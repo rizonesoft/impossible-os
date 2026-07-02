@@ -68,6 +68,25 @@ static uint32_t ascii_to_utf16(const char *src, uint16_t *dst, uint32_t max_char
 
 /* ---- NtQueryInformationFile --------------------------------------------- */
 
+/* Fill st from the file's VFS node (stat op, else raw vfs_node fields). Called
+ * only by the metadata info classes and only AFTER their buffer-size check, so
+ * a too-small or cheap query never pays the (possibly allocating, disk-reading)
+ * stat cost. */
+static void nt_file_fill_stat(FILE_OBJECT *fo, struct vfs_stat *st)
+{
+    int vfs_ret = -1;
+    if (fo->vfs_node->ops && fo->vfs_node->ops->stat)
+        vfs_ret = fo->vfs_node->ops->stat(fo->vfs_node, st);
+    if (vfs_ret != 0) {
+        st->size = fo->vfs_node->size;
+        st->type = fo->vfs_node->type;
+        st->ctime = 0;
+        st->mtime = 0;
+        st->atime = 0;
+        st->blocks = 0;
+    }
+}
+
 static NTSTATUS NtQueryInformationFile_handler(
     uint64_t a1, uint64_t a2, uint64_t a3,
     uint64_t a4, uint64_t a5, uint64_t a6)
@@ -79,7 +98,6 @@ static NTSTATUS NtQueryInformationFile_handler(
     uint32_t info_class = (uint32_t)a5;
     FILE_OBJECT *fo;
     struct vfs_stat st;
-    int vfs_ret;
 
     (void)a6;
 
@@ -90,24 +108,17 @@ static NTSTATUS NtQueryInformationFile_handler(
     if (!info)
         return STATUS_INVALID_PARAMETER;
 
-    vfs_ret = -1;
-    if (fo->vfs_node->ops && fo->vfs_node->ops->stat)
-        vfs_ret = fo->vfs_node->ops->stat(fo->vfs_node, &st);
-    if (vfs_ret != 0) {
-        /* No stat op -- fill from vfs_node directly */
-        st.size = fo->vfs_node->size;
-        st.type = fo->vfs_node->type;
-        st.ctime = 0;
-        st.mtime = 0;
-        st.atime = 0;
-        st.blocks = 0;
-    }
-
+    /* stat is fetched lazily inside the metadata cases AFTER their buffer-size
+     * check (nt_file_fill_stat) -- a cheap class, an invalid class, or a
+     * too-small buffer must not pay the stat cost (on NTFS a stat allocates a
+     * PMM frame and reads an MFT record, so an eager stat would let an
+     * error/cheap-query loop force allocation + disk I/O: local DoS). */
     switch (info_class) {
     case FileBasicInformation: {
         FILE_BASIC_INFORMATION *bi;
         if (length < sizeof(FILE_BASIC_INFORMATION))
             return STATUS_BUFFER_TOO_SMALL;
+        nt_file_fill_stat(fo, &st);
         bi = (FILE_BASIC_INFORMATION *)info;
         bi->CreationTime = vfs_seconds_to_filetime(st.ctime);
         bi->LastAccessTime = vfs_seconds_to_filetime(st.atime);
@@ -126,6 +137,7 @@ static NTSTATUS NtQueryInformationFile_handler(
         FILE_STANDARD_INFORMATION *si;
         if (length < sizeof(FILE_STANDARD_INFORMATION))
             return STATUS_BUFFER_TOO_SMALL;
+        nt_file_fill_stat(fo, &st);
         si = (FILE_STANDARD_INFORMATION *)info;
         si->AllocationSize = (st.size + 4095) & ~(uint64_t)4095;
         si->EndOfFile = st.size;
@@ -141,20 +153,37 @@ static NTSTATUS NtQueryInformationFile_handler(
     }
     case FileNameInformation: {
         FILE_NAME_INFORMATION *ni;
-        uint32_t avail_chars;
+        uint32_t avail_chars, full_chars, copy_chars, full_bytes, copied;
         if (length < sizeof(uint32_t))
             return STATUS_BUFFER_TOO_SMALL;
         ni = (FILE_NAME_INFORMATION *)info;
-        /* Cap copy to caller-provided buffer space */
+        /* Full required name length. Bound the scan to VFS_MAX_NAME so a
+         * corrupted/unterminated node name cannot read past the fixed-size
+         * name storage. */
+        for (full_chars = 0;
+             full_chars < VFS_MAX_NAME && fo->vfs_node->name[full_chars];
+             full_chars++)
+            ;
+        full_bytes = full_chars * 2;
+        /* Copy count is bounded by BOTH the caller buffer AND the scanned
+         * name length -- the buffer cap alone would let ascii_to_utf16 read
+         * past name[] on an unterminated node. */
         avail_chars = (length - sizeof(uint32_t)) / sizeof(uint16_t);
         if (avail_chars > 260) avail_chars = 260;
-        ni->FileNameLength = ascii_to_utf16(
-            fo->vfs_node->name, ni->FileName, avail_chars);
+        copy_chars = (avail_chars < full_chars) ? avail_chars : full_chars;
+        copied = ascii_to_utf16(fo->vfs_node->name, ni->FileName, copy_chars);
+        /* Win11 ZwQueryInformationFile contract: FileNameLength is the FULL
+         * required byte length even when the buffer only held part of it, so
+         * a grow-and-retry caller learns the real size. On truncation report
+         * STATUS_BUFFER_OVERFLOW, not SUCCESS. */
+        ni->FileNameLength = full_bytes;
         if (iosb) {
-            iosb->Status = STATUS_SUCCESS;
-            iosb->Information = sizeof(uint32_t) + ni->FileNameLength;
+            iosb->Status = (copied < full_bytes)
+                ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
+            iosb->Information = sizeof(uint32_t) + copied;
         }
-        return STATUS_SUCCESS;
+        return (copied < full_bytes)
+            ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
     }
     case FilePositionInformation: {
         FILE_POSITION_INFORMATION *pi;
@@ -172,6 +201,7 @@ static NTSTATUS NtQueryInformationFile_handler(
         FILE_NETWORK_OPEN_INFORMATION *noi;
         if (length < sizeof(FILE_NETWORK_OPEN_INFORMATION))
             return STATUS_BUFFER_TOO_SMALL;
+        nt_file_fill_stat(fo, &st);
         noi = (FILE_NETWORK_OPEN_INFORMATION *)info;
         noi->CreationTime = vfs_seconds_to_filetime(st.ctime);
         noi->LastAccessTime = vfs_seconds_to_filetime(st.atime);
@@ -287,11 +317,21 @@ static NTSTATUS NtSetInformationFile_handler(
         if (length < fixed_size)
             return STATUS_BUFFER_TOO_SMALL;
         ri = (FILE_RENAME_INFORMATION *)info;
-        chars = ri->FileNameLength / 2;
-        if (chars > 259) chars = 259;
-        /* Validate caller provided enough bytes for the filename */
-        if (length < fixed_size + ri->FileNameLength)
+        /* Reject malformed name lengths: zero (empty rename) or odd (not
+         * UTF-16-aligned, so the last byte would be silently dropped and the
+         * file renamed to a truncated name). Either would create an invalid
+         * or inaccessible directory entry rather than failing cleanly. */
+        if (ri->FileNameLength == 0 || (ri->FileNameLength & 1))
+            return STATUS_OBJECT_NAME_INVALID;
+        /* Validate with subtraction: fixed_size + FileNameLength can wrap in
+         * uint32_t (FileNameLength is caller-controlled), which would bypass
+         * the size check and let the copy loop overread the buffer. length
+         * >= fixed_size was checked above, so length - fixed_size is safe. */
+        if (ri->FileNameLength > length - fixed_size)
             return STATUS_BUFFER_TOO_SMALL;
+        chars = ri->FileNameLength / 2;
+        /* Reject an over-long rename target rather than truncating it. */
+        if (chars > 259) return STATUS_NAME_TOO_LONG;
         for (i = 0; i < chars; i++)
             ascii_name[i] = (char)(ri->FileName[i] & 0x7F);
         ascii_name[chars] = '\0';
@@ -312,8 +352,11 @@ static NTSTATUS NtSetInformationFile_handler(
             return STATUS_BUFFER_TOO_SMALL;
         ai = (FILE_ALLOCATION_INFORMATION *)info;
         if (node->ops && node->ops->truncate) {
-            if (ai->AllocationSize > node->size)
-                node->ops->truncate(node, ai->AllocationSize);
+            /* Report a failed pre-allocation (e.g. no space) instead of
+             * silently returning success -- matches FileEndOfFileInformation. */
+            if (ai->AllocationSize > node->size &&
+                node->ops->truncate(node, ai->AllocationSize) != 0)
+                return STATUS_UNSUCCESSFUL;
         }
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
@@ -344,7 +387,9 @@ static NTSTATUS NtDeleteFile_handler(
         return STATUS_INVALID_PARAMETER;
 
     chars = oa->ObjectName->Length / 2;
-    if (chars > 259) chars = 259;
+    /* Reject an over-long name rather than truncating it -- a silently
+     * shortened path resolves to a DIFFERENT object than the caller named. */
+    if (chars > 259) return STATUS_NAME_TOO_LONG;
     for (i = 0; i < chars; i++)
         path[i] = (char)(oa->ObjectName->Buffer[i] & 0x7F);
     path[chars] = '\0';
@@ -536,7 +581,7 @@ static NTSTATUS NtQueryVolumeInformationFile_handler(
         vi->VolumeCreationTime = vfs_seconds_to_filetime(0);
         vi->VolumeSerialNumber = 0x494D5053;  /* "IMPS" */
         vi->SupportsObjects = 1;
-        vi->_pad[0] = vi->_pad[1] = vi->_pad[2] = 0;
+        vi->_pad = 0;
         vi->VolumeLabelLength = label_bytes;
         if (length < hdr + label_bytes) {
             if (iosb) {
@@ -601,7 +646,9 @@ static NTSTATUS NtQueryAttributesFile_handler(
         return STATUS_INVALID_PARAMETER;
 
     chars = oa->ObjectName->Length / 2;
-    if (chars > 259) chars = 259;
+    /* Reject an over-long name rather than truncating it -- a silently
+     * shortened path resolves to a DIFFERENT object than the caller named. */
+    if (chars > 259) return STATUS_NAME_TOO_LONG;
     for (i = 0; i < chars; i++)
         path[i] = (char)(oa->ObjectName->Buffer[i] & 0x7F);
     path[chars] = '\0';

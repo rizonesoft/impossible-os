@@ -655,6 +655,18 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 18 NtXxx file-metadata/device-control/IO-completion handlers in nt_file.c; IRP-dependent ops are honest STATUS_INVALID_DEVICE_REQUEST stubs.
+> - Integrates: SSDT 0x0014-0x0028 + 0x0088-0x008A; ALPC posts completion packets into the same IOCP ports via io_completion_post.
+> - Hardened this review: rename length validation, lazy stat (no query-loop DoS), FileNameInformation overflow contract + bounded copy, volume-info offset-18 ABI (details in commit).
+> - Scope boundary: user-buffer probes, IOCP OB-isolation, IXFS long-name rejection deferred to owners; & 0x7F narrowing + size-hint omission are known Lows.
+> - Test gap: security-path negative tests need a live VFS file-handle fixture; registration checks cover all handlers.
+> **Verified:** 2026-07-02 | commit `24c110fb` | 16/16 items | build OK | abi 426/426 PASS
+> **Accepted:** [Critical] IOCP `idx+0x10000` pseudo-handles are globally guessable (cross-task inject/drain), no per-process OB isolation -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate IO completion ports to OB handles" at line 327)
+> **Accepted:** [M] IXFS silently truncates names > 252 bytes on rename/create, so a 252-259 char op resolves to a different entry -> XREF: 05-storage-filesystems/TODO-06 §1 (item: "Reject over-length names" at line 79)
+> **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 4H+4M fixed, 1Crit+1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 14. Registry Syscalls (Core CRUD)

@@ -212,9 +212,14 @@ typedef struct {
     uint32_t VolumeSerialNumber;
     uint32_t VolumeLabelLength;
     uint8_t  SupportsObjects;
-    uint8_t  _pad[3];
+    uint8_t  _pad;               /* 1-byte gap: WCHAR VolumeLabel aligns to 18 */
     uint16_t VolumeLabel[32];    /* UTF-16LE */
 } FILE_FS_VOLUME_INFORMATION;
+/* Win11 ABI: VolumeLabel follows BOOLEAN SupportsObjects at offset 18
+ * (BOOLEAN@16 + 1-byte align + WCHAR VolumeLabel[1]@18), NOT 20. Consumers
+ * that walk the documented layout read the label from offset 18. */
+_Static_assert(__builtin_offsetof(FILE_FS_VOLUME_INFORMATION, VolumeLabel) == 18,
+    "FILE_FS_VOLUME_INFORMATION.VolumeLabel must match Win11 ABI offset 18");
 
 typedef struct {
     uint32_t FileSystemAttributes;

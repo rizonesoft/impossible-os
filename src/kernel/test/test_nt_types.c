@@ -786,6 +786,19 @@ static void test_nt_file_metadata_ssdt_registered(void)
                       0xDEAD, 0, 0, 0, 0, 0);
     TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
                 "NtQueryVolumeInformationFile registered");
+
+    /* NtLockFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtLockFile, 0xDEAD, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED, "NtLockFile registered");
+
+    /* NtUnlockFile with bad handle */
+    s = ssdt_dispatch(SSDT_NtUnlockFile, 0xDEAD, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED, "NtUnlockFile registered");
+
+    /* NtQueryAttributesFile with NULL OBJECT_ATTRIBUTES */
+    s = ssdt_dispatch(SSDT_NtQueryAttributesFile, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT(s != STATUS_NOT_IMPLEMENTED,
+                "NtQueryAttributesFile registered");
 }
 
 static void test_nt_iocp_roundtrip(void)
