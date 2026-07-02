@@ -54,7 +54,7 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
-    if d.get("tool_name") != "Task":
+    if d.get("tool_name") not in ("Task", "Agent"):
         return 0
     root = _repo_root()
     if root is None:
