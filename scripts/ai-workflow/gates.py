@@ -90,7 +90,13 @@ _STAMP_ADDED_RE = re.compile(
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
-def _staged_file_lines(root: Path, path: str) -> list[str]:
+def _staged_file_lines(root: Path, path: str, cache: dict[str, list[str]]) -> list[str]:
+    """Staged blob content, memoized per path for the run: the index is
+    immutable while the hook executes, and a large table flip would otherwise
+    re-run `git show` per added [x]/stamp line (~2.5 ms each, seconds on
+    thousand-row tables -- perf finding)."""
+    if path in cache:
+        return cache[path]
     try:
         out = subprocess.check_output(
             ["git", "show", f":{path}"],
@@ -99,14 +105,18 @@ def _staged_file_lines(root: Path, path: str) -> list[str]:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
+        lines = out.splitlines()
     except Exception:
-        return []
-    return out.splitlines()
+        lines = []
+    cache[path] = lines
+    return lines
 
 
-def _section_for_added_line(root: Path, todo: str, added_lineno: int) -> str:
+def _section_for_added_line(
+    root: Path, todo: str, added_lineno: int, cache: dict[str, list[str]]
+) -> str:
     section = ""
-    lines = _staged_file_lines(root, todo)
+    lines = _staged_file_lines(root, todo, cache)
     if not lines:
         return section
     for idx in range(min(added_lineno, len(lines)) - 1, -1, -1):
@@ -139,8 +149,10 @@ def _section_value(raw: object) -> str:
     return ""
 
 
-def _io_header_for_added_line(root: Path, todo: str, added_lineno: int) -> list[str]:
-    lines = _staged_file_lines(root, todo)
+def _io_header_for_added_line(
+    root: Path, todo: str, added_lineno: int, cache: dict[str, list[str]]
+) -> list[str]:
+    lines = _staged_file_lines(root, todo, cache)
     if not lines:
         return []
     start = min(max(added_lineno - 1, 0), len(lines) - 1)
@@ -154,7 +166,9 @@ def _io_header_for_added_line(root: Path, todo: str, added_lineno: int) -> list[
     return []
 
 
-def _section_from_done_io_row(root: Path, todo: str, added_lineno: int, diff_line: str) -> str:
+def _section_from_done_io_row(
+    root: Path, todo: str, added_lineno: int, diff_line: str, cache: dict[str, list[str]]
+) -> str:
     """Return the target section for an added [x] Implementation Order row.
 
     The target is header-bound so dependency cells cannot satisfy a lease for
@@ -165,7 +179,7 @@ def _section_from_done_io_row(root: Path, todo: str, added_lineno: int, diff_lin
     cells = _table_cells(diff_line[1:])
     if not cells or cells[-1] != "[x]":
         return ""
-    header = _io_header_for_added_line(root, todo, added_lineno)
+    header = _io_header_for_added_line(root, todo, added_lineno, cache)
     labels = _table_labels(header)
     for wanted in ("section", "order"):
         if wanted in labels:
@@ -183,6 +197,7 @@ def _staged_targets(root: Path) -> tuple[list[dict[str, str]], list[str]]:
     targets: list[dict[str, str]] = []
     errors: list[str] = []
     seen: set[tuple[str, str, str]] = set()
+    lines_cache: dict[str, list[str]] = {}
     todos, todo_err = _staged_todo_files(root)
     if todo_err:
         return (targets, [todo_err])
@@ -206,7 +221,7 @@ def _staged_targets(root: Path) -> tuple[list[dict[str, str]], list[str]]:
                 continue
             if line.startswith("+"):
                 new_lineno += 1
-                section = _section_from_done_io_row(root, todo, new_lineno, line)
+                section = _section_from_done_io_row(root, todo, new_lineno, line, lines_cache)
                 if section:
                     item = (todo, section, "implementation-order")
                     if item not in seen:
@@ -214,7 +229,7 @@ def _staged_targets(root: Path) -> tuple[list[dict[str, str]], list[str]]:
                         targets.append({"todo": todo, "section": section, "reason": item[2]})
                     continue
                 if _STAMP_ADDED_RE.match(line):
-                    section = _section_for_added_line(root, todo, new_lineno)
+                    section = _section_for_added_line(root, todo, new_lineno, lines_cache)
                     if section:
                         item = (todo, section, "stamp")
                         if item not in seen:

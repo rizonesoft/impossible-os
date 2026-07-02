@@ -8225,6 +8225,54 @@ else
     t_fail "ai_workflow_obligations: anonymous implement resolution fails closed on lease + reviews"
 fi
 
+# staged gate memoizes staged blob content: hundreds of [x] flips in one file
+# cost ONE git show, not one per flip (perf finding: ~2.5ms per redundant read)
+GSHOW_REPO="$AIWF_TMP/gshow-repo"
+rm -rf "$GSHOW_REPO"; mkdir -p "$GSHOW_REPO/todo/00-infrastructure"
+python3 - "$GSHOW_REPO" <<'PYGEN'
+import pathlib, sys
+repo = pathlib.Path(sys.argv[1])
+rows = "\n".join(f"| x | {i} | Deliverable {i} | -- | [ ] |" for i in range(1, 201))
+todo = repo / "todo/00-infrastructure/TODO-93-many.md"
+todo.write_text(
+    "# TODO-93 Many\n\n| S | Order | Deliverable | Depends On | Status |\n"
+    "| - | :-: | - | - | :-: |\n" + rows + "\n\n"
+    + "".join(f"## {i}. Deliverable {i}\n\nbody\n\n" for i in range(1, 201)),
+    encoding="utf-8",
+)
+PYGEN
+( cd "$GSHOW_REPO" && git init -q && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init )
+perl -0pi -e 's/\[ \]/[x]/g' "$GSHOW_REPO/todo/00-infrastructure/TODO-93-many.md"
+( cd "$GSHOW_REPO" && git add -A )
+if python3 - "$GSHOW_REPO" <<'PYCHK'
+import importlib.util, pathlib, subprocess, sys
+root = pathlib.Path.cwd()
+repo = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("aiwf_gates", root / "scripts/ai-workflow/gates.py")
+gates = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(gates)
+real = subprocess.check_output
+shows = {"n": 0}
+def counting(cmd, **kw):
+    if isinstance(cmd, list) and cmd[:2] == ["git", "show"]:
+        shows["n"] += 1
+    return real(cmd, **kw)
+gates.subprocess.check_output = counting
+try:
+    targets, errors = gates._staged_targets(repo)
+finally:
+    gates.subprocess.check_output = real
+assert not errors, errors
+assert len(targets) == 200, f"expected 200 targets, got {len(targets)}"
+assert shows["n"] == 1, f"git show ran {shows['n']}x for one staged file"
+PYCHK
+then
+    t_pass "ai_workflow_gates: staged blob content memoized (200 flips = one git show)"
+else
+    t_fail "ai_workflow_gates: staged blob content memoized (200 flips = one git show)"
+fi
+
 # legacy-imported reviewer evidence (last-review-stamps.json compatibility
 # records) is dispatch telemetry, never received-review proof for shipping
 LEGACY_STATE="$AIWF_TMP/legacy-reject-state"
