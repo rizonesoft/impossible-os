@@ -712,22 +712,31 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > Persistence, notification, and hive management operations. Depends on §14 (core CRUD) and TODO-14 hive infrastructure.
 
 - [x] `NtFlushKey(KeyHandle)` → SSDT 0x009C: delegates to `registry_flush()`
-- [/] `NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter, WatchTree, Buffer, BufferSize, Asynchronous)` → SSDT 0x009D (returns STATUS_NOT_IMPLEMENTED pending change-notification infrastructure -> XREF: 02-kernel-core/TODO-31 §3)
+- [/] `NtNotifyChangeKey(KeyHandle, Event, ..., CompletionFilter, WatchTree, Asynchronous)` → SSDT 0x009D (STATUS_NOT_IMPLEMENTED pending change-notification infra -> XREF: 02-kernel-core/TODO-14 §3)
 - [x] `NtRenameKey(KeyHandle, NewName)` → SSDT 0x009F (uses `RegRenameKey` helper)
 - [x] `NtSaveKey(KeyHandle, FileHandle)` / `NtSaveKeyEx(...)` → SSDT 0x00A0/0x00A1 (resolves FileHandle via `vfs_get_path_from_node`, then `hive_save`)
 - [x] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2 (same path resolution, then `hive_load`)
 - [x] `NtLoadKey(ObjectAttributes, ObjectAttributes)` / `NtLoadKeyEx(...)` → SSDT 0x00A3/0x00A4 (creates registry mountpoint, loads hive file by path)
 - [x] `NtUnloadKey(ObjectAttributes)` / `NtUnloadKeyEx(...)` → SSDT 0x00A5/0x00A6 (uses `RegUnloadHive` helper)
+- [ ] **NtUnloadKey provenance guard**: NtUnloadKey unloads ANY resolved subkey (no loaded-by-NtLoadKey check), so a caller can destroy \Registry\Machine\SYSTEM. Record loaded-hive roots in NtLoadKey; NtUnloadKey must match before RegUnloadHive.
 - [x] Commit: `"kernel: nt -- advanced registry syscalls (flush/notify/save/restore/hive load)"` (dd22e696)
 
 **Test checkpoint:** `NtFlushKey` completes without error. `NtNotifyChangeKey` fires callback after `NtSetValueKey` on watched key. `NtSaveKey` + `NtRestoreKey` round-trip succeeds.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
-> **Expected:** 5 new §15 tests (NtFlushKey, NtRenameKey, NtNotifyChangeKey blocked, NtUnloadKey invalid, advanced SSDT registered), 0 failures.
-
-> **Verified** (2026-04-14): 10 handlers registered at SSDT 0x009C-0x00A6 via nt_registry.c:1113-1122. 9 complete paths ([x]) route through registry.c helpers: NtFlushKey → registry_flush_checked with STATUS_REGISTRY_IO_FAILED propagation; NtRenameKey → RegRenameKey with case-only no-op + collision check; NtSaveKey/Ex + NtRestoreKey → vfs_get_path_from_node(bounded strlen, overflow-safe math, cycle detection) → hive_save/hive_load; NtLoadKey/Ex → mountpoint creation with rollback on hive_load failure; NtUnloadKey/Ex → RegUnloadHive recursive free. 1 stub ([/]): NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED with SCOPE-GAP-ALLOWED sentinel. 10 ntdll PE exports added (alphabetically sorted for binary search). Build clean.
-> **Accepted:** Change notifications (NtNotifyChangeKey watcher lists) -> XREF: 02-kernel-core/TODO-31 §3 (reg_watcher_t + reg_notify_register), §4 line 271 (NtNotifyChangeKey SSDT wiring calls §3 infra). SMP dirty-flag races on registry_flush/hive_table -> XREF: 02-kernel-core/TODO-31 §14 (explicit wrap of registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-14 §5 (kernel-wide `nt_decode_unicode_string` helper in src/kernel/nt/nt_string.c; retrofit list explicitly covers §14, §15, §17). Per-key flush optimization -> XREF: 02-kernel-core/TODO-14 §5 (new `registry_flush_key` walks parent chain to owning hive).
-> **Quality reviewed** (2026-04-14): dead code clean. Consistency: reg_resolve_key in registry.c now tombstone-aware (rejects keys with name[0]=='\0'); §14 handlers (NtDeleteKey, NtRenameKey, NtQueryKey) routed through shared resolve_hkey in nt_registry.c for uniform liveness semantics. NtLoadKey rollback on hive_load failure uses captured disposition. File handle type-checked via OB_HEADER_FROM_BODY + ObpFileType. New helpers: vfs_get_path_from_node (bounded VFS_MAX_NAME strlen, depth-64 cycle guard, subtraction-form bounds), vfs_name_len_bounded, vfs_find_drive_letter. 5 new tests.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 9 advanced registry handlers (flush/rename/save/restore/load/unload hive) in nt_registry.c wired to SSDT 0x009C-0x00A6 via registry.c helpers; NtNotifyChangeKey is a tracked STATUS_NOT_IMPLEMENTED stub.
+> - Integrates: NtSaveKey/Restore resolve FileHandle via resolve_file_handle_path (ObpFileType check) -> hive_save/hive_load; NtLoadKey creates a mountpoint + rolls back a newly-created key on hive_load failure.
+> - Reviewed this pass: handler wiring correct; hive-parse robustness bugs are registry.c engine scope (TODO-14 §8), and NtUnloadKey lacks a loaded-hive provenance guard (filed Critical).
+> - Scope boundary: hive_load bounds/transactionality + journal validation -> TODO-14 §8; change notifications -> TODO-14 §3; registry SMP locking -> TODO-31 §14; UTF-16 decode -> TODO-14 §5.
+> - Test gap: NtSaveKey/RestoreKey/LoadKey functional paths + NtUnloadKey provenance rejection are untested (registration-only).
+> **Verified:** 2026-07-02 | commit `422113c1` | 6/8 items | build OK | abi 426/426 PASS
+> **Deferred:** [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM) -> XREF: 02-kernel-core/TODO-12 §15 (item: "NtUnloadKey provenance guard" at line 721)
+> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (no change-notification infra) -> XREF: 02-kernel-core/TODO-14 §3 (item: "Static pool of 64 watchers" at line 170)
+> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 409)
+> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 410)
+> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 411)
+> **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit+1M deferred, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 
 ---

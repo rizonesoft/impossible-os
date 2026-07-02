@@ -406,6 +406,9 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 8. Advanced Hive Features
 
+- [ ] Harden `hive_load` value parsing (`registry.c:2515`, nested-key 2371): unchecked `pos += vdata_size` lets a crafted hive move `pos` past `data_size`. Use subtraction bounds + final `pos == data_size` check. XREF: TODO-12 §15.
+- [ ] Make `hive_load` transactional (`registry.c:2504-2546`): a mid-parse failure leaves partial live-key mutations. Parse into a scratch subtree or track created/overwritten keys to restore. XREF: TODO-12 §15.
+- [ ] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
 - [ ] Wire `registry_load_hives()` into boot (`boot_storage.c` after defaults, needs C: mounted); this loads on-disk `ExternalEntropy`, so the secure-delete items below MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
 - [ ] Secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb (else recovery reintroduces the value = reuse); then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
 - [ ] Per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot in `entropy_external_consume()`. -> XREF: `01-boot-platform/TODO-12 §9`
