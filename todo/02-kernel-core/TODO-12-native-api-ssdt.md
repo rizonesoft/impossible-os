@@ -83,7 +83,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7    |  [/]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [/]   |
 | 💎  |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7    |  [/]   |
-| 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [ ]   |
+| 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [/]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §12   |  [ ]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [ ]   |
@@ -955,6 +955,16 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [ ] Commit: `"kernel: nt -- exception and debug syscalls"`
 
 **Test checkpoint:** `NtRaiseException` with `STATUS_BREAKPOINT` reaches SEH handler. `NtCreateDebugObject` + `NtDebugActiveProcess` on a child process captures breakpoint events via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes the debuggee.
+
+> **Test runner:** N/A (reservation-only section -- no handler code) | validation: owner sections TODO-23 §5 + TODO-29 §13 carry the functional tests
+
+> **Notes:**
+> - Reservation-only section: reserves SSDT indices 0x0130-0x0137 and pins the NT-compatible signatures; no handler code lands here by design (see section NOTE callout).
+> - Indices reserved in `include/kernel/nt/service_numbers.h:279-286` (`SSDT_NtRaiseException` through `SSDT_NtSetInformationDebugObject`).
+> - Exception delivery (`NtRaiseException`/`NtContinue`) is owned by TODO-23 §5; the six debug-object syscalls are owned by TODO-29 §13.
+> - Scope boundary: functional handlers, registration, and unit tests belong to the two owner sections, not here.
+> **Deferred:** [M] `NtRaiseException`/`NtContinue` handlers unimplemented; §21 reserves the SSDT slots + signatures only -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §5 (items: "`NtRaiseException` SSDT entry -- calls `ki_dispatch_exception()`" at line 213, "`NtContinue` SSDT entry -- restore CONTEXT, resume user-mode" at line 214)
+> **Deferred:** [M] Six debug-object syscalls unimplemented (NtCreateDebugObject/NtDebugActiveProcess/NtRemoveProcessDebug/NtWaitForDebugEvent/NtDebugContinue/NtSetInformationDebugObject) -> XREF: 02-kernel-core/TODO-29-kernel-debugger-kd-protocol.md §13 (items: "`NtCreateDebugObject` ... register as ObpDebugType" at line 473 through "`NtSetInformationDebugObject`" at line 478)
 
 ---
 
