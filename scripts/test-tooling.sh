@@ -1989,6 +1989,11 @@ check("background_dispatch_detected",
       cd.is_background_dispatch("node /x/codex-companion.mjs task --background --json 'p'")
       and cd.is_background_dispatch("bash scripts/codex-bg-dispatch.sh 'p'")
       and not cd.is_background_dispatch("bash scripts/codex-dispatch.sh 'p'"))
+# argv-based, not raw-text: a FOREGROUND dispatch whose prompt merely mentions
+# the bg wrapper (e.g. a review of the background-dispatch code) stays foreground
+check("fg_prompt_mentioning_bg_wrapper_stays_foreground",
+      not cd.is_background_dispatch(
+          "bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/x review scripts/codex-bg-dispatch.sh behavior'"))
 # the bg wrapper is a RECOGNIZED trigger (proper attribution, telemetry
 # semantics) -- not an invisible dispatch
 check("bg_wrapper_classified_with_prompt",
@@ -2028,11 +2033,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "11" ]; then
+if [ "$GA_OK" = "12" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 11))
+    PASS=$((PASS + 12))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi

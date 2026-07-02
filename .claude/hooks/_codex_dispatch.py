@@ -218,15 +218,46 @@ _COMPANION_REVIEW_SUBCOMMANDS = frozenset({
 # receive step can fire before the job finishes, so their receipt is dispatch
 # TELEMETRY, never completed-review proof (the ledger mirror must not record
 # result=received for them).
-_BG_TASK_RE = re.compile(
-    r"codex-companion\.mjs['\"]?\s+task\b|scripts/codex-bg-dispatch\.sh"
-)
+
+
+def _segment_is_background(seg_tokens):
+    """True when THIS dispatch segment's invocation is companion `task` or the
+    bg wrapper. Argv-based on purpose: a raw-text scan misclassified foreground
+    dispatches whose PROMPT merely mentions the bg wrapper (e.g. a review of
+    the background-dispatch code itself)."""
+    out = _strip_env_and_wrappers(list(seg_tokens))
+    if not out:
+        return False
+    head = out[0]
+    second = out[1] if len(out) > 1 else ""
+    third = out[2] if len(out) > 2 else ""
+    head_base = head.rsplit("/", 1)[-1]
+    if "codex-companion.mjs" in head_base:
+        return second == "task"
+    if head_base == "node" and "codex-companion.mjs" in second:
+        return third == "task"
+    if head_base in ("bash", "sh", "/bin/bash", "/bin/sh") and \
+            second.endswith("codex-bg-dispatch.sh"):
+        return True
+    if head_base == "codex-bg-dispatch.sh" or head_base.endswith("/codex-bg-dispatch.sh"):
+        return True
+    return False
 
 
 def is_background_dispatch(cmd: str) -> bool:
-    """True when the dispatch starts a background job rather than completing a
-    review in the foreground."""
-    return bool(_BG_TASK_RE.search(cmd or ""))
+    """True when the FIRST matching Codex dispatch segment in `cmd` starts a
+    background job rather than completing a review in the foreground."""
+    if not isinstance(cmd, str) or not cmd.strip() or "codex" not in cmd:
+        return False
+    stripped, _heredoc_vars = _harvest_heredoc_vars(cmd)
+    toks = _tokenize(stripped)
+    if not toks:
+        return False
+    for seg in _segment_by_separators(toks):
+        seg = _trim_heredoc_body(seg)
+        if seg and _segment_is_codex_invocation(seg):
+            return _segment_is_background(seg)
+    return False
 
 # Review-carrying bare CLI subcommands ONLY. `codex e` / `codex exec` are
 # non-review automation (see docs/infrastructure/ai-driver-interchangeability.md):
