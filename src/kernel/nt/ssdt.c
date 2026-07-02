@@ -14,27 +14,32 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/zw.h"
+#include "kernel/sched/task.h"  /* thread_current() for per-thread previous_mode */
 #include "kernel/klog.h"
 
 /* ---- Previous-mode tracking ---------------------------------------------- */
 
 /* Previous mode: 0 = KernelMode, 1 = UserMode.
- * Set by the syscall entry path before calling ssdt_dispatch.
- * ZwXxx wrappers save/restore this around their dispatch call.
+ * Set by the syscall entry path before calling ssdt_dispatch; ZwXxx
+ * wrappers save/restore it around their dispatch call.
  *
- * SMP limitation: this is a single global. Safe while APs are parked
- * in hlt. When SMP scheduling is enabled, move to per-CPU or per-thread
- * state (-> XREF: 03-memory-concurrency/TODO-06-smp-phase2.md). */
-static uint32_t s_previous_mode;
-
+ * Stored PER-THREAD (struct thread.previous_mode), not in a global: a
+ * thread runs on one CPU at a time, so its previous mode cannot be
+ * clobbered by a Zw kernel call executing concurrently on another CPU --
+ * which previously let a user syscall handler skip ProbeFor*IfUser().
+ * A NULL current thread (very early boot, before any thread exists)
+ * defaults to KernelMode: there are no user syscalls in that window. */
 void ssdt_set_previous_mode(uint32_t mode)
 {
-    s_previous_mode = mode;
+    struct thread *t = thread_current();
+    if (t)
+        t->previous_mode = mode;
 }
 
 uint32_t ssdt_previous_mode(void)
 {
-    return s_previous_mode;
+    struct thread *t = thread_current();
+    return t ? t->previous_mode : SSDT_KERNEL_MODE;
 }
 
 /* ---- User-buffer probing ------------------------------------------------- */

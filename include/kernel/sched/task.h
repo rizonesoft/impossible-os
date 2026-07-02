@@ -128,6 +128,11 @@ struct thread {
     int32_t     kernel_apc_disable; /* critical-region nesting: blocks NORMAL kernel APCs */
     int32_t     special_apc_disable;/* guarded-region nesting: blocks ALL kernel APCs */
     spinlock_t  apc_lock;           /* guards apc_state queues + the DEAD/FREE insert race */
+    /* --- NT previous mode (SSDT probe gating) --- */
+    uint32_t    previous_mode;      /* 0 = KernelMode, 1 = UserMode; set at syscall entry.
+                                     * Per-thread so a Zw kernel call on one CPU cannot clear
+                                     * another CPU's user-syscall probe flag. Zero-init (a fresh
+                                     * kernel thread defaults to KernelMode). */
 };
 
 /* Task Control Block */

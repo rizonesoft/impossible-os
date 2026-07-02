@@ -611,7 +611,7 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` in `ssdt.c`: validate NULL, overflow, range below `MM_USER_PROBE_ADDRESS` (0x7FFF0000), alignment (power of 2). Returns `STATUS_ACCESS_VIOLATION` or `STATUS_DATATYPE_MISALIGNMENT`.
 - [x] Add `ASSERT_KERNEL_CALLER()` macro in `zw.h`: returns `STATUS_PRIVILEGE_NOT_HELD` if previous mode is UserMode.
 - [x] Convention documented in `zw.h` header comment: kernel calls Zw (no probe), user calls Nt via SYSCALL (probed). Both resolve to the same SSDT handler.
-- [ ] Make `s_previous_mode` (global in `ssdt.c`) per-CPU or pass it through `ssdt_dispatch()`: under SMP user scheduling one CPU can skip another's `ProbeFor*IfUser()`. -> XREF: `TODO-03-kernel-libraries.md` §5
+- [/] Previous-mode moved to per-thread (`struct thread.previous_mode` via `thread_current()`); cross-CPU closure needs per-CPU `thread_current()` -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor")
 - [x] Commit: `"kernel: nt -- ZwXxx kernel-mode alias layer with CPL probe bypass"` (638568e8)
 
 **Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
