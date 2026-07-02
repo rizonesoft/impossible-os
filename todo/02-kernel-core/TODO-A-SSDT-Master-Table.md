@@ -99,9 +99,9 @@ title: "SSDT Master Table"
 | 0x0056 | NtFlushVirtualMemory             | §9  | T12 (§9 no-op)          | [x]  |
 | 0x0057 | NtReadVirtualMemory              | §9  | T12 (§9 implemented)    | [x]  |
 | 0x0058 | NtWriteVirtualMemory             | §9  | T12 (§9 implemented)    | [x]  |
-| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T11-mem §4 (AWE stub)   | [/]  |
-| 0x005A | NtFreeUserPhysicalPages          | §9  | T11-mem §4 (AWE stub)   | [/]  |
-| 0x005B | NtMapUserPhysicalPages           | §9  | T11-mem §4 (AWE stub)   | [/]  |
+| 0x0059 | NtAllocateUserPhysicalPages      | §9  | T05-mem §11 (AWE stub)  | [/]  |
+| 0x005A | NtFreeUserPhysicalPages          | §9  | T05-mem §11 (AWE stub)  | [/]  |
+| 0x005B | NtMapUserPhysicalPages           | §9  | T05-mem §11 (AWE stub)  | [/]  |
 | 0x005C | NtCreateSection                  | §18 | T12 (nt_section.c)      | [x]  |
 | 0x005D | NtOpenSection                    | §18 | T12 (nt_section.c)    | [x]  |
 | 0x005E | NtMapViewOfSection               | §18 | T12 (nt_section.c)      | [x]  |

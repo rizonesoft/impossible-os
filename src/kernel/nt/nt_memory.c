@@ -40,6 +40,44 @@ static uint64_t page_protect_to_vmm(uint32_t protect)
     return flags;
 }
 
+/* ---- Helper: checked page-range validation ------------------------------
+ * Rounds size up to a whole number of pages with overflow rejection, and
+ * confirms base + rounded_size - 1 does not wrap.  Rejects a zero or
+ * pathological (near-max) RegionSize that would round to 0 and succeed as
+ * a no-op, and a base+size that would wrap the per-page loop into
+ * unrelated low memory.  Returns STATUS_SUCCESS with *out_size (rounded)
+ * and *out_pages set, or an NTSTATUS error. (types.h is freestanding and
+ * defines no UINT64_MAX/UINTPTR_MAX, so explicit literals are used.) */
+#define NT_VM_U64_MAX   0xFFFFFFFFFFFFFFFFULL
+#define NT_VM_MAX_PAGES 0x100000ULL           /* 4 GiB in 4 KiB pages */
+
+static NTSTATUS nt_vm_check_range(uintptr_t base, uint64_t size,
+                                  uint64_t *out_size, uint64_t *out_pages)
+{
+    uint64_t rounded, pages;
+
+    if (size == 0)
+        return STATUS_INVALID_PARAMETER;
+    if (size > NT_VM_U64_MAX - (VMM_PAGE_SIZE - 1))
+        return STATUS_INVALID_PARAMETER;  /* rounding would overflow */
+
+    rounded = (size + VMM_PAGE_SIZE - 1) & ~((uint64_t)VMM_PAGE_SIZE - 1);
+    if (rounded == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    pages = rounded / VMM_PAGE_SIZE;
+    if (pages > NT_VM_MAX_PAGES)
+        return STATUS_INVALID_PARAMETER;
+
+    /* base + rounded - 1 must not wrap the address space */
+    if (base != 0 && (uint64_t)base > NT_VM_U64_MAX - (rounded - 1))
+        return STATUS_INVALID_PARAMETER;
+
+    *out_size = rounded;
+    *out_pages = pages;
+    return STATUS_SUCCESS;
+}
+
 /* ---- Helper: convert VMM flags to PAGE_* protection --------------------- */
 static uint32_t __attribute__((unused))
 vmm_to_page_protect(uint64_t flags)
@@ -72,14 +110,17 @@ static NTSTATUS NtAllocateVirtualMemory_handler(uint64_t a1, uint64_t a2,
     uintptr_t base;
     uint64_t size, pages, i;
     uint64_t vmm_flags;
+    NTSTATUS rc;
 
     (void)a1; (void)a3;
 
-    if (!base_ptr || !size_ptr || *size_ptr == 0)
+    if (!base_ptr || !size_ptr)
         return STATUS_INVALID_PARAMETER;
 
-    size = (*size_ptr + VMM_PAGE_SIZE - 1) & ~((uint64_t)VMM_PAGE_SIZE - 1);
-    pages = size / VMM_PAGE_SIZE;
+    /* Checked page rounding + base+size wrap rejection */
+    rc = nt_vm_check_range(*base_ptr, *size_ptr, &size, &pages);
+    if (!NT_SUCCESS(rc))
+        return rc;
     base = *base_ptr;
 
     /* If no base address specified, allocate contiguous physical pages */
@@ -94,7 +135,10 @@ static NTSTATUS NtAllocateVirtualMemory_handler(uint64_t a1, uint64_t a2,
     vmm_flags = page_protect_to_vmm(protect);
 
     if (alloc_type & MEM_COMMIT) {
-        /* Map pages with requested protection */
+        /* Map pages with requested protection.  NOTE: partial-alloc
+         * rollback and per-page protection enforcement are blocked on
+         * per-process page tables + a PMM free-contiguous helper --
+         * tracked as deferred VirtualAlloc items in the native-API TODO. */
         for (i = 0; i < pages; i++) {
             uintptr_t addr = base + i * VMM_PAGE_SIZE;
             uintptr_t phys = vmm_get_physical(addr);
@@ -149,17 +193,22 @@ static NTSTATUS NtFreeVirtualMemory_handler(uint64_t a1, uint64_t a2,
         return STATUS_MEMORY_NOT_ALLOCATED;
 
     if (free_type & MEM_RELEASE) {
-        /* Full release: size must be 0 (release entire allocation) */
-        if (size == 0) {
-            /* Can't determine original size without region tracking;
-             * caller must pass correct size for now */
-            return STATUS_SUCCESS;
-        }
+        /* Full release (size == 0) requires per-region extent tracking to
+         * know how many frames to return.  Without per-process page tables
+         * that tracking does not exist, and silently returning SUCCESS
+         * would leak the whole allocation -- reject explicitly so callers
+         * do not believe the memory was freed.  (Deferred VirtualFree item
+         * in the native-API TODO.) */
+        if (size == 0)
+            return STATUS_INVALID_PARAMETER;
     }
 
-    /* Round up size to page boundary */
-    size = (size + VMM_PAGE_SIZE - 1) & ~((uint64_t)VMM_PAGE_SIZE - 1);
-    pages = size / VMM_PAGE_SIZE;
+    /* Checked page rounding + base+size wrap rejection */
+    {
+        NTSTATUS rc = nt_vm_check_range(base, size, &size, &pages);
+        if (!NT_SUCCESS(rc))
+            return rc;
+    }
 
     for (i = 0; i < pages; i++) {
         uintptr_t addr = base + i * VMM_PAGE_SIZE;
@@ -195,11 +244,15 @@ static NTSTATUS NtProtectVirtualMemory_handler(uint64_t a1, uint64_t a2,
     base = *base_ptr;
     size = *size_ptr;
 
-    if (base == 0 || size == 0)
+    if (base == 0)
         return STATUS_INVALID_PARAMETER;
 
-    size = (size + VMM_PAGE_SIZE - 1) & ~((uint64_t)VMM_PAGE_SIZE - 1);
-    pages = size / VMM_PAGE_SIZE;
+    /* Checked page rounding + base+size wrap rejection */
+    {
+        NTSTATUS rc = nt_vm_check_range(base, size, &size, &pages);
+        if (!NT_SUCCESS(rc))
+            return rc;
+    }
     new_flags = page_protect_to_vmm(new_protect);
 
     /* Get old protection from first page */
@@ -365,7 +418,8 @@ static NTSTATUS NtFlushVirtualMemory_handler(uint64_t a1, uint64_t a2,
     return STATUS_SUCCESS;
 }
 
-/* ---- AWE stubs (0x0059-0x005B) -- deferred to TODO-04-mem ------------- */
+/* ---- AWE stubs (0x0059-0x005B) -- owned by advanced-virtual-memory
+ * Address Windowing Extensions (needs per-process physical page windows) - */
 static NTSTATUS NtAWE_stub(uint64_t a1, uint64_t a2, uint64_t a3,
                             uint64_t a4, uint64_t a5, uint64_t a6)
 {

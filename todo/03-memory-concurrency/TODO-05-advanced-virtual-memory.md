@@ -53,9 +53,10 @@ title: "TODO-05 -- Advanced Virtual Memory"
 | 💎  |   8   | §8 Compressed memory (zRAM-style)                    | TODO-03 §5 (vmalloc), TODO-03 §8    |  [ ]   |
 | 💎  |   9   | §9 NUMA-aware PMM                                    | ACPI SRAT, CPUID                    |  [ ]   |
 | ⭐  |  10   | §10 Transparent huge pages collapser                 | §2, §4, scheduler tick              |  [ ]   |
+| 💎  |  11   | §11 Address Windowing Extensions (AWE)               | per-process page tables, §1         |  [ ]   |
 
 > ⭐ = exclusive -- COW `fork()` is a POSIX capability Windows does not have; the THP collapser is a Linux-specific optimization Impossible OS adds on top of the huge-page foundation.
-> 💎 = parity -- Windows and Linux both implement huge pages, madvise, Section Objects, DMA pools, compressed memory, and NUMA.
+> 💎 = parity -- Windows and Linux both implement huge pages, madvise, Section Objects, DMA pools, compressed memory, NUMA, and AWE-style physical-page windowing (`AllocateUserPhysicalPages` / `MAP_HUGETLB` reservation).
 
 ---
 
@@ -231,6 +232,23 @@ A background kernel thread that promotes regions marked `MADV_HUGEPAGE` from 512
 - [ ] If `pmm_alloc_huge()` fails (no contiguous 2 MiB frame): skip range, retry next pass
 - [ ] Emit `[THP] collapsed 0x%llx → 2 MiB` in serial log (debug builds only)
 - [ ] Commit: `"mm: THP collapser -- background promotion of 512×4KiB to 2MiB for MADV_HUGEPAGE regions"`
+
+## 11. Address Windowing Extensions (AWE) `[Opus]`
+
+Windows AWE lets a process reserve physical pages it owns (`NtAllocateUserPhysicalPages`) and remap them into a fixed reserved virtual window (`NtMapUserPhysicalPages`) without the pagefile -- the mechanism large-memory / NUMA / large-page workloads use to control physical placement. It is the concrete owner for the three AWE SSDT stubs registered by 02-kernel-core/TODO-12 §9 (`nt_memory.c::NtAWE_stub`, SSDT 0x0059-0x005B), which return `STATUS_NOT_IMPLEMENTED` today. **Blocker:** AWE requires per-process physical-page ownership tracking and a per-process page-table window, neither of which exists while all user pages share the kernel's identity map (CLAUDE.md "User-mode pages need User bit at all 4 levels"; per-process isolation is planned for the Win32 PE loader / VirtualAlloc work). Do not implement until per-process page tables land.
+
+**Files:** `src/kernel/nt/nt_memory.c`, `include/kernel/nt/nt_memory.h`, `src/kernel/mm/vmm.c`
+
+- [ ] `NtAllocateUserPhysicalPages(0x0059)`: allocate NumberOfPages PMM frames owned by the process (per-task AWE frame list), return frame numbers in PageArray, enforce a per-process AWE quota
+- [ ] `NtFreeUserPhysicalPages(0x005A)`: unmap any currently-windowed frames, return them to PMM, drop from the process AWE list; reject frames the process does not own
+- [ ] `NtMapUserPhysicalPages(0x005B)`: remap the reserved AWE window at BaseAddress to owned frames (NULL entry unmaps that slot); needs an `MEM_PHYSICAL`-reserved window with per-process PTEs
+- [ ] Replace `NtAWE_stub` in `nt_memory.c` with the three real handlers; flip 02-kernel-core/TODO-12 §9 items 0x0059-0x005B to `[x]` and correct the TODO-A master-table rows (`T05-mem §11`)
+- [ ] Unit tests: allocate-window-map-unmap-free round trip; ownership rejection (map a frame not owned); quota exhaustion
+- [ ] Commit: `"mm: AWE -- NtAllocate/Free/MapUserPhysicalPages over per-process physical page windows"`
+
+**Test checkpoint:** `NtAllocateUserPhysicalPages(4)` returns 4 frame numbers; `NtMapUserPhysicalPages` maps them into the reserved window and a read/write round-trips; remap to NULL unmaps; `NtFreeUserPhysicalPages` returns the frames and a subsequent map of a freed frame is rejected.
+
+**Inputs (XREFs):** -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §9 (the three AWE SSDT stubs this section replaces); per-process page-table prerequisite tracked with the Win32 PE loader / VirtualAlloc isolation work.
 
 ---
 

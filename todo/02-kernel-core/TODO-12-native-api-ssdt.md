@@ -494,15 +494,28 @@ Virtual memory management entry points -- covers the full NT virtual memory API 
 - [x] `NtFlushVirtualMemory(0x0056)`: no-op STATUS_SUCCESS (no backing store yet)
 - [x] `NtReadVirtualMemory(0x0057)`: identity-mapped memcpy from source address; cross-process via CR3 deferred
 - [x] `NtWriteVirtualMemory(0x0058)`: identity-mapped memcpy to target address
-- [ ] `NtAllocateUserPhysicalPages(0x0059)`: AWE stub STATUS_NOT_IMPLEMENTED
-- [ ] `NtFreeUserPhysicalPages(0x005A)`: AWE stub
-- [ ] `NtMapUserPhysicalPages(0x005B)`: AWE stub
+- [x] Checked page-range guard `nt_vm_check_range()` on Alloc/Free/Protect (rejects zero/near-max RegionSize and base+size wrap; MEM_RELEASE size==0 rejects instead of silently leaking)
+- [/] `NtAllocateUserPhysicalPages(0x0059)`: AWE stub STATUS_NOT_IMPLEMENTED -> XREF: 03-memory-concurrency/TODO-05-advanced-virtual-memory.md §11 (item: "NtAllocateUserPhysicalPages(0x0059)" at line 242)
+- [/] `NtFreeUserPhysicalPages(0x005A)`: AWE stub -> XREF: 03-memory-concurrency/TODO-05-advanced-virtual-memory.md §11 (item: "NtFreeUserPhysicalPages(0x005A)" at line 243)
+- [/] `NtMapUserPhysicalPages(0x005B)`: AWE stub -> XREF: 03-memory-concurrency/TODO-05-advanced-virtual-memory.md §11 (item: "NtMapUserPhysicalPages(0x005B)" at line 244)
 - [x] New file: `include/kernel/nt/nt_memory.h` -- MEM_COMMIT/RESERVE/RELEASE, PAGE_* flags, MEMORY_BASIC_INFORMATION
-- [x] New file: `src/kernel/nt/nt_memory.c` -- 12 SSDT handlers (9 implemented + 3 AWE stubs)
-- [x] 2 unit tests: SSDT registration (5 handler checks), constant verification (12 checks)
+- [x] New file: `src/kernel/nt/nt_memory.c` -- 12 SSDT handlers (9 implemented + 3 AWE stubs deferred to advanced-VM §11)
+- [x] 2 unit tests: SSDT registration (5 handler checks), constant verification (12 checks) -- test_nt_types.c TEST_CAT_ABI
 - [x] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
 **Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds. AWE APIs (0x0059-0x005B) currently return `STATUS_NOT_IMPLEMENTED`.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 405 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nt_memory.c` -- 9 VM SSDT handlers (Alloc/Free/Protect/Query/Lock/Unlock/Flush/Read/Write) over VMM+PMM, PAGE_*<->VMM-flag conversion, MEMORY_BASIC_INFORMATION; 3 AWE handlers are STATUS_NOT_IMPLEMENTED stubs.
+> - **How it runs:** all 12 handlers dispatch through the SSDT; alloc uses PMM contiguous + VMM mapping, protect re-maps with new flags, read/write are identity-mapped memcpy (cross-process via CR3 deferred).
+> - **Downstream effects:** the 9 core VM syscalls back user-mode VirtualAlloc/VirtualProtect/VirtualFree; AWE deferral filed with a concrete owner.
+> - **Scope boundary:** AWE (0x0059-0x005B, physical page windows) owned by 03-memory-concurrency/TODO-05-advanced-virtual-memory §11; cross-process read/write via CR3 + per-process isolation owned by the Win32 PE loader work.
+> **Deferred:** [Critical] `NtProtectVirtualMemory` reports success but does not enforce protection -- base==0 pages are identity-mapped huge pages so vmm_get_physical is non-zero and the remap is skipped; needs per-process 4KiB PTEs (reason: infra) -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §1 (item: "Wire `NtProtectVirtualMemory(handle, &base, &size, new_protect, &old_protect)`" at line 89)
+> **Deferred:** [Critical] `NtFreeVirtualMemory` MEM_RELEASE size==0 cannot free without per-region extent tracking; now returns STATUS_INVALID_PARAMETER instead of a silent leak-success (reason: infra) -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §3 (item: "Wire `NtFreeVirtualMemory(handle, &base, &size, MEM_RELEASE)`" at line 120)
+> **Deferred:** [H] `NtAllocateVirtualMemory` MEM_COMMIT has no partial-alloc rollback (needs a PMM free-contiguous helper) (reason: infra) -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §3 (item: "Wire `NtAllocateVirtualMemory(handle, &base, zero_bits, &size, type, protect)`" at line 119)
+> **Deferred:** [H] VM handlers mutate PMM bitmap + VMM page tables with no address-space lock or TLB shootdown (single-thread-assumed) (reason: infra) -> XREF: 03-memory-concurrency/TODO-01-vmm-memory-protection.md §3 (item: "Per-process PML4 spinlock" at line 122)
 
 ---
 
