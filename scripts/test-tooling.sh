@@ -1039,6 +1039,15 @@ _rbg_case "subagent codex dispatch BLOCKED" "/x/agent-a1.jsonl" "bash scripts/co
 _rbg_case "subagent git push BLOCKED" "/x/agent-a1.jsonl" "git push origin main" 2
 _rbg_case "subagent gh pr comment BLOCKED" "/x/agent-a1.jsonl" "gh pr comment 5 --body hi" 2
 _rbg_case "subagent SKIP override BLOCKED" "/x/agent-a1.jsonl" "SKIP_REVIEW_HOOK=1 git status" 2
+# proved bypass shapes from the 2026-07-02 re-adversarial (tokenizer-aware now)
+_rbg_case "subagent git -C commit BLOCKED (global-opt walk)" "/x/agent-a1.jsonl" "git -C /tmp/r commit --no-verify -m x" 2
+_rbg_case "subagent bash -lc codex BLOCKED (shell recursion)" "/x/agent-a1.jsonl" "bash -lc \\\"codex exec x\\\"" 2
+_rbg_case "subagent gh -R pr comment BLOCKED (global-flag walk)" "/x/agent-a1.jsonl" "gh -R o/r pr comment 1 --body hi" 2
+_rbg_case "subagent gh api -XPOST BLOCKED (attached method)" "/x/agent-a1.jsonl" "gh api repos/x/y -XPOST" 2
+_rbg_case "subagent gh api --method=POST BLOCKED" "/x/agent-a1.jsonl" "gh api repos/x/y --method=POST" 2
+_rbg_case "subagent eval BLOCKED (indirection)" "/x/agent-a1.jsonl" "eval git-push-hidden" 2
+_rbg_case "subagent gh api GET allowed" "/x/agent-a1.jsonl" "gh api repos/x/y/actions/runs" 0
+_rbg_case "subagent git branch --list allowed" "/x/agent-a1.jsonl" "git branch --list" 0
 _rbg_case "subagent build.sh allowed" "/x/agent-a1.jsonl" "bash scripts/build.sh" 0
 _rbg_case "subagent git log allowed" "/x/agent-a1.jsonl" "git log --oneline -5" 0
 _rbg_case "subagent gh run view allowed" "/x/agent-a1.jsonl" "gh run view 12 --log-failed" 0
