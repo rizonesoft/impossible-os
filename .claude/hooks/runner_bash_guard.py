@@ -87,14 +87,25 @@ def _base(tok: str) -> str:
 
 
 def _git_verdict(seg: list[str]) -> str:
-    """seg[0] is git. Walk global options, judge the subcommand."""
+    """seg[0] is git. Walk global options, judge the subcommand.
+
+    Temporary config that defines an ALIAS is blocked outright: git executes
+    the alias body (shell `!cmd` or plain subcommand), so
+    `git -c alias.x='!codex exec review' x` would smuggle any forbidden
+    surface past subcommand judgment (re-adversarial probe 2026-07-02)."""
     i = 1
     while i < len(seg):
         tok = seg[i]
         if tok in _GIT_VALUE_OPTS:
+            val = seg[i + 1] if i + 1 < len(seg) else ""
+            if tok == "-c" and val.lower().startswith("alias."):
+                return "git temporary alias definition"
             i += 2
             continue
         if tok.startswith("--") and "=" in tok:
+            optname, optval = tok.split("=", 1)
+            if optname in ("--config", "--config-env") or optval.lower().startswith("alias."):
+                return "git temporary alias/config definition"
             i += 1
             continue
         if tok.startswith("-"):

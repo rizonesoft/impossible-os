@@ -1046,6 +1046,9 @@ _rbg_case "subagent gh -R pr comment BLOCKED (global-flag walk)" "/x/agent-a1.js
 _rbg_case "subagent gh api -XPOST BLOCKED (attached method)" "/x/agent-a1.jsonl" "gh api repos/x/y -XPOST" 2
 _rbg_case "subagent gh api --method=POST BLOCKED" "/x/agent-a1.jsonl" "gh api repos/x/y --method=POST" 2
 _rbg_case "subagent eval BLOCKED (indirection)" "/x/agent-a1.jsonl" "eval git-push-hidden" 2
+_rbg_case "subagent git -c shell-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.x=codex-body x" 2
+_rbg_case "subagent git -c plain-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.k=commit-body k" 2
+_rbg_case "subagent git -c non-alias read allowed" "/x/agent-a1.jsonl" "git -c core.pager=cat log --oneline -3" 0
 _rbg_case "subagent gh api GET allowed" "/x/agent-a1.jsonl" "gh api repos/x/y/actions/runs" 0
 _rbg_case "subagent git branch --list allowed" "/x/agent-a1.jsonl" "git branch --list" 0
 _rbg_case "subagent build.sh allowed" "/x/agent-a1.jsonl" "bash scripts/build.sh" 0
