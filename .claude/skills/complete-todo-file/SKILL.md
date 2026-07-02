@@ -57,7 +57,7 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
    - **Semi-automatable:** "POST16 codes 0xDDNN appear in correct order" -- run via `bash scripts/test-smoke.sh` + grep the stripped log at `build/smoke-test.stripped.log`.
    - **Manual only:** "Verify on QEMU WHPX (2 CPUs)" / "Verify on VirtualBox" / "Verify on bare metal" / "visual frame inspection" / any item requiring native Windows.
    - **Already closed by step 4 sweep**: skip; the demo + revert + re-run pass already captured the evidence.
-6. **Execute the automatable items in order.** For each:
+6. **Execute the automatable items in order.** **Dispatch `Agent(subagent_type="checks-runner", ...)` BY DEFAULT for the build/suite/smoke commands** (it runs them verbatim and returns verdict + failure digest + artifact paths); grep-style one-liners stay in-context. The verification-before-completion quotes still come from YOUR read of each artifact (build.log tail, suite summary line), never from the runner's report alone. For each:
    - Capture the command + exit code + relevant stdout/stderr snippet (last 20 lines of relevant output is usually enough).
    - On PASS, mark the item `[x]` in the TODO file.
    - On FAIL, keep it `[ ]`, record the failure reason inline as a NOTE, and do NOT proceed to stamp the TODO as closed. The user resolves the failure before re-running this skill.
@@ -70,6 +70,7 @@ description: Finalize a TODO file whose `## N.` implementation sections are all 
    - Verification items: M automated PASS, K automated FAIL (listed with reason), L manual-only (listed with platform).
    - Close-out state: **CLOSED** if all gates pass + 0 FAIL, **PARTIAL** if any FAIL exists, **MANUAL-PENDING** if only manual items remain, **SWEEP-ONLY** if the run was sweep-only mode.
 10. **Commit and push** (only if state is CLOSED, MANUAL-PENDING, or SWEEP-ONLY-with-edits):
+    - After the push, dispatch `Agent(subagent_type="gh-query-runner", ...)` to confirm CI (build.yml, todo-graph.yml) went green on the pushed sha; if red, treat it as a close-out failure to diagnose, not a note.
     - Full close-out commit message: `"close: <TODO file> -- unit tests wired; verification N/M automated PASS; L manual items pending"`.
     - Sweep-only commit message: `"todo: close <TODO file> loose ends (<short summary: what got rewritten>)"`. Skip the commit entirely if the sweep found nothing to rewrite (a clean-tree report still goes to the chat).
     - If state is PARTIAL, do NOT commit; report the failure and exit.

@@ -948,17 +948,23 @@ elif [ "$#" -eq 0 ]; then
 fi
 
 # ============================================================================
-# Check 14: Agent tool-allowlist invariant (specialist-agents design 2026-06-20)
+# Check 14: Agent tool-allowlist invariant (specialist-agents design 2026-06-20;
+#           runner class added 2026-07-02)
 # ============================================================================
-# Every .claude/agents/*.md must restrict `tools:` to the read-only allowlist
-# {Read, Grep, Glob, WebSearch, WebFetch}. These advisory agents are sensors,
-# not actuators: the main session is the only thing that edits, builds, commits,
-# or dispatches Codex. Granting Bash/Edit/Write/Skill/Agent to one would reopen
-# the mutation + evidence-desync paths the design closes by capability. A missing
-# `tools:` line (the agent would inherit ALL tools) is also a violation.
-# Per-file opt-out for a deliberately-broader future agent: an HTML comment
-# `<!-- agent-tools-exempt: <reason> -->` on its own line. Whole-check skip:
-# SKIP_LINT_AGENT_TOOLS=1 (prints an auditable WARN).
+# Two sanctioned agent classes, each capability-bounded:
+#   ANALYST (default): `tools:` must be a subset of the read-only allowlist
+#     {Read, Grep, Glob, WebSearch, WebFetch}. Sensors, not actuators.
+#   RUNNER (opt-in via `<!-- agent-class: runner -->` on its own line): may add
+#     Bash for named idempotent command execution (build/test/lint runs, git/gh
+#     READ queries); allowlist is {Bash, Read, Grep, Glob} -- no Edit/Write/
+#     Skill/Agent (cannot mutate files or spawn work) and no Web tools (research
+#     stays with the analysts). The main session remains the sole
+#     editor/committer/Codex-dispatcher and re-verifies runner-reported
+#     artifacts (build.log tails, test summaries) itself.
+# A missing `tools:` line (the agent would inherit ALL tools) is a violation in
+# both classes. Per-file opt-out for a deliberately-broader future agent: an
+# HTML comment `<!-- agent-tools-exempt: <reason> -->` on its own line.
+# Whole-check skip: SKIP_LINT_AGENT_TOOLS=1 (prints an auditable WARN).
 if [ "${SKIP_LINT_AGENT_TOOLS:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 14 (agent tool-allowlist) skipped via SKIP_LINT_AGENT_TOOLS=1"
     WARNINGS=$((WARNINGS + 1))
@@ -966,7 +972,8 @@ elif [ "$#" -eq 0 ]; then
     AGENT_TOOLS_OUT=$(python3 - "$REPO_ROOT" <<'PY'
 import sys, glob, os, re
 root = sys.argv[1]
-allowed = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
+ANALYST_ALLOWED = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
+RUNNER_ALLOWED = {"Bash", "Read", "Grep", "Glob"}
 viol = []
 for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
     rel = os.path.relpath(path, root)
@@ -974,6 +981,9 @@ for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
         text = f.read()
     if re.search(r'^<!--\s*agent-tools-exempt:\s*\S', text, re.M):
         continue
+    is_runner = bool(re.search(r'^<!--\s*agent-class:\s*runner\s*-->', text, re.M))
+    allowed = RUNNER_ALLOWED if is_runner else ANALYST_ALLOWED
+    klass = "runner" if is_runner else "read-only"
     m = re.search(r'^tools:\s*(.*)$', text, re.M)
     if not m:
         viol.append((rel, 1, "no `tools:` allowlist (agent would inherit ALL tools; restrict to read-only set)"))
@@ -996,7 +1006,7 @@ for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
     if not toks:
         viol.append((rel, ln, "empty `tools:` allowlist (could not parse a read-only tool set)"))
     elif bad:
-        viol.append((rel, ln, "tools not in read-only allowlist {Read,Grep,Glob,WebSearch,WebFetch}: " + ", ".join(bad)))
+        viol.append((rel, ln, "tools not in " + klass + " allowlist " + ("{Bash,Read,Grep,Glob}" if is_runner else "{Read,Grep,Glob,WebSearch,WebFetch}") + ": " + ", ".join(bad)))
 for rel, ln, msg in viol:
     print(f"{rel}\t{ln}\t{msg}")
 PY

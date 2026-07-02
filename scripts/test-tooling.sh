@@ -1022,6 +1022,62 @@ else
 fi
 rm -rf "$SEC_TMP"
 
+# --- Check 14 agent tool-allowlist: runner class ------------------------------
+# Synthetic agents in a throwaway repo prove the two-class contract: analyst
+# with Bash fails; runner marker + {Bash,Read,Grep,Glob} passes; runner with
+# Edit or WebSearch fails (runners cannot mutate files or do web research).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lint_agent_runner_class]${NC}"
+ARC_TMP="$(mktemp -d)"
+ARC_REPO="$ARC_TMP/repo"
+mkdir -p "$ARC_REPO/scripts/lint" "$ARC_REPO/.claude/agents" "$ARC_REPO/src"
+cp "$REPO_ROOT/scripts/lint.sh" "$ARC_REPO/scripts/lint.sh"
+cp -r "$REPO_ROOT/scripts/lint/." "$ARC_REPO/scripts/lint/" 2>/dev/null || true
+printf 'int arc_ok(void) { return 0; }\n' > "$ARC_REPO/src/ok.c"
+( cd "$ARC_REPO" && git init -q && git config user.email t@t && git config user.name t \
+    && git add -A && git -c commit.gpgsign=false commit -q -m seed )
+_arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content>
+    # Check 14 runs only in no-arg (full-repo) lint mode; other checks may
+    # error on the bare synthetic repo, so assert on the synthetic.md error
+    # line presence/absence rather than the overall exit code.
+    local desc="$1" want_flag="$2" body="$3" out
+    printf '%s' "$body" > "$ARC_REPO/.claude/agents/synthetic.md"
+    out=$(cd "$ARC_REPO" && bash scripts/lint.sh 2>&1) || true
+    if [ "$want_flag" = "yes" ]; then
+        if echo "$out" | grep -q "synthetic.md.*allowlist"; then
+            t_pass "lint_agent_runner_class: $desc (flagged)"; else
+            t_fail "lint_agent_runner_class: $desc" "expected allowlist flag, got: $(echo "$out" | grep synthetic | head -1)"; fi
+    else
+        if echo "$out" | grep -q "synthetic.md"; then
+            t_fail "lint_agent_runner_class: $desc" "unexpected flag: $(echo "$out" | grep synthetic | head -1)"; else
+            t_pass "lint_agent_runner_class: $desc (clean)"; fi
+    fi
+    rm -f "$ARC_REPO/.claude/agents/synthetic.md"
+}
+_arc_case "analyst with Bash is flagged" yes '---
+name: synthetic
+tools: Bash, Read
+---
+body'
+_arc_case "runner marker + Bash/Read/Grep/Glob passes" no '---
+name: synthetic
+tools: Bash, Read, Grep, Glob
+---
+<!-- agent-class: runner -->
+body'
+_arc_case "runner with Edit is flagged" yes '---
+name: synthetic
+tools: Bash, Read, Edit
+---
+<!-- agent-class: runner -->
+body'
+_arc_case "runner with WebSearch is flagged" yes '---
+name: synthetic
+tools: Bash, Read, WebSearch
+---
+<!-- agent-class: runner -->
+body'
+rm -rf "$ARC_TMP"
+
 # --- codex-bg-dispatch argument contract -----------------------------------
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_bg_dispatch_contract]${NC}"
 _bg_multi="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" '[review-kind: design] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md ok' extra 2>&1 >/dev/null || true)"

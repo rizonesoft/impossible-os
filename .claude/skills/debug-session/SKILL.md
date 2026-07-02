@@ -85,6 +85,7 @@ For the top hypothesis:
 2. **Read the source** around the suspected location. For kernel/boot subsystems, **dispatch `Agent(subagent_type="kernel-explorer", ...)` BY DEFAULT** to walk the call path in a throwaway context (callers, state dependencies, lock order, init-phase placement); read its top hits yourself. When the evidence spans several serial/boot logs, dispatch `Agent(subagent_type="serial-log-auditor", ...)` for the sweep (a single failing run's log goes to `diagnostic-digester` as already documented).
 3. Walk the call path: who calls this? what state does it depend on? what could be invalid at this point?
 4. Check for the bare-metal gotchas in CLAUDE.md (GS_BASE, MMIO caching, per-CPU MSRs, SMAP/SMEP, etc.).
+5. **"When did this break?" questions go to `Agent(subagent_type="git-historian", ...)`** -- it walks git log/pickaxe/blame in a throwaway context and returns the commit trail; confirm the pivotal commit yourself with the VERIFY command it names. External error-message or toolchain/emulator research goes to `Agent(subagent_type="web-research-analyst", ...)`.
 
 ### Step 5: Dispatch Adversarial Review BEFORE Fixing
 

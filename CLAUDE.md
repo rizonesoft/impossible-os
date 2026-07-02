@@ -260,7 +260,12 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 ### Specialist agents -- advisory, read-only
 
-Twelve subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+Seventeen subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate work to, in two capability-bounded classes (enforced by `scripts/lint.sh` Check 14):
+
+- **Analysts (sensors):** read-only (`Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the researchers). They return findings as text and never edit, build, commit, dispatch Codex, or invoke skills.
+- **Runners (constrained executors, `<!-- agent-class: runner -->`):** add `Bash` for named idempotent commands only -- verification scripts (checks-runner), read-only git archaeology (git-historian), read-only GitHub queries (gh-query-runner). They never edit files, never run git/gh mutations, never push, and NEVER touch Codex (a runner-issued dispatch would corrupt review-receipt state). Verification-before-completion quotes come from the main session's own read of the on-disk artifact, not the runner's report.
+
+In both classes the main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md) (original five-agent roster; superseded note inside).
 
 | Agent | Model | Dispatched by |
 |---|---|---|
@@ -276,6 +281,11 @@ Twelve subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skill
 | `test-coverage-mapper` | sonnet | `implement-unit-tests` step 1 (spec status, quoted signatures, runner wiring points) |
 | `doc-sync-auditor` | sonnet | `complete-todo-file` close-out (CLAUDE.md/skills/docs drift vs shipped work) |
 | `spec-research-analyst` | sonnet | `implement-todo-section` step 3 + `debug-session` (external-spec normative facts with citations) |
+| `web-research-analyst` | sonnet | `implement-todo-section` step 3 + `debug-session` (toolchain/emulator/host/CI research; parity + spec stay with their specialists) |
+| `xref-dependency-mapper` | sonnet | `implement-todo-section` step 2 (3+ cross-TODO XREFs: dependency-status brief) |
+| `checks-runner` (runner) | sonnet | `implement-todo-section` step 16, `review-todo-section` build, `complete-todo-file` verification (executes build/test/smoke/lint verbatim, returns verdict + failure digest) |
+| `git-historian` (runner) | sonnet | `debug-session` + `diagnose-serial-log` regression pass (read-only git archaeology: when did X change/break) |
+| `gh-query-runner` (runner) | sonnet | `complete-todo-file` post-push CI check + ad-hoc GitHub state queries (read-only gh: runs/PRs/issues/api GET) |
 
 Model doctrine (updated with the Claude 5 family): **sonnet is the default for every read-only analyst** -- the trust contract (main session verifies findings at file:line before acting) plus the downstream nets (Codex red-team, build/test gates, bare-metal validation) are the backstop. Opus is reserved for the thin/sole nets; today that is only `kernel-quality-auditor` (sole SMP/lock-order/bare-metal specialist net for the repo's most expensive bug class). The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
 

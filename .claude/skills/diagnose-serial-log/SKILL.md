@@ -161,7 +161,7 @@ Do not present raw lines first. Present findings derived from the model.
      - `First subsystem that failed after a good transition`
    - For boot hangs or triple-fault style silence, this block is mandatory.
 
-9. **Baseline regression pass (Phase 1b)** -- MANDATORY when a baseline exists
+9. **Baseline regression pass (Phase 1b)** -- MANDATORY when a baseline exists. When the diff shows a regression, dispatch `Agent(subagent_type="git-historian", ...)` for the what-changed-since-baseline commit trail (advisory; confirm the pivotal commit yourself).
    - Determine baseline path: `--baseline <path>` arg, else `build/smoke-test.baseline.log`. If file missing: emit a single `NOTE: baseline regression pass skipped (no <path>)` and continue. No error.
    - Normalize the baseline through the same pipeline (steps 4, 6, 7) with canonicalization.
    - Compute diffs:
