@@ -214,6 +214,20 @@ _COMPANION_REVIEW_SUBCOMMANDS = frozenset({
     "review", "adversarial-review", "task",
 })
 
+# Companion `task` (incl. --background) and the bg wrapper START a job; the
+# receive step can fire before the job finishes, so their receipt is dispatch
+# TELEMETRY, never completed-review proof (the ledger mirror must not record
+# result=received for them).
+_BG_TASK_RE = re.compile(
+    r"codex-companion\.mjs['\"]?\s+task\b|scripts/codex-bg-dispatch\.sh"
+)
+
+
+def is_background_dispatch(cmd: str) -> bool:
+    """True when the dispatch starts a background job rather than completing a
+    review in the foreground."""
+    return bool(_BG_TASK_RE.search(cmd or ""))
+
 # Review-carrying bare CLI subcommands ONLY. `codex e` / `codex exec` are
 # non-review automation (see docs/infrastructure/ai-driver-interchangeability.md):
 # trusting the `e` alias let a mutating session mint reviewer evidence by

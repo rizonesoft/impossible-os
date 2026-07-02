@@ -740,6 +740,11 @@ def _record_shared_review_evidence(root: Path, state: dict) -> None:
                 if path and blob:
                     source_blobs[str(path)] = str(blob)
         now_ns = time.time_ns()
+        # background dispatches (companion `task` / bg wrapper) mirror as
+        # TELEMETRY: the receive step can fire before the job completes, so
+        # such a receipt is never completed-review proof (obligations require
+        # result=received). The receive-gate UX is unchanged.
+        result = "telemetry" if state.get("background_dispatch") else "received"
         payload = {
             "task_id": f"{todo_path}#{section}" if section else todo_path,
             "todo_path": todo_path,
@@ -750,7 +755,7 @@ def _record_shared_review_evidence(root: Path, state: dict) -> None:
             "kind": kind,
             "head_sha": str(state.get("head_sha") or _head_sha(root)),
             "source_blobs": source_blobs,
-            "result": "received",
+            "result": result,
             "summary_path": "",
             "created_at_ns": now_ns,
             "created_at": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
@@ -1214,6 +1219,13 @@ def main() -> int:
         state["review_run_id"] = review_run_id
         if prompt_hint:
             state["prompt_review_run_id_hint"] = prompt_hint
+        # a background dispatch (companion `task` / bg wrapper) starts a job;
+        # its later receive is telemetry, not completed-review proof
+        raw_cmd = ""
+        ti_for_bg = payload.get("tool_input") or {}
+        if isinstance(ti_for_bg, dict):
+            raw_cmd = str(ti_for_bg.get("command") or "")
+        state["background_dispatch"] = bool(raw_cmd and _cd.is_background_dispatch(raw_cmd))
         _write_atomic(state_path, state)
         stamp_attempted = bool(review_kind and todo_path)
         if stamp_attempted:

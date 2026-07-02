@@ -1983,14 +1983,34 @@ check("codex_e_alias_not_review_dispatch",
       cd.extract_dispatch_prompt("codex e '[review-kind: adversarial] todo/x'") == ""
       and cd.extract_dispatch_prompt("codex exec '[review-kind: adversarial] todo/x'") == ""
       and cd.extract_dispatch_prompt("codex review '[review-kind: adversarial] todo/x'") != "")
+# background dispatches are detected and their receipts mirror as TELEMETRY,
+# never result=received (a receive can precede background-job completion)
+check("background_dispatch_detected",
+      cd.is_background_dispatch("node /x/codex-companion.mjs task --background --json 'p'")
+      and cd.is_background_dispatch("bash scripts/codex-bg-dispatch.sh 'p'")
+      and not cd.is_background_dispatch("bash scripts/codex-dispatch.sh 'p'"))
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    crc._record_shared_review_evidence(root, {
+        "review_kind": "adversarial",
+        "todo_path": "todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md",
+        "section": "2",
+        "review_run_id": "codex-review-adversarial-9",
+        "received_timestamp_ns": 9,
+        "trigger_blobs": {},
+        "head_sha": "abc",
+        "background_dispatch": True,
+    })
+    events = [json.loads(l) for l in (root / ".ai-workflow" / "evidence.jsonl").read_text().splitlines()]
+    check("background_receipt_is_telemetry", events[-1]["result"] == "telemetry")
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "7" ]; then
+if [ "$GA_OK" = "9" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 7))
+    PASS=$((PASS + 9))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi
