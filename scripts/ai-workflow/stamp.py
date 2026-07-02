@@ -164,9 +164,12 @@ def _file_evidence_ids(root: Path, todo: str, kind: str) -> list[str]:
     back to the bounded full-ledger scan.
     """
     def _match(ev: dict) -> bool:
+        # file-level ONLY: a section-scoped event (e.g. a gap-audit received
+        # for one section) must not back a TODO-level lifecycle stamp
         return (
             ev.get("todo_path") == todo
             and ev.get("kind") == kind
+            and str(ev.get("section") or "") in ("", "file")
             and not ev.get("legacy_import")
             and ev.get("result") in ("ok", "received", "", None)
             and bool(ev.get("event_id"))

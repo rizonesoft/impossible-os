@@ -129,6 +129,25 @@ def _matching_events(args: argparse.Namespace, root: Path) -> list[dict[str, Any
 
 def record_event(args: argparse.Namespace) -> int:
     root = common.repo_root()
+    # Reviewer evidence is RECEIPT-ONLY: the codex_review_completed receipt
+    # hook mirrors received reviews into the ledger itself. Recording a
+    # codex-reviewer-* role through this public CLI would let a mutating
+    # session manufacture shipping review proof without any Codex dispatch.
+    # AI_WORKFLOW_ALLOW_REVIEWER_RECORD=1 is the fixture/repair escape and is
+    # a deliberate, logged decision. Residual cooperative boundary: direct
+    # JSONL edits remain possible by design (the ledger is local derived
+    # state); this guard stops the accidental/drifting-session path.
+    if (
+        str(args.role or "").startswith("codex-reviewer-")
+        and os.environ.get("AI_WORKFLOW_ALLOW_REVIEWER_RECORD", "") != "1"
+    ):
+        print(
+            "reviewer evidence is receipt-only: the codex_review_completed "
+            "receipt hook records received reviews. Set "
+            "AI_WORKFLOW_ALLOW_REVIEWER_RECORD=1 only for fixtures/repair.",
+            file=sys.stderr,
+        )
+        return 2
     todo = common.rel_path(args.todo, root) if args.todo else ""
     sources = args.source or []
     explicit_blobs = _parse_source_blobs(args.source_blob)

@@ -6324,6 +6324,23 @@ assert_exit_zero "boot-reliability self-test (classify/aggregate/schema)" \
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[ai workflow driver interchangeability]${NC}"
 AIWF_TMP="$(mktemp -d "${TMPDIR:-/tmp}/impossible-aiwf-XXXXXX")"
+# fixtures record reviewer-role evidence directly; the public CLI is
+# receipt-only without this escape (reviewer-forge guard)
+export AI_WORKFLOW_ALLOW_REVIEWER_RECORD=1
+
+# the guard itself: recording codex-reviewer-* evidence WITHOUT the escape is
+# refused (reviewer evidence is receipt-only; adversarial finding)
+AIWF_FORGE_STATE="$AIWF_TMP/forge-state"
+mkdir -p "$AIWF_FORGE_STATE"
+if env AI_WORKFLOW_ALLOW_REVIEWER_RECORD= AI_WORKFLOW_STATE_DIR="$AIWF_FORGE_STATE" \
+    python3 scripts/ai-workflow/evidence.py record \
+    --todo todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md --section 2 \
+    --role codex-reviewer-adversarial --backend codex --run-id forged \
+    --kind adversarial --result received >/dev/null 2>&1; then
+    t_fail "ai_workflow_evidence: reviewer-role record is receipt-only (forge guard)"
+else
+    t_pass "ai_workflow_evidence: reviewer-role record is receipt-only (forge guard)"
+fi
 AIWF_STATE="$AIWF_TMP/state"
 TODO10="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
 AIWF_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE")
@@ -7667,6 +7684,25 @@ if echo "$LIFE_MAN_STATE2" | grep -q "'validated': True"; then
     t_pass "ai_workflow_stamp: manual lifecycle stamp becomes trusted once ledger evidence exists"
 else
     t_fail "ai_workflow_stamp: manual lifecycle stamp becomes trusted once ledger evidence exists" "$LIFE_MAN_STATE2"
+fi
+
+# a SECTION-scoped gap-audit event must not back a TODO-level lifecycle stamp
+# or manual-stamp trust (adversarial finding: file-level fallback scope)
+LIFE_SEC_GA="todo/00-infrastructure/TODO-88-secga.md"
+printf '# TODO-88 SecGA\n\n> **Goal:** g.\n\n## 3. S\n\n- [ ] i\n' > "$LIFE_REPO/$LIFE_SEC_GA"
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_SEC_GA" --section 3 \
+    --role codex-reviewer-gap-audit --backend codex --run-id sec-ga --kind gap-audit --result received >/dev/null
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py gap-audited "$LIFE_SEC_GA" --write >/dev/null 2>&1; then
+    t_fail "ai_workflow_stamp: section-scoped gap-audit does not back a file-level stamp"
+else
+    t_pass "ai_workflow_stamp: section-scoped gap-audit does not back a file-level stamp"
+fi
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py gap-audited "$LIFE_SEC_GA" --allow-missing --write >/dev/null
+LIFE_SEC_STATE=$(env AI_WORKFLOW_STATE_DIR="$LIFE_REPO/build/ai-workflow" python3 -c "import sys; sys.path.insert(0,'.claude/hooks'); import sequencer_triage as t; print(t.file_lifecycle('$LIFE_REPO/$LIFE_SEC_GA', '$LIFE_REPO', '$LIFE_SEC_GA'))")
+if echo "$LIFE_SEC_STATE" | grep -q "'gap_audited': False"; then
+    t_pass "ai_workflow_stamp: section-scoped gap-audit does not grant manual lifecycle trust"
+else
+    t_fail "ai_workflow_stamp: section-scoped gap-audit does not grant manual lifecycle trust" "$LIFE_SEC_STATE"
 fi
 if ! grep -q '"section": null' "$LIFE_EV" && grep -q '"section": "file"' "$LIFE_EV"; then
     t_pass "ai_workflow_stamp: file-level stamp records file-scoped evidence, never section null"

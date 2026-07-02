@@ -160,6 +160,7 @@ def _ledger_has_file_evidence(root, rel_path, kind):
                     if (
                         ev.get("todo_path") == rel_path
                         and ev.get("kind") == kind
+                        and str(ev.get("section") or "") in ("", "file")
                         and not ev.get("legacy_import")
                         and ev.get("result") in ("ok", "received", "", None)
                     ):
