@@ -3559,6 +3559,24 @@ rm -f "$BOR_SEQ" "$BOR_DISP"
 [ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
 [ -n "$BOR_DISP_BAK" ] && printf '%s' "$BOR_DISP_BAK" > "$BOR_DISP"
 
+# (b5) review_dispatch_gate + xref_dispatch_reminder: embedded selftests are
+#      the full fixture suites (tempdir state, block/allow/fail-open cases).
+if python3 "$REPO_ROOT/.claude/hooks/review_dispatch_gate.py" --selftest >/dev/null 2>&1; then
+    t_pass "review_dispatch_gate_selftest  9-case fixture suite green"
+else
+    t_fail "review_dispatch_gate_selftest  embedded selftest failed"
+fi
+if python3 "$REPO_ROOT/.claude/hooks/xref_dispatch_reminder.py" --selftest >/dev/null 2>&1; then
+    t_pass "xref_dispatch_reminder_selftest  fixture suite green"
+else
+    t_fail "xref_dispatch_reminder_selftest  embedded selftest failed"
+fi
+if python3 "$REPO_ROOT/.claude/hooks/slice_read_reminder.py" --selftest >/dev/null 2>&1; then
+    t_pass "slice_read_reminder_selftest  fixture suite green"
+else
+    t_fail "slice_read_reminder_selftest  embedded selftest failed"
+fi
+
 # (c) stop_audit detects an "I'll run review-todo-section" promise without
 #     a matching tool call. Synthetic transcript fixture below uses the
 #     literal text the regex matches; no markdown section-sign refs here.

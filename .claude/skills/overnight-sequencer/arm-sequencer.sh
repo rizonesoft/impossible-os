@@ -86,7 +86,19 @@ remove_sequencer_env_dropin() {
 # fallback on turns where the primary is overloaded/unavailable (so a transient
 # API error self-heals, a persistent outage effectively stays on the fallback,
 # and recovery auto-returns -- no forcing, no fixed timer). ARM_PRIMARY empty
-# means "inherit the saved default model".
+# means "inherit the saved default model" (reachable via `--model inherit`).
+#
+# DEFAULT POLICY (2026-07-03): Opus primary + Sonnet fallback. Fable 5
+# (Mythos-tier) is overkill as the runner's primary -- the Codex
+# adversarial/consistency/perf pipeline is the quality net, Opus is the
+# doctrine's judgment floor for implement/review/receiving work, and Opus
+# sidesteps the safeguard-flag friction on kernel/security sections (flags
+# route to Opus anyway). The main loop must NOT drop to Sonnet (Sonnet is the
+# read-only agent tier); Sonnet appears here only as the transient-overload
+# fallback, re-tried from the primary each turn. Force per-arm with
+# `--model fable-5` / `--model sonnet` / `--model inherit`. The operator's
+# INTERACTIVE /model default is untouched (this policy lives in the systemd
+# drop-in only).
 write_sequencer_model_dropin() {
   for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
     d="$DROPIN_BASE/$svc.d"
@@ -165,8 +177,8 @@ fi
 # impossible-os work that needs ChromeMCP is the gh-pages landing site; arm those
 # runs with --with-browser to leave the env unset and let the lane logic run.
 WITH_BROWSER=0
-ARM_PRIMARY=""              # empty -> launch inherits the saved default model
-ARM_FALLBACK="opus"        # API-error / overload fallback; retried-from each turn
+ARM_PRIMARY="opus"         # runner default: Opus primary (see policy block above)
+ARM_FALLBACK="sonnet"      # transient overload fallback; primary re-tried each turn
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -176,6 +188,7 @@ while [ $# -gt 0 ]; do
       ;;
     --model)
       ARM_PRIMARY="${2:?--model needs a value}"
+      [ "$ARM_PRIMARY" = "inherit" ] && ARM_PRIMARY=""  # saved-default passthrough
       shift 2
       ;;
     --fallback-model)
@@ -188,6 +201,16 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# Degenerate model policy guard: primary == fallback removes the degradation
+# path entirely (an overload of the primary IS an overload of the fallback --
+# the CLI would re-try the same saturated model and the run dies exactly as
+# with no fallback at all). Warn loudly; the operator's choice still stands.
+if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
+  echo "WARN: --model and --fallback-model are BOTH '$ARM_PRIMARY' -- the fallback" >&2
+  echo "      provides no availability diversity (a primary overload hits the" >&2
+  echo "      fallback identically). Consider --fallback-model sonnet." >&2
+fi
 
 # Arm. Marker first, so the very first tool call of the headless run is already
 # redirected onto overnight-sequencer. Drop-ins are written AFTER the transient
@@ -209,6 +232,7 @@ else
 fi
 echo "  model: ${ARM_PRIMARY:-<saved default>} primary, ${ARM_FALLBACK} fallback (claude --fallback-model; overload/unavailable only, re-tries primary each turn)"
 echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
-echo "  Claude reports: .claude/overnight/reports/latest.log"
+echo "  monitor (from any dir): bash $REPO_ROOT/scripts/overnight/overnight-monitor.sh"
+echo "  reports: $REPO_ROOT/.claude/overnight/reports/latest.log (created at first launch)"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"

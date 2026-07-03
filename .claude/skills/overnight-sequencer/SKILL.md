@@ -57,6 +57,55 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   discover a new one (a flaky gate, an in-flight file, a tool that mis-fires),
   append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
   `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
+- **Read discipline:** one full read per file per pass is orientation; every
+  later read of the cursor TODO or a big source is a SLICE
+  (`Read(offset, limit)` around the region in play -- it satisfies the Edit
+  freshness gate just like a full read). The slice_read_reminder hook nags on
+  whole-file re-reads of > 32 KB files; act on it.
+- **TODO write discipline:** `- [ ]` checklist lines cap at 250 chars (OS
+  Comparison rows at 200). COUNT before writing -- aim <= 230 so margin
+  survives tweaks; a third of line-length-block retries were still over the
+  cap because the trim was done by feel. Detail belongs in commit messages.
+- **Oracle-cache ordering:** `bash scripts/todo-graph/build-and-validate.sh
+  --keep-cache` is the LAST action before a commit that touches todo/ --
+  any TODO edit AFTER a rebuild re-stales the cache and the pre-commit
+  lint's Check 7 blocks (this exact rebuild-then-edit-again ordering bug
+  recurred 3x in one run). Order: all TODO edits -> rebuild -> commit.
+- **MCP may be ABSENT this session (headless).** The `mcp__todo-graph__*` /
+  `mcp__lsp-bridge__*` tools lose the cold-start connection race ~2/3 of the
+  time under `claude -p`; if they are not in your tool list, do NOT emulate
+  them with manual `grep -n "^## N\."` / `sed -n`. Use the deterministic CLIs
+  the servers wrap -- `python3 scripts/todo-graph/query.py <verb>`,
+  `scripts/todo-graph/resolve_symbol.py` -- plus the Grep/Glob tools and
+  slice reads (CLAUDE.md "MCP Usage").
+
+## Wait discipline (background Codex verdicts, agent results, CI watches)
+
+The single biggest measured token leak of the 2026-07-02 run (~1,100 wasted
+turns): every background wait from section 25 onward was covered by a Monitor
+AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
+610 `Check ... status` Bash polls against only 40 Monitor arms. The rules:
+
+- **One wait mechanism per wait.** Once a Monitor (or a background Bash with a
+  completion condition) is armed, HOLD until it fires: no Bash re-polls, no
+  per-poll "holding for the verdict" narrator turns. The notification is the
+  signal; emitting turns while waiting buys nothing and burns the budget.
+- **Prefer ONE foreground Bash call that absorbs the whole wait** when you need
+  the result before anything else can proceed:
+  `for i in $(seq 1 90); do grep -q "Turn completed" <out> && break; sleep 10; done`
+  held a 6-min verdict wait in a SINGLE turn (2026-07-02 log line 1838; a
+  13-min wait at line 497). This is the early-run pattern that later sections
+  regressed away from.
+- **If a manual poll is genuinely unavoidable** (Monitor timed out, host-load
+  slowdown made the ETA unknowable), poll at a 30-60s cadence, never ~10s, and
+  do not narrate between polls.
+- **Batch multi-kind review waits into ONE Monitor condition**
+  (`grep -q A f1 && grep -q B f2 && grep -q C f3`-style, as done correctly at
+  log line 4996) instead of serial per-kind poll clusters -- the section-28
+  antipattern was 43 polls for one verdict, x3 kinds.
+- While a wait is armed you may do UNRELATED forward work (prep the next
+  section's reads, update the cursor) -- what you may not do is spend turns
+  checking or narrating the wait itself.
 
 ## Procedure
 
@@ -76,6 +125,32 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   and stop (relaunching cannot help a broken HEAD).
 - `bash scripts/test.sh QUIET=1` -- a green baseline. A FAIL here is the same
   broken-HEAD case.
+- **CI check (self-heal red CI instead of pushing past it).** After the local
+  baseline is green, dispatch `Agent(subagent_type="gh-query-runner", ...)` to
+  report the latest `build.yml` + `todo-graph.yml` conclusions and head SHAs
+  (`gh run list --workflow=<wf> --limit 3`). Triage the report:
+  - **failure AND the run's head SHA is an ancestor of local HEAD**
+    (`git merge-base --is-ancestor <sha> HEAD`) -> our pushed work broke CI.
+    Treat it like the broken-HEAD case ABOVE new section work: dispatch
+    gh-query-runner again for the failing step's output (`--log-failed`
+    slices), diagnose the root cause (superpowers:systematic-debugging; the
+    2026-07-03 incident class was non-hermetic fixtures -- reproduce with
+    `git clone --no-local . /tmp/cirepo && TEST_TOOLING_SKIP_LSP_MCP=1 bash
+    scripts/test-tooling.sh` when CI fails but local passes), fix, commit,
+    push, then dispatch gh-query-runner to WATCH the new run to conclusion
+    (`gh run watch --exit-status`; one watch dispatch, no manual poll loops)
+    before starting section work. If it cannot be made green this session,
+    handle as the broken-HEAD case (Run Log note "CI broken at preflight",
+    fixpoint, stop).
+  - **failure but the head SHA is NOT ours** (not an ancestor, or the failing
+    step is provider infra) -> Run Log NOTE and continue; do not chase other
+    branches' failures.
+  - **in_progress / queued** -> NOTE and continue (never wait on a running CI
+    at preflight; the next relaunch re-checks).
+  - **gh unauthenticated or network error** -> NOTE "CI check unavailable"
+    and continue -- the CI check must NEVER block the run on tooling absence.
+    (`gh` IS authenticated headless: rizonesoft token in `~/.config/gh`,
+    scopes include `workflow`.)
 
 ### 2. TRIAGE (`phase TRIAGE`)
 

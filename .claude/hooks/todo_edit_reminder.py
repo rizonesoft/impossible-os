@@ -32,7 +32,12 @@ def main() -> int:
         "prerequisites), invoke validate-todo-file to check "
         "structural integrity before committing. "
         "For pure checklist [x] toggles, prose tweaks, or "
-        "notes-only updates, no validation needed."
+        "notes-only updates, no validation needed. "
+        "Before ARMING an overnight run over an edited TODO, validation "
+        "is mandatory regardless of edit size: run validate-todo-file "
+        "(it dispatches todo-validation-mapper) and require a clean pass "
+        "before handoff (runner-kit law: discipline alone missed two "
+        "validation passes on 2026-07-03)."
     )
     print(json.dumps({"systemMessage": msg}))
     return 0

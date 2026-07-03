@@ -44,7 +44,9 @@ Usage:
   bash scripts/test.sh SUITE=fs     Filter to Filesystem suites
   bash scripts/test.sh SUITE=ob     Filter to Object Manager suites
   bash scripts/test.sh QUIET=1      Summary only (suppress per-test PASS lines)
+  bash scripts/test.sh QUIET=0      Force verbose (overrides the overnight default)
   bash scripts/test.sh SUITE=fs QUIET=1   Combine filters
+  (QUIET defaults ON when OVERNIGHT_SEQUENCER_RUN=1; FAIL lines always show)
   TIMEOUT=120 bash scripts/test.sh  Extend QEMU timeout (default: 60s)
   bash scripts/test.sh --help       Show this help
 
@@ -68,7 +70,13 @@ EOF
 # Parse optional arguments
 SUITE_FILTER=""
 SUITE_CATEGORY=""
+# QUIET defaults ON under the overnight sequencer run: the per-test PASS
+# flood is never useful there (it bloats the report log AND the driver's
+# context), and QUIET keeps FAIL lines + the summary + format lines. An
+# explicit QUIET=0 forces verbose (debugging a specific overnight run);
+# QUIET=1 stays accepted everywhere else.
 QUIET_MODE=0
+[ "${OVERNIGHT_SEQUENCER_RUN:-}" = "1" ] && QUIET_MODE=1
 XML_MODE=0
 JSON_MODE=0
 for arg in "$@"; do
@@ -77,6 +85,7 @@ for arg in "$@"; do
         SUITE=*)  SUITE_FILTER="${arg#SUITE=}"
                   SUITE_CATEGORY="$SUITE_FILTER" ;;
         QUIET=1)  QUIET_MODE=1 ;;
+        QUIET=0)  QUIET_MODE=0 ;;
         XML=1)    XML_MODE=1 ;;
         JSON=1)   JSON_MODE=1 ;;
     esac

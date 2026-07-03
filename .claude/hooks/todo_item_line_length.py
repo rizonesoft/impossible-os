@@ -62,7 +62,8 @@ if not findings:
 
 parts = []
 for ln, length, preview in findings:
-    parts.append('line ' + str(ln) + ' (' + str(length) + ' chars): ' + preview)
+    parts.append('line ' + str(ln) + ' (' + str(length) + ' chars, over by '
+                 + str(length - ITEM_CHAR_CAP) + '): ' + preview)
 
 sys.stderr.write(
     '[todo-item-line BLOCK -- TODO item brevity discipline] '
@@ -73,7 +74,11 @@ sys.stderr.write(
     'hashes, fix-loop adoption traces, Codex round counts, and session-date '
     'investigation logs belong in COMMIT MESSAGES, not the bullet. '
     'Compress to one sentence naming what shipped + the canonical doc/file '
-    'where details live. Detail trail moves to the commit message. '
-    'See feedback_terse_comments_and_notes memory.'
+    'where details live. '
+    'BEFORE RETRYING: count the rewritten line -- '
+    "python3 -c 'print(len(\"<the exact line>\"))' -- and aim for <= "
+    + str(ITEM_CHAR_CAP - 20) + ' so margin survives small tweaks; '
+    'roughly a third of retries were STILL over the cap because the trim '
+    'was done by feel. See feedback_terse_comments_and_notes memory.'
 )
 sys.exit(2)

@@ -95,3 +95,4 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [checks-runner](../agents/checks-runner.md) | sonnet (runner) | `implement-todo-section` step 16 + `review-todo-section` build + `complete-todo-file` verification |
 | [git-historian](../agents/git-historian.md) | sonnet (runner) | `debug-session` + `diagnose-serial-log` regression pass |
 | [gh-query-runner](../agents/gh-query-runner.md) | sonnet (runner) | `complete-todo-file` post-push CI check + GitHub state queries |
+| [kit-sync](../agents/kit-sync.md) | sonnet (runner) | `kit_sync_reminder.py` after runner-owned-file edits (drift report vs `~/runner-kit`) |

@@ -125,6 +125,23 @@ def _prune_old(snap_root: str, keep: int) -> None:
         pass
 
 
+def _orphan_mark_sequencer_run(path: str) -> None:
+    """Stamp compaction_orphaned on an ACTIVE sequencer cursor (atomic)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            st = json.load(fh)
+        if not isinstance(st, dict) or not st.get("active"):
+            return
+        st["compaction_orphaned"] = True
+        st["compaction_orphaned_ts_ns"] = _ts_ns()
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(st, fh, indent=1)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def main() -> int:
     # Hook is best-effort: snapshot regardless of payload shape. We do
     # consume stdin (so the harness pipe doesn't block) but we don't
@@ -145,6 +162,13 @@ def main() -> int:
     # state so the audit trail shows orphan_ts_ns alongside the live
     # file's value.
     _orphan_mark_skill_progress(os.path.join(root, _SKILL_PROGRESS_REL))
+
+    # Orphan-mark the phase-cursor state too (runner-kit 2026-07-03 parity
+    # with the skill-progress pattern): no consumer reads the flag yet, but
+    # the snapshot + live file then both record that a compaction bisected
+    # this run, so future guard/oracle logic (or a human) can tell a fresh
+    # cursor from one that survived a context reset.
+    _orphan_mark_sequencer_run(os.path.join(root, ".claude/state/sequencer-run.json"))
 
     # §16: invalidate the transcript-scan offset cache. Compaction
     # changes the semantic window (the design-review gate state pre-

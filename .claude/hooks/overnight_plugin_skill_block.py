@@ -54,5 +54,44 @@ def main() -> int:
     return 0
 
 
+def _selftest() -> int:
+    """3 checks (runner-kit shape, adapted to this hook's substring match +
+    override env). Run: python3 overnight_plugin_skill_block.py --selftest"""
+    import io
+    fails = []
+
+    def run(payload, env_override=None):
+        old_stdin, old_env = sys.stdin, os.environ.get("OVERNIGHT_PLUGIN_SKILL_OVERRIDE")
+        try:
+            if env_override is not None:
+                os.environ["OVERNIGHT_PLUGIN_SKILL_OVERRIDE"] = env_override
+            else:
+                os.environ.pop("OVERNIGHT_PLUGIN_SKILL_OVERRIDE", None)
+            sys.stdin = io.StringIO(json.dumps(payload))
+            return main()
+        finally:
+            sys.stdin = old_stdin
+            if old_env is None:
+                os.environ.pop("OVERNIGHT_PLUGIN_SKILL_OVERRIDE", None)
+            else:
+                os.environ["OVERNIGHT_PLUGIN_SKILL_OVERRIDE"] = old_env
+
+    if run({"tool_name": "Skill", "tool_input": {"skill": "overnight-runner:start"}}) != 2:
+        fails.append("plugin start not blocked")
+    if run({"tool_name": "Skill", "tool_input": {"skill": "plugin:overnight-runner:schedule x"}}) != 2:
+        fails.append("namespaced plugin schedule not blocked (substring match)")
+    if run({"tool_name": "Skill", "tool_input": {"skill": "overnight-sequencer"}}) != 0:
+        fails.append("repo-canonical sequencer skill blocked")
+    if run({"tool_name": "Skill", "tool_input": {"skill": "overnight-runner:start"}}, env_override="1") != 0:
+        fails.append("override env not honored")
+    if fails:
+        sys.stderr.write("overnight_plugin_skill_block selftest FAIL: " + "; ".join(fails) + "\n")
+        return 1
+    print("overnight_plugin_skill_block selftest OK")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        raise SystemExit(_selftest())
     raise SystemExit(main())

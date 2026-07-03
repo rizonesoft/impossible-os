@@ -38,7 +38,15 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    - Read the relevant source file at the cited line numbers.
    - Understand the root cause (not just the symptom).
    - Apply the fix following the `kernel-code-quality` skill gates.
-   - Build: `bash scripts/build.sh` -- must show `=== BUILD OK ===`.
+   - Build **via `Agent(subagent_type="checks-runner", ...)` by DEFAULT** (this
+     IS the iterative fix loop: measured 21 in-context builds on one section,
+     zero checks-runner dispatches). The runner returns PASS/FAIL + failure
+     digest; you quote the `build/build.log` tail yourself and it must show
+     `=== BUILD OK ===`. Repeated symbol lookups across fix rounds go through
+     lsp-bridge (`definition`/`references`), not inline `bash grep`; when the
+     round's fix targets moved to new files, re-dispatch
+     `Agent(subagent_type="review-evidence-mapper", ...)` for the fresh
+     file:line map instead of re-reading whole files.
 6. **For each "rejected" finding:**
    - No code change. Record the rejection reason in the Phase 4 summary table.
 7. **For each "accepted" finding:**
@@ -50,6 +58,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 ### Phase 3 -- Re-Review
 
+8b. **Pre-dispatch self-diff gate (before the re-review dispatch).** Read the fix diff against this round's + every prior round's findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6): scope creep, an operation reordered before its precondition, `==` where a bit-flag/mask test is required, sentinel/boundary handling (INVALID_HANDLE_VALUE / -1 / caps), and whether this fix re-opens a prior finding. This gate is what keeps the fix->re-review loop from becoming a fix-then-regress marathon (TODO-12 section 28: 15 dispatches, 67 min). A localized fix that passes the gate can be self-verified without a fresh round.
 9. **Push the commit.**
 10. **Re-run the Codex adversarial review** with a focused prompt:
     ```
@@ -91,7 +100,9 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 bash scripts/codex-dispatch.sh '[review-kind: re-adversarial] <todo-path> <focus prompt>'
 ```
 
-Run in background for reviews touching > 3 files:
+Run in background for reviews touching > 3 files (wait per the double-poll
+ban in codex-design-review "Wait discipline" -- one absorbing wait, no ~10s
+re-poll clusters):
 ```bash
 # In Bash tool with run_in_background: true
 ```

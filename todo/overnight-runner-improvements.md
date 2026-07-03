@@ -30,19 +30,29 @@
   refuses -- the "docs/staged-leak.md" error on every CI run). Verified:
   clean clone 582/582, dev 583/583.
 
-- [ ] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
-  In PREFLIGHT, after the local build/test baseline, dispatch
-  `Agent(subagent_type="gh-query-runner", ...)` to check `build.yml` +
-  `todo-graph.yml` on HEAD. If a required workflow FAILED on a commit that is an
-  ancestor of HEAD (i.e. our pushed work), treat it like the existing
-  "HEAD broken at preflight" path: diagnose + fix + commit + push + re-check
-  BEFORE new section work. Fail-safe: if `gh` is unauthenticated, emit a NOTE
-  and continue (do not block the whole run). `gh` IS authenticated headless
-  (rizonesoft token in `~/.config/gh`, scopes incl. `workflow`). Handle
-  in-progress runs (skip, not fail) and only act on failures attributable to our
-  commits. Wire into `.claude/skills/overnight-sequencer/SKILL.md` PREFLIGHT.
+- [x] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
+  DONE 2026-07-03: wired into `.claude/skills/overnight-sequencer/SKILL.md`
+  PREFLIGHT as a triage table after the local baseline -- attributable
+  failure (failed run's head SHA is an ancestor of HEAD via
+  `git merge-base --is-ancestor`) -> gh-query-runner `--log-failed` digest +
+  systematic-debugging + fix/commit/push + one `gh run watch` dispatch to
+  conclusion before section work (unfixable -> broken-HEAD stop path);
+  non-ancestor/infra failure -> NOTE and continue; in_progress -> NOTE and
+  continue (never wait at preflight); gh unauthenticated/network -> NOTE
+  "CI check unavailable" and continue. Includes the clean-clone hermeticity
+  repro pointer from the 2026-07-03 incident. Live-run validation pending
+  (next overnight).
 
-- [ ] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
+- [x] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
+  DONE 2026-07-03, both launchers: arm-sequencer.sh defaults flipped to
+  `--model opus --fallback-model sonnet` (`--model inherit` sentinel restores
+  saved-default; interactive /model untouched; launcher's direct-invocation
+  fallback default aligned to sonnet). Conductor (b877662):
+  PrimaryModel/FallbackModel per-project fields (defaults opus/sonnet,
+  metachar-validated) -> Arm() flag pass-through + dogfood chain
+  (arm-sequencer -> overnight-arm --setenv -> launch FALLBACK_ARGS +
+  DRYRUN echo); 486/486 tests + test-launch PASS in both repos. Original
+  rationale follows.
   Fable 5 (Mythos-tier, above Opus) is overkill as the runner's PRIMARY: Codex
   adversarial/consistency/perf reviews already provide the quality net, and Opus
   is the judgment floor the doctrine reserves for `implement-todo-section` /
@@ -66,7 +76,23 @@
     `--model`/`--fallback-model` pass-through; the default is Opus in both;
     overrides (Fable 5 for a hard section, Sonnet for a cheap pass) work in both.
 
-- [ ] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
+- [x] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
+  DONE 2026-07-03 (all three gates):
+  - `review_dispatch_gate.py` (BLOCK, PreToolUse Edit/Write/MultiEdit): a
+    todo edit ADDING a Verified/Quality-reviewed stamp requires a live
+    review-class Skill invocation for this TODO this session (kills the
+    section-25 inline-review shape) AND a review-evidence-mapper dispatch in
+    the pass window (window = earliest review-kind ts for the TODO - 2h
+    grace, else 6h), plus kernel/boot-quality-auditor when the reviewed ship
+    commit (adversarial_head) touched kernel/boot paths. Hash-fills into
+    existing stamps exempt; fail-open on state/git errors;
+    SKIP_DISPATCH_GATE=1 + >= 12-char reason (skip-logged); 9-case selftest.
+  - agent_dispatch_recorder now keeps a bounded per-type dispatch map
+    (by_type) so gates ask "was THIS agent dispatched", not "was anything".
+  - `xref_dispatch_reminder.py` (WARN, once per pass): 3+ distinct foreign
+    TODO-NN in tool inputs during a live implement-todo-section pass with no
+    fresh xref-dependency-mapper dispatch. Live-run validation pending
+    (next overnight). Original measurements follow.
   The agent-lens sweep of run-20260702-141810.log produced a per-invocation
   compliance matrix: kernel-quality-auditor missing in 10/17 review passes,
   review-evidence-mapper missing in 6/17, parity-research-analyst 0/17 (but
@@ -90,7 +116,19 @@
     XREFs -> xref-dependency-mapper" is text-only; count distinct TODO-NN
     greps in the first N calls of a section pass and remind.
 
-- [ ] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
+- [x] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
+  DONE 2026-07-03 across ALL four loop surfaces: implement-todo-section step
+  15 + review-todo-section step 6 (shipped a7ca3263, see Done entry) and --
+  closing sweep -- codex-fix-review step 5 + codex-adversarial-review-section
+  step 5 (both previously instructed bare in-context `bash scripts/build.sh`
+  per round): loop rebuilds/tests via checks-runner BY DEFAULT, lsp-bridge
+  for repeated symbol lookups, evidence-mapper re-dispatch on moved fix
+  targets. implement-todo-item's single build stays inline (one-shot, the
+  documented exception). Enforcement nets: build_offload_reminder (WARN,
+  overnight SECTIONS) + inline_churn_monitor (both modes). No Codex-round
+  cap added, per the correctness-over-cost rule. Live-run adoption
+  measurement: next overnight (compare checks-runner dispatch count vs the
+  0/29 baseline). Original rationale + measurements follow.
   The Codex convergence loops stay UNTOUCHED -- each round produces a distinct
   real fix (verified on TODO-12 §8: sem_signal_n rework -> excess-path ->
   wake-budget -> snapshot-budget). The waste is what the CLAUDE main loop does
@@ -115,7 +153,17 @@
   24 todo-graph-validate runs all went through in-context Bash -- the gap is
   run-wide, not a one-section anomaly.
 
-- [ ] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
+- [x] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
+  DONE 2026-07-03: "Wait discipline" section added to overnight-sequencer
+  SKILL.md (one wait mechanism per wait; prefer the single absorbing
+  foreground Bash wait; hold an armed Monitor silently; 30-60s cadence when a
+  manual poll is truly unavoidable; batch multi-kind waits into ONE combined
+  condition; unrelated forward work allowed while holding). Full rule also in
+  codex-design-review "Wait discipline" (the canonical background-dispatch
+  doc) with pointer lines at the three other codex background-wait sites
+  (adversarial-review-section, review-todo, fix-review). Live-run validation:
+  next overnight (compare Holding/Check-poll counts vs the 531/610 baseline
+  via overnight-log-explorer). Original measurements follow.
   From §25 (03:30) to the end of the 2026-07-02 20h run, every background
   Codex/agent wait was covered by a Monitor AND a manual poll loop on top of it:
   531 `Holding ...` narrator turns + 610 `Check ... status` Bash polls at a
@@ -134,75 +182,167 @@
 
 ## P2 -- efficiency / robustness
 
-- [ ] **Harden `test_perf_syscall` against the TCG timing flake under concurrent Codex load.**
-  The runner hit `test_perf_syscall.exe: FAIL` twice in the first section, each
-  time correctly diagnosed as TCG timing noise (not a regression) and reran green
-  -- but that is wasted cycles every section. Same flake class already fixed in
-  the `four_dispatch_gate D lock-timeout` test (fixed sleep -> deterministic
-  handshake, commit 776ef06c). Give the perf test a load-tolerant bound or a
-  deterministic gate instead of a wall-clock threshold.
+- [x] **Harden `test_perf_syscall` against the TCG timing flake under concurrent Codex load.**
+  DONE 2026-07-03. Measured root cause: the gate asserted a fixed 200k-cycle
+  ceiling on the MEDIAN of 16, and the idle-host median is already 160,535
+  cycles (20% headroom) -- under TCG the guest TSC tracks HOST time, so any
+  concurrent load drags the median over. Fix: gate on MIN of 32 samples
+  (whichever sample escapes host preemption; a real syscall regression
+  inflates every sample incl. the min) + one bounded in-test retry round,
+  ceiling re-derived FOR the min estimator from measurements (idle min
+  ~150k; loaded min-of-two-rounds observed 212,011 -- host bursts outlast
+  in-test retries, so the bound carries the load headroom): 400k = ~2.5x
+  idle floor, still trips on a 2x syscall-path regression. Trend keys
+  (sys_yield_ns/cycles) keep median semantics; sys_yield_min_cycles added.
+  Verified: 2 consecutive green SUITE=exec runs (min 158,734 / median
+  176,601 on the final run); the mid-hardening run that FAILED at min
+  212,011 vs the old 200k proved the load case live.
 
-- [ ] **Verify the headless model-fallback behavior on the first real overload/flag.**
-  `--fallback-model opus` is wired into the launch (confirmed live in the process
-  args) but was never exercised (Fable 5 handled the whole first section, no
-  overload, no safeguard flag). Open questions to confirm on the first real
-  event: (a) does `--fallback-model` return to the primary each turn as
-  documented? (b) does the interactive `switchModelsOnFlag` safeguard->Opus
-  auto-switch ALSO fire under `-p`, or does a Fable-flagged section just DEFER?
-  If it defers, decide whether a periodic explicit `--model opus` pass over the
-  deferred set is worth adding.
+- [x] **Verify the headless model-fallback behavior on the first real overload/flag.**
+  RESOLVED 2026-07-03 by official docs (code.claude.com model-config) +
+  policy change, not by waiting for the event:
+  (a) CONFIRMED: the fallback switch "lasts for the current turn only";
+  next turn re-tries the primary. Triggers are overload/unavailable/
+  non-retryable server errors -- NOT auth/billing/rate-limit/flags.
+  (b) ANSWERED: there is NO safeguard auto-switch under `-p` -- "a flagged
+  request ends the turn with a refusal" in non-interactive mode
+  (documented, hardcoded). So a Fable-primary overnight run could
+  refusal-loop on kernel/security sections; the 2026-07-03 Opus-primary
+  default eliminates the whole class (flags route TO Opus). The
+  "periodic --model opus pass over deferrals" idea is moot.
+  (c) primary == fallback is UNDOCUMENTED (chain dedupe implies the
+  fallback vanishes -- no degradation path); arm-sequencer.sh now WARNs
+  on that degenerate shape at arm time.
+  Residual: the first real 529 during an overnight confirms (a)
+  empirically -- gotcha line filed; nothing further to build.
 
-- [ ] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
-  In the 2026-07-02 run, TODO-12 (1441 lines) was fully Read 59 times and
-  `src/kernel/sched/task.c` (3216 lines) 40 times -- several as back-to-back
-  duplicate reads seconds apart (e.g. 03:31:28 twice in the same second). A
-  driver is the Edit tool's "file has not been read yet" re-gate (19 of 62
-  tool_use_errors), which keeps forcing re-reads that then happen whole-file.
-  Doctrine: `Read(offset, limit)` around the section text / IO-table row being
-  edited; after an edit, re-read only the mutated slice.
+- [x] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
+  DONE 2026-07-03, two layers:
+  - `slice_read_reminder.py` (PostToolUse Read, warning-only): whole-file
+    RE-read of a > 32 KB file within 30 min of a prior read -> one reminder
+    per path per window that a slice read satisfies the Edit freshness gate.
+    First full reads and slice reads never warn; selftest + tooling test.
+  - Doctrine at the three re-read hotspots: implement-todo-section step 1
+    (one full read per pass = orientation, later reads are slices),
+    review-todo-section Phase 1 (verification reads are slices at the
+    mapper's file:line targets), overnight-sequencer Read-discipline bullet.
+  Measured baseline for the next run's comparison: TODO-12 (1441 lines)
+  fully Read 59x, task.c (3216 lines) 40x, back-to-back duplicates within
+  one second; the Edit "file has not been read yet" re-gate drove 19 of 62
+  tool_use_errors. Original text follows.
 
-- [ ] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
-  (a) `todo_item_line_length` -- 77 blocks (46%), and ~36% re-blocked on the
-  immediate retry because the rewritten line was STILL too long: self-check
-  the line length before the first Edit on todo/ files. (b)
-  `agent_dispatch_required` -- 23 blocks, roughly once per section, always
-  reactive: dispatch the mandatory read-only exploration agent as step 1 of a
-  section, before the first kernel/boot Edit. (c) stale todo-graph oracle
-  cache -- the identical rebuild-then-edit-again ordering bug recurred 3x
-  (01:30, 09:29, 10:04): rebuild the cache strictly AFTER all TODO edits for
-  the section land.
+- [x] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
+  DONE 2026-07-03, each at its root:
+  (a) `todo_item_line_length` (77 blocks, 36% re-blocked): block message now
+  shows per-line overage + a count-before-retry recipe + an aim-for-230
+  margin target (retries were trimmed by feel and landed still-over); plus
+  a TODO-write-discipline bullet in the sequencer skill (count BEFORE the
+  first write).
+  (b) `agent_dispatch_required` (23 blocks, ~once per section): ROOT CAUSE
+  was the fixed 30-min freshness TTL expiring mid-section -- the mandated
+  step-3 dispatch had happened but long sections outlived the window. Now
+  section-pass-bound: a dispatch newer than the live implement-todo-section
+  entry's started_ts stays valid for the whole pass (orphaned entries
+  ignored; 30-min TTL kept as the no-pass fallback). 5-case fixture test.
+  (c) stale oracle cache (3 recurrences): explicit ordering rule in the
+  sequencer skill -- all TODO edits -> rebuild -> commit; the rebuild is
+  the LAST action before any todo/-touching commit.
 
-- [ ] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
-  Zero `mcp__lsp-bridge__*` / `mcp__todo-graph__*` calls in the entire 20h run
-  despite the CLAUDE.md MCP-first doctrine; instead ~180-256 standalone Bash
-  greps, 17 manual `grep -n "^## N\."` section-boundary lookups (one
-  `todo-graph code` call each), and 27-53 `sed -n 'X,Yp'` Read-substitutes.
-  First determine whether the MCP servers actually CONNECT under `claude -p`
-  headless (lsp-bridge also drops mid-session interactively); if they connect,
-  the MCP-first + use-Grep-not-Bash(grep) rules need runner-side enforcement
-  (heuristic-step WARN promotion); if they never connect headless, fix the
-  connection or explicitly scope the doctrine to interactive sessions.
+- [x] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
+  DIAGNOSED + RESOLVED 2026-07-03 (systematic-debugging, empirical repro).
+  ROOT CAUSE: a startup RACE, not a connection failure and not approval.
+  Headless `claude -p` discovers the project MCP servers and connects them
+  ASYNCHRONOUSLY (~0.7s stdio handshake each -- neither is slow; both verified
+  handshaking) but does NOT block session init on the connection, and no knob
+  forces it (`MCP_TIMEOUT`/`MCP_TOOL_TIMEOUT` tested: no effect). On a cold
+  start -- the launcher's exact shape -- the init tool-list snapshot catches
+  both servers still `pending` ~2/3 of the time (measured: 2 of 3 cold runs =
+  0 mcp tools; the third = 29 tools + a successful `mcp__todo-graph__stats`
+  call), so the session begins with zero `mcp__` tools and cannot call them.
+  Approval is NOT the gate (`hasTrustDialogAccepted:true`; empty
+  `enabledMcpjsonServers` still loads them). No launcher-side deterministic
+  fix exists (init is async by design) and a non-deterministic pre-warm would
+  be a band-aid. FIX = the "explicitly scope the doctrine" branch: CLAUDE.md
+  MCP Usage rule 3 + overnight-sequencer skill + docs/infrastructure/
+  mcp-usage.md now scope MCP-first to "when the tools are loaded this
+  session" and point the headless fallback at the DETERMINISTIC CLIs the
+  servers wrap (`scripts/todo-graph/query.py`, `resolve_symbol.py`) + the
+  Grep/Glob tools (never Bash grep/sed). The Grep-tool-over-Bash-grep floor
+  is MCP-independent and stays always-on; NO MCP-non-use enforcement was
+  added (can't penalize a race the runner cannot win).
 
-- [ ] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
-  §28's review marathon (15 dispatches, 67 min) was fix-then-regress cycling:
-  the original real bug (unprobed user buffer, line 5669) was fixed, but each
-  round's fix introduced a NEW regression the next pass caught (iosb-probe
-  reorder 5850, equality-vs-bit-flag 5900, INVALID_HANDLE_VALUE 5910) --
-  ~5 full multi-reviewer rounds instead of 1-2. A pre-dispatch self-diff pass
-  against the round's findings is cheap; a full Codex round is minutes of
-  wall-clock plus a poll cluster.
+- [x] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
+  DONE 2026-07-03: added a mandatory PRE-DISPATCH SELF-DIFF GATE at all four
+  Codex re-dispatch points. Canonical rule in review-todo-section step 6
+  (where the §28 marathon ran), referenced from implement-todo-section step
+  15, codex-adversarial-review-section step 6, and codex-fix-review step 8b.
+  The gate reads the fix diff against this round's + prior rounds' findings
+  and self-checks the four fix-then-regress shapes §28 exhibited: scope creep,
+  an op reordered before its precondition (iosb-probe), `==` where a bit-flag
+  test is needed, and sentinel/boundary handling (INVALID_HANDLE_VALUE) --
+  plus a re-open check (a fix for finding N must not resurrect N-1). Clean
+  gate + localized fix = self-verify and proceed without a full round.
+  Doctrine, not a hook: the gate is a self-review discipline a deterministic
+  hook can't meaningfully verify, and the item frames it as a cheap
+  pre-dispatch pass. Original measurements follow.
 
-- [ ] **Add `QUIET=1` to the straggler test.sh calls.** 11-15 of the 55 test.sh
-  invocations ran without `QUIET=1`, pulling full-suite PASS output inline;
-  the other ~42 already do it correctly.
+- [x] **Add `QUIET=1` to the straggler test.sh calls.**
+  DONE 2026-07-03 at the ROOT rather than per-call: `scripts/test.sh` now
+  defaults `QUIET_MODE=1` when `OVERNIGHT_SEQUENCER_RUN=1` (explicit `QUIET=0`
+  overrides for debugging; `QUIET=1` still works everywhere). Catches ALL
+  stragglers regardless of which skill/call omitted the flag -- no doctrine
+  reliance. QUIET keeps FAIL lines + summary + format lines, so nothing is
+  hidden. Interactive/CI unchanged (env unset -> default verbose). 5-case
+  precedence truth-table verified.
 
 ## P3 -- operator UX
 
-- [ ] **Fix / document the `latest.log` path friction.**
-  `tail -f .claude/overnight/reports/latest.log` fails unless run from the repo
-  root (relative symlink) and only after the first launch creates it. Either
-  print the ABSOLUTE path in the arm-sequencer summary, or add a tiny
-  `overnight-tail` helper. Minor.
+- [x] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).**
+  DONE 2026-07-03 via the DEGRADE-CLEAN prong; the install prong was tried,
+  reverted, and re-scoped to TODO-07 (see the new follow-up below). Findings:
+  - Root cause of the WARN noise: pyright simply not installed (node/npm
+    present via nvm; setup.sh already declares it OPTIONAL-tier).
+  - DEGRADE-CLEAN (shipped): `scripts/lsp-mcp/bridge.py` now logs a missing
+    OPTIONAL LSP binary at INFO with status `not-installed` (new
+    `warm-skipped-not-installed` event) and `_emit_health_event` downgrades
+    `lsp-binary-missing` restart-failed/failed to INFO. Verified 0 WARN lines
+    when pyright is hidden from PATH; test_bridge.sh 99/99 (5a SKIPs).
+  - INSTALL tried + REVERTED: `npm install -g pyright` (v1.1.411) made
+    `is_available()` True and warm-start + documentSymbol work, BUT
+    `workspace/symbol` returns EMPTY even with a scoped pyrightconfig (probed
+    to 60s; documentSymbol returns 38 syms incl. `main`, workspaceSymbol
+    returns 0). That is the bridge's flagship py cap, and the 5a self-test
+    correctly turned SKIP->FAIL. Rather than paper over the self-test or ship
+    a red suite (which would re-red the CI just fixed), reverted the install;
+    the deeper integration gap is the new TODO-07 follow-up.
+
+- [ ] **Fix pyright workspace/symbol integration in lsp-bridge (TODO-07).**
+  With pyright-langserver installed (v1.1.411), the bridge's per-file py
+  analysis works (`textDocument/documentSymbol` returns build.py's 38 symbols
+  incl. `main`) but `workspace/symbol` returns 0 for any query (empty or
+  `main`), even with a `pyrightconfig.json` scoping `include: ["scripts"]`
+  (probed to 60s, fresh spawn). This is the flagship py cap the bridge routes
+  to MCP ("where is symbol X across all .py files"), and the `_self_test_pyright`
+  5a smoke asserts exactly it. Likely community-pyright (open-source
+  langserver) not populating a workspace symbol index the way Pylance does,
+  or a missing initialize option the bridge should advertise/drive. Investigate:
+  (a) does pyright need `initializationOptions`/`workspace.symbol` capability
+  the bridge omits; (b) does it need files pre-opened or a didChangeWatchedFiles
+  index prime; (c) if community pyright genuinely lacks workspace symbols,
+  decide whether to keep it for per-file features only (hover/def/refs/
+  documentSymbol) and adjust the 5a smoke to a capability pyright provides, or
+  swap the Python LSP. Owner: TODO-07 lsp-mcp-bridge. Repro: install pyright,
+  `python3 scripts/lsp-mcp/bridge.py --self-test --lang=py`.
+
+- [x] **Fix / document the `latest.log` path friction.**
+  DONE 2026-07-03, both levers (no new script -- enhanced the existing
+  `scripts/overnight/overnight-monitor.sh`, which had the exact friction):
+  it now resolves the repo root from BASH_SOURCE (absolute paths -- works
+  from ANY directory, not just repo root), and waits for the first report
+  when armed-but-not-yet-launched (`--no-wait` to fail fast). `tail -F`
+  follows the symlink across watchdog relaunches. The arm-sequencer summary
+  now prints the ABSOLUTE monitor command + report path. Verified: runs from
+  /tmp resolving the absolute latest.log; clean rc=1 on an empty report dir.
 
 ## Evaluated and rejected (recorded so we don't re-litigate)
 

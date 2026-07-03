@@ -85,8 +85,11 @@ def is_headless():
 # it is the legitimate completion path and is itself oracle-gated (it REFUSES
 # unless the triage oracle reports zero remaining work), so it cannot be abused.
 _STATE_FILES = ("sequencer-armed", "sequencer-run.json", "sequencer-fixpoint")
+# touch/cp/dd close the fabricate-the-fixpoint-sentinel bypass (runner-kit
+# 2026-07-03: touch/cp/dd wrote the sentinel without tripping the old list).
 _MUTATE_OPS = ("rm ", "rm-", "mv ", "unlink", "truncate", "tee ", " > ", ">>",
-               "os.remove", "os.unlink", "rmtree", "shutil.")
+               "touch ", "cp ", "dd ", "os.remove", "os.unlink", "rmtree",
+               "shutil.")
 
 
 def _is_self_teardown(cmd):
@@ -245,6 +248,25 @@ def handle_pretool():
     return 2
 
 
+def _live_oracle_status():
+    """Best-effort live triage-oracle verdict for the Stop fallback.
+
+    Returns the oracle's `status` string (DONE / BLOCKED / NEEDS_WORK) or None
+    on any failure -- callers treat None as "keep blocking" (fail-closed).
+    """
+    import subprocess
+    try:
+        out = subprocess.run(
+            [sys.executable, str(repo_root() / ".claude/hooks/sequencer_triage.py"),
+             "--next"],
+            capture_output=True, text=True, timeout=60, cwd=str(repo_root()))
+        if out.returncode != 0:
+            return None
+        return json.loads(out.stdout.strip()).get("status")
+    except Exception:
+        return None
+
+
 def handle_stop():
     # The guard governs ONLY the headless unattended run -- an interactive
     # operator session is never trapped (it can stop and disarm freely).
@@ -262,6 +284,23 @@ def handle_stop():
     # The human's --disarm removes the master switch (and kills the service); if
     # the marker is already gone, the run has been disarmed -- allow the stop.
     if not ARMED_MARKER.exists():
+        return 0
+    # Oracle-consulting fallback (runner-kit law 2, adopted 2026-07-03): a
+    # session at a TRUE lifecycle end (oracle DONE, or BLOCKED once the 3-state
+    # split reports only recoverable deferrals) may end WITHOUT the sentinel --
+    # the sentinel is written by the fixpoint CLI, and a session that cannot
+    # reach it (lock, confusion, truncation) would otherwise idle until
+    # external reap. Ending here does NOT disarm: the marker persists, the
+    # watchdog relaunches, and the next session (or the operator) finalizes
+    # via `run_phase_guard.py fixpoint`. Fail-closed: any oracle error keeps
+    # the hard block below.
+    verdict = _live_oracle_status()
+    if verdict in ("DONE", "BLOCKED"):
+        sys.stderr.write(
+            f"[sequencer] stop allowed: live triage oracle reports {verdict} "
+            "(no implementable work right now). The run stays ARMED -- "
+            "finalize with `python3 .claude/hooks/run_phase_guard.py fixpoint` "
+            "(DONE) or let the watchdog retry (BLOCKED).\n")
         return 0
     state = load_state()
     sys.stderr.write(
@@ -444,6 +483,9 @@ def selftest():
                 "rm .claude/state/sequencer-run.json",
                 "echo '{}' > .claude/state/sequencer-run.json",
                 "python3 -c \"import os; os.remove('.claude/state/sequencer-fixpoint')\"",
+                "touch .claude/state/sequencer-fixpoint",
+                "cp /tmp/fake .claude/state/sequencer-fixpoint",
+                "dd if=/dev/zero of=.claude/state/sequencer-fixpoint bs=1 count=1",
                 "systemctl --user stop overnight-impossible-os.service",
                 "systemctl --user disable overnight-impossible-os-watchdog.timer",
                 "pkill -f 'claude -p'"):

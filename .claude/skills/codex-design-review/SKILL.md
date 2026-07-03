@@ -72,6 +72,8 @@ When `status: "completed"`, the same JSON contains `finalMessage` (the review te
 
 **Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), cancel the job via `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" cancel <jobId>`. Wrapper-launched background reviews are manual poll-and-receive only until TODO-10 §7 normalizes completed-output binding.
 
+**Wait discipline (double-poll ban, 2026-07-03).** One wait mechanism per wait. Prefer a SINGLE foreground Bash call that absorbs the whole wait (`for i in $(seq 1 90); do grep -q "Turn completed" <log> && break; sleep 10; done` -- one turn for a 6-13 min verdict). If a Monitor (or background Bash) is armed instead, HOLD until it fires: no manual `Check ... status` re-polls, no per-poll narrator turns (measured 2026-07-02: 531 holding turns + 610 polls against 40 Monitor arms, ~1,100 wasted turns). Unavoidable manual polls (Monitor timeout, unknowable ETA under host load) run at a 30-60s cadence, never ~10s. Waiting on several review kinds at once: ONE combined completion condition (`grep -q A f1 && grep -q B f2 && ...`), never serial per-kind poll clusters. This rule applies to every codex-* skill's background waits; they reference this section.
+
 ## Workflow
 
 1. **Read the TODO section** -- full text, checklist items, test checkpoint, and all `-> XREF:` dependencies.

@@ -138,13 +138,25 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   section: update the cursor, then IMMEDIATELY start the next section in the
   queue. There is NO voluntary session-exit on a blocker of ANY kind:
   - A **user-decision / operator-reserved item** (a stop-and-ask boundary) is
-    NOT a stop and NOT a disarm. Record the question in the cursor, DEFER the
-    item (`[/]` + a Deferred stamp + an XREF naming the decision), and ADVANCE
-    to the next section/file. A single reserved decision in one section must
-    never strand the other 85 TODO files. (Incident 2026-06-16: the runner read
-    a stale "user reserved this" blocker and ran `--disarm`. Both the stale-state
-    and the self-disarm paths are now closed; the behavioral rule is: defer and
-    advance, full stop.)
+    NOT a stop and NOT a disarm. Resolve it by the three-tier answer order
+    (runner-kit law 10, adopted 2026-07-03): (1) if `todo/answers.md` carries an
+    `A: (operator, DATE)` answer matching the TODO + question, apply it as the
+    decision; (2) a LOW-RISK question (no money/permissions/data/ABI impact)
+    may take a conservative logged default -- record it in `todo/answers.md` as
+    `A: (proposed default)` so the operator can confirm or veto; (3) otherwise
+    DEFER the item (`[/]` + a Deferred stamp whose line contains
+    `awaiting-answer` + an XREF naming the decision) and ADVANCE. The
+    `awaiting-answer` token makes the deferral RECOVERABLE: the 3-state oracle
+    classes the section BLOCKED (never falsely DONE), the launcher's heal probe
+    retries once per `todo/answers.md` edit, and `collect-questions.py` writes
+    the consolidated operator punch-list to
+    `.claude/overnight/questions-for-operator.md` at each lifecycle exit.
+    Terminal (won't-do / out-of-scope-here) deferrals keep the plain Deferred
+    stamp + XREF as before -- no awaiting token. A single reserved decision in
+    one section must never strand the other 85 TODO files. (Incident
+    2026-06-16: the runner read a stale "user reserved this" blocker and ran
+    `--disarm`. Both the stale-state and the self-disarm paths are now closed;
+    the behavioral rule is: defer and advance, full stop.)
   - A **hard failure** is handled by the defer-and-escalate rule below (defer +
     advance, never halt).
   - **External death** (usage limit / API error) is not a choice; the watchdog

@@ -33,16 +33,16 @@ def _clip(value, limit: int = 200) -> str:
 
 
 def _bash(inp: dict) -> str:
+    # Flatten the FULL command before clipping (runner-kit 2026-07-03): the
+    # old first-line-only render dropped heredoc commit messages and Codex
+    # prompt bodies from the run log entirely.
     desc = (inp.get("description") or "").strip()
-    cmd = (inp.get("command") or "").strip()
-    lines = cmd.splitlines()
-    first = lines[0] if lines else ""
-    more = " ..." if len(lines) > 1 else ""
+    cmd = " ".join((inp.get("command") or "").split())
     parts = []
     if desc:
         parts.append(desc)
-    if first:
-        parts.append(f"$ {first}{more}")
+    if cmd:
+        parts.append(_clip(f"$ {cmd}", 500))
     return "  ".join(parts)
 
 

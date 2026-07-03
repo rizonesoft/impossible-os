@@ -17,7 +17,11 @@ Quality-reviewed). Everything else is NEEDS_WORK.
 
 Classes
   DONE        shipped [x]/[/] with BOTH Verified AND Quality-reviewed stamps,
-              OR a [x]/[/] section carrying a Deferred stamp (parked).
+              OR a [x]/[/] section carrying a TERMINAL Deferred stamp (parked).
+  BLOCKED     a [x]/[/] section whose Deferred stamp carries an `awaiting-*`
+              token (recoverable: operator answer, hardware, infra). The run
+              stays armed; fixpoint refuses (3-state oracle, runner-kit
+              2026-07-03 -- prevents a mass recoverable-park reading as DONE).
   NEEDS_WORK  anything else -- [ ]/blank, an in-progress [/], OR a shipped [x]
               that is missing either stamp (shipped-but-unreviewed is NOT done).
 
@@ -68,6 +72,18 @@ def is_impl_todo(file_path):
 
 DONE = "DONE"
 NEEDS_WORK = "NEEDS_WORK"
+BLOCKED = "BLOCKED"
+
+# Recoverable-vs-terminal deferral split (runner-kit 3-state oracle, adopted
+# 2026-07-03). A `> **Deferred:**` stamp carrying an `awaiting-<token>` word
+# (awaiting-answer, awaiting-hardware, awaiting-infra, ...) marks a blocker
+# that is expected to CLEAR (operator answers todo/answers.md, hardware
+# arrives, infra lands) -- the section reads BLOCKED, the file can never
+# reach DONE through it, and the run stays armed instead of reporting a
+# false fixpoint. A Deferred stamp WITHOUT the token is terminal-parked
+# (resolved out-of-band via its XREF owner) and stays DONE-equivalent,
+# preserving the pre-2026-07-03 behavior for every existing stamp.
+DEFERRED_RECOVERABLE_RE = re.compile(r"\bawaiting-[a-z0-9-]+\b", re.I)
 
 
 def repo_root(override=None):
@@ -121,6 +137,8 @@ def section_stamps(md_path):
                 out[cur].add("Q")
             elif DEFERRED_RE.match(line):
                 out[cur].add("D")
+                if DEFERRED_RECOVERABLE_RE.search(line):
+                    out[cur].add("DR")  # recoverable deferral (awaiting-*)
     return out
 
 
@@ -227,6 +245,8 @@ def classify_section(section, stamps):
     if st not in ("x", "/"):
         return NEEDS_WORK
     kinds = stamps.get(n, frozenset())
+    if "DR" in kinds:
+        return BLOCKED
     if "D" in kinds:
         return DONE
     if "V" in kinds and "Q" in kinds:
@@ -241,7 +261,13 @@ def classify_file(entry, root):
     if not sections:
         return NEEDS_WORK, []
     per = [(s.get("n"), classify_section(s, stamps)) for s in sections]
-    cls = DONE if all(c == DONE for _, c in per) else NEEDS_WORK
+    classes = {c for _, c in per}
+    if classes == {DONE}:
+        cls = DONE
+    elif NEEDS_WORK in classes:
+        cls = NEEDS_WORK
+    else:
+        cls = BLOCKED  # only DONE + recoverable-deferred sections remain
     return cls, per
 
 
@@ -261,16 +287,60 @@ def traversal_order(cache):
 
 
 def next_file(cache, root):
+    """First NEEDS_WORK file in traversal order, else (None, BLOCKED) when
+    only recoverable-deferred files remain, else (None, None) at true DONE."""
+    saw_blocked = False
     for entry in traversal_order(cache):
         cls, _ = classify_file(entry, root)
-        if cls != DONE:
+        if cls == NEEDS_WORK:
             return entry, cls
-    return None, None
+        if cls == BLOCKED:
+            saw_blocked = True
+    return None, (BLOCKED if saw_blocked else None)
+
+
+def collect_blockers(cache, root):
+    """All recoverable-deferred sections: (file, section n, awaiting token)."""
+    out = []
+    for entry in traversal_order(cache):
+        md_path = os.path.join(root, entry["file_path"])
+        stamps = section_stamps(md_path)
+        for s in entry.get("sections") or []:
+            if classify_section(s, stamps) != BLOCKED:
+                continue
+            token = ""
+            try:
+                cur = None
+                with open(md_path, encoding="utf-8") as fh:
+                    for line in fh:
+                        m = SECTION_HEADING_RE.match(line)
+                        if m:
+                            cur = int(m.group(1))
+                            continue
+                        if cur == s.get("n") and DEFERRED_RE.match(line):
+                            mm = DEFERRED_RECOVERABLE_RE.search(line)
+                            if mm:
+                                token = mm.group(0).lower()
+                            break
+            except OSError:
+                pass
+            out.append({"file": entry["file_path"], "section": s.get("n"),
+                        "awaiting": token})
+    return out
+
+
+def cmd_blockers(cache, root):
+    print(json.dumps({"blockers": collect_blockers(cache, root)}))
+    return 0
 
 
 def cmd_next(cache, root):
     entry, cls = next_file(cache, root)
     if entry is None:
+        if cls == BLOCKED:
+            print(json.dumps({"status": BLOCKED, "file": None,
+                              "blockers": collect_blockers(cache, root)}))
+            return 0
         print(json.dumps({"status": "DONE", "file": None}))
         return 0
     lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
@@ -316,7 +386,7 @@ def cmd_summary(cache, root):
 def cmd_selftest(cache, root):
     failures = []
     # 1. every entry classifies without raising and yields a known class.
-    valid = {DONE, NEEDS_WORK}
+    valid = {DONE, NEEDS_WORK, BLOCKED}
     for entry in cache:
         cls, per = classify_file(entry, root)
         if cls not in valid:
@@ -349,9 +419,12 @@ def cmd_selftest(cache, root):
         ({"n": 2, "status": "/"}, {2: {"V", "Q"}}, DONE),
         ({"n": 2, "status": "/"}, {2: {"V"}}, NEEDS_WORK),
         ({"n": 2, "status": "/"}, {}, NEEDS_WORK),
-        # naturally-deferred section: Deferred stamp parks it, no V/Q needed
+        # naturally-deferred section: TERMINAL Deferred stamp parks it, no V/Q needed
         ({"n": 4, "status": "/"}, {4: {"D"}}, DONE),
         ({"n": 4, "status": "x"}, {4: {"D"}}, DONE),
+        # recoverable deferral (awaiting-*): BLOCKED, never DONE (3-state oracle)
+        ({"n": 5, "status": "/"}, {5: {"D", "DR"}}, BLOCKED),
+        ({"n": 5, "status": "x"}, {5: {"D", "DR"}}, BLOCKED),
         # bare [ ]/blank is never done, even with stray stamps
         ({"n": 3, "status": ""}, {3: {"V", "Q"}}, NEEDS_WORK),
         ({"n": 3, "status": " "}, {}, NEEDS_WORK),
@@ -377,12 +450,15 @@ def main(argv=None):
     g.add_argument("--next", action="store_true")
     g.add_argument("--classify", metavar="PATH")
     g.add_argument("--summary", action="store_true")
+    g.add_argument("--blockers", action="store_true")
     g.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
     root = repo_root(args.repo_root)
     cache = load_cache(args.cache, root)
     if args.next:
         return cmd_next(cache, root)
+    if args.blockers:
+        return cmd_blockers(cache, root)
     if args.classify:
         return cmd_classify(cache, root, args.classify)
     if args.summary:
