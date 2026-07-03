@@ -153,7 +153,17 @@
   24 todo-graph-validate runs all went through in-context Bash -- the gap is
   run-wide, not a one-section anomaly.
 
-- [ ] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
+- [x] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
+  DONE 2026-07-03: "Wait discipline" section added to overnight-sequencer
+  SKILL.md (one wait mechanism per wait; prefer the single absorbing
+  foreground Bash wait; hold an armed Monitor silently; 30-60s cadence when a
+  manual poll is truly unavoidable; batch multi-kind waits into ONE combined
+  condition; unrelated forward work allowed while holding). Full rule also in
+  codex-design-review "Wait discipline" (the canonical background-dispatch
+  doc) with pointer lines at the three other codex background-wait sites
+  (adversarial-review-section, review-todo, fix-review). Live-run validation:
+  next overnight (compare Holding/Check-poll counts vs the 531/610 baseline
+  via overnight-log-explorer). Original measurements follow.
   From §25 (03:30) to the end of the 2026-07-02 20h run, every background
   Codex/agent wait was covered by a Monitor AND a manual poll loop on top of it:
   531 `Holding ...` narrator turns + 610 `Check ... status` Bash polls at a

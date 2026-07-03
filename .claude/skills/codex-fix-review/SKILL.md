@@ -99,7 +99,9 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 bash scripts/codex-dispatch.sh '[review-kind: re-adversarial] <todo-path> <focus prompt>'
 ```
 
-Run in background for reviews touching > 3 files:
+Run in background for reviews touching > 3 files (wait per the double-poll
+ban in codex-design-review "Wait discipline" -- one absorbing wait, no ~10s
+re-poll clusters):
 ```bash
 # In Bash tool with run_in_background: true
 ```

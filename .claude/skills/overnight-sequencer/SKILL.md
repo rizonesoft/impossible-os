@@ -58,6 +58,34 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
   `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
 
+## Wait discipline (background Codex verdicts, agent results, CI watches)
+
+The single biggest measured token leak of the 2026-07-02 run (~1,100 wasted
+turns): every background wait from section 25 onward was covered by a Monitor
+AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
+610 `Check ... status` Bash polls against only 40 Monitor arms. The rules:
+
+- **One wait mechanism per wait.** Once a Monitor (or a background Bash with a
+  completion condition) is armed, HOLD until it fires: no Bash re-polls, no
+  per-poll "holding for the verdict" narrator turns. The notification is the
+  signal; emitting turns while waiting buys nothing and burns the budget.
+- **Prefer ONE foreground Bash call that absorbs the whole wait** when you need
+  the result before anything else can proceed:
+  `for i in $(seq 1 90); do grep -q "Turn completed" <out> && break; sleep 10; done`
+  held a 6-min verdict wait in a SINGLE turn (2026-07-02 log line 1838; a
+  13-min wait at line 497). This is the early-run pattern that later sections
+  regressed away from.
+- **If a manual poll is genuinely unavoidable** (Monitor timed out, host-load
+  slowdown made the ETA unknowable), poll at a 30-60s cadence, never ~10s, and
+  do not narrate between polls.
+- **Batch multi-kind review waits into ONE Monitor condition**
+  (`grep -q A f1 && grep -q B f2 && grep -q C f3`-style, as done correctly at
+  log line 4996) instead of serial per-kind poll clusters -- the section-28
+  antipattern was 43 polls for one verdict, x3 kinds.
+- While a wait is armed you may do UNRELATED forward work (prep the next
+  section's reads, update the cursor) -- what you may not do is spend turns
+  checking or narrating the wait itself.
+
 ## Procedure
 
 ### 0. Start / resume

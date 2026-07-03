@@ -44,7 +44,10 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    - Include the exact file paths and line ranges in the focus prompt.
    - List ALL adversarial angles from step 2 in the prompt -- do not omit any.
    - Request findings by severity: `Critical`, `High`, `Medium`, `Low`.
-   - Run in background for large reviews (> 3 files).
+   - Run in background for large reviews (> 3 files). Wait per the
+     double-poll ban (codex-design-review "Wait discipline"): one absorbing
+     foreground wait or one armed Monitor held silently -- never ~10s manual
+     re-polls with narrator turns.
 4. Triage findings -- the new `receiving_review_required.py` PreToolUse hook BLOCKS any subsequent `Edit` / `Write` / `MultiEdit` until you invoke `Skill(name="superpowers:receiving-code-review")` to triage the findings. The block is the hard gate; the existing PostToolUse `systemMessage` reminder is the secondary signal. State lives in `.claude/state/last-codex-review.json` (gitignored, schema documented in `.claude/state/README.md`); 1 hour TTL stale-pass; opt-out via `RECEIVING_REVIEW_OVERRIDE=1` env var on the same call (the agent must state what code-evidence quote justifies skipping). **Adversarial-review false-positive watch:** Codex reads code without runtime context and frequently flags "missing lock" when the caller already holds it, "race" on paths single-threaded by construction (BSP boot phase 0), or "buffer overflow" on buffers static-asserted larger than the access. Verify at file:line before classifying. Priority for valid findings: always fix `Critical` and `High`; fix `Medium` unless accepted with a concrete technical reason.
 5. Rebuild and run relevant tests after fixes -- **via
    `Agent(subagent_type="checks-runner", ...)` by DEFAULT on every round**

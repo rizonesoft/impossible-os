@@ -33,7 +33,10 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    ```bash
    bash scripts/codex-dispatch.sh '[review-kind: adversarial] <todo-path> <focus prompt>'
    ```
-   Run in background for large reviews (> 3 sections).
+   Run in background for large reviews (> 3 sections). Wait per the
+   double-poll ban (codex-design-review "Wait discipline"): one absorbing
+   foreground wait or one held Monitor, 30-60s cadence if a manual poll is
+   truly unavoidable.
 5. **Collect and present findings** verbatim from Codex output.
 6. **Triage findings** -- the PostToolUse hook fires `receiving-code-review` reminder; follow it. Verify each cited line against the actual code; YAGNI-check missing-functionality flags by grepping for callers first.
 7. **Classify each verified finding:**
