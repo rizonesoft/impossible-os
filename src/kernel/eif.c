@@ -3,7 +3,7 @@
  *
  * Loads EIF binaries: validates header, copies segments to user address
  * range (identity-mapped), validates import table against SSDT.
- * Spec: docs/specs/eif-format.md
+ * Spec: specs/eif-format.md
  * ============================================================================ */
 
 #include "kernel/eif.h"

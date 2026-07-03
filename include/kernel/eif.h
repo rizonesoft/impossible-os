@@ -2,7 +2,7 @@
  * eif.h -- Executable Impossible Format (EIF) definitions
  *
  * Native Impossible OS binary format. 64-byte header, integer-only syscall
- * imports, optional code signing. Spec: docs/specs/eif-format.md
+ * imports, optional code signing. Spec: specs/eif-format.md
  * ============================================================================ */
 
 #pragma once

@@ -37,7 +37,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 
 - `exec_load(path, proc)` in `src/kernel/exec.c` replaces the direct `elf_load()` call; auto-detects format by magic and dispatches.
 - ELF loader uses VMM-backed user pages with correct R/W/X permissions; supports PIE; honours `PT_GNU_STACK` (NX stack), `PT_GNU_RELRO` (read-only GOT after relocation), and `PT_GNU_PROPERTY` (CET/IBT feature flags).
-- EIF format is specified in `docs/specs/eif-format.md`; kernel loads EIF in <10 µs.
+- EIF format is specified in `specs/eif-format.md`; kernel loads EIF in <10 µs.
 - PE32+ parser loads sections, resolves imports, processes TLS directory, and registers `.pdata` unwind tables.
 - PE32+ import compatibility covers API-set contract DLL names and delay-load/bound-import metadata for modern Win11 binaries.
 - Every loaded module (ELF, PE32+, EIF) is registered in the `LDR_DATA_TABLE_ENTRY` module list and the `LOADED_MODULE` crash dump registry.
@@ -153,7 +153,7 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
 
-- [x] Write `docs/specs/eif-format.md` -- complete spec with design goals, comparison table, file layout, byte-offset tables
+- [x] Write `specs/eif-format.md` -- complete spec with design goals, comparison table, file layout, byte-offset tables
 - [x] Define `eif_header_t` (64 bytes): magic `"EIF!"` (0x45494621), version, arch (x86_64/AArch64), flags (GUI/CONSOLE/DRIVER/SIGNED/COMPRESSED/DEBUG), api_version, entry_point, load_base, segment/import counts and offsets, signature/metadata offsets. Static assert on size.
 - [x] Define `eif_segment_t` (32 bytes): vaddr, file_offset, file_size, mem_size, flags (READ/WRITE/EXEC), reserved. Static assert on size.
 - [x] Define `eif_import_t` (8 bytes): syscall_id (SSDT service number), flags (OPTIONAL bit). Static assert on size. Import resolution is integer-only -- no string lookup.
@@ -163,7 +163,7 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 - [x] elf2eif conversion flow documented (section 13 prereq)
 - [x] Commit: `"docs: EIF format specification"`
 
-**Test checkpoint:** `docs/specs/eif-format.md` exists and contains `eif_header_t`, `eif_segment_t`, `eif_import_t` definitions with byte offsets. Header totals 64 bytes. No runtime test -- spec document only.
+**Test checkpoint:** `specs/eif-format.md` exists and contains `eif_header_t`, `eif_segment_t`, `eif_import_t` definitions with byte offsets. Header totals 64 bytes. No runtime test -- spec document only.
 
 ## 5. EIF Kernel Loader
 

@@ -15,7 +15,7 @@ title: "TODO-20 -- EIF Full Implementation"
 
 > [!IMPORTANT]
 > **Current state:** `eif_load()` in `src/kernel/eif.c` loads segments via identity mapping, validates imports against SSDT range, writes a per-process dispatch table at 0x8F0000, and measures load time. Missing: segment R/W/X enforcement, ASLR, API version check, metadata parsing, LZ4 decompression, module registration, overlap validation. Optional imports mark `available=0` but there is no deterministic user-callable stub yet (§7).
-> EIF spec lives at `docs/specs/eif-format.md`. Code signing is tracked separately in TODO-17 §17. The `elf2eif` converter is tracked in TODO-17 §13.
+> EIF spec lives at `specs/eif-format.md`. Code signing is tracked separately in TODO-17 §17. The `elf2eif` converter is tracked in TODO-17 §13.
 
 > [!NOTE]
 > **Observability:** Checklists still cite `POST16(0xDE2x)` markers; the EIF path runs post-boot with `klog` available. Prefer matching `klog(..., "eif", ...)` strings for pass/fail when implementing, and treat POST16 lines here as legacy scaffolding unless a section is reclassified as true boot-phase work.
@@ -24,7 +24,7 @@ title: "TODO-20 -- EIF Full Implementation"
 
 - [`src/kernel/eif.c`](../../src/kernel/eif.c) -- current EIF loader (basic segments + imports)
 - [`include/kernel/eif.h`](../../include/kernel/eif.h) -- EIF structures and constants
-- [`docs/specs/eif-format.md`](../../docs/specs/eif-format.md) -- normative EIF specification
+- [`specs/eif-format.md`](../../specs/eif-format.md) -- normative EIF specification
 - [`src/kernel/exec.c`](../../src/kernel/exec.c) -- exec dispatcher, module registration API
 - [`include/kernel/exec.h`](../../include/kernel/exec.h) -- `loaded_module_t`, `exec_register_module()`
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page()`, `vmm_protect_range()`
@@ -166,7 +166,7 @@ The spec reserves `EIF_FLAG_COMPRESSED` for LZ4-compressed segment data. This en
 
 Spec normative rule 5: skipped optional imports MUST have their dispatch table entry set to a deterministic stub returning `STATUS_NOT_IMPLEMENTED`.
 
-- [ ] ABI prerequisite: reconcile `docs/specs/eif-format.md` rule 5, `include/kernel/eif.h` `eif_dispatch_entry_t`, and `TODO-17-binary-system.md` §13 before implementation; the current contract is data-only (`{syscall_id, available}`), not callable stub slots
+- [ ] ABI prerequisite: reconcile `specs/eif-format.md` rule 5, `include/kernel/eif.h` `eif_dispatch_entry_t`, and `TODO-17-binary-system.md` §13 before implementation; the current contract is data-only (`{syscall_id, available}`), not callable stub slots
 - [ ] If the ABI stays data-only: have `elf2eif` emit deterministic user thunks for optional imports that translate `available=0` into `STATUS_NOT_IMPLEMENTED` (-> XREF: `TODO-17-binary-system.md §13`)
 - [ ] If the ABI changes to callable stub slots: update the EIF spec and `eif_dispatch_entry_t` layout first (-> XREF: `TODO-17-binary-system.md §1`)
 - [ ] In the dispatch table write pass: for optional imports where `available=0`, set the dispatch entry to point to a kernel-provided stub function that returns `STATUS_NOT_IMPLEMENTED` (0xC0000002)

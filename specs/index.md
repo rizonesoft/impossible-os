@@ -1,6 +1,12 @@
 # Specs
 
-External reference specifications for hardware, firmware, storage, and hypervisor formats.
+External reference specifications for hardware, firmware, storage, and hypervisor formats, plus Impossible OS's own native format specs.
+
+## Native Formats
+
+| Document                        | Topics                                              |
+| -------------------------------- | ---------------------------------------------------- |
+| [EIF Format](eif-format.md)     | EIF native binary: header, segments, imports, signing |
 
 ## Storage
 
