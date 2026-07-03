@@ -1011,7 +1011,10 @@ if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "docs/staged-leak.md: track
 else
     t_fail "lint Check 16 missed the staged-only key" "rc=$SEC_RC"
 fi
-( cd "$SEC_REPO" && git rm -q --cached docs/staged-leak.md && rm -f docs/staged-leak.md )
+# -f: the fixture deliberately leaves staged != worktree != HEAD (that is the
+# staged-only-leak case itself); plain --cached refuses that state and errored
+# on every run ("staged content different from both the file and the HEAD").
+( cd "$SEC_REPO" && git rm -q --cached -f docs/staged-leak.md && rm -f docs/staged-leak.md )
 
 # skip env produces a visible WARN and passes
 SEC_OUT="$(cd "$SEC_REPO" && SKIP_LINT_SECRETS=1 bash scripts/lint.sh src/ 2>&1)"
@@ -6749,6 +6752,15 @@ fi
 AIWF_STATE="$AIWF_TMP/state"
 TODO10="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
 AIWF_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE")
+# Hermetic build-log fixture (CI red 2026-07-02..03, 5 tests): build-evidence
+# provenance (log_path + final_marker) must NEVER point at the real repo's
+# untracked build/build.log -- it exists on a dev box (from routine builds)
+# but not in a clean actions/checkout, so the obligations source check
+# (obligations.py open+tail of root/log_path) passed locally and failed in CI.
+# common.rel_path keeps out-of-root absolute paths absolute, so this AIWF_TMP
+# path survives the ledger round-trip and resolves in the source check.
+AIWF_BUILD_LOG="$AIWF_TMP/fixture-build.log"
+printf 'compile...\n=== BUILD OK ===\n' > "$AIWF_BUILD_LOG"
 
 if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
     --todo "$TODO10" --section 1 --driver claude --run-id driver-a >/dev/null; then
@@ -6880,7 +6892,7 @@ fi
     --todo "$TODO10" --section 2 --role validator --backend local \
     --run-id build-c-prov --kind build --result ok --source "$TODO10" \
     --command "bash scripts/build.sh" --exit-code 0 \
-    --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
+    --log-path "$AIWF_BUILD_LOG" --final-marker "=== BUILD OK ===" >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 2 --role validator --backend local \
     --run-id graph-c --kind todo-graph-validate --result ok >/dev/null
@@ -7116,7 +7128,7 @@ fi
 AIWF_SCALE_STATE="$AIWF_TMP/scale-state"
 rm -rf "$AIWF_SCALE_STATE"
 mkdir -p "$AIWF_SCALE_STATE"
-if env AI_WORKFLOW_STATE_DIR="$AIWF_SCALE_STATE" python3 - "$AIWF_SCALE_STATE" "$TODO10" <<'PY'
+if env AI_WORKFLOW_STATE_DIR="$AIWF_SCALE_STATE" AIWF_FIXTURE_BUILD_LOG="$AIWF_BUILD_LOG" python3 - "$AIWF_SCALE_STATE" "$TODO10" <<'PY'
 import importlib.util
 import os
 import pathlib
@@ -7179,7 +7191,7 @@ def append(kind, run_id, role, result="ok", source_blob=None):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
+        "metadata": {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -7262,7 +7274,7 @@ def append_multi(kind, run_id, role, result="ok"):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
+        "metadata": {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -7341,7 +7353,7 @@ def append_stale_build(i):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
+        "metadata": {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -7498,7 +7510,7 @@ ledger.unlink()
 
 # build events synthesize FULL provenance by default: the resolver now rejects
 # build evidence without exit code + log path + final marker
-BUILD_PROV = {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="}
+BUILD_PROV = {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="}
 
 
 def append_for_section(
@@ -7733,7 +7745,7 @@ try:
             "created_at": common.now_iso(),
             "expires_at_ns": common.now_ns() - 1_000_000_000,
             "legacy_import": False,
-            "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
+            "metadata": {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="},
         },
         root,
     )
@@ -7849,7 +7861,7 @@ indexed_event = ob.evidence.append_event(
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
+        "metadata": {"exit_code": "0", "log_path": os.environ["AIWF_FIXTURE_BUILD_LOG"], "final_marker": "=== BUILD OK ==="},
     },
     root,
 )
@@ -7933,7 +7945,7 @@ META_OUT=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 3 --role validator --backend local \
     --run-id build-meta --kind build --result ok --source "$TODO10" \
     --command "bash scripts/build.sh" --exit-code 0 \
-    --log-path build/build.log --final-marker "=== BUILD OK ===")
+    --log-path "$AIWF_BUILD_LOG" --final-marker "=== BUILD OK ===")
 if echo "$META_OUT" | grep -q '"command": "bash scripts/build.sh"' \
    && echo "$META_OUT" | grep -q '"exit_code": "0"' \
    && echo "$META_OUT" | grep -q '"final_marker": "=== BUILD OK ==="'; then
@@ -7956,7 +7968,7 @@ mkdir -p "$AIWF_STATE"
     --todo "$STAMP_TODO" --section 1 --driver claude --run-id stamp-driver >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_TODO" --section 1 --role validator --backend local \
-    --run-id stamp-build --kind build --result ok --source "$STAMP_TODO" --command "bash scripts/build.sh" --exit-code 0 --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
+    --run-id stamp-build --kind build --result ok --source "$STAMP_TODO" --command "bash scripts/build.sh" --exit-code 0 --log-path "$AIWF_BUILD_LOG" --final-marker "=== BUILD OK ===" >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_TODO" --section 1 --role validator --backend local \
     --run-id stamp-graph --kind todo-graph-validate --result ok >/dev/null

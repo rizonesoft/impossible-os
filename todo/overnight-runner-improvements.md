@@ -15,15 +15,20 @@
 
 ## P1 -- correctness / stop the bleeding
 
-- [ ] **Fix the non-hermetic `ai_workflow_*` tooling tests so CI (`build.yml`) goes green.**
-  build.yml has been red for 30+ runs (since `548f59a1b`, 2026-07-02); the runner
-  keeps pushing on top of red CI and the failure emails never stop. 5 tests
-  (`ai_workflow_stamp` x2, `ai_workflow_gates` x2, `ai_workflow_obligations` large-ledger)
-  pass in the dev working repo but fail in a clean `actions/checkout`. Repro:
-  `git clone --no-local . /tmp/cirepo && cd /tmp/cirepo && git checkout <HEAD> && TEST_TOOLING_SKIP_LSP_MCP=1 bash scripts/test-tooling.sh`.
-  Also fix the fragile `git rm --cached docs/staged-leak.md` cleanup in the
-  Check 16 `lint_secret_guard` fixture (errors on a divergent index; secondary
-  noise). See memory `project_ci_build_yml_red_since_548f59a1`.
+- [x] **Fix the non-hermetic `ai_workflow_*` tooling tests so CI (`build.yml`) goes green.**
+  FIXED 2026-07-03. Root cause (systematic-debugging, hypothesis verified both
+  directions): the ai_workflow fixtures recorded build-evidence provenance
+  pointing at the REAL repo's untracked `build/build.log` (10 sites: 4 CLI
+  `--log-path` records + 6 embedded ledger events), and the obligations source
+  check opens `root/log_path` and tails for `=== BUILD OK ===` -- present on a
+  dev box from routine builds, absent in a clean actions/checkout. Adding ONLY
+  a marker build.log to the failing clone flipped 5 FAIL -> 582/582 PASS
+  (single cause). Fix: fixture-owned `$AIWF_TMP/fixture-build.log` (rel_path
+  keeps out-of-root absolute paths absolute, so no product change needed).
+  Also fixed the Check 16 cleanup: `git rm --cached -f` (the fixture
+  deliberately leaves staged != worktree != HEAD, which plain --cached
+  refuses -- the "docs/staged-leak.md" error on every CI run). Verified:
+  clean clone 582/582, dev 583/583.
 
 - [ ] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
   In PREFLIGHT, after the local build/test baseline, dispatch
