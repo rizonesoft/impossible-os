@@ -3571,6 +3571,11 @@ if python3 "$REPO_ROOT/.claude/hooks/xref_dispatch_reminder.py" --selftest >/dev
 else
     t_fail "xref_dispatch_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/slice_read_reminder.py" --selftest >/dev/null 2>&1; then
+    t_pass "slice_read_reminder_selftest  fixture suite green"
+else
+    t_fail "slice_read_reminder_selftest  embedded selftest failed"
+fi
 
 # (c) stop_audit detects an "I'll run review-todo-section" promise without
 #     a matching tool call. Synthetic transcript fixture below uses the

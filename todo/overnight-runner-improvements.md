@@ -216,14 +216,20 @@
   Residual: the first real 529 during an overnight confirms (a)
   empirically -- gotcha line filed; nothing further to build.
 
-- [ ] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
-  In the 2026-07-02 run, TODO-12 (1441 lines) was fully Read 59 times and
-  `src/kernel/sched/task.c` (3216 lines) 40 times -- several as back-to-back
-  duplicate reads seconds apart (e.g. 03:31:28 twice in the same second). A
-  driver is the Edit tool's "file has not been read yet" re-gate (19 of 62
-  tool_use_errors), which keeps forcing re-reads that then happen whole-file.
-  Doctrine: `Read(offset, limit)` around the section text / IO-table row being
-  edited; after an edit, re-read only the mutated slice.
+- [x] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
+  DONE 2026-07-03, two layers:
+  - `slice_read_reminder.py` (PostToolUse Read, warning-only): whole-file
+    RE-read of a > 32 KB file within 30 min of a prior read -> one reminder
+    per path per window that a slice read satisfies the Edit freshness gate.
+    First full reads and slice reads never warn; selftest + tooling test.
+  - Doctrine at the three re-read hotspots: implement-todo-section step 1
+    (one full read per pass = orientation, later reads are slices),
+    review-todo-section Phase 1 (verification reads are slices at the
+    mapper's file:line targets), overnight-sequencer Read-discipline bullet.
+  Measured baseline for the next run's comparison: TODO-12 (1441 lines)
+  fully Read 59x, task.c (3216 lines) 40x, back-to-back duplicates within
+  one second; the Edit "file has not been read yet" re-gate drove 19 of 62
+  tool_use_errors. Original text follows.
 
 - [ ] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
   (a) `todo_item_line_length` -- 77 blocks (46%), and ~36% re-blocked on the

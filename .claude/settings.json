@@ -299,6 +299,16 @@
         ]
       },
       {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/slice_read_reminder.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent",
         "hooks": [
           {

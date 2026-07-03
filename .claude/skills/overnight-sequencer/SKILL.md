@@ -57,6 +57,11 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   discover a new one (a flaky gate, an in-flight file, a tool that mis-fires),
   append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
   `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
+- **Read discipline:** one full read per file per pass is orientation; every
+  later read of the cursor TODO or a big source is a SLICE
+  (`Read(offset, limit)` around the region in play -- it satisfies the Edit
+  freshness gate just like a full read). The slice_read_reminder hook nags on
+  whole-file re-reads of > 32 KB files; act on it.
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 
