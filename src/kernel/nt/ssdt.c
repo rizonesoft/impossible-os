@@ -14,6 +14,7 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/zw.h"
+#include "kernel/nt/nt_audit.h"
 #include "kernel/sched/task.h"  /* thread_current() for per-thread previous_mode */
 #include "kernel/klog.h"
 
@@ -270,7 +271,22 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
      * SCOPE-GAP-ALLOWED: out-of-range service number returns NOT_IMPLEMENTED is
      * the Windows-correct terminal behavior, not a stub for deferred work. */
     if (index >= table->max)
-        return STATUS_NOT_IMPLEMENTED;
+        return STATUS_NOT_IMPLEMENTED;   /* SCOPE-GAP-ALLOWED: Windows-correct terminal status */
+
+    /* Syscall audit hooks: zero-overhead relaxed-atomic fast path when none is
+     * registered. One session spans PRE -> handler -> POST so an AUDIT_BOTH
+     * hook cannot be unregistered mid-syscall. A PRE hook returning non-SUCCESS
+     * blocks the syscall. */
+    if (nt_audit_hook_count() != 0) {
+        uint64_t audit_args[6] = { a1, a2, a3, a4, a5, a6 };
+        nt_audit_session_t sess;
+        NTSTATUS pre = nt_audit_begin(service_number, audit_args, &sess);
+        if (pre != STATUS_SUCCESS)
+            return pre;
+        NTSTATUS handler_status = table->handlers[index](a1, a2, a3, a4, a5, a6);
+        nt_audit_end(&sess, service_number, audit_args, handler_status);
+        return handler_status;
+    }
 
     return table->handlers[index](a1, a2, a3, a4, a5, a6);
 }

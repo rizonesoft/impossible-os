@@ -429,6 +429,7 @@ extern void test_register_peb_teb(void);
 extern void test_register_nt_types(void);
 extern void test_register_nt_sync(void);
 extern void test_register_nt_misc(void);
+extern void test_register_nt_audit(void);
 extern void test_register_ipc(void);
 extern void test_register_alpc(void);
 extern void test_register_storage(void);
@@ -550,6 +551,7 @@ void test_runner_init(void)
     test_register_nt_types();
     test_register_nt_sync();
     test_register_nt_misc();
+    test_register_nt_audit();
     test_register_bulletproof();
 
     /* IPC */

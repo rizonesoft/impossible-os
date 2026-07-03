@@ -234,6 +234,7 @@ void boot_phase3(void)
         extern void nt_misc_register_ssdt(void);
         extern int  nt_lpc_register_ssdt(void);
         extern int  nt_alpc_register_ssdt(void);
+        extern int  nt_audit_register_ssdt(void);
         extern int  csprng_register_ssdt(void);
         int reg_failures;
         nt_syscall_register_ssdt();
@@ -248,6 +249,7 @@ void boot_phase3(void)
         nt_misc_register_ssdt();
         reg_failures  = nt_lpc_register_ssdt();
         reg_failures += nt_alpc_register_ssdt();
+        reg_failures += nt_audit_register_ssdt();
         reg_failures += csprng_register_ssdt();
         if (reg_failures != 0) {
             klog(LOG_ERROR, "boot",

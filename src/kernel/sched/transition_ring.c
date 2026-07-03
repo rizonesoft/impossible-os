@@ -61,6 +61,20 @@ void transition_ring_init_this_cpu(void)
     pcpu->transition_init_marker = TRANSITION_INIT_MARKER;
 }
 
+/* -------- Runtime gate -------- *
+ * This byte gates ONLY the hot syscall-entry asm sites (SYSCALL/SYSRET), which
+ * fire twice per syscall; default off so trivial syscalls skip the expensive
+ * per-transition record (TSC + CR3 + 2x RDMSR + task_current). The IDT/fault
+ * transition callers are NOT gated -- the panic forensic ring must always
+ * capture interrupt/fault transitions. Enable syscall-path recording via
+ * transition_ring_set_enabled(). */
+volatile uint8_t g_transition_ring_active = 0;
+
+void transition_ring_set_enabled(int on)
+{
+    __atomic_store_n(&g_transition_ring_active, on ? 1u : 0u, __ATOMIC_RELEASE);
+}
+
 /* -------- Record -------- */
 
 void transition_ring_record(uint32_t direction, uint64_t rip, uint64_t rsp)

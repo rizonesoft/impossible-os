@@ -27,6 +27,7 @@ bits 64
 global syscall_entry
 extern syscall_dispatch_fast
 extern transition_ring_record; fast-path transition ring hook
+extern g_transition_ring_active ; transition-ring runtime gate byte (default off)
 extern g_mds_verw_active     ; MDS VERW gate byte (TODO-10 S19)
 extern g_mds_verw_sel        ; VERW 16-bit selector operand
 
@@ -75,10 +76,15 @@ syscall_entry:
     push rax                            ; save service
     push r10                            ; save arg1
     push rdx                            ; save arg2
+    ; Gate: skip the expensive transition-ring record unless enabled (default off).
+    ; RIP-relative RO byte, not GS-relative -- safe here. ZF clobber is harmless.
+    cmp byte [rel g_transition_ring_active], 0
+    jz .trr_skip_k
     xor edi, edi                        ; direction = TRANSITION_DIR_TO_KERNEL (0)
     mov rsi, [rsp+0x50]                 ; user RIP from stacked rcx
     mov rdx, [gs:PCPU_USER_RSP_SCRATCH] ; user RSP from per-CPU scratch
     call transition_ring_record
+.trr_skip_k:
     pop rdx                             ; restore arg2
     pop r10                             ; restore arg1
     pop rax                             ; restore service
@@ -105,10 +111,14 @@ syscall_entry:
     ; User RIP at [rsp+0x38], user RSP at [rsp+0x40]. RAX holds the
     ; NTSTATUS return; preserve it across the call.
     push rax                            ; save NTSTATUS for sysret caller
+    ; Gate: skip the transition-ring record unless enabled (default off).
+    cmp byte [rel g_transition_ring_active], 0
+    jz .trr_skip_u
     mov edi, 1                          ; direction = TRANSITION_DIR_TO_USER (1)
     mov rsi, [rsp+0x40]                 ; user RIP (rcx slot, shifted by +8 for our rax push)
     mov rdx, [rsp+0x48]                 ; user RSP (user_rsp slot, shifted by +8)
     call transition_ring_record
+.trr_skip_u:
     pop rax                             ; restore NTSTATUS
 
     ; Restore callee-save registers (reverse push order)

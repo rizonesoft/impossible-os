@@ -133,6 +133,9 @@ struct thread {
                                      * Per-thread so a Zw kernel call on one CPU cannot clear
                                      * another CPU's user-syscall probe flag. Zero-init (a fresh
                                      * kernel thread defaults to KernelMode). */
+    uint8_t     in_audit;           /* 1 while this thread is running a syscall-audit hook;
+                                     * per-thread (migration-safe) recursion guard so a hook's
+                                     * own syscall is not itself re-audited. Zero-init. */
 };
 
 /* Task Control Block */

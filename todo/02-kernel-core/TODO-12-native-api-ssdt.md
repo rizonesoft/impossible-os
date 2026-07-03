@@ -86,7 +86,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [/]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §20   |  [/]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [x]   |
-| ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [ ]   |
+| ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [/]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [ ]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
@@ -228,7 +228,7 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 > - Per-CPU `syscall_rsp0`/`user_rsp_scratch` (gs:24/gs:32, `_Static_assert`-pinned), updated at both scheduler switch sites.
 
 > **Verified:** 2026-06-28 | 7/7 items | build OK | smoke PASS (TCG 2.51s), tests 346+16 PASS
-> **Deferred:** [H] syscall-path `transition_ring_record` forensic overhead (2x TSC+CR3+2 RDMSR per syscall) should be gated behind a runtime knob -> XREF: 02-kernel-core/TODO-12 §24 (item: "Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob" at line 798)
+> **Deferred:** [H] syscall-path `transition_ring_record` forensic overhead (2x TSC+CR3+2 RDMSR per syscall) should be gated behind a runtime knob -> XREF: 02-kernel-core/TODO-12 §24 (item: "Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob" at line 231)
 > **Deferred:** [M] `ssdt_dispatch` bound uses hardcoded `SSDT_MAIN_MAX` for both tables; OOB if `SSDT_SHADOW_MAX` ever shrinks -> XREF: 02-kernel-core/TODO-12 §4 (item: "Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`" at line 232)
 > **Quality reviewed:** 2026-06-28 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit fixed (FMASK), 2 deferred (1H+1M), 1Crit rejected (STAR false-positive) | scope: kernel-code-quality
 
@@ -1044,21 +1044,26 @@ Catch-all for global atom table, locale management, environment variables, and d
 > [!IMPORTANT]
 > **Impossible OS exclusive feature.** Windows uses ETW (heavyweight, complex configuration). Linux uses seccomp-bpf (complex BPF programs) or strace (ptrace overhead). Impossible OS provides a first-class kernel API for syscall-level auditing with minimal overhead.
 
-- [ ] `NtRegisterSyscallAuditHook(HookHandle, AuditRoutine, Context, Flags)` → SSDT 0x0150:
-  - `Flags`: `AUDIT_PRE_CALL = 1` (before handler), `AUDIT_POST_CALL = 2` (after handler), `AUDIT_BOTH = 3`
-  - `AuditRoutine(ServiceNumber, Args, Context, Phase)` -- called in kernel context
-  - Hook can inspect arguments, log, or deny (return `STATUS_ACCESS_DENIED` from pre-call to block)
-- [ ] `NtUnregisterSyscallAuditHook(HookHandle)` → SSDT 0x0151
-- [ ] `NtQuerySyscallAuditState(Buffer, Length, ReturnLength)` → SSDT 0x0152:
-  - Returns list of active hooks, their coverage (pre/post/both), and overhead metrics
-- [ ] SSDT dispatcher integration: before/after each `syscall_dispatch` call, check hook list and invoke if registered
-  - Fast path: single atomic read of hook pointer; NULL = no hooks, no overhead
-  - Hook list is RCU-protected for lock-free read in the hot path
-- [ ] Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob: it fires twice per syscall (TSC+CR3+2x RDMSR+task_current) from `syscall_entry.asm`; default cheap/off so trivial syscalls skip it. (§2 perf)
-- [ ] Requires `SeAuditPrivilege` to register hooks
-- [ ] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
+- [/] `NtRegisterSyscallAuditHook` → SSDT 0x0150: shipped as kernel C API `nt_audit_register` (`AUDIT_PRE`/`POST`/`BOTH`); raw-function-pointer SSDT syscall NOT exposed (unsafe pre-SMP-closed previous-mode) -> deferred to §29
+  - `AuditRoutine(ServiceNumber, Args, Context, Phase, Status)` -- kernel context; a PRE routine returning non-`STATUS_SUCCESS` blocks the syscall
+- [/] `NtUnregisterSyscallAuditHook` → SSDT 0x0151: shipped as kernel C API `nt_audit_unregister` (non-blocking try-semantics: `STATUS_UNSUCCESSFUL` while a dispatch is in flight, else clears the slot); SSDT exposure deferred to §29
+- [x] `NtQuerySyscallAuditState(Buffer, Length, ReturnLength)` → SSDT 0x0152: `SYSCALL_AUDIT_STATE` (active count, per-hook handle/flags/invocations, denied count); probe+copy + `ReturnLength`/`BUFFER_TOO_SMALL`; no function pointers exposed
+- [x] SSDT dispatcher integration: `ssdt_dispatch` calls `nt_audit_dispatch_pre` before + `nt_audit_dispatch_post` after the handler; pre-`STATUS_ACCESS_DENIED` skips the handler
+  - Fast path: relaxed atomic `nt_audit_hook_count()==0` -> zero overhead; hooks snapshot under `s_audit_lock` + `in_flight` refcount, invoked outside the lock; per-thread `in_audit` guard breaks recursion
+- [x] Gate the syscall-path `transition_ring_record()` behind `g_transition_ring_active`: `cmp/jz` in `syscall_entry.asm` (both sites), default off; IDT/fault records stay on (panic forensics); `transition_ring_set_enabled()` toggles it. (§2 perf)
+- [x] Registration is kernel-mode only (raw function-pointer `AuditRoutine` is untrusted from ring-3); ring-3-safe `SeAuditPrivilege` gating owned by §29 (no `SeSinglePrivilegeCheck` yet)
+- [x] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
 
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 5 suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/nt/nt_audit.c` + `include/kernel/nt/nt_audit.h`: fixed 8-slot hook pool + pre/post dispatch. Only `NtQuerySyscallAuditState` (0x0152) is SSDT-exposed; `nt_audit_register`/`nt_audit_unregister` are kernel C APIs (see Security).
+> - Hot path: `ssdt_dispatch` reads `nt_audit_hook_count()` (relaxed atomic), zero cost when none registered; hooks are snapshotted under `s_audit_lock` (with a per-hook `in_flight` refcount) and invoked OUTSIDE it (so a hook may yield/block); a per-thread `thread->in_audit` guard breaks recursion; `nt_audit_unregister` refuses (`STATUS_UNSUCCESSFUL`) while `in_flight != 0`, else frees the slot -- context safe with no wait/wake primitive needed.
+> - Syscall-path `transition_ring_record()` gated behind `g_transition_ring_active` (`cmp/jz` in `syscall_entry.asm`, default off); IDT/fault transition records stay on for panic forensics.
+> - Security: registration takes a raw kernel function pointer, so it is NOT a ring-3 syscall (would be kernel-code execution if the non-SMP-closed previous-mode gate were raced); the kernel C API is the only registration path.
+> - Scope boundary: covers the SSDT surface (SYSCALL + INT 0x2E), NOT legacy INT 0x80; ring-3-safe registration via a validated descriptor + `SeAuditPrivilege` is owned by §29.
 
 ---
 
@@ -1162,6 +1167,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > [!NOTE]
 > Split from §16 to keep each section under the 10-item limit. §16 covers "operate on existing token" (open/query/set/adjust). This section covers token creation/derivation and the Security Reference Monitor decision points (NtAccessCheck, NtPrivilegeCheck, security-descriptor I/O). Token infrastructure in `src/kernel/security/token.c`; SRM engine in `src/kernel/security/srm.c` (→ XREF TODO-15 §7, §8).
 
+- [ ] Ring-3-safe audit-hook registration (SSDT 0x0150/0x0151, stubs today): expose §24 `nt_audit.c` register/unregister via a validated descriptor (id, not raw pointer) gated by `SeSinglePrivilegeCheck(SeAuditPrivilege)`.
 - [ ] `NtDuplicateToken(ExistingTokenHandle, DesiredAccess, ObjectAttributes, EffectiveOnly, TokenType, NewTokenHandle)` → SSDT 0x00B8
 - [ ] `NtFilterToken(ExistingTokenHandle, Flags, SidsToDisable, PrivilegesToDelete, RestrictedSids, NewTokenHandle)` → SSDT 0x00B9
 - [ ] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
@@ -1264,6 +1270,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-29            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
 | 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ✅ §23 refcounted global atoms |
+| ⭐ | Syscall audit/tracing hook | ⚠️ ETW (heavyweight)        | ⚠️ seccomp-bpf / ptrace    | ✅ §24 pre/post SSDT hook, deny + zero-overhead-when-off |
 | 💎 | Default locale / UI lang   | ✅ NtQuery/SetDefaultLocale | ✅ setlocale + LANG        | 🟡 §23 query returns en-US; set fails-closed (priv, TODO-13 §6) |
 | ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ✅ §12 zw.h + ProbeFor*      |
 | ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 -- numbered+public |
