@@ -146,6 +146,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** S5 reuses the format for code-page tables; S7 owns the reserved FOLD_* chunks; S8 consumes CTYPE/version; S9 retrofits OB/registry onto `nls_upcase_char`. Real full-BMP data + generator is owned by S10.
 > - **Canonical doc:** [`include/kernel/nt/nls.h`](../../include/kernel/nt/nls.h).
 > - **Scope boundary:** S4 owns format + loader + validation + fallback + accessors. GetStringTypeW/GetNLSVersionEx are S8; fold/collation payload S7; transcoding S5; consumer retrofit S9. CRC32 detects accidental corruption only.
+> **Verified:** 2026-07-04 | commit `3487af07` | 6/6 items | build OK | nls 53/53 PASS | smoke PASS
+> **Accepted:** [H] disk-sourced U+0100+ fold must not back unauthenticated security name-compare -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Disk-fold trust decision" at line 215)
+> **Accepted:** [M] ASCII fold routes through the out-of-line `nls_upcase_char` wrapper; hot name loops need an inline fast path -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Name-compare/hash loops must use an inline ASCII fast path" at line 216)
+> **Quality reviewed:** 2026-07-04 | Codex 10x (design, adversarial, re-adversarial, test-coverage, consistency, perf) | 6M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -213,6 +217,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 - [ ] Object Manager namespace lookup uses canonical Unicode compare.
 - [ ] Disk-fold trust decision: keep OB/registry security compare on compiled `rtl_upcase_char`; do not fold U+0100+ via disk-sourced `nls_upcase_char` unless the table is authenticated (§4 trust = CRC + volume ACL). (Codex §4)
+- [ ] Name-compare/hash loops must use an inline ASCII fast path (no out-of-line `nls_upcase_char` wrapper per code unit; no LTO); verify generated asm for the OB/registry/atom retrofit. (Codex §4 perf)
 - [ ] Registry key/value lookup uses canonical Unicode compare and preserves original casing.
 - [ ] Environment variables use Windows-compatible case-insensitive matching.
 - [ ] PE loader import lookup preserves ASCII fast path but supports UTF-16 path inputs.
