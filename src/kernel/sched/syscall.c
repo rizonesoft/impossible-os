@@ -12,6 +12,7 @@
 #include "kernel/vectors.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"
+#include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on SYS_KILL */
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
@@ -449,6 +450,10 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             if (t && t->state != TASK_DEAD) {
                 t->state = TASK_DEAD;
                 t->exit_status = -1;
+                /* Drop the killed task's syscall-filter count contribution
+                 * (memory frees at the reap barrier) so a killed-but-unreaped
+                 * filtered task stops taxing the global dispatch fast path. */
+                syscall_filter_task_dead(t);
                 klog(LOG_DEBUG, "sys", "Task %u killed", (uint64_t)arg1);
                 ret = 0;
             } else {

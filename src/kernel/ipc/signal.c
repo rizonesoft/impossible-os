@@ -11,6 +11,7 @@
 
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/task.h"
+#include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on signal kill */
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -98,6 +99,13 @@ static void signal_default_action(struct task *t, int sig)
         t->exit_status = -(int32_t)sig;
         break;
     }
+
+    /* If this signal killed the task, drop its syscall-filter count
+     * contribution now (memory frees at the reap barrier). Guarded on the
+     * DEAD transition so the non-fatal branches (SIGCHLD) are unaffected;
+     * idempotent via syscall_filter_counted. */
+    if (t->state == TASK_DEAD)
+        syscall_filter_task_dead(t);
 }
 
 void signal_check(void)

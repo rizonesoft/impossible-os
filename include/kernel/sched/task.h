@@ -172,6 +172,19 @@ struct task {
     uint64_t total_handles_created; /* cumulative handle allocs, diagnostics (64-bit: no wrap) */
     /* --- Security token --- */
     void *token;                         /* ACCESS_TOKEN * (NULL until SRM assigns one) */
+    /* --- Per-process syscall filter (seccomp / SystemCallDisablePolicy) ---
+     * NULL = no filter (all syscalls allowed). Published/read via __atomic
+     * acquire/release; superseded snapshots are chained on retired_prev and
+     * the whole chain is freed at task_cleanup (the reap barrier), NOT at the
+     * TASK_DEAD transition -- consistent with how the kernel stacks/CR3 are
+     * reclaimed. MUST be explicitly reset to NULL on task-slot (re)creation --
+     * a stale pointer from a prior tenant would be a use-after-free AND a
+     * sandbox escape. syscall_filter_counted tracks whether this task still
+     * contributes to g_syscall_filter_count, so the count can drop at
+     * TASK_DEAD (stops taxing the global fast path) while the memory free
+     * waits for the reap barrier -- and neither step double-counts. */
+    struct syscall_filter *syscall_filter;
+    uint8_t syscall_filter_counted;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */

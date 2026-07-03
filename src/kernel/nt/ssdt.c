@@ -15,6 +15,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/zw.h"
 #include "kernel/nt/nt_audit.h"
+#include "kernel/nt/syscall_filter.h"
 #include "kernel/sched/task.h"  /* thread_current() for per-thread previous_mode */
 #include "kernel/klog.h"
 
@@ -292,6 +293,17 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
      * the Windows-correct terminal behavior, not a stub for deferred work. */
     if (index >= table->max)
         return STATUS_NOT_IMPLEMENTED;   /* SCOPE-GAP-ALLOWED: Windows-correct terminal status */
+
+    /* Per-process syscall filter (seccomp / SystemCallDisablePolicy parity):
+     * runs BEFORE the audit hooks and the handler, per the section contract
+     * (bitmap filter first). Zero cost when no process is filtered -- the
+     * inlined relaxed-atomic load of g_syscall_filter_count short-circuits.
+     * A denied index returns STATUS_ACCESS_DENIED (audit mode logs + allows). */
+    if (syscall_filter_active() != 0) {
+        NTSTATUS filt = syscall_filter_check(table_id, index, service_number);
+        if (filt != STATUS_SUCCESS)
+            return filt;
+    }
 
     /* Fast path (no hook registered): a single inlined relaxed-atomic load +
      * branch, then the handler. The audited path is out-of-line (cold). */

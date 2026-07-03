@@ -87,7 +87,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §20   |  [/]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [x]   |
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [/]   |
-| 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
+| 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [x]   |
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [ ]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
@@ -1080,24 +1080,37 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 Per-process syscall restrictions allow a process to lock down which system services its children (or itself) can invoke. Windows has `PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY` (DisallowWin32kSystemCalls, DisallowFsctlSystemCalls) stored in EPROCESS MitigationFlags. Linux has seccomp-bpf with per-process BPF programs and constant-action bitmap caching. Impossible OS provides a first-class bitmap-based filter with optional BPF programs for argument inspection.
 
-- [ ] Define `SYSCALL_FILTER` struct in `include/kernel/nt/syscall_filter.h`:
-  - `uint64_t allow_bitmap[SSDT_MAX_ENTRIES / 64]` -- one bit per SSDT index; 1 = allowed, 0 = blocked
-  - `uint64_t allow_shadow_bitmap[WIN32K_MAX_ENTRIES / 64]` -- same for shadow SSDT (Win32k)
-  - `uint32_t flags` -- `SYSCALL_FILTER_INHERIT = 1` (child inherits), `SYSCALL_FILTER_LOCKED = 2` (cannot relax)
-- [ ] Add `SYSCALL_FILTER *syscall_filter` field to `task_t` (NULL = no filter, all syscalls allowed)
-- [ ] Add `ProcessSystemCallFilterPolicy` info class to `NtSetInformationProcess` (§7, SSDT 0x0035):
-  - `DisallowWin32kSystemCalls`: clear all shadow SSDT bits in filter bitmap
-  - `DisallowFsctlSystemCalls`: clear `NtFsControlFile` (0x001A) bit, except pipe-related FSCTL codes
-  - `CustomBitmap`: install a caller-supplied allow/deny bitmap
-  - Filter can only be tightened (bits cleared), never relaxed once `SYSCALL_FILTER_LOCKED` is set
-- [ ] SSDT dispatcher integration: after index lookup, before handler call, check `current_task->syscall_filter`:
-  - If filter is NULL, skip (zero overhead -- single pointer test)
-  - If filter exists, test bitmap bit for the service index; if blocked, return `STATUS_ACCESS_DENIED`
-- [ ] Filter inheritance: `NtCreateProcess` / `NtCreateUserProcess` copies parent's filter to child if `SYSCALL_FILTER_INHERIT` is set
-- [ ] Audit mode: `SYSCALL_FILTER_AUDIT = 4` -- log blocked syscalls to klog instead of denying
-- [ ] Commit: `"kernel: nt -- per-process syscall filter bitmap (seccomp/SystemCallDisable parity)"`
+- [x] `SYSCALL_FILTER` in `include/kernel/nt/syscall_filter.h`: `allow_main[16]` + `allow_shadow[16]` allow bitmaps (1=allowed; sized on `SSDT_MAIN_MAX`/`SSDT_SHADOW_MAX`), `flags` INHERIT=1/LOCKED=2/AUDIT=4, `retired_prev` retire chain.
+- [x] `struct task` gains `syscall_filter` (NULL=allow-all) + `syscall_filter_counted`; published/read via `__atomic` release/acquire, explicit NULL-reset at every create site (reused slot must not inherit a stale ptr).
+- [x] `ProcessSystemCallFilterPolicy` (=41) on `NtSetInformationProcess`, restricted to self (probe+`copy_from_user`): `DisallowWin32kSystemCalls` / `DisallowFsctlSystemCalls` (0x001A) / `CustomBitmap`; LOCKED = subset-only tighten + frozen flags.
+- [x] `ssdt_dispatch` filter check runs before the audit session + handler, gated by `syscall_filter_active()` (zero cost when no filter exists); blocked index returns `STATUS_ACCESS_DENIED`; KernelMode (Zw) callers bypass.
+- [x] Inheritance: `NtCreateProcess` fail-closed pre-clone when `SYSCALL_FILTER_INHERIT` set; `task_fork` inherits unconditionally (seccomp) and fails closed on clone alloc-failure. (`NtCreateUserProcess` still a stub.)
+- [x] Audit mode `SYSCALL_FILTER_AUDIT=4`: `syscall_filter_check` klogs the would-block and allows instead of denying.
+- [x] Lifetime: immutable snapshots freed only at `task_cleanup` (reap barrier); count contribution dropped at every `TASK_DEAD` site via `syscall_filter_task_dead`; `syscall_filter_counted` single-decrement; generation cap 64.
+- [x] Commit: `"kernel: nt -- per-process syscall filter bitmap (seccomp/SystemCallDisable parity)"`
 
-**Test checkpoint:** Set filter blocking `NtWriteFile` on child process; child's `NtWriteFile` returns `STATUS_ACCESS_DENIED`. Parent's `NtWriteFile` still works. `DisallowWin32kSystemCalls` blocks shadow SSDT calls. Filter inheritance: grandchild also blocked. Locked filter cannot be relaxed. Audit mode logs but doesn't block.
+**Test checkpoint:** A process filters itself (`CustomBitmap` clearing a service index); its own blocked syscall returns `STATUS_ACCESS_DENIED`, other syscalls still work. `DisallowWin32kSystemCalls` blocks shadow SSDT calls. Inheritance: a child created with `SYSCALL_FILTER_INHERIT` (or forked) inherits the filter; grandchild also blocked. Locked filter cannot be relaxed (`STATUS_ACCESS_DENIED`). Audit mode logs but does not block. A filter-policy install targeting a non-self process returns `STATUS_ACCESS_DENIED`.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 8 sfilter suites, 0 failures
+
+> **Notes:**
+> - Shipped `include/kernel/nt/syscall_filter.h` + `src/kernel/nt/syscall_filter.c`: per-process SSDT allow-bitmap (main+shadow), immutable snapshots published via `__atomic` release/acquire, gated system-wide by `g_syscall_filter_count`.
+> - Dispatch: `ssdt_dispatch` runs the bitmap check before the audit session; no-filter is one ACQUIRE load + branch; KernelMode (Zw) callers bypass; blocked -> ACCESS_DENIED (audit mode logs + allows).
+> - Install is self-only via `NtSetInformationProcess(ProcessSystemCallFilterPolicy=41)` (probe+copy); LOCKED = subset-only tighten + frozen flags; inheritance fail-closed pre-clone (NtCreateProcess opt-in, fork unconditional).
+> - Lifetime: retire chain freed only at the `task_cleanup` reap barrier; count contribution dropped at every TASK_DEAD site (`syscall_filter_task_dead`); `syscall_filter_counted` single-decrement; generation cap 64.
+> - Scope boundary: enforcement is not yet SMP-closed (KernelMode bypass + snapshot free rely on the global current-cursor); full SMP hardening + cross-process install are accepted-XREF below.
+> **Verified:** 2026-07-03 | commit `269eccd9` | 8/8 items | build OK | tests 13686 kernel + 16 user PASS
+> **Accepted:** [H] KernelMode bypass + filtered-task resolution read the global current-thread cursor (not SMP-closed); on real SMP a filtered user syscall could be misclassified as KernelMode -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]` ... closes the cross-CPU probe-gating half of 02-kernel-core/TODO-12 §12 (`ssdt_previous_mode`)" at line 116)
+> **Accepted:** [H] snapshot free at the reap barrier has no cross-CPU reader grace period; safe on the single-cursor scheduler, a sibling reader on another CPU could race the free once per-CPU run queues land -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §6 (item: "`call_rcu(cb)` defers callbacks to a per-CPU list drained after each quiescent state" at line 156)
+> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects ... Use real OB objects + rights" at line 1105)
+> **Accepted:** [H] `NtCreateProcess` leaks the unstarted child task if `ObpAllocateHandle` fails after `task_create` (the inherited filter clone is freed, but the child TCB is not); the child is inert (no returned handle, never scheduled/exec'd) so it is not an unfiltered-runnable escape -> XREF: 02-kernel-core/TODO-05-object-manager.md (item: "Atomic CreateProcess teardown on failure ... add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown" at line 359)
+> **Accepted:** [M] the active-count drop at `TASK_DEAD` precedes a proven all-threads-off-CPU quiescence; correct on the single-cursor scheduler (a DEAD task's threads never run), but on real SMP a still-running sibling could see the count reach zero -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor ... proven-off-CPU-on-all-CPUs reap barrier" at line 116)
+> **Accepted:** [M] the audit-mode log throttle bumps one global `s_audit_log_seq` atomic on the blocked-audit branch; uncontended on the single-cursor scheduler but a shared cacheline under real per-CPU run queues (a multi-core audited loop would bounce it) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (per-CPU state; replace the global audit sample counter with a per-CPU cacheline-isolated one at line 116)
+> **Accepted:** [H] the `ProcessSystemCallFilterPolicy` copy of the policy buffer via `copy_from_user` is not fault-recoverable: an unmapped but in-range, aligned user pointer faults in the kernel instead of returning `STATUS_ACCESS_VIOLATION` (systemic usercopy gap, identical to the §24 audit copy-out; affects every NT handler that copies user memory) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`" at line 126)
+> **Accepted:** [H] `NtCreateProcess` attaches the inherited filter after `task_create` publishes the child (TASK_READY + num_tasks++); non-exploitable today (the child has no entry point and cannot issue a syscall until the parent exec's it, which is after the attach, and NtCreateProcess is atomic under IF=0 on the single-cursor scheduler), but attach-before-publish needs a create-suspended/unpublished task path -> XREF: 02-kernel-core/TODO-05-object-manager.md (item: "Atomic CreateProcess teardown on failure ... a create-suspended/unpublished task path" at line 359)
+> **Accepted:** [M] the count gate (`g_syscall_filter_count`) and the filter pointer are two separate atomics, so a lockless reader could observe count==0 while the pointer is already published (miss a just-installed filter for one in-flight syscall); serialized on the single-cursor scheduler, an SMP window -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (per-CPU current-thread cursor / read-side ordering at line 116)
+> **Accepted:** [M] once any task is filtered, every SSDT dispatch (even for an unfiltered current task) pays `task_current()` + acquire-load + the out-of-line check; bounded and only while a filter is alive, but not proportional to filtered tasks -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (cache the current task/filter in per-CPU syscall-entry state at line 116)
+> **Quality reviewed:** 2026-07-03 | Codex 17x (design, adversarial x4, consistency x4, perf x4, re-adversarial x4) + kernel-quality-auditor | 3H+3M+2L fixed, 10 accepted-XREF | scope: kernel-code-quality
 
 ---
 

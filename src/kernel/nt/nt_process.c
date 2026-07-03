@@ -16,6 +16,10 @@
 #include "kernel/ob/ob_thread.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
+#include "kernel/nt/syscall_filter.h"
+#include "kernel/nt/zw.h"           /* ProbeForReadIfUser */
+#include "kernel/cpu_security.h"    /* copy_from_user */
+#include "kernel/mm/heap.h"         /* kfree (inherited-filter cleanup) */
 
 /* ---- Helper: look up task by HANDLE (currently PID) --------------------- */
 static struct task *task_from_handle(HANDLE h)
@@ -59,6 +63,7 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 {
     HANDLE *out_handle = (HANDLE *)a1;
     uint32_t inherit = (uint32_t)a5;
+    struct syscall_filter *inherited_filter = (struct syscall_filter *)0;
     int pid;
 
     (void)a2; (void)a3; (void)a4; (void)a6;
@@ -66,10 +71,31 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!out_handle)
         return STATUS_INVALID_PARAMETER;
 
+    /* Per-process syscall filter inheritance. A spawned process is a fresh
+     * image (not a copy of the parent), so inheritance is OPT-IN via the
+     * parent filter's SYSCALL_FILTER_INHERIT flag -- distinct from fork, where
+     * the filter always carries. Pre-clone BEFORE creating the child so an
+     * inheritable sandbox fails CLOSED under memory pressure (return an error)
+     * rather than spawning an unfiltered child. Reading the parent snapshot
+     * locklessly is safe: it is immutable and never freed while the parent
+     * lives. */
+    {
+        struct syscall_filter *pf = __atomic_load_n(
+            &task_current()->syscall_filter, __ATOMIC_ACQUIRE);
+        if (pf && (pf->flags & SYSCALL_FILTER_INHERIT)) {
+            inherited_filter = syscall_filter_clone(pf);
+            if (!inherited_filter)
+                return STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+
     /* Create a kernel task (no entry point -- caller must exec into it) */
     pid = task_create((task_entry_t)0, "NtProcess");
-    if (pid < 0)
+    if (pid < 0) {
+        if (inherited_filter)
+            kfree(inherited_filter);
         return STATUS_NO_MEMORY;
+    }
 
     /* Inherit handles from parent if requested. Best-effort: ob_handle_table_inherit
      * grows the child to cover all inheritable handles and warns if memory
@@ -91,17 +117,33 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         struct task *child = task_get_by_pid((uint32_t)pid);
         HANDLE h;
 
-        if (!child)
+        if (!child) {
+            if (inherited_filter)
+                kfree(inherited_filter);
             return STATUS_UNSUCCESSFUL;
+        }
 
         /* Find the PROCESS_OBJECT via OB lookup -- for now, return PID as handle */
         h = ObpAllocateHandle(&task_current()->handle_table,
                               child, GENERIC_ALL, 0);
-        if (h == INVALID_HANDLE_VALUE)
+        if (h == INVALID_HANDLE_VALUE) {
+            /* Free the un-attached clone: attaching earlier would leak the
+             * filter + inflate g_syscall_filter_count when this last fallible
+             * step fails (e.g. caller handle-table exhausted). The child task
+             * itself still leaks here -- a pre-existing gap for the handle-
+             * inheritance rollback follow-up, not introduced by the filter. */
+            if (inherited_filter)
+                kfree(inherited_filter);
             return STATUS_NO_MEMORY;
+        }
 
         *out_handle = h;
         (void)entry;
+
+        /* Publish the pre-cloned filter only AFTER every fallible step has
+         * succeeded, so no error path leaves an attached-but-leaked filter. */
+        if (inherited_filter)
+            syscall_filter_attach(child, inherited_filter);
     }
 
     klog(LOG_DEBUG, "nt", "NtCreateProcess: PID %u created", (uint64_t)pid);
@@ -238,6 +280,10 @@ static NTSTATUS NtTerminateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3
 
     t->state = TASK_DEAD;
     t->exit_status = (int32_t)exit_code;
+    /* Drop the target's syscall-filter count contribution now (remote kill);
+     * the memory frees at the reap barrier. Without this a killed-but-unreaped
+     * filtered process would keep the global dispatch fast path armed. */
+    syscall_filter_task_dead(t);
     ob_process_mark_dead(t->pid);
     klog(LOG_DEBUG, "nt", "NtTerminateProcess: PID %u (0x%x)",
          (uint64_t)t->pid, (uint64_t)(uint32_t)exit_code);
@@ -581,6 +627,33 @@ static NTSTATUS NtSetInformationProcess_handler(uint64_t a1, uint64_t a2,
     }
     case ProcessDefaultHardErrorMode:
         return STATUS_SUCCESS;  /* accept but ignore */
+    case ProcessSystemCallFilterPolicy: {
+        /* Install/tighten the target's per-process SSDT filter. The policy
+         * buffer comes from a ring-3 caller, so probe + bounce-copy it into a
+         * kernel-owned struct before touching it (this is a security boundary;
+         * do not follow the sibling cases' raw-deref pattern here). */
+        PROCESS_SYSCALL_FILTER_POLICY pol;
+        NTSTATUS st;
+        /* Restrict to the CALLER'S OWN process. task_from_handle still
+         * resolves a handle as a raw PID with no granted-access check (the
+         * systemic NT handle-rights enforcement gap, owned by the token
+         * lifecycle / SRM access-check work), so a cross-process install here
+         * would be an unprivileged syscall-DoS on an arbitrary PID -- including
+         * an irreversible LOCKED filter. The secure model is self +
+         * SYSCALL_FILTER_INHERIT (children inherit at creation); authorized
+         * cross-process install waits on real handle rights. t ==
+         * task_current() also implies t is live (not DEAD). */
+        if (t != task_current())
+            return STATUS_ACCESS_DENIED;
+        if (length < sizeof(pol))
+            return STATUS_BUFFER_TOO_SMALL;
+        st = ProbeForReadIfUser(buffer, sizeof(pol), 8);
+        if (st != STATUS_SUCCESS)
+            return st;
+        if (copy_from_user(&pol, buffer, (uint32_t)sizeof(pol)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+        return syscall_filter_set_policy(t, &pol);
+    }
     default:
         return STATUS_INVALID_INFO_CLASS;
     }

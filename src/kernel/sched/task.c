@@ -28,6 +28,7 @@
 #include "kernel/ob/ob_thread.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
+#include "kernel/nt/syscall_filter.h"
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -90,6 +91,12 @@ static void task_wrapper(void)
     /* Run RundownRoutine for any APCs still queued on the dead main thread. */
     apc_rundown_thread(&tasks[current_task].threads[0]);
     tasks[current_task].state = TASK_DEAD;
+    /* Drop the filter's count contribution at death so a dead-but-unreaped
+     * filtered task stops taxing the global dispatch fast path system-wide. The
+     * snapshot memory is freed later at the reap barrier (task_cleanup), not
+     * here -- consistent with stack/CR3 reclaim and safe once every thread is
+     * proven off-CPU. */
+    syscall_filter_task_dead(&tasks[current_task]);
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
@@ -509,6 +516,8 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
+    tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
+    tasks[pid].syscall_filter_counted = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -644,6 +653,8 @@ int task_create_user(task_entry_t entry, const char *name)
             klog(LOG_WARN, "sched", "Task %u: per-process PML4 failed", (uint64_t)pid);
         }
     }
+    tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
+    tasks[pid].syscall_filter_counted = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -1151,6 +1162,7 @@ int task_fork(struct interrupt_frame *frame)
     uint8_t *kstack, *ustack;
     uint64_t *sp;
     uint64_t parent_pid_val = current_task;
+    struct syscall_filter *inherited_filter = (struct syscall_filter *)0;
 
     if (num_tasks >= TASK_MAX) {
         klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
@@ -1159,10 +1171,34 @@ int task_fork(struct interrupt_frame *frame)
 
     child_pid = num_tasks;
 
+    /* Syscall filter: a fork is "become a copy of me", so the child MUST
+     * inherit the parent's filter unconditionally -- a sandbox a child could
+     * escape via fork is no sandbox (seccomp semantics). This differs from
+     * NtCreateProcess, which launches a different image and gates inheritance
+     * on SYSCALL_FILTER_INHERIT. Clone FIRST, before allocating the child
+     * kernel/user stacks, so a clone-alloc failure fails the fork CLOSED
+     * without leaking those stacks (and never runs an unsandboxed child).
+     * Reading the parent snapshot locklessly is safe: it is immutable and
+     * never freed while the parent lives. */
+    {
+        struct syscall_filter *pf = __atomic_load_n(
+            &tasks[parent_pid_val].syscall_filter, __ATOMIC_ACQUIRE);
+        if (pf) {
+            inherited_filter = syscall_filter_clone(pf);
+            if (!inherited_filter) {
+                klog(LOG_ERROR, "sched",
+                     "task_fork: filter clone failed; failing fork closed");
+                return -1;
+            }
+        }
+    }
+
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate kernel stack");
+        if (inherited_filter)
+            kfree(inherited_filter);
         return -1;
     }
 
@@ -1170,6 +1206,9 @@ int task_fork(struct interrupt_frame *frame)
     ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
     if (!ustack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate user stack");
+        kfree(kstack);
+        if (inherited_filter)
+            kfree(inherited_filter);
         return -1;
     }
 
@@ -1248,6 +1287,18 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].teb = tasks[parent_pid_val].threads[0].teb;
     tasks[child_pid].threads[0].kernel_gs_base =
         tasks[parent_pid_val].threads[0].kernel_gs_base;
+
+    /* Attach the inherited filter (and clear any stale slot pointer) BEFORE
+     * num_tasks++ publishes the child to the scheduler. Otherwise a timer
+     * preemption between publication and a later attach could run a fork child
+     * with syscall_filter == NULL -- an unfiltered escape from a filtered
+     * parent. Fail-closed inheritance must hold before the child is
+     * schedulable. */
+    tasks[child_pid].syscall_filter = (struct syscall_filter *)0;
+    tasks[child_pid].syscall_filter_counted = 0;
+    if (inherited_filter)
+        syscall_filter_attach(&tasks[child_pid], inherited_filter);
+
     num_tasks++;
 
     /* Per-process page table: clone kernel PML4 + mark image + new
@@ -2089,6 +2140,9 @@ void task_exit(int32_t status)
     apc_rundown_thread(&tasks[pid].threads[0]);
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
+    /* Drop the filter's count contribution at death (stops taxing the global
+     * fast path); the memory free waits for the reap barrier in task_cleanup. */
+    syscall_filter_task_dead(&tasks[pid]);
 
     /* Mark process object as temporary so it can be freed */
     ob_process_mark_dead(pid);
@@ -2194,6 +2248,10 @@ void task_cleanup(uint32_t pid)
 
     if (tasks[pid].state != TASK_DEAD)
         return;
+
+    /* Free the syscall filter + its whole retire chain. Safe here: the task is
+     * DEAD, so no thread of it can be mid-dispatch reading a retired snapshot. */
+    syscall_filter_task_teardown(&tasks[pid]);
 
     /* Close all handles and free handle table */
     ob_handle_table_destroy(&tasks[pid].handle_table);

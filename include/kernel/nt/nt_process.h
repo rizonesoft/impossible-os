@@ -32,6 +32,7 @@ void nt_process_register_ssdt(void);
 #define ProcessSessionInformation   24
 #define ProcessWow64Information     26
 #define ProcessImageFileName        27
+#define ProcessSystemCallFilterPolicy 41  /* per-process SSDT filter (Win: ProcessSystemCallDisablePolicy=0x29) */
 
 /* ---- Thread basic information output ------------------------------------ */
 typedef struct {
