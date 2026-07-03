@@ -125,6 +125,7 @@ Supervisor Mode Access Prevention: the CPU faults on any kernel access to a user
 - [ ] Page fault handler: detect SMAP violation (`error_code & PFEC_SMAP`, bit 5 set, U=0, W=access type) → `PANIC("SMAP violation at 0x%lx from 0x%lx")`
 - [ ] Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()` in `src/kernel/sched/syscall.c` AND every `src/kernel/nt/nt_*.c` that reads `OBJECT_ATTRIBUTES`, `UNICODE_STRING`, or any user-pointer-typed syscall arg. Explicit retrofit list (consumers currently on the probe+direct-deref pattern): `nt_namespace.c` (`oa_name`), `nt_section.c` (`oa_probe_ascii_name`), `nt_timer.c`, `nt_file.c`, `nt_alpc.c` (`alpc_probe_and_split`, `NtAlpcCreatePort_handler`), `nt_misc.c` (`marshal_user_wide`, `write_user_atom`, `NtDisplayString_handler`, all locale/atom out-pointer copies -- ProbeFor* passes an in-range unmapped page and the raw `copy_*_user` loop then faults). Retrofit replaces the kernel-owned copy_from_user'd leaf with a SMAP-safe variant; the current kernel-owned 64-byte leaf buffer stays (TOCTOU fix), only the acquisition path changes.
 - [ ] Apply CR4.SMAP in `ap_cpu_harden()` for every AP
+- [ ] **Bulk-copy path in `copy_from_user`/`copy_to_user`** (`cpu_security.c`): replace the byte-at-a-time loop with a word/qword bulk copy inside the `stac`/`clac` window (per-byte fault-injection entry preserved). (TODO-13 §1 perf)
 - [ ] Commit: `"mm: SMAP -- CR4.SMAP + copy_from_user / copy_to_user wrappers, syscall audit"`
 
 ## 5. NX / DEP Mapping Audit `[Opus]`

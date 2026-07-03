@@ -76,6 +76,15 @@ NTSTATUS nt_unicode_string_validate(const UNICODE_STRING *us, uint32_t prev_mode
     if (len > NT_UNICODE_MAX_BYTES)     /* absolute ceiling (even => <= 65534) */
         return STATUS_INVALID_PARAMETER;
 
+    /* Probe the Buffer itself for UserMode callers: this helper is the
+     * documented syscall-boundary authority, so it must not return a kernel /
+     * unmapped pointer as 'validated'. Keyed to the explicit prev_mode. */
+    if (prev_mode == SSDT_USER_MODE && len > 0u) {
+        NTSTATUS bp = ProbeForRead(buf, (uint64_t)len, 2);
+        if (bp != STATUS_SUCCESS)
+            return bp;
+    }
+
     if (out_buffer)
         *out_buffer = buf;
     if (out_length)
@@ -105,10 +114,8 @@ NTSTATUS nt_decode_unicode_string(const UNICODE_STRING *us, uint16_t *kbuf,
         return STATUS_BUFFER_TOO_SMALL;
 
     if (wchars > 0u) {
+        /* nt_unicode_string_validate already probed ubuf for UserMode. */
         if (prev_mode == SSDT_USER_MODE) {
-            NTSTATUS ps = ProbeForRead(ubuf, len_bytes, 2);
-            if (ps != STATUS_SUCCESS)
-                return ps;
             if (copy_from_user(kbuf, ubuf, len_bytes) != 0)
                 return STATUS_ACCESS_VIOLATION;
         } else {
@@ -122,20 +129,23 @@ NTSTATUS nt_decode_unicode_string(const UNICODE_STRING *us, uint16_t *kbuf,
 }
 
 NTSTATUS nt_encode_unicode_string(UNICODE_STRING *us, uint16_t *wbuf,
-                                  uint32_t wchars)
+                                  uint32_t wchars, uint32_t wbuf_capacity_wchars)
 {
     uint32_t bytes;
 
     if (!us || !wbuf)
         return STATUS_INVALID_PARAMETER;
+    if (wchars > wbuf_capacity_wchars)              /* content must fit the buffer */
+        return STATUS_INVALID_PARAMETER;
     if (!nt_unicode_wchars_to_bytes(wchars, &bytes))
         return STATUS_INVALID_PARAMETER;
-    /* MaximumLength = Length + 2 (room for a NUL) must also fit the uint16. */
-    if (bytes > (uint32_t)NT_UNICODE_MAX_BYTES - 2u)
+    /* MaximumLength = the TRUE backing size (capacity*2) so it is never
+     * overstated; it must also fit the uint16 field. */
+    if (wbuf_capacity_wchars > NT_UNICODE_MAX_WCHARS)
         return STATUS_INVALID_PARAMETER;
 
     us->Length = (uint16_t)bytes;
-    us->MaximumLength = (uint16_t)(bytes + 2u);
+    us->MaximumLength = (uint16_t)(wbuf_capacity_wchars * 2u);
     us->_pad = 0u;              /* clear ABI padding: no kernel-memory leak on copy-out */
     us->Buffer = wbuf;
     return STATUS_SUCCESS;

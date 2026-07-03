@@ -125,20 +125,21 @@ static void test_nls_encode_success(void)
     uint16_t w[3] = { 'X', 'Y', 'Z' };
     UNICODE_STRING us;
     NTSTATUS st;
-    st = nt_encode_unicode_string(&us, w, 3);
+    st = nt_encode_unicode_string(&us, w, 3, 3);
     TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "encode ok");
     TEST_ASSERT_EQ((uint64_t)us.Length, 6u, "Length = 6");
-    TEST_ASSERT_EQ((uint64_t)us.MaximumLength, 8u, "MaximumLength = Length + 2");
+    TEST_ASSERT_EQ((uint64_t)us.MaximumLength, 6u, "MaximumLength = capacity*2 (not overstated)");
     TEST_ASSERT(us.Buffer == w, "Buffer set");
 }
 
-static void test_nls_encode_overflow(void)
+static void test_nls_encode_rejects_over_capacity(void)
 {
-    uint16_t w[1] = { 0 };
+    uint16_t w[2] = { 'A', 'B' };
     UNICODE_STRING us;
-    NTSTATUS st = nt_encode_unicode_string(&us, w, NT_UNICODE_MAX_WCHARS);
+    /* wchars (4) exceeds the declared backing capacity (2). */
+    NTSTATUS st = nt_encode_unicode_string(&us, w, 4, 2);
     TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INVALID_PARAMETER,
-                   "encode past ceiling (no NUL room) rejected");
+                   "encode with content larger than capacity rejected");
 }
 
 static void test_nls_ascii_narrow_success(void)
@@ -186,10 +187,24 @@ static void test_nls_encode_clears_pad(void)
     UNICODE_STRING us;
     NTSTATUS st;
     us._pad = 0xDEADBEEFu;   /* seed the ABI padding non-zero */
-    st = nt_encode_unicode_string(&us, w, 2);
+    st = nt_encode_unicode_string(&us, w, 2, 2);
     TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "encode ok");
     TEST_ASSERT_EQ((uint64_t)us._pad, 0u,
                    "encode clears ABI _pad (no kernel-memory leak on copy-out)");
+}
+
+static void test_nls_validate_probes_buffer_kernel_ptr(void)
+{
+    /* Valid header on the (low-range) kernel stack but Buffer points into
+     * kernel space: with an EXPLICIT UserMode, validate must probe the Buffer
+     * itself and reject it, not just check the header. */
+    UNICODE_STRING us;
+    uint16_t *obuf = 0;
+    NTSTATUS st;
+    make_us(&us, (uint16_t *)0xFFFF800000000000ULL, 2, 2);
+    st = nt_unicode_string_validate(&us, SSDT_USER_MODE, &obuf, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_ACCESS_VIOLATION,
+                   "validate probes the UserMode Buffer pointer and rejects kernel range");
 }
 
 static void test_nls_user_mode_probe_rejects_kernel_ptr(void)
@@ -226,8 +241,8 @@ void test_register_nls(void)
                             test_nls_wchars_to_bytes_overflow, TEST_CAT_NLS);
     test_suite_register_cat("nls: encode success",
                             test_nls_encode_success, TEST_CAT_NLS);
-    test_suite_register_cat("nls: encode overflow",
-                            test_nls_encode_overflow, TEST_CAT_NLS);
+    test_suite_register_cat("nls: encode rejects over-capacity",
+                            test_nls_encode_rejects_over_capacity, TEST_CAT_NLS);
     test_suite_register_cat("nls: ascii narrow success",
                             test_nls_ascii_narrow_success, TEST_CAT_NLS);
     test_suite_register_cat("nls: ascii narrow rejects non-ASCII",
@@ -240,4 +255,6 @@ void test_register_nls(void)
                             test_nls_encode_clears_pad, TEST_CAT_NLS);
     test_suite_register_cat("nls: user-mode probe rejects kernel ptr",
                             test_nls_user_mode_probe_rejects_kernel_ptr, TEST_CAT_NLS);
+    test_suite_register_cat("nls: validate probes buffer ptr",
+                            test_nls_validate_probes_buffer_kernel_ptr, TEST_CAT_NLS);
 }

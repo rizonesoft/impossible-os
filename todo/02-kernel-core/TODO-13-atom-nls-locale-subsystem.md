@@ -62,7 +62,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 **Test checkpoint:** `nt_decode_unicode_string` on a `UNICODE_STRING` with `Length` past the buffer returns an error, not an overread. A counted UTF-16LE buffer with an odd byte length is rejected. Length arithmetic on `0xFFFF`-scale `MaximumLength` does not wrap.
 
-> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 14 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 17 suites, 0 failures
 
 > **Notes:**
 > - **What shipped:** `nt_unicode.h` + `nt_unicode.c` -- the canonical UNICODE_STRING validate/decode/encode primitive + `nt_unicode_to_ascii` lossless narrow bridge; `NT_UNICODE_MAX_BYTES`=65534 ceiling, caller-buffer capacity is the effective cap.
@@ -70,6 +70,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** the single primitive §2 (case fold), §5 (code page), and §9 (consumer retrofit of `oa_name`/`oa_probe_ascii_name`) build on; retrofit of char*-casting handlers is deferred to §9.
 > - **Canonical doc:** [`include/kernel/nt/nt_unicode.h`](../../include/kernel/nt/nt_unicode.h).
 > - **Scope boundary:** UTF-16 <-> UTF-8/code-page transcoding is §5, not §1; §1 provides validated UTF-16 + an ASCII-range narrow bridge only.
+> **Verified:** 2026-07-03 | commit `_review_` | 4/4 items | build OK | tests 13719 kernel + 16 user PASS | smoke PASS
+> **Accepted:** [M] `copy_from_user` copies byte-at-a-time (kernel-wide implementation in `cpu_security.c`, not §1 code -- §1 issues one `copy_from_user` for Length bytes) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Bulk-copy path in `copy_from_user`/`copy_to_user`" at line 128)
+> **Quality reviewed:** 2026-07-03 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) | 4H fixed (probe keyed to explicit prev_mode, `_pad` leak, encode capacity vs overstated MaximumLength, validate now probes Buffer), 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

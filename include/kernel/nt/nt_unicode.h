@@ -67,12 +67,14 @@ NTSTATUS nt_decode_unicode_string(const UNICODE_STRING *us, uint16_t *kbuf,
 
 /*
  * nt_encode_unicode_string -- build a UNICODE_STRING from a kernel WCHAR buffer.
- * Sets Length = wchars*2, MaximumLength = Length + 2 (room for a NUL), Buffer =
- * wbuf. Returns STATUS_INVALID_PARAMETER if wchars*2 would exceed the uint16
- * ceiling. Does not copy; the caller owns wbuf's lifetime.
+ * wbuf_capacity_wchars is the TRUE backing size of wbuf; MaximumLength is set
+ * from it (never overstated) so a consumer can trust it to append/copy the whole
+ * allocation. Sets Length = wchars*2. Returns STATUS_INVALID_PARAMETER if
+ * wchars > capacity or capacity*2 would exceed the uint16 ceiling. Does not copy;
+ * the caller owns wbuf's lifetime.
  */
 NTSTATUS nt_encode_unicode_string(UNICODE_STRING *us, uint16_t *wbuf,
-                                  uint32_t wchars);
+                                  uint32_t wchars, uint32_t wbuf_capacity_wchars);
 
 /*
  * nt_unicode_to_ascii -- lossless ASCII-range narrowing bridge.
