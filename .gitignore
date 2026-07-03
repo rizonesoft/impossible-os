@@ -77,8 +77,6 @@ sdk/build/
 !.claude/state/live-gotchas.md
 .claude/scheduled_tasks.lock
 
-# AI workflow shared state (driver leases, evidence ledger, indexes).
-.ai-workflow/
 
 # Bootloader build intermediate.  bootx64.so is produced by linking
 # .o files from src/boot/uefi/Makefile, then objcopy'd into

@@ -188,8 +188,6 @@ Use the strongest available Opus-class model for implementation and judgment-hea
 
 External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
-Workflow truth (leases, review and build evidence, deterministic stamps, gate verdicts) lives in the tool-neutral protocol under [`scripts/ai-workflow/`](scripts/ai-workflow/) -- not in chat or hook memory. Claude is the sole mutator; Codex is the sole external reviewer; reviewer ledger evidence is receipt-only. Doctrine + rollout toggle (`AI_WORKFLOW_ENFORCE_SHARED_GATES`): [ai-system.md "Tool-Neutral Workflow Protocol"](docs/infrastructure/ai-system.md#tool-neutral-workflow-protocol-evidence-ledger--shared-gates).
-
 ### Codex Invocation Policy
 
 When Claude invokes Codex from any path (the `codex-*` skills, the Codex plugin slash commands, raw `node ...codex-companion.mjs ...`, or `codex exec` / `codex review` / `codex task`), Claude does NOT pass `--model` / `--effort` / `-m` / `-e` / `-c model=...` / `-c model_reasoning_effort=...` / `-c model_provider=...`. The user controls those centrally via `~/.codex/config.toml` (currently `model = "gpt-5.5"`; the `model_reasoning_effort` value is a user dial -- low / medium / high are all legitimate and Claude must NEVER override or audit it).
