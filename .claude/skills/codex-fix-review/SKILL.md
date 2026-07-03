@@ -58,6 +58,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 
 ### Phase 3 -- Re-Review
 
+8b. **Pre-dispatch self-diff gate (before the re-review dispatch).** Read the fix diff against this round's + every prior round's findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6): scope creep, an operation reordered before its precondition, `==` where a bit-flag/mask test is required, sentinel/boundary handling (INVALID_HANDLE_VALUE / -1 / caps), and whether this fix re-opens a prior finding. This gate is what keeps the fix->re-review loop from becoming a fix-then-regress marathon (TODO-12 section 28: 15 dispatches, 67 min). A localized fix that passes the gate can be self-verified without a fresh round.
 9. **Push the commit.**
 10. **Re-run the Codex adversarial review** with a focused prompt:
     ```

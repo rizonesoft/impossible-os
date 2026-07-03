@@ -271,14 +271,20 @@
   is MCP-independent and stays always-on; NO MCP-non-use enforcement was
   added (can't penalize a race the runner cannot win).
 
-- [ ] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
-  §28's review marathon (15 dispatches, 67 min) was fix-then-regress cycling:
-  the original real bug (unprobed user buffer, line 5669) was fixed, but each
-  round's fix introduced a NEW regression the next pass caught (iosb-probe
-  reorder 5850, equality-vs-bit-flag 5900, INVALID_HANDLE_VALUE 5910) --
-  ~5 full multi-reviewer rounds instead of 1-2. A pre-dispatch self-diff pass
-  against the round's findings is cheap; a full Codex round is minutes of
-  wall-clock plus a poll cluster.
+- [x] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
+  DONE 2026-07-03: added a mandatory PRE-DISPATCH SELF-DIFF GATE at all four
+  Codex re-dispatch points. Canonical rule in review-todo-section step 6
+  (where the §28 marathon ran), referenced from implement-todo-section step
+  15, codex-adversarial-review-section step 6, and codex-fix-review step 8b.
+  The gate reads the fix diff against this round's + prior rounds' findings
+  and self-checks the four fix-then-regress shapes §28 exhibited: scope creep,
+  an op reordered before its precondition (iosb-probe), `==` where a bit-flag
+  test is needed, and sentinel/boundary handling (INVALID_HANDLE_VALUE) --
+  plus a re-open check (a fix for finding N must not resurrect N-1). Clean
+  gate + localized fix = self-verify and proceed without a full round.
+  Doctrine, not a hook: the gate is a self-review discipline a deterministic
+  hook can't meaningfully verify, and the item frames it as a cheap
+  pre-dispatch pass. Original measurements follow.
 
 - [ ] **Add `QUIET=1` to the straggler test.sh calls.** 11-15 of the 55 test.sh
   invocations ran without `QUIET=1`, pulling full-suite PASS output inline;

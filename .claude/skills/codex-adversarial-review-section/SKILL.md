@@ -58,9 +58,10 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    scripts/build.sh` is the single-round exception, not the rule. Repeated
    symbol lookups across rounds go through lsp-bridge
    (`definition`/`references`), not inline `bash grep`.
-6. Re-review the same section with focus on previous findings and changed files.
-   - Dispatch to Codex rescue subagent again with the fix context.
-7. Iterate fix -> build/test -> re-review with a maximum of 3 rounds.
+6. **Pre-dispatch self-diff gate, then** re-review the same section with focus on previous findings and changed files.
+   - BEFORE re-dispatching: read the fix diff against this round's + all prior rounds' findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6) -- scope creep, an operation reordered before its precondition, `==` where a bit-flag test is needed, sentinel/boundary handling, re-opening a prior finding. A localized fix that passes the gate needs no fresh Codex round.
+   - If re-dispatch is warranted, dispatch to Codex rescue subagent again with the fix context.
+7. Iterate fix -> self-diff gate -> build/test -> re-review with a maximum of 3 rounds.
 8. End-state rules.
    - If unresolved `Critical`/`High` remain after round 3, do not mark section complete; keep `[/]` or `[ ]` and add explicit follow-up checklist items with ownership and `→ XREF` where needed.
    - Record a compact findings summary for the section with resolved vs accepted items.
