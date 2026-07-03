@@ -260,8 +260,8 @@ def is_background_dispatch(cmd: str) -> bool:
     return False
 
 # Review-carrying bare CLI subcommands ONLY. `codex e` / `codex exec` are
-# non-review automation (see docs/infrastructure/ai-driver-interchangeability.md):
-# trusting the `e` alias let a mutating session mint reviewer evidence by
+# non-review automation: trusting the `e` alias let a mutating session mint
+# reviewer evidence by
 # running `codex e '[review-kind: ...] ...'` through the receipt path.
 _CODEX_BARE_SUBCMDS = ("review",)
 

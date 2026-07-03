@@ -55,20 +55,6 @@ if [ -f "$GATE" ]; then
     fi
 fi
 
-SHARED_GATE="$REPO_ROOT/scripts/ai-workflow/gates.py"
-if [ "${AI_WORKFLOW_ENFORCE_SHARED_GATES:-0}" = "1" ] && [ -f "$SHARED_GATE" ]; then
-    # AI_WORKFLOW_RUN_ID binds the gate to lease OWNERSHIP. Under enforcement it
-    # is REQUIRED when staged section targets exist -- an unset identity must not
-    # silently downgrade to presence-only.
-    if ! python3 "$SHARED_GATE" staged-commit --mode git-hook --format text \
-        --driver-run-id "${AI_WORKFLOW_RUN_ID:-}" --require-run-id; then
-        echo ""
-        echo -e "\033[31mShared AI workflow gate refused this commit\033[0m"
-        echo "  Hold the ACTIVE driver lease for the staged section before section ship."
-        exit 1
-    fi
-fi
-
 echo ""
 echo -e "\033[32mPre-commit lint passed\033[0m"
 exit 0

@@ -1663,10 +1663,6 @@ def _skip_log_path(root: Path) -> Path:
     return root / ".claude" / "state" / "skip-log.jsonl"
 
 
-def _shared_skip_log_path(root: Path) -> Path:
-    return root / ".ai-workflow" / "skip-log.jsonl"
-
-
 def _skip_record_append(record: dict, path: Path) -> bool:
     """Append a single-line JSON record to skip-log.jsonl atomically.
     Uses O_APPEND + a single os.write() under PIPE_BUF (4096) so
@@ -1695,13 +1691,6 @@ def _skip_record_append(record: dict, path: Path) -> bool:
         return True
     except Exception:
         return False
-
-
-def _shared_skip_record_append(record: dict, root: Path) -> bool:
-    shared = dict(record)
-    shared.setdefault("schema", "ai-workflow.skip.v1")
-    shared.setdefault("source", "section_commit_gate")
-    return _skip_record_append(shared, _shared_skip_log_path(root))
 
 
 def _reset_review_state(root: Path) -> None:
@@ -2016,13 +2005,6 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                     "requires a durable paper trail; refusing the commit.\n"
                 )
                 return 2
-            if not _shared_skip_record_append(record, root):
-                sys.stderr.write(
-                    "[section-commit-gate] BLOCK -- SKIP audit write to "
-                    ".ai-workflow/skip-log.jsonl FAILED. The shared "
-                    "workflow ledger needs the same opt-out paper trail.\n"
-                )
-                return 2
             # Codex post-commit review_B: SKIP is a state transition,
             # not just an audit append. Reset last-codex-review.json
             # `received` to false so a stamp-only SKIP cannot leave a
@@ -2033,7 +2015,6 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                 f"[section-commit-gate] SKIP allowed (stamp_only) -- "
                 f"reason: {skip_reason}\n"
                 f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
-                f"mirrored to .ai-workflow/skip-log.jsonl; "
                 f"last-codex-review.json reset (received: false).\n"
             )
             return 0
@@ -2084,18 +2065,10 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                 "requires a durable paper trail; refusing the commit.\n"
             )
             return 2
-        if not _shared_skip_record_append(record, root):
-            sys.stderr.write(
-                "[section-commit-gate] BLOCK -- SKIP audit write to "
-                ".ai-workflow/skip-log.jsonl FAILED. The shared "
-                "workflow ledger needs the same opt-out paper trail.\n"
-            )
-            return 2
         _reset_review_state(root)
         sys.stderr.write(
             f"[section-commit-gate] SKIP allowed -- reason: {skip_reason}\n"
             f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
-            f"mirrored to .ai-workflow/skip-log.jsonl; "
             f"last-codex-review.json reset (received: false).\n"
         )
         return 0
@@ -2115,7 +2088,6 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             "flipped_todos": flipped,
         }
         _skip_record_append(warn_record, _skip_log_path(root))
-        _shared_skip_record_append(warn_record, root)
 
     # TODO-08 §21: WARN-first heuristic gates fire on every section
     # commit attempt that has an active implement-todo-section skill
