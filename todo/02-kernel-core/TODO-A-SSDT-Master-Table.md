@@ -312,9 +312,9 @@ title: "SSDT Master Table"
 
 | Index  | Function                         | §   | Owner                | Done |
 |--------|----------------------------------|-----|----------------------|------|
-| 0x0150 | NtRegisterSyscallAuditHook       | §24 | T12                  | [ ]  |
-| 0x0151 | NtUnregisterSyscallAuditHook     | §24 | T12                  | [ ]  |
-| 0x0152 | NtQuerySyscallAuditState         | §24 | T12                  | [ ]  |
+| 0x0150 | NtRegisterSyscallAuditHook       | §24 | T12                  | [/]  |
+| 0x0151 | NtUnregisterSyscallAuditHook     | §24 | T12                  | [/]  |
+| 0x0152 | NtQuerySyscallAuditState         | §24 | T12                  | [x]  |
 
 **0x0160–0x017F: Job Objects**
 

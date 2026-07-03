@@ -205,6 +205,48 @@ static void test_nt_audit_reentry_guard(void)
     nt_audit_reset_for_test();
 }
 
+/* A denying PRE hook must skip the remaining hooks (so their invocation count
+ * does not advance for a syscall they never saw). */
+static uint32_t s_denier_fired;
+static uint32_t s_observer_fired;
+
+static NTSTATUS test_denier_routine(uint32_t sn, const uint64_t *a, void *c,
+                                    uint32_t phase, NTSTATUS st)
+{
+    (void)sn; (void)a; (void)c; (void)st;
+    if (phase == AUDIT_PHASE_PRE)
+        s_denier_fired++;
+    return STATUS_ACCESS_DENIED;
+}
+
+static NTSTATUS test_observer_routine(uint32_t sn, const uint64_t *a, void *c,
+                                      uint32_t phase, NTSTATUS st)
+{
+    (void)sn; (void)a; (void)c; (void)st;
+    if (phase == AUDIT_PHASE_PRE)
+        s_observer_fired++;
+    return STATUS_SUCCESS;
+}
+
+static void test_nt_audit_pre_deny_skips(void)
+{
+    reset_obs();
+    s_denier_fired = s_observer_fired = 0;
+    int32_t h1 = 0, h2 = 0;
+    nt_audit_register(test_denier_routine, (void *)0, AUDIT_PRE_CALL, &h1);   /* slot 0 */
+    nt_audit_register(test_observer_routine, (void *)0, AUDIT_PRE_CALL, &h2); /* slot 1 */
+
+    uint64_t args[6] = { 0 };
+    nt_audit_session_t sess;
+    NTSTATUS r = nt_audit_begin(0x00DF, args, &sess);
+    if (r == STATUS_SUCCESS)
+        nt_audit_end(&sess, 0x00DF, args, STATUS_SUCCESS);
+    TEST_ASSERT_EQ(r, STATUS_ACCESS_DENIED, "first hook denies the syscall");
+    TEST_ASSERT_EQ(s_denier_fired, 1, "denier fired once");
+    TEST_ASSERT_EQ(s_observer_fired, 0, "hook after a denier is not invoked");
+    nt_audit_reset_for_test();
+}
+
 void test_register_nt_audit(void)
 {
     test_suite_register_cat("NT: audit register/unregister", test_nt_audit_register, TEST_CAT_ABI);
@@ -214,4 +256,5 @@ void test_register_nt_audit(void)
     test_suite_register_cat("NT: audit pool full", test_nt_audit_pool_full, TEST_CAT_ABI);
     test_suite_register_cat("NT: audit recursion guard", test_nt_audit_recursion_guard, TEST_CAT_ABI);
     test_suite_register_cat("NT: audit API re-entry guard", test_nt_audit_reentry_guard, TEST_CAT_ABI);
+    test_suite_register_cat("NT: audit pre-deny skips later hooks", test_nt_audit_pre_deny_skips, TEST_CAT_ABI);
 }

@@ -110,8 +110,13 @@ NTSTATUS nt_audit_begin(uint32_t service_number, const uint64_t *args,
 void nt_audit_end(nt_audit_session_t *sess, uint32_t service_number,
                   const uint64_t *args, NTSTATUS status);
 
-/* Number of live hooks (relaxed); the ssdt.c fast path reads this. */
-uint32_t nt_audit_hook_count(void);
+/* Number of live hooks (relaxed). Inlined so the ssdt.c per-syscall fast path
+ * is a single atomic load + branch with no frame or out-of-line call when idle. */
+extern volatile uint32_t g_nt_audit_hook_count;
+static inline uint32_t nt_audit_hook_count(void)
+{
+    return __atomic_load_n(&g_nt_audit_hook_count, __ATOMIC_RELAXED);
+}
 
 /* ---- Pure helpers (kernel API + unit tests) ------------------------------- */
 

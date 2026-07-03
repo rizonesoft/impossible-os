@@ -45,7 +45,9 @@ typedef struct audit_hook {
 
 static audit_hook_t   g_hooks[NT_AUDIT_MAX_HOOKS];
 static DEFINE_SPINLOCK(s_audit_lock);
-static uint32_t       g_audit_count;          /* live hook count (atomic fast-path read) */
+/* Extern (not static) so the fast-path nt_audit_hook_count() inlines in
+ * ssdt_dispatch; writes are serialized by s_audit_lock. */
+volatile uint32_t     g_nt_audit_hook_count;          /* live hook count (atomic fast-path read) */
 static int32_t        g_next_id = 1;          /* monotonic; 0 is never a live id */
 static uint64_t       g_denied_count;         /* syscalls blocked by a pre-hook (atomic) */
 
@@ -55,11 +57,6 @@ static inline int in_audit_thread(void)
 {
     struct thread *t = thread_current();
     return (t && t->in_audit);
-}
-
-uint32_t nt_audit_hook_count(void)
-{
-    return __atomic_load_n(&g_audit_count, __ATOMIC_RELAXED);
 }
 
 /* ---- Registration -------------------------------------------------------- */
@@ -93,7 +90,7 @@ NTSTATUS nt_audit_register(SYSCALL_AUDIT_ROUTINE routine, void *context,
             g_hooks[i].invocations = 0;
             g_hooks[i].handle      = g_next_id++;
             *out_handle = g_hooks[i].handle;
-            __atomic_store_n(&g_audit_count, g_audit_count + 1, __ATOMIC_RELEASE);
+            __atomic_store_n(&g_nt_audit_hook_count, g_nt_audit_hook_count + 1, __ATOMIC_RELEASE);
             spin_unlock_irqrestore(&s_audit_lock, irq);
             return STATUS_SUCCESS;
         }
@@ -128,7 +125,7 @@ NTSTATUS nt_audit_unregister(int32_t handle)
             g_hooks[i].routine = (SYSCALL_AUDIT_ROUTINE)0;
             g_hooks[i].context = (void *)0;
             g_hooks[i].flags   = 0;
-            __atomic_store_n(&g_audit_count, g_audit_count - 1, __ATOMIC_RELEASE);
+            __atomic_store_n(&g_nt_audit_hook_count, g_nt_audit_hook_count - 1, __ATOMIC_RELEASE);
             spin_unlock_irqrestore(&s_audit_lock, irq);
             return STATUS_SUCCESS;
         }
@@ -149,7 +146,7 @@ void nt_audit_reset_for_test(void)
         g_hooks[i].invocations = 0;
         __atomic_store_n(&g_hooks[i].in_flight, 0, __ATOMIC_RELEASE);
     }
-    __atomic_store_n(&g_audit_count, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_nt_audit_hook_count, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&g_denied_count, 0, __ATOMIC_RELEASE);
     /* g_next_id kept monotonic so a stale handle never re-matches. */
     spin_unlock_irqrestore(&s_audit_lock, irq);
@@ -177,7 +174,6 @@ NTSTATUS nt_audit_begin(uint32_t service_number, const uint64_t *args,
             sess->hooks[n].context = g_hooks[i].context;
             sess->hooks[n].idx     = i;
             sess->hooks[n].flags   = g_hooks[i].flags;
-            g_hooks[i].invocations++;
             __atomic_add_fetch(&g_hooks[i].in_flight, 1, __ATOMIC_ACQUIRE);
             n++;
         }
@@ -194,6 +190,9 @@ NTSTATUS nt_audit_begin(uint32_t service_number, const uint64_t *args,
         t->in_audit = 1;
     for (uint32_t i = 0; i < n; i++) {
         if ((sess->hooks[i].flags & AUDIT_PRE_CALL) && block == STATUS_SUCCESS) {
+            /* Count only hooks that actually fire (a pre-deny skips the rest). */
+            __atomic_add_fetch(&g_hooks[sess->hooks[i].idx].invocations, 1,
+                               __ATOMIC_RELAXED);
             NTSTATUS r = sess->hooks[i].routine(service_number, args,
                                                 sess->hooks[i].context,
                                                 AUDIT_PHASE_PRE, STATUS_SUCCESS);
@@ -226,10 +225,13 @@ void nt_audit_end(nt_audit_session_t *sess, uint32_t service_number,
     if (t)
         t->in_audit = 1;
     for (uint32_t i = 0; i < n; i++) {
-        if (sess->hooks[i].flags & AUDIT_POST_CALL)
+        if (sess->hooks[i].flags & AUDIT_POST_CALL) {
+            __atomic_add_fetch(&g_hooks[sess->hooks[i].idx].invocations, 1,
+                               __ATOMIC_RELAXED);
             (void)sess->hooks[i].routine(service_number, args,
                                          sess->hooks[i].context,
                                          AUDIT_PHASE_POST, status);
+        }
     }
     if (t)
         t->in_audit = 0;
@@ -246,12 +248,18 @@ void nt_audit_end(nt_audit_session_t *sess, uint32_t service_number,
 
 /* NtQuerySyscallAuditState(PVOID Buffer, ULONG Length, PULONG ReturnLength).
  * Returns hook metadata (handle/flags/invocation count) -- no function
- * pointers are exposed, so this is safe to read from user mode. */
+ * pointers are exposed, but the presence/activity of audit hooks is itself a
+ * TCB-sensitive signal, so the handler is kernel-mode only. */
 static NTSTATUS NtQuerySyscallAuditState_handler(uint64_t buffer, uint64_t buf_len_raw,
                                                  uint64_t retlen_out, uint64_t a4,
                                                  uint64_t a5, uint64_t a6)
 {
     (void)a4; (void)a5; (void)a6;
+    /* Audit state (active hooks, denial counts) is a TCB-sensitive audit-evasion
+     * signal, so it is kernel-mode only. Ring-3-safe access gated on
+     * SeAuditPrivilege lands with the token/SRM access-check work. */
+    ASSERT_KERNEL_CALLER();
+
     uint32_t length = (uint32_t)buf_len_raw;   /* ULONG ABI; narrow raw arg */
 
     /* Snapshot the live hooks under the lock (brief; hooks are not invoked
@@ -264,7 +272,10 @@ static NTSTATUS NtQuerySyscallAuditState_handler(uint64_t buffer, uint64_t buf_l
         if (g_hooks[i].handle != 0) {
             info[active].Handle          = g_hooks[i].handle;
             info[active].Flags           = g_hooks[i].flags;
-            info[active].InvocationCount = g_hooks[i].invocations;
+            /* invocations is incremented atomically at the call sites (outside
+             * this lock), so read it atomically too. */
+            info[active].InvocationCount =
+                __atomic_load_n(&g_hooks[i].invocations, __ATOMIC_RELAXED);
             active++;
         }
     }

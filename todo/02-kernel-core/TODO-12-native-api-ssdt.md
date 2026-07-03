@@ -1047,23 +1047,29 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [/] `NtRegisterSyscallAuditHook` → SSDT 0x0150: shipped as kernel C API `nt_audit_register` (`AUDIT_PRE`/`POST`/`BOTH`); raw-function-pointer SSDT syscall NOT exposed (unsafe pre-SMP-closed previous-mode) -> deferred to §29
   - `AuditRoutine(ServiceNumber, Args, Context, Phase, Status)` -- kernel context; a PRE routine returning non-`STATUS_SUCCESS` blocks the syscall
 - [/] `NtUnregisterSyscallAuditHook` → SSDT 0x0151: shipped as kernel C API `nt_audit_unregister` (non-blocking try-semantics: `STATUS_UNSUCCESSFUL` while a dispatch is in flight, else clears the slot); SSDT exposure deferred to §29
-- [x] `NtQuerySyscallAuditState(Buffer, Length, ReturnLength)` → SSDT 0x0152: `SYSCALL_AUDIT_STATE` (active count, per-hook handle/flags/invocations, denied count); probe+copy + `ReturnLength`/`BUFFER_TOO_SMALL`; no function pointers exposed
-- [x] SSDT dispatcher integration: `ssdt_dispatch` calls `nt_audit_dispatch_pre` before + `nt_audit_dispatch_post` after the handler; pre-`STATUS_ACCESS_DENIED` skips the handler
+- [x] `NtQuerySyscallAuditState(Buffer, Length, ReturnLength)` → SSDT 0x0152: `SYSCALL_AUDIT_STATE` (active count, per-hook handle/flags/invocations, denied); probe+copy + `ReturnLength`/`BUFFER_TOO_SMALL`; kernel-mode only (`ASSERT_KERNEL_CALLER`)
+- [x] SSDT dispatcher integration: `ssdt_dispatch` runs one `nt_audit_begin`/`nt_audit_end` session (PRE before + POST after the handler); a non-`STATUS_SUCCESS` PRE blocks the handler; audited path out-of-line so the no-hook path is zero-cost
   - Fast path: relaxed atomic `nt_audit_hook_count()==0` -> zero overhead; hooks snapshot under `s_audit_lock` + `in_flight` refcount, invoked outside the lock; per-thread `in_audit` guard breaks recursion
 - [x] Gate the syscall-path `transition_ring_record()` behind `g_transition_ring_active`: `cmp/jz` in `syscall_entry.asm` (both sites), default off; IDT/fault records stay on (panic forensics); `transition_ring_set_enabled()` toggles it. (§2 perf)
 - [x] Registration is kernel-mode only (raw function-pointer `AuditRoutine` is untrusted from ring-3); ring-3-safe `SeAuditPrivilege` gating owned by §29 (no `SeSinglePrivilegeCheck` yet)
+- [ ] Perf: hoist the `g_transition_ring_active` `cmp/jz` in `syscall_entry.asm` before the register save blocks so the off path skips the 4 push/pop pairs, not just the record.
+- [ ] Perf: make the active audit dispatch read-mostly (RCU/seqlock snapshot + per-CPU padded `in_flight`) so an always-on hook does not serialize every syscall on the global `s_audit_lock`.
 - [x] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
 
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 5 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 8 suites, 0 failures
 
 > **Notes:**
-> - Shipped `src/kernel/nt/nt_audit.c` + `include/kernel/nt/nt_audit.h`: fixed 8-slot hook pool + pre/post dispatch. Only `NtQuerySyscallAuditState` (0x0152) is SSDT-exposed; `nt_audit_register`/`nt_audit_unregister` are kernel C APIs (see Security).
+> - Shipped `src/kernel/nt/nt_audit.c` + `include/kernel/nt/nt_audit.h`: 8-slot hook pool + begin/end session dispatch. Only `NtQuerySyscallAuditState` (0x0152, kernel-only) is SSDT-exposed; register/unregister are kernel C APIs.
 > - Hot path: `ssdt_dispatch` reads `nt_audit_hook_count()` (relaxed atomic), zero cost when none registered; hooks are snapshotted under `s_audit_lock` (with a per-hook `in_flight` refcount) and invoked OUTSIDE it (so a hook may yield/block); a per-thread `thread->in_audit` guard breaks recursion; `nt_audit_unregister` refuses (`STATUS_UNSUCCESSFUL`) while `in_flight != 0`, else frees the slot -- context safe with no wait/wake primitive needed.
 > - Syscall-path `transition_ring_record()` gated behind `g_transition_ring_active` (`cmp/jz` in `syscall_entry.asm`, default off); IDT/fault transition records stay on for panic forensics.
 > - Security: registration takes a raw kernel function pointer, so it is NOT a ring-3 syscall (would be kernel-code execution if the non-SMP-closed previous-mode gate were raced); the kernel C API is the only registration path.
 > - Scope boundary: covers the SSDT surface (SYSCALL + INT 0x2E), NOT legacy INT 0x80; ring-3-safe registration via a validated descriptor + `SeAuditPrivilege` is owned by §29.
+> **Verified:** 2026-07-03 | commit `8537a1b8` | 4/8 items | build OK | tests 1008 kernel + 16 user PASS
+> **Accepted:** [M] the `NtQuerySyscallAuditState` copy-out is not fault-recoverable (in-range unmapped user page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`" at line 126)
+> **Deferred:** [M] perf: syscall-entry off-path still does push/pop pairs, and an always-on hook serializes syscalls on the global `s_audit_lock` -> XREF: 02-kernel-core/TODO-12 §24 (items: "Perf: hoist the `g_transition_ring_active`..." + "Perf: make the active audit dispatch read-mostly...")
+> **Quality reviewed:** 2026-07-03 | Codex 24x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 1Crit+5H+9M fixed, 1M accepted-XREF, 2M deferred | scope: kernel-code-quality
 
 ---
 

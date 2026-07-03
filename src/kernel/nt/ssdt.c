@@ -244,6 +244,26 @@ void ssdt_init(void)
 
 /* ---- Dispatch ------------------------------------------------------------ */
 
+/* Cold audited path: kept out-of-line so the common no-hook syscall path in
+ * ssdt_dispatch reserves no session frame and makes no call -- it is just the
+ * inline nt_audit_hook_count() load + branch + the handler call. One session
+ * spans PRE -> handler -> POST so an AUDIT_BOTH hook cannot be unregistered
+ * mid-syscall; a PRE hook returning non-SUCCESS blocks the syscall. */
+static NTSTATUS __attribute__((noinline))
+ssdt_dispatch_audited(SSDT_HANDLER handler, uint32_t service_number,
+                      uint64_t a1, uint64_t a2, uint64_t a3,
+                      uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    uint64_t audit_args[6] = { a1, a2, a3, a4, a5, a6 };
+    nt_audit_session_t sess;
+    NTSTATUS pre = nt_audit_begin(service_number, audit_args, &sess);
+    if (pre != STATUS_SUCCESS)
+        return pre;
+    NTSTATUS handler_status = handler(a1, a2, a3, a4, a5, a6);
+    nt_audit_end(&sess, service_number, audit_args, handler_status);
+    return handler_status;
+}
+
 NTSTATUS ssdt_dispatch(uint32_t service_number,
                        uint64_t a1, uint64_t a2, uint64_t a3,
                        uint64_t a4, uint64_t a5, uint64_t a6)
@@ -273,20 +293,11 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
     if (index >= table->max)
         return STATUS_NOT_IMPLEMENTED;   /* SCOPE-GAP-ALLOWED: Windows-correct terminal status */
 
-    /* Syscall audit hooks: zero-overhead relaxed-atomic fast path when none is
-     * registered. One session spans PRE -> handler -> POST so an AUDIT_BOTH
-     * hook cannot be unregistered mid-syscall. A PRE hook returning non-SUCCESS
-     * blocks the syscall. */
-    if (nt_audit_hook_count() != 0) {
-        uint64_t audit_args[6] = { a1, a2, a3, a4, a5, a6 };
-        nt_audit_session_t sess;
-        NTSTATUS pre = nt_audit_begin(service_number, audit_args, &sess);
-        if (pre != STATUS_SUCCESS)
-            return pre;
-        NTSTATUS handler_status = table->handlers[index](a1, a2, a3, a4, a5, a6);
-        nt_audit_end(&sess, service_number, audit_args, handler_status);
-        return handler_status;
-    }
+    /* Fast path (no hook registered): a single inlined relaxed-atomic load +
+     * branch, then the handler. The audited path is out-of-line (cold). */
+    if (nt_audit_hook_count() != 0)
+        return ssdt_dispatch_audited(table->handlers[index], service_number,
+                                     a1, a2, a3, a4, a5, a6);
 
     return table->handlers[index](a1, a2, a3, a4, a5, a6);
 }
