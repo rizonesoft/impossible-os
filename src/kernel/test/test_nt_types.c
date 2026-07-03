@@ -710,13 +710,16 @@ static void test_nt_procinfo_classes(void)
 /* FILE_DIRECTORY_INFORMATION struct should have expected fixed size */
 static void test_dir_info_struct_sizes(void)
 {
-    /* Verify the fixed-size portion (before variable FileName) */
-    TEST_ASSERT(FILE_DIR_INFO_FIXED_SIZE >= 64,
-                "FILE_DIR_INFO_FIXED_SIZE includes all metadata fields");
-    TEST_ASSERT(FILE_BOTH_DIR_INFO_FIXED_SIZE > FILE_DIR_INFO_FIXED_SIZE,
-                "FILE_BOTH_DIR_INFO adds ShortName to DIR_INFO");
-    TEST_ASSERT(FILE_ID_BOTH_DIR_INFO_FIXED_SIZE > FILE_BOTH_DIR_INFO_FIXED_SIZE,
-                "FILE_ID_BOTH_DIR_INFO adds FileId to BOTH_DIR_INFO");
+    /* Fixed size = byte offset of FileName (NOT sizeof - 2, which over-counts
+     * by trailing struct padding). Exact Windows x64 ABI offsets. */
+    TEST_ASSERT_EQ((uint32_t)FILE_DIR_INFO_FIXED_SIZE, 64u,
+                   "FILE_DIRECTORY_INFORMATION FileName offset = 64");
+    TEST_ASSERT_EQ((uint32_t)FILE_BOTH_DIR_INFO_FIXED_SIZE, 94u,
+                   "FILE_BOTH_DIR_INFORMATION FileName offset = 94");
+    TEST_ASSERT_EQ((uint32_t)FILE_ID_BOTH_DIR_INFO_FIXED_SIZE, 104u,
+                   "FILE_ID_BOTH_DIR_INFORMATION FileName offset = 104");
+    TEST_ASSERT_EQ((uint32_t)__builtin_offsetof(FILE_ID_BOTH_DIR_INFORMATION, FileId), 96u,
+                   "FILE_ID_BOTH_DIR_INFORMATION FileId offset = 96");
 }
 
 /* NtQueryDirectoryFile with class 1 should return entries with metadata */

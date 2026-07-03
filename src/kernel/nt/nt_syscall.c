@@ -32,6 +32,7 @@
 #include "kernel/policy_lock.h"       /* kernel_lockdown_level_get */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
+extern void *memset(void *s, int c, uint64_t n);
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
 #include "kernel/ob/ob.h"
@@ -503,31 +504,87 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
     struct vfs_node *dir_node;
     FILE_OBJECT *fo;
     uint64_t offset = 0;
+    uint64_t last_entry_end = 0;   /* actual end of the last entry (no trailing pad) */
     uint32_t entries_written = 0;
     uint8_t *prev_entry = (uint8_t *)0;
 
     if (!buf || buf_size == 0)
         return STATUS_INVALID_PARAMETER;
 
-    /* Resolve directory handle -> FILE_OBJECT -> vfs_node */
-    fo = (FILE_OBJECT *)0;
-    if (fh != 0 && fh != (HANDLE)-1) {
-        HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(
-            &task_current()->handle_table, fh);
-        if (entry && entry->object) {
-            OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(entry->object);
-            if (hdr->type == ObpFileType)
-                fo = (FILE_OBJECT *)entry->object;
+    /* Probe the output buffer + IO_STATUS_BLOCK FIRST -- before any branch
+     * writes iosb -- so an invalid class/handle combined with a kernel-range or
+     * unmapped iosb pointer is rejected with STATUS_ACCESS_VIOLATION rather than
+     * driving a raw kernel write (matches the sibling handlers' probe pattern).
+     * Fault-recoverable copy_to_user via a kernel bounce buffer is the systemic
+     * usercopy follow-up. Every error exit below sets iosb {status, 0}. */
+    {
+        NTSTATUS ps = ProbeForWriteIfUser(buf, buf_size, 1);
+        if (ps != STATUS_SUCCESS)
+            return ps;
+        if (iosb) {
+            ps = ProbeForWriteIfUser(iosb, sizeof(IO_STATUS_BLOCK), 1);
+            if (ps != STATUS_SUCCESS)
+                return ps;
         }
     }
 
-    if (fo && fo->vfs_node) {
+    /* Validate the info class up front (not inside the loop): an invalid class
+     * on an empty directory must return STATUS_INVALID_INFO_CLASS -- not
+     * STATUS_NO_MORE_FILES. */
+    if (info_class != 0 &&
+        info_class != FileDirectoryInformation &&
+        info_class != FileBothDirectoryInformation &&
+        info_class != FileIdBothDirectoryInformation) {
+        if (iosb) { iosb->Status = STATUS_INVALID_INFO_CLASS; iosb->Information = 0; }
+        return STATUS_INVALID_INFO_CLASS;
+    }
+
+    /* Resolve directory handle -> FILE_OBJECT -> vfs_node. Any nonzero handle
+     * (INCLUDING the INVALID_HANDLE_VALUE sentinel (HANDLE)-1) MUST resolve to
+     * a live File object; an invalid/closed/wrong-type handle returns
+     * STATUS_INVALID_HANDLE (never silent C:\ enumeration), and a File object
+     * whose node is not a directory returns STATUS_NOT_A_DIRECTORY. Only the
+     * explicit no-handle value fh==0 uses the C:\ root legacy shim. */
+    fo = (FILE_OBJECT *)0;
+    if (fh != 0) {
+        HANDLE_TABLE_ENTRY *entry = ObpLookupHandle(
+            &task_current()->handle_table, fh);
+        OBJECT_HEADER *hdr;
+        if (!entry || !entry->object) {
+            if (iosb) { iosb->Status = STATUS_INVALID_HANDLE; iosb->Information = 0; }
+            return STATUS_INVALID_HANDLE;
+        }
+        hdr = OB_HEADER_FROM_BODY(entry->object);
+        if (hdr->type != ObpFileType) {
+            if (iosb) { iosb->Status = STATUS_INVALID_HANDLE; iosb->Information = 0; }
+            return STATUS_INVALID_HANDLE;
+        }
+        fo = (FILE_OBJECT *)entry->object;
+        /* VFS type is a bit flag: a mounted drive root is VFS_DIRECTORY |
+         * VFS_MOUNTPOINT, so test the DIRECTORY bit, not exact equality
+         * (== would wrongly reject a real C:\ handle as not-a-directory). */
+        if (!fo->vfs_node || !(fo->vfs_node->type & VFS_DIRECTORY)) {
+            if (iosb) { iosb->Status = STATUS_NOT_A_DIRECTORY; iosb->Information = 0; }
+            return STATUS_NOT_A_DIRECTORY;
+        }
+        /* Gate enumeration on list/read access, like NtReadFile gates reads on
+         * VFS_O_READ. A directory handle opened write-only (GENERIC_WRITE with
+         * no read) must not enumerate. Normal opens (GENERIC_READ /
+         * FILE_LIST_DIRECTORY / default) set VFS_O_READ via disposition_to_vfs,
+         * so this passes for legitimate enumeration. Inside the fh!=0 branch, so
+         * fo is non-NULL (the fh==0 shim has no FILE_OBJECT). */
+        if (!(fo->access & VFS_O_READ)) {
+            if (iosb) { iosb->Status = STATUS_ACCESS_DENIED; iosb->Information = 0; }
+            return STATUS_ACCESS_DENIED;
+        }
         dir_node = fo->vfs_node;
     } else {
-        /* Fallback: C:\ root (legacy compat) */
+        /* Explicit no-handle legacy shape: C:\ root. */
         dir_node = vfs_get_drive_root('C');
-        if (!dir_node)
+        if (!dir_node) {
+            if (iosb) { iosb->Status = STATUS_OBJECT_PATH_NOT_FOUND; iosb->Information = 0; }
             return STATUS_OBJECT_PATH_NOT_FOUND;
+        }
     }
 
     /* Handle RestartScan */
@@ -575,7 +632,9 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
             else if (child)
                 st.size = child->size;
 
-            /* Compute filename length in bytes (UTF-16) */
+            /* Compute filename length in bytes (UTF-16). Capped at 255, the
+             * Windows max path-component length; a disk-sourced name longer
+             * than that is intentionally truncated to the component limit. */
             for (name_len = 0; name_len < 255 && de->name[name_len]; name_len++)
                 ;
             name_bytes = name_len * 2;
@@ -598,8 +657,11 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
             /* 8-byte align */
             aligned_size = (entry_size + 7) & ~(uint32_t)7;
 
-            /* Check buffer space (must fit the full aligned extent) */
-            if (offset + aligned_size > buf_size)
+            /* The ENTRY itself must fit; its trailing 8-byte pad is only needed
+             * when another entry follows (the last entry keeps NextEntryOffset
+             * 0 and no pad). Checking aligned_size here would wrongly reject an
+             * exact-size single-entry / ReturnSingleEntry buffer. */
+            if (offset + entry_size > buf_size)
                 break;
 
             /* Fill the entry */
@@ -613,13 +675,13 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 uint32_t attrs = (st.type == VFS_DIRECTORY)
                     ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
-                /* Zero the entry region */
+                /* Zero the entry region. aligned_size <= remaining by the
+                 * space check above; clamp defensively, then memset. */
                 {
-                    uint32_t z;
                     uint32_t clear = aligned_size;
-                    if (offset + clear > buf_size) clear = (uint32_t)(buf_size - offset);
-                    for (z = 0; z < clear; z++)
-                        dst[z] = 0;
+                    if (offset + clear > buf_size)
+                        clear = (uint32_t)(buf_size - offset);
+                    memset(dst, 0, clear);
                 }
 
                 if (info_class == FileDirectoryInformation) {
@@ -678,6 +740,7 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 }
 
                 prev_entry = dst;
+                last_entry_end = offset + entry_size;  /* unpadded end of this (so far last) entry */
                 offset += aligned_size;
                 entries_written++;
                 start_index++;
@@ -708,7 +771,7 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
 
     if (iosb) {
         iosb->Status = STATUS_SUCCESS;
-        iosb->Information = offset;
+        iosb->Information = last_entry_end;  /* actual bytes; last entry has no trailing pad */
     }
     return STATUS_SUCCESS;
 }

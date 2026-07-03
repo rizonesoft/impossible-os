@@ -186,13 +186,32 @@ typedef struct {
     uint16_t FileName[1];      /* variable length */
 } FILE_ID_BOTH_DIR_INFORMATION;
 
-/* Fixed-size portion (before FileName[]) for each struct */
+/* Fixed-size portion (before FileName[]) for each struct. MUST be the byte
+ * offset of FileName, NOT `sizeof - sizeof(uint16_t)`: the u64 members force
+ * trailing struct padding after the u16 FileName[1], so `sizeof - 2` over-counts
+ * by the pad (e.g. 70 vs the real 64) -- inflating entry_size, wasting buffer
+ * space, and rejecting Windows-sized buffers with STATUS_BUFFER_OVERFLOW. */
 #define FILE_DIR_INFO_FIXED_SIZE \
-    (sizeof(FILE_DIRECTORY_INFORMATION) - sizeof(uint16_t))
+    __builtin_offsetof(FILE_DIRECTORY_INFORMATION, FileName)
 #define FILE_BOTH_DIR_INFO_FIXED_SIZE \
-    (sizeof(FILE_BOTH_DIR_INFORMATION) - sizeof(uint16_t))
+    __builtin_offsetof(FILE_BOTH_DIR_INFORMATION, FileName)
 #define FILE_ID_BOTH_DIR_INFO_FIXED_SIZE \
-    (sizeof(FILE_ID_BOTH_DIR_INFORMATION) - sizeof(uint16_t))
+    __builtin_offsetof(FILE_ID_BOTH_DIR_INFORMATION, FileName)
+
+/* Windows x64 ABI offset pins -- these structs are consumed by Win32
+ * FindFirstFileW/FindNextFileW at fixed field offsets. */
+_Static_assert(__builtin_offsetof(FILE_DIRECTORY_INFORMATION, FileName) == 64,
+    "FILE_DIRECTORY_INFORMATION.FileName must be at ABI offset 64");
+_Static_assert(__builtin_offsetof(FILE_BOTH_DIR_INFORMATION, ShortName) == 70,
+    "FILE_BOTH_DIR_INFORMATION.ShortName must be at ABI offset 70");
+_Static_assert(__builtin_offsetof(FILE_BOTH_DIR_INFORMATION, FileName) == 94,
+    "FILE_BOTH_DIR_INFORMATION.FileName must be at ABI offset 94");
+_Static_assert(__builtin_offsetof(FILE_ID_BOTH_DIR_INFORMATION, ShortName) == 70,
+    "FILE_ID_BOTH_DIR_INFORMATION.ShortName must be at ABI offset 70");
+_Static_assert(__builtin_offsetof(FILE_ID_BOTH_DIR_INFORMATION, FileId) == 96,
+    "FILE_ID_BOTH_DIR_INFORMATION.FileId must be at ABI offset 96");
+_Static_assert(__builtin_offsetof(FILE_ID_BOTH_DIR_INFORMATION, FileName) == 104,
+    "FILE_ID_BOTH_DIR_INFORMATION.FileName must be at ABI offset 104");
 
 /* ---- FS_INFORMATION_CLASS (NtQueryVolumeInformationFile) ---------------- */
 

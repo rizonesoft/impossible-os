@@ -1183,6 +1183,24 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 
 **Test checkpoint:** `NtQueryDirectoryFile(FileBothDirectoryInformation)` on `C:\` returns entries with valid timestamps and sizes. Entry names match VFS readdir output. 8.3 ShortName is populated (uppercase truncated). ReturnSingleEntry returns exactly 1 entry per call. RestartScan re-reads from the beginning.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | dir-enum struct-size + dispatch suites, 0 failures
+
+> **Notes:**
+> - Shipped 3 Win32 dir info classes (FILE_DIRECTORY/BOTH_DIR/ID_BOTH_DIR_INFORMATION) in `nt_file.h` + the `NtQueryDirectoryFile` class packer in `nt_syscall.c` (NextEntryOffset chain, ReturnSingleEntry/RestartScan, `dir_enum_index` cursor).
+> - Review hardened it: `FILE_*_FIXED_SIZE` -> `__builtin_offsetof(FileName)` + 6 ABI `_Static_assert`s; info_class checked before the loop; bad handle -> `STATUS_INVALID_HANDLE`; up-front `ProbeForWriteIfUser`; error exits set iosb.
+> - Consumers: Win32 `FindFirstFileW`/`FindNextFileW` (TODO-05 §6) via `WIN32_FIND_DATAW`.
+> - Canonical doc: the struct definitions in `include/kernel/nt/nt_file.h`.
+> - Scope boundary: fault-recoverable `copy_to_user`, the O(1) cursor, and cursor SMP-serialization are accepted-XREF below; ShortName 8.3 collisions + non-ASCII UTF-16 decode stay naive.
+> **Verified:** 2026-07-03 | commit `7338e0a4` (impl) + review fixes | 9/9 items | build OK | tests 1051 kernel + 16 user PASS
+> **Accepted:** [Critical] the output buffer + IO_STATUS_BLOCK are `ProbeForWriteIfUser`'d then written entry-by-entry through the raw user pointer (not a fault-recoverable `copy_to_user` bounce) -- an in-range unmapped page faults in the kernel; systemic usercopy gap -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()` ... every `src/kernel/nt/nt_*.c` ... any user-pointer-typed syscall arg" at line 126)
+> **Accepted:** [H] `FILE_OBJECT.dir_enum_index` cursor read-modify-write across the enumeration loop is unlocked; concurrent enumeration on a duplicated handle races (skip/dupe); single-cursor-safe today -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "VFS dir-enum cursor ... serialize vs concurrent shared-handle enum" at line 170)
+> **Accepted:** [H] enumeration is O(n^2) -- `vfs_readdir(index)` re-walks from head and `vfs_finddir`+`stat` re-scan per entry (VFS iterator API is index-based, no metadata in `vfs_dirent`) -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "VFS dir-enum cursor ... O(1) `FILE_OBJECT` cursor + metadata in `vfs_dirent`" at line 170)
+> **Accepted:** [H] `NtQueryDirectoryFile(fh==0, ...)` still enumerates `C:\` (the original §6 no-handle dev shim) instead of `STATUS_INVALID_HANDLE` for Windows parity; the fh==-1 and all other-handle paths are now validated, only fh==0 keeps the shim (the ABI unit test relies on it, and requiring a valid handle needs the `CreateFile(LIST_DIR)` handle-open path) -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "Retire the `NtQueryDirectoryFile` fh==0 C:\ shim ... require a valid handle" at line 171)
+> **Accepted:** [H] the read gate checks object-wide `FILE_OBJECT.access`, not the per-handle `granted_access`, so a duplicate handle with read stripped still enumerates; systemic handle-rights gap shared by NtReadFile/NtWriteFile -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "Per-handle granted-access enum gate" at line 172)
+> **Accepted:** [M] `disposition_to_vfs` maps only GENERIC_READ/WRITE, so a directory opened list+`GENERIC_WRITE` is stored write-only and the `VFS_O_READ` gate false-denies it; systemic mapping limitation affecting every read gate -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "`disposition_to_vfs` FILE_LIST_DIRECTORY mapping" at line 173)
+> **Accepted:** [M] the `IO_STATUS_BLOCK` is not published on the null/zero-buffer and buffer-probe-failure early returns (they precede the iosb probe), so a caller reusing the IOSB can observe a stale completion -> XREF: 05-storage-filesystems/TODO-05-win32-file-io-api.md §6 (item: "`NtQueryDirectoryFile` IOSB on early exits" at line 174)
+> **Quality reviewed:** 2026-07-03 | Codex 15x (adversarial x4, consistency x4, perf x4, re-adversarial x3) + kernel-quality-auditor | 1Crit+6H+3M+2L fixed (incl. handle-access VFS_O_READ gate + last-entry unpadded packing), 7 accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 29. Token Lifecycle and SRM Access Check Syscalls

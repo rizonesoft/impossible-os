@@ -167,6 +167,11 @@ Implement `FindFirstFileW`/`FindNextFileW`/`FindClose`, `CreateDirectoryW`/`Remo
 - [ ] `CreateDirectoryW(lpPathName, lpSecAttr)` → `vfs_mkdir(path)`; return TRUE/FALSE
 - [ ] `RemoveDirectoryW(lpPathName)` → `vfs_rmdir(path)`; if empty check fails return `ERROR_DIR_NOT_EMPTY`
 - [ ] Per-process CWD: add `char cwd[256]` to `task_t`; init to `"C:\\"` at process create; `GetCurrentDirectoryW(nBufLen, lpBuf)` → copy `cwd` → WCHAR; `SetCurrentDirectoryW(lpPathName)` → resolve + validate path → update `cwd`
+- [ ] **VFS dir-enum cursor** (`NtQueryDirectoryFile`/FindNextFileW): O(1) `FILE_OBJECT` cursor + metadata in `vfs_dirent`, replacing O(n^2) `vfs_readdir`+`vfs_finddir`; serialize vs concurrent shared-handle enum (`dir_enum_index` raced).
+- [ ] **Retire the `NtQueryDirectoryFile` fh==0 C:\ shim** (`nt_syscall.c`): once `CreateFile(LIST_DIR)` yields a real dir handle + the ABI test opens `C:\`, require a valid handle (fh==0 -> `STATUS_INVALID_HANDLE`, parity).
+- [ ] **Per-handle granted-access enum gate** (`nt_syscall.c`): gate dir/read/write on the handle's `granted_access` (`ObReferenceObjectByHandle`) not object-wide `FILE_OBJECT.access`; a read-stripped duplicate handle still passes.
+- [ ] **`disposition_to_vfs` FILE_LIST_DIRECTORY mapping** (`nt_syscall.c`): map `FILE_LIST_DIRECTORY`/`FILE_READ_DATA` to `VFS_O_READ` independent of `GENERIC_WRITE`, so a list+write dir open is not stored write-only and wrongly denied.
+- [ ] **`NtQueryDirectoryFile` IOSB on early exits** (`nt_syscall.c`): probe the `IO_STATUS_BLOCK` first and set it on the null/zero-buffer and probe-failure returns too, so a reused IOSB never shows a stale completion.
 - [ ] Commit: `"win32: FindFirstFile/FindNextFile/FindClose, CreateDirectory/RemoveDirectory, per-process CWD"`
 
 ## 7. File Management -- Delete, Move, Copy `[Sonnet]`
