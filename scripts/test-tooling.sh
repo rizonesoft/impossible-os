@@ -1146,7 +1146,7 @@ rm -rf "$ARC_TMP"
 
 # --- codex-bg-dispatch argument contract -----------------------------------
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_bg_dispatch_contract]${NC}"
-_bg_multi="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" '[review-kind: design] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md ok' extra 2>&1 >/dev/null || true)"
+_bg_multi="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" '[review-kind: design] todo/00-infrastructure/TODO-08-automation-hardening.md ok' extra 2>&1 >/dev/null || true)"
 if grep -q "expected exactly one prompt argv" <<<"$_bg_multi"; then
     t_pass "codex-bg-dispatch rejects multi-argv prompt"
 else
@@ -2232,7 +2232,7 @@ with tempfile.TemporaryDirectory() as tmp:
     hook = pathlib.Path.cwd() / ".claude/hooks/codex_review_completed.py"
     payload = json.dumps({
         "tool_name": "Bash",
-        "tool_input": {"command": "bash scripts/codex-bg-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md body'"},
+        "tool_input": {"command": "bash scripts/codex-bg-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-08-automation-hardening.md body'"},
     })
     sp.run([sys.executable, str(hook)], input=payload, text=True, cwd=tmp, capture_output=True)
     stamps = root / ".claude" / "state" / "last-review-stamps.json"
