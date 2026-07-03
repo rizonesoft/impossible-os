@@ -334,11 +334,15 @@
   swap the Python LSP. Owner: TODO-07 lsp-mcp-bridge. Repro: install pyright,
   `python3 scripts/lsp-mcp/bridge.py --self-test --lang=py`.
 
-- [ ] **Fix / document the `latest.log` path friction.**
-  `tail -f .claude/overnight/reports/latest.log` fails unless run from the repo
-  root (relative symlink) and only after the first launch creates it. Either
-  print the ABSOLUTE path in the arm-sequencer summary, or add a tiny
-  `overnight-tail` helper. Minor.
+- [x] **Fix / document the `latest.log` path friction.**
+  DONE 2026-07-03, both levers (no new script -- enhanced the existing
+  `scripts/overnight/overnight-monitor.sh`, which had the exact friction):
+  it now resolves the repo root from BASH_SOURCE (absolute paths -- works
+  from ANY directory, not just repo root), and waits for the first report
+  when armed-but-not-yet-launched (`--no-wait` to fail fast). `tail -F`
+  follows the symlink across watchdog relaunches. The arm-sequencer summary
+  now prints the ABSOLUTE monitor command + report path. Verified: runs from
+  /tmp resolving the absolute latest.log; clean rc=1 on an empty report dir.
 
 ## Evaluated and rejected (recorded so we don't re-litigate)
 

@@ -232,6 +232,7 @@ else
 fi
 echo "  model: ${ARM_PRIMARY:-<saved default>} primary, ${ARM_FALLBACK} fallback (claude --fallback-model; overload/unavailable only, re-tries primary each turn)"
 echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
-echo "  Claude reports: .claude/overnight/reports/latest.log"
+echo "  monitor (from any dir): bash $REPO_ROOT/scripts/overnight/overnight-monitor.sh"
+echo "  reports: $REPO_ROOT/.claude/overnight/reports/latest.log (created at first launch)"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"
