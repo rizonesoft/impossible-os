@@ -297,16 +297,42 @@
 
 ## P3 -- operator UX
 
-- [ ] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).**
-  `scripts/lsp-mcp/bridge.py --warm-start=c,py` fails the Python LSP probe:
-  `lsp-binary-missing: 'pyright-langserver' availability probe failed (binary
-  missing on PATH OR present but the npm shim's sibling pyright CLI failed
-  --version)`. clangd (C) warm-starts fine. Effect: even when lsp-bridge IS
-  connected, Python symbol queries error out. Orthogonal to the MCP startup
-  race (which is now scoped/resolved). Install/repair `pyright-langserver` on
-  the dev+overnight host or make the bridge degrade cleanly (skip py warm-start
-  when the binary is absent instead of logging restart-failed). Owner:
-  TODO-07 lsp-mcp-bridge.
+- [x] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).**
+  DONE 2026-07-03 via the DEGRADE-CLEAN prong; the install prong was tried,
+  reverted, and re-scoped to TODO-07 (see the new follow-up below). Findings:
+  - Root cause of the WARN noise: pyright simply not installed (node/npm
+    present via nvm; setup.sh already declares it OPTIONAL-tier).
+  - DEGRADE-CLEAN (shipped): `scripts/lsp-mcp/bridge.py` now logs a missing
+    OPTIONAL LSP binary at INFO with status `not-installed` (new
+    `warm-skipped-not-installed` event) and `_emit_health_event` downgrades
+    `lsp-binary-missing` restart-failed/failed to INFO. Verified 0 WARN lines
+    when pyright is hidden from PATH; test_bridge.sh 99/99 (5a SKIPs).
+  - INSTALL tried + REVERTED: `npm install -g pyright` (v1.1.411) made
+    `is_available()` True and warm-start + documentSymbol work, BUT
+    `workspace/symbol` returns EMPTY even with a scoped pyrightconfig (probed
+    to 60s; documentSymbol returns 38 syms incl. `main`, workspaceSymbol
+    returns 0). That is the bridge's flagship py cap, and the 5a self-test
+    correctly turned SKIP->FAIL. Rather than paper over the self-test or ship
+    a red suite (which would re-red the CI just fixed), reverted the install;
+    the deeper integration gap is the new TODO-07 follow-up.
+
+- [ ] **Fix pyright workspace/symbol integration in lsp-bridge (TODO-07).**
+  With pyright-langserver installed (v1.1.411), the bridge's per-file py
+  analysis works (`textDocument/documentSymbol` returns build.py's 38 symbols
+  incl. `main`) but `workspace/symbol` returns 0 for any query (empty or
+  `main`), even with a `pyrightconfig.json` scoping `include: ["scripts"]`
+  (probed to 60s, fresh spawn). This is the flagship py cap the bridge routes
+  to MCP ("where is symbol X across all .py files"), and the `_self_test_pyright`
+  5a smoke asserts exactly it. Likely community-pyright (open-source
+  langserver) not populating a workspace symbol index the way Pylance does,
+  or a missing initialize option the bridge should advertise/drive. Investigate:
+  (a) does pyright need `initializationOptions`/`workspace.symbol` capability
+  the bridge omits; (b) does it need files pre-opened or a didChangeWatchedFiles
+  index prime; (c) if community pyright genuinely lacks workspace symbols,
+  decide whether to keep it for per-file features only (hover/def/refs/
+  documentSymbol) and adjust the 5a smoke to a capability pyright provides, or
+  swap the Python LSP. Owner: TODO-07 lsp-mcp-bridge. Repro: install pyright,
+  `python3 scripts/lsp-mcp/bridge.py --self-test --lang=py`.
 
 - [ ] **Fix / document the `latest.log` path friction.**
   `tail -f .claude/overnight/reports/latest.log` fails unless run from the repo

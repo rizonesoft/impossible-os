@@ -241,8 +241,16 @@ def _emit_health_event(event: str, lang: str, root: str,
 
     Best-effort -- the logger swallows write failures so a logger
     fault during teardown cannot crash the bridge."""
-    level = "WARN" if event in ("crash", "restart-failed",
-                                  "failed") else "INFO"
+    # A missing OPTIONAL LSP binary is not a failure -- it means that
+    # language's server is not installed on this host (setup.sh reports LSP
+    # tools as OPTIONAL-tier). Downgrade the restart-failed/failed WARN to
+    # INFO for that reason so an un-installed LSP does not read as a fault.
+    if fields.get("reason") == "lsp-binary-missing":
+        level = "INFO"
+    elif event in ("crash", "restart-failed", "failed"):
+        level = "WARN"
+    else:
+        level = "INFO"
     _lsplog.log(level, f"health: {event}",
                 event=event, lang=lang, root=root, **fields)
 
@@ -1240,6 +1248,19 @@ def _warm_one(lang: str, workspace_root: Path) -> dict[str, Any]:
         inst = _get_or_spawn(lang, workspace_root)
     except LspError as exc:
         elapsed = _time.monotonic() - t0
+        # A missing OPTIONAL LSP binary (setup.sh OPTIONAL-tier: pyright,
+        # asm-lsp, PSES, ...) is not a bridge fault -- that language's server
+        # simply is not installed on this host. Log it INFO and mark the
+        # result "not-installed" so an un-installed LSP never reads as a
+        # warm-start FAILURE. The query path (_call_lsp) already skips these.
+        if exc.kind == "lsp-binary-missing":
+            _lsplog.log("INFO", "warm-start skipped: LSP not installed",
+                        event="warm-skipped-not-installed", lang=lang,
+                        elapsed_s=round(elapsed, 3), detail=exc.detail)
+            return {"lang": lang, "status": "not-installed",
+                    "spawn_s": round(elapsed, 3), "ready_s": 0.0,
+                    "total_s": round(elapsed, 3),
+                    "reason": f"{exc.kind}: {exc.detail}"}
         _lsplog.log("WARN", "warm-start spawn failed",
                     event="warm-spawn-failed", lang=lang,
                     elapsed_s=round(elapsed, 3),
