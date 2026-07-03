@@ -60,12 +60,37 @@ def main() -> int:
     if root is None:
         return 0
     ti = d.get("tool_input") or {}
+    path = root / ".claude" / "state" / "last-agent-dispatch.json"
+    # Per-type dispatch map (review_dispatch_gate / xref_dispatch_reminder,
+    # 2026-07-03): preserve by_type across writes so gates can ask "was a
+    # review-evidence-mapper dispatched in this pass window", not just "was
+    # ANYTHING dispatched recently". Top-level fields keep their old shape for
+    # the existing consumers (agent_dispatch_required, build_offload_reminder).
+    by_type: dict = {}
+    try:
+        prev = json.loads(path.read_text())
+        if isinstance(prev.get("by_type"), dict):
+            by_type = prev["by_type"]
+    except Exception:
+        pass
+    stype = ti.get("subagent_type") or ""
+    now = time.time_ns()
+    if stype:
+        by_type[stype] = {
+            "timestamp_ns": now,
+            "session_id": d.get("session_id") or "",
+        }
+        if len(by_type) > 48:  # bounded; drop oldest entries
+            for k, _ in sorted(by_type.items(),
+                               key=lambda kv: kv[1].get("timestamp_ns", 0))[: len(by_type) - 48]:
+                by_type.pop(k, None)
     state = {
-        "timestamp_ns": time.time_ns(),
-        "subagent_type": ti.get("subagent_type") or "",
+        "timestamp_ns": now,
+        "subagent_type": stype,
         "head_sha": _head_sha(root),
+        "by_type": by_type,
     }
-    _write_atomic(root / ".claude" / "state" / "last-agent-dispatch.json", state)
+    _write_atomic(path, state)
     return 0
 
 

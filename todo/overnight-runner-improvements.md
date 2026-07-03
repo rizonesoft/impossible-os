@@ -76,7 +76,23 @@
     `--model`/`--fallback-model` pass-through; the default is Opus in both;
     overrides (Fable 5 for a hard section, Sonnet for a cheap pass) work in both.
 
-- [ ] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
+- [x] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
+  DONE 2026-07-03 (all three gates):
+  - `review_dispatch_gate.py` (BLOCK, PreToolUse Edit/Write/MultiEdit): a
+    todo edit ADDING a Verified/Quality-reviewed stamp requires a live
+    review-class Skill invocation for this TODO this session (kills the
+    section-25 inline-review shape) AND a review-evidence-mapper dispatch in
+    the pass window (window = earliest review-kind ts for the TODO - 2h
+    grace, else 6h), plus kernel/boot-quality-auditor when the reviewed ship
+    commit (adversarial_head) touched kernel/boot paths. Hash-fills into
+    existing stamps exempt; fail-open on state/git errors;
+    SKIP_DISPATCH_GATE=1 + >= 12-char reason (skip-logged); 9-case selftest.
+  - agent_dispatch_recorder now keeps a bounded per-type dispatch map
+    (by_type) so gates ask "was THIS agent dispatched", not "was anything".
+  - `xref_dispatch_reminder.py` (WARN, once per pass): 3+ distinct foreign
+    TODO-NN in tool inputs during a live implement-todo-section pass with no
+    fresh xref-dependency-mapper dispatch. Live-run validation pending
+    (next overnight). Original measurements follow.
   The agent-lens sweep of run-20260702-141810.log produced a per-invocation
   compliance matrix: kernel-quality-auditor missing in 10/17 review passes,
   review-evidence-mapper missing in 6/17, parity-research-analyst 0/17 (but
