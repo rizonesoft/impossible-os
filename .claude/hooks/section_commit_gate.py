@@ -2088,7 +2088,6 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             "flipped_todos": flipped,
         }
         _skip_record_append(warn_record, _skip_log_path(root))
-        _shared_skip_record_append(warn_record, root)
 
     # TODO-08 §21: WARN-first heuristic gates fire on every section
     # commit attempt that has an active implement-todo-section skill

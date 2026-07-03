@@ -14,7 +14,6 @@ so existing stamps are NOT retroactively re-classified into a BLOCK):
 
 Consumers:
   - `.claude/hooks/accepted_xref_block.py` (git hook)  -> bare_clauses()/soft_clauses() tiers
-  - `scripts/ai-workflow/common.py` (stamp writer)     -> writer_bare_xrefs()/writer_has_concrete()
 
 Deliberately NOT a consumer: `scripts/todo-graph/build.py`. Its `XREF_CLAUSE_RE`
 serves a DIFFERENT purpose -- extracting dependency-graph EDGES, which requires the
