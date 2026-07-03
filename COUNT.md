@@ -35,32 +35,32 @@
 | **Shell scripts** (`.sh`)         |      77 |     35248 |
 | **Batch scripts** (`.bat`)        |      69 |       998 |
 | **PowerShell** (`.ps1`)           |      11 |      3314 |
-| **Python** (`.py`)                |     118 |     40928 |
+| **Python** (`.py`)                |     121 |     41327 |
 | **JavaScript** (`.js`)            |       1 |       524 |
 | **Include fragments** (`.inc`)    |       7 |      3241 |
 | **Makefile**                      |       4 |      2121 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |       199 |
-| **Subtotal**                      | **290** | **86573** |
+| **Subtotal**                      | **293** | **86972** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     420 |     113972 |
+| **Markdown** (`.md`)        |     421 |     114033 |
 | **JSON** (`.json`)          |      14 |       1020 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1465 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **470** | **192660** |
+| **Subtotal**                | **471** | **192721** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1295** | **616467** |
-| **Supporting text + metadata** |  **470** | **192660** |
-| **All counted text files**     | **1765** | **809127** |
+| **Core code + tooling**        | **1298** | **616866** |
+| **Supporting text + metadata** |  **471** | **192721** |
+| **All counted text files**     | **1769** | **809587** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               616,467 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               616,866 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 3 month(s), 28 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 616,467
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 616,866
 > lines of core code and tooling would take **190 developers** working for **3 month(s), 28 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-03 15:13 · commit `15a997c6`*
+*Last updated: 2026-07-03 15:13 · commit `c589407a`*
