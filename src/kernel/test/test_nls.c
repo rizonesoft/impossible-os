@@ -10,6 +10,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/nt/nt_unicode.h"
+#include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char, Rtl*UnicodeString, CompareStringOrdinal */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
 
 /* Helper: build a UNICODE_STRING over a kernel WCHAR literal. */
@@ -221,6 +222,215 @@ static void test_nls_user_mode_probe_rejects_kernel_ptr(void)
                    "explicit UserMode probes the non-user pointer and rejects it");
 }
 
+/* ---- Section 2: invariant case fold + Rtl*UnicodeString compare ----------- */
+
+static void test_nls_upcase_char_ascii(void)
+{
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char('a'), (uint64_t)'A', "a -> A");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char('z'), (uint64_t)'Z', "z -> Z");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char('A'), (uint64_t)'A', "A unchanged");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char('5'), (uint64_t)'5', "digit unchanged");
+}
+
+static void test_nls_upcase_char_latin1(void)
+{
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x00E0u), (uint64_t)0x00C0u, "0xE0 -> 0xC0");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x00FEu), (uint64_t)0x00DEu, "0xFE -> 0xDE");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x00F7u), (uint64_t)0x00F7u, "0xF7 division unchanged");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x00FFu), (uint64_t)0x0178u, "0xFF -> U+0178");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x00DFu), (uint64_t)0x00DFu, "sharp s unchanged (no SS)");
+}
+
+static void test_nls_upcase_char_above_latin1_unchanged(void)
+{
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x0100u), (uint64_t)0x0100u,
+                   "U+0100 unchanged (pending NLS table)");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char(0x0430u), (uint64_t)0x0430u,
+                   "Cyrillic unchanged (pending NLS table)");
+}
+
+static void test_nls_upcase_string_success(void)
+{
+    uint16_t src[4] = { 'f', 'i', 'l', 'e' };
+    uint16_t dst[4] = { 0, 0, 0, 0 };
+    uint16_t want[4] = { 'F', 'I', 'L', 'E' };
+    UNICODE_STRING us, ud;
+    NTSTATUS st;
+    int i;
+    make_us(&us, src, 8, 8);
+    make_us(&ud, dst, 0, 8);
+    st = RtlUpcaseUnicodeString(&ud, &us, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "upcase success");
+    TEST_ASSERT_EQ((uint64_t)ud.Length, (uint64_t)8, "dst Length == src Length");
+    for (i = 0; i < 4; i++)
+        TEST_ASSERT_EQ((uint64_t)dst[i], (uint64_t)want[i], "upcased code unit");
+}
+
+static void test_nls_upcase_string_buffer_too_small(void)
+{
+    uint16_t src[4] = { 'f', 'i', 'l', 'e' };
+    uint16_t dst[2] = { 0, 0 };
+    UNICODE_STRING us, ud;
+    NTSTATUS st;
+    make_us(&us, src, 8, 8);
+    make_us(&ud, dst, 0, 4 /* only 2 wchars */);
+    st = RtlUpcaseUnicodeString(&ud, &us, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_BUFFER_TOO_SMALL, "too-small dst rejected");
+}
+
+static void test_nls_upcase_string_rejects_allocate(void)
+{
+    uint16_t src[1] = { 'a' };
+    uint16_t dst[1] = { 0 };
+    UNICODE_STRING us, ud;
+    NTSTATUS st;
+    make_us(&us, src, 2, 2);
+    make_us(&ud, dst, 0, 2);
+    st = RtlUpcaseUnicodeString(&ud, &us, 1 /* allocate */);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "allocate_destination != 0 rejected at kernel Rtl layer");
+}
+
+static void test_nls_equal_case_insensitive(void)
+{
+    uint16_t a[4] = { 'F', 'i', 'l', 'e' };
+    uint16_t b[4] = { 'f', 'i', 'l', 'e' };
+    UNICODE_STRING ua, ub;
+    make_us(&ua, a, 8, 8);
+    make_us(&ub, b, 8, 8);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&ua, &ub, 1), (uint64_t)1,
+                   "File == file case-insensitive");
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&ua, &ub, 0), (uint64_t)0,
+                   "File != file case-sensitive");
+}
+
+static void test_nls_equal_different_length(void)
+{
+    uint16_t a[3] = { 'a', 'b', 'c' };
+    uint16_t b[2] = { 'a', 'b' };
+    UNICODE_STRING ua, ub;
+    make_us(&ua, a, 6, 6);
+    make_us(&ub, b, 4, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&ua, &ub, 1), (uint64_t)0,
+                   "different length not equal");
+}
+
+static void test_nls_compare_case_sensitive_distinguishes(void)
+{
+    uint16_t a[1] = { 0x0041 };  /* 'A' */
+    uint16_t b[1] = { 0x0061 };  /* 'a' */
+    UNICODE_STRING ua, ub;
+    int r_cs, r_ci;
+    make_us(&ua, a, 2, 2);
+    make_us(&ub, b, 2, 2);
+    r_cs = RtlCompareUnicodeString(&ua, &ub, 0);
+    r_ci = RtlCompareUnicodeString(&ua, &ub, 1);
+    TEST_ASSERT(r_cs < 0, "U+0041 sorts before U+0061 case-sensitive");
+    TEST_ASSERT_EQ((uint64_t)r_ci, (uint64_t)0, "U+0041 == U+0061 case-insensitive");
+}
+
+static void test_nls_compare_prefix_sorts_first(void)
+{
+    uint16_t a[2] = { 'a', 'b' };
+    uint16_t b[3] = { 'a', 'b', 'c' };
+    UNICODE_STRING ua, ub;
+    make_us(&ua, a, 4, 4);
+    make_us(&ub, b, 6, 6);
+    TEST_ASSERT(RtlCompareUnicodeString(&ua, &ub, 0) < 0, "prefix sorts before longer");
+    TEST_ASSERT(RtlCompareUnicodeString(&ub, &ua, 0) > 0, "longer sorts after prefix");
+}
+
+static void test_nls_ordinal_compare(void)
+{
+    uint16_t a[3] = { 'A', 'B', 'C' };
+    uint16_t b[3] = { 'a', 'b', 'c' };
+    uint16_t c[3] = { 'A', 'B', 'C' };
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, 3, c, 3, 0),
+                   (uint64_t)NT_CSTR_EQUAL, "equal ordinal");
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, 3, b, 3, 0),
+                   (uint64_t)NT_CSTR_LESS_THAN, "A < a ordinal");
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, 3, b, 3, 1),
+                   (uint64_t)NT_CSTR_EQUAL, "ABC == abc ordinal case-insensitive");
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(0, 3, b, 3, 0),
+                   (uint64_t)NT_CSTR_ERROR, "NULL operand -> error");
+}
+
+static void test_nls_ordinal_nul_terminated_length(void)
+{
+    uint16_t a[4] = { 'a', 'b', 'c', 0 };
+    uint16_t b[4] = { 'a', 'b', 'c', 0 };
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, -1, b, -1, 0),
+                   (uint64_t)NT_CSTR_EQUAL, "-1 length scans to NUL, equal");
+}
+
+static void test_nls_ordinal_rejects_bad_negative(void)
+{
+    uint16_t a[2] = { 'a', 0 };
+    uint16_t b[2] = { 'a', 0 };
+    /* Only -1 is the NUL-terminated sentinel; any count < -1 is rejected before
+     * any scan can run past the operand. */
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, -2, b, 1, 0),
+                   (uint64_t)NT_CSTR_ERROR, "a_wchars < -1 rejected");
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, 1, b, -2, 0),
+                   (uint64_t)NT_CSTR_ERROR, "b_wchars < -1 rejected");
+    TEST_ASSERT_EQ((uint64_t)CompareStringOrdinal(a, (int32_t)0x80000000, b, 1, 0),
+                   (uint64_t)NT_CSTR_ERROR, "INT32_MIN count rejected");
+}
+
+static void test_nls_equal_rejects_malformed(void)
+{
+    uint16_t buf[2] = { 'a', 'b' };
+    UNICODE_STRING good, bad;
+    make_us(&good, buf, 4, 4);
+    /* Odd Length: never reported equal even against an identical odd sibling. */
+    make_us(&bad, buf, 3, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&bad, &bad, 0), (uint64_t)0,
+                   "odd-Length operand not equal");
+    /* Length > MaximumLength. */
+    make_us(&bad, buf, 8, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&good, &bad, 0), (uint64_t)0,
+                   "Length > MaximumLength not equal");
+    /* Non-empty Length with NULL Buffer. */
+    make_us(&bad, 0, 4, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&good, &bad, 0), (uint64_t)0,
+                   "NULL Buffer with nonzero Length not equal");
+}
+
+static void test_nls_compare_malformed_is_total_order(void)
+{
+    uint16_t bufA[3] = { 'a', 'b', 'c' };
+    uint16_t bufB[2] = { 'x', 'y' };
+    UNICODE_STRING badA, badB;
+    int ab, ba;
+    /* Both operands malformed (odd Length). A sort comparator must stay
+     * antisymmetric and reflexive even here -- safe-clamp compares content, it
+     * does not return a fixed non-equal sentinel. */
+    make_us(&badA, bufA, 5, 6);   /* odd Length 5 -> safe 2 wchars "ab" */
+    make_us(&badB, bufB, 3, 4);   /* odd Length 3 -> safe 1 wchar "x" */
+    ab = RtlCompareUnicodeString(&badA, &badB, 0);
+    ba = RtlCompareUnicodeString(&badB, &badA, 0);
+    TEST_ASSERT(ab != 0, "distinct malformed operands are ordered");
+    TEST_ASSERT((ab < 0 && ba > 0) || (ab > 0 && ba < 0), "malformed compare is antisymmetric");
+    TEST_ASSERT_EQ((uint64_t)RtlCompareUnicodeString(&badA, &badA, 0), (uint64_t)0,
+                   "malformed self-compare is reflexive (== 0)");
+}
+
+static void test_nls_upcase_rejects_malformed(void)
+{
+    uint16_t src[2] = { 'a', 'b' };
+    uint16_t dst[2] = { 0, 0 };
+    UNICODE_STRING us, ud;
+    make_us(&ud, dst, 0, 4);
+    /* src Length > src MaximumLength is malformed and must be rejected. */
+    make_us(&us, src, 8, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlUpcaseUnicodeString(&ud, &us, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "src Length > MaximumLength rejected");
+    /* Odd src Length is malformed. */
+    make_us(&us, src, 3, 4);
+    TEST_ASSERT_EQ((uint64_t)RtlUpcaseUnicodeString(&ud, &us, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "odd src Length rejected");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -257,4 +467,36 @@ void test_register_nls(void)
                             test_nls_user_mode_probe_rejects_kernel_ptr, TEST_CAT_NLS);
     test_suite_register_cat("nls: validate probes buffer ptr",
                             test_nls_validate_probes_buffer_kernel_ptr, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase char ASCII",
+                            test_nls_upcase_char_ascii, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase char Latin-1",
+                            test_nls_upcase_char_latin1, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase char above Latin-1 unchanged",
+                            test_nls_upcase_char_above_latin1_unchanged, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase string success",
+                            test_nls_upcase_string_success, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase string buffer too small",
+                            test_nls_upcase_string_buffer_too_small, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase string rejects allocate",
+                            test_nls_upcase_string_rejects_allocate, TEST_CAT_NLS);
+    test_suite_register_cat("nls: equal case-insensitive",
+                            test_nls_equal_case_insensitive, TEST_CAT_NLS);
+    test_suite_register_cat("nls: equal different length",
+                            test_nls_equal_different_length, TEST_CAT_NLS);
+    test_suite_register_cat("nls: compare case-sensitive distinguishes",
+                            test_nls_compare_case_sensitive_distinguishes, TEST_CAT_NLS);
+    test_suite_register_cat("nls: compare prefix sorts first",
+                            test_nls_compare_prefix_sorts_first, TEST_CAT_NLS);
+    test_suite_register_cat("nls: ordinal compare",
+                            test_nls_ordinal_compare, TEST_CAT_NLS);
+    test_suite_register_cat("nls: ordinal NUL-terminated length",
+                            test_nls_ordinal_nul_terminated_length, TEST_CAT_NLS);
+    test_suite_register_cat("nls: ordinal rejects bad negative count",
+                            test_nls_ordinal_rejects_bad_negative, TEST_CAT_NLS);
+    test_suite_register_cat("nls: equal rejects malformed",
+                            test_nls_equal_rejects_malformed, TEST_CAT_NLS);
+    test_suite_register_cat("nls: compare malformed is total order",
+                            test_nls_compare_malformed_is_total_order, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase rejects malformed",
+                            test_nls_upcase_rejects_malformed, TEST_CAT_NLS);
 }

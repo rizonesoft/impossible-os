@@ -78,16 +78,28 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 2. Case Folding and Invariant Compare
 
-- [ ] Implement invariant uppercase/lowercase mapping for ASCII plus core Unicode BMP.
-- [ ] Add `RtlEqualUnicodeString`, `RtlCompareUnicodeString`, `RtlUpcaseUnicodeString`.
+- [ ] Implement invariant uppercase mapping for ASCII a-z + Latin-1 Supplement (0xE0-0xFE except 0xF7, and 0xFF->0x178); Latin-Extended + full-BMP algorithmic fold land in §4's table loader. (§2 design)
+- [ ] Add `RtlEqualUnicodeString`, `RtlCompareUnicodeString`, `RtlUpcaseUnicodeString` (caller-provided dst buffer; no pool alloc at kernel Rtl layer).
 - [ ] Support case-sensitive and case-insensitive modes.
 - [ ] Registry and Object Manager use this layer for name comparisons.
 - [ ] Add `CompareStringOrdinal` (pure code-unit compare, no locale) as an explicit named deliverable over `RtlCompareUnicodeString` (was only in the §10 test list). (gap-audit)
-- [ ] Add `GetStringTypeW`/`GetStringTypeEx` character-type classification (CT_CTYPE1 C1_* alpha/digit/space/punct, CT_CTYPE2 bidi, CT_CTYPE3) over the BMP type table. (gap-audit)
 - [ ] Scope note: supplementary-plane + locale special-casing (Turkish dotless-i, German ss expansion) is explicitly OUT of the kernel `Rtl*` layer (mirrors NT; user-mode `LCMapStringEx` owns it). (gap-audit)
+- [ ] Public `GetStringTypeW`/`GetStringTypeEx` (C1/C2/C3 over the full BMP table) is owned by §4, not §2 -- shipping it over only ASCII+Latin-1 here would misclassify BMP chars. (§2 design)
 - [ ] Commit: `"kernel: nls -- invariant case folding + RtlUnicodeString compare authority"`
 
 **Test checkpoint:** `RtlEqualUnicodeString("File", "file", CaseInsensitive=TRUE)` returns TRUE; with `FALSE` returns FALSE. `RtlUpcaseUnicodeString` folds ASCII a-z and BMP Latin-1 supplement. Case-sensitive compare distinguishes U+0041 from U+0061.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 33 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nt_rtlstr.h` + `nt_rtlstr.c` -- the kernel name-compare authority: invariant UTF-16 upcase fold (`rtl_upcase_char`, ASCII a-z + Latin-1) + `RtlUpcase`/`RtlEqual`/`RtlCompareUnicodeString` + `CompareStringOrdinal`.
+> - **How it integrates:** pure kernel-resident ops, no user probing (callers decode via the §1 primitive first); `build.sh` auto-picks up new `nt_*.c`; `TEST_CAT_NLS` now 33 suites (16 added for §2).
+> - **Defense:** the authority self-defends the canonical validity rules -- `rtl_us_valid` rejects malformed input in Equal/Upcase, `rtl_us_safe_wchars` keeps Compare a reflexive+antisymmetric total order.
+> - **Downstream effects:** §3 (atom `w_fold`) + §9 (`oa_name`) retrofit consumers onto this authority; full-BMP fold + public `GetStringTypeW`/`GetStringTypeEx` are owned by §4's NLS table loader.
+> - **Canonical doc:** [`include/kernel/nt/nt_rtlstr.h`](../../include/kernel/nt/nt_rtlstr.h).
+> - **Scope boundary:** locale special-casing (Turkish dotless-i, German ss expansion) and supplementary planes are OUT of the kernel `Rtl*` layer (mirrors NT; user-mode `LCMapStringEx` owns them).
+> **Verified:** 2026-07-03 | commit `PENDING` | 7/7 items | build OK | tests 13755 kernel + 16 user PASS | lint 0 errors
+> **Quality reviewed:** 2026-07-03 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) | fixed: bad-negative ordinal count NUL scan (H), malformed-input overread self-defense (H), non-antisymmetric malformed compare (M); perf: ASCII fast path + raw-compare-first fold + one-pass ordinal compare | scope: kernel-code-quality
 
 ---
 
