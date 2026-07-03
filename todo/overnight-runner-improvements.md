@@ -116,7 +116,19 @@
     XREFs -> xref-dependency-mapper" is text-only; count distinct TODO-NN
     greps in the first N calls of a section pass and remind.
 
-- [ ] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
+- [x] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
+  DONE 2026-07-03 across ALL four loop surfaces: implement-todo-section step
+  15 + review-todo-section step 6 (shipped a7ca3263, see Done entry) and --
+  closing sweep -- codex-fix-review step 5 + codex-adversarial-review-section
+  step 5 (both previously instructed bare in-context `bash scripts/build.sh`
+  per round): loop rebuilds/tests via checks-runner BY DEFAULT, lsp-bridge
+  for repeated symbol lookups, evidence-mapper re-dispatch on moved fix
+  targets. implement-todo-item's single build stays inline (one-shot, the
+  documented exception). Enforcement nets: build_offload_reminder (WARN,
+  overnight SECTIONS) + inline_churn_monitor (both modes). No Codex-round
+  cap added, per the correctness-over-cost rule. Live-run adoption
+  measurement: next overnight (compare checks-runner dispatch count vs the
+  0/29 baseline). Original rationale + measurements follow.
   The Codex convergence loops stay UNTOUCHED -- each round produces a distinct
   real fix (verified on TODO-12 §8: sem_signal_n rework -> excess-path ->
   wake-budget -> snapshot-budget). The waste is what the CLAUDE main loop does

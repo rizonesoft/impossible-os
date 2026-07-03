@@ -46,9 +46,15 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    - Request findings by severity: `Critical`, `High`, `Medium`, `Low`.
    - Run in background for large reviews (> 3 files).
 4. Triage findings -- the new `receiving_review_required.py` PreToolUse hook BLOCKS any subsequent `Edit` / `Write` / `MultiEdit` until you invoke `Skill(name="superpowers:receiving-code-review")` to triage the findings. The block is the hard gate; the existing PostToolUse `systemMessage` reminder is the secondary signal. State lives in `.claude/state/last-codex-review.json` (gitignored, schema documented in `.claude/state/README.md`); 1 hour TTL stale-pass; opt-out via `RECEIVING_REVIEW_OVERRIDE=1` env var on the same call (the agent must state what code-evidence quote justifies skipping). **Adversarial-review false-positive watch:** Codex reads code without runtime context and frequently flags "missing lock" when the caller already holds it, "race" on paths single-threaded by construction (BSP boot phase 0), or "buffer overflow" on buffers static-asserted larger than the access. Verify at file:line before classifying. Priority for valid findings: always fix `Critical` and `High`; fix `Medium` unless accepted with a concrete technical reason.
-5. Rebuild and run relevant tests after fixes.
-   - `bash scripts/build.sh` and confirm `=== BUILD OK ===`.
-   - Run targeted runtime/test evidence needed by the section.
+5. Rebuild and run relevant tests after fixes -- **via
+   `Agent(subagent_type="checks-runner", ...)` by DEFAULT on every round**
+   (build + targeted suite; the runner returns PASS/FAIL + failure digest +
+   artifact path, you quote the `build/build.log` tail yourself and it must
+   show `=== BUILD OK ===`). This loop is where ~90% of a hard section's
+   context burns (TODO-12 section-8 measurement); inline `bash
+   scripts/build.sh` is the single-round exception, not the rule. Repeated
+   symbol lookups across rounds go through lsp-bridge
+   (`definition`/`references`), not inline `bash grep`.
 6. Re-review the same section with focus on previous findings and changed files.
    - Dispatch to Codex rescue subagent again with the fix context.
 7. Iterate fix -> build/test -> re-review with a maximum of 3 rounds.
