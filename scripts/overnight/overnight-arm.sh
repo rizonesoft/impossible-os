@@ -81,12 +81,19 @@ systemctl --user reset-failed 2>/dev/null || true
 
 # ExecStart points straight at the repo launcher (absolute path). Re-arm
 # regenerates the transient unit, so a moved repo just needs a re-arm.
+# --setenv OVERNIGHT_SEQUENCER_RUN=1 on BOTH units (runner-kit 2026-07-03):
+# a DIRECT invocation of this script (docstring permits it) previously
+# produced a bypassPermissions run with run_phase_guard's headless
+# discriminator unset -- self-teardown, Stop, and phase guards all inert.
+# arm-sequencer.sh's unit drop-in sets the same var; redundant is harmless.
 systemd-run --user --on-calendar="$AT" --unit="$UNIT" \
+  --setenv=OVERNIGHT_SEQUENCER_RUN=1 \
   "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"
 echo "armed ${UNIT}: starts at ${AT} (mode: ${MODE})"
 
 if [ "$ARM_WATCHDOG" = "1" ]; then
   systemd-run --user --on-calendar="$WATCHDOG_CAL" --unit="${UNIT}-watchdog" \
+    --setenv=OVERNIGHT_SEQUENCER_RUN=1 \
     "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"
   echo "armed ${UNIT}-watchdog: cadence ${WATCHDOG_CAL} (same mode -- a watchdog in a weaker mode stalls on relaunch)"
 fi

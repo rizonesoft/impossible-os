@@ -50,6 +50,20 @@ if [ -f "$SNOOZE_FILE" ]; then
   rm -f "$SNOOZE_FILE"
 fi
 
+# Watchdog backoff (runner-kit 2026-07-03): when the run is persistently
+# BLOCKED (only recoverable deferrals left), every watchdog tick would re-run
+# the oracle + heal probe against the same dead blocker. Linear backoff capped
+# at 30 min; reset to full cadence the moment real work runs (cleared by the
+# lifecycle gate below).
+BACKOFF_FILE="$RUNTIME_BASE/watchdog-backoff-until"
+if [ -f "$BACKOFF_FILE" ]; then
+  BACKOFF_UNTIL="$(cut -d' ' -f1 "$BACKOFF_FILE" 2>/dev/null || echo 0)"
+  if [ "$(date +%s)" -lt "${BACKOFF_UNTIL:-0}" ] 2>/dev/null; then
+    echo "watchdog backoff active until $(date -d "@$BACKOFF_UNTIL" -Is 2>/dev/null || echo "$BACKOFF_UNTIL"), launch skipped $(date -Is)"
+    exit 0
+  fi
+fi
+
 # Concurrency lock: only one launch per project at a time. Watchdog timers can
 # call this freely -- it exits 0 immediately while a run is alive. The kernel
 # releases the flock when the holding process dies (any exit, crash, or kill),
@@ -57,6 +71,71 @@ fi
 LOCKFILE="$RUNTIME_BASE/launch.lock"
 exec 9>"$LOCKFILE"
 flock -n 9 || { echo "run already active, launch skipped $(date -Is)"; exit 0; }
+
+# --- Self-healing lifecycle gate (runner-kit law 2, adopted 2026-07-03) ------
+# A cheap, no-Claude oracle classification decides what this tick does:
+#   NEEDS_WORK -> fall through and run Claude (work to do now)
+#   BLOCKED    -> only recoverable (awaiting-*) deferrals remain; run the heal
+#                 probe. Healed -> run; else cheap-exit but STAY ARMED.
+#   DONE       -> TRUE fixpoint. The only auto-stop: sentinel + disarm timers.
+# The agent-invoked `run_phase_guard.py fixpoint` remains the in-session
+# completion path; this gate is the launcher-side mirror so a tick never spawns
+# Claude against a finished or fully-blocked queue.
+# Skipped under DRYRUN (test-launch.sh) and OVERNIGHT_SEQUENCER_FORCE=1.
+ORACLE="$PROJECT_DIR/.claude/hooks/sequencer_triage.py"
+FIXPOINT_SENTINEL="$PROJECT_DIR/.claude/state/sequencer-fixpoint"
+ARMED_MARKER_FILE="$PROJECT_DIR/.claude/state/sequencer-armed"
+disarm_timers() {  # stop future fires; the current oneshot service still exits 0
+  local unit="overnight-$(basename "$PROJECT_DIR")"
+  systemctl --user stop "${unit}.timer" "${unit}-watchdog.timer" 2>/dev/null || true
+}
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ "${OVERNIGHT_SEQUENCER_FORCE:-}" != "1" ] \
+   && [ -f "$ORACLE" ]; then
+  LIFECYCLE_STATE="$(cd "$PROJECT_DIR" && python3 "$ORACLE" --next 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+  case "$LIFECYCLE_STATE" in
+    DONE)
+      mkdir -p "$(dirname "$FIXPOINT_SENTINEL")"
+      printf 'TRUE FIXPOINT -- %s\nOracle: sequencer_triage.py --next => DONE (no recoverable deferrals left).\nAuto-disarmed by overnight-launch.sh. Re-arm to resume.\n' \
+        "$(date -Is)" > "$FIXPOINT_SENTINEL"
+      echo "TRUE fixpoint reached (oracle: DONE) -- disarming sequencer timers $(date -Is)"
+      python3 "$SCRIPT_DIR/run-status.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+      python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+      bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" fixpoint "Overnight queue 100% finished -- sequencer disarmed." 2>/dev/null || true
+      rm -f "$BACKOFF_FILE" 2>/dev/null || true
+      rm -f "$ARMED_MARKER_FILE" 2>/dev/null || true  # launcher-side lifecycle end mirrors the fixpoint CLI's disarm
+      disarm_timers
+      exit 0
+      ;;
+    BLOCKED)
+      rm -f "$FIXPOINT_SENTINEL" 2>/dev/null || true  # not finished -- clear any stale sentinel
+      if bash "$SCRIPT_DIR/lifecycle-unblocked.sh" "$PROJECT_DIR"; then
+        echo "blocker cleared -- resuming run $(date -Is)"
+        rm -f "$BACKOFF_FILE" 2>/dev/null || true  # real work resuming -> full cadence
+      else
+        PREV_COUNT="$(cut -d' ' -f2 "$BACKOFF_FILE" 2>/dev/null || echo 0)"
+        [ -n "$PREV_COUNT" ] || PREV_COUNT=0
+        NEXT_COUNT=$((PREV_COUNT + 1))
+        DELAY=$((600 * NEXT_COUNT)); [ "$DELAY" -gt 1800 ] && DELAY=1800
+        echo "$(( $(date +%s) + DELAY )) $NEXT_COUNT" > "$BACKOFF_FILE"
+        python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+        echo "blocked on recoverable deferrals; staying armed, backing off ${DELAY}s, launch skipped $(date -Is)"
+        exit 0
+      fi
+      ;;
+    *)  # NEEDS_WORK (or oracle unavailable -- fail-open to the agent path);
+        # any sentinel is stale and real work resets the backoff cadence.
+      rm -f "$FIXPOINT_SENTINEL" 2>/dev/null || true
+      rm -f "$BACKOFF_FILE" 2>/dev/null || true
+      ;;
+  esac
+  # Inspection seam: print the decision and exit before spinning up Claude.
+  if [ "${OVERNIGHT_SEQUENCER_GATE_ONLY:-}" = "1" ]; then
+    echo "GATE: would run (state=${LIFECYCLE_STATE:-NEEDS_WORK})"
+    exit 0
+  fi
+fi
+# ------------------------------------------------------------------------------
 
 # Report-log rotation: the watchdog relaunches every 10 min, so over many nights
 # (and especially a usage-limit retry that mis-snoozed) the reports dir grows
@@ -99,6 +178,16 @@ resolve_claude() {
   echo "todo: $TODO_FILE"
   echo "runtime: $RUNTIME_BASE_REL"
 } | tee "$REPORT"
+
+# Dry-run stop point (runner-kit 2026-07-03; exercised by test-launch.sh):
+# everything above (snooze, backoff, lock, report path + rotation, metrics
+# sidecar) has been exercised. Exit before acquiring a ChromeMCP lane or
+# invoking Claude. The flock on fd 9 is released by the kernel on this exit.
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" = "1" ]; then
+  DRYRUN_CLAUDE="$(resolve_claude 2>/dev/null || echo missing)"
+  echo "DRYRUN ok: report=$REPORT claude=$DRYRUN_CLAUDE mode=$PERMISSION_MODE todo-hint=$TODO_FILE" | tee -a "$REPORT"
+  exit 0
+fi
 
 # ChromeMCP lane isolation is OFF for kernel runs (OVERNIGHT_NO_CHROMEMCP=1, set
 # by arm-sequencer.sh's per-unit env drop-in). impossible-os kernel work never
