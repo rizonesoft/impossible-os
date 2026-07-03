@@ -28,8 +28,18 @@ _RUNNER_PATH_RE = re.compile(
 )
 
 
+# This repo's root (hook lives at <root>/.claude/hooks/). The reminder must
+# fire ONLY for paths inside THIS repo: a session editing another repo's
+# scripts/overnight/ (live incident 2026-07-03: Conductor) would otherwise
+# match the substring regex and demand a drift report against the wrong tree.
+_REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
+
+
 def _reminder_for(file_path: str) -> dict | None:
-    if not _RUNNER_PATH_RE.search(file_path.replace("\\", "/")):
+    norm = file_path.replace("\\", "/")
+    if norm.startswith("/") and not norm.startswith(str(_REPO_ROOT) + "/"):
+        return None  # absolute path outside this repo -- not ours
+    if not _RUNNER_PATH_RE.search(norm):
         return None
     return {
         "hookSpecificOutput": {
@@ -92,6 +102,10 @@ def _selftest() -> int:
         "/home/derickpayne/impossible-os/todo/02-kernel-core/TODO-12-native-api-ssdt.md",
         "/home/derickpayne/impossible-os/.claude/state/live-gotchas.md",
         "/home/derickpayne/impossible-os/docs/infrastructure/ai-system.md",
+        # runner-shaped paths in OTHER repos must be silent (2026-07-03
+        # Conductor incident: substring match fired cross-repo).
+        "/mnt/r/GitHub/Conductor/scripts/overnight/overnight-arm.sh",
+        "/mnt/r/GitHub/Conductor/.claude/skills/overnight-sequencer/SKILL.md",
     ):
         check(f"silent:{p}", _reminder_for(p) is None)
 

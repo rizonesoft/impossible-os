@@ -43,7 +43,16 @@
   repro pointer from the 2026-07-03 incident. Live-run validation pending
   (next overnight).
 
-- [ ] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
+- [x] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
+  DONE 2026-07-03, both launchers: arm-sequencer.sh defaults flipped to
+  `--model opus --fallback-model sonnet` (`--model inherit` sentinel restores
+  saved-default; interactive /model untouched; launcher's direct-invocation
+  fallback default aligned to sonnet). Conductor (b877662):
+  PrimaryModel/FallbackModel per-project fields (defaults opus/sonnet,
+  metachar-validated) -> Arm() flag pass-through + dogfood chain
+  (arm-sequencer -> overnight-arm --setenv -> launch FALLBACK_ARGS +
+  DRYRUN echo); 486/486 tests + test-launch PASS in both repos. Original
+  rationale follows.
   Fable 5 (Mythos-tier, above Opus) is overkill as the runner's PRIMARY: Codex
   adversarial/consistency/perf reviews already provide the quality net, and Opus
   is the judgment floor the doctrine reserves for `implement-todo-section` /

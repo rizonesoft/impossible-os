@@ -270,8 +270,11 @@ CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BI
 # rerouting (a 200 flag is not an availability error); those sections DEFER.
 MODEL_ARGS=()
 [ -n "${OVERNIGHT_MODEL:-}" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL")
-MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-opus}")
-echo "model: ${OVERNIGHT_MODEL:-<saved default>} primary, ${OVERNIGHT_FALLBACK_MODEL:-opus} fallback" >> "$REPORT"
+# Built-in fallback default matches the 2026-07-03 arm policy (Opus primary +
+# Sonnet transient-overload fallback) so a direct launcher invocation that
+# bypassed the arm drop-in still lands on the same policy.
+MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-sonnet}")
+echo "model: ${OVERNIGHT_MODEL:-<saved default>} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback" >> "$REPORT"
 "$CLAUDE" -p "$CLAUDE_PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
