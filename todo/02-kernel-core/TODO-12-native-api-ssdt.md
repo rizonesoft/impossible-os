@@ -91,7 +91,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [/]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [/]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
-| 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8|  [ ]   |
+| 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8|  [/]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9|  [ ]   |
 | 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
 
@@ -1223,9 +1223,17 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] [Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval: input/output user pointers deref'd raw (`nt_process.c:460+`) -- probe + copy_from_user/copy_to_user via kernel bounce buffers. (§7 review)
 - [ ] [Critical] Sync syscalls deref raw user pointers (`nt_sync.c`): NtWaitForMultipleObjects handle array + timeout, Create* name/OA/out-HANDLE, prev-state/count outputs -- probe + copy-in/out via kernel buffers. (§8)
 - [ ] [Critical] Namespace + token syscalls deref raw user pointers (`nt_namespace.c`, `nt_token.c`): out-HANDLE, Context/ReturnLength, OBJECT_ATTRIBUTES, symlink target, token buffers -- probe + copy-in/out via kernel buffers. (§16/§17)
+- [ ] **Foundation: per-token SMP lock** (`token.h`/`token.c`): add a spinlock to `ACCESS_TOKEN` taken by every read/mutate path so a privilege decision cannot observe a torn `Privileges[]` mid-adjust. (§29 design)
+- [ ] **Foundation: owned restricted-SID storage** (`token.c`): replace the single `RestrictedSids`+count with owned per-entry storage (bounded usercopy, deep-dup, `token_on_delete` free) before `NtFilterToken`. (§29 design)
+- [ ] **Foundation: access-mask-aware token resolution** (`nt_token.c`): `resolve_token_handle` must enforce per-op `TOKEN_*` bits from `granted_access`; restrict `NtOpenProcessToken` to authorized handles until DACL enforcement lands. (§29 design)
+- [ ] **Foundation: default-token privilege policy** (`SeCreateUserToken`): do NOT enable `SeShutdownPrivilege` for standard users, else the shutdown gate is meaningless; require elevation + negative test. (§29 design)
+- [ ] **Foundation: shared privilege-gated shutdown helper** (`nt_syscall.c`, `sched/syscall.c`): route `NtShutdownSystem` AND legacy `SYS_REBOOT`/`SYS_SHUTDOWN` through one `SeShutdownPrivilege` check. (§29 design)
+- [ ] `NtAccessCheck`/`SeAccessCheck` DACL engine + `GENERIC_MAPPING` type are external prerequisites -> XREF: `TODO-15-security-reference-monitor.md §5,§8`.
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
+
+> **Deferred:** 2026-07-03 | reason: correct token-lifecycle + SRM syscalls require foundational token-security infrastructure not present today -- a per-token SMP lock (privilege reads race in-place `NtAdjustPrivilegesToken` mutation), owned restricted-SID storage for `NtFilterToken`, access-mask-aware `resolve_token_handle`, and a default-token privilege-policy fix (standard tokens hold `SeShutdownPrivilege` enabled, which nullifies the shutdown gate). §29 Codex design review returned needs-attention (2 Critical + 2 High + 1 Medium) proving a thin wiring ships bypassable/racy/ineffective enforcement. The SRM decision engine (`SeAccessCheck` + `GENERIC_MAPPING`) is also absent. Security-sensitive; deferred rather than guessed in an unattended pass. Foundations tracked as `[ ]` items above -> XREF: `TODO-15-security-reference-monitor.md §5,§8` (SeAccessCheck DACL engine + SeSinglePrivilegeCheck/SePrivilegeCheck SRM API).
 
 ---
 
