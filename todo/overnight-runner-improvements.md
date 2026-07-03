@@ -231,16 +231,22 @@
   one second; the Edit "file has not been read yet" re-gate drove 19 of 62
   tool_use_errors. Original text follows.
 
-- [ ] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
-  (a) `todo_item_line_length` -- 77 blocks (46%), and ~36% re-blocked on the
-  immediate retry because the rewritten line was STILL too long: self-check
-  the line length before the first Edit on todo/ files. (b)
-  `agent_dispatch_required` -- 23 blocks, roughly once per section, always
-  reactive: dispatch the mandatory read-only exploration agent as step 1 of a
-  section, before the first kernel/boot Edit. (c) stale todo-graph oracle
-  cache -- the identical rebuild-then-edit-again ordering bug recurred 3x
-  (01:30, 09:29, 10:04): rebuild the cache strictly AFTER all TODO edits for
-  the section land.
+- [x] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
+  DONE 2026-07-03, each at its root:
+  (a) `todo_item_line_length` (77 blocks, 36% re-blocked): block message now
+  shows per-line overage + a count-before-retry recipe + an aim-for-230
+  margin target (retries were trimmed by feel and landed still-over); plus
+  a TODO-write-discipline bullet in the sequencer skill (count BEFORE the
+  first write).
+  (b) `agent_dispatch_required` (23 blocks, ~once per section): ROOT CAUSE
+  was the fixed 30-min freshness TTL expiring mid-section -- the mandated
+  step-3 dispatch had happened but long sections outlived the window. Now
+  section-pass-bound: a dispatch newer than the live implement-todo-section
+  entry's started_ts stays valid for the whole pass (orphaned entries
+  ignored; 30-min TTL kept as the no-pass fallback). 5-case fixture test.
+  (c) stale oracle cache (3 recurrences): explicit ordering rule in the
+  sequencer skill -- all TODO edits -> rebuild -> commit; the rebuild is
+  the LAST action before any todo/-touching commit.
 
 - [ ] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
   Zero `mcp__lsp-bridge__*` / `mcp__todo-graph__*` calls in the entire 20h run

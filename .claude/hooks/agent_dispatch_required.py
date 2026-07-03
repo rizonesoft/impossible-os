@@ -45,13 +45,40 @@ def _guard_in_sections(root: Path) -> bool:
     return bool(st.get("active")) and st.get("phase") == "SECTIONS"
 
 
+def _pass_started_ts(root: Path) -> int:
+    """started_ts of the live implement-todo-section pass, or 0.
+
+    Section-pass binding: a dispatch made at the top of the section (skill
+    step 3) must stay valid for the WHOLE pass -- the fixed 30-min TTL alone
+    re-blocked long sections mid-pass (~once per section, measured 23x in
+    one run) even though the mandated dispatch had happened.
+    """
+    try:
+        prog = json.loads((root / ".claude" / "state" / "skill-progress.json").read_text())
+        entry = prog.get("implement-todo-section")
+        if isinstance(entry, dict) and not entry.get("compaction_orphaned"):
+            ts = entry.get("started_ts")
+            if isinstance(ts, int):
+                return ts
+    except Exception:
+        pass
+    return 0
+
+
 def _recent_dispatch(root: Path) -> bool:
     try:
         st = json.loads((root / ".claude" / "state" / "last-agent-dispatch.json").read_text())
     except Exception:
         return False
     ts = st.get("timestamp_ns")
-    return isinstance(ts, int) and (time.time_ns() - ts) <= FRESH_NS
+    if not isinstance(ts, int):
+        return False
+    if (time.time_ns() - ts) <= FRESH_NS:
+        return True
+    # Older than the TTL but newer than the live section pass start: the
+    # step-3 dispatch covers its own section regardless of section length.
+    pass_start = _pass_started_ts(root)
+    return pass_start > 0 and ts >= pass_start
 
 
 def main() -> int:

@@ -62,6 +62,15 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   (`Read(offset, limit)` around the region in play -- it satisfies the Edit
   freshness gate just like a full read). The slice_read_reminder hook nags on
   whole-file re-reads of > 32 KB files; act on it.
+- **TODO write discipline:** `- [ ]` checklist lines cap at 250 chars (OS
+  Comparison rows at 200). COUNT before writing -- aim <= 230 so margin
+  survives tweaks; a third of line-length-block retries were still over the
+  cap because the trim was done by feel. Detail belongs in commit messages.
+- **Oracle-cache ordering:** `bash scripts/todo-graph/build-and-validate.sh
+  --keep-cache` is the LAST action before a commit that touches todo/ --
+  any TODO edit AFTER a rebuild re-stales the cache and the pre-commit
+  lint's Check 7 blocks (this exact rebuild-then-edit-again ordering bug
+  recurred 3x in one run). Order: all TODO edits -> rebuild -> commit.
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 
