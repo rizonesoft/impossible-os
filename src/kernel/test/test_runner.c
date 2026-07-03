@@ -35,6 +35,7 @@ static const char *cat_names[] = {
     [TEST_CAT_X86]      = "x86",
     [TEST_CAT_DESKTOP]  = "desktop",
     [TEST_CAT_EX]       = "ex",
+    [TEST_CAT_NLS]      = "nls",
 };
 
 static const char *cat_labels[] = {
@@ -51,6 +52,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_X86]      = "x86-64 Architecture",
     [TEST_CAT_DESKTOP]  = "Desktop UI",
     [TEST_CAT_EX]       = "Executive Support",
+    [TEST_CAT_NLS]      = "Atom/NLS/Locale",
 };
 
 /* ---- Global test state ---- */
@@ -450,6 +452,7 @@ extern void test_register_crashdump(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
 extern void test_register_ex(void);
+extern void test_register_nls(void);
 
 void test_runner_init(void)
 {
@@ -573,6 +576,9 @@ void test_runner_init(void)
 
     /* Executive support runtime */
     test_register_ex();
+
+    /* Atom/NLS/locale subsystem */
+    test_register_nls();
 
     klog(LOG_INFO, test_tag(), "%u suite(s) registered",
          (uint64_t)g_test_state.suite_count);

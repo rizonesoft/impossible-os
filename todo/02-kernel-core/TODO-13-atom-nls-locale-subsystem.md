@@ -39,7 +39,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | Unicode string primitive layer | -- | [ ] |
+| 💎 | 1 | Unicode string primitive layer | -- | [x] |
 | 💎 | 2 | Case folding and invariant compare | §1 | [ ] |
 | 💎 | 3 | Global and local atom tables | T12 | [ ] |
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [ ] |
@@ -54,13 +54,22 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 1. Unicode String Primitive Layer
 
-- [ ] Define safe helpers for `UNICODE_STRING`, counted UTF-16LE buffers, and bounded conversion.
-- [ ] Reject unterminated buffer assumptions in Native API handlers.
-- [ ] Provide `nt_decode_unicode_string` and `nt_encode_unicode_string` as canonical helpers.
-- [ ] Add overflow-safe length arithmetic.
-- [ ] Commit: `"kernel: nls -- UNICODE_STRING primitive layer with bounded conversion"`
+- [x] Safe helpers for `UNICODE_STRING` + counted UTF-16LE + bounded copy: `nt_unicode_string_validate` (snapshot-copy, validate Length even/<=MaximumLength/<=`NT_UNICODE_MAX_BYTES`/non-NULL Buffer) in `nt_unicode.c`.
+- [x] Reject unterminated/oversized buffers: `nt_decode_unicode_string` copies into a caller kernel buffer bounded by capacity, NUL-terminates, `STATUS_BUFFER_TOO_SMALL` if too small (handler retrofit is §9).
+- [x] Canonical `nt_decode_unicode_string` + `nt_encode_unicode_string` in `nt_unicode.{h,c}`; plus lossless ASCII-narrow bridge `nt_unicode_to_ascii` (rejects non-ASCII + embedded NUL).
+- [x] Overflow-safe length arithmetic: `nt_unicode_wchars_to_bytes` + `>=`-form capacity checks (no `+1` wrap).
+- [x] Commit: `"kernel: nls -- UNICODE_STRING primitive layer with bounded conversion"`
 
 **Test checkpoint:** `nt_decode_unicode_string` on a `UNICODE_STRING` with `Length` past the buffer returns an error, not an overread. A counted UTF-16LE buffer with an odd byte length is rejected. Length arithmetic on `0xFFFF`-scale `MaximumLength` does not wrap.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 14 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nt_unicode.h` + `nt_unicode.c` -- the canonical UNICODE_STRING validate/decode/encode primitive + `nt_unicode_to_ascii` lossless narrow bridge; `NT_UNICODE_MAX_BYTES`=65534 ceiling, caller-buffer capacity is the effective cap.
+> - **How it integrates:** stateless/re-entrant (no locking); TOCTOU-safe via snapshot-copy of the struct then the buffer through `copy_from_user` when previous-mode is UserMode; `test_nls.c` under new `TEST_CAT_NLS` (14 suites, kernel-mode).
+> - **Downstream effects:** the single primitive §2 (case fold), §5 (code page), and §9 (consumer retrofit of `oa_name`/`oa_probe_ascii_name`) build on; retrofit of char*-casting handlers is deferred to §9.
+> - **Canonical doc:** [`include/kernel/nt/nt_unicode.h`](../../include/kernel/nt/nt_unicode.h).
+> - **Scope boundary:** UTF-16 <-> UTF-8/code-page transcoding is §5, not §1; §1 provides validated UTF-16 + an ASCII-range narrow bridge only.
 
 ---
 
