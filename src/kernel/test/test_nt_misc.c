@@ -91,6 +91,27 @@ static void test_nt_atom_case_insensitive(void)
     nt_atom_reset_for_test();
 }
 
+/* Latin-1 fold: the NLS-authority retrofit matches accented case pairs the old
+ * ASCII-only fold could not (U+00E9 lower vs U+00C9 upper), and the folded-hash
+ * prefilter keeps a genuinely different accented letter from matching. */
+static void test_nt_atom_latin1_fold(void)
+{
+    nt_atom_reset_for_test();
+    uint16_t lo[8] = { 'c', 'a', 'f', 0x00E9, 0 };   /* "caf" + small e-acute */
+    uint16_t up[8] = { 'C', 'A', 'F', 0x00C9, 0 };   /* "CAF" + capital E-acute */
+    uint16_t a1 = 0, a2 = 0;
+    nt_atom_add(lo, 4, &a1);
+    NTSTATUS s = nt_atom_find(up, 4, &a2);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS, "Latin-1 case-insensitive find matches");
+    TEST_ASSERT_EQ(a2, a1, "accented differently-cased name resolves to same atom");
+
+    uint16_t other[8] = { 'c', 'a', 'f', 0x00E8, 0 };  /* small e-grave: a different letter */
+    uint16_t a3 = 0;
+    s = nt_atom_find(other, 4, &a3);
+    TEST_ASSERT_EQ(s, STATUS_OBJECT_NAME_NOT_FOUND, "distinct accented letter does not match");
+    nt_atom_reset_for_test();
+}
+
 /* Integer atoms: no table entry, delete is a no-op success. */
 static void test_nt_atom_integer(void)
 {
@@ -257,6 +278,7 @@ void test_register_nt_misc(void)
     test_suite_register_cat("NT: atom add/find/delete round-trip", test_nt_atom_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("NT: atom refcount", test_nt_atom_refcount, TEST_CAT_ABI);
     test_suite_register_cat("NT: atom case-insensitive", test_nt_atom_case_insensitive, TEST_CAT_ABI);
+    test_suite_register_cat("NT: atom Latin-1 fold + hash prefilter", test_nt_atom_latin1_fold, TEST_CAT_ABI);
     test_suite_register_cat("NT: integer atom passthrough", test_nt_atom_integer, TEST_CAT_ABI);
     test_suite_register_cat("NT: atom bad input", test_nt_atom_bad_input, TEST_CAT_ABI);
     test_suite_register_cat("NT: atom table full boundary", test_nt_atom_table_full, TEST_CAT_ABI);

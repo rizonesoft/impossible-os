@@ -41,7 +41,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | -- | :---: | ----------- | ---------- | :----: |
 | 💎 | 1 | Unicode string primitive layer | -- | [x] |
 | 💎 | 2 | Case folding and invariant compare | §1 | [x] |
-| 💎 | 3 | Global and local atom tables | T12 | [ ] |
+| 💎 | 3 | Global and local atom tables | T12 | [x] |
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [ ] |
 | 💎 | 5 | Code page conversion providers | §4 | [ ] |
 | 💎 | 6 | Locale and LCID metadata | §4 | [ ] |
@@ -105,14 +105,25 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 3. Global and Local Atom Tables
 
-- [ ] Implement per-process or per-session local atom tables for Win32 compatibility.
-- [ ] Retrofit the global atom table onto the NLS case-folding authority (§2), replacing the ASCII fold.
-- [ ] Bound the locked atom lookup (`nt_misc.c` `atom_find_slot_locked` scans O(512x255) under the irqsave `s_atom_lock`): add a per-slot case-folded hash / bucket index or a thread-context mutex.
-- [ ] Commit: `"kernel: nls -- local atom tables + NLS-authority global atom retrofit"`
+- [x] Per-process LOCAL atom tables are USER-MODE per Win32 parity (ntdll `RtlAtomTable`, freed at process exit); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay GLOBAL-only. Owner: `D12T04 §9` (item: "RtlCreateAtomTable"). (§3 design)
+- [x] Retrofit the global atom table onto the NLS case-folding authority (§2), replacing the ASCII fold (`atom_name_eq` folds via `rtl_upcase_char`; `w_fold` removed).
+- [x] Bound the locked atom lookup: per-slot case-folded FNV hash (`atom_name_hash`, computed outside `s_atom_lock`) gates the full name compare in `atom_find_slot_locked`, so a miss costs one word compare per slot, not up to 255 folds.
+- [x] Commit: `"kernel: nls -- global atom NLS-authority retrofit + bounded lookup"`
 
-> **Note:** The GLOBAL atom table (16-bit IDs 0xC000+, string interning, refcount, add/find/delete/query APIs, integer/string range split) shipped in TODO-12 §23 (`src/kernel/nt/nt_misc.c`) with an ASCII-only case fold. This section still owns per-process/per-session LOCAL atom tables and the NLS-authority retrofit above.
+> **Note:** The GLOBAL atom table (16-bit IDs 0xC000+, string interning, refcount, add/find/delete/query APIs, integer/string range split) shipped in TODO-12 §23 (`src/kernel/nt/nt_misc.c`) with an ASCII-only case fold. This section retrofits it onto the §2 fold authority and bounds its lookup; LOCAL atom tables are user-mode (owner above).
 
-**Test checkpoint:** A local atom added in one process is not visible in another; a global atom is. Case-insensitive lookup finds "Foo" when added as "foo" via the §2 authority. The bounded lookup resolves a hit without the O(512x255) linear scan.
+**Test checkpoint:** Global `nt_atom_find` locates an atom case-insensitively via the §2 authority (added `"foo"`, found `"FOO"`, plus a Latin-1 fold pair). The bounded lookup resolves a hit without a full-name compare on every slot (per-slot folded-hash prefilter). Local-atom cross-process isolation is validated in the user-mode owner (TODO-04 §9), not here.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | atom suites 0 failures
+
+> **Notes:**
+> - **What shipped:** `nt_misc.c` global atom retrofit -- `atom_name_eq` folds through `rtl_upcase_char` (the §2 authority; `w_fold` removed) plus a per-slot case-folded FNV hash (`atom_name_hash`) prefilter in `atom_find_slot_locked`.
+> - **How it integrates:** the query hash is computed OUTSIDE `s_atom_lock` and reused on insert, so the irqsave hold no longer covers the per-char fold; a miss costs one word compare per slot. New `test_nt_misc.c` Latin-1 fold test.
+> - **Downstream effects:** global atom case-insensitivity now agrees with the §2 `RtlEqualUnicodeString` fold; the `oa_name` retrofit is §9, full-BMP fold is §4.
+> - **Canonical doc:** [`src/kernel/nt/nt_misc.c`](../../src/kernel/nt/nt_misc.c) (atom table section).
+> - **Scope boundary:** per-process LOCAL atom tables are user-mode (owner `D12T04 §9`); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay global-only; full-BMP/locale casing is §4.
+> **Verified:** 2026-07-03 | commit `PENDING` | 4/4 items | build OK | tests 13758 kernel + 16 user PASS | lint 0 errors
+> **Quality reviewed:** 2026-07-03 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | design deferred local atoms to user-mode (`D12T04 §9`); fixed: stale ASCII header comment (L), hash-under-lock + double-compute (M) | scope: kernel-code-quality
 
 ---
 
@@ -222,7 +233,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
 |----|---------|----------|----------|------------------|
-| 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global shipped (T12 §23); §3 local + retrofit |
+| 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (D12T04 §9) |
 | 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ⬜ §5 UTF-8/CP437/CP850/1252 |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |

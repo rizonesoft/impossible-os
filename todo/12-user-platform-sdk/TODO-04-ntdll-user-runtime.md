@@ -75,6 +75,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 | 6 | Process startup (CRT0) | 💎 | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH |
 | 7 | User-mode libc shims (`user/lib/libc.lib`) | 💎 | §6 CRT0; `kernel32.dll` stubs |
 | 8 | Fiber API | ⭐ | §1 TEB FiberData; §6 thread-to-fiber conversion |
+| 9 | Local atom tables (RtlAtomTable + kernel32 AddAtom) | 💎 | §2 RtlHeap; `D02T13 §3` (kernel global `NtAddAtom` stays global-only) |
 
 ---
 
@@ -354,6 +355,20 @@ are available via `CreateFiber`/`SwitchToFiber`.
   - `TEB.FiberData` tracks the currently running fiber on this thread
 - [ ] **`PVOID ConvertThreadToFiber(param)`**: allocate `FIBER` for the current thread; `FIBER.is_thread = 1`; `TEB.FiberData = fiber`; return fiber handle; subsequent `SwitchToFiber` calls return to this fiber
 - [ ] **`VOID DeleteFiber(fiber)`**: `VirtualFree(stack_base, 0, MEM_RELEASE)`; `RtlFreeHeap(fiber)`; if `fiber == TEB.FiberData`: call `ExitThread(0)` (current fiber cannot delete itself except via exit)
+
+---
+
+## 9. Local Atom Tables (RtlAtomTable) `[Sonnet]`
+
+> Win32 LOCAL atom tables (`AddAtom`/`FindAtom`/`DeleteAtom`) are USER-MODE, per Windows parity: they live in the process heap and are destroyed at process exit, unlike the kernel-owned GLOBAL atom table (`GlobalAddAtom` -> `NtAddAtom`, kept global-only in the kernel per `D02T13 §3`). This section owns the user-mode local-table implementation the kernel deliberately does not host. **Source file:** `src/user/ntdll/ntdll_atom.c`.
+
+- [ ] **`RtlCreateAtomTable(NumberOfBuckets, AtomTable)`** in `include/win32/ntdll.h`: allocate a per-process `RTL_ATOM_TABLE` from the process heap (`RtlAllocateHeap`) with a hash-bucket index; lazily created on first `AddAtom`.
+- [ ] **`RtlAddAtomToAtomTable` / `RtlLookupAtomInAtomTable` / `RtlDeleteAtomFromAtomTable` / `RtlDestroyAtomTable`**: refcounted string-atom interning with the `0xC000`-base integer/string split and case-insensitive invariant fold.
+- [ ] **`kernel32` wrappers `ATOM AddAtomW/FindAtomW/DeleteAtom`** over the process-default local table; `GlobalAddAtomW` etc. route to `NtAddAtom` (kernel global table).
+- [ ] Destroy the process-default local atom table on process exit (CRT0 teardown / `ExitProcess`), matching Windows local-table lifetime.
+- [ ] Commit: `"ntdll: user-mode local atom tables (RtlAtomTable) + kernel32 Add/Find/DeleteAtom"`
+
+**Test checkpoint:** A local atom added in one process is not visible in another (separate `RTL_ATOM_TABLE`); a global atom (`GlobalAddAtom`) is visible across processes. Case-insensitive `FindAtom("Foo")` locates an atom added as `"foo"`. The local table is freed at process exit with no leak.
 
 ---
 

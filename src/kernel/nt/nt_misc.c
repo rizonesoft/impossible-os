@@ -10,8 +10,11 @@
  * (s_atom_lock). Each occupied slot's atom value is NT_STRING_ATOM_BASE +
  * slot, so the value is stable while the atom lives and reverse lookup is
  * O(1). String atoms are refcounted (NtAddAtom bumps, NtDeleteAtom drops,
- * slot freed at zero). Names are case-insensitive over the ASCII range;
- * full Unicode case folding is out of scope (owner: locale/NLS work).
+ * slot freed at zero). Name matching is case-insensitive through the invariant
+ * fold authority (rtl_upcase_char: ASCII + Latin-1); a per-slot case-folded
+ * hash gates the full name compare so the linear scan stays cheap. Full-BMP /
+ * locale-specific casing remains out of scope. Local (per-process) atom tables
+ * are user-mode (ntdll RtlAtomTable), not here.
  * ============================================================================ */
 
 #include "kernel/nt/nt_misc.h"
@@ -19,6 +22,7 @@
 #include "kernel/nt/zw.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
+#include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char -- the NLS case-fold authority */
 #include "kernel/nt/service_numbers.h"
 #include "kernel/ob/peb.h"
 #include "kernel/sched/spinlock.h"
@@ -32,6 +36,7 @@ typedef struct atom_slot {
     uint16_t atom;                       /* 0 = free; else NT_STRING_ATOM_BASE+slot */
     uint16_t name_len;                   /* chars, excluding NUL */
     uint32_t refcount;                   /* usage count; every add is accounted */
+    uint32_t hash;                       /* case-folded name hash; lookup prefilter */
     uint64_t generation;                 /* bumped on each allocation; ID-reuse guard (64-bit: never wraps) */
     uint16_t name[NT_MAX_ATOM_LEN + 1];  /* NUL-terminated wide name */
 } atom_slot_t;
@@ -47,29 +52,44 @@ static uint16_t        s_default_ui_lang  = NT_DEFAULT_LANGID;
 static const uint16_t  s_install_ui_lang  = NT_DEFAULT_LANGID;
 static DEFINE_SPINLOCK(s_locale_lock);
 
-/* ---- Case-insensitive ASCII fold ----------------------------------------- */
+/* ---- Case-insensitive name matching (NLS invariant fold authority) ------- */
 
-static inline uint16_t w_fold(uint16_t c)
-{
-    return (c >= (uint16_t)'A' && c <= (uint16_t)'Z') ? (uint16_t)(c + 32) : c;
-}
-
-/* Compare two wide names of equal char length, case-insensitive (ASCII). */
+/* Compare two wide names of equal char length, case-insensitive, through the
+ * invariant fold authority (ASCII + Latin-1); replaces the old ASCII-only fold
+ * so atom matching agrees with the kernel's single case-fold policy. */
 static int atom_name_eq(const uint16_t *a, const uint16_t *b, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i++) {
-        if (w_fold(a[i]) != w_fold(b[i]))
+        if (rtl_upcase_char(a[i]) != rtl_upcase_char(b[i]))
             return 0;
     }
     return 1;
 }
 
-/* Caller must hold s_atom_lock. Returns slot index of a matching name, or
- * NT_ATOM_TABLE_CAP if none. */
-static uint32_t atom_find_slot_locked(const uint16_t *name, uint32_t len)
+/* Case-folded FNV-1a over a wide name -- the per-slot lookup prefilter. Each
+ * code unit is folded through rtl_upcase_char so a case-insensitive match
+ * hashes identically regardless of the stored case. */
+static uint32_t atom_name_hash(const uint16_t *name, uint32_t len)
+{
+    uint32_t h = 2166136261u;            /* FNV-1a offset basis */
+    for (uint32_t i = 0; i < len; i++) {
+        h ^= (uint32_t)rtl_upcase_char(name[i]);
+        h *= 16777619u;                  /* FNV-1a prime */
+    }
+    return h;
+}
+
+/* Caller must hold s_atom_lock and pass the pre-computed folded hash `qh`
+ * (computed OUTSIDE the lock so the per-char fold never lengthens the
+ * irq-disabled hold time). Returns slot index of a matching name, or
+ * NT_ATOM_TABLE_CAP if none. The folded hash gates the full name compare so a
+ * non-matching slot costs a single word compare, not len char folds -- bounding
+ * the old O(NT_ATOM_TABLE_CAP * name_len) scan to O(NT_ATOM_TABLE_CAP). */
+static uint32_t atom_find_slot_locked(const uint16_t *name, uint32_t len, uint32_t qh)
 {
     for (uint32_t i = 0; i < NT_ATOM_TABLE_CAP; i++) {
-        if (s_atoms[i].atom != 0 && s_atoms[i].name_len == len &&
+        if (s_atoms[i].atom != 0 && s_atoms[i].hash == qh &&
+            s_atoms[i].name_len == len &&
             atom_name_eq(s_atoms[i].name, name, len)) {
             return i;
         }
@@ -85,10 +105,14 @@ static NTSTATUS nt_atom_add_ex(const uint16_t *name, uint32_t len_chars,
     if (!name || !out_atom || len_chars == 0 || len_chars > NT_MAX_ATOM_LEN)
         return STATUS_INVALID_PARAMETER;
 
+    /* Fold + hash the name OUTSIDE the lock so the irq-disabled hold time never
+     * covers the per-char fold; reused for the slot's stored hash on insert. */
+    uint32_t qh = atom_name_hash(name, len_chars);
+
     uint64_t flags;
     spin_lock_irqsave(&s_atom_lock, &flags);
 
-    uint32_t slot = atom_find_slot_locked(name, len_chars);
+    uint32_t slot = atom_find_slot_locked(name, len_chars, qh);
     if (slot != NT_ATOM_TABLE_CAP) {
         /* Existing atom: every add is accounted. Refuse rather than return
          * an unaccounted reference the caller would later over-delete. */
@@ -111,6 +135,7 @@ static NTSTATUS nt_atom_add_ex(const uint16_t *name, uint32_t len_chars,
             s_atoms[i].atom     = (uint16_t)(NT_STRING_ATOM_BASE + i);
             s_atoms[i].refcount = 1;
             s_atoms[i].name_len = (uint16_t)len_chars;
+            s_atoms[i].hash     = qh;   /* reuse the hash computed before the lock */
             for (uint32_t j = 0; j < len_chars; j++)
                 s_atoms[i].name[j] = name[j];
             s_atoms[i].name[len_chars] = 0;
@@ -161,9 +186,11 @@ NTSTATUS nt_atom_find(const uint16_t *name, uint32_t len_chars, uint16_t *out_at
     if (!name || !out_atom || len_chars == 0 || len_chars > NT_MAX_ATOM_LEN)
         return STATUS_INVALID_PARAMETER;
 
+    uint32_t qh = atom_name_hash(name, len_chars);   /* fold+hash outside the lock */
+
     uint64_t flags;
     spin_lock_irqsave(&s_atom_lock, &flags);
-    uint32_t slot = atom_find_slot_locked(name, len_chars);
+    uint32_t slot = atom_find_slot_locked(name, len_chars, qh);
     if (slot == NT_ATOM_TABLE_CAP) {
         spin_unlock_irqrestore(&s_atom_lock, flags);
         return STATUS_OBJECT_NAME_NOT_FOUND;
