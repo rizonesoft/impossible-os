@@ -9,8 +9,11 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "libc/string.h"           /* memset for synthetic blob builders */
 #include "kernel/nt/nt_unicode.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char, Rtl*UnicodeString, CompareStringOrdinal */
+#include "kernel/nt/nls.h"         /* S4: nls_table_parse + accessors + fallback */
+#include "kernel/kchecksum.h"      /* kcrc32 for synthetic table blobs */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
 
 /* Helper: build a UNICODE_STRING over a kernel WCHAR literal. */
@@ -431,6 +434,393 @@ static void test_nls_upcase_rejects_malformed(void)
                    (uint64_t)STATUS_INVALID_PARAMETER, "odd src Length rejected");
 }
 
+/* ==========================================================================
+ * Section 4: nls_table_v1 format + loader + fallback (pure helper tests).
+ * All tests build synthetic in-memory blobs and drive the pure parser /
+ * accessors -- no live boot infrastructure, no VFS.
+ * ========================================================================== */
+
+static uint8_t s_nls_blob[2048];
+
+/* Build a table with one UPCASE chunk of `count` u16 entries (entry[i]=0x8000+i).
+ * Leaves crc32 unset (0); caller finalizes with nls_recrc after any tampering.
+ * Returns the total blob length. */
+static uint32_t nls_build_upcase(uint32_t count)
+{
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    nls_chunk_desc_t *d = (nls_chunk_desc_t *)(s_nls_blob + sizeof(*h));
+    uint32_t body = (uint32_t)(sizeof(*h) + sizeof(*d));
+    uint32_t size = count * 2u;
+    uint16_t *up = (uint16_t *)(s_nls_blob + body);
+    uint32_t total = body + size;
+    uint32_t i;
+
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->code_page = 0;
+    h->nls_version = 7;
+    h->total_size = total;
+    h->crc32 = 0;
+    h->chunk_count = 1;
+    d->type = NLS_CHUNK_UPCASE;
+    d->offset = body;
+    d->size = size;
+    for (i = 0; i < count; i++)
+        up[i] = (uint16_t)(0x8000u + i);
+    return total;
+}
+
+/* Compute + store the CRC over the whole blob with crc32 already zeroed. */
+static void nls_recrc(uint32_t total)
+{
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    h->crc32 = 0;
+    h->crc32 = kcrc32(s_nls_blob, total);
+}
+
+static void test_nls_parse_valid_upcase(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);   /* covers 0..0x101 */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_SUCCESS, "valid table parses");
+    TEST_ASSERT_EQ((uint64_t)d.upcase_count, 0x102u, "upcase element count resolved");
+    TEST_ASSERT_EQ((uint64_t)(d.upcase != 0), 1u, "upcase chunk pointer resolved");
+    TEST_ASSERT_EQ((uint64_t)d.nls_version, 7u, "nls_version carried");
+}
+
+static void test_nls_parse_rejects_bad_magic(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    ((nls_table_header_t *)s_nls_blob)->magic = 0xDEADBEEFu;
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "bad magic rejected");
+}
+
+static void test_nls_parse_rejects_bad_crc(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    nls_recrc(total);
+    s_nls_blob[total - 1] ^= 0xFF;   /* flip a body byte AFTER crc finalized */
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "corrupt body fails CRC");
+}
+
+static void test_nls_parse_rejects_size_mismatch(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    nls_recrc(total);
+    /* total_size in header != bytes handed to parser. */
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total - 2, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "len != total_size rejected");
+}
+
+static void test_nls_parse_rejects_oob_chunk(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(nls_table_header_t));
+    cd->size += 4;   /* chunk now runs past total_size */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "out-of-bounds chunk rejected");
+}
+
+static void test_nls_parse_rejects_dup_chunk(void)
+{
+    nls_published_t d;
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    nls_chunk_desc_t *d0, *d1;
+    uint32_t body, size, total;
+
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->nls_version = 1;
+    h->chunk_count = 2;
+    body = (uint32_t)(sizeof(*h) + 2u * sizeof(nls_chunk_desc_t));
+    size = 8;   /* two tiny same-type chunks */
+    d0 = (nls_chunk_desc_t *)(s_nls_blob + sizeof(*h));
+    d1 = d0 + 1;
+    d0->type = NLS_CHUNK_UPCASE; d0->offset = body;        d0->size = size;
+    d1->type = NLS_CHUNK_UPCASE; d1->offset = body + size; d1->size = size;
+    total = body + 2u * size;
+    h->total_size = total;
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "duplicate chunk type rejected");
+}
+
+static void test_nls_upcase_table_path_and_guard(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);   /* indices 0..0x101 present */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_SUCCESS, "table parses for accessor test");
+    nls_test_set_active(&d);
+    /* < U+0100 stays on the compiled rtl authority, never the table. */
+    TEST_ASSERT_EQ((uint64_t)nls_upcase_char('a'), (uint64_t)'A',
+                   "ASCII fold uses compiled authority");
+    /* U+0100 is in range -> table value 0x8000 + 0x100. */
+    TEST_ASSERT_EQ((uint64_t)nls_upcase_char(0x0100), 0x8100u,
+                   "in-range code point reads UPCASE chunk");
+    /* U+0102 is past upcase_count (0x102) -> guarded, returns unchanged. */
+    TEST_ASSERT_EQ((uint64_t)nls_upcase_char(0x0102), 0x0102u,
+                   "out-of-range code point falls back to unchanged");
+    nls_test_set_active(0);   /* restore compiled fallback */
+}
+
+static void test_nls_ctype1_compiled_fallback(void)
+{
+    nls_test_set_active(0);   /* ensure no table */
+    TEST_ASSERT_EQ((uint64_t)(nls_char_type('A', 1) & (NLS_C1_UPPER | NLS_C1_ALPHA)),
+                   (uint64_t)(NLS_C1_UPPER | NLS_C1_ALPHA), "A is upper alpha");
+    TEST_ASSERT_EQ((uint64_t)(nls_char_type('5', 1) & (NLS_C1_DIGIT | NLS_C1_XDIGIT)),
+                   (uint64_t)(NLS_C1_DIGIT | NLS_C1_XDIGIT), "5 is digit + xdigit");
+    TEST_ASSERT_EQ((uint64_t)(nls_char_type(' ', 1) & NLS_C1_SPACE),
+                   (uint64_t)NLS_C1_SPACE, "space is C1_SPACE");
+    TEST_ASSERT_EQ((uint64_t)(nls_char_type('!', 1) & NLS_C1_PUNCT),
+                   (uint64_t)NLS_C1_PUNCT, "! is punctuation");
+    /* No compiled CTYPE2/CTYPE3 fallback. */
+    TEST_ASSERT_EQ((uint64_t)nls_char_type('A', 2), 0u, "no CTYPE2 fallback");
+}
+
+static void test_nls_missing_dir_fallback(void)
+{
+    /* Pure fallback-selection check: with no active table published, upcase of a
+     * BMP code point >= U+0100 passes through unchanged and the version reports
+     * the compiled default. This is the state nls_init() leaves on a missing
+     * C:\Impossible\System\NLS directory. */
+    nls_test_set_active(0);
+    TEST_ASSERT_EQ((uint64_t)nls_upcase_char(0x0100), 0x0100u,
+                   "no table: >= U+0100 upcase unchanged");
+    TEST_ASSERT_EQ((uint64_t)nls_get_version(), (uint64_t)NLS_TABLE_V1_VERSION,
+                   "no table: compiled version default");
+}
+
+/* NOTE: the `total_size > NLS_TABLE_V1_MAX_SIZE` parse branch is not unit-tested
+ * here -- it needs a >2 MiB blob (impractical for a static test buffer) and is
+ * an OR with the `total_size != len` branch (tested above). nls_init also caps
+ * total_size before the PMM allocation; smoke covers the boot path. */
+
+static void test_nls_parse_rejects_null(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(0, total, &d),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL blob rejected");
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL out rejected");
+}
+
+static void test_nls_parse_rejects_short_header(void)
+{
+    nls_published_t d;
+    nls_build_upcase(0x102);
+    /* len below the 32-byte header size. */
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, 16, &d),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "len < header rejected");
+}
+
+static void test_nls_parse_rejects_bad_version(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    ((nls_table_header_t *)s_nls_blob)->version = 999;
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "bad version rejected");
+}
+
+static void test_nls_parse_rejects_chunk_count_over_max(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_upcase(0x102);
+    ((nls_table_header_t *)s_nls_blob)->chunk_count = NLS_TABLE_V1_MAX_CHUNKS + 1;
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "chunk_count > max rejected");
+}
+
+static void test_nls_parse_rejects_dir_overrun(void)
+{
+    nls_published_t d;
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    /* Header claims 5 chunks (dir = 60 bytes -> body_start 92) but total_size 40. */
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->chunk_count = 5;
+    h->total_size = 40;
+    nls_recrc(40);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, 40, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "directory past blob rejected");
+}
+
+static void test_nls_parse_rejects_bad_chunk_type(void)
+{
+    nls_published_t d;
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(nls_table_header_t));
+    uint32_t total;
+
+    total = nls_build_upcase(0x102);
+    cd->type = 0;   /* type 0 invalid */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "chunk type 0 rejected");
+
+    total = nls_build_upcase(0x102);
+    cd->type = NLS_CHUNK_TYPE_MAX + 1;   /* type past max invalid */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "chunk type > max rejected");
+}
+
+static void test_nls_parse_rejects_chunk_in_directory(void)
+{
+    nls_published_t d;
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(nls_table_header_t));
+    uint32_t total = nls_build_upcase(0x102);
+    cd->offset = 40;   /* < body_start (44) -- chunk would overlap the directory */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "chunk inside directory rejected");
+}
+
+static void test_nls_parse_rejects_odd_offset_and_size(void)
+{
+    nls_published_t d;
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(nls_table_header_t));
+    uint32_t total;
+
+    total = nls_build_upcase(0x102);
+    cd->offset = 45;   /* odd offset on a uint16 chunk */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "odd uint16 offset rejected");
+
+    total = nls_build_upcase(0x102);
+    cd->size = cd->size - 1;   /* odd size on a uint16 chunk */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "odd uint16 size rejected");
+}
+
+static void test_nls_parse_fold_only_success(void)
+{
+    nls_published_t d;
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(*h));
+    uint32_t body = (uint32_t)(sizeof(*h) + sizeof(*cd));
+    uint32_t total = body + 8;   /* a reserved FOLD_COMPAT chunk, 8 opaque bytes */
+
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->nls_version = 3;
+    h->chunk_count = 1;
+    h->total_size = total;
+    cd->type = NLS_CHUNK_FOLD_COMPAT;
+    cd->offset = body;
+    cd->size = 8;
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_SUCCESS, "reserved FOLD-only table parses");
+    TEST_ASSERT_EQ((uint64_t)(d.upcase == 0 && d.ctype1 == 0 && d.ctype2 == 0 &&
+                              d.ctype3 == 0), 1u, "no consumed chunk resolved");
+    TEST_ASSERT_EQ((uint64_t)(d.upcase_count | d.ctype1_count |
+                              d.ctype2_count | d.ctype3_count), 0u, "all counts zero");
+    TEST_ASSERT_EQ((uint64_t)d.lcid, 0x007Fu, "lcid carried from header");
+}
+
+static void test_nls_parse_rejects_odd_fold_chunk(void)
+{
+    /* Even-alignment is enforced for EVERY defined chunk type, including the
+     * reserved FOLD_* chunks that fall through the parser's resolve switch. */
+    nls_published_t d;
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    nls_chunk_desc_t *cd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(*h));
+    uint32_t body = (uint32_t)(sizeof(*h) + sizeof(*cd));
+    uint32_t total = body + 7;   /* odd-size FOLD chunk */
+
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->chunk_count = 1;
+    h->total_size = total;
+    cd->type = NLS_CHUNK_FOLD_WIDTH;
+    cd->offset = body;
+    cd->size = 7;   /* odd */
+    nls_recrc(total);
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_INVALID_IMAGE_FORMAT, "odd-size FOLD chunk rejected");
+}
+
+/* Build a table with CTYPE1/2/3 chunks each of `count` u16 entries; entry[i]=0.
+ * entry[0x100] is set to a distinct sentinel per namespace. nls_version = 5. */
+static uint32_t nls_build_ctype123(void)
+{
+    nls_table_header_t *h = (nls_table_header_t *)s_nls_blob;
+    nls_chunk_desc_t *dd = (nls_chunk_desc_t *)(s_nls_blob + sizeof(*h));
+    uint32_t count = 0x102;
+    uint32_t size = count * 2u;
+    uint32_t body = (uint32_t)(sizeof(*h) + 3u * sizeof(*dd));
+    uint16_t *c1 = (uint16_t *)(s_nls_blob + body);
+    uint16_t *c2 = (uint16_t *)(s_nls_blob + body + size);
+    uint16_t *c3 = (uint16_t *)(s_nls_blob + body + 2u * size);
+    uint32_t total = body + 3u * size;
+
+    memset(s_nls_blob, 0, sizeof(s_nls_blob));
+    h->magic = NLS_TABLE_V1_MAGIC;
+    h->version = NLS_TABLE_V1_VERSION;
+    h->lcid = 0x007Fu;
+    h->nls_version = 5;
+    h->chunk_count = 3;
+    h->total_size = total;
+    dd[0].type = NLS_CHUNK_CTYPE1; dd[0].offset = body;              dd[0].size = size;
+    dd[1].type = NLS_CHUNK_CTYPE2; dd[1].offset = body + size;       dd[1].size = size;
+    dd[2].type = NLS_CHUNK_CTYPE3; dd[2].offset = body + 2u * size;  dd[2].size = size;
+    c1[0x100] = 0x1111;
+    c2[0x100] = 0x2222;
+    c3[0x100] = 0x3333;
+    nls_recrc(total);
+    return total;
+}
+
+static void test_nls_ctype_table_paths(void)
+{
+    nls_published_t d;
+    uint32_t total = nls_build_ctype123();
+    TEST_ASSERT_EQ((uint64_t)nls_table_parse(s_nls_blob, total, &d),
+                   (uint64_t)STATUS_SUCCESS, "ctype table parses");
+    nls_test_set_active(&d);
+    TEST_ASSERT_EQ((uint64_t)nls_char_type(0x0100, 1), 0x1111u, "CTYPE1 table value");
+    TEST_ASSERT_EQ((uint64_t)nls_char_type(0x0100, 2), 0x2222u, "CTYPE2 table value");
+    TEST_ASSERT_EQ((uint64_t)nls_char_type(0x0100, 3), 0x3333u, "CTYPE3 table value");
+    /* Out-of-range code point: CTYPE2/3 have no fallback -> 0. */
+    TEST_ASSERT_EQ((uint64_t)nls_char_type(0x0102, 2), 0u, "CTYPE2 out-of-range 0");
+    TEST_ASSERT_EQ((uint64_t)nls_char_type(0x0102, 3), 0u, "CTYPE3 out-of-range 0");
+    /* Invalid namespace selectors. */
+    TEST_ASSERT_EQ((uint64_t)nls_char_type('A', 0), 0u, "which=0 -> 0");
+    TEST_ASSERT_EQ((uint64_t)nls_char_type('A', 4), 0u, "which=4 -> 0");
+    /* Active descriptor reports its own nls_version. */
+    TEST_ASSERT_EQ((uint64_t)nls_get_version(), 5u, "active version reported");
+    nls_test_set_active(0);
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -499,4 +889,45 @@ void test_register_nls(void)
                             test_nls_compare_malformed_is_total_order, TEST_CAT_NLS);
     test_suite_register_cat("nls: upcase rejects malformed",
                             test_nls_upcase_rejects_malformed, TEST_CAT_NLS);
+    /* Section 4: nls_table_v1 format + loader + fallback. */
+    test_suite_register_cat("nls: table parse valid upcase",
+                            test_nls_parse_valid_upcase, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects bad magic",
+                            test_nls_parse_rejects_bad_magic, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects bad crc",
+                            test_nls_parse_rejects_bad_crc, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects size mismatch",
+                            test_nls_parse_rejects_size_mismatch, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects oob chunk",
+                            test_nls_parse_rejects_oob_chunk, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects dup chunk",
+                            test_nls_parse_rejects_dup_chunk, TEST_CAT_NLS);
+    test_suite_register_cat("nls: upcase table path + oob guard",
+                            test_nls_upcase_table_path_and_guard, TEST_CAT_NLS);
+    test_suite_register_cat("nls: ctype1 compiled fallback",
+                            test_nls_ctype1_compiled_fallback, TEST_CAT_NLS);
+    test_suite_register_cat("nls: missing dir fallback selection",
+                            test_nls_missing_dir_fallback, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects null",
+                            test_nls_parse_rejects_null, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects short header",
+                            test_nls_parse_rejects_short_header, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects bad version",
+                            test_nls_parse_rejects_bad_version, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects chunk_count over max",
+                            test_nls_parse_rejects_chunk_count_over_max, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects dir overrun",
+                            test_nls_parse_rejects_dir_overrun, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects bad chunk type",
+                            test_nls_parse_rejects_bad_chunk_type, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects chunk in directory",
+                            test_nls_parse_rejects_chunk_in_directory, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects odd offset/size",
+                            test_nls_parse_rejects_odd_offset_and_size, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse fold-only success",
+                            test_nls_parse_fold_only_success, TEST_CAT_NLS);
+    test_suite_register_cat("nls: table parse rejects odd fold chunk",
+                            test_nls_parse_rejects_odd_fold_chunk, TEST_CAT_NLS);
+    test_suite_register_cat("nls: ctype table paths + invalid which",
+                            test_nls_ctype_table_paths, TEST_CAT_NLS);
 }

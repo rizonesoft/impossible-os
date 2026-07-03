@@ -42,7 +42,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 1 | Unicode string primitive layer | -- | [x] |
 | 💎 | 2 | Case folding and invariant compare | §1 | [x] |
 | 💎 | 3 | Global and local atom tables | T12 | [x] |
-| 💎 | 4 | NLS table file format and loader | VFS, T03 | [ ] |
+| 💎 | 4 | NLS table file format and loader | VFS, T03 | [x] |
 | 💎 | 5 | Code page conversion providers | §4 | [ ] |
 | 💎 | 6 | Locale and LCID metadata | §4 | [ ] |
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [ ] |
@@ -129,14 +129,23 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 4. NLS Table File Format and Loader
 
-- [ ] Define compact `nls_table_v1` format with magic, version, locale ID, code page ID, hash, and table offsets.
-- [ ] Load tables from `C:\Impossible\System\NLS\`.
-- [ ] Provide compiled fallback for invariant locale and UTF-8/UTF-16.
-- [ ] Validate checksums and bounds before publishing tables.
-- [ ] Add `nls_table_v1` chunks for character-type data (`GetStringTypeW` C1/C2/C3), folding tables (upcase + compatibility/digit/width), and an NLS/collation version ID (`GetNLSVersionEx`) so later consumers do not force a format break. (gap-audit)
-- [ ] Commit: `"kernel: nls -- nls_table_v1 format + loader with compiled fallback"`
+- [x] `nls_table_v1` format in `include/kernel/nt/nls.h`: 32-byte header (magic/version/lcid/code_page/nls_version/total_size/crc32/chunk_count) + `nls_chunk_desc[]` directory + bodies; offsets pinned by `_Static_assert`.
+- [x] `nls_init()` loads `C:\Impossible\System\NLS\invariant.nls` at Phase 2 (`SUBSYS_NLS`, POST16 `0x20D0/1`, after registry); header read first, body into a `pmm_alloc_contiguous` blob (mirrors `hive_load`).
+- [x] Compiled invariant fallback when no valid table: `nls_upcase_char` delegates < U+0100 to the §2 `rtl_upcase_char` authority (disk never overrides that range); ASCII+Latin-1 CTYPE1 classifier. UTF-8/UTF-16 transcoding is §5.
+- [x] `nls_table_parse` (pure, no VFS) validates before publish: magic, version, `total_size == len` and `<= MAX`, chunk-count bound, CRC32, every chunk in-bounds (overflow-safe), even offset/size, no duplicate type.
+- [x] Format chunks so §7/§8 need no break: separate `CTYPE1/2/3` (Codex fix: one uint16 can't hold 3 flag namespaces), `UPCASE`, reserved `FOLD_*`, header `nls_version`; accessors guard `cp < count`. (gap-audit)
+- [x] Commit: `"kernel: nls -- nls_table_v1 format + loader with compiled fallback"`
 
-**Test checkpoint:** A `nls_table_v1` blob with a bad magic or a mismatched hash is rejected and the compiled fallback is used. A table whose offsets exceed the blob size is rejected before publish. Boot with an empty NLS directory logs degraded state and serves the invariant fallback.
+**Test checkpoint:** A `nls_table_v1` blob with a bad magic or a mismatched CRC is rejected (`STATUS_INVALID_IMAGE_FORMAT`) and the compiled fallback is used. A chunk whose offset+size exceeds `total_size`, a duplicate chunk type, and a `total_size != len` are each rejected before publish. With no active table, `nls_upcase_char(>= U+0100)` passes through unchanged and `nls_get_version()` reports the compiled default -- the state `nls_init()` leaves on a missing NLS directory.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 42 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nls.h` + `nls.c` -- the `nls_table_v1` format, the pure `nls_table_parse` validator (CRC32 + bounds + dup/size), the Phase-2 `nls_init` loader, a compiled ASCII+Latin-1 fallback, and the query accessors.
+> - **How it integrates:** `nls_init` runs after registry in `boot_storage.c`; the table publishes with a release store + acquire-load read (SMP live at Phase 2); load/parse failure logs degraded and serves the fallback.
+> - **Downstream effects:** S5 reuses the format for code-page tables; S7 owns the reserved FOLD_* chunks; S8 consumes CTYPE/version; S9 retrofits OB/registry onto `nls_upcase_char`. Real full-BMP data + generator is owned by S10.
+> - **Canonical doc:** [`include/kernel/nt/nls.h`](../../include/kernel/nt/nls.h).
+> - **Scope boundary:** S4 owns format + loader + validation + fallback + accessors. GetStringTypeW/GetNLSVersionEx are S8; fold/collation payload S7; transcoding S5; consumer retrofit S9. CRC32 detects accidental corruption only.
 
 ---
 
@@ -203,6 +212,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 ## 9. Retrofit Kernel Consumers
 
 - [ ] Object Manager namespace lookup uses canonical Unicode compare.
+- [ ] Disk-fold trust decision: keep OB/registry security compare on compiled `rtl_upcase_char`; do not fold U+0100+ via disk-sourced `nls_upcase_char` unless the table is authenticated (§4 trust = CRC + volume ACL). (Codex §4)
 - [ ] Registry key/value lookup uses canonical Unicode compare and preserves original casing.
 - [ ] Environment variables use Windows-compatible case-insensitive matching.
 - [ ] PE loader import lookup preserves ASCII fast path but supports UTF-16 path inputs.
@@ -221,6 +231,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [ ] Compatibility tests for Win32 atom APIs and `CompareStringOrdinal`.
 - [ ] Fuzz counted string inputs to every Native API helper.
 - [ ] Boot test with missing NLS files uses invariant fallback and logs degraded state.
+- [ ] Compatibility corpus: full-BMP NLS data table -- host tool emits a real `invariant.nls` (`UPCASE` + `CTYPE1/2/3` chunks, §4 format) to `C:\Impossible\System\NLS\` so boot loads a table not the fallback; feeds §7/§8.
 - [ ] Tests for `GetStringTypeW` C1/C2/C3 classification, `FoldStringW`, `LCMapStringEx` sort-key ordering, `GetNLSVersionEx`, `GetCPInfoEx`/`IsDBCSLeadByte` metadata, and `CompareStringOrdinal`. (gap-audit)
 - [ ] Create `TEST_CAT_NLS` (enum in `test.h`, label in `test_runner.c`, `make test-nls` target, `bootx64.c` parser, `scripts\debug\kernel\run-nls-tests.bat`).
 - [ ] Commit: `"kernel: nls -- unit tests + compatibility corpus (TEST_CAT_NLS)"`
@@ -238,7 +249,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ⬜ §5 UTF-8/CP437/CP850/1252 |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ⬜ §7 invariant + case-insensitive keys |
-| 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ⬜ §4 `nls_table_v1` + compiled fallback |
+| 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | ⬜ §7 no-silent-normalize + explicit helper |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §4/§7 C1-C3 + FoldString |

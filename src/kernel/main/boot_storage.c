@@ -17,6 +17,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/nt/nls.h"
 #include "kernel/wer.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/fs/partition.h"
@@ -845,6 +846,12 @@ void boot_phase2(void)
     klog_load_levels_from_registry();
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
     boot_progress(2, "REGISTRY", POST16_REGISTRY_OK);
+
+    /* --- NLS table loader: requires VFS + C: mount (nls_init sets readiness) --- */
+    POST16(POST16_NLS);
+    nls_init();
+    POST16(POST16_NLS_OK);
+    boot_progress(2, "NLS", POST16_NLS_OK);
 
     /* --- Symbol table --- */
     symtab_init();

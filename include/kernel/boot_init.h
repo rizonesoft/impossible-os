@@ -63,7 +63,8 @@ typedef enum {
     SUBSYS_XSAVE    = 25,   /* XSAVE/XCR0 Phase 1 finalize (TODO-09-boot S5) */
     SUBSYS_PCID     = 26,   /* CR4.PCIDE activation window (TODO-09-boot S5) */
     SUBSYS_EX       = 27,   /* Executive support runtime (Ex* primitives) */
-    SUBSYS_COUNT    = 28,  /* sentinel -- keep last */
+    SUBSYS_NLS      = 28,   /* NLS table loader + invariant fallback (TODO-13 S4) */
+    SUBSYS_COUNT    = 29,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
 /* g_boot_info.degraded_mask is a uint32 and BOOT_TRY / kernel_subsystem_
@@ -256,6 +257,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_OB_OK            0x20B1
 #define POST16_EX               0x20C0
 #define POST16_EX_OK            0x20C1
+#define POST16_NLS              0x20D0
+#define POST16_NLS_OK           0x20D1
 
 /* Phase 3 -- Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000

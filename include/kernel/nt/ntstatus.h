@@ -74,6 +74,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_INVALID_PORT_HANDLE           ((NTSTATUS)0xC0000042)
 #define STATUS_REPLY_MESSAGE_MISMATCH       ((NTSTATUS)0xC000021F)  /* ALPC reply MessageId not in PendingQueue */
 #define STATUS_NOT_FOUND                    ((NTSTATUS)0xC0000225)  /* generic not-found (UEFI vars etc.) */
+#define STATUS_INVALID_IMAGE_FORMAT         ((NTSTATUS)0xC000007B)  /* on-disk blob format/bounds/CRC fail */
 
 /* ---- Error codes -- sync ------------------------------------------------- */
 
