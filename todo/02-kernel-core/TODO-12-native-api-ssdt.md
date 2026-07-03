@@ -88,7 +88,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [x]   |
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [/]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [x]   |
-| 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [ ]   |
+| 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [/]   |
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8|  [ ]   |
@@ -1137,6 +1137,8 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 > This mechanism is consumed by Win32k (→ XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §7) for `NtUserDispatchMessage` and `NtUserSendMessage`. Until this section is implemented, Win32k cannot call user-mode window procedures.
 
 **Test checkpoint:** Kernel calls `KeUserModeCallback(0, ...)` → user-mode callback fires → `NtCallbackReturn` returns result to kernel. Nested callback (callback calls syscall which calls another callback) succeeds up to depth 64. Depth 65 returns `STATUS_STACK_OVERFLOW`. Callback on terminated thread returns `STATUS_THREAD_IS_TERMINATING`.
+
+> **Deferred:** [blocker] KeUserModeCallback is blocked on missing infrastructure and has no in-tree caller: no ntdll `KiUserCallbackDispatcher` to return into (ntdll runtime unbuilt), no `PEB.KernelCallbackTable` field (+0x058), no kernel `KiCallUserMode` stack-splice/continuation primitive (needs new asm -- SYSRET/iretq today only return to the syscall caller or the scheduler switch-in, not into a suspended kernel C frame), `NtCallbackReturn` (0x0300) is an unregistered NOT_IMPLEMENTED stub, no per-thread callback-stack/depth fields, and no consumer (Win32k unbuilt) -- the test checkpoint is unsatisfiable, so implementing now would ship untested forward-infrastructure. -> XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §1 (item: "Kernel-callback user side ... `KiUserCallbackDispatcher` in `ntdll_except.c`") + 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §7 (USER window management -- the `NtUserDispatchMessage`/`NtUserSendMessage` consumer that calls KeUserModeCallback)
 
 ---
 

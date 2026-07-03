@@ -160,6 +160,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
       syscall
       ret
   ```
+- [ ] **Kernel-callback user side** (ntdll dep of TODO-12 §26): `KernelCallbackTable` at PEB +0x058 + a `KiUserCallbackDispatcher` in `ntdll_except.c` (index by ApiNumber, call the callback, return via `NtCallbackReturn` 0x0300).
 
 ---
 
