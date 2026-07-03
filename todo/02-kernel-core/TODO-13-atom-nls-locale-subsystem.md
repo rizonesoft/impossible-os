@@ -122,7 +122,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** global atom case-insensitivity now agrees with the §2 `RtlEqualUnicodeString` fold; the `oa_name` retrofit is §9, full-BMP fold is §4.
 > - **Canonical doc:** [`src/kernel/nt/nt_misc.c`](../../src/kernel/nt/nt_misc.c) (atom table section).
 > - **Scope boundary:** per-process LOCAL atom tables are user-mode (owner `D12T04 §9`); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay global-only; full-BMP/locale casing is §4.
-> **Verified:** 2026-07-03 | commit `PENDING` | 4/4 items | build OK | tests 13758 kernel + 16 user PASS | lint 0 errors
+> **Verified:** 2026-07-03 | commit `730353cd` | 4/4 items | build OK | tests 13758 kernel + 16 user PASS | lint 0 errors
 > **Quality reviewed:** 2026-07-03 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | design deferred local atoms to user-mode (`D12T04 §9`); fixed: stale ASCII header comment (L), hash-under-lock + double-compute (M) | scope: kernel-code-quality
 
 ---
