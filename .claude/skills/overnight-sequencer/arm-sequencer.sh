@@ -202,6 +202,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Degenerate model policy guard: primary == fallback removes the degradation
+# path entirely (an overload of the primary IS an overload of the fallback --
+# the CLI would re-try the same saturated model and the run dies exactly as
+# with no fallback at all). Warn loudly; the operator's choice still stands.
+if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
+  echo "WARN: --model and --fallback-model are BOTH '$ARM_PRIMARY' -- the fallback" >&2
+  echo "      provides no availability diversity (a primary overload hits the" >&2
+  echo "      fallback identically). Consider --fallback-model sonnet." >&2
+fi
+
 # Arm. Marker first, so the very first tool call of the headless run is already
 # redirected onto overnight-sequencer. Drop-ins are written AFTER the transient
 # unit exists (systemd-run created it) and before it fires (--at is +2min), then

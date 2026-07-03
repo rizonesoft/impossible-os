@@ -198,15 +198,23 @@
   176,601 on the final run); the mid-hardening run that FAILED at min
   212,011 vs the old 200k proved the load case live.
 
-- [ ] **Verify the headless model-fallback behavior on the first real overload/flag.**
-  `--fallback-model opus` is wired into the launch (confirmed live in the process
-  args) but was never exercised (Fable 5 handled the whole first section, no
-  overload, no safeguard flag). Open questions to confirm on the first real
-  event: (a) does `--fallback-model` return to the primary each turn as
-  documented? (b) does the interactive `switchModelsOnFlag` safeguard->Opus
-  auto-switch ALSO fire under `-p`, or does a Fable-flagged section just DEFER?
-  If it defers, decide whether a periodic explicit `--model opus` pass over the
-  deferred set is worth adding.
+- [x] **Verify the headless model-fallback behavior on the first real overload/flag.**
+  RESOLVED 2026-07-03 by official docs (code.claude.com model-config) +
+  policy change, not by waiting for the event:
+  (a) CONFIRMED: the fallback switch "lasts for the current turn only";
+  next turn re-tries the primary. Triggers are overload/unavailable/
+  non-retryable server errors -- NOT auth/billing/rate-limit/flags.
+  (b) ANSWERED: there is NO safeguard auto-switch under `-p` -- "a flagged
+  request ends the turn with a refusal" in non-interactive mode
+  (documented, hardcoded). So a Fable-primary overnight run could
+  refusal-loop on kernel/security sections; the 2026-07-03 Opus-primary
+  default eliminates the whole class (flags route TO Opus). The
+  "periodic --model opus pass over deferrals" idea is moot.
+  (c) primary == fallback is UNDOCUMENTED (chain dedupe implies the
+  fallback vanishes -- no degradation path); arm-sequencer.sh now WARNs
+  on that degenerate shape at arm time.
+  Residual: the first real 529 during an overnight confirms (a)
+  empirically -- gotcha line filed; nothing further to build.
 
 - [ ] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
   In the 2026-07-02 run, TODO-12 (1441 lines) was fully Read 59 times and
