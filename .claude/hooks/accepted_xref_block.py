@@ -10,13 +10,13 @@ except Exception:
     sys.exit(0)
 if not diff:
     sys.exit(0)
-# Tier classification lives in the ONE shared grammar module (scripts/ai-workflow/xref.py)
-# so the git hook, the stamp writer, and todo-graph cannot drift. Fail-open with a loud
-# note if it is unavailable -- this is a convenience gate, not a security boundary, and
+# Tier classification lives in the ONE shared grammar module (scripts/xref_grammar.py)
+# so the git hook and todo-graph cannot drift. Fail-open with a loud note if it is
+# unavailable -- this is a convenience gate, not a security boundary, and
 # review-todo-section step 15 is the real backstop; wedging every commit is worse.
-sys.path.insert(0, os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", "."), "scripts", "ai-workflow"))
+sys.path.insert(0, os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", "."), "scripts"))
 try:
-    import xref as xref_mod
+    import xref_grammar as xref_mod
 except Exception as e:
     sys.stderr.write(f"[accepted-xref] shared xref.py unavailable ({e}); skipping concreteness check\n")
     sys.exit(0)

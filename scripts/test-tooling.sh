@@ -6393,8 +6393,8 @@ fi
 
 XREF_OUT=$(python3 - <<'PYEOF'
 import sys
-sys.path.insert(0, "scripts/ai-workflow")
-import xref
+sys.path.insert(0, "scripts")
+import xref_grammar as xref
 
 S = "§"  # section sign built at runtime -- keeps a literal bare-section-ref out of this test file
 BARE = '> **Accepted:** [M] foo -> XREF: 01-boot-platform/TODO-13'
