@@ -248,16 +248,28 @@
   sequencer skill -- all TODO edits -> rebuild -> commit; the rebuild is
   the LAST action before any todo/-touching commit.
 
-- [ ] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
-  Zero `mcp__lsp-bridge__*` / `mcp__todo-graph__*` calls in the entire 20h run
-  despite the CLAUDE.md MCP-first doctrine; instead ~180-256 standalone Bash
-  greps, 17 manual `grep -n "^## N\."` section-boundary lookups (one
-  `todo-graph code` call each), and 27-53 `sed -n 'X,Yp'` Read-substitutes.
-  First determine whether the MCP servers actually CONNECT under `claude -p`
-  headless (lsp-bridge also drops mid-session interactively); if they connect,
-  the MCP-first + use-Grep-not-Bash(grep) rules need runner-side enforcement
-  (heuristic-step WARN promotion); if they never connect headless, fix the
-  connection or explicitly scope the doctrine to interactive sessions.
+- [x] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
+  DIAGNOSED + RESOLVED 2026-07-03 (systematic-debugging, empirical repro).
+  ROOT CAUSE: a startup RACE, not a connection failure and not approval.
+  Headless `claude -p` discovers the project MCP servers and connects them
+  ASYNCHRONOUSLY (~0.7s stdio handshake each -- neither is slow; both verified
+  handshaking) but does NOT block session init on the connection, and no knob
+  forces it (`MCP_TIMEOUT`/`MCP_TOOL_TIMEOUT` tested: no effect). On a cold
+  start -- the launcher's exact shape -- the init tool-list snapshot catches
+  both servers still `pending` ~2/3 of the time (measured: 2 of 3 cold runs =
+  0 mcp tools; the third = 29 tools + a successful `mcp__todo-graph__stats`
+  call), so the session begins with zero `mcp__` tools and cannot call them.
+  Approval is NOT the gate (`hasTrustDialogAccepted:true`; empty
+  `enabledMcpjsonServers` still loads them). No launcher-side deterministic
+  fix exists (init is async by design) and a non-deterministic pre-warm would
+  be a band-aid. FIX = the "explicitly scope the doctrine" branch: CLAUDE.md
+  MCP Usage rule 3 + overnight-sequencer skill + docs/infrastructure/
+  mcp-usage.md now scope MCP-first to "when the tools are loaded this
+  session" and point the headless fallback at the DETERMINISTIC CLIs the
+  servers wrap (`scripts/todo-graph/query.py`, `resolve_symbol.py`) + the
+  Grep/Glob tools (never Bash grep/sed). The Grep-tool-over-Bash-grep floor
+  is MCP-independent and stays always-on; NO MCP-non-use enforcement was
+  added (can't penalize a race the runner cannot win).
 
 - [ ] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
   §28's review marathon (15 dispatches, 67 min) was fix-then-regress cycling:
@@ -273,6 +285,17 @@
   the other ~42 already do it correctly.
 
 ## P3 -- operator UX
+
+- [ ] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).**
+  `scripts/lsp-mcp/bridge.py --warm-start=c,py` fails the Python LSP probe:
+  `lsp-binary-missing: 'pyright-langserver' availability probe failed (binary
+  missing on PATH OR present but the npm shim's sibling pyright CLI failed
+  --version)`. clangd (C) warm-starts fine. Effect: even when lsp-bridge IS
+  connected, Python symbol queries error out. Orthogonal to the MCP startup
+  race (which is now scoped/resolved). Install/repair `pyright-langserver` on
+  the dev+overnight host or make the bridge degrade cleanly (skip py warm-start
+  when the binary is absent instead of logging restart-failed). Owner:
+  TODO-07 lsp-mcp-bridge.
 
 - [ ] **Fix / document the `latest.log` path friction.**
   `tail -f .claude/overnight/reports/latest.log` fails unless run from the repo

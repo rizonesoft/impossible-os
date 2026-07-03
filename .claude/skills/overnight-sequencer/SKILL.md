@@ -71,6 +71,13 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   any TODO edit AFTER a rebuild re-stales the cache and the pre-commit
   lint's Check 7 blocks (this exact rebuild-then-edit-again ordering bug
   recurred 3x in one run). Order: all TODO edits -> rebuild -> commit.
+- **MCP may be ABSENT this session (headless).** The `mcp__todo-graph__*` /
+  `mcp__lsp-bridge__*` tools lose the cold-start connection race ~2/3 of the
+  time under `claude -p`; if they are not in your tool list, do NOT emulate
+  them with manual `grep -n "^## N\."` / `sed -n`. Use the deterministic CLIs
+  the servers wrap -- `python3 scripts/todo-graph/query.py <verb>`,
+  `scripts/todo-graph/resolve_symbol.py` -- plus the Grep/Glob tools and
+  slice reads (CLAUDE.md "MCP Usage").
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 

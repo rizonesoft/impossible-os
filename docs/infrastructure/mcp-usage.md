@@ -13,6 +13,18 @@ Two MCP servers ship with this repo, both `Read`-only over their respective cach
 
 Both servers are wired in [`.mcp.json`](../../.mcp.json) at project scope; Claude Code loads them at session start. Codex CLI gains the same wiring once the [Codex MCP wiring + cross-config drift validator](../../todo/00-infrastructure/TODO-08-automation-hardening.md#1-codex-mcp-wiring--cross-config-drift-validator) work ships.
 
+### Headless availability caveat (measured 2026-07-03)
+
+This guide is written for INTERACTIVE sessions, where both servers reliably connect and their `mcp__*` tools are in the model's tool list. Under **headless `claude -p`** (the overnight runner) the story is different and load-bearing:
+
+- The servers connect ASYNCHRONOUSLY (~0.7s stdio handshake each -- neither is slow), and `-p` does NOT block session initialization on that connection. There is no knob to force it (`MCP_TIMEOUT` was tested and has no effect on the init snapshot).
+- On a COLD start -- every launcher spawn and every watchdog relaunch -- the init tool-list snapshot catches the servers still `pending` roughly **2 of 3 times** (measured on the WSL2 dev host). When that happens the session begins with **zero `mcp__` tools** and the model cannot call them for the rest of the run. A 20 h production run made zero MCP calls for exactly this reason.
+- Approval is NOT the gate (`hasTrustDialogAccepted: true` at the project level suffices; an empty `enabledMcpjsonServers` still loads them). Account-level claude.ai MCP servers, when present, add a dozen more connections competing for the same startup window.
+
+**Headless rule:** when the `mcp__` tools are absent, do NOT emulate them with manual `grep -n "^## N\."` section scans or `sed -n 'X,Yp'` reads. The MCP servers are thin wrappers over deterministic, always-available CLIs -- use those instead: `python3 scripts/todo-graph/query.py <verb>` (backlinks / ready / deferred-by / code / ...) and [`scripts/todo-graph/resolve_symbol.py`](../../scripts/todo-graph/resolve_symbol.py), plus the built-in **Grep / Glob** tools (never Bash `grep`/`sed`) and slice `Read(offset, limit)`. The Grep-tool-over-Bash-grep floor is MCP-independent and always applies.
+
+Known lsp-bridge health gap (orthogonal to the race): the `pyright-langserver` Python LSP fails its availability probe (`lsp-binary-missing`) on the current host, so `lsp-bridge` Python symbol queries return errors even when the server IS connected. Tracked as a follow-up; clangd (C) warm-starts fine.
+
 ## When to call `todo-graph`
 
 12 read-only queries; all return JSON over stdio MCP transport. Pick by the question being asked:
