@@ -91,7 +91,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Define `tlb_shootdown_work_t { uintptr_t vaddr; size_t len; atomic_int pending; }`
 - [ ] `tlb_shootdown(cpu_mask, vaddr, len)` -- populate work struct, `atomic_store(&pending, popcount(cpu_mask))`, send `IPI_TLB_FLUSH` to each CPU in mask, spin on `atomic_load(&pending) > 0`
 - [ ] IPI handler `ipi_tlb_flush_handler()`: read pending work ptr, loop `invlpg(vaddr)` for range, `atomic_fetch_sub(&pending, 1)`, return
-- [ ] Hook into `vmm_unmap()` and `vmm_mprotect()` -- call `tlb_shootdown(addr_space->cpu_mask, vaddr, len)` after PTE store + `smp_mb()`
+- [ ] Hook `tlb_shootdown()` into `vmm_unmap()`, `vmm_mprotect()`, and the RO path `vmm_set_ro()`/`vmm_protect_range()` (W^X + SSDT write-protect TODO-12 §27) after the PTE store, so RO transitions are coherent across all CPUs, not BSP-local.
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
 - [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xE0)`
 - [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)

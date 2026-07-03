@@ -89,7 +89,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [/]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [x]   |
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [/]   |
-| ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [ ]   |
+| ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [/]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8|  [ ]   |
 | 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9|  [ ]   |
@@ -1160,6 +1160,8 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 - [ ] Commit: `"kernel: nt -- SSDT hardware write-protection (integrity enforcement)"`
 
 **Test checkpoint:** After init, writing to SSDT address triggers #PF → BugCheck. `ssdt_register_late` succeeds with correct privilege. `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`. SSDT dispatch still works normally after write-protect (read-only doesn't block reads).
+
+> **Deferred:** [blocker] The write-protect is a hardware-enforced INTEGRITY feature, but `vmm_set_ro` (the RO-transition primitive) is local-invlpg-only and the SSDT is registered in Phase 3 (`boot_desktop.c`), AFTER AP launch in Phase 2 -- so a BSP-local RO transition leaves APs holding a stale writable (huge-page) TLB entry over the SSDT, an SMP write bypass that defeats the feature's purpose. No cross-CPU TLB shootdown exists (only `vmm_flush_tlb_all`, a local CR3 reload). Shipping BSP-only RO for a "hardware-enforced immutability" feature is substandard; the correct fix is an SMP-safe TLB shootdown wired into the RO path, which is SMP-phase-2 infrastructure. The self-contained parts (array `aligned(4096)`, `#PF`->`KeBugCheckEx(0x109)` hook, `ssdt_register_late` WP-clear window gated on `ASSERT_KERNEL_CALLER`) are all ready to land once the shootdown exists. -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §2 (items: "`tlb_shootdown(cpu_mask, vaddr, len)`" + "Hook `tlb_shootdown()` into ... `vmm_set_ro()`/`vmm_protect_range()` (W^X + SSDT write-protect TODO-12 §27)"). Shadow-SSDT sub-item additionally blocked on `win32k_init` -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §1.
 
 ---
 
