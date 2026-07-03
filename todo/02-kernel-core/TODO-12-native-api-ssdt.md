@@ -92,7 +92,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | ⭐  |  27   | SSDT integrity protection (hardware write-protect)             | §4                |  [/]   |
 | 💎  |  28   | Extended directory enumeration classes                         | §6, §13           |  [x]   |
 | 💎  |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8|  [/]   |
-| 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9|  [ ]   |
+| 💎  |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9|  [/]   |
 | 💎  |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
@@ -1248,9 +1248,14 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
 - [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
 - [ ] **Expose `NtQueryObject` at SSDT 0x0002 with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName`), replacing the internal `char[32]`+counters struct in `ob.c`; unblocks the `ZwQueryObject` alias. XREF: TODO-05 §12.
+- [ ] **Foundation: pinned handle resolution** -- handlers must resolve+ref via `ObpReferenceObjectByHandle` + `ObDereferenceObject`, not raw `ObpLookupHandle` (unref'd, UAF vs close) -> XREF: `TODO-05-win32-file-io-api.md §3`. (§30 design)
+- [ ] **Foundation: SMP-safe make-permanent gate** -- `NtMakePermanentObject`'s `ssdt_previous_mode()` gate is unreliable until previous-mode is per-CPU (cursor misclassifies on SMP) -> XREF: `TODO-07-smp-phase2.md §3`. (§30 design)
+- [ ] **Foundation: DELETE-access gate on make-temporary** -- `NtMakeTemporaryObject` must require DELETE via per-handle `granted_access`, else any handle alters object lifetime. (§30 design)
 - [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
+
+> **Deferred:** 2026-07-03 | reason: the object-lifetime + identity syscalls require the pinned handle-lookup primitive that does not exist yet. `ObpLookupHandle` returns a raw unreferenced `HANDLE_TABLE_ENTRY*` (`handle_table.c:343-367`), so `NtMakeTemporary`/`NtMakePermanent`/`NtSetInformationObject`/`NtCompareObjects` built on it are use-after-free surfaces against a concurrent `NtClose` -- §30 Codex design review returned needs-attention (1 Critical + 2 High). The pinned `ObpReferenceObjectByHandle` primitive is owned by TODO-05 §3; the SMP-safe kernel-mode gate needs per-CPU previous-mode (TODO-07 §3); the make-temporary DELETE-access gate needs per-handle granted-access enforcement. Security/lifetime-sensitive; deferred rather than ship a UAF regression in an unattended pass. Foundations tracked as `[ ]` items above -> XREF: `TODO-05-win32-file-io-api.md §3` (`ObReferenceObjectByHandle` at line 115) + `TODO-07-smp-phase2.md §3`.
 
 ---
 
