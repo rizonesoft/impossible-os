@@ -98,7 +98,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** §3 (atom `w_fold`) + §9 (`oa_name`) retrofit consumers onto this authority; full-BMP fold + public `GetStringTypeW`/`GetStringTypeEx` are owned by §4's NLS table loader.
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlstr.h`](../../include/kernel/nt/nt_rtlstr.h).
 > - **Scope boundary:** locale special-casing (Turkish dotless-i, German ss expansion) and supplementary planes are OUT of the kernel `Rtl*` layer (mirrors NT; user-mode `LCMapStringEx` owns them).
-> **Verified:** 2026-07-03 | commit `PENDING` | 7/7 items | build OK | tests 13755 kernel + 16 user PASS | lint 0 errors
+> **Verified:** 2026-07-03 | commit `19737af6` | 7/7 items | build OK | tests 13755 kernel + 16 user PASS | lint 0 errors
 > **Quality reviewed:** 2026-07-03 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) | fixed: bad-negative ordinal count NUL scan (H), malformed-input overread self-defense (H), non-antisymmetric malformed compare (M); perf: ASCII fast path + raw-compare-first fold + one-pass ordinal compare | scope: kernel-code-quality
 
 ---
