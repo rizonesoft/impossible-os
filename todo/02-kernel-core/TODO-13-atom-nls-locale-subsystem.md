@@ -40,7 +40,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | ⭐ | Order | Deliverable | Depends On | Status |
 | -- | :---: | ----------- | ---------- | :----: |
 | 💎 | 1 | Unicode string primitive layer | -- | [x] |
-| 💎 | 2 | Case folding and invariant compare | §1 | [ ] |
+| 💎 | 2 | Case folding and invariant compare | §1 | [x] |
 | 💎 | 3 | Global and local atom tables | T12 | [ ] |
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [ ] |
 | 💎 | 5 | Code page conversion providers | §4 | [ ] |
@@ -78,14 +78,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 2. Case Folding and Invariant Compare
 
-- [ ] Implement invariant uppercase mapping for ASCII a-z + Latin-1 Supplement (0xE0-0xFE except 0xF7, and 0xFF->0x178); Latin-Extended + full-BMP algorithmic fold land in §4's table loader. (§2 design)
-- [ ] Add `RtlEqualUnicodeString`, `RtlCompareUnicodeString`, `RtlUpcaseUnicodeString` (caller-provided dst buffer; no pool alloc at kernel Rtl layer).
-- [ ] Support case-sensitive and case-insensitive modes.
-- [ ] Registry and Object Manager use this layer for name comparisons.
-- [ ] Add `CompareStringOrdinal` (pure code-unit compare, no locale) as an explicit named deliverable over `RtlCompareUnicodeString` (was only in the §10 test list). (gap-audit)
-- [ ] Scope note: supplementary-plane + locale special-casing (Turkish dotless-i, German ss expansion) is explicitly OUT of the kernel `Rtl*` layer (mirrors NT; user-mode `LCMapStringEx` owns it). (gap-audit)
-- [ ] Public `GetStringTypeW`/`GetStringTypeEx` (C1/C2/C3 over the full BMP table) is owned by §4, not §2 -- shipping it over only ASCII+Latin-1 here would misclassify BMP chars. (§2 design)
-- [ ] Commit: `"kernel: nls -- invariant case folding + RtlUnicodeString compare authority"`
+- [x] Implement invariant uppercase mapping for ASCII a-z + Latin-1 Supplement (0xE0-0xFE except 0xF7, and 0xFF->0x178); Latin-Extended + full-BMP algorithmic fold land in §4's table loader. (§2 design)
+- [x] Add `RtlEqualUnicodeString`, `RtlCompareUnicodeString`, `RtlUpcaseUnicodeString` (caller-provided dst buffer; no pool alloc at kernel Rtl layer).
+- [x] Support case-sensitive and case-insensitive modes.
+- [x] Provide the single compare authority the Object Manager, Registry, and atom table retrofit onto; consumer retrofit is owned by §3 (atom `w_fold`) and §9 (`oa_name`/`oa_probe_ascii_name`), not §2.
+- [x] Add `CompareStringOrdinal` (pure code-unit compare, no locale) as an explicit named deliverable over `RtlCompareUnicodeString` (was only in the §10 test list). (gap-audit)
+- [x] Scope note: supplementary-plane + locale special-casing (Turkish dotless-i, German ss expansion) is explicitly OUT of the kernel `Rtl*` layer (mirrors NT; user-mode `LCMapStringEx` owns it). (gap-audit)
+- [x] Public `GetStringTypeW`/`GetStringTypeEx` (C1/C2/C3 over the full BMP table) is owned by §4, not §2 -- shipping it over only ASCII+Latin-1 here would misclassify BMP chars. (§2 design)
+- [x] Commit: `"kernel: nls -- invariant case folding + RtlUnicodeString compare authority"`
 
 **Test checkpoint:** `RtlEqualUnicodeString("File", "file", CaseInsensitive=TRUE)` returns TRUE; with `FALSE` returns FALSE. `RtlUpcaseUnicodeString` folds ASCII a-z and BMP Latin-1 supplement. Case-sensitive compare distinguishes U+0041 from U+0061.
 
@@ -223,14 +223,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
 |----|---------|----------|----------|------------------|
 | 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global shipped (T12 §23); §3 local + retrofit |
-| 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | ⬜ §2 invariant + BMP fold |
+| 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ⬜ §5 UTF-8/CP437/CP850/1252 |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ⬜ §7 invariant + case-insensitive keys |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ⬜ §4 `nls_table_v1` + compiled fallback |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | ⬜ §7 no-silent-normalize + explicit helper |
-| 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §2/§7 C1-C3 + FoldString |
+| 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §4/§7 C1-C3 + FoldString |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | ⬜ §5 CPINFO + lead-byte |
 | ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ⬜ §6 ordered fallback |
 
