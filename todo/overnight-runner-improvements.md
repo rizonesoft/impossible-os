@@ -30,17 +30,18 @@
   refuses -- the "docs/staged-leak.md" error on every CI run). Verified:
   clean clone 582/582, dev 583/583.
 
-- [ ] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
-  In PREFLIGHT, after the local build/test baseline, dispatch
-  `Agent(subagent_type="gh-query-runner", ...)` to check `build.yml` +
-  `todo-graph.yml` on HEAD. If a required workflow FAILED on a commit that is an
-  ancestor of HEAD (i.e. our pushed work), treat it like the existing
-  "HEAD broken at preflight" path: diagnose + fix + commit + push + re-check
-  BEFORE new section work. Fail-safe: if `gh` is unauthenticated, emit a NOTE
-  and continue (do not block the whole run). `gh` IS authenticated headless
-  (rizonesoft token in `~/.config/gh`, scopes incl. `workflow`). Handle
-  in-progress runs (skip, not fail) and only act on failures attributable to our
-  commits. Wire into `.claude/skills/overnight-sequencer/SKILL.md` PREFLIGHT.
+- [x] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
+  DONE 2026-07-03: wired into `.claude/skills/overnight-sequencer/SKILL.md`
+  PREFLIGHT as a triage table after the local baseline -- attributable
+  failure (failed run's head SHA is an ancestor of HEAD via
+  `git merge-base --is-ancestor`) -> gh-query-runner `--log-failed` digest +
+  systematic-debugging + fix/commit/push + one `gh run watch` dispatch to
+  conclusion before section work (unfixable -> broken-HEAD stop path);
+  non-ancestor/infra failure -> NOTE and continue; in_progress -> NOTE and
+  continue (never wait at preflight); gh unauthenticated/network -> NOTE
+  "CI check unavailable" and continue. Includes the clean-clone hermeticity
+  repro pointer from the 2026-07-03 incident. Live-run validation pending
+  (next overnight).
 
 - [ ] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
   Fable 5 (Mythos-tier, above Opus) is overkill as the runner's PRIMARY: Codex

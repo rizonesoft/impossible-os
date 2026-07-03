@@ -76,6 +76,32 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   and stop (relaunching cannot help a broken HEAD).
 - `bash scripts/test.sh QUIET=1` -- a green baseline. A FAIL here is the same
   broken-HEAD case.
+- **CI check (self-heal red CI instead of pushing past it).** After the local
+  baseline is green, dispatch `Agent(subagent_type="gh-query-runner", ...)` to
+  report the latest `build.yml` + `todo-graph.yml` conclusions and head SHAs
+  (`gh run list --workflow=<wf> --limit 3`). Triage the report:
+  - **failure AND the run's head SHA is an ancestor of local HEAD**
+    (`git merge-base --is-ancestor <sha> HEAD`) -> our pushed work broke CI.
+    Treat it like the broken-HEAD case ABOVE new section work: dispatch
+    gh-query-runner again for the failing step's output (`--log-failed`
+    slices), diagnose the root cause (superpowers:systematic-debugging; the
+    2026-07-03 incident class was non-hermetic fixtures -- reproduce with
+    `git clone --no-local . /tmp/cirepo && TEST_TOOLING_SKIP_LSP_MCP=1 bash
+    scripts/test-tooling.sh` when CI fails but local passes), fix, commit,
+    push, then dispatch gh-query-runner to WATCH the new run to conclusion
+    (`gh run watch --exit-status`; one watch dispatch, no manual poll loops)
+    before starting section work. If it cannot be made green this session,
+    handle as the broken-HEAD case (Run Log note "CI broken at preflight",
+    fixpoint, stop).
+  - **failure but the head SHA is NOT ours** (not an ancestor, or the failing
+    step is provider infra) -> Run Log NOTE and continue; do not chase other
+    branches' failures.
+  - **in_progress / queued** -> NOTE and continue (never wait on a running CI
+    at preflight; the next relaunch re-checks).
+  - **gh unauthenticated or network error** -> NOTE "CI check unavailable"
+    and continue -- the CI check must NEVER block the run on tooling absence.
+    (`gh` IS authenticated headless: rizonesoft token in `~/.config/gh`,
+    scopes include `workflow`.)
 
 ### 2. TRIAGE (`phase TRIAGE`)
 
