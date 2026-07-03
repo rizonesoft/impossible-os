@@ -268,13 +268,16 @@ CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BI
 # overloaded/unavailable -- transient API errors self-heal, a persistent outage
 # effectively rides the fallback, recovery auto-returns. No content-refusal
 # rerouting (a 200 flag is not an availability error); those sections DEFER.
+# Orchestrator model: PINNED opus by default (runner-kit v0.10.0 parity --
+# the run must not depend on whatever the interactive CLI default happens to
+# be, even on a direct launcher invocation that bypassed the arm drop-in).
+# OVERNIGHT_MODEL overrides; the literal value `inherit` restores no-pin.
+# Fallback default matches the arm policy (Sonnet, transient-overload only).
 MODEL_ARGS=()
-[ -n "${OVERNIGHT_MODEL:-}" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL")
-# Built-in fallback default matches the 2026-07-03 arm policy (Opus primary +
-# Sonnet transient-overload fallback) so a direct launcher invocation that
-# bypassed the arm drop-in still lands on the same policy.
+OVERNIGHT_MODEL_EFFECTIVE="${OVERNIGHT_MODEL:-opus}"
+[ "$OVERNIGHT_MODEL_EFFECTIVE" != "inherit" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL_EFFECTIVE")
 MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-sonnet}")
-echo "model: ${OVERNIGHT_MODEL:-<saved default>} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback" >> "$REPORT"
+echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback" >> "$REPORT"
 "$CLAUDE" -p "$CLAUDE_PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
