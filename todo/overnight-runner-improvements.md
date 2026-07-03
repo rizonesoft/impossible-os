@@ -61,6 +61,30 @@
     `--model`/`--fallback-model` pass-through; the default is Opus in both;
     overrides (Fable 5 for a hard section, Sonnet for a cheap pass) work in both.
 
+- [ ] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
+  The agent-lens sweep of run-20260702-141810.log produced a per-invocation
+  compliance matrix: kernel-quality-auditor missing in 10/17 review passes,
+  review-evidence-mapper missing in 6/17, parity-research-analyst 0/17 (but
+  see the CLAUDE.md proportionality note added 2026-07-03: 1-row table syncs
+  are legitimately main-session), xref-dependency-mapper 0 dispatches in 20h
+  despite several 3+-XREF sections resolving owners inline (log:24-36,
+  2672-2679, 5225-5310, 6532-6548), and TODO-12 §25's ENTIRE review ran
+  inline with no Skill(review-todo-section) invocation and no Phase-1 mapper
+  (log:5160 self-report) while consuming 8 receiving-code-review passes.
+  Remaining enforcement work (the warning layer shipped 2026-07-03; these
+  need gates):
+  - Stamp-time completion check: before review-todo-section can write its
+    Verified/Quality-reviewed stamps for a kernel/boot section, require
+    evidence of a review-evidence-mapper AND (kernel/boot) quality-auditor
+    dispatch for THIS pass (extend the section-review hook family; the
+    recorder already writes last-agent-dispatch.json).
+  - Detect the "review pipeline executed inline" shape (stamp written with
+    zero review-todo-section Skill invocation this session) and remind/BLOCK
+    per the same gate.
+  - xref-trigger reminder: implement-todo-section step 2's "3+ cross-TODO
+    XREFs -> xref-dependency-mapper" is text-only; count distinct TODO-NN
+    greps in the first N calls of a section pass and remind.
+
 - [ ] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
   The Codex convergence loops stay UNTOUCHED -- each round produces a distinct
   real fix (verified on TODO-12 §8: sem_signal_n rework -> excess-path ->
@@ -80,6 +104,28 @@
     for repeated internal-symbol lookups instead of inline `bash grep`.
   Do NOT add a Codex-round cap -- the loops find real bugs; correctness over
   cost on kernel code.
+  Run-wide confirmation (run-20260702-141810.log, 20h, measured 2026-07-03 via
+  the new `overnight-log-explorer` agent): checks-runner was dispatched 0 times
+  out of 38 Agent dispatches while 57 build.sh + 55 test.sh + 17 lint.sh +
+  24 todo-graph-validate runs all went through in-context Bash -- the gap is
+  run-wide, not a one-section anomaly.
+
+- [ ] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
+  From §25 (03:30) to the end of the 2026-07-02 20h run, every background
+  Codex/agent wait was covered by a Monitor AND a manual poll loop on top of it:
+  531 `Holding ...` narrator turns + 610 `Check ... status` Bash polls at a
+  ~10s cadence, against only 40 Monitor arms (heaviest single episode:
+  `Check §28 final-v2 adversarial` x43, log lines 5999-6083, ~7.5 min). The
+  early sections (§8-§24) did it right: ONE foreground Bash call absorbing the
+  whole wait (line 1838: `for i in $(seq 1 90); do grep -q "Turn completed"
+  ...; sleep ...done` held a 6-min verdict wait in a single turn; line 497 a
+  13-min one, zero extra turns). Fix at doctrine level (overnight-sequencer
+  SKILL.md wait guidance + the codex-* skills): once a Monitor is armed, HOLD
+  until it fires -- no Bash re-polls, no per-poll narrator turns; where a poll
+  is genuinely needed (Monitor timeout, host-load slowdown), use a 30-60s
+  cadence, never ~10s. Also batch multi-kind review waits into ONE Monitor
+  condition (done correctly at line 4996) instead of serial per-kind poll
+  clusters (§28 pattern).
 
 ## P2 -- efficiency / robustness
 
@@ -100,6 +146,50 @@
   auto-switch ALSO fire under `-p`, or does a Fable-flagged section just DEFER?
   If it defers, decide whether a periodic explicit `--model opus` pass over the
   deferred set is worth adding.
+
+- [ ] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
+  In the 2026-07-02 run, TODO-12 (1441 lines) was fully Read 59 times and
+  `src/kernel/sched/task.c` (3216 lines) 40 times -- several as back-to-back
+  duplicate reads seconds apart (e.g. 03:31:28 twice in the same second). A
+  driver is the Edit tool's "file has not been read yet" re-gate (19 of 62
+  tool_use_errors), which keeps forcing re-reads that then happen whole-file.
+  Doctrine: `Read(offset, limit)` around the section text / IO-table row being
+  edited; after an edit, re-read only the mutated slice.
+
+- [ ] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
+  (a) `todo_item_line_length` -- 77 blocks (46%), and ~36% re-blocked on the
+  immediate retry because the rewritten line was STILL too long: self-check
+  the line length before the first Edit on todo/ files. (b)
+  `agent_dispatch_required` -- 23 blocks, roughly once per section, always
+  reactive: dispatch the mandatory read-only exploration agent as step 1 of a
+  section, before the first kernel/boot Edit. (c) stale todo-graph oracle
+  cache -- the identical rebuild-then-edit-again ordering bug recurred 3x
+  (01:30, 09:29, 10:04): rebuild the cache strictly AFTER all TODO edits for
+  the section land.
+
+- [ ] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
+  Zero `mcp__lsp-bridge__*` / `mcp__todo-graph__*` calls in the entire 20h run
+  despite the CLAUDE.md MCP-first doctrine; instead ~180-256 standalone Bash
+  greps, 17 manual `grep -n "^## N\."` section-boundary lookups (one
+  `todo-graph code` call each), and 27-53 `sed -n 'X,Yp'` Read-substitutes.
+  First determine whether the MCP servers actually CONNECT under `claude -p`
+  headless (lsp-bridge also drops mid-session interactively); if they connect,
+  the MCP-first + use-Grep-not-Bash(grep) rules need runner-side enforcement
+  (heuristic-step WARN promotion); if they never connect headless, fix the
+  connection or explicitly scope the doctrine to interactive sessions.
+
+- [ ] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
+  §28's review marathon (15 dispatches, 67 min) was fix-then-regress cycling:
+  the original real bug (unprobed user buffer, line 5669) was fixed, but each
+  round's fix introduced a NEW regression the next pass caught (iosb-probe
+  reorder 5850, equality-vs-bit-flag 5900, INVALID_HANDLE_VALUE 5910) --
+  ~5 full multi-reviewer rounds instead of 1-2. A pre-dispatch self-diff pass
+  against the round's findings is cheap; a full Codex round is minutes of
+  wall-clock plus a poll cluster.
+
+- [ ] **Add `QUIET=1` to the straggler test.sh calls.** 11-15 of the 55 test.sh
+  invocations ran without `QUIET=1`, pulling full-suite PASS output inline;
+  the other ~42 already do it correctly.
 
 ## P3 -- operator UX
 
@@ -134,3 +224,26 @@
   launcher, captured at arm time (commit 053d1643).
 - [x] `agent_dispatch_recorder` accepting the harness-renamed `Agent` tool name
   (was keying on the old `Task`); fixed by the runner itself (commit 78a69f8c).
+- [x] `overnight-log-explorer` agent created 2026-07-03 (`.claude/agents/`,
+  sonnet analyst, Read/Grep/Glob): run-transcript cost/efficiency digests
+  (tool-call accounting, wait/poll waste, churn). Source of the measured
+  counts in the P1/P2 items above (three parallel lens sweeps over
+  run-20260702-141810.log; load-bearing counts re-verified by the main
+  session per the trust contract).
+- [x] Fix/review LOOP wiring shipped 2026-07-03: implement-todo-section
+  step 15 and review-todo-section step 6 now route loop rebuilds/tests
+  through checks-runner BY DEFAULT (with the measured 21-build/§8 rationale
+  inline) + re-dispatch review-evidence-mapper on moved fix targets +
+  lsp-bridge for repeated symbol lookups. Backed by two warning-only hooks:
+  `build_offload_reminder.py` (overnight SECTIONS, bare build/test Bash with
+  no recent dispatch -> checks-runner reminder; warning-only because
+  checks-runner's own Bash traverses the hook) and `inline_churn_monitor.py`
+  (25+ inline ops since last dispatch -> route reminder, interactive +
+  overnight). Live-run adoption still to be verified on the next overnight.
+- [x] review-todo-section step 7 duplicate gate-walk removed 2026-07-03: a
+  fresh same-diff kernel/boot-quality-auditor dispatch now IS the mechanical
+  gate pass (main session triages findings per receiving-code-review);
+  the main-session domain-skill re-read/re-walk is required only when the
+  auditor was not dispatched or failed. Measured: 8/8 auditor dispatches in
+  run-20260702-141810.log were followed within seconds by a full 235-line
+  kernel-code-quality/SKILL.md re-read (log:402/403 through 5694/5696).

@@ -182,7 +182,8 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   the EXISTING machinery (`[/]` + Deferred/Accepted stamps, todo-graph
   `deferred`, `complete-todo-file` sweep), not a parallel ledger. [Supersedes the
   prior halt-and-pause rule for unattended fixpoint runs, per the 2026-06-13
-  design `docs/specs/2026-06-13-overnight-sequencer-design.md`.]
+  sequencer design (retired from the tree 2026-07-03; git history:
+  `docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`).]
 - **Full quality pipeline every section** -- all Codex dispatches, domain
   code-quality gates, unit tests, stamps. No "straightforward section"
   exceptions (`feedback_no_corner_cutting`, `feedback_never_skip_review`).
@@ -193,7 +194,7 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 ## Enforcement & Scheduling
 
 This doctrine is not just guidance: it is hard-enforced. Architecture is
-**repo schedules, repo decides** (`docs/specs/2026-06-13-overnight-sequencer-design.md`):
+**repo schedules, repo decides** (2026-06-13 sequencer design, in git history):
 
 - **Scheduler (repo-vendored, `scripts/overnight/`):** systemd main + watchdog
   timers, headless `claude` launch, usage-limit snooze, linger-survival,

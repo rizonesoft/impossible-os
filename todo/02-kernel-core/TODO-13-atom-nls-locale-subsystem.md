@@ -105,7 +105,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 3. Global and Local Atom Tables
 
-- [x] Per-process LOCAL atom tables are USER-MODE per Win32 parity (ntdll `RtlAtomTable`, freed at process exit); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay GLOBAL-only. Owner: `D12T04 §9` (item: "RtlCreateAtomTable"). (§3 design)
+- [x] Per-process LOCAL atom tables are USER-MODE per Win32 parity (ntdll `RtlAtomTable`); kernel Nt atom syscalls stay GLOBAL-only. Owner: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` §9 (item: "RtlCreateAtomTable"). (§3 design)
 - [x] Retrofit the global atom table onto the NLS case-folding authority (§2), replacing the ASCII fold (`atom_name_eq` folds via `rtl_upcase_char`; `w_fold` removed).
 - [x] Bound the locked atom lookup: per-slot case-folded FNV hash (`atom_name_hash`, computed outside `s_atom_lock`) gates the full name compare in `atom_find_slot_locked`, so a miss costs one word compare per slot, not up to 255 folds.
 - [x] Commit: `"kernel: nls -- global atom NLS-authority retrofit + bounded lookup"`
@@ -121,7 +121,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **How it integrates:** the query hash is computed OUTSIDE `s_atom_lock` and reused on insert, so the irqsave hold no longer covers the per-char fold; a miss costs one word compare per slot. New `test_nt_misc.c` Latin-1 fold test.
 > - **Downstream effects:** global atom case-insensitivity now agrees with the §2 `RtlEqualUnicodeString` fold; the `oa_name` retrofit is §9, full-BMP fold is §4.
 > - **Canonical doc:** [`src/kernel/nt/nt_misc.c`](../../src/kernel/nt/nt_misc.c) (atom table section).
-> - **Scope boundary:** per-process LOCAL atom tables are user-mode (owner `D12T04 §9`); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay global-only; full-BMP/locale casing is §4.
+> - **Scope boundary:** per-process LOCAL atom tables are user-mode (owner `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` §9); kernel `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom` stay global-only; full-BMP/locale casing is §4.
 > **Verified:** 2026-07-03 | commit `730353cd` | 4/4 items | build OK | tests 13758 kernel + 16 user PASS | lint 0 errors
 > **Quality reviewed:** 2026-07-03 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | design deferred local atoms to user-mode (`D12T04 §9`); fixed: stale ASCII header comment (L), hash-under-lock + double-compute (M) | scope: kernel-code-quality
 
@@ -161,7 +161,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [ ] Define locale records: LCID, BCP-47 name, language, region, decimal separator, date/time formats, currency metadata, first day of week.
 - [ ] Kernel stores invariant and installed-locale metadata; user-mode libraries format UI strings.
 - [ ] Registry policy chooses system locale and user locale; owns the privileged/per-user `NtSetDefaultLocale`/`NtSetDefaultUILanguage` (fail closed in TODO-12 §23 `nt_misc.c` pending this).
-- [ ] Publish locale change notification through TODO-27.
+- [ ] Publish locale change notification: WM_SETTINGCHANGE broadcast (lParam "intl") via 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage"); env-var precedent: TODO-22-environment-variables.md §9.
 - [ ] Itemize the 3-way split: independent system locale (non-Unicode program default), user locale, and UI language -- each separately settable via registry policy. (gap-audit)
 - [ ] Add an ordered MUI UI-language fallback chain (e.g. es-MX -> es -> en-US), not just a single LANGID; mirrors `SetThreadPreferredUILanguages` / gettext `LANGUAGE`. (gap-audit)
 - [ ] Provide locale-formatted timezone DISPLAY NAMES over the tz table + DST rules owned by `08-graphics-ui/TODO-12-clock-time.md` (this section owns only the localized display-string layer). (gap-audit)
@@ -233,7 +233,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
 |----|---------|----------|----------|------------------|
-| 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (D12T04 §9) |
+| 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3) |
 | 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ⬜ §5 UTF-8/CP437/CP850/1252 |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |

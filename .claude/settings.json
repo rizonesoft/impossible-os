@@ -92,6 +92,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/build_offload_reminder.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/runner_bash_guard.py\"",
             "timeout": 10
           },
@@ -208,6 +213,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/interactive_offload_router.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/overnight_guard.py\" prompt",
             "timeout": 5
           }
@@ -258,6 +268,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Glob|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/inline_churn_monitor.py\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Task|Agent",
         "hooks": [

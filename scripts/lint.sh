@@ -1052,7 +1052,7 @@ for base in roots:
                 continue
             rel = os.path.relpath(os.path.join(dirpath, fn), root)
             # design docs (specs/plans) legitimately discuss the anti-pattern.
-            if rel.startswith("docs/superpowers/"):
+            if rel.startswith(("docs/specs/", "docs/plans/")):
                 continue
             try:
                 lines = open(os.path.join(dirpath, fn), encoding="utf-8",

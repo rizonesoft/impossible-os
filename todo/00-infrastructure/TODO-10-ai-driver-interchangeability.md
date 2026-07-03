@@ -214,7 +214,7 @@ Every session starts by asking what is missing, not by replaying the whole workf
 
 ## 5. Deterministic Stamp Writer
 
-> **Folded 2026-07-01, landed 2026-07-02:** the stamp writer shipped in commit 92b80346; its post-ship review and the open XREF-grammar findings were folded into the XREF-grammar unification plan (docs/superpowers/plans/2026-07-01-todo10-xref-grammar-unification-plan.md) and landed as Phase 1 (shared `xref.py` grammar, writer/hook subset property, atomic stamp+ledger critical section, linear clause scan; commits 2c23f910 through the Phase 1 triad close).
+> **Folded 2026-07-01, landed 2026-07-02:** the stamp writer shipped in commit 92b80346; its post-ship review and the open XREF-grammar findings were folded into the XREF-grammar unification plan (retired from the tree 2026-07-03; git history: docs/superpowers/plans/2026-07-01-todo10-xref-grammar-unification-plan.md) and landed as Phase 1 (shared `xref.py` grammar, writer/hook subset property, atomic stamp+ledger critical section, linear clause scan; commits 2c23f910 through the Phase 1 triad close).
 
 Stop relying on model-authored stamp prose for workflow truth.
 

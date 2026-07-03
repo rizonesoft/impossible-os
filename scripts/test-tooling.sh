@@ -3477,6 +3477,85 @@ else
     t_fail "user_prompt_doctrine_clean  expected empty output, got: $UPD_OUT2"
 fi
 
+# (b2) interactive_offload_router routes offloadable prompt shapes to the
+#      right specialist agent and stays silent on ordinary prompts.
+IOR_HOOK="$REPO_ROOT/.claude/hooks/interactive_offload_router.py"
+IOR_OUT="$(printf '%s' '{"prompt":"validate TODO-13 for structural gaps"}' | \
+    python3 "$IOR_HOOK" 2>/dev/null)"
+if echo "$IOR_OUT" | grep -q "offload hint" && \
+   echo "$IOR_OUT" | grep -q "todo-validation-mapper"; then
+    t_pass "offload_router_todo  validate-TODO prompt routes to todo-validation-mapper"
+else
+    t_fail "offload_router_todo  expected todo-validation-mapper hint, got: $IOR_OUT"
+fi
+IOR_OUT2="$(printf '%s' '{"prompt":"run the full test suite"}' | \
+    python3 "$IOR_HOOK" 2>/dev/null)"
+if echo "$IOR_OUT2" | grep -q "checks-runner"; then
+    t_pass "offload_router_checks  run-tests prompt routes to checks-runner"
+else
+    t_fail "offload_router_checks  expected checks-runner hint, got: $IOR_OUT2"
+fi
+IOR_OUT3="$(printf '%s' '{"prompt":"fix this typo in the README"}' | \
+    python3 "$IOR_HOOK" 2>/dev/null)"
+if [ -z "$IOR_OUT3" ]; then
+    t_pass "offload_router_clean  ordinary prompt produces no systemMessage"
+else
+    t_fail "offload_router_clean  expected empty output, got: $IOR_OUT3"
+fi
+
+# (b3) inline_churn_monitor: warns at 25 inline ops, resets on Agent dispatch.
+ICM_HOOK="$REPO_ROOT/.claude/hooks/inline_churn_monitor.py"
+ICM_STATE="$REPO_ROOT/.claude/state/inline-churn.json"
+ICM_BACKUP=""
+[ -f "$ICM_STATE" ] && ICM_BACKUP="$(cat "$ICM_STATE")"
+rm -f "$ICM_STATE"
+ICM_WARN=""
+for _i in $(seq 1 25); do
+    ICM_WARN="$(printf '%s' '{"tool_name":"Bash"}' | python3 "$ICM_HOOK" 2>/dev/null)"
+done
+if echo "$ICM_WARN" | grep -q "inline-churn" && echo "$ICM_WARN" | grep -q "25 inline"; then
+    t_pass "inline_churn_warn  systemMessage emitted at op 25"
+else
+    t_fail "inline_churn_warn  expected churn warning at op 25, got: $ICM_WARN"
+fi
+ICM_RESET_OUT="$(printf '%s' '{"tool_name":"Agent"}' | python3 "$ICM_HOOK" 2>/dev/null)"
+ICM_COUNT="$(python3 -c "import json; print(json.load(open('$ICM_STATE'))['count'])" 2>/dev/null)"
+if [ -z "$ICM_RESET_OUT" ] && [ "$ICM_COUNT" = "0" ]; then
+    t_pass "inline_churn_reset  Agent dispatch resets the counter silently"
+else
+    t_fail "inline_churn_reset  expected silent reset to 0, got count=$ICM_COUNT out=$ICM_RESET_OUT"
+fi
+rm -f "$ICM_STATE"
+[ -n "$ICM_BACKUP" ] && printf '%s' "$ICM_BACKUP" > "$ICM_STATE"
+
+# (b4) build_offload_reminder: warns on bare build.sh in overnight SECTIONS
+#      with no fresh Agent dispatch; silent interactively.
+BOR_HOOK="$REPO_ROOT/.claude/hooks/build_offload_reminder.py"
+BOR_SEQ="$REPO_ROOT/.claude/state/sequencer-run.json"
+BOR_DISP="$REPO_ROOT/.claude/state/last-agent-dispatch.json"
+BOR_SEQ_BAK=""; BOR_DISP_BAK=""
+[ -f "$BOR_SEQ" ] && BOR_SEQ_BAK="$(cat "$BOR_SEQ")"
+[ -f "$BOR_DISP" ] && BOR_DISP_BAK="$(cat "$BOR_DISP")"
+rm -f "$BOR_SEQ" "$BOR_DISP"
+BOR_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
+    python3 "$BOR_HOOK" 2>/dev/null)"
+if [ -z "$BOR_OUT" ]; then
+    t_pass "build_offload_interactive  silent when sequencer guard inactive"
+else
+    t_fail "build_offload_interactive  expected silence, got: $BOR_OUT"
+fi
+printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
+BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
+    python3 "$BOR_HOOK" 2>/dev/null)"
+if echo "$BOR_OUT2" | grep -q "checks-runner offload"; then
+    t_pass "build_offload_sections  warns on bare test.sh in SECTIONS phase"
+else
+    t_fail "build_offload_sections  expected checks-runner reminder, got: $BOR_OUT2"
+fi
+rm -f "$BOR_SEQ" "$BOR_DISP"
+[ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
+[ -n "$BOR_DISP_BAK" ] && printf '%s' "$BOR_DISP_BAK" > "$BOR_DISP"
+
 # (c) stop_audit detects an "I'll run review-todo-section" promise without
 #     a matching tool call. Synthetic transcript fixture below uses the
 #     literal text the regex matches; no markdown section-sign refs here.

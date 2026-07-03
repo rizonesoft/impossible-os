@@ -22,6 +22,13 @@ description: Validate a TODO file for structural completeness, Implementation Or
 
 ## Workflow
 
+0. **Dispatch the evidence mapper first:** `Agent(subagent_type="todo-validation-mapper")`
+   on the target TODO. It returns the structural evidence map (sections vs
+   Implementation Order table, per-section stamp census, XREF-target existence
+   with quoted lines, Inputs-path existence, checklist counts) in a throwaway
+   context. Use it to scope steps 4-6; verify every load-bearing finding at
+   file:line before acting on it (trust contract). The mapper supplements, it
+   does not replace, the main-session read in step 1 -- verdicts stay here.
 1. Read the full TODO file, not just a selected section.
 2. Clean up formatting throughout the file.
    - Run Grep for continuation lines: `rg '^ {2,}[a-zA-Z`'"'"'"]' <file>` -- fix all matches before proceeding.

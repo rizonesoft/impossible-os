@@ -260,19 +260,19 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 ### Specialist agents -- advisory, read-only
 
-Seventeen subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate work to, in two capability-bounded classes (enforced by `scripts/lint.sh` Check 14):
+Nineteen subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate work to, in two capability-bounded classes (enforced by `scripts/lint.sh` Check 14):
 
 - **Analysts (sensors):** read-only (`Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the researchers). They return findings as text and never edit, build, commit, dispatch Codex, or invoke skills.
 - **Runners (constrained executors, `<!-- agent-class: runner -->`):** add `Bash` for named idempotent commands only -- verification scripts (checks-runner), read-only git archaeology (git-historian), read-only GitHub queries (gh-query-runner). They never edit files, never run git/gh mutations, never push, and NEVER touch Codex (a runner-issued dispatch would corrupt review-receipt state). Verification-before-completion quotes come from the main session's own read of the on-disk artifact, not the runner's report.
 
-In both classes the main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md) (original five-agent roster; superseded note inside).
+In both classes the main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: the 2026-06-20 specialist-agents design doc, retired from the tree 2026-07-03 (git history: `docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md`; original five-agent roster, superseded note inside).
 
 | Agent | Model | Dispatched by |
 |---|---|---|
 | `kernel-explorer` | sonnet | `implement-todo-section` step 3 (kernel/boot exploration) + `debug-session` step 4 (call-path walk) |
 | `kernel-quality-auditor` | opus | `review-todo-section` step 7 (SMP/bare-metal gate walk) |
 | `boot-quality-auditor` | sonnet | `review-todo-section` step 7 (UEFI gate walk) |
-| `parity-research-analyst` | sonnet | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 + `create-todo` research |
+| `parity-research-analyst` | sonnet | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 + `create-todo` research (research-scale parity questions only; 1-row OS-table syncs stay main-session) |
 | `review-evidence-mapper` | sonnet | `review-todo-section` Phase 1 + `quality-review-section` step 1 (pre-Codex evidence map; supplements, does not replace, the main session's >=2 gate reads) |
 | `diagnostic-digester` | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail (failure-log digest; hypotheses validated by main session before fixing) |
 | `todo-hygiene-auditor` | sonnet | `complete-todo-file` close-out (fuzzy-residue hygiene punch-list; script-verified before applied) |
@@ -283,11 +283,15 @@ In both classes the main session remains the sole mutator/committer/Codex-dispat
 | `spec-research-analyst` | sonnet | `implement-todo-section` step 3 + `debug-session` (external-spec normative facts with citations) |
 | `web-research-analyst` | sonnet | `implement-todo-section` step 3 + `debug-session` (toolchain/emulator/host/CI research; parity + spec stay with their specialists) |
 | `xref-dependency-mapper` | sonnet | `implement-todo-section` step 2 (3+ cross-TODO XREFs: dependency-status brief) |
+| `overnight-log-explorer` | sonnet | ad-hoc + `overnight-runner-improvements` backlog work (run-transcript cost/efficiency digest: tool-call accounting, wait/poll waste, churn; serial logs stay with serial-log-auditor) |
+| `todo-validation-mapper` | sonnet | `validate-todo-file` / `todo-pipeline` legwork + ad-hoc "is this TODO sound?" (structural evidence map: sections vs IO table, stamps, XREF existence, Inputs paths) |
 | `checks-runner` (runner) | sonnet | `implement-todo-section` step 16, `review-todo-section` build, `complete-todo-file` verification (executes build/test/smoke/lint verbatim, returns verdict + failure digest) |
 | `git-historian` (runner) | sonnet | `debug-session` + `diagnose-serial-log` regression pass (read-only git archaeology: when did X change/break) |
 | `gh-query-runner` (runner) | sonnet | `complete-todo-file` post-push CI check + ad-hoc GitHub state queries (read-only gh: runs/PRs/issues/api GET) |
 
 Model doctrine (updated with the Claude 5 family): **sonnet is the default for every read-only analyst** -- the trust contract (main session verifies findings at file:line before acting) plus the downstream nets (Codex red-team, build/test gates, bare-metal validation) are the backstop. Opus is reserved for the thin/sole nets; today that is only `kernel-quality-auditor` (sole SMP/lock-order/bare-metal specialist net for the repo's most expensive bug class). The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
+
+**Interactive offload -- default-on, not pipeline-only.** The fleet applies to interactive sessions the same as to skill pipelines; the main session orchestrates and judges, agents do the legwork. Default routes: TODO structural validation -> `todo-validation-mapper`; build/test/lint/smoke runs -> `checks-runner`; kernel/boot exploration or call-path tracing -> `kernel-explorer` (generic repo search -> `Explore`); "when did X break/change" -> `git-historian`; CI/PR/issue state -> `gh-query-runner`; serial/boot logs -> `serial-log-auditor`; overnight-run transcripts -> `overnight-log-explorer`; coverage gaps -> `test-coverage-mapper`; doc drift -> `doc-sync-auditor`; parity/spec/toolchain research -> the three researchers. Work inline only when the task is genuinely one or two reads. The `interactive_offload_router.py` UserPromptSubmit hook injects a hint when a prompt matches one of these shapes (warning-only, never blocks); load-bearing findings are still verified at file:line by the main session (trust contract), and verification-before-completion quotes still come from the main session's own read of the artifact.
 
 ### Plugin skills -- usage notes
 

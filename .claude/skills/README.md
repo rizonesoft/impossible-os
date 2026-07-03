@@ -68,7 +68,7 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 
 ## Specialist agents (advisory, read-only)
 
-Subagents in [`../agents/`](../agents/) that the skills above delegate work to. Two classes, both enforced by `scripts/lint.sh` Check 14: ANALYSTS are read-only (no `Edit`/`Write`/`Bash`/`Skill`) and return findings as text; RUNNERS (marked `<!-- agent-class: runner -->`) add constrained `Bash` for named idempotent commands (verification scripts, read-only git/gh) but never edit, never mutate git/GitHub, and never touch Codex. The main session does all edits, commits, and Codex dispatches, and re-quotes on-disk artifacts itself before claiming success. Design: [`../../docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md`](../../docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+Subagents in [`../agents/`](../agents/) that the skills above delegate work to. Two classes, both enforced by `scripts/lint.sh` Check 14: ANALYSTS are read-only (no `Edit`/`Write`/`Bash`/`Skill`) and return findings as text; RUNNERS (marked `<!-- agent-class: runner -->`) add constrained `Bash` for named idempotent commands (verification scripts, read-only git/gh) but never edit, never mutate git/GitHub, and never touch Codex. The main session does all edits, commits, and Codex dispatches, and re-quotes on-disk artifacts itself before claiming success. Design: the 2026-06-20 specialist-agents design doc, retired from the tree 2026-07-03 (git history: `docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md`).
 
 <!-- Agent rows use [name](path), NOT [`name`](path): the skill-catalog check
      (scripts/test-ai-system.sh) counts any `| [`name`]` row as a skill, so the
@@ -90,6 +90,8 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate work to. 
 | [spec-research-analyst](../agents/spec-research-analyst.md) | sonnet | `implement-todo-section` step 3 + `debug-session` spec lookups |
 | [web-research-analyst](../agents/web-research-analyst.md) | sonnet | `implement-todo-section` step 3 + `debug-session` toolchain/emulator/CI research |
 | [xref-dependency-mapper](../agents/xref-dependency-mapper.md) | sonnet | `implement-todo-section` step 2 (3+ XREFs) |
+| [overnight-log-explorer](../agents/overnight-log-explorer.md) | sonnet | ad-hoc + overnight-runner-improvements backlog (run-transcript cost/behavior digest) |
+| [todo-validation-mapper](../agents/todo-validation-mapper.md) | sonnet | `validate-todo-file` / `todo-pipeline` legwork + ad-hoc TODO structure checks |
 | [checks-runner](../agents/checks-runner.md) | sonnet (runner) | `implement-todo-section` step 16 + `review-todo-section` build + `complete-todo-file` verification |
 | [git-historian](../agents/git-historian.md) | sonnet (runner) | `debug-session` + `diagnose-serial-log` regression pass |
 | [gh-query-runner](../agents/gh-query-runner.md) | sonnet (runner) | `complete-todo-file` post-push CI check + GitHub state queries |
