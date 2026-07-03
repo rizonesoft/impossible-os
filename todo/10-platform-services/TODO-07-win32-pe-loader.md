@@ -162,6 +162,7 @@ Set `MSR_STAR` (SYSCALL/SYSRET CS selectors), `MSR_LSTAR` (`syscall_entry` addre
 - [ ] `pe_resolve_imports(uint8_t *base, const uint8_t *file_data)` -- ILT walk → IAT write
 - [ ] `pe_missing_import_stub()` -- `klog_err("PE: missing import called")` + `syscall SYS_EXIT(1)` (in ASM or via C)
 - [ ] Wire `pe_resolve_imports()` into `pe_load()` after relocations
+- [ ] **Harden `pe_resolve_dll_imports` RVA bounds** (`pe.c`): the `name_rva+2`/`hint_rva+3` checks add in 32-bit and wrap near `UINT32_MAX` -> OOB read on a malformed PE; use non-wrapping/64-bit math + malformed-PE tests. (TODO-12 §31 review)
 - [ ] Commit: `"kernel: pe_resolve_imports -- IAT walk, dll_find name/ordinal, stub tables, missing import trap"`
 
 ## 7. PE Execution `[Opus]`

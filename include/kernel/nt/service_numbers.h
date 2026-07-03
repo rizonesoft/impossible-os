@@ -636,7 +636,7 @@
  *   Object ops: 0x000A   File I/O: 0x002A   Process: 0x0050
  *   Thread: 0x006A       Memory: 0x0087     Sync: 0x00A4
  *   Registry: 0x00C0     Security: 0x00DF   Token: 0x00F6
- *   Port/ALPC: 0x010F    Timer: 0x011F      Info: 0x013C
+ *   Port/ALPC: FULL (0x010F-0x011E)  Timer: 0x011F      Info: 0x013C
  *   Debug: 0x0156        Atom: 0x0167       Power: 0x0177
  *   PnP: 0x0186          Key: 0x0196        Transaction: 0x01A5
  *   I/O complete: 0x01AF Notify: 0x01B9     Resource: 0x01CA
