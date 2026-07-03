@@ -286,9 +286,14 @@
   hook can't meaningfully verify, and the item frames it as a cheap
   pre-dispatch pass. Original measurements follow.
 
-- [ ] **Add `QUIET=1` to the straggler test.sh calls.** 11-15 of the 55 test.sh
-  invocations ran without `QUIET=1`, pulling full-suite PASS output inline;
-  the other ~42 already do it correctly.
+- [x] **Add `QUIET=1` to the straggler test.sh calls.**
+  DONE 2026-07-03 at the ROOT rather than per-call: `scripts/test.sh` now
+  defaults `QUIET_MODE=1` when `OVERNIGHT_SEQUENCER_RUN=1` (explicit `QUIET=0`
+  overrides for debugging; `QUIET=1` still works everywhere). Catches ALL
+  stragglers regardless of which skill/call omitted the flag -- no doctrine
+  reliance. QUIET keeps FAIL lines + summary + format lines, so nothing is
+  hidden. Interactive/CI unchanged (env unset -> default verbose). 5-case
+  precedence truth-table verified.
 
 ## P3 -- operator UX
 
