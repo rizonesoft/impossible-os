@@ -43,7 +43,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 - → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §1` -- SMEP+SMAP implementation (CR4 enable + copy_from/to_user wrappers); this TODO owns boot sequencing and AP consistency, `02-kernel-core/TODO-10-kernel-security-hardening.md` owns the actual CR4 hardening policy
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- UC MMIO; PAT layout must match §8 here
 - → XREF: `02-kernel-core/TODO-08-time-filetime-management.md §4,§1` -- monotonic clock + invariant TSC calibration consume stable timer choice from §1
-- → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- §4 / §10 Registry keys when hardware hive writer exists
+- → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- §8 boot hive lifecycle enables `HKLM\HARDWARE\*` registry keys when the hardware hive writer exists
 
 ---
 
@@ -377,7 +377,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > - Scope boundary: `[CPU%u AUDIT]` is the authoritative consolidated line; the §4/§6/§8 per-feature success lines remain for their checkpoints. Registry exposure owned here; registry-engine infra is `02-kernel-core/TODO-14`.
 
 > **Verified:** 2026-05-27 | commit `2a96de4b` | 8/8 items | build OK | smoke PASS (KVM); `[CPU0 AUDIT]` + `[SMP] All 1 CPUs register-consistent` on serial
-> **Accepted:** [M] `RegCreateKeyEx` non-atomic create+handle-alloc can publish a markerless `HKLM\HARDWARE\CPU\%u\Registers` key under handle-pool exhaustion (benign here -- absent `AuditComplete` reads as incomplete; affects all RegCreateKeyEx callers) -> XREF: 02-kernel-core/TODO-14 (item: "`RegCreateKeyEx` atomic create-or-fail" at line 108)
+> **Accepted:** [M] `RegCreateKeyEx` non-atomic create+handle-alloc can publish a markerless `HKLM\HARDWARE\CPU\%u\Registers` key under handle-pool exhaustion (benign here -- absent `AuditComplete` reads as incomplete; affects all RegCreateKeyEx callers) -> XREF: 02-kernel-core/TODO-14 (item: "`RegCreateKeyEx` atomic create-or-fail" at line 111)
 > **Quality reviewed:** 2026-05-27 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

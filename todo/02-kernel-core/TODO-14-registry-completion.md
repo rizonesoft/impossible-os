@@ -9,6 +9,7 @@ title: "TODO-14 -- Registry System Completion"
 # TODO-14 -- Registry System Completion
 
 > **Validated:** 2026-07-04 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-07-04 | gap-audit + codex-gap-audit; 3 findings filed (transacted + hive-op syscalls §4, advapi32 export surface §5, layered-key enum carveout §4/OS row)
 
 > **Goal:** The core registry engine (`reg_key_t`, Win32 registry API surface per MSDN ch. 2.1 through 2.4, hive persistence, crash-safe WAJ journaling) is fully implemented in `src/kernel/registry.c` (2 536 lines). This TODO delivers everything that is still pending: access rights enforcement, advanced key operations, change notifications, Nt/Zw user-mode syscalls, the `advapi32.dll` compatibility layer, registry virtualization, a `regedit` shell tool, advanced hive features (dual-log WAJ, delta flush, compaction), and the exclusive stretch features (atomic transactions, search API, snapshot diff, per-PID quota).
 > When complete, Impossible OS has a native Windows-compatible registry that exceeds both Windows 11 and Linux's configuration store in every dimension.
@@ -38,12 +39,12 @@ title: "TODO-14 -- Registry System Completion"
 - `include/registry.h` -- types, constants, API declarations
 - → XREF: `TODO-12-native-api-ssdt.md §14, §15` -- SSDT: core registry entry points in §14 (0x0090--0x009B), advanced (flush/notify/save/hive) in §15 (0x009C--0x00A6 + extended range); §14 must exist before §5 of this TODO
 - → XREF: `TODO-08-time-filetime-management.md §1` -- `ticks_to_filetime()` conversion needed by §1 for `LastWriteTime` FILETIME output (TODO-08 §1 is [x] done)
-- → XREF: `TODO-15-security-reference-monitor.md §6,§7,§8` -- `SECURITY_DESCRIPTOR` + `SeAccessCheck` are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
-- → XREF: `TODO-05-object-manager.md §2` -- registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §3 of this TODO as a note
+- → XREF: `TODO-15-security-reference-monitor.md §3,§5` -- `SECURITY_DESCRIPTOR` (§3) + `SeAccessCheck` (§5) are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
+- → XREF: `TODO-05-object-manager.md §3` -- registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §3 of this TODO as a note
 - → XREF: `TODO-22-environment-variables.md §2` -- system env vars from `Session Manager\Environment` once `NtEnumerateValueKey` / `NtQueryValueKey` (this file §4) are wired; boot uses `reg_expand_sz` today
 - → XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §9` -- optional DWORD values under `HKLM\SYSTEM\SecureBoot\` (db/dbx counts); must not regress `State` value written from TODO-01 §5
 - → XREF: `01-boot-platform/TODO-05-boot-device-discovery.md §9` -- `HKLM\SYSTEM\Boot\Device\*` boot provenance is written from `boot_info` after `registry_init()` (coordinate value layout with that TODO)
-- → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4,§10` -- optional `HKLM\HARDWARE\VM\*` hypervisor mirror from `boot_info`; per-CPU `HKLM\HARDWARE\CPU\%u\Registers` audit strings per that TODO §10
+- → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3,§9` -- optional `HKLM\HARDWARE\VM\*` hypervisor mirror from `boot_info` (§3 hypervisor detection); per-CPU `HKLM\HARDWARE\CPU\%u\Registers` audit strings per that TODO §9
 - → XREF: `TODO-02-kernel-configuration-policy.md §3, §4` -- `HKLM\SYSTEM\CurrentControlSet\Control\Kernel`, `Select`, and LastKnownGood semantics are consumed by the kernel config plane
 
 ---
@@ -92,10 +93,10 @@ title: "TODO-14 -- Registry System Completion"
 ## 1. Access Rights, API Limits & RegFlushKey
 
 > [!NOTE]
-> **Self-contained execution:** `SeAccessCheck` (TODO-15 §8) and `SECURITY_DESCRIPTOR` (TODO-15 §6) are not yet implemented. §1 should stub `SeAccessCheck` as always-grant with a `#warning` reminder. `SECURITY_DESCRIPTOR` should be a `void*` placeholder. Full enforcement arrives when TODO-15 §6,§7,§8 is complete.
+> **Self-contained execution:** `SeAccessCheck` (TODO-15 §5) and `SECURITY_DESCRIPTOR` (TODO-15 §3) are not yet implemented. §1 should stub `SeAccessCheck` as always-grant with a `#warning` reminder. `SECURITY_DESCRIPTOR` should be a `void*` placeholder. Full enforcement arrives when TODO-15 §3,§5 is complete.
 
 - [ ] Add `uint32_t access_mask` field to `reg_key_t` (stored at open time)
-- [ ] `RegOpenKeyEx`: validate `samDesired` against key's `SECURITY_DESCRIPTOR` DACL via `SeAccessCheck` (→ XREF `TODO-15-security-reference-monitor.md §8`); store granted mask in returned HKEY; return `ERROR_ACCESS_DENIED` on failure
+- [ ] `RegOpenKeyEx`: validate `samDesired` against key's `SECURITY_DESCRIPTOR` DACL via `SeAccessCheck` (→ XREF `TODO-15-security-reference-monitor.md §5`); store granted mask in returned HKEY; return `ERROR_ACCESS_DENIED` on failure
 - [ ] `RegCreateKeyEx`: requires `KEY_CREATE_SUB_KEY` on parent
 - [ ] `RegSetValueEx` / `RegDeleteValue`: requires `KEY_SET_VALUE` on key
 - [ ] `RegQueryValueEx` / `RegEnumKeyEx` / `RegEnumValue`: requires `KEY_QUERY_VALUE` / `KEY_ENUMERATE_SUB_KEYS`
@@ -127,7 +128,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] `RegCopyTree(hKeySrc, lpSubKey, hKeyDest)` -- recursively copy all sub-keys and values from `hKeySrc\lpSubKey` into `hKeyDest`; preserves value types, data, and sub-key structure; uses existing `RegCreateKeyEx` + `RegSetValueEx` internally; requires `KEY_READ` on source and `KEY_WRITE` on destination
 - [ ] `RegRenameKey(hKey, lpSubKeyName, lpNewKeyName)` -- rename a sub-key in place: create new key, copy all values and children (recursive `RegCopyTree`), delete old key tree; atomic under `hKey->lock` spinlock; return `ERROR_ALREADY_EXISTS` if `lpNewKeyName` already exists
 
-- [ ] `RegSaveKey(hKey, lpFile, lpSecurityAttributes)` -- serialise the sub-tree rooted at `hKey` to a standalone `.hive` file at `lpFile` (write a new hive header + all keys/values in the sub-tree; use the existing `hive_write_key` path); requires `SeBackupPrivilege` (→ XREF `TODO-15-security-reference-monitor.md §3`)
+- [ ] `RegSaveKey(hKey, lpFile, lpSecurityAttributes)` -- serialise the sub-tree rooted at `hKey` to a standalone `.hive` file at `lpFile` (write a new hive header + all keys/values in the sub-tree; use the existing `hive_write_key` path); requires `SeBackupPrivilege` (→ XREF `TODO-15-security-reference-monitor.md §2`)
 - [ ] `RegRestoreKey(hKey, lpFile, dwFlags)` -- replace the sub-tree rooted at `hKey` with the contents of a `.hive` file; `REG_FORCE_RESTORE (0x8)` allows replacing in-use keys; requires `SeRestorePrivilege`
 
 - [ ] `RegCreateKeyEx` with `dwOptions = REG_OPTION_VOLATILE (0x1)`: set `REG_FLAG_VOLATILE` on the new `reg_key_t`; volatile keys are excluded from `hive_flush` and `hive_write_key`; they are destroyed on reboot
@@ -219,8 +220,11 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Add to SSDT (→ XREF `TODO-12-native-api-ssdt.md §14, §15`); SSDT indices already reserved in TODO-12:
   ```
   NtCreateKey(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, Disposition)         0x0090
+  NtCreateKeyTransacted(KeyHandle, DesiredAccess, ObjectAttributes, TitleIndex, Class, CreateOptions, TxHandle, Disposition)  0x0091
   NtOpenKey(KeyHandle, DesiredAccess, ObjectAttributes)                                                          0x0092
+  NtOpenKeyTransacted(KeyHandle, DesiredAccess, ObjectAttributes, TransactionHandle)                             0x0093
   NtOpenKeyEx(KeyHandle, DesiredAccess, ObjectAttributes, OpenOptions)                                           0x0094
+  NtOpenKeyTransactedEx(KeyHandle, DesiredAccess, ObjectAttributes, OpenOptions, TransactionHandle)               --
   NtDeleteKey(KeyHandle)                                                                                         0x0095
   NtRenameKey(KeyHandle, NewName)                                                                                0x009F
   NtSetValueKey(KeyHandle, ValueName, TitleIndex, Type, Data, DataSize)                                          0x0096
@@ -240,8 +244,12 @@ title: "TODO-14 -- Registry System Completion"
   NtReplaceKey(NewFile, TargetHandle, OldFile)                                                                   --
   NtLoadKey(TargetKey, SourceFile)                                                                               0x00A3
   NtLoadKeyEx(TargetKey, SourceFile, Flags, TrustClassKey, Event, DesiredAccess, RootHandle, IoStatus)           0x00A4
+  NtLoadKey2(TargetKey, SourceFile, Flags)                                                                        --
+  NtLoadKey3(TargetKey, SourceFile, Flags, ExtendedParameters[], ExtendedParameterCount, DesiredAccess, RootHandle, ...)  --
   NtUnloadKey(TargetKey)                                                                                         0x00A5
   NtUnloadKeyEx(TargetKey, Event)                                                                                0x00A6
+  NtUnloadKey2(TargetKey, Flags)                                                                                  --
+  NtSaveMergedKeys(HighPrecedenceKey, LowPrecedenceKey, FileHandle)                                               --
   NtCompactKeys(Count, KeyArray[])                                                                               0x00A8
   NtCompressKey(KeyHandle)                                                                                       0x00A9
   NtQueryOpenSubKeys(TargetKey, HandleCount)                                                                     0x00A7
@@ -252,6 +260,9 @@ title: "TODO-14 -- Registry System Completion"
   ZwXxx aliases for each -- kernel-mode bypass wrappers
   ```
 - [ ] Syscalls marked `--` need SSDT index allocation in TODO-12 §14/§15; add to the registry block (0x0090--0x00AA range or extended range)
+- [ ] Transacted key ops: `NtCreateKeyTransacted` (0x0091), `NtOpenKeyTransacted` (0x0093), `NtOpenKeyTransactedEx` bind the op to a KTM `TransactionHandle` (XREF §9, §11); NULL handle = non-transacted
+- [ ] `NtLoadKey2(TargetKey, SourceFile, Flags)`: flag-scoped load; `NtLoadKey3`: extended-parameter array (`CmExtendedParameterFileAccessToken` for token-scoped load), not a bare token arg
+- [ ] `NtUnloadKey2(TargetKey, Flags)`: `REG_FORCE_UNLOAD (0x1)` unloads a hive with open handles; `NtSaveMergedKeys(High, Low, FileHandle)`: High-over-Low precedence merge to one `.hive` file
 - [ ] `ObjectAttributes` for key paths: `RootDirectory` handle + `ObjectName` (`UNICODE_STRING` for future UTF-16; for now accept UTF-8 `ANSI_STRING` wrapper); resolve absolute paths starting with `\Registry\Machine` → `HKLM`, `\Registry\User\{SID}` → `HKCU`
 - [ ] Wrap every user-mode pointer argument in `ProbeForRead(ptr, size, align)` / `ProbeForWrite(ptr, size, align)` (→ XREF `TODO-23-exception-dispatch-seh.md §13`) before any dereference; return `STATUS_ACCESS_VIOLATION` if probe faults
 - [ ] `UNICODE_STRING` / `ANSI_STRING` struct fields: validate both the struct pointer AND the embedded `Buffer` pointer separately
@@ -270,6 +281,7 @@ title: "TODO-14 -- Registry System Completion"
   - `KeyVirtualizationInformation` (6): virtualization open/enabled/target status
   - `KeyHandleTagsInformation` (7): handle tags for trusted keys
   - `KeyTrustInformation` (8): trust level information
+  - `KeyLayerInformation` (9): layered-key metadata -- DEFERRED with layered keys / hive stacking (see Deferred features note); Win11 defines 10 classes total, this section ships 0-8
 - [ ] `KEY_VALUE_INFORMATION_CLASS` -- `NtQueryValueKey` / `NtEnumerateValueKey` info class enum:
   - `KeyValueBasicInformation` (0): `TitleIndex`, `Type`, `NameLength`, `Name[]`
   - `KeyValueFullInformation` (1): adds `DataOffset`, `DataLength`, `Data[]`
@@ -284,6 +296,7 @@ title: "TODO-14 -- Registry System Completion"
   - `KeySetVirtualizationInformation` (3): enable/disable virtualization per key
   - `KeySetDebugInformation` (4): debug information
   - `KeySetHandleTagsInformation` (5): set handle tags
+  - `KeySetLayerInformation` (6): layered-key set metadata -- DEFERRED with layered keys / hive stacking (see Deferred features note)
 - [ ] `NtNotifyChangeKey`: **replace the existing `STATUS_NOT_IMPLEMENTED` stub** in `src/kernel/nt/nt_registry.c::NtNotifyChangeKey_handler` (currently tagged `SCOPE-GAP-ALLOWED: blocked on TODO-14 §4`) with real wiring: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §4; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC). Remove the `SCOPE-GAP-ALLOWED` comment when the stub is replaced.
 - [ ] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
 - [ ] `NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], ...)`: register notifications on `MasterKeyHandle` plus up to `Count` additional subordinate keys in a single call; fires when *any* of the watched keys changes; shares implementation with §3 but registers multiple watchers atomically
@@ -296,7 +309,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] `NtQueryOpenSubKeys(TargetKey, HandleCount)` / `NtQueryOpenSubKeysEx(...)`: return how many handles are open to subkeys of `TargetKey`; used before `NtUnloadKey` to check if a hive can be safely unloaded
 - [ ] `NtCompactKeys(Count, KeyArray[])`: move the specified keys into the same hive bin to improve spatial locality; `NtCompressKey(KeyHandle)`: compress a key and all subkeys (reduces hive file size)
 - [ ] `NtLockRegistryKey(KeyHandle)`: mark a key as immutable for the remainder of the boot session; used for security-critical keys like `HKLM\SAM`
-- [ ] `HKCU` redirect: `NtOpenKey` with a path under `\Registry\User` resolves to the *current process's* per-session user subtree rather than a global `HKCU`; each process inherits its user SID from its primary token (→ XREF `TODO-15-security-reference-monitor.md §2`); `\Registry\User\S-1-5-21-...-1001` is the actual physical path; `NtOpenKey` with `RootDirectory=HKCU` resolves via the task's token
+- [ ] `HKCU` redirect: `NtOpenKey` with a path under `\Registry\User` resolves to the *current process's* per-session user subtree rather than a global `HKCU`; each process inherits its user SID from its primary token (→ XREF `TODO-15-security-reference-monitor.md §4`); `\Registry\User\S-1-5-21-...-1001` is the actual physical path; `NtOpenKey` with `RootDirectory=HKCU` resolves via the task's token
 - [ ] **Per-process sandbox** ⭐ -- `NtSetInformationProcess(ProcessRegistrySandbox, root_path)`: future API that restricts all registry access for a process to a sub-tree; used by browser renderer and low-IL processes; deferred until process isolation (→ XREF `TODO-21-process-model-extensions.md`) matures
 - [ ] **Rate limiting** ⭐ -- per-task `reg_ops_this_sec` counter reset every 1 000 ms by scheduler tick; if > 10 000 registry ops per second: `schedule_yield()` and re-check; soft throttle prevents runaway registry hammering from buggy apps; counter tracked in `struct task`
 - [ ] **Audit log** ⭐ -- if `HKLM\SYSTEM\Registry\AuditEnabled = 1`: write a compact audit entry to `X:\Logs\registry-audit.log` on each `NtSetValueKey` / `NtDeleteKey`: `{timestamp, pid, key_path, value_name, old_type, new_type, result_ntstatus}`; uses the existing `klog` ring buffer at LOG_AUDIT level; auto-rotated at 4 MiB
@@ -312,6 +325,10 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] `A` variants: call the internal UTF-8 kernel API directly (already exists)
 - [ ] `W` variants: `wchar_to_utf8(src_w, buf, len)` → call internal UTF-8 API → convert any UTF-8 string results back to UTF-16LE via `utf8_to_wchar(src, buf, len)` before returning to caller
 - [ ] `wchar_to_utf8` / `utf8_to_wchar`: implement in `src/libs/libc/wchar.c` (BMP-only initially; no surrogate pair support needed for registry paths); use existing `libc` string helpers
+
+- [ ] Full advapi32 `RegXxx` export surface (Outcome parity): `RegLoadKey` / `RegUnLoadKey` / `RegReplaceKey` / `RegSaveKeyEx`, plus `RegLoadAppKey` (private per-process hive, auto-unloads on last `RegCloseKey`)
+- [ ] advapi32 utility wrappers: `RegSetKeyValue` / `RegDeleteKeyValue`, `RegQueryMultipleValues` (over §4 `NtQueryMultipleValueKey`), `RegOpenCurrentUser` / `RegOpenUserClassesRoot` / `RegOverridePredefKey`
+- [ ] advapi32 transacted wrappers `Reg{Create,Open,Delete}KeyTransacted` (pair with §4 transacted syscalls); implement or explicitly defer each documented export
 
 - [ ] `HKEY_CLASSES_ROOT` read path: `RegOpenKeyEx(HKCR, sub_key, ...)` → first look in `HKCU\Software\Classes\<sub_key>`; if not found, look in `HKLM\SOFTWARE\Classes\<sub_key>`; return whichever is found first
 - [ ] `HKCR` write path: `RegCreateKeyEx(HKCR, sub_key, ...)` → always write to `HKCU\Software\Classes\<sub_key>` (per-user override)
@@ -332,7 +349,7 @@ title: "TODO-14 -- Registry System Completion"
 ## 6. Registry Virtualization & .reg Import/Export
 
 - [ ] Low-IL and non-elevated processes that write to `HKLM\SOFTWARE\<path>` are silently redirected to `HKCU\Software\VirtualStore\MACHINE\SOFTWARE\<path>`
-- [ ] Condition for redirect: `current_task()->Token->IntegrityLevelSid == SeILMedium` AND write is to `HKLM\SOFTWARE` subtree AND the key does not have `REG_FLAG_READONLY` AND the calling process is NOT running elevated (→ XREF `TODO-15-security-reference-monitor.md §5`)
+- [ ] Condition for redirect: `current_task()->Token->IntegrityLevelSid == SeILMedium` AND write is to `HKLM\SOFTWARE` subtree AND the key does not have `REG_FLAG_READONLY` AND the calling process is NOT running elevated (→ XREF `TODO-15-security-reference-monitor.md §6`)
 - [ ] `NtCreateKey` / `NtSetValueKey`: check for virtualization condition before the write; if active, silently rewrite the path to VirtualStore and notify caller of success -- the caller is unaware of the redirect
 - [ ] Read path: `NtOpenKey` / `NtQueryValueKey` for virtualized paths: try VirtualStore first; fall back to real HKLM path
 - [ ] **Virtualization control flags** -- per-key opt-out via `NtSetInformationKey(KeyControlFlagsInformation)`:
@@ -594,7 +611,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 | 💎   | Change notifications                 | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | ⬜ §3                          |
 | 💎   | `REG_NOTIFY_THREAD_AGNOSTIC`         | ✅ Win8+                     | ❌ N/A                             | ⬜ §3                          |
 | 💎   | Full NT registry syscall surface     | ✅ 30+ syscalls              | ❌ No registry concept             | ⬜ §4                          |
-| 💎   | `KEY_INFORMATION_CLASS` completeness | ✅ 9 info classes            | ❌ N/A                             | ⬜ §4                          |
+| 💎   | `KEY_INFORMATION_CLASS` completeness | ✅ 10 info classes           | ❌ N/A                             | ⬜ §4                          |
 | 💎   | advapi32.dll W variants + HKCR       | ✅ Full                      | ⚠️ Wine reimplements              | ⬜ §5                          |
 | 💎   | Registry virtualization              | ✅ Vista+ VirtualStore       | ❌ N/A                             | ⬜ §6                          |
 | 💎   | Virtualization control flags         | ✅ `DONT_VIRTUALIZE` etc.    | ❌ N/A                             | ⬜ §6                          |

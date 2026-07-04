@@ -700,7 +700,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Verified:** 2026-07-02 | commit `1d898565` | 10/13 items | build OK | abi 426/426 PASS
 > **Deferred:** [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args -> XREF: 02-kernel-core/TODO-12 §14 (item: "Registry syscalls with 5+ args" at line 687)
 > **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 702)
-> **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 256)
+> **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 269)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
 
@@ -732,10 +732,10 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: NtSaveKey/RestoreKey/LoadKey functional paths + NtUnloadKey provenance rejection are untested (registration-only).
 > **Verified:** 2026-07-02 | commit `422113c1` | 6/8 items | build OK | abi 426/426 PASS
 > **Deferred:** [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM) -> XREF: 02-kernel-core/TODO-12 §15 (item: "NtUnloadKey provenance guard" at line 721)
-> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (no change-notification infra) -> XREF: 02-kernel-core/TODO-14 §3 (item: "Static pool of 64 watchers" at line 170)
-> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 409)
-> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 410)
-> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 411)
+> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (no change-notification infra) -> XREF: 02-kernel-core/TODO-14 §3 (item: "Static pool of 64 watchers" at line 173)
+> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 428)
+> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 429)
+> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 430)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit+1M deferred, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 
@@ -799,7 +799,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Verified:** 2026-07-02 | commit `517cb921` | 6/8 items | build OK | ob 426/426 PASS
 > **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1109)
 > **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 256)
+> **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 269)
 > **Deferred:** [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI -> XREF: 02-kernel-core/TODO-12 §17 (item: "`NtQueryDirectoryObject` returns the legacy 96-byte ASCII" at line 786)
 > **Deferred:** [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute) -> XREF: 02-kernel-core/TODO-12 §17 (item: "`oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory" at line 787)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 2Crit+1H accepted-XREF, 2H deferred | scope: kernel-code-quality
