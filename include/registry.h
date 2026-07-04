@@ -303,12 +303,12 @@ long RegCopyTree(HKEY hKeySrc, const char *lpSubKey, HKEY hKeyDest);
 long RegRenameKey(HKEY hKey, const char *lpSubKeyName, const char *lpNewKeyName);
 
 /* Serialize the sub-tree rooted at hKey to a standalone .hive file at lpFile.
- * Requires SeBackupPrivilege (fail-closed until TODO-15 s2 supplies the check). */
+ * Requires SeBackupPrivilege (fail-closed until TODO-15 SePrivilegeCheck lands). */
 long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes);
 
 /* Restore a .hive file into the sub-tree rooted at hKey.  REG_FORCE_RESTORE
  * (0x8) wipes the existing sub-tree first.  Requires SeRestorePrivilege
- * (fail-closed until TODO-15 s2). */
+ * (fail-closed until TODO-15 SePrivilegeCheck lands). */
 long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags);
 
 /* KCB (Key Control Block) LRU cache diagnostics: cumulative hit / miss counts

@@ -159,11 +159,15 @@ title: "TODO-14 -- Registry System Completion"
 > **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 154 suites, 0 failures
 
 > **Notes:**
-> - Shipped `RegCopyTree`/`RegRenameKey`/`RegSaveKey`/`RegRestoreKey` + `REG_OPTION_VOLATILE` + a 32-entry KCB LRU cache in `registry.c`; 5 new `test_registry.c` suites (CopyTree, RenameKey, volatile, save/restore, KCB hit-rate).
+> - Shipped `RegCopyTree`/`RegRenameKey`/`RegSaveKey`/`RegRestoreKey` + `REG_OPTION_VOLATILE` + a 32-entry KCB LRU cache in `registry.c`; 7 new `test_registry.c` suites.
 > - KCB caches `(parent, name) -> child`; monotonic-pool + tombstone make pointers stable, and a 3-part liveness check makes a stale entry miss (never mis-resolve); >90% hit rate asserted over a 1000x open/close loop.
-> - `RegSaveKey`/`RegRestoreKey` fail closed with `ERROR_PRIVILEGE_NOT_HELD`; the `hive_save`/`hive_load` bodies Deferred to `TODO-15 §2` SePrivilegeCheck (Codex design adoption in the commit message).
+> - `RegSaveKey`/`RegRestoreKey` fail closed with `ERROR_PRIVILEGE_NOT_HELD`; the `hive_save`/`hive_load` bodies Deferred to `TODO-15 §8` SePrivilegeCheck (Codex design adoption in the commit message).
 > - Canonical doc: registry API surface in [`include/registry.h`](../../include/registry.h); §2 design decisions in `.claude/state/live-gotchas.md`.
-> - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck`/privilege eval is TODO-15 §2/§5.
+> - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck` is TODO-15 §5, privilege eval is §8.
+> **Verified:** 2026-07-04 | commit `a5b7b219` | 8/11 items | build OK | tests 1108 ABI PASS
+> **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 291)
+> **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 622)
+> **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H+2M+2L fixed, 1H+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -615,6 +619,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] Protect `hive_save()` / `hive_load()` / `registry_flush()` / `registry_save_all()` / `registry_load_hives()` with the lock (these walk the entire tree)
 - [ ] SMP stress test: concurrent `NtCreateKey` + `NtDeleteKey` + `NtEnumerateKey` from multiple tasks; verify no pool corruption, no stale pointer dereference, no duplicate handle allocation
 - [ ] Upgrade to rwlock if profiling shows read contention (deferred; spinlock is correct first step for a 512-key pool)
+- [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, added §2) written on every `reg_walk_path` hop -- this write-heavy read path must hold the §14 write lock or use atomics -> XREF: 02-kernel-core/TODO-14 §2
 - [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
 
 **Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).

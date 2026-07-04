@@ -927,7 +927,7 @@ static NTSTATUS NtSaveKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_INVALID_HANDLE;
 
     /* Subtree export is privilege-gated (SeBackupPrivilege).  No evaluator
-     * exists yet (TODO-15 s2) -- fail closed so any handle holder cannot export
+     * exists yet (TODO-15 SePrivilegeCheck) -- fail closed so any handle holder cannot export
      * an arbitrary subtree.  Trusted kernel code uses hive_save() directly. */
     if (reg_check_access(hkey, KEY_READ) != ERROR_SUCCESS)
         return STATUS_ACCESS_DENIED;
@@ -960,7 +960,7 @@ static NTSTATUS NtRestoreKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_INVALID_HANDLE;
 
     /* Subtree import is privilege-gated (SeRestorePrivilege).  No evaluator
-     * exists yet (TODO-15 s2) -- fail closed so any handle holder cannot
+     * exists yet (TODO-15 SePrivilegeCheck) -- fail closed so any handle holder cannot
      * overwrite a subtree from an arbitrary file.  Trusted kernel code uses
      * hive_load() directly. */
     if (reg_check_access(hkey, KEY_WRITE) != ERROR_SUCCESS)

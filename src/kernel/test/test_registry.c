@@ -916,6 +916,25 @@ static void test_registry_rename_separator(void)
     rc = RegRenameKey(HKEY_LOCAL_MACHINE, "Software\\SepRen", "Bad\\Name");
     TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "rename to name with '\\' rejected");
 
+    /* A hive root (direct child of HKLM such as SYSTEM/SOFTWARE) cannot be
+     * renamed -- the hive table maps it by fixed name. */
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "SYSTEM", "SYSTEM_RENAMED");
+    TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "rename of hive root SYSTEM rejected");
+
+    /* The HKCR backing key HKLM\SOFTWARE\Classes cannot be renamed either --
+     * reg_resolve_hkcr finds it by name, so a rename would break HKCR. */
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes", "Classes2");
+    TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "rename of HKLM\\SOFTWARE\\Classes rejected");
+    {
+        /* HKCR still resolves after the rejected rename. */
+        HKEY hcr;
+        rc = RegCreateKeyEx(HKEY_CLASSES_ROOT, "SepRenHkcrProbe", 0, NULL, 0,
+                            KEY_ALL_ACCESS, NULL, &hcr, NULL);
+        TEST_ASSERT(rc == ERROR_SUCCESS, "HKCR still resolves after Classes rename attempt");
+        if (rc == ERROR_SUCCESS) RegCloseKey(hcr);
+        RegDeleteTree(HKEY_CLASSES_ROOT, "SepRenHkcrProbe");
+    }
+
     RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\SepRen");
 }
 

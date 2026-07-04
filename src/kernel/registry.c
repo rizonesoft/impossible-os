@@ -1197,17 +1197,25 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
 
 long RegCloseKey(HKEY hKey)
 {
+    uint32_t i;
+
     /* Predefined handles are never closed */
     if (!hKey || reg_is_predefined(hKey))
         return ERROR_SUCCESS;
 
-    /* Promote the closing key in the KCB cache: close-then-reopen of the same
-     * key is the hot pattern the cache targets.  Only cache live, non-root
-     * keys (a tombstoned or root key is rejected by reg_kcb_insert). */
-    {
-        reg_key_t *k = reg_resolve_key(hKey);
-        if (k && k->parent && k->name[0] != '\0')
-            reg_kcb_insert(k->parent, k);
+    /* Promote the closing key into the KCB cache (close-then-reopen is the hot
+     * pattern) -- but ONLY after address-validating hKey against the handle
+     * pool.  reg_resolve_key would dereference hKey->key, faulting the kernel on
+     * a bogus caller HKEY; the by-address scan matches reg_free_handle's own
+     * check and never touches an unvalidated pointer.  reg_kcb_insert rejects a
+     * tombstoned or root key. */
+    for (i = 0; i < REG_HANDLE_POOL_SIZE; i++) {
+        if (&reg_handle_pool[i] == hKey) {
+            reg_key_t *k = reg_handle_used[i] ? reg_handle_pool[i].key : (reg_key_t *)0;
+            if (k && k->parent && k->name[0] != '\0')
+                reg_kcb_insert(k->parent, k);
+            break;
+        }
     }
 
     reg_free_handle(hKey);
@@ -1291,6 +1299,10 @@ long RegDeleteKey(HKEY hKey, const char *lpSubKey)
     reg_free_values(target);
     reg_remove_child(target->parent, target);
 
+    /* Drop any KCB entry pointing at this slot before tombstoning it (same
+     * invariant the other delete/unload paths maintain). */
+    reg_kcb_purge_key(target);
+
     /* Mark key slot as freed */
     target->name[0] = '\0';
     target->flags = 0;
@@ -1329,6 +1341,22 @@ long RegDeleteKeyDirect(reg_key_t *key)
 
 /* ---- RegRenameKeyDirect ---- */
 
+/* True for structural keys that other subsystems resolve by fixed name/pointer
+ * and therefore must never be renamed: the hive roots (SYSTEM/SOFTWARE/HARDWARE
+ * under HKLM, Default under HKU -- the hive table maps them by fixed name), and
+ * the HKLM\SOFTWARE\Classes backing key (reg_resolve_hkcr finds it by name, so
+ * renaming it would make every HKCR operation return an invalid handle). */
+static int reg_is_structural_key(reg_key_t *key)
+{
+    if (!key || !key->parent)
+        return 0;
+    if (key->parent == reg_root_hklm || key->parent == reg_root_hku)
+        return 1;
+    if (key == reg_resolve_hkcr())
+        return 1;
+    return 0;
+}
+
 long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
 {
     reg_key_t *parent;
@@ -1338,7 +1366,14 @@ long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
 
     parent = key->parent;
     if (!parent)
-        return ERROR_ACCESS_DENIED;  /* cannot rename root */
+        return ERROR_ACCESS_DENIED;  /* cannot rename a predefined root */
+
+    /* Cannot rename a structural key (hive root or the HKCR backing key): the
+     * hive table + reg_resolve_hkcr resolve them by fixed name, so an in-place
+     * rename would orphan the hive from save/load + dirty tracking and/or break
+     * HKCR resolution. */
+    if (reg_is_structural_key(key))
+        return ERROR_ACCESS_DENIED;
 
     /* The (parent, old-name) KCB binding is about to become wrong; drop it. */
     reg_kcb_purge_key(key);
@@ -1673,6 +1708,11 @@ static long reg_copy_subtree(reg_key_t *src, reg_key_t *dst,
             if (!dc)
                 return ERROR_OUTOFMEMORY;
             dc->last_write_time = reg_get_uptime_ns();
+            /* Mark each created child's hive dirty: a structure-only (value-less)
+             * copy never calls reg_set_value_direct, and when dst is a bare root
+             * (HKLM/HKU) the children can span several hives that a single
+             * registry_mark_dirty(dst) would miss. */
+            registry_mark_dirty(dc);
             (*nkeys)++;
             rc = reg_copy_subtree(c, dc, nkeys, nvals);
             if (rc != ERROR_SUCCESS)
@@ -1815,7 +1855,7 @@ long RegRenameKey(HKEY hKey, const char *lpSubKeyName, const char *lpNewKeyName)
 /* ---- RegSaveKey / RegRestoreKey (privilege-gated, fail-closed) ----
  *
  * The hive_save/hive_load subtree infrastructure exists, but SeBackupPrivilege /
- * SeRestorePrivilege have no evaluator yet (TODO-15 s2).  Failing closed keeps
+ * SeRestorePrivilege have no evaluator yet (TODO-15 SePrivilegeCheck).  Failing closed keeps
  * subtree export/import from being available to any handle holder; the trusted
  * kernel-mode path uses hive_save/hive_load directly. */
 long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes)
