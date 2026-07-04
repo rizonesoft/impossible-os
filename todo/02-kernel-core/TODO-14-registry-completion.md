@@ -183,8 +183,8 @@ title: "TODO-14 -- Registry System Completion"
 - [x] Dispatch hooks: `reg_set_value_direct`(LAST_SET; covers RegSetValueEx+RegCopyTree), `RegDeleteValue`(LAST_SET), `RegCreateKeyEx` new-key(NAME), `RegDeleteKey` pre-tombstone(NAME), `RegCopyTree`(NAME)
 - [x] `reg_notify_unregister_all` cleanup at EVERY tombstone -- `RegDeleteKey`, `RegDeleteKeyDirect`, `reg_delete_subtree` (RegDeleteTree/RegUnloadHive children), `RegUnloadHive` root -- so a freed slot can never stay linked
 
-- [/] Win32 `RegNotifyChangeKeyValue`(hEvent, fAsync) + `NtNotifyChangeKey`: KEY_NOTIFY check, referenced hEvent, sync completion-status -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 273)
-- [/] `RegCloseKey` handle-scoped unregister + wake blocked callers `ERROR_KEY_DELETED` (§3 cleans up on key DELETE) -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 273)
+- [/] Win32 `RegNotifyChangeKeyValue`(hEvent, fAsync) + `NtNotifyChangeKey`: KEY_NOTIFY check, referenced hEvent, sync completion-status -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 298)
+- [/] `RegCloseKey` handle-scoped unregister + wake blocked callers `ERROR_KEY_DELETED` (§3 cleans up on key DELETE) -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 298)
 - [/] Change-detail payloads ⭐ (old/new value snapshot before mutation) -> Deferred: in-section (no old-value snapshot infra; core fires value_name only)
 - [/] Telemetry ⭐ `HKLM\SYSTEM\Registry\WatcherStats` HitCount/LastFiredMs -> Deferred: in-section (needs the Registry substrate key; counts already tracked in `reg_watcher_t`)
 - [/] Priority-based dispatch ⭐ (`priority` field, system>high>normal fire order) -> Deferred: in-section (needs theme/display/service consumers)
@@ -203,6 +203,10 @@ title: "TODO-14 -- Registry System Completion"
 > - Lock-free (registry-wide SMP sync owned by §14, same regime as the KCB cache); Codex design adoptions in the commit message.
 > - Canonical doc: notification API in [`include/registry.h`](../../include/registry.h).
 > - Scope boundary: §3 owns the callback engine; the Win32 `RegNotifyChangeKeyValue`/`NtNotifyChangeKey` event/semaphore path is §4; ⭐ advanced features + THREAD_AGNOSTIC are deferred `[/]` in-section; SD-change is TODO-15 §5.
+> **Verified:** 2026-07-04 | commit `7e90e9b6` | 7/14 items | build OK | tests 1140 ABI PASS
+> **Accepted:** [H] concurrent watcher registration (unlocked slot-claim + `reg_watcher_next_id` + head-insert) can corrupt the pool -- lock-free-registry class -> XREF: 02-kernel-core/TODO-14 §14 (item: "Notification engine SMP" at line 595)
+> **Accepted:** [M] global `reg_dispatch_depth` shares the recursion budget across CPUs (concurrent dispatch can drop a notification) -> XREF: 02-kernel-core/TODO-14 §14 (item: "Notification engine SMP" at line 595)
+> **Quality reviewed:** 2026-07-04 | Codex 11x (design, adversarial, consistency, perf, re-adversarial) | 5H+7M+1L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -592,6 +596,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] SMP stress test: concurrent `NtCreateKey` + `NtDeleteKey` + `NtEnumerateKey` from multiple tasks; verify no pool corruption, no stale pointer dereference, no duplicate handle allocation
 - [ ] Upgrade to rwlock if profiling shows read contention (deferred; spinlock is correct first step for a 512-key pool)
 - [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, added §2) written on every `reg_walk_path` hop -- this write-heavy read path must hold the §14 write lock or use atomics -> XREF: 02-kernel-core/TODO-14 §2
+- [ ] Notification engine SMP (§3): watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert are unlocked; `reg_dispatch_depth` is a global cross-CPU budget -- serialize under §14 lock or per-thread depth -> XREF §3
 - [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
 
 **Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).

@@ -943,13 +943,13 @@ static uint64_t reg_get_uptime_ns(void)
  * completion status) lands with the registry syscall work; this is the
  * callback engine kernel subsystems register against directly. */
 #define REG_WATCHER_POOL_SIZE 64
-#define REG_NOTIFY_MAX_DEPTH  8         /* re-entrancy cap: a callback that mutates
+#define REG_NOTIFY_MAX_DEPTH  4         /* re-entrancy cap: a callback that mutates
                                          * the watched key re-enters dispatch; this
                                          * bounds recursion so it cannot overflow
                                          * the kernel stack. */
 
 static reg_watcher_t reg_watcher_pool[REG_WATCHER_POOL_SIZE];
-static uint32_t      reg_watcher_next_id = 1;   /* 0 is never a valid id */
+static uint64_t      reg_watcher_next_id = 1;   /* 64-bit: never wraps/reuses; 0 invalid */
 static uint32_t      reg_dispatch_depth  = 0;   /* current dispatch nesting depth */
 
 /* Milliseconds since boot (for watcher coalescing). */
@@ -1010,7 +1010,7 @@ static uint32_t reg_build_key_path(reg_key_t *key, char *buf, uint32_t size)
     return n - 1;
 }
 
-uint32_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
+uint64_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
                              reg_notify_fn callback, void *ctx,
                              uint64_t coalesce_ms)
 {
@@ -1027,9 +1027,9 @@ uint32_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
         reg_watcher_t *w = &reg_watcher_pool[i];
         if (w->active)
             continue;
+        /* 64-bit monotonic id -- never reused for the practical system lifetime,
+         * so the dispatch walk's slot-reuse guard (watcher_id compare) is sound. */
         w->watcher_id    = reg_watcher_next_id++;
-        if (reg_watcher_next_id == 0)   /* skip the reserved 0 on wrap */
-            reg_watcher_next_id = 1;
         w->key           = key;
         w->filter        = filter;
         w->watch_subtree = watch_subtree;
@@ -1061,7 +1061,7 @@ static void reg_watcher_unlink(reg_watcher_t *w)
     w->next = (reg_watcher_t *)0;
 }
 
-long RegUnregisterNotify(uint32_t watcher_id)
+long RegUnregisterNotify(uint64_t watcher_id)
 {
     uint32_t i;
     if (watcher_id == 0)
@@ -1125,28 +1125,53 @@ void reg_dispatch_notify(reg_key_t *key, uint32_t change_type,
 
     /* Re-entrancy guard: a callback may mutate the registry and re-enter here.
      * Cap the nesting so a self-modifying callback cannot recurse the kernel
-     * stack to death (a callback that writes the key it watches with
-     * coalesce_ms=0 would otherwise loop unbounded). */
-    if (reg_dispatch_depth >= REG_NOTIFY_MAX_DEPTH)
+     * stack deeply (each level holds a path buffer + callback frame); depth 4 is
+     * well within an 8 KiB kernel task stack.  ATOMIC inc-then-check with an
+     * always-paired dec so a lost update (SMP / preemption mid-callback) can
+     * never wedge the latch and silently kill all notifications registry-wide.
+     * The residual (the depth budget is shared across CPUs, so a concurrent
+     * dispatch on another CPU can transiently over-count) rides on the
+     * registry-wide lock (TODO-14 registry SMP work), the same lock-free-until-
+     * then regime as every other registry structure. */
+    if (__atomic_add_fetch(&reg_dispatch_depth, 1, __ATOMIC_SEQ_CST)
+            > REG_NOTIFY_MAX_DEPTH) {
+        __atomic_sub_fetch(&reg_dispatch_depth, 1, __ATOMIC_SEQ_CST);
         return;
-    reg_dispatch_depth++;
+    }
 
     /* Walk from the changed key up its ancestor chain.  At the changed key
      * itself, fire both direct and subtree watchers; at every ancestor, fire
      * only subtree watchers (a non-subtree watcher on an ancestor does not see
      * a descendant change).  Because a watcher lives on exactly one key, a
-     * subtree watcher registered on `key` fires exactly once (at at_key). */
+     * subtree watcher registered on `key` fires exactly once (at at_key).
+     *
+     * Fire only a watcher that is still live AND still linked to THIS level:
+     * a callback (fired earlier in the walk) may have unregistered a later
+     * watcher and re-registered another that reused its 64-slot pool entry.
+     * Re-checking w->key == level rejects a reused slot, and if the snapshotted
+     * `next` was unlinked/reused its ->next would walk a foreign list, so the
+     * walk stops when next is no longer part of `level`. */
     for (level = key; level; level = level->parent, at_key = 0) {
         reg_watcher_t *w = level->watchers;
         while (w) {
-            reg_watcher_t *next = w->next;   /* firing must not mutate the list */
-            if (at_key || w->watch_subtree)
+            reg_watcher_t *next = w->next;
+            uint64_t next_id = next ? next->watcher_id : 0;
+            if (w->active && w->key == level && (at_key || w->watch_subtree))
                 reg_notify_fire(w, key, change_type, value_name);
+            /* Advance only if `next` is STILL the exact same live watcher on this
+             * level.  A callback may have unregistered `next` and re-registered a
+             * replacement that reused its pool slot -- even on the SAME key (head
+             * insert).  The reused slot carries a NEW monotonic watcher_id, so an
+             * id mismatch (or inactive / different-key) stops the walk instead of
+             * firing a wrong watcher or looping. */
+            if (next && (!next->active || next->key != level ||
+                         next->watcher_id != next_id))
+                break;
             w = next;
         }
     }
 
-    reg_dispatch_depth--;
+    __atomic_sub_fetch(&reg_dispatch_depth, 1, __ATOMIC_SEQ_CST);
 }
 
 /* Convert a stored monotonic `last_write_time` (uptime_ns at mutation) to a
@@ -1526,23 +1551,28 @@ long RegDeleteKey(HKEY hKey, const char *lpSubKey)
     if (target->child_count > 0)
         return ERROR_ACCESS_DENIED;
 
-    /* A deleted sub-key changes the parent's name-set -- notify NAME watchers on
-     * the parent BEFORE unlinking (reg_remove_child clears target->parent). */
-    if (target->parent)
-        reg_dispatch_notify(target->parent, REG_NOTIFY_CHANGE_NAME, NULL);
+    /* Save the parent before reg_remove_child clears target->parent. */
+    {
+        reg_key_t *dparent = target->parent;
 
-    /* Free values and unlink from parent */
-    reg_free_values(target);
-    reg_remove_child(target->parent, target);
+        /* Free values and unlink from parent */
+        reg_free_values(target);
+        reg_remove_child(target->parent, target);
 
-    /* Drop KCB + change-notification state before tombstoning the slot (same
-     * invariant the other delete/unload paths maintain). */
-    reg_kcb_purge_key(target);
-    reg_notify_unregister_all(target);
+        /* Drop KCB + change-notification state before tombstoning the slot (same
+         * invariant the other delete/unload paths maintain). */
+        reg_kcb_purge_key(target);
+        reg_notify_unregister_all(target);
 
-    /* Mark key slot as freed */
-    target->name[0] = '\0';
-    target->flags = 0;
+        /* Mark key slot as freed */
+        target->name[0] = '\0';
+        target->flags = 0;
+
+        /* Notify the parent's NAME watchers AFTER the tombstone so a callback
+         * that refreshes state sees the key actually gone. */
+        if (dparent)
+            reg_dispatch_notify(dparent, REG_NOTIFY_CHANGE_NAME, NULL);
+    }
 
     return ERROR_SUCCESS;
 }
@@ -1562,17 +1592,26 @@ long RegDeleteKeyDirect(reg_key_t *key)
     if (!key->parent)
         return ERROR_ACCESS_DENIED;
 
-    /* Free values and unlink from parent */
-    reg_free_values(key);
-    reg_remove_child(key->parent, key);
+    {
+        reg_key_t *dparent = key->parent;   /* save before unlink clears it */
 
-    /* Drop KCB + change-notification state before tombstoning the slot. */
-    reg_kcb_purge_key(key);
-    reg_notify_unregister_all(key);
+        /* Free values and unlink from parent */
+        reg_free_values(key);
+        reg_remove_child(key->parent, key);
 
-    /* Mark key slot as freed */
-    key->name[0] = '\0';
-    key->flags = 0;
+        /* Drop KCB + change-notification state before tombstoning the slot. */
+        reg_kcb_purge_key(key);
+        reg_notify_unregister_all(key);
+
+        /* Mark key slot as freed */
+        key->name[0] = '\0';
+        key->flags = 0;
+
+        /* NtDeleteKey routes here -- notify the parent's NAME watchers too,
+         * after the tombstone, matching RegDeleteKey/RegDeleteTree. */
+        if (dparent)
+            reg_dispatch_notify(dparent, REG_NOTIFY_CHANGE_NAME, NULL);
+    }
 
     return ERROR_SUCCESS;
 }
@@ -1643,6 +1682,8 @@ long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
             parent->last_write_time = reg_get_uptime_ns();
             key->last_write_time = parent->last_write_time;
             registry_mark_dirty(key);
+            /* A rename is a NAME change on the parent's name-set. */
+            reg_dispatch_notify(parent, REG_NOTIFY_CHANGE_NAME, NULL);
             return ERROR_SUCCESS;
         }
     }
@@ -1660,6 +1701,9 @@ long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
     parent->last_write_time = reg_get_uptime_ns();
     key->last_write_time = parent->last_write_time;
     registry_mark_dirty(key);
+
+    /* A rename is a NAME change on the parent's name-set. */
+    reg_dispatch_notify(parent, REG_NOTIFY_CHANGE_NAME, NULL);
 
     return ERROR_SUCCESS;
 }
@@ -1696,16 +1740,25 @@ long RegUnloadHive(reg_key_t *key)
     /* Free own values */
     reg_free_values(key);
 
-    /* Unlink from parent */
-    reg_remove_child(key->parent, key);
+    {
+        reg_key_t *dparent = key->parent;   /* save before unlink clears it */
 
-    /* Drop KCB + change-notification state before tombstoning the slot. */
-    reg_kcb_purge_key(key);
-    reg_notify_unregister_all(key);
+        /* Unlink from parent */
+        reg_remove_child(key->parent, key);
 
-    /* Mark slot freed */
-    key->name[0] = '\0';
-    key->flags = 0;
+        /* Drop KCB + change-notification state before tombstoning the slot. */
+        reg_kcb_purge_key(key);
+        reg_notify_unregister_all(key);
+
+        /* Mark slot freed */
+        key->name[0] = '\0';
+        key->flags = 0;
+
+        /* NtUnloadKey routes here -- notify the parent's NAME watchers after the
+         * tombstone, matching the other delete paths. */
+        if (dparent)
+            reg_dispatch_notify(dparent, REG_NOTIFY_CHANGE_NAME, NULL);
+    }
 
     return ERROR_SUCCESS;
 }
@@ -1779,23 +1832,23 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey)
             base->children[b] = (reg_key_t *)0;
         }
         base->child_count = 0;
-        reg_free_values(base);
-        /* A recursive clear is a NAME change on base -- notify its (and its
-         * ancestors' subtree) watchers, which RegDeleteKey does per-key but the
-         * recursive path would otherwise miss. */
-        if (deleted_any)
-            reg_dispatch_notify(base, REG_NOTIFY_CHANGE_NAME, NULL);
+        {
+            int had_values = (base->value_count > 0);
+            reg_free_values(base);
+            /* A recursive clear is a NAME change on base (sub-keys removed) and
+             * a LAST_SET change if base also held values -- notify after the
+             * clear so callbacks see the emptied key. */
+            if (deleted_any)
+                reg_dispatch_notify(base, REG_NOTIFY_CHANGE_NAME, NULL);
+            if (had_values)
+                reg_dispatch_notify(base, REG_NOTIFY_CHANGE_LAST_SET, NULL);
+        }
         return ERROR_SUCCESS;
     }
 
     target = reg_walk_path(base, lpSubKey, 0);
     if (!target)
         return ERROR_FILE_NOT_FOUND;
-
-    /* Removing a sub-tree is a NAME change on the target's parent -- dispatch
-     * BEFORE unlinking (reg_remove_child clears target->parent). */
-    if (target->parent)
-        reg_dispatch_notify(target->parent, REG_NOTIFY_CHANGE_NAME, NULL);
 
     /* Unlink from parent FIRST while target->name still hashes to the
      * original bucket; reg_delete_subtree() clears name[0]='\0' as
@@ -1805,8 +1858,14 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey)
      * ESRT registry mirror feature: leaked the ESRT key on every
      * populate-after-init cycle, monotonic key pool exhausts on
      * repeated mirror refreshes). */
-    reg_remove_child(target->parent, target);
-    reg_delete_subtree(target);
+    {
+        reg_key_t *dparent = target->parent;   /* save before unlink clears it */
+        reg_remove_child(target->parent, target);
+        reg_delete_subtree(target);
+        /* NAME change on the parent -- dispatch AFTER the subtree is gone. */
+        if (dparent)
+            reg_dispatch_notify(dparent, REG_NOTIFY_CHANGE_NAME, NULL);
+    }
 
     return ERROR_SUCCESS;
 }

@@ -143,7 +143,7 @@ typedef void (*reg_notify_fn)(const char *key_path, uint32_t change_type,
                               void *ctx);
 
 typedef struct reg_watcher {
-    uint32_t            watcher_id;   /* monotonic id (0 = never a valid id)  */
+    uint64_t            watcher_id;   /* monotonic 64-bit id (never reused; 0 invalid) */
     reg_key_t          *key;          /* key this watcher is attached to      */
     uint32_t            filter;       /* REG_NOTIFY_CHANGE_* bitmask          */
     int                 watch_subtree;
@@ -361,13 +361,13 @@ void reg_kcb_get_stats(uint64_t *hits, uint64_t *misses);
  * limits fires (0 = every change).  Returns a non-zero watcher id, or 0 on a
  * bad handle / exhausted 64-slot pool.  Kernel-internal + trusted: no
  * KEY_NOTIFY check (the Win32 hKey path enforces access). */
-uint32_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
+uint64_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
                              reg_notify_fn callback, void *ctx,
                              uint64_t coalesce_ms);
 
 /* Deactivate + unlink a single watcher by id.  Returns ERROR_SUCCESS or
  * ERROR_FILE_NOT_FOUND if no live watcher has that id. */
-long RegUnregisterNotify(uint32_t watcher_id);
+long RegUnregisterNotify(uint64_t watcher_id);
 
 /* Deactivate + unlink every watcher on `key` (called before a key is
  * tombstoned so a freed slot cannot stay linked). */

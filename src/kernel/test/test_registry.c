@@ -1009,7 +1009,7 @@ static int notify_streq(const char *a, const char *b)
 static void test_registry_notify_basic(void)
 {
     HKEY hk;
-    uint32_t id, val = 1920;
+    uint64_t id; uint32_t val = 1920;
     long rc;
 
     rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyBasic", 0, NULL, 0,
@@ -1041,7 +1041,7 @@ static void test_registry_notify_basic(void)
 static void test_registry_notify_subtree(void)
 {
     HKEY hpar, hchild;
-    uint32_t idsub, idflat, val = 7;
+    uint64_t idsub, idflat; uint32_t val = 7;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyPar", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
@@ -1069,7 +1069,7 @@ static void test_registry_notify_subtree(void)
 static void test_registry_notify_coalesce(void)
 {
     HKEY hk;
-    uint32_t id, val = 0;
+    uint64_t id; uint32_t val = 0;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyCoal", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
@@ -1092,7 +1092,7 @@ static void test_registry_notify_coalesce(void)
 static void test_registry_notify_name(void)
 {
     HKEY hpar, hchild;
-    uint32_t id;
+    uint64_t id;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyName", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
@@ -1120,7 +1120,7 @@ static void test_registry_notify_name(void)
 static void test_registry_notify_cleanup_on_delete(void)
 {
     HKEY hpar, hk;
-    uint32_t id, val = 1;
+    uint64_t id; uint32_t val = 1;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyDel", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
@@ -1147,7 +1147,7 @@ static void test_registry_notify_cleanup_on_delete(void)
 static void test_registry_notify_deep_path(void)
 {
     HKEY hk;
-    uint32_t id, val = 3;
+    uint64_t id; uint32_t val = 3;
     /* ~40 components -- a recursive path builder would risk the kernel stack. */
     const char *deep =
         "Software\\d0\\d1\\d2\\d3\\d4\\d5\\d6\\d7\\d8\\d9\\d10\\d11\\d12\\d13"
@@ -1184,7 +1184,7 @@ static void notify_reentrant_cb(const char *key_path, uint32_t change_type,
 static void test_registry_notify_reentrant(void)
 {
     HKEY hk;
-    uint32_t id, val = 1;
+    uint64_t id; uint32_t val = 1;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyReent", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
@@ -1194,8 +1194,8 @@ static void test_registry_notify_reentrant(void)
     TEST_ASSERT(id != 0, "reentrant watcher registered");
     s_notify_fires = 0;
     RegSetValueEx(hk, "R", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
-    /* Bounded by REG_NOTIFY_MAX_DEPTH (8) -- terminated, did not hang. */
-    TEST_ASSERT(s_notify_fires >= 1 && s_notify_fires <= 8,
+    /* Bounded by REG_NOTIFY_MAX_DEPTH (4) -- terminated, did not hang. */
+    TEST_ASSERT(s_notify_fires >= 1 && s_notify_fires <= 4,
                 "reentrant callback terminates within the depth guard");
 
     RegUnregisterNotify(id);
@@ -1208,7 +1208,7 @@ static void test_registry_notify_reentrant(void)
 static void test_registry_notify_multicomponent(void)
 {
     HKEY hpar, hk;
-    uint32_t id;
+    uint64_t id;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyMC", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
@@ -1232,7 +1232,7 @@ static void test_registry_notify_multicomponent(void)
 static void test_registry_notify_deletetree(void)
 {
     HKEY hpar, hk;
-    uint32_t idsub, idflat;
+    uint64_t idsub, idflat;
 
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyDT", 0, NULL, 0,
                        KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
@@ -1263,6 +1263,100 @@ static void test_registry_notify_deletetree(void)
     RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyDT");
 }
 
+/* Rename fires NAME on the parent. */
+static void test_registry_notify_rename(void)
+{
+    HKEY hpar, hk;
+    uint64_t id;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyRen", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    if (RegCreateKeyEx(hpar, "Old", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hk);
+    id = reg_notify_register(hpar, REG_NOTIFY_CHANGE_NAME, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "rename NAME watcher registered");
+    s_notify_fires = 0;
+    RegRenameKey(hpar, "Old", "New");
+    TEST_ASSERT(s_notify_fires >= 1, "RegRenameKey fires NAME on the parent");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyRen");
+}
+
+/* A callback that unregisters the next watcher AND re-registers a replacement on
+ * the same key (pool-slot reuse) must not corrupt the walk or spin. */
+static uint64_t s_mutation_victim;
+static HKEY     s_mutation_key;
+static uint64_t s_mutation_readd;
+static void notify_mutation_cb(const char *key_path, uint32_t change_type,
+                               const char *value_name, void *ctx)
+{
+    (void)key_path; (void)change_type; (void)value_name; (void)ctx;
+    s_notify_fires++;
+    if (s_mutation_victim) {
+        /* Unregister the later sibling, then re-register on the SAME key -- the
+         * new watcher reuses the freed pool slot but gets a new watcher_id. */
+        RegUnregisterNotify(s_mutation_victim);
+        s_mutation_victim = 0;
+        s_mutation_readd = reg_notify_register(s_mutation_key, REG_NOTIFY_CHANGE_LAST_SET,
+                                               0, notify_test_cb, NULL, 0);
+    }
+}
+
+static void test_registry_notify_callback_mutation(void)
+{
+    HKEY hk;
+    uint64_t idvictim, idmut; uint32_t val = 1;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyMut", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
+        return;
+    /* Register the victim FIRST, the mutating watcher SECOND: head-insertion
+     * makes the mutating watcher fire first and remove/replace the victim. */
+    idvictim = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    idmut    = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_mutation_cb, NULL, 0);
+    TEST_ASSERT(idvictim != 0 && idmut != 0, "mutation-test watchers registered");
+    s_mutation_victim = idvictim;
+    s_mutation_key    = hk;
+    s_mutation_readd  = 0;
+    s_notify_fires    = 0;
+    RegSetValueEx(hk, "V", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    /* Exactly one fire: only the mutating watcher runs; the removed victim never
+     * fires, and the same-key replacement (new id) is NOT followed/fired during
+     * this dispatch -- the walk stops safely at the reused slot. */
+    TEST_ASSERT(s_notify_fires == 1,
+                "callback unregister+same-key re-register fires once, no wrong/duplicate watcher");
+
+    if (s_mutation_readd) RegUnregisterNotify(s_mutation_readd);
+    RegUnregisterNotify(idmut);
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyMut");
+}
+
+/* RegDeleteTree(parent, NULL) on a value-only base fires LAST_SET. */
+static void test_registry_notify_deletetree_values(void)
+{
+    HKEY hk;
+    uint64_t id; uint32_t val = 9;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyDTV", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
+        return;
+    RegSetValueEx(hk, "OnlyVal", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "value-clear watcher registered");
+    s_notify_fires = 0;
+    RegDeleteTree(hk, NULL);   /* clears the value-only base */
+    TEST_ASSERT(s_notify_fires >= 1, "RegDeleteTree(NULL) value-only clear fires LAST_SET");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyDTV");
+}
+
 void test_register_registry(void)
 {
     test_suite_register_cat("Registry: CopyTree", test_registry_copytree, TEST_CAT_ABI);
@@ -1281,6 +1375,9 @@ void test_register_registry(void)
     test_suite_register_cat("Registry: notify reentrant", test_registry_notify_reentrant, TEST_CAT_ABI);
     test_suite_register_cat("Registry: notify multi-component", test_registry_notify_multicomponent, TEST_CAT_ABI);
     test_suite_register_cat("Registry: notify deletetree", test_registry_notify_deletetree, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify rename", test_registry_notify_rename, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify callback mutation", test_registry_notify_callback_mutation, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify deletetree values", test_registry_notify_deletetree_values, TEST_CAT_ABI);
     test_suite_register_cat("Registry: access enforcement", test_registry_access_enforcement, TEST_CAT_ABI);
     test_suite_register_cat("Registry: API limits", test_registry_api_limits, TEST_CAT_ABI);
     test_suite_register_cat("Registry: reg_check_access", test_reg_check_access_basic, TEST_CAT_ABI);
