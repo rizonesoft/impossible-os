@@ -42,11 +42,18 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER="$SCRIPT_DIR/overnight-launch.sh"
 
-if ! systemctl --user is-system-running >/dev/null 2>&1 &&
-   ! systemctl --user is-system-running 2>/dev/null | grep -qE "running|degraded"; then
-  echo "FATAL: user systemd is not available (systemctl --user errors). Timers cannot be armed." >&2
-  exit 1
-fi
+# is-system-running exits nonzero for "degraded" (a failed unrelated unit),
+# which is still a fully working timer host. Capture the state instead of
+# piping it: under pipefail, `systemctl | grep` inherits systemctl's exit 1
+# and the old probe FATALed on every degraded-but-healthy user systemd.
+SYSTEMD_STATE="$(systemctl --user is-system-running 2>/dev/null || true)"
+case "$SYSTEMD_STATE" in
+  running|degraded) ;;
+  *)
+    echo "FATAL: user systemd is not available (state: ${SYSTEMD_STATE:-unreachable}). Timers cannot be armed." >&2
+    exit 1
+    ;;
+esac
 
 PROJECT_DIR="$PWD"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
