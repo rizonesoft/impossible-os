@@ -732,10 +732,10 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: NtSaveKey/RestoreKey/LoadKey functional paths + NtUnloadKey provenance rejection are untested (registration-only).
 > **Verified:** 2026-07-02 | commit `422113c1` | 6/8 items | build OK | abi 426/426 PASS
 > **Deferred:** [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM) -> XREF: 02-kernel-core/TODO-12 §15 (item: "NtUnloadKey provenance guard" at line 721)
-> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (no change-notification infra) -> XREF: 02-kernel-core/TODO-14 §3 (item: "Static pool of 64 watchers" at line 195)
-> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 451)
-> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 452)
-> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 453)
+> **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (no change-notification infra) -> XREF: 02-kernel-core/TODO-14 §3 (item: "Static pool of 64 watchers" at line 199)
+> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 455)
+> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 456)
+> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 457)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit+1M deferred, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 
