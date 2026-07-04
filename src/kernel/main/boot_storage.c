@@ -836,7 +836,24 @@ void boot_phase2(void)
 
     boot_splash_status("Initializing registry...");
     POST16(POST16_REGISTRY);
-    registry_init();
+    {
+        /* NOTE: do NOT publish SUBSYS_REGISTRY ready here. The panic path
+         * (KeBugCheckEx, panic.c) gates its LastBugCheck registry writes on
+         * kernel_subsystem_ready(SUBSYS_REGISTRY); the registry tree has no
+         * SMP lock yet (registry SMP synchronization is unimplemented) and
+         * registry_populate_defaults() below mutates it while APs are already
+         * running. Publishing readiness before population would let an AP
+         * panic re-enter RegCreateKeyEx / RegSetValueEx against a tree the BSP
+         * is mid-mutating. Readiness is published after population below. */
+        boot_result_t r = registry_init();
+        if (r == BOOT_FATAL) {
+            boot_recovery_info_t ri = { SUBSYS_REGISTRY, POST16_REGISTRY_OK, BOOT_FATAL, 2 };
+            kernel_subsystem_dump();
+            boot_recovery_action_t act = boot_recovery_show(&ri);
+            boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
+            boot_halt("Registry init failed -- cannot allocate root keys");
+        }
+    }
     POST16(POST16_REGISTRY_OK);
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
@@ -844,6 +861,8 @@ void boot_phase2(void)
      * registry is up (HKLM\SYSTEM\Logs\Levels\<tag> + \RateLimit\<tag>). No-op until
      * an admin sets the keys; without this call the registry log config never loads. */
     klog_load_levels_from_registry();
+    /* Publish readiness only now -- tree is fully populated + log-config
+     * applied, so the panic-path registry write (gated on this flag) is safe. */
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
     boot_progress(2, "REGISTRY", POST16_REGISTRY_OK);
 

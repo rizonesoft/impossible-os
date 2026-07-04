@@ -293,7 +293,7 @@ reg_key_t *reg_resolve_hkcr(void)
 
 /* ---- Initialization ---- */
 
-void registry_init(void)
+boot_result_t registry_init(void)
 {
     reg_key_t *sw;
 
@@ -313,7 +313,9 @@ void registry_init(void)
     if (!reg_root_hklm || !reg_root_hkcu || !reg_root_hkcr ||
         !reg_root_hku  || !reg_root_hkcc) {
         klog(LOG_ERROR, "registry", "Registry: failed to allocate root keys");
-        return;
+        /* No root keys -> registry is unusable; not a reduced-capability
+         * state, so BOOT_FATAL (caller branches to boot recovery). */
+        return BOOT_FATAL;
     }
 
     /* Set redirection flags */
@@ -341,6 +343,8 @@ void registry_init(void)
          "Registry initialized (pool: %u/%u keys, %u/%u values)",
          (uint64_t)reg_key_pool_next, (uint64_t)REG_KEY_POOL_SIZE,
          (uint64_t)reg_value_pool_next, (uint64_t)REG_VALUE_POOL_SIZE);
+
+    return BOOT_OK;
 }
 
 /* ---- Pool statistics ---- */
@@ -3079,7 +3083,7 @@ typedef struct {
 
 static int hive_buf_write_u16(hive_buf_t *b, uint16_t v)
 {
-    if (b->pos + 2 > b->cap) return -1;
+    if (!b || b->pos > b->cap || 2 > b->cap - b->pos) return -1;
     b->buf[b->pos++] = (uint8_t)(v & 0xFF);
     b->buf[b->pos++] = (uint8_t)((v >> 8) & 0xFF);
     return 0;
@@ -3087,7 +3091,7 @@ static int hive_buf_write_u16(hive_buf_t *b, uint16_t v)
 
 static int hive_buf_write_u32(hive_buf_t *b, uint32_t v)
 {
-    if (b->pos + 4 > b->cap) return -1;
+    if (!b || b->pos > b->cap || 4 > b->cap - b->pos) return -1;
     b->buf[b->pos++] = (uint8_t)(v & 0xFF);
     b->buf[b->pos++] = (uint8_t)((v >>  8) & 0xFF);
     b->buf[b->pos++] = (uint8_t)((v >> 16) & 0xFF);
@@ -3098,7 +3102,8 @@ static int hive_buf_write_u32(hive_buf_t *b, uint32_t v)
 static int hive_buf_write_bytes(hive_buf_t *b, const uint8_t *data, uint32_t len)
 {
     uint32_t i;
-    if (b->pos + len > b->cap) return -1;
+    if (!b || (!data && len != 0)) return -1;
+    if (b->pos > b->cap || len > b->cap - b->pos) return -1;
     for (i = 0; i < len; i++)
         b->buf[b->pos++] = data[i];
     return 0;
@@ -3106,7 +3111,7 @@ static int hive_buf_write_bytes(hive_buf_t *b, const uint8_t *data, uint32_t len
 
 static int hive_buf_read_u16(hive_buf_t *b, uint16_t *v)
 {
-    if (b->pos + 2 > b->cap) return -1;
+    if (!b || !v || b->pos > b->cap || 2 > b->cap - b->pos) return -1;
     *v = (uint16_t)b->buf[b->pos]
        | ((uint16_t)b->buf[b->pos + 1] << 8);
     b->pos += 2;
@@ -3115,7 +3120,7 @@ static int hive_buf_read_u16(hive_buf_t *b, uint16_t *v)
 
 static int hive_buf_read_u32(hive_buf_t *b, uint32_t *v)
 {
-    if (b->pos + 4 > b->cap) return -1;
+    if (!b || !v || b->pos > b->cap || 4 > b->cap - b->pos) return -1;
     *v = (uint32_t)b->buf[b->pos]
        | ((uint32_t)b->buf[b->pos + 1] << 8)
        | ((uint32_t)b->buf[b->pos + 2] << 16)
@@ -3127,9 +3132,17 @@ static int hive_buf_read_u32(hive_buf_t *b, uint32_t *v)
 static int hive_buf_read_bytes(hive_buf_t *b, uint8_t *out, uint32_t len)
 {
     uint32_t i;
-    if (b->pos + len > b->cap) return -1;
+    if (!b || (!out && len != 0)) return -1;
+    if (b->pos > b->cap || len > b->cap - b->pos) return -1;
     for (i = 0; i < len; i++)
         out[i] = b->buf[b->pos++];
+    return 0;
+}
+
+static int hive_buf_skip(hive_buf_t *b, uint32_t len)
+{
+    if (!b || b->pos > b->cap || len > b->cap - b->pos) return -1;
+    b->pos += len;
     return 0;
 }
 
@@ -3407,29 +3420,283 @@ fail_free:
 
 /* ---- Journal recovery ---- */
 
-/* Check if a hive file has a valid header (magic + version + CRC32) */
+/* ---- Deserialization ---- */
+
+static int hive_parse_value(hive_buf_t *buf, reg_key_t *key,
+                            uint32_t *parsed_values,
+                            uint32_t *loaded_values,
+                            int apply)
+{
+    uint16_t vname_len;
+    char vname[REG_MAX_VALUE_NAME + 1];
+    uint32_t vtype, vdata_size;
+    reg_value_t *v = (reg_value_t *)0;
+    int new_value = 0;
+
+    if (hive_buf_read_u16(buf, &vname_len) < 0) return -1;
+    if (vname_len > REG_MAX_VALUE_NAME) return -1;
+    if (hive_buf_read_bytes(buf, (uint8_t *)vname, vname_len) < 0) return -1;
+    vname[vname_len] = '\0';
+    if (hive_buf_read_u32(buf, &vtype) < 0) return -1;
+    if (hive_buf_read_u32(buf, &vdata_size) < 0) return -1;
+    if (vdata_size > REG_MAX_VALUE_SIZE) return -1;
+
+    (*parsed_values)++;
+    if (apply) {
+        if (!key) return -1;
+        v = reg_find_value_in_key(key, vname);
+        if (!v) {
+            v = reg_alloc_value(vname, vtype);
+            if (!v) return -1;
+            new_value = 1;
+        }
+        if (hive_buf_read_bytes(buf, v->data, vdata_size) < 0)
+            return -1;
+        v->type = vtype;
+        v->data_size = vdata_size;
+        if (new_value) {
+            v->next = key->values;
+            key->values = v;
+            key->value_count++;
+        }
+        key->last_write_time = reg_get_uptime_ns();
+        registry_mark_dirty(key);
+        reg_dispatch_notify(key, REG_NOTIFY_CHANGE_LAST_SET, vname);
+        (*loaded_values)++;
+    } else {
+        if (hive_buf_skip(buf, vdata_size) < 0)
+            return -1;
+    }
+    return 0;
+}
+
+static int hive_parse_key(hive_buf_t *buf, reg_key_t *parent,
+                          uint32_t *parsed_keys,
+                          uint32_t *parsed_values,
+                          uint32_t *loaded_values,
+                          uint32_t depth,
+                          int apply)
+{
+    uint16_t name_len, val_count, child_count;
+    char name[REG_MAX_KEY_NAME + 1];
+    reg_key_t *key = (reg_key_t *)0;
+    uint16_t vi, ci;
+
+    if (depth == 0 || depth > HIVE_MAX_PARSE_DEPTH)
+        return -1;
+
+    /* Read key record */
+    if (hive_buf_read_u16(buf, &name_len) < 0) return -1;
+    if (name_len > REG_MAX_KEY_NAME) return -1;
+    if (hive_buf_read_bytes(buf, (uint8_t *)name, name_len) < 0) return -1;
+    name[name_len] = '\0';
+    if (hive_buf_read_u16(buf, &val_count) < 0) return -1;
+    if (hive_buf_read_u16(buf, &child_count) < 0) return -1;
+    (*parsed_keys)++;
+
+    /* Create or find the key under parent */
+    if (apply) {
+        if (!parent) return -1;
+        key = reg_find_child(parent, name);
+        if (!key)
+            key = reg_create_child(parent, name);
+        if (!key) return -1;
+    }
+
+    /* Read values */
+    for (vi = 0; vi < val_count; vi++) {
+        if (hive_parse_value(buf, key, parsed_values, loaded_values, apply) < 0)
+            return -1;
+    }
+
+    /* Recurse into children */
+    for (ci = 0; ci < child_count; ci++) {
+        if (hive_parse_key(buf, key, parsed_keys, parsed_values,
+                           loaded_values, depth + 1, apply) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+static int hive_parse_payload(hive_buf_t *deser, reg_key_t *root,
+                              uint32_t *parsed_keys,
+                              uint32_t *parsed_values,
+                              uint32_t *loaded_values,
+                              int apply)
+{
+    uint16_t root_name_len, root_val_count, root_child_count;
+    uint16_t vi, ci;
+
+    if (!deser || !parsed_keys || !parsed_values || !loaded_values)
+        return -1;
+
+    *parsed_keys = 0;
+    *parsed_values = 0;
+    *loaded_values = 0;
+
+    if (hive_buf_read_u16(deser, &root_name_len) < 0) return -1;
+    /* Payload root record carries the full key name (hive_serialize_key emits
+     * strlen(name) up to REG_MAX_KEY_NAME); the header root_name[64] is a
+     * separate truncated quick-id field. Bound the payload name accordingly. */
+    if (root_name_len > REG_MAX_KEY_NAME) return -1;
+    if (hive_buf_skip(deser, root_name_len) < 0) return -1;
+    if (hive_buf_read_u16(deser, &root_val_count) < 0) return -1;
+    if (hive_buf_read_u16(deser, &root_child_count) < 0) return -1;
+    (*parsed_keys)++;
+
+    for (vi = 0; vi < root_val_count; vi++) {
+        if (hive_parse_value(deser, root, parsed_values, loaded_values, apply) < 0)
+            return -1;
+    }
+
+    for (ci = 0; ci < root_child_count; ci++) {
+        if (hive_parse_key(deser, root, parsed_keys, parsed_values,
+                           loaded_values, 1, apply) < 0)
+            return -1;
+    }
+
+    return (deser->pos == deser->cap) ? 0 : -1;
+}
+
+static int hive_validate_payload(const uint8_t *data, uint32_t data_size,
+                                 uint32_t expected_keys,
+                                 uint32_t expected_values,
+                                 uint32_t *parsed_keys_out,
+                                 uint32_t *parsed_values_out)
+{
+    hive_buf_t deser;
+    uint32_t parsed_keys, parsed_values, loaded_values;
+
+    if (!data || data_size == 0)
+        return -1;
+
+    deser.buf = (uint8_t *)(uintptr_t)data;
+    deser.pos = 0;
+    deser.cap = data_size;
+
+    if (hive_parse_payload(&deser, (reg_key_t *)0, &parsed_keys,
+                           &parsed_values, &loaded_values, 0) < 0)
+        return -1;
+    if (parsed_keys != expected_keys || parsed_values != expected_values)
+        return -1;
+
+    if (parsed_keys_out) *parsed_keys_out = parsed_keys;
+    if (parsed_values_out) *parsed_values_out = parsed_values;
+    return 0;
+}
+
+#ifdef KERNEL_TESTS
+int hive_validate_payload_for_test(const uint8_t *data, uint32_t data_size,
+                                   uint32_t expected_keys,
+                                   uint32_t expected_values)
+{
+    return hive_validate_payload(data, data_size, expected_keys,
+                                 expected_values, (uint32_t *)0,
+                                 (uint32_t *)0);
+}
+#endif
+
+static void hive_free_pages(uintptr_t phys, uint32_t pages)
+{
+    uint32_t p;
+    if (!phys) return;
+    for (p = 0; p < pages; p++)
+        pmm_free_frame(phys + p * 4096);
+}
+
+static int hive_read_validated_payload(struct vfs_node *f,
+                                       const char *path,
+                                       const hive_header_t *hdr,
+                                       uint8_t **data_out,
+                                       uintptr_t *phys_out,
+                                       uint32_t *pages_out,
+                                       uint32_t *parsed_keys_out,
+                                       uint32_t *parsed_values_out)
+{
+    uint32_t buf_pages;
+    uintptr_t data_phys;
+    uint8_t *data_ptr;
+    int rc;
+
+    if (!f || !path || !hdr || !data_out || !phys_out || !pages_out)
+        return -1;
+    if (hdr->data_size == 0 || hdr->data_size > 1024 * 1024)
+        return -1;
+
+    buf_pages = (hdr->data_size + 4095) / 4096;
+    data_phys = pmm_alloc_contiguous(buf_pages);
+    if (!data_phys)
+        return -1;
+    data_ptr = (uint8_t *)data_phys;
+
+    rc = vfs_read(f, HIVE_HEADER_SIZE, hdr->data_size, data_ptr);
+    if (rc < (int)hdr->data_size) {
+        klog(LOG_WARN, "hive", "Short data read in '%s': got %d, expected %u",
+             path, rc, (uint64_t)hdr->data_size);
+        hive_free_pages(data_phys, buf_pages);
+        return -1;
+    }
+
+    if (hive_validate_payload(data_ptr, hdr->data_size, hdr->total_keys,
+                              hdr->total_values, parsed_keys_out,
+                              parsed_values_out) < 0) {
+        klog(LOG_WARN, "hive", "Payload validation failed in '%s'", path);
+        hive_free_pages(data_phys, buf_pages);
+        return -1;
+    }
+
+    *data_out = data_ptr;
+    *phys_out = data_phys;
+    *pages_out = buf_pages;
+    return 0;
+}
+
+static int hive_read_valid_header(struct vfs_node *f, const char *path,
+                                  hive_header_t *hdr)
+{
+    uint32_t saved_crc, computed_crc;
+    int rc;
+
+    if (!f || !path || !hdr) return -1;
+
+    rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)hdr);
+    if (rc < (int)HIVE_HEADER_SIZE) return -1;
+    if (hdr->magic != HIVE_MAGIC) return -1;
+    if (hdr->version != HIVE_VERSION) return -1;
+    if (hdr->data_offset != HIVE_HEADER_SIZE) return -1;
+
+    saved_crc = hdr->checksum;
+    hdr->checksum = 0;
+    computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
+    hdr->checksum = saved_crc;
+    if (computed_crc != saved_crc) return -1;
+
+    return 0;
+}
+
+/* Check if a hive file has a valid header and a fully parseable payload. */
 static int hive_validate_file(const char *path)
 {
     struct vfs_node *f;
     hive_header_t hdr;
-    uint32_t saved_crc, computed_crc;
-    int rc;
+    uint8_t *data_ptr = (uint8_t *)0;
+    uintptr_t data_phys = 0;
+    uint32_t buf_pages = 0;
+    int rc = -1;
 
     f = vfs_open(path, HIVE_VFS_O_READ);
     if (!f) return -1;
 
-    rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)&hdr);
+    if (hive_read_valid_header(f, path, &hdr) == 0 &&
+        hive_read_validated_payload(f, path, &hdr, &data_ptr, &data_phys,
+                                    &buf_pages, (uint32_t *)0,
+                                    (uint32_t *)0) == 0)
+        rc = 0;
+
     vfs_close(f);
-    if (rc < (int)HIVE_HEADER_SIZE) return -1;
-    if (hdr.magic != HIVE_MAGIC) return -1;
-    if (hdr.version != HIVE_VERSION) return -1;
-
-    saved_crc = hdr.checksum;
-    hdr.checksum = 0;
-    computed_crc = hive_crc32((const uint8_t *)&hdr, HIVE_HEADER_SIZE);
-    if (computed_crc != saved_crc) return -1;
-
-    return 0;  /* valid */
+    hive_free_pages(data_phys, buf_pages);
+    return rc;
 }
 
 /* Try to recover from a journal or backup file.
@@ -3441,7 +3708,7 @@ static const char *hive_best_source(const char *filepath,
     hive_str_append(log_path, 160, filepath, ".log");
     hive_str_append(bak_path, 160, filepath, ".bak");
 
-    /* 1. Check journal -- if valid, a crash happened mid-write */
+    /* 1. Check journal -- if fully valid, a crash happened mid-write */
     if (hive_validate_file(log_path) == 0) {
         klog(LOG_WARN, "hive", "Recovering from journal: %s", log_path);
         /* Copy journal to main hive to complete the interrupted write */
@@ -3465,66 +3732,6 @@ static const char *hive_best_source(const char *filepath,
     return (const char *)0;
 }
 
-/* ---- Deserialization ---- */
-
-static int hive_deserialize_key(hive_buf_t *buf, reg_key_t *parent,
-                                uint32_t *loaded_values)
-{
-    uint16_t name_len, val_count, child_count;
-    char name[REG_MAX_KEY_NAME];
-    reg_key_t *key;
-    uint16_t vi, ci;
-
-    /* Read key record */
-    if (hive_buf_read_u16(buf, &name_len) < 0) return -1;
-    if (name_len >= REG_MAX_KEY_NAME) return -1;
-    if (hive_buf_read_bytes(buf, (uint8_t *)name, name_len) < 0) return -1;
-    name[name_len] = '\0';
-    if (hive_buf_read_u16(buf, &val_count) < 0) return -1;
-    if (hive_buf_read_u16(buf, &child_count) < 0) return -1;
-
-    /* Create or find the key under parent */
-    key = reg_find_child(parent, name);
-    if (!key)
-        key = reg_create_child(parent, name);
-    if (!key) return -1;
-
-    /* Read values */
-    for (vi = 0; vi < val_count; vi++) {
-        uint16_t vname_len;
-        char vname[REG_MAX_VALUE_NAME];
-        uint32_t vtype, vdata_size;
-
-        if (hive_buf_read_u16(buf, &vname_len) < 0) return -1;
-        if (vname_len >= REG_MAX_VALUE_NAME) return -1;
-        if (hive_buf_read_bytes(buf, (uint8_t *)vname, vname_len) < 0) return -1;
-        vname[vname_len] = '\0';
-        if (hive_buf_read_u32(buf, &vtype) < 0) return -1;
-        if (hive_buf_read_u32(buf, &vdata_size) < 0) return -1;
-
-        if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
-            uint8_t vdata[REG_MAX_VALUE_SIZE];
-            if (hive_buf_read_bytes(buf, vdata, vdata_size) < 0) return -1;
-            if (reg_set_value_direct(key, vname, vtype, vdata, vdata_size) == ERROR_SUCCESS)
-                (*loaded_values)++;
-        } else if (vdata_size == 0) {
-            if (reg_set_value_direct(key, vname, vtype, (const uint8_t *)0, 0) == ERROR_SUCCESS)
-                (*loaded_values)++;
-        } else {
-            /* Skip oversized values */
-            buf->pos += vdata_size;
-        }
-    }
-
-    /* Recurse into children */
-    for (ci = 0; ci < child_count; ci++) {
-        if (hive_deserialize_key(buf, key, loaded_values) < 0)
-            return -1;
-    }
-
-    return 0;
-}
-
 /* ---- hive_load ---- */
 
 int hive_load(const char *filepath, reg_key_t *root)
@@ -3533,10 +3740,11 @@ int hive_load(const char *filepath, reg_key_t *root)
     hive_header_t hdr_obj;
     hive_header_t *hdr = &hdr_obj;
     uint32_t saved_crc, computed_crc;
-    uint32_t buf_pages;
-    uintptr_t data_phys;
-    uint8_t *data_ptr;
+    uint32_t buf_pages = 0;
+    uintptr_t data_phys = 0;
+    uint8_t *data_ptr = (uint8_t *)0;
     hive_buf_t deser;
+    uint32_t parsed_keys = 0, parsed_values = 0;
     uint32_t loaded_values = 0;
     int rc;
 
@@ -3571,11 +3779,10 @@ int hive_load(const char *filepath, reg_key_t *root)
         return -1;
     }
 
-    /* Validate CRC32 */
-    saved_crc = hdr->checksum;
-    hdr->checksum = 0;
-    computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
-    if (computed_crc != saved_crc) {
+    if (hive_read_valid_header(f, filepath, hdr) < 0) {
+        saved_crc = hdr->checksum;
+        hdr->checksum = 0;
+        computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
         klog(LOG_WARN, "hive", "CRC32 mismatch in '%s': file=0x%x computed=0x%x",
              filepath, (uint64_t)saved_crc, (uint64_t)computed_crc);
         vfs_close(f);
@@ -3590,27 +3797,22 @@ int hive_load(const char *filepath, reg_key_t *root)
         return -1;
     }
 
-    /* Allocate buffer for key/value data from PMM */
-    buf_pages = (hdr->data_size + 4095) / 4096;
-    data_phys = pmm_alloc_contiguous(buf_pages);
-    if (!data_phys) {
-        klog(LOG_ERROR, "hive", "Failed to alloc %u pages for hive load", (uint64_t)buf_pages);
+    if (hive_read_validated_payload(f, filepath, hdr, &data_ptr, &data_phys,
+                                    &buf_pages, &parsed_keys,
+                                    &parsed_values) < 0) {
+        klog(LOG_WARN, "hive", "Invalid hive payload in '%s'", filepath);
         vfs_close(f);
         return -1;
     }
-    data_ptr = (uint8_t *)data_phys;
-
-    /* Read key/value data */
-    rc = vfs_read(f, HIVE_HEADER_SIZE, hdr->data_size, data_ptr);
     vfs_close(f);
-    if (rc < (int)hdr->data_size) {
-        klog(LOG_WARN, "hive", "Short data read in '%s': got %d, expected %u",
-             filepath, rc, (uint64_t)hdr->data_size);
-        {
-            uint32_t p;
-            for (p = 0; p < buf_pages; p++)
-                pmm_free_frame(data_phys + p * 4096);
-        }
+
+    if (parsed_keys > 0 &&
+        parsed_keys - 1 > (REG_KEY_POOL_SIZE - reg_key_pool_next)) {
+        hive_free_pages(data_phys, buf_pages);
+        return -1;
+    }
+    if (parsed_values > (REG_VALUE_POOL_SIZE - reg_value_pool_next)) {
+        hive_free_pages(data_phys, buf_pages);
         return -1;
     }
 
@@ -3619,57 +3821,12 @@ int hive_load(const char *filepath, reg_key_t *root)
     deser.pos = 0;
     deser.cap = hdr->data_size;
 
-    /* The root key itself is the first record -- but we already have the root,
-     * so we deserialize as if root's children start from the file. */
-    {
-        uint16_t root_name_len, root_val_count, root_child_count;
-        uint16_t vi, ci;
-
-        /* Read the root key record (skip it, we already have the root) */
-        if (hive_buf_read_u16(&deser, &root_name_len) < 0) goto fail;
-        deser.pos += root_name_len;  /* skip name (already known) */
-        if (hive_buf_read_u16(&deser, &root_val_count) < 0) goto fail;
-        if (hive_buf_read_u16(&deser, &root_child_count) < 0) goto fail;
-
-        /* Read root's values */
-        for (vi = 0; vi < root_val_count; vi++) {
-            uint16_t vname_len;
-            char vname[REG_MAX_VALUE_NAME];
-            uint32_t vtype, vdata_size;
-
-            if (hive_buf_read_u16(&deser, &vname_len) < 0) goto fail;
-            if (vname_len >= REG_MAX_VALUE_NAME) goto fail;
-            if (hive_buf_read_bytes(&deser, (uint8_t *)vname, vname_len) < 0) goto fail;
-            vname[vname_len] = '\0';
-            if (hive_buf_read_u32(&deser, &vtype) < 0) goto fail;
-            if (hive_buf_read_u32(&deser, &vdata_size) < 0) goto fail;
-
-            if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
-                uint8_t vdata[REG_MAX_VALUE_SIZE];
-                if (hive_buf_read_bytes(&deser, vdata, vdata_size) < 0) goto fail;
-                if (reg_set_value_direct(root, vname, vtype, vdata, vdata_size) == ERROR_SUCCESS)
-                    loaded_values++;
-            } else if (vdata_size == 0) {
-                if (reg_set_value_direct(root, vname, vtype, (const uint8_t *)0, 0) == ERROR_SUCCESS)
-                    loaded_values++;
-            } else {
-                deser.pos += vdata_size;
-            }
-        }
-
-        /* Deserialize children */
-        for (ci = 0; ci < root_child_count; ci++) {
-            if (hive_deserialize_key(&deser, root, &loaded_values) < 0)
-                goto fail;
-        }
-    }
+    if (hive_parse_payload(&deser, root, &parsed_keys, &parsed_values,
+                           &loaded_values, 1) < 0)
+        goto fail;
 
     /* Free PMM buffer */
-    {
-        uint32_t p;
-        for (p = 0; p < buf_pages; p++)
-            pmm_free_frame(data_phys + p * 4096);
-    }
+    hive_free_pages(data_phys, buf_pages);
 
     klog(LOG_DEBUG, "hive", "Loaded '%s': %u keys, %u values",
          filepath, (uint64_t)hdr->total_keys, (uint64_t)loaded_values);
@@ -3679,11 +3836,7 @@ int hive_load(const char *filepath, reg_key_t *root)
 fail:
     klog(LOG_WARN, "hive", "Corrupt data in '%s' at offset %u",
          filepath, (uint64_t)deser.pos);
-    {
-        uint32_t p;
-        for (p = 0; p < buf_pages; p++)
-            pmm_free_frame(data_phys + p * 4096);
-    }
+    hive_free_pages(data_phys, buf_pages);
     return -1;
 }
 

@@ -1357,6 +1357,186 @@ static void test_registry_notify_deletetree_values(void)
     RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyDTV");
 }
 
+static void hive_test_put_u16(uint8_t *buf, uint32_t *pos, uint16_t v)
+{
+    buf[(*pos)++] = (uint8_t)(v & 0xFF);
+    buf[(*pos)++] = (uint8_t)((v >> 8) & 0xFF);
+}
+
+static void hive_test_put_u32(uint8_t *buf, uint32_t *pos, uint32_t v)
+{
+    buf[(*pos)++] = (uint8_t)(v & 0xFF);
+    buf[(*pos)++] = (uint8_t)((v >> 8) & 0xFF);
+    buf[(*pos)++] = (uint8_t)((v >> 16) & 0xFF);
+    buf[(*pos)++] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+static void hive_test_put_bytes(uint8_t *buf, uint32_t *pos,
+                                const uint8_t *src, uint32_t len)
+{
+    uint32_t i;
+    for (i = 0; i < len; i++)
+        buf[(*pos)++] = src[i];
+}
+
+static void hive_test_put_name(uint8_t *buf, uint32_t *pos, const char *name)
+{
+    uint16_t len = 0;
+    while (name[len])
+        len++;
+    hive_test_put_u16(buf, pos, len);
+    hive_test_put_bytes(buf, pos, (const uint8_t *)name, len);
+}
+
+static void hive_test_put_dword_value(uint8_t *buf, uint32_t *pos,
+                                      const char *name, uint32_t value)
+{
+    hive_test_put_name(buf, pos, name);
+    hive_test_put_u32(buf, pos, REG_DWORD);
+    hive_test_put_u32(buf, pos, sizeof(value));
+    hive_test_put_bytes(buf, pos, (const uint8_t *)&value, sizeof(value));
+}
+
+static uint32_t hive_test_valid_payload(uint8_t *buf)
+{
+    uint32_t pos = 0;
+
+    hive_test_put_name(buf, &pos, "SYSTEM");
+    hive_test_put_u16(buf, &pos, 1);  /* root values */
+    hive_test_put_u16(buf, &pos, 1);  /* root children */
+    hive_test_put_dword_value(buf, &pos, "RootValue", 0x12345678);
+
+    hive_test_put_name(buf, &pos, "Child");
+    hive_test_put_u16(buf, &pos, 1);  /* child values */
+    hive_test_put_u16(buf, &pos, 0);  /* child children */
+    hive_test_put_dword_value(buf, &pos, "ChildValue", 0x90ABCDEF);
+
+    return pos;
+}
+
+static uint32_t hive_test_deep_payload(uint8_t *buf, uint32_t child_keys)
+{
+    uint32_t pos = 0;
+    uint32_t i;
+
+    hive_test_put_name(buf, &pos, "SYSTEM");
+    hive_test_put_u16(buf, &pos, 0);
+    hive_test_put_u16(buf, &pos, child_keys ? 1 : 0);
+
+    for (i = 0; i < child_keys; i++) {
+        hive_test_put_name(buf, &pos, "A");
+        hive_test_put_u16(buf, &pos, 0);
+        hive_test_put_u16(buf, &pos, (i + 1 < child_keys) ? 1 : 0);
+    }
+
+    return pos;
+}
+
+static void test_registry_hive_payload_validation(void)
+{
+    uint8_t buf[160];
+    uint32_t len;
+    int rc;
+
+    len = hive_test_valid_payload(buf);
+    rc = hive_validate_payload_for_test(buf, len, 2, 2);
+    TEST_ASSERT(rc == 0, "hive payload validator accepts exact valid payload");
+
+    buf[len] = 0xA5;
+    rc = hive_validate_payload_for_test(buf, len + 1, 2, 2);
+    TEST_ASSERT(rc != 0, "hive payload validator rejects trailing bytes");
+
+    rc = hive_validate_payload_for_test(buf, len, 2, 3);
+    TEST_ASSERT(rc != 0, "hive payload validator rejects value-count mismatch");
+}
+
+static void test_registry_hive_payload_oversized_value(void)
+{
+    uint8_t buf[64];
+    uint32_t pos = 0;
+    int rc;
+
+    hive_test_put_name(buf, &pos, "SYSTEM");
+    hive_test_put_u16(buf, &pos, 1);
+    hive_test_put_u16(buf, &pos, 0);
+    hive_test_put_name(buf, &pos, "TooLarge");
+    hive_test_put_u32(buf, &pos, REG_BINARY);
+    hive_test_put_u32(buf, &pos, REG_MAX_VALUE_SIZE + 1);
+
+    rc = hive_validate_payload_for_test(buf, pos, 1, 1);
+    TEST_ASSERT(rc != 0, "hive payload validator rejects oversized value");
+}
+
+static void test_registry_hive_payload_depth_limit(void)
+{
+    static uint8_t buf[4096];
+    uint32_t len;
+    int rc;
+
+    /* A chain exactly at the parse recursion cap is accepted. */
+    len = hive_test_deep_payload(buf, HIVE_MAX_PARSE_DEPTH);
+    rc = hive_validate_payload_for_test(buf, len, HIVE_MAX_PARSE_DEPTH + 1, 0);
+    TEST_ASSERT(rc == 0, "hive validator accepts a chain at the parse depth cap");
+
+    /* One level past the cap is rejected (fail-closed, no stack overflow). */
+    len = hive_test_deep_payload(buf, HIVE_MAX_PARSE_DEPTH + 1);
+    rc = hive_validate_payload_for_test(buf, len, HIVE_MAX_PARSE_DEPTH + 2, 0);
+    TEST_ASSERT(rc != 0, "hive validator rejects a chain past the parse depth cap");
+}
+
+/* The hive parser must ACCEPT exactly-max (REG_MAX_KEY_NAME /
+ * REG_MAX_VALUE_NAME = 255-char) names that the on-disk writer can legally
+ * emit, and reject only names longer than the max. */
+static void test_registry_hive_payload_max_name(void)
+{
+    static uint8_t buf[1024];
+    char maxname[REG_MAX_KEY_NAME + 1];
+    char overname[REG_MAX_KEY_NAME + 2];
+    uint32_t pos = 0;
+    int rc, i;
+
+    for (i = 0; i < REG_MAX_KEY_NAME; i++) maxname[i] = 'K';
+    maxname[REG_MAX_KEY_NAME] = '\0';
+
+    /* root SYSTEM: 0 values, 1 child; child has a 255-char name + one value
+     * whose name is also 255 chars. */
+    hive_test_put_name(buf, &pos, "SYSTEM");
+    hive_test_put_u16(buf, &pos, 0);   /* root values  */
+    hive_test_put_u16(buf, &pos, 1);   /* root children */
+    hive_test_put_name(buf, &pos, maxname);
+    hive_test_put_u16(buf, &pos, 1);   /* child values  */
+    hive_test_put_u16(buf, &pos, 0);   /* child children */
+    hive_test_put_dword_value(buf, &pos, maxname, 0x11223344);
+
+    rc = hive_validate_payload_for_test(buf, pos, 2, 1);
+    TEST_ASSERT(rc == 0, "hive validator accepts exactly-max (255) key + value names");
+
+    /* A 256-char (over-max) name is still rejected. */
+    for (i = 0; i < REG_MAX_KEY_NAME + 1; i++) overname[i] = 'K';
+    overname[REG_MAX_KEY_NAME + 1] = '\0';
+    pos = 0;
+    hive_test_put_name(buf, &pos, "SYSTEM");
+    hive_test_put_u16(buf, &pos, 0);
+    hive_test_put_u16(buf, &pos, 1);
+    hive_test_put_name(buf, &pos, overname);
+    hive_test_put_u16(buf, &pos, 0);
+    hive_test_put_u16(buf, &pos, 0);
+
+    rc = hive_validate_payload_for_test(buf, pos, 2, 0);
+    TEST_ASSERT(rc != 0, "hive validator rejects over-max (256) key name");
+
+    /* The payload ROOT record also carries a full key name (up to 255); a hive
+     * rooted at a max-length key name must round-trip, not be capped at the
+     * header root_name[64] quick-id size. */
+    pos = 0;
+    hive_test_put_name(buf, &pos, maxname);   /* 255-char root name */
+    hive_test_put_u16(buf, &pos, 0);          /* root values   */
+    hive_test_put_u16(buf, &pos, 0);          /* root children */
+
+    rc = hive_validate_payload_for_test(buf, pos, 1, 0);
+    TEST_ASSERT(rc == 0, "hive validator accepts a 255-char root key name");
+}
+
 void test_register_registry(void)
 {
     test_suite_register_cat("Registry: CopyTree", test_registry_copytree, TEST_CAT_ABI);
@@ -1396,6 +1576,16 @@ void test_register_registry(void)
     test_suite_register_cat("Registry: NtNotifyChangeKey pending", test_nt_notify_change_key_pending, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtUnloadKey invalid", test_nt_unload_key_invalid, TEST_CAT_ABI);
     test_suite_register_cat("Registry: advanced SSDT registered", test_nt_registry_advanced_registered, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: hive payload validation", test_registry_hive_payload_validation, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: hive oversized value rejected",
+                            test_registry_hive_payload_oversized_value,
+                            TEST_CAT_ABI);
+    test_suite_register_cat("Registry: hive payload depth limit",
+                            test_registry_hive_payload_depth_limit,
+                            TEST_CAT_ABI);
+    test_suite_register_cat("Registry: hive max-length names",
+                            test_registry_hive_payload_max_name,
+                            TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

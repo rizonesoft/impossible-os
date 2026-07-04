@@ -73,8 +73,8 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [/]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [/]   |
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [/]   |
-| 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
-| ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [ ]   |
+| 💎  |   7   | `regedit` shell tool                               | §4                           |  [/]   |
+| ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [/]   |
 | ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8                   |  [ ]   |
 | ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | §9                           |  [ ]   |
 | 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-12 §14, §15         |  [ ]   |
@@ -444,28 +444,37 @@ title: "TODO-14 -- Registry System Completion"
 
 **Test checkpoint:** `regedit list HKLM\SYSTEM\Display` → shows Width/Height/Depth with types. `regedit set HKLM\Test val1 REG_DWORD 42` + `regedit query HKLM\Test val1` → `42 (REG_DWORD)`. `regedit delete HKLM\Test` → key removed. `regedit tree HKLM --depth 2` → ASCII tree output. Invalid path → `"Error: key not found: ..."`. Test on: QEMU WHPX + TCG.
 
+> **Notes:**
+> - Deferred: a truthful `regedit` cannot be shipped as a shell stub today. User-mode `win32.h` explicitly excludes registry APIs, `cmd.exe` has no argv-preserving external command path for a standalone `regedit.exe`, and the live registry NT surface still has §4 gaps (`NtNotifyChangeKey` stub, HKEY-as-raw-pointer handles, UTF-16 decode, missing `NtSetInformationKey`).
+> - `export`/`import` are also blocked by §6, where `reg_import`/`reg_export` are still unimplemented. Shipping only list/query/set/delete/tree would make the §7 deliverable falsely complete because the section contract explicitly includes export/import.
+> **Verified:** 2026-07-04 | deferral evidence checked against `user/include/win32.h`, `user/cmd.c`, `src/kernel/nt/nt_registry.c`, and §4/§6 owners | no code change
+> **Deferred:** [H] `regedit` shell tool blocked until the user-mode registry API/handle surface and `.reg` import/export exist; a stub command would be false completeness. -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272); -> XREF: 02-kernel-core/TODO-14 §6 (item: "`regedit import <file>` shell wrapper" at line 404)
+> **Quality reviewed:** 2026-07-04 | Codex runner review loop (design, adversarial, consistency, perf; test-coverage N/A, no behavior change) | 1M fixed (stale review-infra note), 0 deferred
+
 ---
 
 ## 8. Advanced Hive Features
 
-- [ ] Harden `hive_load` value parsing (`registry.c:2515`, nested-key 2371): unchecked `pos += vdata_size` lets a crafted hive move `pos` past `data_size`. Use subtraction bounds + final `pos == data_size` check. XREF: TODO-12 §15.
-- [ ] Make `hive_load` transactional (`registry.c:2504-2546`): a mid-parse failure leaves partial live-key mutations. Parse into a scratch subtree or track created/overwritten keys to restore. XREF: TODO-12 §15.
-- [ ] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
-- [ ] Wire `registry_load_hives()` into boot (`boot_storage.c` after defaults, needs C: mounted); this loads on-disk `ExternalEntropy`, so the secure-delete items below MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
-- [ ] Secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb (else recovery reintroduces the value = reuse); then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
-- [ ] Per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot in `entropy_external_consume()`. -> XREF: `01-boot-platform/TODO-12 §9`
-- [ ] Recovery tests (with the secure-delete work): post-consume main-hive corruption must NOT reintroduce `ExternalEntropy`; an unrelated-hive flush failure must NOT discard a deleted SYSTEM one-shot.
-- [ ] Maintain two alternating journal files: `SYSTEM.hive.log1` and `SYSTEM.hive.log2`; current active log tracked in hive header `active_log` byte (0=log1, 1=log2)
-- [ ] Write cycle: dirty pages + header written to active log → `fsync` → commit marker written → `fsync` → copy dirty pages into main hive file → clear journal → switch active log to the other file
-- [ ] Recovery: on mount, check both log files for a valid commit marker; use the one with the higher sequence number; if both are valid but different, the newer one wins; if neither has a commit marker, hive is clean
-- [ ] Advantage over single-log WAJ: if a crash occurs while clearing the journal, the other log still has the previous good state; matches Windows NT `.LOG1`/`.LOG2` behaviour exactly
+- [x] Harden `hive_load` value parsing (`registry.c:2515`, nested-key 2371): unchecked `pos += vdata_size` lets a crafted hive move `pos` past `data_size`. Use subtraction bounds + final `pos == data_size` check. XREF: TODO-12 §15.
+- [/] Make `hive_load` transactional -- PARTIAL: validate pass (apply=0) catches malformed input before any live mutation, but apply still mutates incrementally with no rollback; full staging -> §14 reload-transactionality. XREF: TODO-12 §15.
+- [x] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
+- [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (16) for 8 KiB stack safety; full REG_MAX_KEY_DEPTH (512) support needs an iterative/heap-backed parse stack. -> XREF: 02-kernel-core/TODO-14 §10
+- [/] DEFERRED (boot-mount coupled, GPF history): wire `registry_load_hives()` into boot after defaults (needs C:); loads on-disk `ExternalEntropy`, so secure-delete MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (with load trio): secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb; then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (with load trio): per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (needs secure-delete above): recovery tests -- post-consume corruption must NOT reintroduce `ExternalEntropy`; unrelated-hive flush failure must NOT discard a one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (with boot-wiring): registry_load_hives double-reads -- hive_best_source validates the full candidate, then hive_load re-reads/re-parses; reuse the validated buffer. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (recovery path needs the boot-mount wiring above): two alternating journal files `SYSTEM.hive.log1`/`log2`; active log tracked in hive header `active_log` byte (0=log1, 1=log2). -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (dual-log): write cycle -- dirty pages + header to active log, fsync, commit marker, fsync, copy into main hive, clear journal, switch active log. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (dual-log): recovery -- on mount check both logs for a valid commit marker; higher sequence number wins; neither marker = hive clean. -> XREF: `01-boot-platform/TODO-12 §9`
+- [/] DEFERRED (dual-log): crash while clearing journal leaves the other log with prior good state; matches Windows NT `.LOG1`/`.LOG2` exactly. -> XREF: `01-boot-platform/TODO-12 §9`
 
-- [ ] Add `uint8_t dirty_bitmap[HIVE_MAX_PAGES / 8]` to the in-memory hive struct; each bit corresponds to one 4 KiB hive page; set on every mutation that touches a page
-- [ ] `hive_flush_incremental()` -- only write dirty pages to disk (seek+write each dirty 4 KiB page); clear bitmap after write; vs. the current `hive_flush()` which rewrites the entire hive from scratch
-- [ ] Speedup: a single `RegSetValueEx` call on a 10 MiB hive flushes 4 KiB instead of 10 MiB; critical for fast boot (many small writes during init)
-- [ ] Lazy writer timer: call `hive_flush_incremental` every 5 s from a kernel timer DPC (→ XREF `TODO-07-irql-model-dpcs.md §4`); also called from `RegFlushKey` and the shutdown path
+- [/] DEFERRED (dirty_bitmap is cross-CPU shared state; needs §14 registry SMP lock first): `uint8_t dirty_bitmap[HIVE_MAX_PAGES / 8]` on the hive struct, bit per 4 KiB page, set on every mutation. -> XREF: 02-kernel-core/TODO-14 §14
+- [/] DEFERRED (needs §14 lock + dirty_bitmap): `hive_flush_incremental()` writes only dirty pages (seek+write each dirty 4 KiB page), clears bitmap; vs current full-rewrite `hive_flush()`. -> XREF: 02-kernel-core/TODO-14 §14
+- [/] DEFERRED (with delta-flush): speedup -- a single `RegSetValueEx` on a 10 MiB hive flushes 4 KiB not 10 MiB; critical for fast boot. -> XREF: 02-kernel-core/TODO-14 §14
+- [/] DEFERRED (with delta-flush): lazy writer -- call `hive_flush_incremental` every 5 s from a timer DPC, plus `RegFlushKey`/shutdown paths (DPC infra ready). -> XREF: `02-kernel-core/TODO-07 §4`
 
-- [ ] `chkregistry <hive_path>` shell command:
+- [/] DEFERRED (user-mode shell has no registry/hive parse surface; same block as §7 regedit -- needs advapi32 trampoline / user-mode hive parser) -> XREF: 02-kernel-core/TODO-14 §7 -- `chkregistry <hive_path>` shell command:
   - Open hive file directly (not via the live registry)
   - Validate header CRC32; check `magic`, `version`, `key_count`, `value_count` fields
   - Walk all `reg_key_t` entries: verify parent pointers are valid, verify child-list linkage is consistent (no cycles, no dangling pointers)
@@ -473,18 +482,25 @@ title: "TODO-14 -- Registry System Completion"
   - Report: total keys, total values, errors found, estimated bytes wasted (deleted pool slots that could be compacted)
   - `--fix` flag: calls `hive_compact` (§8) on a copy and replaces the original if compact succeeds
 
-- [ ] **Format versioning**: hive header `version` field (currently 1); `registry_init` reads version; if version > current code supports → log warning + mount read-only; if version < supported → auto-migrate (bump version, add any new header fields at the end of the header page)
-- [ ] **Compaction** ⭐ -- `hive_compact(hive)`:
+- [/] DEFERRED (pairs with compaction) **Format versioning**: hive header `version`; `registry_init` reads it; version > supported -> read-only mount; version < supported -> auto-migrate. -> XREF: 02-kernel-core/TODO-14 §10
+- [/] DEFERRED (pool is monotonic bump-only, no live-count; slot reclaim + util<60% trigger need a non-monotonic allocator first) **Compaction** ⭐ -- `hive_compact(hive)`:
   - Allocate new hive buffer
   - Walk all live (non-deleted) `reg_key_t` and `reg_value_t` entries in BFS order; pack them tightly into the new buffer
   - Write new hive atomically: write to `.hive.tmp` → fsync → rename over old file (atomic on IXFS/NTFS)
   - Triggered automatically when pool utilisation < 60% (many deletions have occurred) or by `chkregistry --fix`
   - Reclaims memory: a registry with 10 000 creations and 8 000 deletions compacts from 10 000 slots to 2 000 slots
 
-- [ ] Boot lifecycle: change `registry_init()` (`registry.c:272`) `void`→`boot_result_t`, return BOOT_FATAL on hive-mount/default-population failure so `boot_phase2` branches to recovery. -> XREF: `02-kernel-core/TODO-01 §4,§8`
-- [ ] Commit: `"kernel/registry: dual-log WAJ, incremental delta flush, chkregistry, hive compaction"`
+- [x] Boot lifecycle: `registry_init()` now `boot_result_t` (registry.c:296), BOOT_FATAL on root-key alloc failure wired to the OB/EX recovery branch; default-population best-effort. -> XREF: `02-kernel-core/TODO-01 §4,§8`
+- [x] Commit: `"kernel/registry: registry_init boot_result_t -> boot recovery on root-key alloc failure"`
 
-**Test checkpoint:** Dual-log: corrupt `SYSTEM.hive.log1` mid-write → `registry_init` mounts from `log2`; data intact. Delta flush: modify one value in 1 MiB hive → `hive_flush_incremental` writes exactly 4 KiB (one dirty page). `chkregistry SYSTEM.hive` → reports key/value counts, 0 errors. Compaction: create 10K keys, delete 8K → `hive_compact` reduces pool to ~2K slots. Serial log: `"[REG] Delta flush: %u dirty pages written"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Dual-log: corrupt `SYSTEM.hive.log1` mid-write → `registry_init` mounts from `log2`; data intact. Delta flush: modify one value in 1 MiB hive → `hive_flush_incremental` writes exactly 4 KiB (one dirty page). `chkregistry SYSTEM.hive` → reports key/value counts, 0 errors. Compaction: create 10K keys, delete 8K → `hive_compact` reduces pool to ~2K slots. Serial log: `"[REG] Delta flush: %u dirty pages written"`. Test on: QEMU WHPX + TCG. **This-pass shipped item (registry_init boot_result_t):** boot to `C:\>` on WHPX proves the non-fatal path; the fatal path needs pool corruption to exercise.
+
+> **Test runner:** N/A (registry_init is live boot infra -- forbidden in unit tests) | validation: `bash scripts/test-smoke.sh` boot to `C:\>`
+> **Notes:**
+> - Shipped: `registry_init()` `void`->`boot_result_t` (registry.c:296) -- BOOT_FATAL on root-key alloc failure; boot_storage.c wires it to the recovery branch. Hardening items shipped a prior pass.
+> - Integrates: mirrors the OB/EX gate pattern (`kernel_subsystem_set_ready` + `boot_recovery_show` + `boot_halt`); registry.h gains `kernel/boot_init.h`; default-population stays best-effort.
+> - Downstream: closes the TODO-01 §4/§8 typed-registry_init items; the 3 `[x]` hive_load hardening items close TODO-12 §15's crafted-hive `Accepted:` stamps (swept this commit).
+> - Scope boundary: durability DEFERRED -- delta-flush needs §14 SMP lock; dual-log/load-wiring/secure-delete need boot TODO-12 §9; chkregistry needs user-mode surface (§7); compaction needs a non-monotonic allocator.
 
 ---
 
@@ -613,6 +629,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] Wrap all `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` entry points with read lock (or shared spinlock if available; single spinlock is acceptable for v1)
 - [ ] Protect pool allocators: `reg_alloc_key()`, `reg_alloc_value()`, `reg_alloc_handle()`, `reg_free_handle()` must hold the lock when called (verify callers already hold it, or acquire internally)
 - [ ] Protect `hive_save()` / `hive_load()` / `registry_flush()` / `registry_save_all()` / `registry_load_hives()` with the lock (these walk the entire tree)
+- [ ] `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total records; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
 - [ ] SMP stress test: concurrent `NtCreateKey` + `NtDeleteKey` + `NtEnumerateKey` from multiple tasks; verify no pool corruption, no stale pointer dereference, no duplicate handle allocation
 - [ ] Upgrade to rwlock if profiling shows read contention (deferred; spinlock is correct first step for a 512-key pool)
 - [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, added §2) written on every `reg_walk_path` hop -- this write-heavy read path must hold the §14 write lock or use atomics -> XREF: 02-kernel-core/TODO-14 §2

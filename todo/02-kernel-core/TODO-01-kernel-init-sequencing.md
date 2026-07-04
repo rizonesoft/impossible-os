@@ -221,7 +221,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] `partition_scan_all()` + `partition_mount_filesystems()` wired in Phase 2 before registry and symbol-table init
 - [x] `ahci_setup_interrupts()` is called in Phase 2 after storage driver init
 - [x] `klog_disk_enable()` is wired in Phase 2 after VFS mount path (degraded behavior is handled inside logging path)
-- [/] `registry_init()` is wired after `SUBSYS_VFS`, but typed BOOT_FATAL propagation is still missing because `registry_init()` is `void` today
+- [x] `registry_init()` returns `boot_result_t` -- BOOT_FATAL on root-key alloc failure wired to the OB/EX recovery branch in `boot_storage.c` (readiness published post-population for panic-path safety). Shipped in TODO-14 §8.
 - [x] `symtab_init()` -- load symbol table from disk; BOOT_DEGRADED; BOOT_REQUIRE(SUBSYS_VFS)
 - [x] `mmap_init()` -- user-mode memory map subsystem; BOOT_REQUIRE(SUBSYS_VMM)
 - [x] Time service bootstrap in Phase 2: `mono_clock_init()` + `wall_clock_init()` + `timezone_init()` + `kusd_init()` (→ XREF: [TODO-08 §3](./TODO-08-time-filetime-management.md))
@@ -235,7 +235,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 - [ ] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
   - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - `registry_init()` return-path ownership → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md) (Advanced Hive Features -- owns `registry_load_hives()` boot wiring + dual-log mount; the `void`→`boot_result_t` change belongs with hive-mount-failure semantics, not §2 Advanced Key Operations)
+  - `registry_init()` return-path: `void`→`boot_result_t` SHIPPED (TODO-14 §8, root-key alloc fatal); remaining hive-mount-failure semantics defer with `registry_load_hives()` boot wiring → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md)
   - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
 
 **Test checkpoint:** Boot reaches Phase 2 -- serial shows `[PHASE2]` progress lines `PCI_NET`/`STORAGE_DRV`/`VFS`/`PARTITION`/`BLACKBOX`/`KLOG_DISK`/`OB`/`REGISTRY`/`SYS_SVC`, `C:`/`X:` mount, `[PHASE2] complete`; desktop follows. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -362,7 +362,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
   - [x] `pipe_init()` → [TODO-24 §1](./TODO-24-alpc-message-ports.md)
   - [ ] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
   - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - [ ] `registry_init()` → [TODO-14 §8](./TODO-14-registry-completion.md) (Advanced Hive Features; §2 is Advanced Key Operations and does not own boot lifecycle)
+  - [x] `registry_init()` → [TODO-14 §8](./TODO-14-registry-completion.md) -- returns `boot_result_t`, BOOT_FATAL on root-key alloc failure wired to boot recovery branch
 
 **Test checkpoint:** Grep confirms zero `HV_BAR` in `src/kernel/`, no `fs/vfs.h`/`fs/partition.h` in `boot_interrupts.c`, `kernel_main` = phase0->1->2->3; boot reaches `C:\>` (smoke). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 

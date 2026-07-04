@@ -19,6 +19,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"   /* boot_result_t -- registry_init() propagates BOOT_FATAL */
 
 /* ---- Value types (match Win32 constants) ---- */
 
@@ -70,6 +71,12 @@
 #define DELETE             0x00010000   /* DELETE standard right (RegDeleteKey) */
 #define MAXIMUM_ALLOWED    0x02000000   /* samDesired: grant the maximum the DACL permits */
 #define REG_MAX_KEY_DEPTH  512          /* Max key path depth (backslash-separated levels) */
+/* Recursion cap for the on-disk hive parser (hive_parse_key). Each recursive
+ * frame carries a char name[REG_MAX_KEY_NAME + 1] (256 bytes); the API-level
+ * REG_MAX_KEY_DEPTH would blow the 8 KiB kernel task stack, so hive parsing is
+ * capped well within the stack and rejects deeper hives (fail-closed).
+ * Realistic registry paths are far shallower. */
+#define HIVE_MAX_PARSE_DEPTH 16
 /* GENERIC_* rights (mapped onto KEY_* by reg_effective_access); guarded so a
  * TU that also pulls acl.h / nt_types.h does not double-define. */
 #ifndef GENERIC_READ
@@ -185,8 +192,10 @@ typedef reg_handle_t *HKEY;
 /* ---- Lifecycle API ---- */
 
 /* Initialize the registry: zero pools, create predefined root keys.
- * Must be called once during kernel boot. */
-void registry_init(void);
+ * Must be called once during kernel boot. Returns BOOT_FATAL if the
+ * predefined root keys cannot be allocated (registry unusable -> boot
+ * recovery branch); BOOT_OK otherwise. */
+boot_result_t registry_init(void);
 
 /* ---- Internal: pool statistics (for debug logging) ---- */
 
@@ -534,6 +543,12 @@ int hive_save(reg_key_t *root, const char *filepath);
  * Returns number of values loaded, or -1 on error.
  * On corrupt file: logs warning, returns -1 (caller uses defaults). */
 int hive_load(const char *filepath, reg_key_t *root);
+
+#ifdef KERNEL_TESTS
+int hive_validate_payload_for_test(const uint8_t *data, uint32_t data_size,
+                                   uint32_t expected_keys,
+                                   uint32_t expected_values);
+#endif
 
 /* ---- Hive Disk Layout ---- */
 
