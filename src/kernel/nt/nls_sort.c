@@ -12,8 +12,16 @@
  * ============================================================================ */
 
 #include "kernel/types.h"
+#include "libc/string.h"           /* memcmp -- binary-key comparator */
 #include "kernel/nt/nls_sort.h"
 #include "kernel/nt/nls.h"         /* nls_upcase_char -- the full-BMP fold */
+
+/* Sort-key primary-band radix: 256 minus the two reserved control bytes (0x00
+ * terminator + 0x01 level separator), and the +bias that lifts every payload
+ * byte clear of them. The whole memcmp total-order guarantee rests on the bias
+ * keeping payload bytes >= 0x02, so name these load-bearing values explicitly. */
+#define NLS_SORTKEY_BIAS  2u
+#define NLS_SORTKEY_BASE  (256u - NLS_SORTKEY_BIAS)    /* 254 */
 
 /* ---- length helper (src_len -1 == NUL-terminated) ------------------------ */
 static uint32_t nls_wlen(const uint16_t *src, int32_t src_len)
@@ -56,12 +64,12 @@ int nls_sort_key(const uint16_t *src, int32_t src_len,
      * each biased +2 so no byte is 0x00 or 0x01. */
     for (i = 0; i < len; i++) {
         uint16_t w = nls_upcase_char(src[i]);
-        uint8_t b0 = (uint8_t)(w / (254u * 254u));
-        uint8_t b1 = (uint8_t)((w / 254u) % 254u);
-        uint8_t b2 = (uint8_t)(w % 254u);
-        if (b_put(dst, dst_cap, &n, (uint8_t)(b0 + 2))) return NLS_SORT_ERR_TOO_SMALL;
-        if (b_put(dst, dst_cap, &n, (uint8_t)(b1 + 2))) return NLS_SORT_ERR_TOO_SMALL;
-        if (b_put(dst, dst_cap, &n, (uint8_t)(b2 + 2))) return NLS_SORT_ERR_TOO_SMALL;
+        uint8_t b0 = (uint8_t)(w / (NLS_SORTKEY_BASE * NLS_SORTKEY_BASE));
+        uint8_t b1 = (uint8_t)((w / NLS_SORTKEY_BASE) % NLS_SORTKEY_BASE);
+        uint8_t b2 = (uint8_t)(w % NLS_SORTKEY_BASE);
+        if (b_put(dst, dst_cap, &n, (uint8_t)(b0 + NLS_SORTKEY_BIAS))) return NLS_SORT_ERR_TOO_SMALL;
+        if (b_put(dst, dst_cap, &n, (uint8_t)(b1 + NLS_SORTKEY_BIAS))) return NLS_SORT_ERR_TOO_SMALL;
+        if (b_put(dst, dst_cap, &n, (uint8_t)(b2 + NLS_SORTKEY_BIAS))) return NLS_SORT_ERR_TOO_SMALL;
     }
     if (b_put(dst, dst_cap, &n, 0x01)) return NLS_SORT_ERR_TOO_SMALL;   /* level separator */
 
@@ -93,6 +101,26 @@ int nls_sort_key_binary(const uint16_t *src, int32_t src_len,
     }
     if (n > 0x7FFFFFFFu) return NLS_SORT_ERR_TOO_SMALL;
     return (int)n;
+}
+
+int nls_sort_key_binary_compare(const uint8_t *a, uint32_t alen,
+                                const uint8_t *b, uint32_t blen)
+{
+    uint32_t m;
+    /* A NULL side is empty: normalize the length to 0 FIRST so the tiebreak
+     * below cannot rank a NULL/non-zero-length input equal to a real key of the
+     * same length (which would collapse distinct keys / break weak ordering). */
+    if (!a) alen = 0;
+    if (!b) blen = 0;
+    m = alen < blen ? alen : blen;
+    if (m) {   /* m > 0 implies both sides non-NULL, so memcmp cannot overread */
+        int c = memcmp(a, b, m);
+        if (c) return c < 0 ? -1 : 1;
+    }
+    /* Common prefix equal: shorter sorts first. */
+    if (alen < blen) return -1;
+    if (alen > blen) return 1;
+    return 0;
 }
 
 /* ---- Normalization (ASCII + Latin-1) ------------------------------------- */

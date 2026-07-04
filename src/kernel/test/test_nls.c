@@ -1214,6 +1214,34 @@ static void test_nls_sort_binary(void)
     TEST_ASSERT_EQ((uint64_t)(sk_cmp(k3, l3, k4, l4) < 0), 1u, "A < a (binary ordinal)");
 }
 
+static void test_nls_sort_binary_compare(void)
+{
+    /* The shipped length-aware comparator: min-length memcmp then shorter-first,
+     * so a prefix ranks BEFORE its extension (a bare memcmp would tie them). */
+    const uint16_t app[3]   = { 'a', 'p', 'p' };
+    const uint16_t apple[5] = { 'a', 'p', 'p', 'l', 'e' };
+    uint8_t k1[16], k2[16];
+    int l1 = nls_sort_key_binary(app, 3, k1, 16);
+    int l2 = nls_sort_key_binary(apple, 5, k2, 16);
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key_binary_compare(k1, l1, k2, l2), (uint64_t)(int64_t)-1,
+                   "app < apple (prefix sorts first)");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key_binary_compare(k2, l2, k1, l1), 1u,
+                   "apple > app (antisymmetric)");
+    TEST_ASSERT_EQ((uint64_t)nls_sort_key_binary_compare(k1, l1, k1, l1), 0u,
+                   "equal keys compare 0");
+    /* NULL/empty side sorts first, no deref. */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key_binary_compare((const uint8_t *)0, 0, k1, l1),
+                   (uint64_t)(int64_t)-1, "empty < non-empty");
+    TEST_ASSERT_EQ((uint64_t)nls_sort_key_binary_compare((const uint8_t *)0, 0, (const uint8_t *)0, 0), 0u,
+                   "empty == empty");
+    /* A NULL side with a STALE non-zero length is still empty (sorts first), not
+     * equal to a real same-length key -- else weak ordering collapses. */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key_binary_compare((const uint8_t *)0, l1, k1, l1),
+                   (uint64_t)(int64_t)-1, "NULL/stale-len < real same-length key");
+    TEST_ASSERT_EQ((uint64_t)nls_sort_key_binary_compare(k2, l2, (const uint8_t *)0, l2), 1u,
+                   "real key > NULL/stale-len");
+}
+
 static void test_nls_sort_sizing(void)
 {
     const uint16_t s[3] = { 'a', 'b', 'c' };
@@ -1510,6 +1538,8 @@ void test_register_nls(void)
                             test_nls_sort_prefix_order, TEST_CAT_NLS);
     test_suite_register_cat("nls: sort key binary ordinal",
                             test_nls_sort_binary, TEST_CAT_NLS);
+    test_suite_register_cat("nls: sort key binary compare",
+                            test_nls_sort_binary_compare, TEST_CAT_NLS);
     test_suite_register_cat("nls: sort key sizing",
                             test_nls_sort_sizing, TEST_CAT_NLS);
     test_suite_register_cat("nls: normalize NFD/NFC round-trip",

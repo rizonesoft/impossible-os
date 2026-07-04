@@ -1,10 +1,15 @@
 /* ============================================================================
  * nls_sort.h -- Invariant sort keys, normalization policy, FoldStringW
  *
- * The collation / normalization layer of the atom/NLS/locale subsystem. Builds
- * on the section-2 invariant fold authority (rtl_upcase_char). Kernel-internal
- * like the other NLS layers; the Win32 LCMapStringEx / FoldStringW / CompareStringEx
- * export + SSDT surface is owned by the NLS native-syscall section, not here.
+ * The collation / normalization layer of the atom/NLS/locale subsystem. Sort
+ * keys fold through nls_upcase_char (the section-2 compiled ASCII/Latin-1 fold
+ * PLUS the section-4 full-BMP NLS table when loaded), so U+0100+ key bytes are
+ * table-version-dependent -- an ephemeral key is compare-then-discard, not
+ * persisted across a table reload (as with Windows LCMAP_SORTKEY vs the NLS
+ * version). The OB/registry code-unit-exact security compare is a SEPARATE path
+ * (rtl_upcase_char), NOT these keys. Kernel-internal like the other NLS layers;
+ * the Win32 LCMapStringEx / FoldStringW / CompareStringEx export + SSDT surface
+ * is owned by the NLS native-syscall section, not here.
  *
  * Normalization POLICY: the kernel does NOT silently normalize object names --
  * the Object Manager / Registry compare code-unit-exact through the section-2
@@ -54,13 +59,22 @@ int nls_sort_key(const uint16_t *src, int32_t src_len,
 int nls_sort_key_binary(const uint16_t *src, int32_t src_len,
                         uint8_t *dst, uint32_t dst_cap);
 
+/* nls_sort_key_binary_compare -- the length-aware comparator the terminator-less
+ * binary key requires (min-length memcmp, then shorter-sorts-first). Ships with
+ * the key so callers do not each re-derive it (a bare memcmp would rank a prefix
+ * EQUAL to its extension). Returns -1 / 0 / +1. A NULL side with a non-zero
+ * length is treated as empty (sorts first). */
+int nls_sort_key_binary_compare(const uint8_t *a, uint32_t alen,
+                                const uint8_t *b, uint32_t blen);
+
 /* ---- Normalization (explicit, opt-in) ------------------------------------ */
 #define NLS_NORM_NFC   1   /* canonical composition */
 #define NLS_NORM_NFD   2   /* canonical decomposition */
 
 #define NLS_NORM_ERR_PARAM       (-1)
 #define NLS_NORM_ERR_TOO_SMALL   (-2)
-#define NLS_NORM_ERR_UNSUPPORTED (-3)  /* input has a code unit the kernel range excludes */
+/* out-of-range code unit, OR an in-range sequence outside the 1-starter/1-mark model (see nls_normalize doc) */
+#define NLS_NORM_ERR_UNSUPPORTED (-3)
 #define NLS_NORM_ERR_FORM        (-4)  /* unknown form */
 
 /*
@@ -70,10 +84,13 @@ int nls_sort_key_binary(const uint16_t *src, int32_t src_len,
  * src_len is a WCHAR count, or -1 for NUL-terminated. dst == NULL sizes.
  *
  * Honest coverage: returns NLS_NORM_ERR_UNSUPPORTED if the input contains any
- * code unit outside {U+0000..U+00FF} plus the handled combining marks -- the
- * kernel does NOT guarantee full UAX #15, so a caller must fall back to the
- * user-mode normalizer for the rest of the BMP rather than trust a partial fold.
- * Returns the WCHAR count written, or a negative NLS_NORM_ERR_*.
+ * code unit outside {U+0000..U+00FF} plus the handled combining marks, OR an
+ * in-range sequence the single-starter/single-mark model cannot represent (a
+ * leading mark with no starter, a second mark on one starter, or a base+mark
+ * pair absent from the Latin-1 composition table) -- the kernel does NOT
+ * guarantee full UAX #15, so a caller must fall back to the user-mode normalizer
+ * rather than trust a partial fold. Returns the WCHAR count written, or a
+ * negative NLS_NORM_ERR_*.
  */
 int nls_normalize(int form, const uint16_t *src, int32_t src_len,
                   uint16_t *dst, uint32_t dst_cap);
