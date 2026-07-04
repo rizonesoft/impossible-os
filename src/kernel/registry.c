@@ -20,6 +20,8 @@
 #include "kernel/nt/nls_cp.h"
 #include "kernel/nt/nls_locale.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char_inline -- canonical compiled fold */
+#include "kernel/security/default_sds.h" /* SeCreateDefaultSD -- registry-key default DACL */
+#include "kernel/time/wall_clock.h"      /* KeQuerySystemTime -- LastWriteTime FILETIME conversion */
 #include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
@@ -117,6 +119,11 @@ static reg_key_t *reg_alloc_key(const char *name)
     if (reg_key_pool_next >= REG_KEY_POOL_SIZE)
         return (reg_key_t *)0;
 
+    /* Soft warning at 90% pool utilization (item: total key count limit). */
+    if (reg_key_pool_next == (REG_KEY_POOL_SIZE * 9) / 10)
+        klog(LOG_WARN, "reg", "key pool at 90%% (%u/%u)",
+             (uint64_t)reg_key_pool_next, (uint64_t)REG_KEY_POOL_SIZE);
+
     k = &reg_key_pool[reg_key_pool_next++];
 
     /* Zero the entire struct first */
@@ -124,6 +131,11 @@ static reg_key_t *reg_alloc_key(const char *name)
 
     /* Set the name */
     reg_strcpy(k->name, name, REG_MAX_KEY_NAME + 1);
+
+    /* Default DACL: SY+BA=Full, BU=Read (static self-relative blob, NOT owned,
+     * never freed).  Forward-looking storage for SeAccessCheck (TODO-15 s5);
+     * tolerates NULL if the security subsystem has not initialized yet. */
+    k->security_descriptor = SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY);
 
     /* Initialize hash buckets to NULL */
     for (i = 0; i < REG_CHILD_BUCKETS; i++)
@@ -670,6 +682,34 @@ static reg_key_t *reg_resolve_key(HKEY hkey)
     return k;
 }
 
+/* ---- KEY_* access-rights enforcement ----
+ *
+ * Every public RegXxx entry point calls this before acting.  The granted mask
+ * is recorded on the handle at open time (reg_alloc_handle); SeAccessCheck is
+ * currently stubbed always-grant (TODO-15 s5 not yet built), so the granted
+ * mask equals what the caller requested via samDesired/DesiredAccess.  Once
+ * SeAccessCheck lands, the open path will narrow the granted mask against the
+ * key's DACL and this per-operation check stays unchanged.
+ *
+ * Predefined root sentinels (HKLM/HKCU/...) carry implicit full access -- boot
+ * code and kernel subsystems address them directly and must not be gated. */
+long reg_check_access(HKEY hKey, uint32_t required_mask)
+{
+    reg_key_t *k;
+
+    if (!hKey) return ERROR_INVALID_HANDLE;
+    if (reg_is_predefined(hKey)) return ERROR_SUCCESS;
+
+    /* User handle: reject freed/tombstoned slots (same rule as resolve). */
+    k = hKey->key;
+    if (!k || k->name[0] == '\0')
+        return ERROR_INVALID_HANDLE;
+
+    if ((hKey->access & required_mask) == required_mask)
+        return ERROR_SUCCESS;
+    return ERROR_ACCESS_DENIED;
+}
+
 /* ---- Path walker ---- */
 
 /* Walk a backslash-separated path from 'start'.
@@ -694,6 +734,12 @@ static reg_key_t *reg_walk_path(reg_key_t *start, const char *path, int create)
         while (*p && *p != '\\' && ci < REG_MAX_KEY_NAME)
             component[ci++] = *p++;
         component[ci] = '\0';
+
+        /* Reject an over-long component rather than truncating it and re-reading
+         * the remainder as phantom sub-components (which would resolve to, or
+         * delete, an unrelated existing chunked path). */
+        if (*p && *p != '\\')
+            return (reg_key_t *)0;
 
         if (ci == 0) break;  /* trailing backslash or empty */
 
@@ -746,6 +792,87 @@ static uint64_t reg_get_uptime_ns(void)
     return uptime_ns();
 }
 
+/* Convert a stored monotonic `last_write_time` (uptime_ns at mutation) to a
+ * Windows FILETIME (100-ns intervals since 1601-01-01) at READ time.  Uses the
+ * current wall-clock anchor minus the monotonic delta since the event; this
+ * avoids the boot-order hazard where registry keys are populated before
+ * wall_clock is sourced (mutation-time KeQuerySystemTime would read 0 there).
+ * Returns 0 for never-written keys or before the wall clock is sourced. */
+uint64_t reg_last_write_filetime(uint64_t stored_uptime_ns)
+{
+    uint64_t now_ns, delta_100ns;
+    uint64_t now_ft;
+
+    if (stored_uptime_ns == 0)
+        return 0;
+    if (!wall_clock_time_sourced())
+        return 0;
+
+    now_ft = (uint64_t)KeQuerySystemTime();
+    now_ns = uptime_ns();
+
+    /* Monotonic clock should never go backwards; clamp if it appears to. */
+    if (now_ns <= stored_uptime_ns)
+        return now_ft;
+
+    delta_100ns = (now_ns - stored_uptime_ns) / 100u;
+    if (delta_100ns > now_ft)   /* event predates the FILETIME epoch anchor */
+        return 0;
+    return now_ft - delta_100ns;
+}
+
+/* SeAccessCheck stub: grant what the caller requested.  MAXIMUM_ALLOWED maps
+ * to full access.  A samDesired of 0 maps to full access as well: it is the
+ * legacy "RegCreateKey without Ex" request that many kernel callers use to mean
+ * "give me a working handle", and treating it as no-access would break them.
+ * Non-zero restrictive masks (e.g. KEY_READ) are honored as-is, so a read-only
+ * handle cannot write.  When TODO-15 s5 SeAccessCheck lands, the open path will
+ * narrow the granted mask against the key DACL; the mask returned here is what
+ * reg_check_access enforces per operation. */
+static uint32_t reg_effective_access(uint32_t sam_desired)
+{
+    if (sam_desired == 0 || (sam_desired & MAXIMUM_ALLOWED))
+        return KEY_ALL_ACCESS;
+    return sam_desired;
+}
+
+/* Anti-escalation cap: until SeAccessCheck evaluates the key DACL at open time,
+ * a handle opened FROM another handle cannot gain rights the source handle did
+ * not already hold, so a KEY_READ handle cannot reopen the same subtree as
+ * KEY_ALL_ACCESS and then write.  Predefined roots grant full access. */
+static uint32_t reg_source_access(HKEY source)
+{
+    if (!source || reg_is_predefined(source))
+        return KEY_ALL_ACCESS;
+    return source->access;
+}
+
+/* Reject a subkey path whose depth exceeds REG_MAX_KEY_DEPTH levels or whose
+ * any single component exceeds REG_MAX_KEY_NAME chars.  Returns ERROR_SUCCESS
+ * or ERROR_INVALID_PARAMETER (API limits: key name max, path depth max). */
+static long reg_validate_path_limits(const char *path)
+{
+    uint32_t depth = 0, comp = 0;
+    const char *p;
+
+    if (!path) return ERROR_SUCCESS;
+
+    for (p = path; *p; p++) {
+        if (*p == '\\') {
+            if (comp > 0) depth++;
+            comp = 0;
+            continue;
+        }
+        comp++;
+        if (comp > REG_MAX_KEY_NAME)
+            return ERROR_INVALID_PARAMETER;
+    }
+    if (comp > 0) depth++;
+    if (depth > REG_MAX_KEY_DEPTH)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_SUCCESS;
+}
+
 /* ---- RegOpenKeyEx ---- */
 
 long RegOpenKeyEx(HKEY hKey, const char *lpSubKey, uint32_t ulOptions,
@@ -761,6 +888,12 @@ long RegOpenKeyEx(HKEY hKey, const char *lpSubKey, uint32_t ulOptions,
 
     *phkResult = (HKEY)0;
 
+    {
+        long lim = reg_validate_path_limits(lpSubKey);
+        if (lim != ERROR_SUCCESS)
+            return lim;
+    }
+
     base = reg_resolve_key(hKey);
     if (!base)
         return ERROR_INVALID_HANDLE;
@@ -774,7 +907,11 @@ long RegOpenKeyEx(HKEY hKey, const char *lpSubKey, uint32_t ulOptions,
     if (!target)
         return ERROR_FILE_NOT_FOUND;
 
-    handle = reg_alloc_handle(target, samDesired);
+    /* SeAccessCheck stub grants the requested mask, capped to the source
+     * handle's own grant (anti-escalation); recorded on the handle and
+     * enforced per operation by reg_check_access. */
+    handle = reg_alloc_handle(target,
+                              reg_effective_access(samDesired) & reg_source_access(hKey));
     if (!handle)
         return ERROR_OUTOFMEMORY;
 
@@ -806,9 +943,33 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
     if (!base)
         return ERROR_INVALID_HANDLE;
 
+    /* API limits: reject over-long name components and excessive path depth. */
+    {
+        long lim = reg_validate_path_limits(lpSubKey);
+        if (lim != ERROR_SUCCESS)
+            return lim;
+    }
+
     /* Check if already exists before creating */
     pre_existing = (!lpSubKey || lpSubKey[0] == '\0')
         ? base : reg_walk_path(base, lpSubKey, 0);
+
+    /* Creating a NEW subkey requires KEY_CREATE_SUB_KEY on the parent handle
+     * (opening an existing key does not). */
+    if (!pre_existing && lpSubKey && lpSubKey[0] != '\0') {
+        long acc = reg_check_access(hKey, KEY_CREATE_SUB_KEY);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
+    /* Atomic create-or-fail: reserve the handle slot (key = NULL) BEFORE
+     * linking anything into the tree, so handle-pool exhaustion cannot leave a
+     * freshly-created, handleless key behind (which would later persist via
+     * hive flush).  The reserved slot is not exposed until bound below. */
+    handle = reg_alloc_handle((reg_key_t *)0,
+                              reg_effective_access(samDesired) & reg_source_access(hKey));
+    if (!handle)
+        return ERROR_OUTOFMEMORY;
 
     /* Create (or find) the key */
     if (!lpSubKey || lpSubKey[0] == '\0')
@@ -816,8 +977,10 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
     else
         target = reg_walk_path(base, lpSubKey, 1);
 
-    if (!target)
+    if (!target) {
+        reg_free_handle(handle);
         return ERROR_OUTOFMEMORY;
+    }
 
     /* Update parent's last-write time */
     if (target->parent)
@@ -829,10 +992,7 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
             : REG_CREATED_NEW_KEY;
     }
 
-    handle = reg_alloc_handle(target, samDesired);
-    if (!handle)
-        return ERROR_OUTOFMEMORY;
-
+    handle->key = target;   /* bind the reserved slot to the resolved key */
     *phkResult = handle;
     return ERROR_SUCCESS;
 }
@@ -895,13 +1055,24 @@ static void reg_free_values(reg_key_t *key)
 long RegDeleteKey(HKEY hKey, const char *lpSubKey)
 {
     reg_key_t *base, *target;
+    long acc;
 
     base = reg_resolve_key(hKey);
     if (!base)
         return ERROR_INVALID_HANDLE;
 
+    acc = reg_check_access(hKey, DELETE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
     if (!lpSubKey || lpSubKey[0] == '\0')
         return ERROR_INVALID_PARAMETER;
+
+    {
+        long lim = reg_validate_path_limits(lpSubKey);
+        if (lim != ERROR_SUCCESS)
+            return lim;
+    }
 
     target = reg_walk_path(base, lpSubKey, 0);
     if (!target)
@@ -1077,10 +1248,23 @@ static void reg_delete_subtree(reg_key_t *key)
 long RegDeleteTree(HKEY hKey, const char *lpSubKey)
 {
     reg_key_t *base, *target;
+    long acc;
 
     base = reg_resolve_key(hKey);
     if (!base)
         return ERROR_INVALID_HANDLE;
+
+    /* Destructive: require DELETE on the handle (a read-only handle must not
+     * be able to wipe a subtree). */
+    acc = reg_check_access(hKey, DELETE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
+    {
+        long lim = reg_validate_path_limits(lpSubKey);
+        if (lim != ERROR_SUCCESS)
+            return lim;
+    }
 
     /* If subKey is NULL, delete all children of hKey (but not hKey itself) */
     if (!lpSubKey || lpSubKey[0] == '\0') {
@@ -1166,6 +1350,12 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
     if (!key)
         return ERROR_INVALID_HANDLE;
 
+    {
+        long acc = reg_check_access(hKey, KEY_SET_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
     if (cbData > REG_MAX_VALUE_SIZE)
         return ERROR_INVALID_PARAMETER;
 
@@ -1215,6 +1405,12 @@ long RegQueryValueEx(HKEY hKey, const char *lpValueName,
     if (!key)
         return ERROR_INVALID_HANDLE;
 
+    {
+        long acc = reg_check_access(hKey, KEY_QUERY_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
     v = reg_find_value_in_key(key, lpValueName);
     if (!v)
         return ERROR_FILE_NOT_FOUND;
@@ -1258,6 +1454,18 @@ long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
     base = reg_resolve_key(hKey);
     if (!base)
         return ERROR_INVALID_HANDLE;
+
+    {
+        long acc = reg_check_access(hKey, KEY_QUERY_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
+    {
+        long lim = reg_validate_path_limits(lpSubKey);
+        if (lim != ERROR_SUCCESS)
+            return lim;
+    }
 
     /* Walk to sub-key if specified */
     if (lpSubKey && lpSubKey[0] != '\0')
@@ -1334,10 +1542,15 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
     reg_key_t *key;
     reg_value_t **pp;
     const char *vname;
+    long acc;
 
     key = reg_resolve_key(hKey);
     if (!key)
         return ERROR_INVALID_HANDLE;
+
+    acc = reg_check_access(hKey, KEY_SET_VALUE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
 
     vname = (lpValueName && lpValueName[0] != '\0') ? lpValueName : "";
 
@@ -1425,6 +1638,12 @@ long RegEnumKeyEx(HKEY hKey, uint32_t dwIndex, char *lpName,
     if (!key)
         return ERROR_INVALID_HANDLE;
 
+    {
+        long acc = reg_check_access(hKey, KEY_ENUMERATE_SUB_KEYS);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
     child = reg_get_child_by_index(key, dwIndex);
     if (!child)
         return ERROR_NO_MORE_ITEMS;
@@ -1441,7 +1660,7 @@ long RegEnumKeyEx(HKEY hKey, uint32_t dwIndex, char *lpName,
     }
 
     if (lpftLastWriteTime)
-        *lpftLastWriteTime = child->last_write_time;
+        *lpftLastWriteTime = reg_last_write_filetime(child->last_write_time);
 
     return ERROR_SUCCESS;
 }
@@ -1461,6 +1680,12 @@ long RegEnumValue(HKEY hKey, uint32_t dwIndex, char *lpValueName,
     key = reg_resolve_key(hKey);
     if (!key)
         return ERROR_INVALID_HANDLE;
+
+    {
+        long acc = reg_check_access(hKey, KEY_QUERY_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
 
     v = reg_get_value_by_index(key, dwIndex);
     if (!v)
@@ -1513,11 +1738,16 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
     (void)lpcchClass;
     (void)lpReserved;
     (void)lpcbMaxClassLen;
-    (void)lpcbSecurityDescriptor;
 
     key = reg_resolve_key(hKey);
     if (!key)
         return ERROR_INVALID_HANDLE;
+
+    {
+        long acc = reg_check_access(hKey, KEY_QUERY_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
 
     if (lpcSubKeys)
         *lpcSubKeys = key->child_count;
@@ -1526,7 +1756,11 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
         *lpcValues = key->value_count;
 
     if (lpftLastWriteTime)
-        *lpftLastWriteTime = key->last_write_time;
+        *lpftLastWriteTime = reg_last_write_filetime(key->last_write_time);
+
+    if (lpcbSecurityDescriptor)
+        *lpcbSecurityDescriptor = key->security_descriptor
+            ? SeGetDefaultSDSize(SE_SD_TYPE_REGISTRY_KEY) : 0;
 
     /* Compute max sub-key name length */
     if (lpcbMaxSubKeyLen) {
@@ -2680,6 +2914,69 @@ int registry_flush_checked(void)
         }
     }
     return failures;  /* 0 = all clean, >0 = count of failed hives */
+}
+
+/* ---- RegFlushKey: force an immediate flush of one hive ---- */
+
+long RegFlushKey(HKEY hKey)
+{
+    reg_key_t *key, *cur;
+    uint32_t i;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    /* Flushing forces persistence I/O; require a read right on the handle so a
+     * no-access handle cannot drive disk activity. */
+    {
+        long acc = reg_check_access(hKey, KEY_QUERY_VALUE);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+    }
+
+    /* Volatile keys have no hive backing: flush is a no-op success (Win32). */
+    if (key->flags & REG_FLAG_VOLATILE)
+        return ERROR_SUCCESS;
+
+    /* Nothing persisted yet this boot -- nothing to flush. */
+    if (!registry_ready || !hive_table_inited)
+        return ERROR_SUCCESS;
+    if (!vfs_is_mounted('C'))
+        return ERROR_INVALID_HANDLE;
+
+    /* Walk to the depth-1 child of a root key (the hive root). */
+    cur = key;
+    while (cur && cur->parent && cur->parent->parent)
+        cur = cur->parent;
+
+    /* A persisted-root handle (\Registry\Machine, \Registry\User) covers
+     * several hives; flush all of them rather than returning a no-op that
+     * would silently drop dirty SYSTEM/SOFTWARE/HARDWARE/DEFAULT data.  Only
+     * these two roots back hives -- HKCC and other parentless predefined roots
+     * fall through to the no-matching-hive no-op below. */
+    if (cur == reg_root_hklm || cur == reg_root_hku) {
+        int failures = registry_flush_checked();
+        if (failures > 0)
+            return ERROR_REGISTRY_IO_FAILED;
+        return ERROR_SUCCESS;
+    }
+
+    /* Save only the single hive that contains hKey. */
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        reg_key_t *sub = hive_get_subkey(i);
+        if (sub && sub == cur) {
+            if (hive_save(sub, hive_table[i].path) == 0) {
+                hive_table[i].dirty = 0;
+                return ERROR_SUCCESS;
+            }
+            return ERROR_REGISTRY_IO_FAILED;
+        }
+    }
+
+    /* Key is not under any persisted hive root (predefined-only subtree):
+     * treat as a successful no-op. */
+    return ERROR_SUCCESS;
 }
 
 int registry_persistence_active(void)

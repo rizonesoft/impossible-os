@@ -554,8 +554,120 @@ static void test_registry_latin1_casefold(void)
 }
 
 /* Registration */
+/* Section 1: KEY_* access-rights enforcement -- a KEY_READ handle may query
+ * but not set/delete; a full handle may do both. */
+static void test_registry_access_enforcement(void)
+{
+    HKEY hk;
+    long rc;
+    uint32_t val = 1, out = 0, cb;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\AccessTest", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create AccessTest (full access)");
+    if (rc != ERROR_SUCCESS) return;
+    rc = RegSetValueEx(hk, "V", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(rc == ERROR_SUCCESS, "full handle can set value");
+    RegCloseKey(hk);
+
+    /* Reopen read-only: query allowed, set/delete denied. */
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\AccessTest", 0, KEY_READ, &hk);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "open AccessTest KEY_READ");
+    if (rc != ERROR_SUCCESS) return;
+
+    cb = sizeof(out);
+    rc = RegQueryValueEx(hk, "V", NULL, NULL, (uint8_t *)&out, &cb);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "KEY_READ handle can query");
+    TEST_ASSERT(out == 1, "queried value correct");
+
+    val = 2;
+    rc = RegSetValueEx(hk, "V", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "KEY_READ handle cannot set value");
+
+    rc = RegDeleteValue(hk, "V");
+    TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "KEY_READ handle cannot delete value");
+
+    /* RegDeleteTree from a read-only handle is denied before any deletion. */
+    rc = RegDeleteTree(hk, "AnySub");
+    TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "KEY_READ handle cannot RegDeleteTree");
+
+    /* No escalation: reopening the same key with KEY_ALL_ACCESS from a
+     * KEY_READ handle yields a handle still capped to KEY_READ. */
+    {
+        HKEY hk2;
+        uint32_t d = 3;
+        rc = RegOpenKeyEx(hk, NULL, 0, KEY_ALL_ACCESS, &hk2);
+        TEST_ASSERT(rc == ERROR_SUCCESS, "reopen from read-only handle");
+        if (rc == ERROR_SUCCESS) {
+            rc = RegSetValueEx(hk2, "V", 0, REG_DWORD, (const uint8_t *)&d, sizeof(d));
+            TEST_ASSERT(rc == ERROR_ACCESS_DENIED,
+                        "reopened handle capped to KEY_READ (no escalation)");
+            RegCloseKey(hk2);
+        }
+    }
+    RegCloseKey(hk);
+
+    /* RegFlushKey requires KEY_QUERY_VALUE: a create-only handle is denied
+     * before any persistence I/O (deterministic regardless of C: mount). */
+    {
+        HKEY hk3;
+        rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\AccessTest", 0,
+                          KEY_CREATE_SUB_KEY, &hk3);
+        if (rc == ERROR_SUCCESS) {
+            rc = RegFlushKey(hk3);
+            TEST_ASSERT(rc == ERROR_ACCESS_DENIED,
+                        "RegFlushKey denied without KEY_QUERY_VALUE");
+            RegCloseKey(hk3);
+        }
+    }
+
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\AccessTest");
+}
+
+/* Section 1: API limits -- a key-name component over REG_MAX_KEY_NAME (255)
+ * is rejected; 255 chars is accepted. */
+static void test_registry_api_limits(void)
+{
+    HKEY hk;
+    long rc;
+    char name[300];
+    uint32_t i;
+
+    for (i = 0; i < 257; i++) name[i] = 'A';
+    name[257] = '\0';
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, name, 0, NULL, 0, KEY_ALL_ACCESS,
+                        NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "256+ char key name rejected (create)");
+
+    /* Same limit enforced on the open path (not just create). */
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, name, 0, KEY_READ, &hk);
+    TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "256+ char key name rejected (open)");
+
+    name[255] = '\0';
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, name, 0, NULL, 0, KEY_ALL_ACCESS,
+                        NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "255-char key name accepted");
+    if (rc == ERROR_SUCCESS) {
+        RegCloseKey(hk);
+        RegDeleteKey(HKEY_LOCAL_MACHINE, name);
+    }
+}
+
+/* Section 1: reg_check_access chokepoint -- predefined roots grant implicit
+ * full access; a NULL handle is invalid. */
+static void test_reg_check_access_basic(void)
+{
+    TEST_ASSERT(reg_check_access(HKEY_LOCAL_MACHINE, KEY_ALL_ACCESS) == ERROR_SUCCESS,
+                "predefined handle grants full access");
+    TEST_ASSERT(reg_check_access((HKEY)0, KEY_QUERY_VALUE) == ERROR_INVALID_HANDLE,
+                "NULL handle is invalid");
+}
+
 void test_register_registry(void)
 {
+    test_suite_register_cat("Registry: access enforcement", test_registry_access_enforcement, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: API limits", test_registry_api_limits, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: reg_check_access", test_reg_check_access_basic, TEST_CAT_ABI);
     test_suite_register_cat("Registry: Latin-1 casefold", test_registry_latin1_casefold, TEST_CAT_ABI);
     test_suite_register_cat("Registry: DWORD", test_registry_dword, TEST_CAT_ABI);
     test_suite_register_cat("Registry: string", test_registry_string, TEST_CAT_ABI);

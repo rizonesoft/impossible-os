@@ -51,6 +51,7 @@
 #define ERROR_MORE_DATA        234
 #define ERROR_NO_MORE_ITEMS    259
 #define ERROR_KEY_DELETED     1018
+#define ERROR_REGISTRY_IO_FAILED 1016  /* hive flush/save I/O failure */
 
 /* ---- Access rights (match Win32 subset) ---- */
 
@@ -61,6 +62,11 @@
 #define KEY_SET_VALUE      0x0002
 #define KEY_CREATE_SUB_KEY 0x0004
 #define KEY_ENUMERATE_SUB_KEYS 0x0008
+#define KEY_NOTIFY         0x0010
+#define KEY_CREATE_LINK    0x0020
+#define DELETE             0x00010000   /* DELETE standard right (RegDeleteKey) */
+#define MAXIMUM_ALLOWED    0x02000000   /* samDesired: grant the maximum the DACL permits */
+#define REG_MAX_KEY_DEPTH  512          /* Max key path depth (backslash-separated levels) */
 
 /* ---- Security / key flags ---- */
 
@@ -90,8 +96,9 @@ typedef struct reg_key {
     uint32_t           child_count;  /* Number of child keys         */
     reg_value_t       *values;       /* Linked list of values        */
     uint32_t           value_count;  /* Number of values             */
-    uint64_t           last_write_time; /* PIT ticks at last modification */
+    uint64_t           last_write_time; /* monotonic uptime_ns() at last mutation; converted to FILETIME at query time */
     uint32_t           flags;        /* REG_FLAG_* bits              */
+    const void        *security_descriptor; /* self-relative SD blob; NOT owned (points at the static SeCreateDefaultSD default) -- never freed */
 } reg_key_t;
 
 /* ---- HKEY handle ---- */
@@ -308,6 +315,26 @@ long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
 
 /* Delete a named value from hKey. */
 long RegDeleteValue(HKEY hKey, const char *lpValueName);
+
+/* Check that an open HKEY was granted at least `required_mask` (KEY_* bits).
+ * Predefined root sentinels have implicit full access.  Returns ERROR_SUCCESS
+ * if granted, ERROR_ACCESS_DENIED otherwise, ERROR_INVALID_HANDLE for a NULL
+ * or freed handle.  This is the KEY_* access-rights enforcement chokepoint;
+ * every public RegXxx entry point calls it before acting. */
+long reg_check_access(HKEY hKey, uint32_t required_mask);
+
+/* Convert a stored monotonic last_write_time (uptime_ns at mutation) to a
+ * Windows FILETIME (100-ns since 1601) at read time.  Returns 0 for a
+ * never-written key or before the wall clock is sourced.  Used by RegQueryInfoKey
+ * / RegEnumKeyEx and the NtQueryKey / NtEnumerateKey info-class handlers so the
+ * LastWriteTime they report is a real FILETIME, not raw ticks. */
+uint64_t reg_last_write_filetime(uint64_t stored_uptime_ns);
+
+/* Force an immediate synchronous flush of the single hive containing hKey
+ * (walks the parent chain to the hive root, saves that hive only).  Volatile
+ * keys have no hive backing: returns ERROR_SUCCESS (no-op).  Returns
+ * ERROR_INVALID_HANDLE for a bad handle, or a save-failure code on I/O error. */
+long RegFlushKey(HKEY hKey);
 
 /* ---- Win32-Compatible Enumeration ---- */
 

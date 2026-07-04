@@ -67,7 +67,7 @@ title: "TODO-14 -- Registry System Completion"
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
-| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [ ]   |
+| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
@@ -81,6 +81,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [ ]   |
 | ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [ ]   |
 | 💎  |  14   | Registry SMP synchronization                       | TODO-12 §14                  |  [ ]   |
+| 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)    | §1, §14                      |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -95,31 +96,39 @@ title: "TODO-14 -- Registry System Completion"
 > [!NOTE]
 > **Self-contained execution:** `SeAccessCheck` (TODO-15 §5) and `SECURITY_DESCRIPTOR` (TODO-15 §3) are not yet implemented. §1 should stub `SeAccessCheck` as always-grant with a `#warning` reminder. `SECURITY_DESCRIPTOR` should be a `void*` placeholder. Full enforcement arrives when TODO-15 §3,§5 is complete.
 
-- [ ] Add `uint32_t access_mask` field to `reg_key_t` (stored at open time)
-- [ ] `RegOpenKeyEx`: validate `samDesired` against key's `SECURITY_DESCRIPTOR` DACL via `SeAccessCheck` (→ XREF `TODO-15-security-reference-monitor.md §5`); store granted mask in returned HKEY; return `ERROR_ACCESS_DENIED` on failure
-- [ ] `RegCreateKeyEx`: requires `KEY_CREATE_SUB_KEY` on parent
-- [ ] `RegSetValueEx` / `RegDeleteValue`: requires `KEY_SET_VALUE` on key
-- [ ] `RegQueryValueEx` / `RegEnumKeyEx` / `RegEnumValue`: requires `KEY_QUERY_VALUE` / `KEY_ENUMERATE_SUB_KEYS`
-- [ ] `KEY_READ = KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS | KEY_NOTIFY | STANDARD_RIGHTS_READ`; `KEY_WRITE = KEY_SET_VALUE | KEY_CREATE_SUB_KEY | STANDARD_RIGHTS_WRITE`; `KEY_ALL_ACCESS = 0xF003F` -- all bits
-- [ ] Default DACL on new keys: `(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;BU)` -- System+Admins = all access, BuiltinUsers = read only
+- [x] Granted access mask recorded on the open handle (`reg_handle_t.access`); self-relative DACL on `reg_key_t.security_descriptor`; `reg_check_access(hKey, mask)` is the per-operation chokepoint
+- [x] `RegOpenKeyEx`: SeAccessCheck stubbed always-grant (TODO-15 §5 unbuilt); `reg_effective_access` records the requested mask capped to the source handle's grant (anti-escalation); samDesired 0 / `MAXIMUM_ALLOWED` map to full (legacy compat)
+- [x] `RegCreateKeyEx`: requires `KEY_CREATE_SUB_KEY` on the parent handle (`reg_check_access`) before creating a new subkey
+- [x] `RegSetValueEx` / `RegDeleteValue`: require `KEY_SET_VALUE`; `RegDeleteKey` / `RegDeleteTree` require `DELETE`; `RegGetValue` requires `KEY_QUERY_VALUE`
+- [x] `RegQueryValueEx` / `RegEnumValue` require `KEY_QUERY_VALUE`; `RegEnumKeyEx` requires `KEY_ENUMERATE_SUB_KEYS`; `RegQueryInfoKey` requires `KEY_QUERY_VALUE`
+- [x] `KEY_READ`/`KEY_WRITE`/`KEY_ALL_ACCESS` already defined with correct values; added `KEY_NOTIFY` (0x10), `KEY_CREATE_LINK` (0x20), `DELETE` (0x10000), `MAXIMUM_ALLOWED`
+- [x] Default DACL on new keys: `SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY)` (SY+BA=Full, BU=Read) -- non-owned static self-relative blob, never freed
 
-- [ ] Key name max: 255 chars (currently `REG_MAX_KEY_NAME = 255` ✅, but not enforced on `RegCreateKeyEx` input -- add check)
-- [ ] Value name max: **16 383** chars (increase `REG_MAX_VALUE_NAME` from 255 → 16 383, backing store uses `pmm_alloc_contiguous` for names > 255); **HIGH RISK** -- current `reg_value_t.name` is a fixed `char[256]` array; must change to pointer + `pmm_alloc_contiguous` for large names, keep inline for ≤ 255 chars; update all serialization paths in `hive_save` / `hive_load`; rollback: keep 255 limit if breakage detected
-- [ ] Value data max: **1 MiB** (increase `REG_MAX_VALUE_SIZE` from 512 → 1 048 576; large values use `pmm_alloc_contiguous`); **HIGH RISK** -- current `reg_value_t.data` is a fixed `uint8_t[512]` array; must change to pointer-based allocation for data > 512 bytes; update `hive_save`/`hive_load`, `RegSetValueEx`, `RegQueryValueEx`; rollback: keep 512 limit if breakage detected
-- [ ] Key path depth max: 512 levels -- `reg_path_depth(path)` count of `\\` separators; return `ERROR_INVALID_PARAMETER` if exceeded
-- [ ] Total key count: soft warn at 90% of pool; hard limit returns `ERROR_OUTOFMEMORY`; pool size comment documents the limit
-- [ ] **`RegCreateKeyEx` atomic create-or-fail** -- links the key, then allocates the `HKEY` separately; handle-pool exhaustion leaves a linked-but-handleless key. Reserve the handle before linking or roll back on failure. (TODO-09-boot §9.)
+- [x] Key name max 255: `reg_validate_path_limits` (wired into Create/Open/DeleteKey/DeleteTree/GetValue) rejects any component longer than `REG_MAX_KEY_NAME`; `reg_walk_path` also rejects over-long components
+- [/] Value name max 16383 chars -- DEFERRED to §15 (hybrid inline/pointer migration is boot-critical); current 255-char limit enforced here
+- [/] Value data max 1 MiB -- DEFERRED to §15 (heap-backed migration + 5 stack-buffer conversion, bare-metal stack hazard); current 512-byte limit enforced here
+- [x] Key path depth max 512: `reg_validate_path_limits` rejects depth > `REG_MAX_KEY_DEPTH` with `ERROR_INVALID_PARAMETER`
+- [x] Total key count: 90% soft-warn `klog`; hard limit via key-pool exhaustion returns `ERROR_OUTOFMEMORY`
+- [x] `RegCreateKeyEx` atomic create-or-fail: reserve the handle slot (key=NULL) BEFORE `reg_walk_path` links anything, bind after; `reg_free_handle` on walk failure -- no handleless key on pool exhaustion
 
-- [ ] `reg_key_t.last_write_time` currently stores raw PIT ticks; convert to Windows `FILETIME` (100-ns intervals since 1601-01-01) via `ticks_to_filetime()` (→ XREF `TODO-08-time-filetime-management.md §1`, now [x] done); if the conversion helper is unavailable, implement a minimal stub (`ticks * PIT_NS_PER_TICK / 100 + FILETIME_EPOCH_BIAS`) inline -- canonical implementation is TODO-08 §1
-- [ ] `RegQueryInfoKey` `lpftLastWriteTime` output: return the FILETIME, not raw ticks
-- [ ] `NtQueryKey(KeyBasicInformation)`, `NtQueryKey(KeyNodeInformation)`, `NtQueryKey(KeyFullInformation)` -- all return `LARGE_INTEGER LastWriteTime` in FILETIME format; output structs must match NT definitions
+- [x] `last_write_time` (monotonic `uptime_ns`) converted to `FILETIME` at READ time via `reg_last_write_filetime()` (wall-clock anchor + mono delta); avoids the boot-order zero-wall-clock hazard
+- [x] `RegQueryInfoKey` returns `lpftLastWriteTime` as FILETIME and `lpcbSecurityDescriptor` as the default-SD size
+- [x] `NtQueryKey` / `NtEnumerateKey` info-class handlers return `LastWriteTime` as FILETIME (inherited from `RegEnumKeyEx` / `RegQueryInfoKey`)
 
-- [ ] `RegFlushKey(hKey)` -- force immediate hive sync for the hive containing `hKey`; calls `hive_flush_sync(hive)` which writes dirty pages and the WAJ log without waiting for the 5-second lazy-writer timer
-- [ ] Return `ERROR_SUCCESS` on flush; `ERROR_INVALID_HANDLE` for volatile keys (volatile keys have no hive backing -- flush is a no-op, not an error)
+- [x] `RegFlushKey(hKey)` -- immediate save of the single hive containing `hKey` (walk to hive root + `hive_save`); a persisted-root handle (HKLM/HKU) flushes all hives; wired into `NtFlushKey`
+- [x] `RegFlushKey` requires `KEY_QUERY_VALUE`; volatile key or normal flush -> `ERROR_SUCCESS`; save failure -> `ERROR_REGISTRY_IO_FAILED`; C: unmounted -> `ERROR_INVALID_HANDLE` (NtFlushKey no-op)
 
-- [ ] Commit: `"kernel/registry: KEY_* access rights enforcement, API limits, FILETIME timestamps, RegFlushKey"`
+- [x] Commit: `"kernel/registry: KEY_* access rights enforcement, API limits, FILETIME timestamps, RegFlushKey"`
 
 **Test checkpoint:** `RegOpenKeyEx(HKLM\SOFTWARE, KEY_SET_VALUE)` from a Medium-IL process against an Admins-only DACL → `ERROR_ACCESS_DENIED`; as SYSTEM → `ERROR_SUCCESS`. `RegCreateKeyEx` with 256-char name → `ERROR_INVALID_PARAMETER`; 255-char → succeeds. `RegQueryInfoKey.ftLastWriteTime` returns non-zero FILETIME after `RegSetValueEx`. `RegFlushKey` on volatile key → `ERROR_SUCCESS` (no-op). Serial log: `"[REG] Access denied: %s mask=0x%x required=0x%x"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1072 suites, 0 failures
+> **Notes:**
+> - Shipped: `reg_check_access` KEY_* chokepoint on all public `RegXxx` + NT `DesiredAccess` propagation; `reg_last_write_filetime` read-time FILETIME; per-hive `RegFlushKey`; `reg_validate_path_limits`; default DACL via `SeCreateDefaultSD`.
+> - Integrates: enforcement gates every public entry plus the `NtDeleteKey`/`NtFlushKey` direct-pointer paths; SeAccessCheck stubbed always-grant with an anti-escalation source-grant cap until TODO-15 §5 lands the real DACL check.
+> - Downstream: the §4 per-key `NtFlushKey` scope item is satisfied here; §2/§4 NT rename/save/restore/unload mask enforcement filed as concrete items with reciprocal XREF §1.
+> - Scope boundary: value name/data size expansion is §15; SMP locking is §14; real DACL `SeAccessCheck` is TODO-15 §5.
+> **Deferred:** [M] value-name 16383 + value-data 1 MiB size expansion (heap-backed migration + 5 stack-buffer conversion, bare-metal stack hazard) -> XREF: 02-kernel-core/TODO-14 §15 (item: "Migrate `reg_value_t.name`" at the §15 checklist)
 
 ---
 
@@ -138,6 +147,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Add an LRU cache of 32 recently closed `reg_key_t*` pointers; on `RegCloseKey`: if the key still exists in the tree, move its handle to the LRU cache instead of immediately freeing the pool slot
 - [ ] On `RegOpenKeyEx`: check the LRU cache first (O(1) name hash compare); if hit, promote the entry, bump refcount, return immediately -- avoids tree walk for hot keys like `HKLM\SYSTEM\Display` that are opened and closed in a tight loop
 - [ ] Cache entries are evicted on LRU overflow or when the underlying key is deleted; eviction releases the pool slot
+- [ ] NT raw-HKEY access enforcement: route `NtRenameKey`/`NtSaveKey`/`NtRestoreKey` through the §1 checked resolver with write / SeBackup / SeRestore masks so direct-pointer paths cannot bypass access checks -> XREF §1
 
 - [ ] Commit: `"kernel/registry: RegCopyTree, RegRenameKey, RegSaveKey/RestoreKey, volatile keys, KCB cache"`
 
@@ -267,7 +277,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Wrap every user-mode pointer argument in `ProbeForRead(ptr, size, align)` / `ProbeForWrite(ptr, size, align)` (→ XREF `TODO-23-exception-dispatch-seh.md §13`) before any dereference; return `STATUS_ACCESS_VIOLATION` if probe faults
 - [ ] `UNICODE_STRING` / `ANSI_STRING` struct fields: validate both the struct pointer AND the embedded `Buffer` pointer separately
 - [ ] **UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)**: current Nt handlers across §14/§15/§17 cast `UNICODE_STRING.Buffer` (uint16_t*) directly to `const char*`, which treats real UTF-16 input as a one-byte ASCII string truncated at the first high byte. Add `int nt_decode_unicode_string(const UNICODE_STRING *us, char *buf, uint32_t buf_size)` in NEW file `src/kernel/nt/nt_string.c` (declared in `include/kernel/nt/nt_string.h`). Implementation: read `us->Length` bytes (counted, NOT NUL-terminated), validate each UTF-16 code unit fits in ASCII (high byte == 0), validate `us->Length <= us->MaximumLength`, validate `us->Length / 2 + 1 <= buf_size`, write to `buf` as NUL-terminated ASCII, return `STATUS_SUCCESS` or `STATUS_INVALID_PARAMETER`. The helper is kernel-wide because all NT names (registry keys, token values, namespace paths, file paths) are ASCII per MSDN. **Retrofit consumers across all §-handlers**: (a) registry §14 `NtSetValueKey` / `NtQueryValueKey` / `NtDeleteValueKey` / `NtEnumerateValueKey` and §15 `NtRenameKey` in `src/kernel/nt/nt_registry.c` (replace `(const char *)vname->Buffer` casts and `reg_oa_path` ASCII assumption); (b) token §16 (no UNICODE_STRING parsing currently: handler args are HANDLE / ACCESS_MASK / struct-by-pointer); (c) namespace §17 `oa_name`, `path_within_bounds`, `NtCreateSymbolicLinkObject_handler` target read in `src/kernel/nt/nt_namespace.c` (cast UNICODE_STRING.Buffer to char*, scan with bounded_strlen); (d) section §18 `oa_probe_ascii_name` in `src/kernel/nt/nt_section.c:39` and timer §19 `oa_probe_ascii_name` in `src/kernel/nt/nt_timer.c` (both return the raw `UNICODE_STRING.Buffer` pointer after probing `Length` bytes; callers feed it to `snprintf("%s")` in `ObCreateSectionEx`/`ObCreateTimerEx`/`ObOpenTimer` which reads past `Length` if the buffer lacks an embedded NUL); (e) future NT handlers must use `nt_decode_unicode_string` directly: never cast.
-- [ ] **Per-key `NtFlushKey` scope**: current TODO-12 §15 NtFlushKey flushes all dirty hives via `registry_flush_checked()`. Add `registry_flush_key(reg_key_t *key)` that walks the key's parent chain to find its owning hive index (matching `hive_table[i]`), then flushes only that one hive. Update NtFlushKey_handler to call `registry_flush_key(resolve_hkey(hkey))` instead of `registry_flush_checked()`. Rationale: Win32 `RegFlushKey` semantics expect per-hive scope; current implementation over-flushes on SMP systems with high registry write rates.
+- [x] **Per-key `NtFlushKey` scope**: §1's `RegFlushKey(hKey)` does single-hive flush (persisted-root handle flushes all hives); `NtFlushKey_handler` routes through it so an unrelated hive I/O error cannot fail the call
 - [ ] **Migrate HKEY to OB handle table**: current TODO-12 §14 returns raw `HKEY` pointers (into `reg_handle_pool`) as NT `HANDLE` values. `NtClose` (TODO-12 §9) cannot release them, so long-running processes exhaust the 128-entry pool. Register a new `ObpKeyType` via `ob_create_type("Key", sizeof(reg_key_handle_t), ...)` with an `on_close` callback that calls `RegCloseKey` on the underlying `reg_handle_t*`, then change `NtCreateKey_handler` / `NtOpenKey_handler` / `NtOpenKeyEx_handler` / `NtLoadKey_handler` in `src/kernel/nt/nt_registry.c` to allocate via `ObpAllocateHandle(ht, reg_handle, access, 0)` instead of casting HKEY to HANDLE. All §14/§15 handlers that currently do `hkey = (HKEY)(uintptr_t)a1` then `hkey->key` must route through `ObpLookupHandle + type-check against ObpKeyType + recover reg_handle_t*`. This auto-closes Finding §14 "HKEY-to-HANDLE ABI gap" and removes the 128-handle exhaustion limit.
 - [ ] **KeyNodeInformation output struct in NtQueryKey/NtEnumerateKey**: TODO-12 §14 `NtEnumerateKey` returns `STATUS_INVALID_PARAMETER` for `KeyFullInformation`/`KeyNodeInformation` (only `KeyBasicInformation` and `KeyNameInformation` are supported; `KeyFullInformation` is implemented via opening child + RegQueryInfoKey but `KeyNodeInformation` is rejected). Define `KEY_NODE_INFORMATION` struct in `include/kernel/nt/nt_registry.h` (`LastWriteTime`, `TitleIndex`, `ClassOffset`, `ClassLength`, `NameLength`, `Name[1]`), then extend both `NtQueryKey_handler` and `NtEnumerateKey_handler` to fill it. Current registry has no class string so `ClassOffset = (uint32_t)-1` and `ClassLength = 0` in the output.
 - [ ] `KeyValueInfo` output buffer: `ProbeForWrite(KeyValueInfo, Length, 1)`; if probe succeeds but `Length` is too small to hold the result, return `STATUS_BUFFER_TOO_SMALL` with `*ResultLength` set to the required size
@@ -313,6 +323,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] **Per-process sandbox** ⭐ -- `NtSetInformationProcess(ProcessRegistrySandbox, root_path)`: future API that restricts all registry access for a process to a sub-tree; used by browser renderer and low-IL processes; deferred until process isolation (→ XREF `TODO-21-process-model-extensions.md`) matures
 - [ ] **Rate limiting** ⭐ -- per-task `reg_ops_this_sec` counter reset every 1 000 ms by scheduler tick; if > 10 000 registry ops per second: `schedule_yield()` and re-check; soft throttle prevents runaway registry hammering from buggy apps; counter tracked in `struct task`
 - [ ] **Audit log** ⭐ -- if `HKLM\SYSTEM\Registry\AuditEnabled = 1`: write a compact audit entry to `X:\Logs\registry-audit.log` on each `NtSetValueKey` / `NtDeleteKey`: `{timestamp, pid, key_path, value_name, old_type, new_type, result_ntstatus}`; uses the existing `klog` ring buffer at LOG_AUDIT level; auto-rotated at 4 MiB
+- [ ] NT raw-HKEY access enforcement: route `NtUnloadKey`/`NtLoadKey`/`NtUnloadKey2` through the §1 checked resolver so hive unload/load direct-pointer paths enforce access rights -> XREF §1
 - [ ] Commit: `"kernel/registry: NtOpenKey/NtSetValueKey/NtNotifyChangeKey syscalls, pointer validation, audit"`
 
 **Test checkpoint:** `NtCreateKey` + `NtOpenKey` round-trip via SYSCALL from user-mode succeeds. `NtQueryValueKey(KeyValuePartialInformation)` returns correct data. `ProbeForWrite` with invalid pointer → `STATUS_ACCESS_VIOLATION`. `NtFreezeRegistry(5)` → all `NtSetValueKey` from another thread block; `NtThawRegistry()` → blocked writes complete. Audit log: enable `AuditEnabled=1` → `NtSetValueKey` entries appear in `registry-audit.log`. Serial log: `"[SSDT] NtOpenKey: \\Registry\\Machine\\... -> 0x%x"`. Test on: QEMU WHPX + TCG.
@@ -598,6 +609,24 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 
 ---
 
+## 15. Registry Value Size Expansion (16 KiB Names, 1 MiB Data)
+
+Raise registry value-name and value-data limits to Windows 11 parity (16 383-char names, 1 MiB data). Split out of §1 because it is a boot-critical data-structure + on-disk-format migration that converts fixed inline arrays to heap-backed storage across five stack buffers, not just the `reg_value_t` fields.
+
+> [!WARNING]
+> **Bare-metal hazard:** the kernel stack is 8 KiB (`TASK_STACK_SIZE`). Five `uint8_t buf[REG_MAX_VALUE_SIZE]` stack buffers (`registry.c:1296`, `2380`, `2524`; `nt_registry.c:360`, `595`) MUST be converted to heap/PMM-backed BEFORE raising `REG_MAX_VALUE_SIZE`, or the first large-value call guard-page-faults. SMP locking stays with §14.
+
+- [ ] Migrate `reg_value_t.name` (`char[256]`) to hybrid inline-or-pointer: inline <=255 chars, `pmm_alloc_contiguous` for longer; raise `REG_MAX_VALUE_NAME` to 16383; keep the empty-name tombstone (`registry.c:1355`) pointer-safe
+- [ ] Migrate `reg_value_t.data` (`uint8_t[512]`) to pointer-backed for data > 512 bytes; raise `REG_MAX_VALUE_SIZE` to 1048576; update `reg_alloc_value` + free paths
+- [ ] Convert the five oversized stack buffers to heap/PMM-backed: `registry.c:1296` (RegGetValue expand), `2380` (hive_deserialize_key), `2524` (hive_load root), `nt_registry.c:360` + `595` (NtQueryValueKey/enum)
+- [ ] Update on-disk wire format (`hive_serialize_key`/`hive_deserialize_key`, `registry.c:2049`/`2344`): name len is u16 (16383 fits), data len already u32; bump `HIVE_VERSION` only if record layout changes + add a v1 read path
+- [ ] Free heap-backed name/data on value delete + key free; no leak on `RegDeleteValue` / `RegDeleteKey` / hive unload
+- [ ] Commit: `"kernel/registry: value size expansion to 16KiB names + 1MiB data (heap-backed)"`
+
+**Test checkpoint:** `RegSetValueEx` with a 4096-byte `REG_BINARY` succeeds; a 1 MiB value round-trips through `hive_save`/`hive_load`; a 300-char value name round-trips; no kernel-stack guard fault on a large-value query. Serial log: `"[REG] large value: name=%u data=%u bytes"`. Test on: QEMU WHPX + TCG.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                              | 🪟 Win11                     | 🐧 Linux                           | 🚀 Impossible OS               |
@@ -605,8 +634,8 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 | 💎   | Hierarchical typed key/value store   | ✅ Full                      | ⚠️ dconf (GNOME), ini files       | ✅ Done -- `reg_key_t` tree    |
 | 💎   | Win32 `RegXxx` API                   | ✅ Native                    | ❌ N/A                             | ✅ Done -- complete native API |
 | 💎   | Persistent hive + crash-safe WAJ     | ✅ `.LOG1`/`.LOG2`           | ⚠️ dconf binary db, no WAJ        | ✅ Done -- `.hive.log` WAJ     |
-| 💎   | Key `LastWriteTime` (FILETIME)       | ✅ Every key                 | ❌ N/A                             | ⚠️ Ticks done; FILETIME ⬜ §1  |
-| 💎   | KEY_* access rights enforcement      | ✅ Full                      | ❌ N/A                             | ⬜ §1                          |
+| 💎   | Key `LastWriteTime` (FILETIME)       | ✅ Every key                 | ❌ N/A                             | ✅ FILETIME read-time (§1)     |
+| 💎   | KEY_* access rights enforcement      | ✅ Full                      | ❌ N/A                             | 🔄 handle-mask enforced (§1); DACL SeAccessCheck T15 §5 |
 | 💎   | Registry symlinks (REG_LINK)         | ✅ CurrentControlSet, etc.   | ❌ N/A                             | ⚠️ Resolution done; API ⬜ §12 |
 | 💎   | Change notifications                 | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | ⬜ §3                          |
 | 💎   | `REG_NOTIFY_THREAD_AGNOSTIC`         | ✅ Win8+                     | ❌ N/A                             | ⬜ §3                          |

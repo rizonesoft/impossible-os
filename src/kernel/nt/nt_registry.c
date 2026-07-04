@@ -145,6 +145,7 @@ static NTSTATUS reg_win32_to_nt(long err)
     case ERROR_MORE_DATA:        return STATUS_BUFFER_TOO_SMALL;
     case ERROR_NO_MORE_ITEMS:    return STATUS_NO_MORE_ENTRIES;
     case ERROR_KEY_DELETED:      return STATUS_KEY_DELETED;
+    case ERROR_REGISTRY_IO_FAILED: return STATUS_REGISTRY_IO_FAILED;
     default:                     return STATUS_UNSUCCESSFUL;
     }
 }
@@ -172,13 +173,14 @@ static NTSTATUS NtCreateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     HANDLE *out = (HANDLE *)a1;
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a3;
     uint32_t create_options = (uint32_t)a6;
+    uint32_t desired_access = (uint32_t)a2;
     const char *nt_path;
     const char *subpath;
     HKEY root, result_key;
     uint32_t disp = 0;
     long rc;
 
-    (void)a2; (void)a4; (void)a5;
+    (void)a4; (void)a5;
 
     if (!out)
         return STATUS_INVALID_PARAMETER;
@@ -191,8 +193,10 @@ static NTSTATUS NtCreateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!root)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
+    /* Grant the caller-requested DesiredAccess on the returned handle (not a
+     * blanket KEY_ALL_ACCESS); per-operation checks enforce it thereafter. */
     rc = RegCreateKeyEx(root, subpath, 0, (const char *)0,
-                        create_options, KEY_ALL_ACCESS, (void *)0,
+                        create_options, desired_access, (void *)0,
                         &result_key, &disp);
     if (rc != ERROR_SUCCESS)
         return reg_win32_to_nt(rc);
@@ -220,9 +224,10 @@ static NTSTATUS NtOpenKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     const char *nt_path;
     const char *subpath;
     HKEY root, result_key;
+    uint32_t desired_access = (uint32_t)a2;
     long rc;
 
-    (void)a2; (void)a4; (void)a5; (void)a6;
+    (void)a4; (void)a5; (void)a6;
 
     if (!out)
         return STATUS_INVALID_PARAMETER;
@@ -235,7 +240,8 @@ static NTSTATUS NtOpenKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!root)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
-    rc = RegOpenKeyEx(root, subpath, 0, KEY_ALL_ACCESS, &result_key);
+    /* Grant the caller-requested DesiredAccess on the returned handle. */
+    rc = RegOpenKeyEx(root, subpath, 0, desired_access, &result_key);
     if (rc != ERROR_SUCCESS)
         return reg_win32_to_nt(rc);
 
@@ -288,6 +294,11 @@ static NTSTATUS NtDeleteKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     key = resolve_hkey(hkey);
     if (!key)
         return STATUS_INVALID_HANDLE;
+
+    /* The direct-pointer NT path bypasses the Win32 RegDeleteKey chokepoint;
+     * enforce DELETE access on the handle so a read-only handle cannot delete. */
+    if (reg_check_access(hkey, DELETE) != ERROR_SUCCESS)
+        return STATUS_ACCESS_DENIED;
 
     /* Return the specific NT status for children before the generic delete */
     if (key->child_count > 0)
@@ -538,11 +549,15 @@ static NTSTATUS NtEnumerateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
             uint32_t max_subkey_len = 0, max_value_name_len = 0, max_value_data_len = 0;
             uint64_t child_last_write = 0;
             uint32_t needed = sizeof(KEY_FULL_INFORMATION);
-            RegQueryInfoKey(child_hkey, (char *)0, (uint32_t *)0, (uint32_t *)0,
+            long q_rc = RegQueryInfoKey(child_hkey, (char *)0, (uint32_t *)0, (uint32_t *)0,
                             &sub_keys, &max_subkey_len, (uint32_t *)0,
                             &child_values, &max_value_name_len, &max_value_data_len,
                             (uint32_t *)0, &child_last_write);
             RegCloseKey(child_hkey);
+            /* Surface a clear error rather than STATUS_SUCCESS with zeroed
+             * metadata if the (access-capped) child query was denied. */
+            if (q_rc != ERROR_SUCCESS)
+                return reg_win32_to_nt(q_rc);
             if (result_len) *result_len = needed;
             if (buf_len < needed)
                 return STATUS_BUFFER_TOO_SMALL;
@@ -841,7 +856,7 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 {
     HKEY hkey = (HKEY)(uintptr_t)a1;
     reg_key_t *key;
-    int rc;
+    long wrc;
 
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
 
@@ -852,15 +867,15 @@ static NTSTATUS NtFlushKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    /* Flush all dirty hives with status.  Per-key flush is a future
-     * optimization -> XREF: 02-kernel-core/TODO-14-registry-completion.md
-     * (registry syscalls). */
-    rc = registry_flush_checked();
-    if (rc < 0)
-        return STATUS_SUCCESS;  /* registry not yet ready; treat as no-op */
-    if (rc > 0)
-        return STATUS_REGISTRY_IO_FAILED;
-    return STATUS_SUCCESS;
+    /* Per-hive flush: only the hive containing hkey is saved, so an unrelated
+     * dirty hive's I/O error cannot fail this call. */
+    wrc = RegFlushKey(hkey);
+    /* ERROR_INVALID_HANDLE here means C: is not mounted (the handle was already
+     * validated above) -- treat as a no-op success.  Every other non-success
+     * (ACCESS_DENIED, REGISTRY_IO_FAILED) is surfaced. */
+    if (wrc == ERROR_SUCCESS || wrc == ERROR_INVALID_HANDLE)
+        return STATUS_SUCCESS;
+    return reg_win32_to_nt(wrc);
 }
 
 /* ======================================================================== */
