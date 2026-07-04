@@ -72,7 +72,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [/]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [/]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [/]   |
-| 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
+| 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [/]   |
 | 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [ ]   |
 | ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8                   |  [ ]   |
@@ -414,6 +414,8 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Commit: `"kernel/registry: virtualization redirect, .reg import/export"`
 
 **Test checkpoint:** Low-IL process writes `HKLM\SOFTWARE\Test` → redirected to `HKCU\Software\VirtualStore\MACHINE\SOFTWARE\Test`. Read: VirtualStore value returned first. `REG_KEY_DONT_VIRTUALIZE` on key → low-IL write → `STATUS_ACCESS_DENIED`. `.reg` round-trip: export → delete → import → all values restored byte-for-byte. Serial log: `"[REG] Virtualize: %s -> VirtualStore\\%s"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] registry virtualization (low-IL `HKLM\SOFTWARE`->VirtualStore redirect) + `.reg` import/export blocked on the per-process token IntegrityLevel infra (TODO-15 §6 MIC) + the non-existent `NtSetInformationKey` control-flag path; also rides on §5 -> XREF: 02-kernel-core/TODO-14 §6 (item: "Condition for redirect" at line 373)
 
 ---
 
