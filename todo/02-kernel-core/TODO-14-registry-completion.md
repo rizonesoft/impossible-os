@@ -80,7 +80,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-12 §14, §15         |  [ ]   |
 | 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [ ]   |
 | ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [ ]   |
-| 💎  |  14   | Registry SMP synchronization                       | TODO-12 §14                  |  [ ]   |
+| 💎  |  14   | Registry SMP synchronization                       | TODO-12 §14                  |  [/]   |
 | 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)    | §1, §14                      |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -629,20 +629,28 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 > [!NOTE]
 > The registry engine (`registry.c`) was designed as a single-threaded subsystem used only during boot. TODO-12 §14 exposed it to concurrent SSDT dispatch from user-mode tasks, making three unsynchronized shared resources vulnerable to SMP races: pool allocators, handle pool, and tree structure. This section adds a registry-wide rwlock so read-heavy workloads (enumerate, query) can run concurrently while mutations (create, delete, set value) serialize safely.
 
-- [ ] Declare `static spinlock_t reg_lock` in `registry.c`; initialize in `registry_init()`
-- [ ] Wrap all `RegCreateKeyEx`, `RegOpenKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree`, `RegDeleteKeyDirect` entry points with `spin_lock(&reg_lock)` / `spin_unlock(&reg_lock)` (write path)
-- [ ] Wrap all `RegSetValueEx`, `RegDeleteValue` entry points with write lock
-- [ ] Wrap all `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` entry points with read lock (or shared spinlock if available; single spinlock is acceptable for v1)
-- [ ] Protect pool allocators: `reg_alloc_key()`, `reg_alloc_value()`, `reg_alloc_handle()`, `reg_free_handle()` must hold the lock when called (verify callers already hold it, or acquire internally)
-- [ ] Protect `hive_save()` / `hive_load()` / `registry_flush()` / `registry_save_all()` / `registry_load_hives()` with the lock (these walk the entire tree)
-- [ ] `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total records; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
-- [ ] SMP stress test: concurrent `NtCreateKey` + `NtDeleteKey` + `NtEnumerateKey` from multiple tasks; verify no pool corruption, no stale pointer dereference, no duplicate handle allocation
-- [ ] Upgrade to rwlock if profiling shows read contention (deferred; spinlock is correct first step for a 512-key pool)
-- [ ] KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, added §2) written on every `reg_walk_path` hop -- this write-heavy read path must hold the §14 write lock or use atomics -> XREF: 02-kernel-core/TODO-14 §2
-- [ ] Notification engine SMP (§3): watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert are unlocked; `reg_dispatch_depth` is a global cross-CPU budget -- serialize under §14 lock or per-thread depth -> XREF §3
+> [!WARNING]
+> **Design-review-confirmed prerequisites (2026-07-04, Codex `b9pq875ym`).** A naive coarse spinlock does NOT work here; four hard constraints must be designed first: (1) **IRQ context** -- `RegCreateKeyEx`/`RegSetString`/`RegSetDword`/`RegCloseKey` run in ISR context via `ahci_hotplug_check` (`ahci_core.c` `ahci_irq_body`), so `reg_lock` must be `spin_lock_irqsave`, and the lock must NOT be held across `hive_save`/`hive_load`/`registry_flush` PMM+VFS I/O (an ISR would spin behind disk I/O). (2) **Reentrant callbacks** -- `reg_dispatch_notify` fires watcher callbacks synchronously inside every mutation, and a LIVE test (`test_registry_notify_reentrant`) re-enters `RegSetValueEx` from a callback; a non-recursive lock held across the notify call deadlocks. Requires DEFERRED dispatch: under lock, apply + collect watcher payload snapshots (callback, ctx, change_type, COPIED key_path + value_name, generation) into a bounded array, release lock, then fire lock-free. (3) **Watcher lifetime** -- `RegUnregisterNotify` frees watchers immediately, so a deferred `{fn,ctx}` array is a UAF; needs a generation/epoch or in-flight refcount. (4) **Depth guard** -- global `reg_dispatch_depth` must become per-thread/per-CPU once dispatch is outside the lock (else unrelated CPUs share the budget = silent notification loss). Non-trivial wrappers (`RegRenameKey` walks the tree before `RegRenameKeyDirect`) must lock their FULL body, not just the callee.
+
+- [/] DEFERRED (needs the redesign in the WARNING above): declare `static spinlock_t reg_lock` (irqsave) in `registry.c`; static `SPINLOCK_INIT`.
+- [/] DEFERRED: `spin_lock_irqsave` wrap write-path entry points -- `RegCreateKeyEx`, `RegOpenKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree`, `RegDeleteKeyDirect`.
+- [/] DEFERRED: `RegSetValueEx`, `RegDeleteValue` under the lock (both fire notify -> need the deferred-dispatch redesign first).
+- [/] DEFERRED: read-path entry points `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` under the lock (single spinlock v1).
+- [/] DEFERRED: pool allocators (`reg_alloc_key`/`reg_alloc_value`/`reg_alloc_handle`/`reg_free_handle`) + `reg_create_child`/`reg_walk_path` called lock-held; non-recursive, never self-lock.
+- [/] DEFERRED: cross-call hazards -- `RegRenameKey` locks its FULL body (pre-callee walk is a TOCTOU race); `Reg{Set,Get}{Dword,String}` wrappers stay lock-free, lock in the `RegSetValueEx`/`RegQueryValueEx` callee.
+- [/] DEFERRED: `reg_dispatch_notify` -> deferred dispatch (snapshot payload under lock, fire lock-free) + watcher refcount/epoch (RegUnregisterNotify frees = UAF) + per-CPU depth. -> XREF: 02-kernel-core/TODO-14 §3
+- [/] DEFERRED: `hive_save`/`hive_load`/`registry_flush`/`registry_save_all`/`registry_load_hives` -- lock only the tree-walk portion, release before PMM+VFS I/O (ISR must not spin behind disk I/O).
+- [/] DEFERRED: `hive_load` reload transactionality: hold lock across validate-to-apply; preflight counts MISSING allocs not total; roll back partial mutations on apply-fail into an existing key. -> XREF: 02-kernel-core/TODO-14 §8
+- [/] DEFERRED: SMP stress tests -- concurrent create/delete/enum; unregister-during-dispatch (UAF); unrelated-CPU dispatch depth; RegRenameKey racing delete/rename. WHPX 2 vCPU.
+- [/] DEFERRED: upgrade to rwlock if profiling shows read contention (spinlock is v1).
+- [/] DEFERRED: KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, §2) written on every `reg_walk_path` hop -- covered by `reg_lock` above. -> XREF: 02-kernel-core/TODO-14 §2
+- [/] DEFERRED: notification-engine SMP (§3) -- watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert + `reg_dispatch_depth` covered by the lock + deferred-dispatch redesign. -> XREF §3
 - [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
 
 **Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).
+
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat` + WHPX 2-vCPU SMP stress
+> **Deferred:** [H] Registry SMP lock deferred pending a notification-engine deferred-dispatch redesign (payload snapshots + watcher refcount/epoch), IRQ-safe (`spin_lock_irqsave`) lock boundaries that exclude hive PMM+VFS I/O, and per-CPU dispatch depth (design review `b9pq875ym`; a naive coarse lock deadlocks the live reentrant-callback test) -- see the WARNING callout -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
 
 ---
 
