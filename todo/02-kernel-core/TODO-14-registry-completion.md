@@ -75,13 +75,13 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [/]   |
 | 💎  |   7   | `regedit` shell tool                               | §4                           |  [/]   |
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [/]   |
-| ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8                   |  [ ]   |
-| ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | §9                           |  [ ]   |
-| 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-12 §14, §15         |  [ ]   |
-| 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [ ]   |
-| ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [ ]   |
+| ⭐  |   9   | Transactions, search API & snapshot/diff           | §2, §3, §8                   |  [/]   |
+| ⭐  |  10   | Performance (mmap hive, B-tree cell format)        | §9                           |  [/]   |
+| 💎  |  11   | KTM Transaction syscalls wired to SSDT             | §9, TODO-12 §14, §15         |  [/]   |
+| 💎  |  12   | Registry symlink completion (create, open-link)    | §2, §4                       |  [/]   |
+| ⭐  |  13   | Schema-validated registry keys                     | §3, §4                       |  [/]   |
 | 💎  |  14   | Registry SMP synchronization                       | TODO-12 §14                  |  [/]   |
-| 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)    | §1, §14                      |  [ ]   |
+| 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)    | §1, §14                      |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -511,30 +511,30 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 9. Transactions, Search API & Snapshot/Diff
 
-- [ ] `RegBeginTransaction(hKey)` → returns `HREG_TXN` (transaction handle): creates a `reg_txn_t` struct with a copy-on-write journal -- each mutation during the transaction writes to the journal instead of the live tree
-- [ ] `RegCommitTransaction(hTxn)` -- apply all journalled mutations to the live tree under `hKey->lock` spinlock; atomically visible to all readers after the spinlock is released; flush hive after commit
-- [ ] `RegAbortTransaction(hTxn)` -- discard the journal; live tree is unchanged; free `reg_txn_t` struct
-- [ ] Conflict detection: if a key modified in the transaction has also been modified by another writer since `RegBeginTransaction`, return `STATUS_REGISTRY_TRANSACTION_CONFLICT` from `RegCommitTransaction`; caller must retry or abort
-- [ ] `NtCreateTransaction` / `NtCommitTransaction` / `NtRollbackTransaction` SSDT wrappers; compatible with Win32 `RtlSetCurrentTransaction` contract
-
-- [ ] `RegFindKey(hRoot, lpPattern, dwFlags, phKey)` -- glob-pattern search (`*` = any sequence, `?` = single char, case-insensitive) over key names in the sub-tree rooted at `hRoot`; returns the first match via `phKey`; caller calls `RegFindNextKey(search_handle, phKey)` to iterate
-- [ ] `RegFindValue(hRoot, lpKeyPattern, lpValuePattern, dwType, phKey, lpValueName)` -- search for a value matching both a key-name pattern and a value-name pattern; optionally filter by `dwType` (0 = any type)
-- [ ] `reg_find_state_t` internal struct: holds the DFS traversal stack (current path, depth) so `RegFindNextKey` can resume where it left off without rescanning from the root
-
-- [ ] `RegTakeSnapshot(hRoot, phSnapshot)` -- deep-copy the sub-tree rooted at `hRoot` into a new in-memory tree (not persisted to disk); returns an opaque `HREG_SNAPSHOT` handle
-- [ ] `RegDiffSnapshots(hSnapshot1, hSnapshot2, callback, ctx)` -- compare two snapshots (or a snapshot and the live tree via `NULL`):
+- [/] DEFERRED (transactions need the §14 lock + KTM §11): `RegBeginTransaction(hKey)` → `HREG_TXN`: `reg_txn_t` copy-on-write journal -- each mutation writes to the journal, not the live tree.
+- [/] DEFERRED: `RegCommitTransaction(hTxn)` -- apply journalled mutations under the §14 registry lock; atomically visible after release; flush hive after commit.
+- [/] DEFERRED: `RegAbortTransaction(hTxn)` -- discard the journal; live tree unchanged; free `reg_txn_t`.
+- [/] DEFERRED: conflict detection -- key modified by another writer since `RegBeginTransaction` -> `STATUS_REGISTRY_TRANSACTION_CONFLICT`; caller retries/aborts.
+- [/] DEFERRED: `NtCreateTransaction`/`NtCommitTransaction`/`NtRollbackTransaction` SSDT wrappers (KTM `RtlSetCurrentTransaction`) -> XREF: 02-kernel-core/TODO-14 §11
+- [/] DEFERRED (concurrent tree read needs the §14 read lock): `RegFindKey(hRoot, lpPattern, dwFlags, phKey)` -- glob (`*`/`?`, case-insensitive) over key names under `hRoot`; `RegFindNextKey` iterates.
+- [/] DEFERRED: `RegFindValue(hRoot, lpKeyPattern, lpValuePattern, dwType, phKey, lpValueName)` -- key+value name pattern search, optional `dwType` filter.
+- [/] DEFERRED: `reg_find_state_t` -- DFS traversal stack so `RegFindNextKey` resumes without rescanning from the root.
+- [/] DEFERRED (deep-copy allocates pool slots -- needs the §14 lock): `RegTakeSnapshot(hRoot, phSnapshot)` -- deep-copy the sub-tree into a new in-memory tree; opaque `HREG_SNAPSHOT`.
+- [/] DEFERRED: `RegDiffSnapshots(hSnapshot1, hSnapshot2, callback, ctx)` -- compare two snapshots (or snapshot vs live via `NULL`):
   - For each key/value added: callback with `REG_DIFF_ADDED`
   - For each key/value deleted: callback with `REG_DIFF_DELETED`
   - For each value that changed type or data: callback with `REG_DIFF_MODIFIED` including old and new values
-- [ ] `RegFreeSnapshot(hSnapshot)` -- free the deep-copy tree
-- [ ] `regedit diff <snapshot_file1> <snapshot_file2>` -- call `RegTakeSnapshot` on two `.reg` exports and diff them; output in unified diff style with `+` / `-` / `~` prefixes
-
-- [ ] **Orphan GC** ⭐ -- `reg_gc_orphans()`: walk all pool slots; find `reg_key_t` entries with `active=true` but no path from any root key reachable (parent pointer chain never reaches HKLM/HKCU/etc.); log each orphan and free its pool slot; run automatically on `registry_flush` if orphan count > 10
-- [ ] **Per-PID quota** ⭐ -- `HKLM\SYSTEM\Registry\QuotaEnabled = 1` (default 0): track per-task total bytes of registry data written since process start in `struct task`; if > `QuotaBytes` (default 50 MiB): `NtSetValueKey` returns `STATUS_QUOTA_EXCEEDED`; quota reset on process exit; enables per-app registry footprint limiting
+- [/] DEFERRED: `RegFreeSnapshot(hSnapshot)` -- free the deep-copy tree.
+- [/] DEFERRED (needs §7 regedit, deferred): `regedit diff <f1> <f2>` -- `RegTakeSnapshot` two `.reg` exports, unified diff (`+`/`-`/`~`). -> XREF: 02-kernel-core/TODO-14 §7
+- [/] DEFERRED (frees shared pool slots -- needs the §14 lock): **Orphan GC** ⭐ `reg_gc_orphans()` -- free pool slots for `active` keys unreachable from any root; auto-run on `registry_flush` if orphan count > 10.
+- [/] DEFERRED (per-task tracking + NtSetValueKey hook -- needs §14 lock): **Per-PID quota** ⭐ track per-task registry bytes in `struct task`; > `QuotaBytes` (50 MiB) -> `STATUS_QUOTA_EXCEEDED`; reset on exit.
 
 - [ ] Commit: `"kernel/registry: transactions, search API, snapshot/diff, orphan GC, per-PID quota"`
 
 **Test checkpoint:** `RegBeginTransaction` + `RegSetValueEx` + `RegCommitTransaction` → value visible. `RegAbortTransaction` → value absent. Conflict: two concurrent txns modify same key → second commit → `STATUS_REGISTRY_TRANSACTION_CONFLICT`. `RegFindKey(HKLM, "Disp*")` → finds `Display`. `RegTakeSnapshot` + modify + `RegDiffSnapshots` → `REG_DIFF_MODIFIED`. Per-PID quota at 50 MiB → exceed → `STATUS_QUOTA_EXCEEDED`. Serial log: `"[REG] Transaction commit: %u mutations applied"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] Transactions/search/snapshot/GC/quota deferred -- all add registry operations (pool alloc/free, tree walk under concurrent mutation, per-task writes) that must be SMP-safe under the §14 lock (deferred); transactions also need KTM (§11) and `regedit diff` needs §7 -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
 
 ---
 
@@ -563,6 +563,9 @@ title: "TODO-14 -- Registry System Completion"
 
 **Test checkpoint:** Hash map: create 100 children under one key → `reg_child_lookup` finds each by name. Load factor: bucket chain > 8 triggers rehash. Mmap hive: `hive_open_mmap` → `RegQueryValueEx` reads directly from mapped page (zero-copy). B-tree: write hive in `regf` format → external `python-registry` tool parses it. Serial log: `"[REG] Hash map: bucket_count=%u max_chain=%u"`. Test on: QEMU WHPX + TCG.
 
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] Performance (hash-map child lookup, mmap hive, B-tree cell format) deferred -- mmap needs `NtMapViewOfSection` (05-storage/TODO-05 §7) + §9; all add registry surface needing the §14 SMP lock (deferred) -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
+
 ---
 
 ## 11. KTM Transaction Syscalls Wired to SSDT
@@ -581,6 +584,9 @@ Register the full Kernel Transaction Manager (KTM) syscall surface in the SSDT f
 
 **Test checkpoint:** `NtCreateTransactionManager` + `NtCreateTransaction` + `NtCommitTransaction` round-trip succeeds. `NtRollbackTransaction` reverts changes. `NtCreateRegistryTransaction` + `NtCommitRegistryTransaction` atomically applies registry mutations. Test on: QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
 
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] KTM transaction SSDT surface deferred -- needs the KTM transaction-manager infrastructure and §9 registry transactions (both deferred) -> XREF: 02-kernel-core/TODO-14 §9 (item: "RegBeginTransaction" at the §9 checklist)
+
 ---
 
 ## 12. Registry Symlink Completion
@@ -597,6 +603,9 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] Commit: `"kernel/registry: REG_OPTION_CREATE_LINK, REG_OPTION_OPEN_LINK, symlink loop detection"`
 
 **Test checkpoint:** Create a symlink key `HKLM\Test\Link` → `HKLM\Test\Target` via `NtCreateKey(REG_OPTION_CREATE_LINK)` + `NtSetValueKey(REG_LINK)`. `NtOpenKey("HKLM\\Test\\Link")` transparently returns target key. `NtOpenKeyEx("HKLM\\Test\\Link", REG_OPTION_OPEN_LINK)` returns the link key itself. Create circular symlink `A → B → A`; `NtOpenKey("A")` returns `STATUS_REPARSE_POINT_NOT_RESOLVED` (not infinite loop). `CurrentControlSet` symlink resolves to `ControlSet001`. Serial log: `"[REG] Symlink resolve: %s -> %s (depth=%u)"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] Symlink create/open-link completion deferred -- REG_LINK creation/open needs the HKEY->OB handle-table migration (§4, deferred) and the §14 SMP lock -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
 
 ---
 
@@ -621,6 +630,9 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [ ] Commit: `"kernel/registry: schema-validated keys -- type, range, and size enforcement"`
 
 **Test checkpoint:** Set schema on `HKLM\Test\SchemaKey`: `_AllowedTypes = "REG_DWORD"`, `_MinValue = 0`, `_MaxValue = 100`. `RegSetValueEx("Value", REG_DWORD, 50)` → succeeds. `RegSetValueEx("Value", REG_DWORD, 200)` → `STATUS_INTEGER_OVERFLOW`. `RegSetValueEx("Value", REG_SZ, "hello")` → `STATUS_OBJECT_TYPE_MISMATCH`. Key with no schema → all writes succeed (opt-in). Serial log: `"[REG] Schema reject: %s type=%u expected=%s"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] Schema-validated keys deferred -- schema enforcement hooks into the write path (§3 notify + §4 handles) and needs the §14 SMP lock; §4 is deferred -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
 
 ---
 
@@ -669,6 +681,9 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 - [ ] Commit: `"kernel/registry: value size expansion to 16KiB names + 1MiB data (heap-backed)"`
 
 **Test checkpoint:** `RegSetValueEx` with a 4096-byte `REG_BINARY` succeeds; a 1 MiB value round-trips through `hive_save`/`hive_load`; a 300-char value name round-trips; no kernel-stack guard fault on a large-value query. Serial log: `"[REG] large value: name=%u data=%u bytes"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
+> **Deferred:** [M] Value-size expansion (16 KiB names, 1 MiB data) deferred -- heap-backed migration of the 5 stack buffers + on-disk format bump must land under the §14 SMP lock (deferred) -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
 
 ---
 
