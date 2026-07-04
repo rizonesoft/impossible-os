@@ -152,7 +152,7 @@ Impossible OS commits do NOT carry `Co-Authored-By: Claude`, `Assisted-by: TOOL:
 
 ## Autonomous-agent boundary -- interactive only
 
-Impossible OS does NOT accept autonomous coding-agent PRs (Copilot cloud-agent, Devin, Cognition, or equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship). Every commit is authored by a human operator working interactively with Claude Code. The repo deliberately does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/`, or `.github/instructions/` -- their absence is policy, not omission. `AGENTS.md` and `CLAUDE.md` exist for cross-tool-pointer / doctrine-source purposes and are NOT autonomous-agent enablement. (`.github/copilot-instructions.md` previously sat alongside them as a Copilot-CLI reviewer-mode instruction file; both that file and `scripts/copilot-review.sh` were retired wholesale 2026-04-28 when the Copilot-CLI subordinate-reviewer role was dropped in favor of Codex GPT-5.5 as sole external reviewer.) GitHub-side cloud-agent enablement (org/repo Settings -> Copilot -> Access policies) is a procedural guard; the regression pack cannot detect it. Full reasoning, MCP-server corollary, and stance-change condition: [docs/infrastructure/ai-system.md "Autonomous-Agent Boundary Policy"](docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy).
+Impossible OS does NOT accept autonomous coding-agent PRs (Copilot cloud-agent, Devin, Cognition, or equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship). Every commit is authored by a human operator working interactively with Claude Code. The repo deliberately does NOT ship `.github/workflows/copilot-setup-steps.yml`, `.github/agents/`, `.github/chatmodes/`, or `.github/instructions/` -- their absence is policy, not omission. `AGENTS.md` and `CLAUDE.md` exist for cross-tool-pointer / doctrine-source purposes and are NOT autonomous-agent enablement. (`.github/copilot-instructions.md` previously sat alongside them as a Copilot-CLI reviewer-mode instruction file; both that file and `scripts/copilot-review.sh` were retired wholesale 2026-04-28 when the Copilot-CLI subordinate-reviewer role was dropped in favor of Codex review mode.) GitHub-side cloud-agent enablement (org/repo Settings -> Copilot -> Access policies) is a procedural guard; the regression pack cannot detect it. Full reasoning, MCP-server corollary, and stance-change condition: [docs/infrastructure/ai-system.md "Autonomous-Agent Boundary Policy"](docs/infrastructure/ai-system.md#autonomous-agent-boundary-policy).
 
 ## Git Hooks
 
@@ -184,7 +184,7 @@ Driver and module formats are tracked separately in the [kernel module system TO
 
 ## Model Roles
 
-Use the strongest available Opus-class model for implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-audit-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex and GPT-5.4 style external review passes for adversarial review, consistency audit, and performance review.
+Use the strongest available Opus-class model for Claude implementation and judgment-heavy work such as `implement-todo-section`, `review-todo-section`, `create-todo`, `gap-audit-todo`, `quality-review-section`, and design-heavy roadmap shaping. Keep Codex review passes for adversarial review, consistency audit, and performance review.
 
 External review does not replace self-review. The agent must always perform its own integration-level check for completeness, polish, regressions, parity gaps, and ownerless adjacent work.
 
@@ -219,7 +219,7 @@ Two MCP servers are wired in [`.mcp.json`](.mcp.json) at project scope: `todo-gr
 
 ## Skills
 
-Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained. Impossible OS is Claude Code-only as of 2026-04-18; Cursor was removed because the parallel skill set created clutter without a corresponding productivity win. The Copilot CLI subordinate-reviewer wrapper was retired wholesale 2026-04-28; Codex GPT-5.5 is now the sole external reviewer. The full ownership matrix (Claude master, Codex sole subordinate reviewer, edit-here-not-there rules) lives at [docs/infrastructure/ai-system.md](docs/infrastructure/ai-system.md).
+Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges them relevant based on the `description` field. Each skill is self-contained. Impossible OS is Claude-primary for interactive work; Cursor was removed because the parallel skill set created clutter without a corresponding productivity win. The Copilot CLI subordinate-reviewer wrapper was retired wholesale 2026-04-28. Codex is used only in review mode: finding-only, received through the existing review discipline. The full ownership matrix lives at [docs/infrastructure/ai-system.md](docs/infrastructure/ai-system.md).
 
 | Skill | Description |
 |---|---|

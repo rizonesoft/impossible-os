@@ -15,10 +15,10 @@
 
 |                       |    Files |      Lines |
 | --------------------- | -------: | ---------: |
-| **C sources** (`.c`)  |      541 |     399720 |
-| **Headers** (`.h`)    |      457 |     133343 |
+| **C sources** (`.c`)  |      541 |     399995 |
+| **Headers** (`.h`)    |      457 |     133349 |
 | **Assembly** (`.asm`) |        9 |        875 |
-| **Subtotal**          | **1007** | **533938** |
+| **Subtotal**          | **1007** | **534219** |
 
 ## SDK Tools
 
@@ -32,7 +32,7 @@
 
 |                                   |   Files |     Lines |
 | --------------------------------- | ------: | --------: |
-| **Shell scripts** (`.sh`)         |      77 |     32906 |
+| **Shell scripts** (`.sh`)         |      77 |     32908 |
 | **Batch scripts** (`.bat`)        |      69 |       998 |
 | **PowerShell** (`.ps1`)           |      11 |      3314 |
 | **Python** (`.py`)                |     116 |     39357 |
@@ -40,27 +40,27 @@
 | **Include fragments** (`.inc`)    |       7 |      3241 |
 | **Makefile**                      |       4 |      2123 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |       199 |
-| **Subtotal**                      | **288** | **82662** |
+| **Subtotal**                      | **288** | **82664** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     419 |     113778 |
+| **Markdown** (`.md`)        |     419 |     113786 |
 | **JSON** (`.json`)          |      14 |       1050 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1465 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **469** | **192496** |
+| **Subtotal**                | **469** | **192504** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1302** | **618319** |
-| **Supporting text + metadata** |  **469** | **192496** |
-| **All counted text files**     | **1771** | **810815** |
+| **Core code + tooling**        | **1302** | **618602** |
+| **Supporting text + metadata** |  **469** | **192504** |
+| **All counted text files**     | **1771** | **811106** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -75,17 +75,17 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-|                               |         Linux |     Windows |         Impossible OS |
-| ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               618,319 |
-| **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
-| **Time span**                 |      33 years |    40 years | 3 month(s), 29 day(s) |
+|                               |         Linux |     Windows | Impossible OS |
+| ----------------------------- | ------------: | ----------: | ------------: |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |       618,602 |
+| **Developers**                | ~1,000 active | ~5,000 peak |             1 |
+| **Time span**                 |      33 years |    40 years |    4 month(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 618,319
-> lines of core code and tooling would take **189 developers** working for **3 month(s), 29 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 618,602
+> lines of core code and tooling would take **188 developers** working for **4 month(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-04 16:54 · commit `903535e2`*
+*Last updated: 2026-07-04 19:31 · commit `d9800f5b`*

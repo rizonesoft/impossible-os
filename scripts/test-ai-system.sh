@@ -38,8 +38,8 @@ Usage:
 What this tests (12 check groups; owned by TODO-02 sections 1-8):
   1. Authority Hierarchy present in TODO-02 + ai-system.md, with the 5
      hierarchy invariants intact.
-  2. Claude-Code-only declaration in CLAUDE.md, with the .cursor/
-     removal date preserved.
+  2. Claude-primary declaration in CLAUDE.md, with the historical
+     .cursor/ removal date preserved in the AI-system docs.
   3. AGENTS.md file contract: exists, links CLAUDE.md, <=60 lines,
      Authority section full-sentence phrases byte-match TODO-02 +
      ai-system.md canonical block, no CLAUDE.md-exclusive doctrine
@@ -165,15 +165,15 @@ check_authority_hierarchy() {
     section "[1/12] Authority Hierarchy (TODO-02 §1)"
     local todo="todo/00-infrastructure/TODO-02-ai-development-system.md"
     local doc="docs/infrastructure/ai-system.md"
-    local master="Claude Code is the master"
-    assert_fixed_string "TODO-02 carries master statement" "$todo" "$master"
-    assert_fixed_string "ai-system.md carries master statement" "$doc" "$master"
+    local master="Claude Code is the primary interactive orchestrator"
+    assert_fixed_string "TODO-02 carries primary-orchestrator statement" "$todo" "$master"
+    assert_fixed_string "ai-system.md carries primary-orchestrator statement" "$doc" "$master"
     # 5 hierarchy invariants (first phrase of each).
     local inv1="Doctrine lives in"
     local inv2="Skills live in"
     local inv3="External reviewers return findings"
     local inv4="CLAUDE.md wins on conflict"
-    local inv5="Claude Code is also the interactive agent"
+    local inv5="Claude Code remains the only implementation agent"
     for file in "$todo" "$doc"; do
         for phrase in "$inv1" "$inv2" "$inv3" "$inv4" "$inv5"; do
             assert_fixed_string "invariant in $file: $phrase" "$file" "$phrase"
@@ -182,12 +182,14 @@ check_authority_hierarchy() {
 }
 
 # ============================================================================
-# 2. Claude-Code-only declaration (§1)
+# 2. Claude-primary declaration (§1)
 # ============================================================================
 check_claude_code_only() {
-    section "[2/12] Claude-Code-only declaration (TODO-02 §1)"
-    assert_fixed_string "CLAUDE.md names Claude Code-only" "CLAUDE.md" "Claude Code-only"
-    assert_fixed_string "CLAUDE.md references .cursor/ removal date 2026-04-18" "CLAUDE.md" "2026-04-18"
+    section "[2/12] Claude-primary declaration (TODO-02 §1)"
+    assert_fixed_string "CLAUDE.md names Claude as primary interactive orchestrator" \
+        "CLAUDE.md" "Claude-primary for interactive work"
+    assert_fixed_string "skill-authoring.md references .cursor/ removal date 2026-04-18" \
+        "docs/infrastructure/skill-authoring.md" "2026-04-18"
 }
 
 # ============================================================================
@@ -239,8 +241,8 @@ check_agents_md() {
     # TODO-02, AND ai-system.md. Pulled from the canonical 5-invariant block
     # (TODO-02 lines 21, 23 and the parallel paragraph in ai-system.md).
     local canonical_phrases=(
-        "doctrine files tell Claude what to do, skills tell Claude how to do it, external reviewers tell Claude what might be wrong"
-        "Nothing outside Claude Code edits code, commits, or makes scope decisions autonomously"
+        "Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong."
+        "There is no sibling executor in this repo."
         "Doctrine lives in \`CLAUDE.md\`. Nowhere else."
         "External reviewers return findings, never edits."
     )
@@ -258,9 +260,9 @@ check_agents_md() {
     # and TODO-02 (table cell). Check only that AGENTS.md has it.
     assert_fixed_string "AGENTS.md Authority has invariant: no parallel skill trees" \
         "AGENTS.md" "No parallel skill trees"
-    # Master statement (shared verbatim in AGENTS.md + TODO-02).
-    local master="Claude Code is the master."
-    assert_fixed_string "AGENTS.md carries master statement" "AGENTS.md" "$master"
+    # Primary-orchestrator statement (shared verbatim in AGENTS.md + TODO-02).
+    local master="Claude Code is the primary interactive orchestrator."
+    assert_fixed_string "AGENTS.md carries primary-orchestrator statement" "AGENTS.md" "$master"
     # Must-not-copy: CLAUDE.md-exclusive doctrine paragraphs
     local forbidden_phrases=(
         "Bare Metal First"

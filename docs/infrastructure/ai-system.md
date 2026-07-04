@@ -4,34 +4,35 @@
 
 ## Authority Hierarchy (read this first)
 
-> **Claude Code is the master.** Everything else in the AI surface is subordinate: doctrine files tell Claude what to do, skills tell Claude how to do it, external reviewers tell Claude what might be wrong. Nothing outside Claude Code edits code, commits, or makes scope decisions autonomously. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority, never implies anything is co-equal with Claude Code.
+> **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo. When this page uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
 | Layer                             | Role                                             | Authority over                                                                                                                     |
 | --------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Claude Code (tool)**            | MASTER / orchestrator                            | All code edits, commits, skill invocations, reviewer dispatches                                                                    |
+| **Claude Code (tool)**            | Primary interactive orchestrator                 | Interactive code edits, commits, skill invocations, reviewer dispatches                                                            |
 | `CLAUDE.md`                       | Doctrine source-of-truth (file)                  | Product north star, workflow rules, safety constraints, policy                                                                     |
 | `.claude/skills/`                 | Workflow source-of-truth (directory)             | How Claude executes a specific task (implement, review, verify, diagnose)                                                          |
 | `.claude/settings.json`           | Harness policy source-of-truth (file)            | Permissions, hook reminders, pre/post-tool-use gates                                                                               |
-| Codex (OpenAI plugin)             | Subordinate reviewer (sole external)             | Adversarial findings only; invoked from inside Claude skills (23 contract-carrying entries: 9 angle-owner `codex-*` + 9 direct workflow-consumer + 1 inheritor + 4 indirect workflow consumers); findings go through `receiving-code-review` before action |
+| Codex review mode                 | External reviewer                                | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action |
 | `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push, opt-in shared AI-workflow gate                                              |
 
 ### Hierarchy invariants
 
 1. **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skill headers, tool instructions, and regression messages reference doctrine but do not redefine it. Edits go to `CLAUDE.md` first, then propagate.
-2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/`, `.codex/`, `.other-tool/` etc.). External tools that want to participate do so through a Claude skill that dispatches them.
-3. **External reviewers return findings, never edits.** Codex output is information Claude reads and judges. The commit/edit decision stays with Claude under `superpowers:receiving-code-review` discipline.
+2. **Skills live in `.claude/skills/` only.** No parallel skill trees (`.cursor/skills/`, `.codex/skills/`, `.other-tool/skills/` etc.).
+3. **External reviewers return findings, never edits.** Codex review output is information the active orchestrator reads and judges. Each finding is verified at file:line and classified Fix / Reject / Accept-XREF before action.
 4. **CLAUDE.md wins on conflict.** If a skill, a hook message, or an external-tool config contradicts `CLAUDE.md`, `CLAUDE.md` is right and the other layer is the bug. Fix the drift, do not fork the doctrine.
-5. **Claude Code is also the interactive agent.** A human operator talks to Claude; Claude dispatches subordinates. Treating Codex as a direct-edit or direct-commit tool violates the hierarchy.
+5. **Claude Code remains the only implementation agent.** A human operator talks to Claude for normal work. External reviewers return findings only.
 
 ---
 
-## Claude Code-Only Stance
+## Claude / Reviewer Boundary
 
-As of 2026-04-18, Impossible OS is **Claude Code-only** for AI-assisted development. This is a deliberate design choice, documented here so the decision is discoverable when a contributor wonders why there is no `.cursor/` tree or `.windsurf/` tree or Aider config checked in.
+Impossible OS is Claude Code-only for implementation and overnight execution. Codex remains available only as an external reviewer invoked by Claude skills.
 
-- **No `.cursor/`, no parallel skill sets.** Doctrine lives in `CLAUDE.md`; skills live in `.claude/skills/`. The previous `.cursor/` tree was removed because maintaining a parallel skill set under it created clutter without a corresponding productivity win.
-- **External reviewers are invoked from inside Claude skills, not from separate instruction layers.** Codex runs through the OpenAI Codex plugin when one of the 23 contract-carrying skill entries ([External-Reviewer Contract](#external-reviewer-contract-codex) names them: 9 angle-owner `codex-*` + 9 direct workflow-consumer + 1 inheritor + 4 indirect workflow consumers) invokes or inherits it. Codex is the sole external reviewer; the previous Copilot CLI subordinate-reviewer wrapper was retired wholesale 2026-04-28 (per the Copilot-removal automation-hardening sweep). It does not read its own instruction tree in this repo.
-- **If a new AI tool is added in the future, it goes through the [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex)** and applies `receiving-code-review` discipline to its findings. New tools do not get their own instruction tree.
+- **No parallel skill sets.** Doctrine lives in `CLAUDE.md`; Claude skills live in `.claude/skills/`. `.codex/skills/` remains forbidden.
+- **Claude owns runner files and state.** Runner mechanics stay under `.claude/skills/overnight-sequencer/`, `.claude/hooks/`, and `scripts/overnight/`.
+- **Codex review mode remains finding-only.** When Codex is used as a reviewer, its output goes through receiving-code-review discipline.
+- **Other AI tools still go through the [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex)** before adoption.
 
 ---
 
@@ -63,7 +64,7 @@ Every row above is load-bearing across ALL layers. If a skill, hook message, or 
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `.claude/skills/*/SKILL.md`       | Step-by-step Claude workflows; invoke-in-chat names; when-to-use heuristics                                   |
 | `.claude/settings.json`           | Permission allow/deny lists; hook matchers; environment variables; pre/post-tool-use reminders                |
-| Codex plugin (external)           | Codex-specific review templates; each `codex-*` skill owns the prompt it dispatches, invoking the external OpenAI Codex plugin binary (`codex-companion.mjs` lives under the installed plugin tree, not in this repo) |
+| Codex review mode                 | Codex-specific review prompts and output; findings only, received through Fix / Reject / Accept-XREF triage |
 
 Tool-local mechanics are implementation details. They can change independently as long as they continue to respect global doctrine. Global doctrine, by contrast, only changes via a `CLAUDE.md` edit and propagates from there.
 
@@ -79,7 +80,7 @@ Preserve the hierarchy by editing the ONE canonical location when a concept has 
 | Skill workflow (steps, gates, guardrails)        | [`.claude/skills/<skill>/SKILL.md`](../../.claude/skills/)                            | Skill catalog table in `CLAUDE.md` (update the one-line description only when a skill is added/renamed/retired)                                  |
 | Skill lifecycle (how to add/edit/retire)         | [`docs/infrastructure/skill-authoring.md`](skill-authoring.md)                        | [`.claude/skills/TEMPLATE.md`](../../.claude/skills/TEMPLATE.md) (scaffold only -- structural changes go to skill-authoring.md first)            |
 | Harness policy (hooks, permissions)              | [`.claude/settings.json`](../../.claude/settings.json) + [§5 boundary](#mcp-permissions-and-extension-boundary) | Mandatory-Skill-Triggers table in `CLAUDE.md` (update when a hook is added that enforces a new rule)                                             |
-| Codex dispatch templates                         | Individual `codex-*` skills under [`.claude/skills/`](../../.claude/skills/)          | Codex plugin config (external); never restate doctrine in plugin docs                                                                            |
+| Codex review templates in Claude workflow        | Individual `codex-*` skills under [`.claude/skills/`](../../.claude/skills/)          | Codex plugin config (external); never restate doctrine in plugin docs                                                                            |
 | Git-hook lifecycle (pre-commit lint, post-commit COUNT, pre-push) | [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle) + [`.githooks/`](../../.githooks/) | `CONTRIBUTING.md` "Enable Git Hooks" section (copy-pastable install commands only); `CLAUDE.md` "Git Hooks" section (one-line pointer) |
 | TODO workflow (validate, gap-analysis, implement, review) | [`.claude/skills/`](../../.claude/skills/) (the individual skill files are the SoT)   | `/todo-pipeline` orchestrator (references the individual skills; never inlines their content)                                                    |
 
@@ -383,7 +384,7 @@ Skills (`.claude/skills/`) are the primary repo-tracked surface for workflows; s
 
 ## Autonomous-Agent Boundary Policy
 
-Autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship) are **refused** here. Impossible OS accepts commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Claude Code is also the interactive agent. A human operator talks to Claude; Claude dispatches subordinates.") enforced as repo policy rather than implied.
+Autonomous coding agents (Copilot coding-agent, Devin, Cognition, equivalent tools that run tasks in sandboxes and open PRs without per-step human authorship) are **refused** here. Impossible OS accepts commits only from human operators working interactively with Claude Code. This is Authority Hierarchy invariant #5 ("Claude Code remains the only implementation agent. A human operator talks to Claude for normal work. External reviewers return findings only.") enforced as repo policy rather than implied.
 
 ### Why
 
@@ -431,13 +432,13 @@ If Impossible OS ever opts in to autonomous-agent support, adoption ships as a *
 - Its own review pipeline (equivalent to `/implement-todo-section` steps 13-18 running inside the autonomous-agent sandbox before a PR is opened).
 - A `.github/workflows/copilot-setup-steps.yml` (or equivalent) that wires the agent to the domain code-quality gates and mandatory Codex dispatches.
 - An explicit firewall allowlist for the agent's network access.
-- A revised [Authority Hierarchy](#authority-hierarchy-read-this-first) row acknowledging the new autonomous class (Claude Code stays master; the autonomous agent would be a subordinate contributor, not an authority).
+- A revised [Authority Hierarchy](#authority-hierarchy-read-this-first) row acknowledging the new autonomous class (Claude Code stays primary interactive orchestrator; the autonomous agent would be a subordinate contributor, not an authority).
 
 Until that TODO ships, every autonomous-agent-authored PR fails review. Any reviewer can cite this section and close the PR with the refusal reason.
 
 ### Why this is a competitive edge
 
-Mature Windows and Linux repos document whether they accept autonomous-agent PRs; **fewer document WHY and what they refuse to ship as a consequence**. Making the refusal explicit (and linking it to the Authority Hierarchy) keeps the Claude-Code-only stance enforceable long-term rather than degrading silently one reviewer-accepts-a-PR at a time.
+Mature Windows and Linux repos document whether they accept autonomous-agent PRs; **fewer document WHY and what they refuse to ship as a consequence**. Making the refusal explicit (and linking it to the Authority Hierarchy) keeps the Claude-primary boundary enforceable long-term rather than degrading silently one reviewer-accepts-a-PR at a time.
 
 ---
 
