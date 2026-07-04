@@ -14,6 +14,7 @@
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char, Rtl*UnicodeString, CompareStringOrdinal */
 #include "kernel/nt/nls.h"         /* S4: nls_table_parse + accessors + fallback */
 #include "kernel/nt/nls_cp.h"      /* S5: code page conversion providers */
+#include "kernel/nt/nls_locale.h"  /* S6: locale/LCID metadata */
 #include "registry.h"              /* S5: HKLM\SYSTEM\Nls policy preservation test */
 #include "kernel/kchecksum.h"      /* kcrc32 for synthetic table blobs */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
@@ -1086,6 +1087,72 @@ static void test_nls_cp_get_info_zeroes_output(void)
     TEST_ASSERT_EQ((uint64_t)info.lead_bytes[0], 0u, "lead_bytes zeroed");
 }
 
+/* ==========================================================================
+ * Section 6: locale / LCID metadata (pure helper tests).
+ * ========================================================================== */
+
+static void test_nls_locale_lookup(void)
+{
+    const nls_locale_t *l = nls_locale_by_lcid(0x0409);
+    TEST_ASSERT_EQ((uint64_t)(l != 0), 1u, "en-US LCID resolves");
+    TEST_ASSERT_EQ((uint64_t)(strcmp(l->bcp47, "en-US") == 0), 1u, "en-US BCP-47 name");
+    /* Round-trip name -> record -> LCID. */
+    TEST_ASSERT_EQ((uint64_t)nls_locale_by_bcp47("en-US")->lcid, 0x0409u, "BCP-47 round-trips");
+    TEST_ASSERT_EQ((uint64_t)(nls_locale_by_lcid(NLS_LCID_INVARIANT) != 0), 1u,
+                   "invariant always resolvable");
+    TEST_ASSERT_EQ((uint64_t)(nls_locale_by_lcid(0xDEADu) == 0), 1u, "unknown LCID -> NULL");
+    TEST_ASSERT_EQ((uint64_t)(nls_locale_by_bcp47("xx-XX") == 0), 1u, "unknown name -> NULL");
+    TEST_ASSERT_EQ((uint64_t)(nls_locale_by_bcp47(0) == 0), 1u, "NULL name -> NULL");
+}
+
+static void test_nls_locale_ui_fallback(void)
+{
+    uint16_t chain[8];
+    /* es-MX (0x080A) -> [0x080A, 0x000A neutral, 0x0409 en-US]. */
+    uint32_t n = nls_locale_ui_fallback(0x080A, chain, 8);
+    TEST_ASSERT_EQ((uint64_t)n, 3u, "es-MX fallback has 3 entries");
+    TEST_ASSERT_EQ((uint64_t)chain[0], 0x080Au, "specific LANGID first");
+    TEST_ASSERT_EQ((uint64_t)chain[1], 0x000Au, "neutral (primary) second");
+    TEST_ASSERT_EQ((uint64_t)chain[2], 0x0409u, "en-US backstop last");
+    /* en-US (0x0409, primary 0x0009): specific -> neutral English; the en-US
+     * backstop de-dups with entry[0], so the chain is [0x0409, 0x0009]. */
+    n = nls_locale_ui_fallback(0x0409, chain, 8);
+    TEST_ASSERT_EQ((uint64_t)n, 2u, "en-US fallback: specific + neutral");
+    TEST_ASSERT_EQ((uint64_t)chain[0], 0x0409u, "en-US specific first");
+    TEST_ASSERT_EQ((uint64_t)chain[1], 0x0009u, "neutral English second (backstop deduped)");
+    /* Small caps: full count returned, only cap entries written, no over-read. */
+    chain[1] = 0xEEEE;
+    n = nls_locale_ui_fallback(0x080A, chain, 1);
+    TEST_ASSERT_EQ((uint64_t)n, 3u, "cap=1 still returns full count");
+    TEST_ASSERT_EQ((uint64_t)chain[0], 0x080Au, "cap=1 writes only entry 0");
+    TEST_ASSERT_EQ((uint64_t)chain[1], 0xEEEEu, "cap=1 leaves entry 1 untouched");
+    n = nls_locale_ui_fallback(0x080A, chain, 0);
+    TEST_ASSERT_EQ((uint64_t)n, 3u, "cap=0 returns full count, writes nothing");
+}
+
+static void test_nls_locale_policy(void)
+{
+    /* register_defaults ran at boot; the compiled default is en-US for all three. */
+    TEST_ASSERT_EQ((uint64_t)nls_locale_get_system(), 0x0409u, "system locale en-US");
+    TEST_ASSERT_EQ((uint64_t)nls_locale_get_user(), 0x0409u, "user locale en-US");
+    TEST_ASSERT_EQ((uint64_t)nls_locale_get_ui_language(), 0x0409u, "UI language en-US");
+}
+
+static void test_nls_locale_codepages_valid(void)
+{
+    /* Every locale record's ANSI/OEM code page must name a real provider so a
+     * future CP_THREAD_ACP can derive a thread ACP from a locale. */
+    const nls_locale_t *l = nls_locale_by_lcid(0x0407);   /* de-DE */
+    TEST_ASSERT_EQ((uint64_t)(l != 0), 1u, "de-DE resolves");
+    TEST_ASSERT_EQ((uint64_t)(nls_cp_get_provider(l->ansi_code_page) != 0), 1u,
+                   "de-DE ANSI code page has a provider");
+    TEST_ASSERT_EQ((uint64_t)(nls_cp_get_provider(l->oem_code_page) != 0), 1u,
+                   "de-DE OEM code page has a provider");
+    l = nls_locale_by_lcid(0x0409);                        /* en-US */
+    TEST_ASSERT_EQ((uint64_t)l->ansi_code_page, 1252u, "en-US ANSI is 1252");
+    TEST_ASSERT_EQ((uint64_t)l->oem_code_page, 437u, "en-US OEM is 437");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -1232,4 +1299,13 @@ void test_register_nls(void)
                             test_nls_cp_register_rejects_malformed_acp, TEST_CAT_NLS);
     test_suite_register_cat("nls: cp register rejects unsupported acp",
                             test_nls_cp_register_rejects_unsupported_acp, TEST_CAT_NLS);
+    /* Section 6: locale / LCID metadata. */
+    test_suite_register_cat("nls: locale lookup + bcp47 round-trip",
+                            test_nls_locale_lookup, TEST_CAT_NLS);
+    test_suite_register_cat("nls: locale MUI fallback chain",
+                            test_nls_locale_ui_fallback, TEST_CAT_NLS);
+    test_suite_register_cat("nls: locale registry policy",
+                            test_nls_locale_policy, TEST_CAT_NLS);
+    test_suite_register_cat("nls: locale code pages valid",
+                            test_nls_locale_codepages_valid, TEST_CAT_NLS);
 }

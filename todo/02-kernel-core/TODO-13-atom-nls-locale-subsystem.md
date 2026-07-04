@@ -44,7 +44,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 3 | Global and local atom tables | T12 | [x] |
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [x] |
 | 💎 | 5 | Code page conversion providers | §4 | [x] |
-| 💎 | 6 | Locale and LCID metadata | §4 | [ ] |
+| 💎 | 6 | Locale and LCID metadata | §4 | [/] |
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [ ] |
 | 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [ ] |
 | ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [ ] |
@@ -183,18 +183,27 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 6. Locale and LCID Metadata
 
-- [ ] Define locale records: LCID, BCP-47 name, language, region, decimal separator, date/time formats, currency metadata, first day of week.
-- [ ] Kernel stores invariant and installed-locale metadata; user-mode libraries format UI strings.
-- [ ] Registry policy chooses system locale and user locale; owns the privileged/per-user `NtSetDefaultLocale`/`NtSetDefaultUILanguage` (fail closed in TODO-12 §23 `nt_misc.c` pending this).
-- [ ] Publish locale change notification: WM_SETTINGCHANGE broadcast (lParam "intl") via 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage"); env-var precedent: TODO-22-environment-variables.md §9.
-- [ ] Itemize the 3-way split: independent system locale (non-Unicode program default), user locale, and UI language -- each separately settable via registry policy. (gap-audit)
-- [ ] Add an ordered MUI UI-language fallback chain (e.g. es-MX -> es -> en-US), not just a single LANGID; mirrors `SetThreadPreferredUILanguages` / gettext `LANGUAGE`. (gap-audit)
-- [ ] Provide locale-formatted timezone DISPLAY NAMES over the tz table + DST rules owned by `08-graphics-ui/TODO-12-clock-time.md` (this section owns only the localized display-string layer). (gap-audit)
-- [ ] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` returns the thread locale's ANSI page, not the system ACP (§5 resolves it to system ACP for now). (from §5)
-- [ ] When `registry_load_hives()` is wired (persisted policy), refresh the NLS ACP/OEMCP boot cache after hive load (add `nls_cp_refresh_policy()`) so a persisted `SYSTEM\Nls` ACP/OEMCP takes effect; §5 caches at populate-defaults time. (Codex §5)
-- [ ] Commit: `"kernel: nls -- locale/LCID metadata records + registry policy binding"`
+- [x] Locale records in `nls_locale.c` (LCID, BCP-47, language/region, ANSI/OEM code page, separators, date/time formats, currency, first-day); invariant + en-US/en-GB/de-DE/fr-FR/es-ES; `by_lcid`/`by_bcp47` round-trip.
+- [x] Kernel stores invariant + installed-locale metadata (compiled `s_locales[]`); user-mode libraries format UI strings over it.
+- [/] Registry policy: `HKLM\SYSTEM\Nls` SystemLocale/UserLocale/UILanguage seeded + boot-cached; `NtQueryDefaultLocale`/`NtQueryDefaultUILanguage` bound to it. Privileged `NtSetDefault*` stays fail-closed pending SRM.
+- [/] Locale change notification: WM_SETTINGCHANGE (lParam "intl") via 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage"). BLOCKED: TODO-15 §25 unshipped.
+- [x] 3-way split (system / user / UI language) stored + independently queryable via registry policy (per-user HKCU routing deferred until per-user hives). (gap-audit)
+- [x] Ordered MUI UI-language fallback chain `nls_locale_ui_fallback` (specific -> neutral primary -> en-US backstop, de-duped); mirrors `SetThreadPreferredUILanguages`. (gap-audit)
+- [/] Locale-formatted timezone DISPLAY NAMES over the tz table owned by `08-graphics-ui/TODO-12-clock-time.md` (§6 owns only the display-string layer). BLOCKED: clock-time §5 tz table unshipped. (gap-audit)
+- [/] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` uses the thread locale's ANSI page (schema ready: `nls_locale_t.ansi_code_page`); BLOCKED: needs per-thread locale storage. (from §5)
+- [/] When `registry_load_hives()` is wired (persisted policy), refresh the NLS ACP/OEMCP + locale boot caches after hive load; §5/§6 cache at populate-defaults time. BLOCKED: `registry_load_hives()` unwired. (Codex §5)
+- [x] Commit: `"kernel: nls -- locale/LCID metadata records + registry policy binding"`
 
 **Test checkpoint:** `NtQueryDefaultLocale` returns the registry-selected LCID; the invariant locale (0x007F) is always queryable. A BCP-47 name round-trips to its LCID. `NtSetDefaultLocale` from an unprivileged caller fails closed until the §6 policy binding lands.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 75 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nls_locale.h` + `nls_locale.c` -- compiled locale records (6 locales, ANSI/OEM code page + formats), `by_lcid`/`by_bcp47` round-trip, MUI fallback chain, and the registry-backed system/user/UI locale policy.
+> - **How it integrates:** `nls_locale_register_defaults()` seeds `HKLM\SYSTEM\Nls` (boot-cached) from `registry_populate_defaults` and syncs the `nt_misc.c` locale globals; `NtQueryDefaultLocale` honors the UserProfile flag (user vs system).
+> - **Downstream effects:** gives the TODO-12 §23 query handlers registry backing; the privileged `NtSetDefault*` setter stays fail-closed pending the SRM privilege check.
+> - **Canonical doc:** [`include/kernel/nt/nls_locale.h`](../../include/kernel/nt/nls_locale.h).
+> - **Scope boundary:** §6 owns records + registry-policy query binding + MUI fallback. Privileged setter -> SRM; WM_SETTINGCHANGE -> TODO-15 §25; tz display -> clock-time §5; CP_THREAD_ACP + hive-refresh deferred (blocked).
 
 ---
 
@@ -266,14 +275,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3) |
 | 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5) |
-| 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |
+| 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ⬜ §7 invariant + case-insensitive keys |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | ⬜ §7 no-silent-normalize + explicit helper |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §4/§7 C1-C3 + FoldString |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
-| ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ⬜ §6 ordered fallback |
+| ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ✅ `nls_locale_ui_fallback` ordered chain (§6) |
 
 Win11 provides the deepest NLS surface (per-locale `.nls` tables, linguistic collation, normalization) but couples case-insensitivity into the kernel object manager. Linux pushes locale to userspace (ICU/glibc) and keeps the VFS bytewise. Impossible OS centralizes one kernel case-fold authority (§2) that OB, registry, and environment all consume (§9), keeps culture-aware collation in user-mode (§7), and refuses silent normalization of object names.
 

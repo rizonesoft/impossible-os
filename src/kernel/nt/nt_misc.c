@@ -23,6 +23,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char -- the NLS case-fold authority */
+#include "kernel/nt/nls_locale.h"  /* nls_locale_get_system -- system-locale query */
 #include "kernel/nt/service_numbers.h"
 #include "kernel/ob/peb.h"
 #include "kernel/sched/spinlock.h"
@@ -500,15 +501,20 @@ static NTSTATUS NtQueryInformationAtom_handler(uint64_t atom, uint64_t info_clas
 /* ---- Locale syscalls ----------------------------------------------------- */
 
 /* NtQueryDefaultLocale(BOOLEAN UserProfile, PLCID DefaultLocaleId).
- * UserProfile is accepted and ignored (no per-user hive yet). */
+ * UserProfile TRUE returns the (registry-backed) user locale, FALSE the system
+ * locale. Both come from the nls_locale policy (user locale is machine-wide
+ * until per-user hives exist). */
 static NTSTATUS NtQueryDefaultLocale_handler(uint64_t user_profile, uint64_t lcid_out,
                                              uint64_t a3, uint64_t a4,
                                              uint64_t a5, uint64_t a6)
 {
-    (void)user_profile; (void)a3; (void)a4; (void)a5; (void)a6;
+    (void)a3; (void)a4; (void)a5; (void)a6;
     if (!lcid_out)
         return STATUS_INVALID_PARAMETER;
-    uint32_t lcid = nt_locale_get_default();
+    /* UserProfile is a BOOLEAN (UCHAR): narrow before branching so high bits of
+     * the raw syscall argument (e.g. 0x100 with a FALSE low byte) don't flip it. */
+    uint8_t profile = (uint8_t)user_profile;
+    uint32_t lcid = profile ? nt_locale_get_default() : nls_locale_get_system();
     if (ProbeForWriteIfUser((void *)lcid_out, sizeof(uint32_t), sizeof(uint32_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
     if (copy_to_user((void *)lcid_out, &lcid, sizeof(uint32_t)) != 0)

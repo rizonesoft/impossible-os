@@ -18,6 +18,7 @@
 
 #include "registry.h"
 #include "kernel/nt/nls_cp.h"
+#include "kernel/nt/nls_locale.h"
 #include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
@@ -1786,6 +1787,9 @@ void registry_populate_defaults(void)
 
     /* --- HKLM\SYSTEM\Nls: system ANSI/OEM code page policy (GetACP/GetOEMCP) --- */
     nls_cp_register_defaults();
+
+    /* --- HKLM\SYSTEM\Nls: locale policy (system/user locale + UI language) --- */
+    nls_locale_register_defaults();
 
     /* --- HKLM\HARDWARE\CPU --- */
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\CPU", 0,
