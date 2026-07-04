@@ -712,7 +712,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > Persistence, notification, and hive management operations. Depends on §14 (core CRUD) and TODO-14 hive infrastructure.
 
 - [x] `NtFlushKey(KeyHandle)` → SSDT 0x009C: delegates to `registry_flush()`
-- [/] `NtNotifyChangeKey(KeyHandle, Event, ..., CompletionFilter, WatchTree, Asynchronous)` → SSDT 0x009D (STATUS_NOT_IMPLEMENTED pending change-notification infra -> XREF: 02-kernel-core/TODO-14 §3)
+- [/] `NtNotifyChangeKey(KeyHandle, Event, ..., CompletionFilter, WatchTree, Asynchronous)` → SSDT 0x009D (STATUS_NOT_IMPLEMENTED; §3 shipped the watcher engine, syscall wiring pending -> XREF: 02-kernel-core/TODO-14 §4)
 - [x] `NtRenameKey(KeyHandle, NewName)` → SSDT 0x009F (uses `RegRenameKey` helper)
 - [x] `NtSaveKey(KeyHandle, FileHandle)` / `NtSaveKeyEx(...)` → SSDT 0x00A0/0x00A1 (resolves FileHandle via `vfs_get_path_from_node`, then `hive_save`)
 - [x] `NtRestoreKey(KeyHandle, FileHandle, Flags)` → SSDT 0x00A2 (same path resolution, then `hive_load`)
@@ -733,9 +733,9 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Verified:** 2026-07-02 | commit `422113c1` | 6/8 items | build OK | abi 426/426 PASS
 > **Deferred:** [Critical] NtUnloadKey unloads any resolved subkey with no loaded-hive provenance check (can destroy \Registry\Machine\SYSTEM) -> XREF: 02-kernel-core/TODO-12 §15 (item: "NtUnloadKey provenance guard" at line 721)
 > **Deferred:** [M] NtNotifyChangeKey returns STATUS_NOT_IMPLEMENTED (§3 shipped the watcher engine; the syscall wiring is §4) -> XREF: 02-kernel-core/TODO-14 §4 (item: "NtNotifyChangeKey" at line 297)
-> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 427)
-> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 428)
-> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 429)
+> **Accepted:** [H] hive_load value-record parsing advances pos unchecked (crafted hive bypasses stream bounds) -> XREF: 02-kernel-core/TODO-14 §8 (item: "Harden `hive_load` value parsing" at line 431)
+> **Accepted:** [H] hive_load writes into the live key while parsing, so a failed load leaves partial mutations -> XREF: 02-kernel-core/TODO-14 §8 (item: "Make `hive_load` transactional" at line 432)
+> **Accepted:** [M] journal recovery promotes a header-valid but data-corrupt hive over a good main hive -> XREF: 02-kernel-core/TODO-14 §8 (item: "`hive_validate_file` checks only the header CRC" at line 433)
 > **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit+1M deferred, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 
