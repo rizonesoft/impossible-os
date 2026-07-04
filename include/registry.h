@@ -282,7 +282,7 @@ long RegDeleteKeyDirect(reg_key_t *key);
  * Validates new_name length and uniqueness within the parent.
  * Re-links the key in the parent's hash bucket under the new name.
  * Returns ERROR_ACCESS_DENIED if name collides or key is a root. */
-long RegRenameKey(reg_key_t *key, const char *new_name);
+long RegRenameKeyDirect(reg_key_t *key, const char *new_name);
 
 /* Unload a hive subtree: recursively free all children, values, and the
  * key itself.  Used by NtUnloadKey.  Returns ERROR_ACCESS_DENIED for roots. */

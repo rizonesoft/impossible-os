@@ -919,7 +919,7 @@ static NTSTATUS NtRenameKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_INVALID_HANDLE;
 
     name_str = (const char *)nn->Buffer;
-    rc = RegRenameKey(key, name_str);
+    rc = RegRenameKeyDirect(key, name_str);
     return reg_win32_to_nt(rc);
 }
 

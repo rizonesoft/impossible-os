@@ -1181,9 +1181,9 @@ long RegDeleteKeyDirect(reg_key_t *key)
     return ERROR_SUCCESS;
 }
 
-/* ---- RegRenameKey ---- */
+/* ---- RegRenameKeyDirect ---- */
 
-long RegRenameKey(reg_key_t *key, const char *new_name)
+long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
 {
     reg_key_t *parent;
 
