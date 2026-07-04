@@ -1619,32 +1619,99 @@ static void test_nls_fuzz_counted_strings(void)
         TEST_ASSERT_EQ((uint64_t)(vs == STATUS_SUCCESS || vs == STATUS_INVALID_PARAMETER),
                        1u, "validate returns a defined status");
 
-        /* (2) decode: Length bounded to wbuf so it can never overread. */
+        /* (2) decode: Length bounded to wbuf; a sentinel one past the effective
+         * cap proves the decode never writes at/past its declared capacity. */
         UNICODE_STRING ok;
         ok.Buffer = wbuf; ok.Length = (uint16_t)(n * 2u); ok.MaximumLength = 64;
-        NTSTATUS ds = nt_decode_unicode_string(&ok, kb, r % 40u, (uint32_t *)0,
+        uint32_t dcap = r % 40u;                 /* 0..39 WCHARs; kb[dcap] valid (kb[40]) */
+        kb[dcap] = 0xCAFEu;
+        NTSTATUS ds = nt_decode_unicode_string(&ok, kb, dcap, (uint32_t *)0,
                                                SSDT_KERNEL_MODE);
         TEST_ASSERT_EQ((uint64_t)(ds == STATUS_SUCCESS || ds == STATUS_BUFFER_TOO_SMALL ||
                                   ds == STATUS_INVALID_PARAMETER), 1u,
                        "decode returns a defined status");
+        TEST_ASSERT_EQ((uint64_t)kb[dcap], 0xCAFEu, "decode no write at/past cap");
 
         /* (3) Rtl comparator preserves reflexivity for any bounded operand. */
         TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&ok, &ok, (int)(r & 1u)), 1u,
                        "RtlEqual reflexive");
 
-        /* (4) sort-key / normalize / fold: bounded return + dst canary intact
-         * past the reported cap (proves no overrun). */
+        /* (4) sort-key / normalize / fold: cross-check the real call against the
+         * dst==NULL SIZING pass, so silent truncation-to-cap cannot masquerade
+         * as success. sizing<0 -> both error; required>cap -> real must ERROR
+         * (not truncate); required<=cap -> real must EQUAL required. Plus a
+         * sentinel AT the cap proves no write at/past it. */
         int32_t slen = (r & 8u) ? -1 : (int32_t)n;
-        skbuf[sizeof(skbuf) - 1] = 0xA5;
-        int sk = nls_sort_key(wbuf, slen, skbuf, r % (uint32_t)sizeof(skbuf), (int)(r & 1u));
-        TEST_ASSERT_EQ((uint64_t)(sk < 0 || (uint32_t)sk <= 0x7FFFFFFFu), 1u, "sort_key defined");
-        TEST_ASSERT_EQ((uint64_t)skbuf[sizeof(skbuf) - 1], 0xA5u, "sort_key dst canary intact");
-        int nm = nls_normalize((int)(1u + (r % 2u)), wbuf, slen, nbuf,
-                               (uint32_t)(sizeof(nbuf) / 2));
-        TEST_ASSERT_EQ((uint64_t)(nm < 0 || (uint32_t)nm <= sizeof(nbuf) / 2), 1u, "normalize defined");
-        int fd = nls_fold_string(NLS_MAP_FOLDDIGITS, wbuf, slen, nbuf,
-                                 (uint32_t)(sizeof(nbuf) / 2));
-        TEST_ASSERT_EQ((uint64_t)(fd < 0 || (uint32_t)fd <= sizeof(nbuf) / 2), 1u, "fold defined");
+        int ci = (int)(r & 1u);
+        int form = (int)(1u + (r % 2u));
+
+        int sk_need = nls_sort_key(wbuf, slen, (uint8_t *)0, 0, ci);   /* sizing */
+        uint32_t scap = r % (uint32_t)sizeof(skbuf);   /* 0..79; skbuf[scap] valid */
+        skbuf[scap] = 0xA5;
+        int sk = nls_sort_key(wbuf, slen, skbuf, scap, ci);
+        if (sk_need < 0)
+            TEST_ASSERT_EQ((uint64_t)(sk < 0), 1u, "sort_key: bad input errors both passes");
+        else if ((uint32_t)sk_need > scap)
+            TEST_ASSERT_EQ((uint64_t)(sk < 0), 1u, "sort_key: over-cap errors, no truncation");
+        else
+            TEST_ASSERT_EQ((uint64_t)sk, (uint64_t)sk_need, "sort_key: fits -> exact required length");
+        TEST_ASSERT_EQ((uint64_t)skbuf[scap], 0xA5u, "sort_key no write at/past cap");
+
+        int nm_need = nls_normalize(form, wbuf, slen, (uint16_t *)0, 0);   /* sizing */
+        uint32_t ncap = r % (uint32_t)(sizeof(nbuf) / 2);   /* 0..19; nbuf[ncap] valid */
+        nbuf[ncap] = 0xBEEFu;
+        int nm = nls_normalize(form, wbuf, slen, nbuf, ncap);
+        if (nm_need < 0)
+            TEST_ASSERT_EQ((uint64_t)(nm < 0), 1u, "normalize: bad input errors both passes");
+        else if ((uint32_t)nm_need > ncap)
+            TEST_ASSERT_EQ((uint64_t)(nm < 0), 1u, "normalize: over-cap errors, no truncation");
+        else
+            TEST_ASSERT_EQ((uint64_t)nm, (uint64_t)nm_need, "normalize: fits -> exact required length");
+        TEST_ASSERT_EQ((uint64_t)nbuf[ncap], 0xBEEFu, "normalize no write at/past cap");
+
+        int fd_need = nls_fold_string(NLS_MAP_FOLDDIGITS, wbuf, slen, (uint16_t *)0, 0);   /* sizing */
+        nbuf[ncap] = 0xBEEFu;   /* re-arm (fold reuses nbuf) */
+        int fd = nls_fold_string(NLS_MAP_FOLDDIGITS, wbuf, slen, nbuf, ncap);
+        if (fd_need < 0)
+            TEST_ASSERT_EQ((uint64_t)(fd < 0), 1u, "fold: bad input errors both passes");
+        else if ((uint32_t)fd_need > ncap)
+            TEST_ASSERT_EQ((uint64_t)(fd < 0), 1u, "fold: over-cap errors, no truncation");
+        else
+            TEST_ASSERT_EQ((uint64_t)fd, (uint64_t)fd_need, "fold: fits -> exact required length");
+        TEST_ASSERT_EQ((uint64_t)nbuf[ncap], 0xBEEFu, "fold no write at/past cap");
+        TEST_ASSERT_EQ((uint64_t)nbuf[ncap], 0xBEEFu, "fold no write at/past cap");
+    }
+
+    /* Deterministic over-cap + exact-fit coverage: the random corpus above never
+     * drives some helpers (esp. normalize, whose random >0xFF units mostly
+     * return UNSUPPORTED) into a VALID over-cap case, so prove the "over-cap
+     * ERRORS (never truncates), exact-fit returns the required length" contract
+     * with known inputs for all three transforms. */
+    {
+        uint16_t ea[1] = { 0x00E9 };   /* NFD e-acute -> 'e' + U+0301 (2 WCHARs) */
+        uint16_t d[4];
+        TEST_ASSERT_EQ((uint64_t)nls_normalize(NLS_NORM_NFD, ea, 1, (uint16_t *)0, 0), 2u,
+                       "NFD e-acute sizes to 2");
+        TEST_ASSERT_EQ((uint64_t)(nls_normalize(NLS_NORM_NFD, ea, 1, d, 1) < 0), 1u,
+                       "normalize over-cap (1 < 2) errors, no truncation");
+        TEST_ASSERT_EQ((uint64_t)nls_normalize(NLS_NORM_NFD, ea, 1, d, 2), 2u,
+                       "normalize exact-fit returns required 2");
+
+        uint16_t a[1] = { 'a' };       /* sort key needs > 1 byte */
+        uint8_t sb[16];
+        int sneed = nls_sort_key(a, 1, (uint8_t *)0, 0, 0);
+        TEST_ASSERT_EQ((uint64_t)(sneed > 1), 1u, "sort_key sizes > 1 byte");
+        TEST_ASSERT_EQ((uint64_t)(nls_sort_key(a, 1, sb, (uint32_t)(sneed - 1), 0) < 0), 1u,
+                       "sort_key over-cap errors, no truncation");
+        TEST_ASSERT_EQ((uint64_t)nls_sort_key(a, 1, sb, (uint32_t)sneed, 0), (uint64_t)sneed,
+                       "sort_key exact-fit returns required");
+
+        uint16_t fw[2] = { 0xFF11, 0xFF12 };   /* fullwidth "12" -> "12" (2 WCHARs) */
+        uint16_t fo[4];
+        TEST_ASSERT_EQ((uint64_t)(nls_fold_string(NLS_MAP_FOLDDIGITS, fw, 2, fo, 1) < 0), 1u,
+                       "fold over-cap (1 < 2) errors, no truncation");
+        TEST_ASSERT_EQ((uint64_t)nls_fold_string(NLS_MAP_FOLDDIGITS, fw, 2, fo, 2), 2u,
+                       "fold exact-fit returns required 2");
     }
 }
 
@@ -1689,6 +1756,12 @@ static void test_nls_atom_syscall_roundtrip(void)
                    "NtFindAtom finds FOO == Foo (case-insensitive) via dispatch");
     s = ssdt_dispatch(SSDT_NtDeleteAtom, atom, 0, 0, 0, 0, 0);
     TEST_ASSERT_EQ((uint64_t)s, (uint64_t)STATUS_SUCCESS, "NtDeleteAtom dispatch ok");
+    /* Side-effect validated: after delete the atom is gone, so a find fails
+     * (a handler that returned success without dropping it would be caught). */
+    found = atom;
+    s = ssdt_dispatch(SSDT_NtFindAtom, (uint64_t)(uintptr_t)name, 6,
+                      (uint64_t)(uintptr_t)&found, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(s != STATUS_SUCCESS), 1u, "NtFindAtom fails after delete");
 }
 
 void test_register_nls(void)
