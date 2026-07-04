@@ -71,7 +71,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [/]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [/]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [/]   |
-| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
+| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [/]   |
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
 | 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact)  | §4                           |  [ ]   |
@@ -357,6 +357,13 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Commit: `"kernel/registry: advapi32 A/W shims, HKCR merged view, error mapping, API tracing"`
 
 **Test checkpoint:** `RegOpenKeyExW(HKLM, L"SYSTEM\\Display", ...)` succeeds (UTF-16 path resolves). `RegOpenKeyExA(HKCR, "myapp.doc")` → reads HKCU\Software\Classes first, falls back to HKLM. Failed `RegQueryValueEx` → `GetLastError()` returns `ERROR_FILE_NOT_FOUND`. API trace: `TraceEnabled=1` → serial log shows `"[REG] RegSetValueEx HKLM\\... Width=1920 (pid=N)"`. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - Deferred: §5 advapi32 A/W compat is blocked -- the PE export table is name->SSDT-slot only (no user-mode advapi32 trampoline for wchar conversion + SetLastError), so A/W export entries would be non-functional (false completeness per design review).
+> - Also blocked: `reg_resolve_hkcr` is HKLM-only (no HKCU-first / write-redirect / dedup-enum overlay); RegCloseKey needs the HKEY->OB handle migration (§4) or user open/close loops exhaust the 128-handle pool.
+> - Canonical doc: registry Win32 surface in [`include/registry.h`](../../include/registry.h).
+> - Scope boundary: §5 blocked on user-mode advapi32 surfacing (PE loader / user-mode libc) + HKEY->OB migration (§4) + HKCR overlay; wchar helpers ride with the §4 UTF-16 cluster.
+> **Deferred:** [H] A/W advapi32 Reg* variants + export surface need a real user-mode advapi32 trampoline + the HKEY->OB handle migration before they can execute -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
 
 ---
 
