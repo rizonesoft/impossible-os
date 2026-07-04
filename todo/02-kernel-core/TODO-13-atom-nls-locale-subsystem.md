@@ -43,7 +43,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 2 | Case folding and invariant compare | §1 | [x] |
 | 💎 | 3 | Global and local atom tables | T12 | [x] |
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [x] |
-| 💎 | 5 | Code page conversion providers | §4 | [ ] |
+| 💎 | 5 | Code page conversion providers | §4 | [x] |
 | 💎 | 6 | Locale and LCID metadata | §4 | [ ] |
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [ ] |
 | 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [ ] |
@@ -155,17 +155,26 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 5. Code Page Conversion Providers
 
-- [ ] Implement UTF-8 <-> UTF-16LE.
-- [ ] Implement CP437, CP850, and Windows-1252 <-> UTF-16LE.
-- [ ] Add replacement-character and strict-failure modes.
-- [ ] Add best-fit substitution mode (Windows `WideCharToMultiByte` default) distinct from strict/replacement; opt-out equals `WC_NO_BEST_FIT_CHARS`. (gap-audit)
-- [ ] Expose provider lookup by code page ID.
-- [ ] Add `GetACP`/`GetOEMCP`/`CP_THREAD_ACP` default-ANSI/OEM code-page policy bound to registry (system + per-thread). (gap-audit)
-- [ ] Add `GetCPInfoEx`-style metadata per provider (`CPINFO`/`CPINFOEX`: max char size, default char, DBCS lead-byte ranges) + `IsDBCSLeadByte`. (gap-audit)
-- [ ] Add `IsValidCodePage` + `EnumSystemCodePages` (installed vs supported). (gap-audit)
-- [ ] Commit: `"kernel: nls -- code page conversion providers (UTF-8/CP437/CP850/1252)"`
+- [x] UTF-8 <-> UTF-16LE algorithmic codec in `nls_cp.c` (`nls_cp_utf8_to_utf16`/`nls_cp_utf16_to_utf8`); rejects overlong/lone-surrogate/>U+10FFFF on decode and lone/invalid surrogates on encode; sizing pass via `dst==NULL`.
+- [x] CP437/CP850/Windows-1252 <-> UTF-16LE as compiled 256-entry tables; CP1252 undefined bytes (0x81/0x8D/0x8F/0x90/0x9D) carry an `NLS_CP_UNDEFINED` sentinel.
+- [x] `NLS_CP_STRICT` (fail) + `NLS_CP_REPLACE` (U+FFFD decode / default byte encode) modes across UTF-8 and SBCS.
+- [x] `NLS_CP_BESTFIT` mode: a 1-byte best-fit map (smart quotes/dashes/bullet/nbsp -> ASCII, keeping SBCS `max_char_size==1`); opt-out = not passing BESTFIT (equiv `WC_NO_BEST_FIT_CHARS`). (gap-audit)
+- [x] `nls_cp_get_provider(cp)` lookup; resolves pseudo pages (ACP/OEMCP/THREAD_ACP); unknown id -> NULL.
+- [x] `GetACP`/`GetOEMCP` read `HKLM\SYSTEM\Nls` ACP(1252)/OEMCP(437) via `RegGetDword` (compiled fallback); `CP_THREAD_ACP` resolves to system ACP (per-thread override -> §6). (gap-audit)
+- [x] `nls_cp_get_info` (CPINFO/CPINFOEX: max_char_size, default_char, name) + `nls_cp_is_dbcs_lead_byte` (SBCS -> always false). (gap-audit)
+- [x] `nls_cp_is_valid` + `nls_cp_enum` (walks the provider array). (gap-audit)
+- [x] Commit: `"kernel: nls -- code page conversion providers (UTF-8/CP437/CP850/1252)"`
 
 **Test checkpoint:** UTF-8 round-trips a 3-byte BMP sequence and a surrogate-pair 4-byte sequence through UTF-16LE. An invalid UTF-8 lead byte yields U+FFFD in replacement mode and an error in strict mode. CP1252 0x80 maps to U+20AC (Euro). Provider lookup by unknown code page ID returns NULL.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 71 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nls_cp.h` + `nls_cp.c` -- UTF-8<->UTF-16LE codec, compiled CP437/CP850/CP1252 tables, strict/replace/best-fit modes, provider registry, GetACP/GetOEMCP policy, CPINFO/IsDBCSLeadByte/IsValidCodePage/EnumSystemCodePages.
+> - **How it integrates:** pure kernel-resident functions (no boot init); `nls_cp_register_defaults()` seeds `HKLM\SYSTEM\Nls` from `registry_populate_defaults`; conversions with explicit code pages never touch the registry.
+> - **Downstream effects:** consumable by VFS/console/future syscalls; the Win32 MultiByteToWideChar/WideCharToMultiByte/GetACP export + SSDT surface is owned by S8. Full per-thread CP_THREAD_ACP (SetThreadLocale) is owned by S6.
+> - **Canonical doc:** [`include/kernel/nt/nls_cp.h`](../../include/kernel/nt/nls_cp.h).
+> - **Scope boundary:** S5 owns UTF-8 + the three SBCS providers + policy + metadata. DBCS providers, best-fit corpus beyond the ASCII lookalikes, and Win32/SSDT exposure are out of scope. UTF-7 not implemented.
 
 ---
 
@@ -178,6 +187,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [ ] Itemize the 3-way split: independent system locale (non-Unicode program default), user locale, and UI language -- each separately settable via registry policy. (gap-audit)
 - [ ] Add an ordered MUI UI-language fallback chain (e.g. es-MX -> es -> en-US), not just a single LANGID; mirrors `SetThreadPreferredUILanguages` / gettext `LANGUAGE`. (gap-audit)
 - [ ] Provide locale-formatted timezone DISPLAY NAMES over the tz table + DST rules owned by `08-graphics-ui/TODO-12-clock-time.md` (this section owns only the localized display-string layer). (gap-audit)
+- [ ] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` returns the thread locale's ANSI page, not the system ACP (§5 resolves it to system ACP for now). (from §5)
 - [ ] Commit: `"kernel: nls -- locale/LCID metadata records + registry policy binding"`
 
 **Test checkpoint:** `NtQueryDefaultLocale` returns the registry-selected LCID; the invariant locale (0x007F) is always queryable. A BCP-47 name round-trips to its LCID. `NtSetDefaultLocale` from an unprivileged caller fails closed until the §6 policy binding lands.
@@ -251,14 +261,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 |----|---------|----------|----------|------------------|
 | 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3) |
 | 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
-| 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ⬜ §5 UTF-8/CP437/CP850/1252 |
+| 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5) |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 default LCID (T12 §23); §6 records |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ⬜ §7 invariant + case-insensitive keys |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | ⬜ §7 no-silent-normalize + explicit helper |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §4/§7 C1-C3 + FoldString |
-| 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | ⬜ §5 CPINFO + lead-byte |
+| 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
 | ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ⬜ §6 ordered fallback |
 
 Win11 provides the deepest NLS surface (per-locale `.nls` tables, linguistic collation, normalization) but couples case-insensitivity into the kernel object manager. Linux pushes locale to userspace (ICU/glibc) and keeps the VFS bytewise. Impossible OS centralizes one kernel case-fold authority (§2) that OB, registry, and environment all consume (§9), keeps culture-aware collation in user-mode (§7), and refuses silent normalization of object names.

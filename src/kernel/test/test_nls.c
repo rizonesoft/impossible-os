@@ -13,6 +13,8 @@
 #include "kernel/nt/nt_unicode.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char, Rtl*UnicodeString, CompareStringOrdinal */
 #include "kernel/nt/nls.h"         /* S4: nls_table_parse + accessors + fallback */
+#include "kernel/nt/nls_cp.h"      /* S5: code page conversion providers */
+#include "registry.h"              /* S5: HKLM\SYSTEM\Nls policy preservation test */
 #include "kernel/kchecksum.h"      /* kcrc32 for synthetic table blobs */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
 
@@ -821,6 +823,269 @@ static void test_nls_ctype_table_paths(void)
     nls_test_set_active(0);
 }
 
+/* ==========================================================================
+ * Section 5: code page conversion providers (pure helper tests).
+ * ========================================================================== */
+
+static void test_nls_cp_utf8_3byte_roundtrip(void)
+{
+    /* U+20AC EURO = UTF-8 E2 82 AC = UTF-16 0x20AC. */
+    const uint8_t u8[3] = { 0xE2, 0x82, 0xAC };
+    uint16_t u16[4];
+    uint8_t back[8];
+    int n = nls_cp_utf8_to_utf16(u8, 3, u16, 4, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "3-byte UTF-8 decodes to 1 code unit");
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0x20ACu, "decodes to U+20AC");
+    n = nls_cp_utf16_to_utf8(u16, 1, back, 8, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)n, 3u, "re-encodes to 3 bytes");
+    TEST_ASSERT_EQ((uint64_t)(back[0] == 0xE2 && back[1] == 0x82 && back[2] == 0xAC), 1u,
+                   "round-trips to original bytes");
+}
+
+static void test_nls_cp_utf8_surrogate_roundtrip(void)
+{
+    /* U+1F600 = UTF-8 F0 9F 98 80 = UTF-16 D83D DE00 (surrogate pair). */
+    const uint8_t u8[4] = { 0xF0, 0x9F, 0x98, 0x80 };
+    uint16_t u16[4];
+    uint8_t back[8];
+    int n = nls_cp_utf8_to_utf16(u8, 4, u16, 4, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)n, 2u, "4-byte UTF-8 decodes to a surrogate pair");
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0xD83Du, "high surrogate");
+    TEST_ASSERT_EQ((uint64_t)u16[1], 0xDE00u, "low surrogate");
+    n = nls_cp_utf16_to_utf8(u16, 2, back, 8, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)n, 4u, "surrogate pair re-encodes to 4 bytes");
+    TEST_ASSERT_EQ((uint64_t)(back[0] == 0xF0 && back[3] == 0x80), 1u, "astral round-trips");
+}
+
+static void test_nls_cp_utf8_invalid_lead(void)
+{
+    const uint8_t bad[1] = { 0xFF };
+    uint16_t u16[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(bad, 1, u16, 4, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "invalid lead: strict fails");
+    int n = nls_cp_utf8_to_utf16(bad, 1, u16, 4, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "invalid lead: replace emits one unit");
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0xFFFDu, "invalid lead: replace emits U+FFFD");
+}
+
+static void test_nls_cp_utf8_overlong_and_surrogate(void)
+{
+    /* Overlong '/' (C0 AF) and a UTF-8-encoded surrogate (ED A0 80 = U+D800). */
+    const uint8_t overlong[2] = { 0xC0, 0xAF };
+    const uint8_t surro[3] = { 0xED, 0xA0, 0x80 };
+    uint16_t u16[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(overlong, 2, u16, 4, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "overlong rejected");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(surro, 3, u16, 4, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "UTF-8 surrogate rejected");
+}
+
+static void test_nls_cp_utf8_truncated(void)
+{
+    /* A 3-byte lead (E2 82 ..) with only 2 bytes available: the subtraction-form
+     * length guard rejects it (strict) / replaces it (replace) without overread. */
+    const uint8_t trunc[2] = { 0xE2, 0x82 };
+    uint16_t u16[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(trunc, 2, u16, 4, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "truncated 3-byte: strict fails");
+    int n = nls_cp_utf8_to_utf16(trunc, 2, u16, 4, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0xFFFDu, "truncated 3-byte: replace -> U+FFFD");
+    (void)n;
+}
+
+static void test_nls_cp_invalid_mode_fails_closed(void)
+{
+    /* An out-of-range mode must fail closed (ERR_PARAM), never silently downgrade
+     * invalid/unmapped input to replacement. */
+    const uint8_t bad[1] = { 0xFF };
+    const uint16_t pair[1] = { 0xD800 };
+    uint16_t u16[4];
+    uint8_t u8[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(bad, 1, u16, 4, 99),
+                   (uint64_t)(int64_t)NLS_CP_ERR_PARAM, "utf8 decode invalid mode -> ERR_PARAM");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_from_utf16(NLS_CP_1252, pair, 1, u8, 4, -1),
+                   (uint64_t)(int64_t)NLS_CP_ERR_PARAM, "sbcs encode invalid mode -> ERR_PARAM");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_to_utf16(NLS_CP_1252, bad, 1, u16, 4, 7),
+                   (uint64_t)(int64_t)NLS_CP_ERR_PARAM, "sbcs decode invalid mode -> ERR_PARAM");
+}
+
+static void test_nls_cp1252_euro(void)
+{
+    const uint8_t b[1] = { 0x80 };
+    uint16_t u16[4];
+    int n = nls_cp_to_utf16(NLS_CP_1252, b, 1, u16, 4, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "CP1252 byte decodes");
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0x20ACu, "CP1252 0x80 -> U+20AC");
+}
+
+static void test_nls_cp1252_undefined_byte(void)
+{
+    const uint8_t b[1] = { 0x81 };   /* undefined in CP1252 */
+    uint16_t u16[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_to_utf16(NLS_CP_1252, b, 1, u16, 4, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "undefined byte: strict fails");
+    int n = nls_cp_to_utf16(NLS_CP_1252, b, 1, u16, 4, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "undefined byte: replace emits a unit");
+    TEST_ASSERT_EQ((uint64_t)u16[0], 0xFFFDu, "undefined byte: replace -> U+FFFD");
+}
+
+static void test_nls_cp_unknown_returns_null(void)
+{
+    TEST_ASSERT_EQ((uint64_t)(nls_cp_get_provider(99999u) == 0), 1u,
+                   "unknown code page -> NULL provider");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_is_valid(99999u), 0u, "unknown code page invalid");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_is_valid(NLS_CP_1252), 1u, "CP1252 valid");
+}
+
+static void test_nls_cp_encode_lone_surrogate(void)
+{
+    const uint16_t lone_high[1] = { 0xD800 };
+    uint8_t u8[8];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf16_to_utf8(lone_high, 1, u8, 8, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "lone surrogate to UTF-8: strict fails");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_from_utf16(NLS_CP_1252, lone_high, 1, u8, 8, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "lone surrogate to SBCS: strict fails");
+    int n = nls_cp_from_utf16(NLS_CP_1252, lone_high, 1, u8, 8, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "lone surrogate to SBCS: replace emits one default byte");
+    TEST_ASSERT_EQ((uint64_t)u8[0], (uint64_t)NLS_CP_DEFAULT_BYTE, "replace uses default char");
+}
+
+static void test_nls_cp_encode_astral_to_sbcs(void)
+{
+    /* A valid astral pair is one scalar; SBCS cannot map it. */
+    const uint16_t pair[2] = { 0xD83D, 0xDE00 };
+    uint8_t u8[8];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_from_utf16(NLS_CP_1252, pair, 2, u8, 8, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_INVALID, "astral to SBCS: strict fails");
+    int n = nls_cp_from_utf16(NLS_CP_1252, pair, 2, u8, 8, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "astral to SBCS replace: one default byte (pair = one scalar)");
+    TEST_ASSERT_EQ((uint64_t)u8[0], (uint64_t)NLS_CP_DEFAULT_BYTE, "default char emitted once");
+}
+
+static void test_nls_cp_bestfit(void)
+{
+    /* U+2018 LEFT SINGLE QUOTE is not in CP437; best-fit -> 0x27 ('), replace -> '?'. */
+    const uint16_t q[1] = { 0x2018 };
+    uint8_t u8[4];
+    int n = nls_cp_from_utf16(NLS_CP_437, q, 1, u8, 4, NLS_CP_BESTFIT);
+    TEST_ASSERT_EQ((uint64_t)n, 1u, "best-fit emits one byte");
+    TEST_ASSERT_EQ((uint64_t)u8[0], 0x27u, "best-fit U+2018 -> apostrophe");
+    n = nls_cp_from_utf16(NLS_CP_437, q, 1, u8, 4, NLS_CP_REPLACE);
+    TEST_ASSERT_EQ((uint64_t)u8[0], (uint64_t)NLS_CP_DEFAULT_BYTE, "replace (no best-fit) -> default");
+}
+
+static void test_nls_cp_sizing_and_too_small(void)
+{
+    const uint8_t u8[3] = { 0xE2, 0x82, 0xAC };
+    uint16_t u16[1];
+    /* Sizing pass: dst == NULL returns required count without writing. */
+    TEST_ASSERT_EQ((uint64_t)nls_cp_utf8_to_utf16(u8, 3, 0, 0, NLS_CP_STRICT), 1u,
+                   "sizing pass returns required unit count");
+    /* Two euros need 2 units but cap is 1 -> TOO_SMALL. */
+    const uint8_t two[6] = { 0xE2, 0x82, 0xAC, 0xE2, 0x82, 0xAC };
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_cp_utf8_to_utf16(two, 6, u16, 1, NLS_CP_STRICT),
+                   (uint64_t)(int64_t)NLS_CP_ERR_TOO_SMALL, "over-cap output -> TOO_SMALL");
+}
+
+static void test_nls_cp_policy_and_info(void)
+{
+    nls_cpinfo_t info;
+    uint32_t ids[8];
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)NLS_CP_DEFAULT_ACP,
+                   "GetACP default is 1252");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_oemcp(), (uint64_t)NLS_CP_DEFAULT_OEMCP,
+                   "GetOEMCP default is 437");
+    TEST_ASSERT_EQ((uint64_t)(nls_cp_get_provider(NLS_CP_ACP) != 0), 1u,
+                   "CP_ACP resolves to a provider");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_info(NLS_CP_1252, &info), 0u, "GetCPInfoEx ok");
+    TEST_ASSERT_EQ((uint64_t)info.max_char_size, 1u, "CP1252 max_char_size 1");
+    TEST_ASSERT_EQ((uint64_t)info.default_char, (uint64_t)NLS_CP_DEFAULT_BYTE, "default char '?'");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_is_dbcs_lead_byte(NLS_CP_1252, 0x81), 0u, "SBCS has no lead byte");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_enum(ids, 8), 4u, "four code pages enumerated");
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_info(NLS_CP_UTF8, &info), 0u, "UTF-8 info ok");
+    TEST_ASSERT_EQ((uint64_t)info.max_char_size, (uint64_t)NLS_CP_UTF8_MAX_CHAR, "UTF-8 max 4");
+}
+
+static void test_nls_cp_register_preserves_policy(void)
+{
+    /* nls_cp_register_defaults must NOT clobber an existing supported ACP. Set a
+     * non-default supported value (437), re-seed, verify preservation, then
+     * restore so later tests see the boot default again. */
+    HKEY k;
+    uint32_t saved = nls_cp_get_acp();
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetDword(k, "ACP", 437);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), 437u,
+                   "register_defaults preserves an existing supported ACP");
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetDword(k, "ACP", saved);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)saved, "ACP restored for later tests");
+}
+
+static void test_nls_cp_register_rejects_malformed_acp(void)
+{
+    /* A short (2-byte) REG_DWORD ACP is malformed; register_defaults must reseed
+     * the compiled default rather than snapshot a partially-initialized value. */
+    HKEY k;
+    uint32_t saved = nls_cp_get_acp();
+    uint16_t shortval = 0x1234;
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetValueEx(k, "ACP", 0, REG_DWORD, (const uint8_t *)&shortval, 2);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)NLS_CP_DEFAULT_ACP,
+                   "malformed short ACP -> compiled default");
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetDword(k, "ACP", saved);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)saved, "ACP restored for later tests");
+}
+
+static void test_nls_cp_register_rejects_unsupported_acp(void)
+{
+    /* A well-formed but unsupported ACP (99999) must fall back to the compiled
+     * default in the cache, never poisoning CP_ACP conversions into BADCP. */
+    HKEY k;
+    uint32_t saved = nls_cp_get_acp();
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetDword(k, "ACP", 99999);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)NLS_CP_DEFAULT_ACP,
+                   "unsupported ACP -> compiled default in cache");
+    TEST_ASSERT_EQ((uint64_t)(nls_cp_get_provider(NLS_CP_ACP) != 0), 1u,
+                   "CP_ACP still resolves to a provider");
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Nls", 0, KEY_ALL_ACCESS, &k) == 0) {
+        RegSetDword(k, "ACP", saved);
+        RegCloseKey(k);
+    }
+    nls_cp_register_defaults();
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_acp(), (uint64_t)saved, "ACP restored for later tests");
+}
+
+static void test_nls_cp_get_info_zeroes_output(void)
+{
+    /* nls_cp_get_info must fully initialize the ABI struct -- the name tail after
+     * the NUL and padding must be zero even if the caller passed dirty memory. */
+    nls_cpinfo_t info;
+    memset(&info, 0xFF, sizeof(info));
+    TEST_ASSERT_EQ((uint64_t)nls_cp_get_info(NLS_CP_1252, &info), 0u, "get_info ok");
+    /* "windows-1252" is 12 chars; name[12] is the NUL, name[13..] must be zeroed. */
+    TEST_ASSERT_EQ((uint64_t)info.name[12], 0u, "name NUL-terminated");
+    TEST_ASSERT_EQ((uint64_t)info.name[sizeof(info.name) - 1], 0u, "name tail zeroed");
+    TEST_ASSERT_EQ((uint64_t)info.lead_bytes[0], 0u, "lead_bytes zeroed");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -930,4 +1195,41 @@ void test_register_nls(void)
                             test_nls_parse_rejects_odd_fold_chunk, TEST_CAT_NLS);
     test_suite_register_cat("nls: ctype table paths + invalid which",
                             test_nls_ctype_table_paths, TEST_CAT_NLS);
+    /* Section 5: code page conversion providers. */
+    test_suite_register_cat("nls: cp utf8 3-byte roundtrip",
+                            test_nls_cp_utf8_3byte_roundtrip, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp utf8 surrogate roundtrip",
+                            test_nls_cp_utf8_surrogate_roundtrip, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp utf8 invalid lead",
+                            test_nls_cp_utf8_invalid_lead, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp utf8 overlong + surrogate rejected",
+                            test_nls_cp_utf8_overlong_and_surrogate, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp utf8 truncated multibyte",
+                            test_nls_cp_utf8_truncated, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp invalid mode fails closed",
+                            test_nls_cp_invalid_mode_fails_closed, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp1252 euro",
+                            test_nls_cp1252_euro, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp1252 undefined byte",
+                            test_nls_cp1252_undefined_byte, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp unknown returns null",
+                            test_nls_cp_unknown_returns_null, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp encode lone surrogate",
+                            test_nls_cp_encode_lone_surrogate, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp encode astral to sbcs",
+                            test_nls_cp_encode_astral_to_sbcs, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp best-fit substitution",
+                            test_nls_cp_bestfit, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp sizing + too small",
+                            test_nls_cp_sizing_and_too_small, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp policy + cpinfo",
+                            test_nls_cp_policy_and_info, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp get_info zeroes output",
+                            test_nls_cp_get_info_zeroes_output, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp register preserves policy",
+                            test_nls_cp_register_preserves_policy, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp register rejects malformed acp",
+                            test_nls_cp_register_rejects_malformed_acp, TEST_CAT_NLS);
+    test_suite_register_cat("nls: cp register rejects unsupported acp",
+                            test_nls_cp_register_rejects_unsupported_acp, TEST_CAT_NLS);
 }

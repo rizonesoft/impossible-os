@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "registry.h"
+#include "kernel/nt/nls_cp.h"
 #include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
@@ -1567,17 +1568,24 @@ long RegGetDword(HKEY hKey, const char *lpValueName, uint32_t *pValue)
 {
     uint32_t type = 0;
     uint32_t size = sizeof(uint32_t);
+    uint32_t local = 0;
     long rc;
 
     if (!pValue)
         return ERROR_INVALID_PARAMETER;
 
+    /* Read into a zero-initialized local, not *pValue, so a malformed value never
+     * modifies the caller's output on failure. A REG_DWORD shorter than 4 bytes
+     * (partial copy) is rejected via the exact-size check; an oversized value
+     * makes RegQueryValueEx return ERROR_MORE_DATA (rc != SUCCESS). *pValue is
+     * assigned only on a clean exact-size REG_DWORD read. */
     rc = RegQueryValueEx(hKey, lpValueName, (uint32_t *)0, &type,
-                         (uint8_t *)pValue, &size);
+                         (uint8_t *)&local, &size);
     if (rc != ERROR_SUCCESS)
         return rc;
-    if (type != REG_DWORD)
+    if (type != REG_DWORD || size != sizeof(uint32_t))
         return ERROR_FILE_NOT_FOUND;
+    *pValue = local;
     return ERROR_SUCCESS;
 }
 
@@ -1775,6 +1783,9 @@ void registry_populate_defaults(void)
         RegCloseKey(hKey);
         count += 1;
     }
+
+    /* --- HKLM\SYSTEM\Nls: system ANSI/OEM code page policy (GetACP/GetOEMCP) --- */
+    nls_cp_register_defaults();
 
     /* --- HKLM\HARDWARE\CPU --- */
     if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\CPU", 0,
