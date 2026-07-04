@@ -175,6 +175,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** consumable by VFS/console/future syscalls; the Win32 MultiByteToWideChar/WideCharToMultiByte/GetACP export + SSDT surface is owned by S8. Full per-thread CP_THREAD_ACP (SetThreadLocale) is owned by S6.
 > - **Canonical doc:** [`include/kernel/nt/nls_cp.h`](../../include/kernel/nt/nls_cp.h).
 > - **Scope boundary:** S5 owns UTF-8 + the three SBCS providers + policy + metadata. DBCS providers, best-fit corpus beyond the ASCII lookalikes, and Win32/SSDT exposure are out of scope. UTF-7 not implemented.
+> **Verified:** 2026-07-04 | commit `fbe79801` | 9/9 items | build OK | nls 71/71 PASS
+> **Accepted:** [M] ACP/OEMCP cache snapshots at populate-defaults time, before any hive load (no persisted-policy load exists today) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "When `registry_load_hives()` is wired" at line 191)
+> **Quality reviewed:** 2026-07-04 | Codex 12x (design, adversarial, re-adversarial, consistency, perf) | 3H+9M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -188,6 +191,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [ ] Add an ordered MUI UI-language fallback chain (e.g. es-MX -> es -> en-US), not just a single LANGID; mirrors `SetThreadPreferredUILanguages` / gettext `LANGUAGE`. (gap-audit)
 - [ ] Provide locale-formatted timezone DISPLAY NAMES over the tz table + DST rules owned by `08-graphics-ui/TODO-12-clock-time.md` (this section owns only the localized display-string layer). (gap-audit)
 - [ ] Per-thread `CP_THREAD_ACP`: wire `SetThreadLocale`->locale->code-page so `nls_cp_resolve(CP_THREAD_ACP)` returns the thread locale's ANSI page, not the system ACP (§5 resolves it to system ACP for now). (from §5)
+- [ ] When `registry_load_hives()` is wired (persisted policy), refresh the NLS ACP/OEMCP boot cache after hive load (add `nls_cp_refresh_policy()`) so a persisted `SYSTEM\Nls` ACP/OEMCP takes effect; §5 caches at populate-defaults time. (Codex §5)
 - [ ] Commit: `"kernel: nls -- locale/LCID metadata records + registry policy binding"`
 
 **Test checkpoint:** `NtQueryDefaultLocale` returns the registry-selected LCID; the invariant locale (0x007F) is always queryable. A BCP-47 name round-trips to its LCID. `NtSetDefaultLocale` from an unprivileged caller fails closed until the §6 policy binding lands.
