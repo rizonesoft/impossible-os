@@ -900,17 +900,24 @@ NTSTATUS nt_query_nls_information(void *buffer, uint32_t buf_size,
     if (!buffer || buf_size < need)
         return STATUS_INFO_LENGTH_MISMATCH;
 
+    /* Probe the output buffer before snapshotting so an invalid-but-sized buffer
+     * fails without doing the field reads. */
+    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+
     info.AnsiCodePage    = nls_cp_get_acp();
     info.OemCodePage     = nls_cp_get_oemcp();
     info.SystemLcid      = nls_locale_get_system();
     info.UserLcid        = nls_locale_get_user();
     info.NlsVersion      = nls_get_version();
-    info.UiLangId        = nt_locale_get_ui_language();
+    /* Lock-free active UI language; the SAME source the MUI-query handlers read,
+     * so all the NLS query surfaces agree on the UI language (the locked
+     * nt_locale store is the settable NtQueryDefaultUILanguage value, a
+     * separate concept). */
+    info.UiLangId        = nls_locale_get_ui_language();
     info.InstallUiLangId = nt_locale_get_install_ui_language();
 
-    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
-    if (pst != STATUS_SUCCESS)
-        return pst;
     if (copy_to_user(buffer, &info, need) != 0)
         return STATUS_ACCESS_VIOLATION;
     return STATUS_SUCCESS;

@@ -469,9 +469,9 @@ title: "SSDT Master Table"
 | 0x0260 | NtOpenSession                    | §23 | T12                      | [ ]  |
 | 0x0261 | NtNotifyChangeSession            | §23 | T12                      | [ ]  |
 | 0x0262 | NtQueryLicenseValue              | §23 | T12                      | [ ]  |
-| 0x0263 | NtGetMUIRegistryInfo             | §8  | T13                      | [ ]  |
-| 0x0264 | NtIsUILanguageComitted           | §8  | T13                      | [ ]  |
-| 0x0265 | NtFlushInstallUILanguage         | §8  | T13                      | [ ]  |
+| 0x0263 | NtGetMUIRegistryInfo             | §8  | T13                      | [/]  |
+| 0x0264 | NtIsUILanguageComitted           | §8  | T13                      | [x]  |
+| 0x0265 | NtFlushInstallUILanguage         | §8  | T13                      | [/]  |
 
 **0x0270–0x027F: Plug and Play**
 

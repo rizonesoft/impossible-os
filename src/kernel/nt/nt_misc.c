@@ -592,9 +592,11 @@ static NTSTATUS NtIsUILanguageComitted_handler(uint64_t langid, uint64_t committ
     (void)a3; (void)a4; (void)a5; (void)a6;
     if (!committed_out)
         return STATUS_INVALID_PARAMETER;
-    uint8_t committed = ((uint16_t)langid == nt_locale_get_ui_language()) ? 1 : 0;
+    /* Probe the output before the (lock-free) comparison so a bad user pointer
+     * fails without any work. */
     if (ProbeForWriteIfUser((void *)committed_out, sizeof(uint8_t), sizeof(uint8_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
+    uint8_t committed = ((uint16_t)langid == nls_locale_get_ui_language()) ? 1 : 0;
     if (copy_to_user((void *)committed_out, &committed, sizeof(uint8_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
     return STATUS_SUCCESS;
@@ -628,14 +630,14 @@ static NTSTATUS NtGetMUIRegistryInfo_handler(uint64_t flags, uint64_t size_ptr,
 
     if (!size_ptr)
         return STATUS_INVALID_PARAMETER;
-    /* Read the caller-provided capacity from the in/out size pointer. */
-    if (ProbeForReadIfUser((void *)size_ptr, sizeof(uint32_t), sizeof(uint32_t)) != 0)
+    /* One writable probe covers both the capacity read and the required-size
+     * write-back (the size word is in/out, so it must be writable; a writable
+     * user range is readable). */
+    if (ProbeForWriteIfUser((void *)size_ptr, sizeof(uint32_t), sizeof(uint32_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
     if (copy_from_user(&cap, (void *)size_ptr, sizeof(uint32_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
     /* Write the required size back on every outcome (two-pass caller). */
-    if (ProbeForWriteIfUser((void *)size_ptr, sizeof(uint32_t), sizeof(uint32_t)) != 0)
-        return STATUS_ACCESS_VIOLATION;
     if (copy_to_user((void *)size_ptr, &need, sizeof(uint32_t)) != 0)
         return STATUS_ACCESS_VIOLATION;
     if (!buffer || cap < need)

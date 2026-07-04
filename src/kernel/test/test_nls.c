@@ -1423,7 +1423,7 @@ static void test_nls_syscall_system_nls_info(void)
     TEST_ASSERT_EQ((uint64_t)info.SystemLcid, (uint64_t)nls_locale_get_system(), "system LCID");
     TEST_ASSERT_EQ((uint64_t)info.UserLcid, (uint64_t)nls_locale_get_user(), "user LCID");
     TEST_ASSERT_EQ((uint64_t)info.NlsVersion, (uint64_t)nls_get_version(), "NLS version");
-    TEST_ASSERT_EQ((uint64_t)info.UiLangId, (uint64_t)nt_locale_get_ui_language(), "UI langid");
+    TEST_ASSERT_EQ((uint64_t)info.UiLangId, (uint64_t)nls_locale_get_ui_language(), "UI langid");
     TEST_ASSERT_EQ((uint64_t)info.InstallUiLangId,
                    (uint64_t)nt_locale_get_install_ui_language(), "install langid");
 }
@@ -1431,7 +1431,7 @@ static void test_nls_syscall_system_nls_info(void)
 /* NtIsUILanguageComitted: active UI language is committed; a different one is not. */
 static void test_nls_syscall_is_ui_committed(void)
 {
-    uint16_t active = nt_locale_get_ui_language();
+    uint16_t active = nls_locale_get_ui_language();
     uint8_t committed = 0xFF;
     NTSTATUS st = ssdt_dispatch(SSDT_NtIsUILanguageComitted, active,
                                 (uint64_t)(uintptr_t)&committed, 0, 0, 0, 0);
@@ -1450,7 +1450,7 @@ static void test_nls_syscall_is_ui_committed(void)
 /* NtFlushInstallUILanguage: fail-closed for any language/flags, state unchanged. */
 static void test_nls_syscall_flush_fail_closed(void)
 {
-    uint16_t active = nt_locale_get_ui_language();
+    uint16_t active = nls_locale_get_ui_language();
     TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtFlushInstallUILanguage, active,
                    0, 0, 0, 0, 0), (uint64_t)STATUS_PRIVILEGE_NOT_HELD,
                    "flush active fail-closed");
@@ -1459,7 +1459,7 @@ static void test_nls_syscall_flush_fail_closed(void)
                    (uint16_t)(active ^ 0x0F0F), 1, 0, 0, 0, 0),
                    (uint64_t)STATUS_PRIVILEGE_NOT_HELD, "flush other lang + flag fail-closed");
     /* The denied calls left the UI/install language policy untouched. */
-    TEST_ASSERT_EQ((uint64_t)nt_locale_get_ui_language(), (uint64_t)active,
+    TEST_ASSERT_EQ((uint64_t)nls_locale_get_ui_language(), (uint64_t)active,
                    "UI language unchanged after denied flush");
 }
 

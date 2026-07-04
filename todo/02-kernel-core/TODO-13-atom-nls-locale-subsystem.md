@@ -246,7 +246,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 - [ ] Wire `NtGetNlsSectionPtr` as a read-only per-process-mapped NLS SECTION. DEFERRED: needs SECTION objects + per-process address space (user pages share kernel frames today). (gap-audit)
 - [x] Add `SystemNlsInformation` (class 0x1001) to `NtQuerySystemInformation`: `nt_query_nls_information` snapshots ACP/OEMCP/LCIDs/langids/NLS version, two-pass length contract. (`nls_syscall_info.h`)
-- [x] Wire the orphaned MUI SSDT trio: `NtIsUILanguageComitted` (0x0264 query), `NtFlushInstallUILanguage` (0x0265 fail-closed until SRM), `NtGetMUIRegistryInfo` (0x0263 in/out-size marshaller). (gap-audit)
+- [x] Wire the orphaned MUI SSDT trio: `NtIsUILanguageComitted` (0x0264 query), `NtFlushInstallUILanguage` (0x0265 fail-closed until SRM), `NtGetMUIRegistryInfo` (0x0263 in/out-size marshaller, simplified locale-snapshot blob). (gap-audit)
+- [ ] Full `NtGetMUIRegistryInfo` (Flags-driven null-delimited preferred-UI-language multi-string) + `NtIsUILanguageComitted` installed-vs-active semantics: both need a language-pack/MUI-install subsystem. DEFERRED. (parity §8)
+- [ ] Unify the UI-language store: settable `nt_locale` default vs `nls_locale` registry policy sync only at boot; a runtime setter diverges the query surfaces. Fold to one backing when the SRM SET path un-gates. (review §8)
 - [/] `GetNLSVersionEx` version via `SystemNlsInformation.NlsVersion` (`nls_get_version()`). DEFERRED: full `NLSVERSIONINFOEX` (DefinedVersion/EffectiveId/GuidCustomVersion) needs the NLS ABI to carry them. (gap-audit)
 - [ ] Public `FoldStringW` folds the full Nd digit set + compatibility zone (§4 FOLD_* / §10 corpus), failing closed on uncovered fold-relevant units so success never masks a partial fold. (Codex §7)
 - [ ] Surface `LCMapStringEx`/`CompareStringEx` over §7 sort keys; the public key needs droppable diacritic + case tiers so `NORM_IGNORENONSPACE`/`IGNORESYMBOLS` + word-sort flags are honorable (§7 key is 2-band ordinal). (parity §7)
@@ -264,6 +266,12 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** GetNLSVersionEx callers read the version via SystemNlsInformation; the write path (NtFlushInstallUILanguage) stays fail-closed until the SRM privilege check exists.
 > - **Canonical doc:** [`include/kernel/nt/nls_syscall_info.h`](../../include/kernel/nt/nls_syscall_info.h).
 > - **Scope boundary:** §8 ships the read-only NLS/MUI query syscalls; NtGetNlsSectionPtr (section infra), full public FoldStringW (§10 corpus), and LCMapStringEx/CompareStringEx (multi-tier key) are deferred to their owners.
+
+> **Verified:** 2026-07-04 | commit `196cc251` | 2/8 items ([/] partial) | build OK | tests 335/335 PASS
+> **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 116)
+> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 250)
+> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 251)
+> **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
 
