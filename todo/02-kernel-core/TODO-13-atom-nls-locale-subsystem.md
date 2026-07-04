@@ -14,7 +14,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > **Goal:** Complete the kernel-owned atom and NLS/locale layer required by NT Native API, Win32 compatibility, registry case-insensitivity, object namespace comparisons, environment lookup, filesystem interop, and user-mode locale APIs. This covers global/local atom tables, Unicode case mapping, code page conversion, locale identifiers, sort keys, normalization policy, timezone display names, and native syscalls.
 
 > [!IMPORTANT]
-> **Current state:** TODO-12 §23 shipped the GLOBAL atom table + global LCID/LANGID storage + `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` in `src/kernel/nt/nt_misc.c` -- but with an ASCII-only case fold and global-only scope. Still missing: per-process LOCAL atom tables, a single Unicode case-folding authority, the NLS table loader, code-page conversion providers, full LCID/locale metadata records, and a kernel/user contract for locale-sensitive comparison. Existing string handling is mostly ASCII.
+> **Current state (updated 2026-07-04):** TODO-12 §23 shipped the GLOBAL atom table + global LCID/LANGID storage + `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` in `src/kernel/nt/nt_misc.c` with an ASCII-only fold. THIS TODO then shipped the rest: the single Unicode case-fold authority (§2), NLS table loader (§4), code-page providers (§5), LCID/locale metadata (§6), sort keys + normalization (§7), NLS/MUI query syscalls (§8), and the OB/registry/atom consumer retrofit (§9). Per-process LOCAL atom tables remain user-mode; the full-BMP fold corpus + real-table boot path are §10-deferred.
 
 ## Inputs
 
@@ -295,7 +295,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Notes:**
 > - **What shipped:** `rtl_upcase_char_inline` (`nt_rtlstr.h` inline ASCII fast path) + retrofitted consumers OB `dir_name_eq`, registry `reg_stricmp`/`reg_fnv1a`, atom `atom_name_*`, plus file-name fail-closed on non-ASCII (`nt_file.c`).
-> - **How it integrates:** every security name compare/hash folds through the COMPILED authority (ASCII inline, Latin-1 + BMP delegated); the disk-backed `nls_upcase_char` is never on a security path (trust boundary recorded in `nls.h`).
+> - **How it integrates:** every security name compare/hash folds through the COMPILED authority (ASCII inline, Latin-1 out-of-line; U+0100+ unchanged today -- full-BMP needs a compile-time table); the disk-backed `nls_upcase_char` is never on a security path (trust boundary recorded in `nls.h`).
 > - **Downstream effects:** closes the §4 accepted disk-fold-trust [H] + inline-fast-path [M]; OB/registry are now Latin-1 case-insensitive, not just ASCII.
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlstr.h`](../../include/kernel/nt/nt_rtlstr.h).
 > - **Scope boundary:** §9 folds the existing byte-name consumers; the systemic UTF-16 `OBJECT_ATTRIBUTES` ABI (real wide file names, `LoadLibraryW` wide paths) is deferred to its future owner.
@@ -343,14 +343,14 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
 |----|---------|----------|----------|------------------|
 | 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3) |
-| 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
+| 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant ASCII+Latin-1 fold + Rtl compare (§2/§4); full-BMP data §10-deferred |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5) |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive, compiled ASCII+Latin-1 fold (§9); full-BMP needs compile-time table |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode |
-| 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); C1-C3 + full fold §4/§8 |
+| 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); internal `nls_char_type` C1-C3; public GetStringTypeW deferred |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
 | ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ✅ `nls_locale_ui_fallback` ordered chain (§6) |
 | 💎 | NLS/MUI native query syscalls | ✅ `NtQuerySystemInformation` / `GetNLSVersionEx` | ⚠️ `/proc` + `localedef` | 🔄 SystemNlsInformation + MUI trio (§8); section-ptr deferred |
@@ -382,4 +382,4 @@ Win11 provides the deepest NLS surface (per-locale `.nls` tables, linguistic col
 
 Boot on QEMU WHPX + TCG, VirtualBox, and bare metal. Confirm case-insensitive object/registry/env lookups resolve, code-page round trips are lossless, and a missing NLS directory boots on the invariant fallback with a degraded-state log line. Verify on bare metal -- VM behavior differs for boot-time table loading and disk-sourced NLS files.
 
-> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | N suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 96 suites, 0 failures (2026-07-04 WSL2 TCG)
