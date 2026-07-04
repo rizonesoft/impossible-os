@@ -152,7 +152,7 @@ mkdir -p "$METRICS_DIR"
 # pipeline's exit out of set -e, and the wrapper is belt-and-suspenders so a
 # prune failure never aborts an otherwise-healthy launch.
 prune_reports() {
-  local keep="${OVERNIGHT_REPORT_KEEP:-40}" old
+  local keep="${OVERNIGHT_REPORT_KEEP:-20}" old
   while IFS= read -r old; do
     [ -n "$old" ] && rm -f "$old"
   done < <(ls -1t "$REPORT_DIR"/run-*.log 2>/dev/null | tail -n +"$((keep + 1))")
