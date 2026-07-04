@@ -197,11 +197,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/kit_update_check.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/session_start.py\"",
             "timeout": 5
           },
@@ -304,6 +299,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/slice_read_reminder.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_offload_reminder.py\"",
             "timeout": 5
           }
         ]
@@ -411,11 +411,6 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/accepted_xref_warn.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/kit_sync_reminder.py\"",
             "timeout": 5
           },
           {

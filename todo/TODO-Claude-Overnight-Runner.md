@@ -139,7 +139,7 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   queue. There is NO voluntary session-exit on a blocker of ANY kind:
   - A **user-decision / operator-reserved item** (a stop-and-ask boundary) is
     NOT a stop and NOT a disarm. Resolve it by the three-tier answer order
-    (runner-kit law 10, adopted 2026-07-03): (1) if `todo/answers.md` carries an
+    (adopted 2026-07-03): (1) if `todo/answers.md` carries an
     `A: (operator, DATE)` answer matching the TODO + question, apply it as the
     decision; (2) a LOW-RISK question (no money/permissions/data/ABI impact)
     may take a conservative logged default -- record it in `todo/answers.md` as

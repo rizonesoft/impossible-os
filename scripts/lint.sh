@@ -976,8 +976,7 @@ ANALYST_ALLOWED = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
 RUNNER_ALLOWED = {"Bash", "Read", "Grep", "Glob"}
 # Runner class is roster-gated: the marker ALONE cannot mint a runner. Adding a
 # runner is a deliberate act that edits this roster (and gets reviewed).
-RUNNER_ROSTER = {"checks-runner.md", "git-historian.md", "gh-query-runner.md",
-                 "kit-sync.md"}
+RUNNER_ROSTER = {"checks-runner.md", "git-historian.md", "gh-query-runner.md"}
 viol = []
 for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
     rel = os.path.relpath(path, root)
