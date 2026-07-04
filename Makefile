@@ -1042,6 +1042,8 @@ test-storage: all
 	@bash scripts/test.sh SUITE=storage
 test-exec: all
 	@bash scripts/test.sh SUITE=exec
+test-nls: all
+	@bash scripts/test.sh SUITE=nls
 
 test-x86: all
 	@bash scripts/test.sh SUITE=x86

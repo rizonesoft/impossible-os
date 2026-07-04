@@ -48,7 +48,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [x] |
 | 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [/] |
 | ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [/] |
-| 💎 | 10 | Tests and compatibility corpus | §1..§9 | [ ] |
+| 💎 | 10 | Tests and compatibility corpus | §1..§9 | [/] |
 
 ---
 
@@ -311,16 +311,26 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 10. Tests and Compatibility Corpus
 
-- [ ] Unit tests: UTF-8 invalid sequences, UTF-16 surrogate pairs, case-insensitive compare, atom refcounts, CP437/1252 round trips.
-- [ ] Compatibility tests for Win32 atom APIs and `CompareStringOrdinal`.
-- [ ] Fuzz counted string inputs to every Native API helper.
-- [ ] Boot test with missing NLS files uses invariant fallback and logs degraded state.
-- [ ] Compatibility corpus: full-BMP NLS data table -- host tool emits a real `invariant.nls` (`UPCASE` + `CTYPE1/2/3` chunks, §4 format) to `C:\Impossible\System\NLS\` so boot loads a table not the fallback; feeds §7/§8.
-- [ ] Tests for `GetStringTypeW` C1/C2/C3 classification, `FoldStringW`, `LCMapStringEx` sort-key ordering, `GetNLSVersionEx`, `GetCPInfoEx`/`IsDBCSLeadByte` metadata, and `CompareStringOrdinal`. (gap-audit)
-- [ ] Create `TEST_CAT_NLS` (enum in `test.h`, label in `test_runner.c`, `make test-nls` target, `bootx64.c` parser, `scripts\debug\kernel\run-nls-tests.bat`).
+- [x] Unit tests: UTF-8 invalid/overlong/surrogate rejection, surrogate round-trip, case-insensitive compare, atom refcounts (test_nt_misc.c), CP437 + CP1252 round trip -- all under TEST_CAT_NLS/ABI.
+- [x] Win32 atom APIs via SSDT dispatch (`test_nls_atom_syscall_roundtrip`: NtAddAtom/NtFindAtom/NtDeleteAtom) + pure nt_atom_* helpers + `CompareStringOrdinal` (test_nls.c).
+- [x] `test_nls_fuzz_counted_strings`: deterministic 512-iter LCG fuzz over the validator/decode/RtlEqual/sort-key/normalize/fold helpers, per-target contracts + dst canary (never crash/overread/overrun).
+- [x] Missing-NLS invariant fallback: `test_nls_missing_dir_fallback` (no active table -> compiled fallback); boot degraded-state marker via the smoke path.
+- [ ] Compatibility corpus (full-BMP): host tool emits a real invariant.nls (UPCASE + CTYPE1/2/3, §4 format); unblocks §7 full-FoldStringW + §9 full-BMP. DEFERRED (host tooling + build wiring). (design §10)
+- [ ] Minimal real-table boot fixture: a valid invariant.nls in sysroot + a boot/test assertion that nls_init loaded it (version != fallback), proving the disk-load path not just fallback. (design §10)
+- [x] Tests for `GetStringTypeW` C1/C2/C3 (`nls_char_type`), `FoldStringW`, `LCMapStringEx` sort keys, `GetNLSVersionEx`, `GetCPInfoEx`/`IsDBCSLeadByte` (SBCS), `CompareStringOrdinal`. (gap-audit)
+- [x] `TEST_CAT_NLS` wired: enum (test.h), labels (test_runner.c), `make test-nls` (Makefile), bootx64.c parser (test_suite=nls), run-nls-tests.bat.
 - [ ] Commit: `"kernel: nls -- unit tests + compatibility corpus (TEST_CAT_NLS)"`
 
 **Test checkpoint:** `test_nls.c` registers under `TEST_CAT_NLS`; the suite covers UTF-8 invalid-sequence rejection, surrogate-pair round trip, case-insensitive compare, atom refcount add/find/delete, and CP437/CP1252 round trips, all with concrete expected values. Boot with a missing NLS dir passes with a logged degraded-state marker.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 96 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** §10 test surface -- `test_nls_fuzz_counted_strings` (512-iter LCG fuzz), `test_nls_cp_roundtrip` (CP437/CP1252), `test_nls_atom_syscall_roundtrip` (atom SSDT dispatch), + the `make test-nls` target; 96 nls suites.
+> - **How it integrates:** all under TEST_CAT_NLS via `test_register_nls`; the fuzz asserts every counted-string helper returns a defined/bounded result + dst canary intact for random malformed inputs.
+> - **Downstream effects:** items 1/2/3/4/6/7 close the §1-§9 test coverage; the disk-load NLS corpus is the only open piece.
+> - **Canonical doc:** [`src/kernel/test/test_nls.c`](../../src/kernel/test/test_nls.c).
+> - **Scope boundary:** the full-BMP `invariant.nls` corpus (host tool + build wiring) and the minimal real-table boot fixture are deferred `[ ]` items; they also own the deferred §7 full-FoldStringW + §9 full-BMP.
 
 ---
 

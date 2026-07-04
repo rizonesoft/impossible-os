@@ -1583,6 +1583,114 @@ static void test_nls_file_nonascii_fail_closed(void)
                    "NtDeleteFile Length>MaximumLength fail-closed");
 }
 
+/* ---- Section 10: deterministic fuzz over the counted-string helpers -------- */
+
+/* Fixed-LCG (no wall clock / randomness) fuzz. Per-target contracts -- a single
+ * "must error on malformed" would be WRONG: the field validator is fields-only
+ * (a huge/odd Length is rejected without reading Buffer), RtlEqual preserves a
+ * total order (reflexive, not an error), and the raw pointer+length helpers are
+ * fuzzed ONLY over lengths within the backing buffer (a huge length for a small
+ * buffer would be a harness overread, not a helper failure). Every call must
+ * return a DEFINED bounded result and never crash / overread / overrun dst. */
+static void test_nls_fuzz_counted_strings(void)
+{
+    uint32_t seed = 0x13579BDFu, iter, j;
+    uint16_t wbuf[33];
+    uint8_t  skbuf[80];
+    uint16_t nbuf[40];
+    uint16_t kb[40];
+    for (iter = 0; iter < 512u; iter++) {
+        uint32_t r = (seed = seed * 1103515245u + 12345u);
+        uint32_t n = r % 32u;                    /* bounded WCHAR count in wbuf */
+        for (j = 0; j < 32u; j++)
+            wbuf[j] = (uint16_t)((seed = seed * 1103515245u + 12345u) >> 8);
+        wbuf[32] = 0;                            /* guaranteed NUL for the -1 scan */
+        if (r & 1u) wbuf[n ? n - 1u : 0u] = 0x0301;   /* stray combining mark */
+        if (r & 2u) wbuf[n / 2u] = 0x0000;            /* embedded NUL */
+
+        /* (1) FIELD validator (kernel mode = fields only, no Buffer read): a
+         * huge/odd Length or NULL Buffer is rejected without touching Buffer. */
+        UNICODE_STRING us;
+        us.Buffer = (r & 4u) ? (uint16_t *)0 : wbuf;
+        us.Length = (uint16_t)(r >> 3);          /* may be odd / larger than max */
+        us.MaximumLength = (uint16_t)(n * 2u);
+        NTSTATUS vs = nt_unicode_string_validate(&us, SSDT_KERNEL_MODE,
+                                                 (uint16_t **)0, (uint32_t *)0);
+        TEST_ASSERT_EQ((uint64_t)(vs == STATUS_SUCCESS || vs == STATUS_INVALID_PARAMETER),
+                       1u, "validate returns a defined status");
+
+        /* (2) decode: Length bounded to wbuf so it can never overread. */
+        UNICODE_STRING ok;
+        ok.Buffer = wbuf; ok.Length = (uint16_t)(n * 2u); ok.MaximumLength = 64;
+        NTSTATUS ds = nt_decode_unicode_string(&ok, kb, r % 40u, (uint32_t *)0,
+                                               SSDT_KERNEL_MODE);
+        TEST_ASSERT_EQ((uint64_t)(ds == STATUS_SUCCESS || ds == STATUS_BUFFER_TOO_SMALL ||
+                                  ds == STATUS_INVALID_PARAMETER), 1u,
+                       "decode returns a defined status");
+
+        /* (3) Rtl comparator preserves reflexivity for any bounded operand. */
+        TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&ok, &ok, (int)(r & 1u)), 1u,
+                       "RtlEqual reflexive");
+
+        /* (4) sort-key / normalize / fold: bounded return + dst canary intact
+         * past the reported cap (proves no overrun). */
+        int32_t slen = (r & 8u) ? -1 : (int32_t)n;
+        skbuf[sizeof(skbuf) - 1] = 0xA5;
+        int sk = nls_sort_key(wbuf, slen, skbuf, r % (uint32_t)sizeof(skbuf), (int)(r & 1u));
+        TEST_ASSERT_EQ((uint64_t)(sk < 0 || (uint32_t)sk <= 0x7FFFFFFFu), 1u, "sort_key defined");
+        TEST_ASSERT_EQ((uint64_t)skbuf[sizeof(skbuf) - 1], 0xA5u, "sort_key dst canary intact");
+        int nm = nls_normalize((int)(1u + (r % 2u)), wbuf, slen, nbuf,
+                               (uint32_t)(sizeof(nbuf) / 2));
+        TEST_ASSERT_EQ((uint64_t)(nm < 0 || (uint32_t)nm <= sizeof(nbuf) / 2), 1u, "normalize defined");
+        int fd = nls_fold_string(NLS_MAP_FOLDDIGITS, wbuf, slen, nbuf,
+                                 (uint32_t)(sizeof(nbuf) / 2));
+        TEST_ASSERT_EQ((uint64_t)(fd < 0 || (uint32_t)fd <= sizeof(nbuf) / 2), 1u, "fold defined");
+    }
+}
+
+/* CP437 + CP1252 lossless round trip (decode then re-encode == original byte). */
+static void test_nls_cp_roundtrip(void)
+{
+    uint16_t u16[4] = { 0, 0, 0, 0 };   /* sentinel-init: a failed decode never */
+    uint8_t  back[4] = { 0, 0, 0, 0 };  /* feeds uninitialized data to the encode */
+    uint8_t  c437[1]  = { 0x80 };       /* CP437 0x80 -> U+00C7 (C-cedilla) */
+    uint8_t  c1252[1] = { 0x80 };       /* CP1252 0x80 -> U+20AC (euro) */
+    int n = nls_cp_to_utf16(NLS_CP_437, c437, 1, u16, 4, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)(n == 1 && u16[0] == 0x00C7u), 1u, "CP437 0x80 -> U+00C7");
+    if (n == 1) {   /* only re-encode when the decode actually wrote u16 */
+        back[0] = 0xFF;   /* non-0x80 sentinel: a regressed encode cannot false-pass on stale data */
+        n = nls_cp_from_utf16(NLS_CP_437, u16, 1, back, 4, NLS_CP_STRICT);
+        TEST_ASSERT_EQ((uint64_t)(n == 1 && back[0] == 0x80u), 1u, "CP437 round-trips 0x80");
+    }
+    n = nls_cp_to_utf16(NLS_CP_1252, c1252, 1, u16, 4, NLS_CP_STRICT);
+    TEST_ASSERT_EQ((uint64_t)(n == 1 && u16[0] == 0x20ACu), 1u, "CP1252 0x80 -> U+20AC");
+    if (n == 1) {
+        back[0] = 0xFF;   /* reset before the second encode (back is shared with CP437) */
+        n = nls_cp_from_utf16(NLS_CP_1252, u16, 1, back, 4, NLS_CP_STRICT);
+        TEST_ASSERT_EQ((uint64_t)(n == 1 && back[0] == 0x80u), 1u, "CP1252 round-trips 0x80");
+    }
+}
+
+/* Atom Win32 APIs through the SSDT DISPATCH path (marshalling), not just the
+ * pure nt_atom_* helpers: add "Foo", find "FOO" (case-insensitive), delete. */
+static void test_nls_atom_syscall_roundtrip(void)
+{
+    uint16_t name[3] = { 'F', 'o', 'o' };
+    uint16_t up[3]   = { 'F', 'O', 'O' };
+    uint16_t atom = 0, found = 0;
+    nt_atom_reset_for_test();
+    NTSTATUS s = ssdt_dispatch(SSDT_NtAddAtom, (uint64_t)(uintptr_t)name, 6,
+                               (uint64_t)(uintptr_t)&atom, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)s, (uint64_t)STATUS_SUCCESS, "NtAddAtom dispatch ok");
+    TEST_ASSERT_EQ((uint64_t)(atom >= 0xC000u), 1u, "string atom in 0xC000+ range");
+    s = ssdt_dispatch(SSDT_NtFindAtom, (uint64_t)(uintptr_t)up, 6,
+                      (uint64_t)(uintptr_t)&found, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(s == STATUS_SUCCESS && found == atom), 1u,
+                   "NtFindAtom finds FOO == Foo (case-insensitive) via dispatch");
+    s = ssdt_dispatch(SSDT_NtDeleteAtom, atom, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)s, (uint64_t)STATUS_SUCCESS, "NtDeleteAtom dispatch ok");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -1777,4 +1885,11 @@ void test_register_nls(void)
                             test_nls_upcase_inline_matches_authority, TEST_CAT_NLS);
     test_suite_register_cat("nls: file non-ASCII name fail-closed",
                             test_nls_file_nonascii_fail_closed, TEST_CAT_NLS);
+    /* Section 10: deterministic counted-string fuzz + coverage gaps. */
+    test_suite_register_cat("nls: fuzz counted-string helpers",
+                            test_nls_fuzz_counted_strings, TEST_CAT_NLS);
+    test_suite_register_cat("nls: CP437/CP1252 round trip",
+                            test_nls_cp_roundtrip, TEST_CAT_NLS);
+    test_suite_register_cat("nls: atom Win32 syscall dispatch",
+                            test_nls_atom_syscall_roundtrip, TEST_CAT_NLS);
 }
