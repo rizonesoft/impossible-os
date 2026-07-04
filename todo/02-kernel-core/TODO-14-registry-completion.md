@@ -70,7 +70,7 @@ title: "TODO-14 -- Registry System Completion"
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [/]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [/]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [/]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
 | 💎  |   7   | `regedit` shell tool                               | §4                           |  [ ]   |
@@ -319,6 +319,17 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Commit: `"kernel/registry: NtOpenKey/NtSetValueKey/NtNotifyChangeKey syscalls, pointer validation, audit"`
 
 **Test checkpoint:** `NtCreateKey` + `NtOpenKey` round-trip via SYSCALL from user-mode succeeds. `NtQueryValueKey(KeyValuePartialInformation)` returns correct data. `ProbeForWrite` with invalid pointer → `STATUS_ACCESS_VIOLATION`. `NtFreezeRegistry(5)` → all `NtSetValueKey` from another thread block; `NtThawRegistry()` → blocked writes complete. Audit log: enable `AuditEnabled=1` → `NtSetValueKey` entries appear in `registry-audit.log`. Serial log: `"[SSDT] NtOpenKey: \\Registry\\Machine\\... -> 0x%x"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | registry NT syscalls covered via `ssdt_dispatch` in `test_registry.c`
+
+> **Notes:**
+> - Core registry NT CRUD syscalls (14 handlers, SSDT 0x0090-0x00A6) implemented + wired in `nt_registry.c`, tested via `ssdt_dispatch`; `NtSaveKey`/`NtRestoreKey` fail-closed (§2).
+> - Deferred: `NtNotifyChangeKey`/Win32 `RegNotifyChangeKeyValue` need a safe watcher lifecycle (handle-close unregister + event deref) that rides on the HKEY->OB migration; the 6-arg SSDT ceiling hides `Asynchronous`.
+> - Also deferred: kernel-wide `nt_decode_unicode_string` UTF-16 retrofit, HKEY->OB migration, `KeyNodeInformation` completion, transacted ops (KTM), ProbeForRead/Write (SEH).
+> - Canonical doc: registry NT surface in [`src/kernel/nt/nt_registry.c`](../../src/kernel/nt/nt_registry.c).
+> - Scope boundary: §4 is a >10-item mega-section -- the info-class enums + UTF-16 decode + OB migration warrant a section split before a fresh implementation pass.
+> **Deferred:** [H] `NtNotifyChangeKey` + Win32 `RegNotifyChangeKeyValue` wiring blocked on safe watcher lifecycle (handle-close unregister + event deref) -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
+> **Deferred:** [M] user-mode pointer validation on all Nt args -> XREF: 02-kernel-core/TODO-14 §4 (item: "Wrap every user-mode pointer argument in" at line 268)
 
 ---
 
