@@ -458,7 +458,7 @@ title: "TODO-14 -- Registry System Completion"
 - [x] Harden `hive_load` value parsing (`registry.c:2515`, nested-key 2371): unchecked `pos += vdata_size` lets a crafted hive move `pos` past `data_size`. Use subtraction bounds + final `pos == data_size` check. XREF: TODO-12 §15.
 - [/] Make `hive_load` transactional -- PARTIAL: validate pass (apply=0) catches malformed input before any live mutation, but apply still mutates incrementally with no rollback; full staging -> §14 reload-transactionality. XREF: TODO-12 §15.
 - [x] `hive_validate_file` checks only the header CRC, then `hive_best_source` promotes a header-valid `.hive.log` over a good main hive before any data parse (`registry.c:2265-2305`). Validate the full candidate before promotion. XREF: TODO-12 §15.
-- [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (16) for 8 KiB stack safety; full REG_MAX_KEY_DEPTH (512) support needs an iterative/heap-backed parse stack. -> XREF: 02-kernel-core/TODO-14 §10
+- [/] DEFERRED: hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full-depth support needs an iterative parser. -> XREF: 02-kernel-core/TODO-14 §10 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
 - [/] DEFERRED (boot-mount coupled, GPF history): wire `registry_load_hives()` into boot after defaults (needs C:); loads on-disk `ExternalEntropy`, so secure-delete MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
 - [/] DEFERRED (with load trio): secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb; then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
 - [/] DEFERRED (with load trio): per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot. -> XREF: `01-boot-platform/TODO-12 §9`
@@ -499,8 +499,13 @@ title: "TODO-14 -- Registry System Completion"
 > **Notes:**
 > - Shipped: `registry_init()` `void`->`boot_result_t` (registry.c:296) -- BOOT_FATAL on root-key alloc failure; boot_storage.c wires it to the recovery branch. Hardening items shipped a prior pass.
 > - Integrates: mirrors the OB/EX gate pattern (`kernel_subsystem_set_ready` + `boot_recovery_show` + `boot_halt`); registry.h gains `kernel/boot_init.h`; default-population stays best-effort.
-> - Downstream: closes the TODO-01 §4/§8 typed-registry_init items; the 3 `[x]` hive_load hardening items close TODO-12 §15's crafted-hive `Accepted:` stamps (swept this commit).
+> - Downstream: closes the TODO-01 §4/§8 typed-registry_init items; 2 of 3 hive_load hardening items (bounds, full-validate) swept TODO-12 §15's crafted-hive stamps; the transactional one is [/] partial, its stamp re-linked to §14.
 > - Scope boundary: durability DEFERRED -- delta-flush needs §14 SMP lock; dual-log/load-wiring/secure-delete need boot TODO-12 §9; chkregistry needs user-mode surface (§7); compaction needs a non-monotonic allocator.
+> **Verified:** 2026-07-04 | commit `dd29fad8` | 3/21 items | build OK | abi 1149/0 PASS + smoke PASS 3.1s
+> **Deferred:** [H] hive_load apply pass mutates the live tree with no rollback + load-capacity preflight counts total records not missing allocations -> XREF: 02-kernel-core/TODO-14 §14 (item: "reload transactionality" at the §14 checklist)
+> **Deferred:** [H] hive_parse_key recursion capped at HIVE_MAX_PARSE_DEPTH (12) for 8 KiB stack safety; full depth needs an iterative parser -> XREF: 02-kernel-core/TODO-14 §10 (item: "Iterative/heap-backed hive parser" at the §10 checklist)
+> **Deferred:** [M] registry_load_hives double-reads (best_source validates then hive_load re-parses) -> XREF: 02-kernel-core/TODO-14 §8 (item: "double-reads" at the §8 checklist)
+> **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 ---
 
@@ -553,6 +558,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Compatibility: the B-tree format is compatible with Windows NT hive internals; external `chntpw` and `python-registry` tools can read it
 - [ ] Prerequisite: §10 (mmap) and §8 (compaction) should be stable first
 
+- [ ] Iterative/heap-backed hive parser: replace `hive_parse_key` recursion (capped at HIVE_MAX_PARSE_DEPTH=12 for 8 KiB-stack safety) with a heap-backed parse stack so hives up to REG_MAX_KEY_DEPTH round-trip. -> XREF: 02-kernel-core/TODO-14 §8
 - [ ] Commit: `"kernel/registry: hash map child lookup, mmap hive, B-tree cell format"`
 
 **Test checkpoint:** Hash map: create 100 children under one key → `reg_child_lookup` finds each by name. Load factor: bucket chain > 8 triggers rehash. Mmap hive: `hive_open_mmap` → `RegQueryValueEx` reads directly from mapped page (zero-copy). B-tree: write hive in `regf` format → external `python-registry` tool parses it. Serial log: `"[REG] Hash map: bucket_count=%u max_chain=%u"`. Test on: QEMU WHPX + TCG.

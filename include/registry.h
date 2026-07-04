@@ -72,11 +72,12 @@
 #define MAXIMUM_ALLOWED    0x02000000   /* samDesired: grant the maximum the DACL permits */
 #define REG_MAX_KEY_DEPTH  512          /* Max key path depth (backslash-separated levels) */
 /* Recursion cap for the on-disk hive parser (hive_parse_key). Each recursive
- * frame carries a char name[REG_MAX_KEY_NAME + 1] (256 bytes); the API-level
- * REG_MAX_KEY_DEPTH would blow the 8 KiB kernel task stack, so hive parsing is
- * capped well within the stack and rejects deeper hives (fail-closed).
+ * frame carries a char name[REG_MAX_KEY_NAME + 1] (~392 bytes with locals), so
+ * the API-level REG_MAX_KEY_DEPTH would blow the 8 KiB kernel task stack. Even
+ * with the 4 KiB hive header moved off-stack, cap parse recursion well within
+ * the stack (12 frames ~= 4.7 KiB) and reject deeper hives (fail-closed).
  * Realistic registry paths are far shallower. */
-#define HIVE_MAX_PARSE_DEPTH 16
+#define HIVE_MAX_PARSE_DEPTH 12
 /* GENERIC_* rights (mapped onto KEY_* by reg_effective_access); guarded so a
  * TU that also pulls acl.h / nt_types.h does not double-define. */
 #ifndef GENERIC_READ

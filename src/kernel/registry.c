@@ -3679,23 +3679,30 @@ static int hive_read_valid_header(struct vfs_node *f, const char *path,
 static int hive_validate_file(const char *path)
 {
     struct vfs_node *f;
-    hive_header_t hdr;
+    hive_header_t *hdr;      /* off-stack: 4 KiB header + recursive parser */
     uint8_t *data_ptr = (uint8_t *)0;
     uintptr_t data_phys = 0;
     uint32_t buf_pages = 0;
     int rc = -1;
 
-    f = vfs_open(path, HIVE_VFS_O_READ);
-    if (!f) return -1;
+    hdr = (hive_header_t *)pmm_alloc_contiguous(1);
+    if (!hdr) return -1;
 
-    if (hive_read_valid_header(f, path, &hdr) == 0 &&
-        hive_read_validated_payload(f, path, &hdr, &data_ptr, &data_phys,
+    f = vfs_open(path, HIVE_VFS_O_READ);
+    if (!f) {
+        hive_free_pages((uintptr_t)hdr, 1);
+        return -1;
+    }
+
+    if (hive_read_valid_header(f, path, hdr) == 0 &&
+        hive_read_validated_payload(f, path, hdr, &data_ptr, &data_phys,
                                     &buf_pages, (uint32_t *)0,
                                     (uint32_t *)0) == 0)
         rc = 0;
 
     vfs_close(f);
     hive_free_pages(data_phys, buf_pages);
+    hive_free_pages((uintptr_t)hdr, 1);
     return rc;
 }
 
@@ -3736,9 +3743,8 @@ static const char *hive_best_source(const char *filepath,
 
 int hive_load(const char *filepath, reg_key_t *root)
 {
-    struct vfs_node *f;
-    hive_header_t hdr_obj;
-    hive_header_t *hdr = &hdr_obj;
+    struct vfs_node *f = (struct vfs_node *)0;
+    hive_header_t *hdr = (hive_header_t *)0;
     uint32_t saved_crc, computed_crc;
     uint32_t buf_pages = 0;
     uintptr_t data_phys = 0;
@@ -3746,37 +3752,42 @@ int hive_load(const char *filepath, reg_key_t *root)
     hive_buf_t deser;
     uint32_t parsed_keys = 0, parsed_values = 0;
     uint32_t loaded_values = 0;
-    int rc;
+    int rc, ret = -1;
+
+    deser.pos = 0;
 
     if (!filepath || !root) return -1;
     if (!vfs_is_mounted(filepath[0])) return -1;
 
+    /* The 4 KiB hive header must NOT live on the 8 KiB task stack: the
+     * recursive hive parser (hive_parse_key) needs that stack. One PMM page
+     * (identity-mapped, freed via the single `out:` cleanup below). */
+    hdr = (hive_header_t *)pmm_alloc_contiguous(1);
+    if (!hdr) return -1;
+
     /* Open the hive file */
     f = vfs_open(filepath, HIVE_VFS_O_READ);
-    if (!f) return -1;  /* File doesn't exist -- not an error, just no saved data */
+    if (!f) goto out;  /* File doesn't exist -- not an error, just no saved data */
 
     /* Read header */
     rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)hdr);
     if (rc < (int)HIVE_HEADER_SIZE) {
         klog(LOG_WARN, "hive", "Short read on '%s' header (%d bytes)", filepath, rc);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
 
     /* Validate magic */
     if (hdr->magic != HIVE_MAGIC) {
         klog(LOG_WARN, "hive", "Bad magic in '%s': 0x%x (expected REGH)", filepath,
              (uint64_t)hdr->magic);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
 
     /* Validate version */
     if (hdr->version != HIVE_VERSION) {
         klog(LOG_WARN, "hive", "Unsupported hive version %u in '%s'",
              (uint64_t)hdr->version, filepath);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
 
     if (hive_read_valid_header(f, filepath, hdr) < 0) {
@@ -3785,36 +3796,30 @@ int hive_load(const char *filepath, reg_key_t *root)
         computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
         klog(LOG_WARN, "hive", "CRC32 mismatch in '%s': file=0x%x computed=0x%x",
              filepath, (uint64_t)saved_crc, (uint64_t)computed_crc);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
 
     /* Sanity check data size */
     if (hdr->data_size == 0 || hdr->data_size > 1024 * 1024) {
         klog(LOG_WARN, "hive", "Invalid data size %u in '%s'",
              (uint64_t)hdr->data_size, filepath);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
 
     if (hive_read_validated_payload(f, filepath, hdr, &data_ptr, &data_phys,
                                     &buf_pages, &parsed_keys,
                                     &parsed_values) < 0) {
         klog(LOG_WARN, "hive", "Invalid hive payload in '%s'", filepath);
-        vfs_close(f);
-        return -1;
+        goto out;
     }
     vfs_close(f);
+    f = (struct vfs_node *)0;
 
     if (parsed_keys > 0 &&
-        parsed_keys - 1 > (REG_KEY_POOL_SIZE - reg_key_pool_next)) {
-        hive_free_pages(data_phys, buf_pages);
-        return -1;
-    }
-    if (parsed_values > (REG_VALUE_POOL_SIZE - reg_value_pool_next)) {
-        hive_free_pages(data_phys, buf_pages);
-        return -1;
-    }
+        parsed_keys - 1 > (REG_KEY_POOL_SIZE - reg_key_pool_next))
+        goto out;
+    if (parsed_values > (REG_VALUE_POOL_SIZE - reg_value_pool_next))
+        goto out;
 
     /* Deserialize into the tree */
     deser.buf = data_ptr;
@@ -3822,22 +3827,21 @@ int hive_load(const char *filepath, reg_key_t *root)
     deser.cap = hdr->data_size;
 
     if (hive_parse_payload(&deser, root, &parsed_keys, &parsed_values,
-                           &loaded_values, 1) < 0)
-        goto fail;
-
-    /* Free PMM buffer */
-    hive_free_pages(data_phys, buf_pages);
+                           &loaded_values, 1) < 0) {
+        klog(LOG_WARN, "hive", "Corrupt data in '%s' at offset %u",
+             filepath, (uint64_t)deser.pos);
+        goto out;
+    }
 
     klog(LOG_DEBUG, "hive", "Loaded '%s': %u keys, %u values",
          filepath, (uint64_t)hdr->total_keys, (uint64_t)loaded_values);
+    ret = (int)loaded_values;
 
-    return (int)loaded_values;
-
-fail:
-    klog(LOG_WARN, "hive", "Corrupt data in '%s' at offset %u",
-         filepath, (uint64_t)deser.pos);
+out:
+    if (f) vfs_close(f);
     hive_free_pages(data_phys, buf_pages);
-    return -1;
+    hive_free_pages((uintptr_t)hdr, 1);
+    return ret;
 }
 
 /* ============================================================================
