@@ -137,27 +137,33 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ "${OVERNIGHT_SEQUENCER_FORC
 fi
 # ------------------------------------------------------------------------------
 
+# WS3: per-run metrics sidecar (read by stream-report.py). Shares the report
+# log's basename so a report and its metrics pair up. Defined before the prune
+# so sidecars rotate with their logs.
+METRICS_DIR="$RUNTIME_BASE/metrics"
+mkdir -p "$METRICS_DIR"
+
 # Report-log rotation: the watchdog relaunches every 10 min, so over many nights
 # (and especially a usage-limit retry that mis-snoozed) the reports dir grows
 # without bound. Keep only the most recent $OVERNIGHT_REPORT_KEEP run logs; prune
-# the rest right before we add this launch's log. The process-substitution read
-# keeps the inner pipeline's exit out of set -e, and the wrapper is belt-and-
-# suspenders so a prune failure never aborts an otherwise-healthy launch.
+# the rest right before we add this launch's log. Metrics sidecars pair 1:1
+# with run logs (same basename) and rotate to the same depth -- they were
+# unrotated until 2026-07-04. The process-substitution read keeps the inner
+# pipeline's exit out of set -e, and the wrapper is belt-and-suspenders so a
+# prune failure never aborts an otherwise-healthy launch.
 prune_reports() {
   local keep="${OVERNIGHT_REPORT_KEEP:-40}" old
   while IFS= read -r old; do
     [ -n "$old" ] && rm -f "$old"
   done < <(ls -1t "$REPORT_DIR"/run-*.log 2>/dev/null | tail -n +"$((keep + 1))")
+  while IFS= read -r old; do
+    [ -n "$old" ] && rm -f "$old"
+  done < <(ls -1t "$METRICS_DIR"/run-*.jsonl 2>/dev/null | tail -n +"$((keep + 1))")
 }
 prune_reports || true
 
 REPORT="$REPORT_DIR/run-$(date +%Y%m%d-%H%M%S).log"
 ln -sfn "$(basename "$REPORT")" "$REPORT_DIR/latest.log"
-
-# WS3: per-run metrics sidecar (read by stream-report.py). Shares the report
-# log's basename so a report and its metrics pair up.
-METRICS_DIR="$RUNTIME_BASE/metrics"
-mkdir -p "$METRICS_DIR"
 export OVERNIGHT_METRICS_FILE="$METRICS_DIR/$(basename "${REPORT%.log}").jsonl"
 
 # systemd user units don't inherit the login shell's PATH; resolve claude
