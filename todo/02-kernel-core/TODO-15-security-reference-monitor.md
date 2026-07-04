@@ -60,7 +60,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   1   | SID & LUID primitives                             | --                  |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [/]   |
-| 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [x]   |
+| 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [/]   |
 | 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [ ]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [ ]   |
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [ ]   |
@@ -314,12 +314,21 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] `NtDuplicateToken(Existing, Access, ObjAttr, EffectiveOnly, Type, New)` -- deep-copies token struct, allocates new `TokenId` LUID; `EffectiveOnly` strips disabled privileges and groups
 - [x] `NtAdjustPrivilegesToken(hToken, DisableAll, NewState, BufferLen, PreviousState, ReturnLen)` -- for each LUID_AND_ATTRIBUTES in `NewState`: find matching privilege in token, apply SE_PRIVILEGE_ENABLED / SE_PRIVILEGE_REMOVED; requires `TOKEN_ADJUST_PRIVILEGES`; write previous state to `PreviousState`; return `STATUS_NOT_ALL_ASSIGNED` if any LUID not found
 - [x] `NtAdjustGroupsToken(hToken, ResetToDefault, NewState, BufferLen, PreviousState, ReturnLen)` -- enable/disable group SIDs; cannot re-enable a `SE_GROUP_USE_FOR_DENY_ONLY` group (immutable once disabled)
-- [ ] **Deep-copy token field setters for `NtSetInformationToken`** -- current TODO-12 §16 `NtSetInformationToken` rejects all info classes with `STATUS_INVALID_INFO_CLASS` to avoid storing caller-owned pointers in `ACCESS_TOKEN`. Implement safe setters: `token_set_integrity_level(tok, sid, sid_len)` deep-copies the SID into token-owned heap storage, validates revision/length, and replaces `tok->IntegrityLevelSid` under the per-token lock (see next item). Similar setters for TokenOwner, TokenPrimaryGroup, TokenDefaultDacl. Remove the reject list from `NtSetInformationToken_handler` (src/kernel/nt/nt_token.c::NtSetInformationToken_handler) once these are available.
+- [ ] Deep-copy setters for `NtSetInformationToken` (IntegrityLevel/PrimaryGroup/DefaultDacl/Owner): validate + alloc-copy the SID/ACL BEFORE the lock; swap under lock; free the OLD field after unlock. Remove the reject at nt_token.c:299.
 - [ ] TokenXxx query marshalling: `token.c` NtQueryInformationToken returns kernel SID pointers; TokenGroups uses the wrong header offset. Marshal each class into a self-contained caller buffer. XREF: TODO-12 §16.
 - [ ] **Per-token lock for SMP safety** -- add `spinlock_t lock` to `ACCESS_TOKEN` covering Groups[], Privileges[], IntegrityLevelSid, DefaultDacl, and other mutable fields. All NtAdjust*Token / NtSet*Token / NtQuery*Token paths must acquire (write for mutate, read for query). Required to make TODO-12 §16 token syscalls SMP-safe when scheduler exposes them to multiple threads of the same process.
 - [x] Commit: `"kernel/security: ACCESS_TOKEN object, SeCreateSystemToken, NtOpenProcessToken"`
 
 **Test checkpoint:** `SeCreateSystemToken()` yields UserSid=`S-1-5-18`, IL=System, all privileges enabled. `NtDuplicateToken` produces a deep copy with a distinct `TokenId`. `NtAdjustPrivilegesToken` enable/disable round-trips; missing LUID returns `STATUS_NOT_ALL_ASSIGNED`. `NtQueryInformationToken(TokenIntegrityLevel)` returns the IL SID; `TokenUser` returns UserSid. `ObpTokenType` is a refcounted Ob type. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | on implementation of the token-hardening items
+> **Notes:**
+> - Shipped: the core `ACCESS_TOKEN` object + `SeCreateSystemToken`/`SeCreateUserToken` + `NtOpen*/Query/Adjust*` handlers (token.c/nt_token.c). Types + trusted-path token ops work.
+> - Downgraded [x]->[/]: design review specced the token-hardening (per-token lock, deep-copy setters, query-marshalling leak fix, `OwnerSid` field, `NtDuplicateToken` deep-copy) -- filed as precise [ ] items above.
+> - BLOCKED/latent: setters need §5's handle-rights gate before enabling; the query kernel-pointer-leak is latent (§7 unwired, no live process token). Lock/alloc ordering per spinlock rules.
+> - Scope boundary: §5 owns handle-rights enforcement + SeAccessCheck; §7 owns wiring tokens into processes.
+> **Deferred:** [Critical] `NtSetInformationToken` setters must gate on `TOKEN_ADJUST_DEFAULT` before enabling -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
+> **Deferred:** [H] token-hardening (per-token lock + deep-copy setters + query kernel-pointer-leak fix + OwnerSid + NtDuplicateToken deep-copy) design-specced, latent until §7 wires tokens into processes -> XREF: 02-kernel-core/TODO-15 §7 (item: "Add `ACCESS_TOKEN *Token;` to `struct task`")
 
 ---
 
