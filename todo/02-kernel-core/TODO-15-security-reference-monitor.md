@@ -14,7 +14,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Goal:** Implement the Windows Security Reference Monitor (SRM) -- the kernel subsystem that enforces every resource access decision in the OS. The SRM owns three things: the `ACCESS_TOKEN` object (who you are, what groups you belong to, what privileges you hold), the `SECURITY_DESCRIPTOR` + ACL machinery (who is allowed to do what to a named resource), and the `SeAccessCheck` engine that compares the two to produce an allow/deny decision. Without SRM, the OS has no file permissions, no process isolation, no privilege separation, and no UAC -- it is a flat single-user system where every process can touch every resource.
 
 > [!IMPORTANT]
-> **Current state:** SID/LUID primitives (§1) and privilege constants (§2) are implemented + reviewed. SECURITY_DESCRIPTOR/ACL/ACE types (§3) and the core ACCESS_TOKEN object (§4) are implemented but not yet review-stamped; §4 still has 3 open token-marshalling/lock items (safe `NtSetInformationToken` setters, query marshalling, per-token SMP lock -> TODO-12 §16). The Object Manager (TODO-05 §8) integrates security descriptors. Remaining: SeAccessCheck engine (§5), MIC (§6), token assignment at process spawn (§7), privilege enforcement (§8), UAC/NtFilterToken (§9), Win32 wrappers (§10), SSDT wiring (§12), SD inheritance (§13), AppContainer tokens (§14), and the access denial explainer (§15).
+> **Current state:** SID/LUID primitives (§1) and privilege constants (§2) are implemented + reviewed. SECURITY_DESCRIPTOR/ACL/ACE types (§3) and the core ACCESS_TOKEN object (§4) are implemented but partial: §3 reviewed + downgraded to [/] -- its Win32 SD/ACL/ACE types + trusted-path helpers work, but the review found the untrusted-input parsers (self-relative SD unmarshal, ACL/ACE walk, `RtlLengthSid`) need bounded validators (latent OOB, no live caller yet); §4 still has 3 open token-marshalling/lock items (safe `NtSetInformationToken` setters, query marshalling, per-token SMP lock -> TODO-12 §16). The Object Manager (TODO-05 §8) integrates security descriptors. Remaining: SeAccessCheck engine (§5), MIC (§6), token assignment at process spawn (§7), privilege enforcement (§8), UAC/NtFilterToken (§9), Win32 wrappers (§10), SSDT wiring (§12), SD inheritance (§13), AppContainer tokens (§14), and the access denial explainer (§15).
 
 ---
 
@@ -59,7 +59,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | --- | :---: | ------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | SID & LUID primitives                             | --                  |  [x]   |
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
-| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [x]   |
+| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [/]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [x]   |
 | 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [ ]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [ ]   |
@@ -250,9 +250,24 @@ title: "TODO-15 -- Security Reference Monitor"
   - `OB_TYPE_PROCESS` -- `(A;;GA;;;SY)(A;;0x1FFFFF;;;BA)(A;;0x1000;;;WD)` (create/terminate restricted for Everyone)
   - `OB_TYPE_TOKEN` -- `(A;;GA;;;SY)(A;;0x0008;;;OW)` (Query only for owner)
   - `OB_TYPE_REGISTRY_KEY` -- `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` (BuiltinUsers=Read)
+- [ ] SECURITY [Critical, latent]: `RtlSelfRelativeToAbsoluteSD` (acl.c:189) reads attacker `Offset*` with no source-length param -> OOB. Add a `rel_len` arg + bounds-validate header/offsets before deref, before the untrusted-SD import path.
+- [ ] SECURITY [H, latent]: bounded ACL/ACE walk -- `acl_append_ace`/`RtlGetAce` (acl.c:273-350) trust `AceCount`/`AceSize` past `AclSize`; add `RtlValidAcl` + bounded `RtlGetAceEx`; append must fail if `used > AclSize`.
+- [ ] SECURITY [H, latent]: `RtlLengthSid` (sid.c:83) has no `SID_MAX_SUB_AUTHORITIES` (15) check -> OOB on untrusted SID. Add `RtlLengthSidBounded`; SD/ACL import + append require `RtlValidSid` + length proof.
+- [ ] Select per-type default SD: ob.c always uses `SE_SD_TYPE_DEFAULT`; map `ObpProcessType`->PROCESS, `ObpTokenType`->TOKEN so process/token get the §3 DACLs once §5 honors `hdr->security`. -> XREF: 02-kernel-core/TODO-15 §5
+- [ ] Move a canonical `SECURITY_DESCRIPTOR_RELATIVE` typedef into `acl.h` with size/offset `_Static_assert`s (currently private in acl.c; consumers cannot inspect self-relative offsets safely).
 - [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 **Test checkpoint:** `RtlCreateSecurityDescriptor` + `RtlSetDaclSecurityDescriptor` + `RtlAbsoluteToSelfRelativeSD` round-trips (self-relative buffer parses back to identical ACEs via `RtlSelfRelativeToAbsoluteSD`). `SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY)` yields the `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` DACL. `RtlAclToCStr` dumps `D:(A;;FA;;;SY)`. `RtlGetAce` walks each ACE by index. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | on implementation of the bounded validators
+> **Notes:**
+> - Shipped: the Win32 SD/ACL/ACE types + Rtl* helpers (acl.c/acl.h, size `_Static_assert`s) + `SeCreateDefaultSD` object-type DACL blobs (default_sds.c). Types + trusted-path helpers work.
+> - Downgraded [x]->[/]: review found the untrusted-input parsers (self-relative SD unmarshal, ACL/ACE walk, `RtlLengthSid`) are NOT memory-safe -- bounded validators filed above as SECURITY items.
+> - Latent: all three OOB findings have NO production caller today (import paths IXFS/registry/`NtSetSecurityObject` unwired); they MUST land before that wiring. Process/token default-SD selection is a §5 wiring gap.
+> - Scope boundary: §5 owns SeAccessCheck (honoring `hdr->security`); the SD-import safety must precede it.
+> **Deferred:** [Critical] `RtlSelfRelativeToAbsoluteSD` OOB on untrusted self-relative SD (no `rel_len` bounds) -- latent, no live caller -> XREF: 02-kernel-core/TODO-15 §3 (item: "RtlSelfRelativeToAbsoluteSD" at the §3 checklist)
+> **Deferred:** [H] unbounded ACL/ACE walk + `RtlLengthSid` SID-max both allow OOB on untrusted input -- latent -> XREF: 02-kernel-core/TODO-15 §3 (item: "bounded ACL/ACE walk" at the §3 checklist)
+> **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) | 1M fixed (MIC constant drift), 1Crit+3H+1M deferred | scope: kernel-code-quality
 
 ---
 
@@ -372,9 +387,9 @@ title: "TODO-15 -- Security Reference Monitor"
   - Compute `subject_il = SeGetTokenIntegrityLevel(effective_token)`
   - Compute `object_il = SeGetObjectIntegrityLevel(sd)`
   - Read `SYSTEM_MANDATORY_LABEL_ACE->Mask` policy bits:
-    - `SYSTEM_MANDATORY_LABEL_NO_WRITE_UP (0x4)` -- default; if `subject_il < object_il` AND `desired` contains write access bits → deny
+    - `SYSTEM_MANDATORY_LABEL_NO_WRITE_UP (0x1)` -- default; if `subject_il < object_il` AND `desired` contains write access bits → deny (Windows value; matches acl.h)
     - `SYSTEM_MANDATORY_LABEL_NO_READ_UP (0x2)` -- optional; if `subject_il < object_il` AND `desired` contains read access bits → deny
-    - `SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP (0x1)` -- if `subject_il < object_il` AND `desired` contains execute bits → deny
+    - `SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP (0x4)` -- if `subject_il < object_il` AND `desired` contains execute bits → deny
   - Returns `STATUS_ACCESS_DENIED` or `STATUS_SUCCESS`
 - [ ] Default object IL assignment: kernel objects created by System process get `SeILSystem`; objects created by user process inherit creator's IL
 - [ ] UIPI note: MIC also gates cross-IL window-message sends (UIPI), but that path is compositor/Win32k-owned, not an SRM object DACL check. -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserChangeWindowMessageFilterEx")
