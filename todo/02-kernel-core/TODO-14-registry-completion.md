@@ -69,7 +69,7 @@ title: "TODO-14 -- Registry System Completion"
 | --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [/]   |
-| 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
+| 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [/]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
 | 💎  |   6   | Registry virtualization & .reg import/export       | §5                           |  [ ]   |
@@ -173,65 +173,36 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 3. Change Notifications
 
-- [ ] Add to `include/registry.h`:
-  ```c
-  #define REG_NOTIFY_CHANGE_NAME       0x01 /* sub-key create/delete */
-  #define REG_NOTIFY_CHANGE_ATTRIBUTES 0x02 /* key metadata change */
-  #define REG_NOTIFY_CHANGE_LAST_SET   0x04 /* value create/modify/delete */
-  #define REG_NOTIFY_CHANGE_SECURITY   0x08 /* security descriptor change */
+> **Scope:** §3 ships the CORE kernel-internal CALLBACK notification engine. The Win32 event/semaphore-facing `RegNotifyChangeKeyValue` + `NtNotifyChangeKey` wiring (KEY_NOTIFY, referenced hEvent, sync completion status) is owned by §4; the ⭐ advanced features + REG_NOTIFY_THREAD_AGNOSTIC are deferred `[/]` in-section.
 
-  typedef void (*reg_notify_fn)(const char *key_path, uint32_t change_type,
-                                const char *value_name,  /* NULL if not applicable */
-                                void *ctx);
-  typedef struct reg_watcher {
-      uint32_t      watcher_id;
-      reg_key_t    *key;
-      uint32_t      filter;        /* REG_NOTIFY_CHANGE_* bitmask */
-      bool          watch_subtree;
-      reg_notify_fn callback;
-      void         *ctx;
-      bool          active;
-      uint64_t      hit_count;     /* ⭐ telemetry counter */
-      uint64_t      coalesce_ms;   /* ⭐ min ms between fires (0=off) */
-      uint64_t      last_fired_ms; /* ⭐ last fire timestamp */
-  } reg_watcher_t;
-  ```
-- [ ] Static pool of 64 watchers (`reg_watcher_t watcher_pool[64]`); `bool active` marks slot in use; `watcher_id` is a monotonic u32 counter
+- [x] `include/registry.h`: `REG_NOTIFY_CHANGE_NAME/ATTRIBUTES/LAST_SET/SECURITY` (0x01-0x08), `reg_notify_fn` typedef, callback-based `reg_watcher_t` (adds `next`), and a `reg_watcher_t *watchers` head on `reg_key_t`
+- [x] Static `reg_watcher_pool[64]` + monotonic u32 `reg_watcher_next_id` (0 reserved as never-valid); `active` marks a slot in use; slots threaded onto each key's `watchers` head
+- [x] `reg_notify_register(HKEY, filter, watch_subtree, callback, ctx, coalesce_ms) -> id` (kernel-internal + trusted: no KEY_NOTIFY check; returns 0 on bad handle / pool exhaustion) + `RegUnregisterNotify(id)` + `reg_notify_unregister_all(key)`
+- [x] `reg_dispatch_notify(key, change_type, value_name)` walks `key` UP its parent chain: fires subtree+non-subtree at `key`, subtree-only at ancestors (once); coalescing via `reg_now_ms()`; `hit_count`++; callback
+- [x] `reg_is_descendant(ancestor, key)` exported subtree-membership primitive (the dispatch walk uses the parent chain directly)
+- [x] Dispatch hooks: `reg_set_value_direct`(LAST_SET; covers RegSetValueEx+RegCopyTree), `RegDeleteValue`(LAST_SET), `RegCreateKeyEx` new-key(NAME), `RegDeleteKey` pre-tombstone(NAME), `RegCopyTree`(NAME)
+- [x] `reg_notify_unregister_all` cleanup at EVERY tombstone -- `RegDeleteKey`, `RegDeleteKeyDirect`, `reg_delete_subtree` (RegDeleteTree/RegUnloadHive children), `RegUnloadHive` root -- so a freed slot can never stay linked
 
-- [ ] `RegNotifyChangeKeyValue(hKey, bWatchSubtree, dwNotifyFilter, hEvent, fAsynchronous)`:
-  - Allocate `reg_watcher_t` slot from pool; if pool full → `ERROR_OUTOFMEMORY`
-  - Set `key`, `filter = dwNotifyFilter`, `watch_subtree = bWatchSubtree`
-  - If `fAsynchronous == FALSE`: store a semaphore in the watcher; caller will block on it after this call
-  - If `fAsynchronous == TRUE` and `hEvent != NULL`: store the event handle; `SetEvent(hEvent)` will be called on each matching change
-  - `reg_notify_register(watcher)` appends to the key's watcher list
-  - Returns `ERROR_SUCCESS`; caller queries result via `WaitForSingleObject` on `hEvent` or the built-in semaphore
+- [/] Win32 `RegNotifyChangeKeyValue`(hEvent, fAsync) + `NtNotifyChangeKey`: KEY_NOTIFY check, referenced hEvent, sync completion-status -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 273)
+- [/] `RegCloseKey` handle-scoped unregister + wake blocked callers `ERROR_KEY_DELETED` (§3 cleans up on key DELETE) -> Deferred: `02-kernel-core/TODO-14 §4` (item: "Win32 RegNotifyChangeKeyValue" at line 273)
+- [/] Change-detail payloads ⭐ (old/new value snapshot before mutation) -> Deferred: in-section (no old-value snapshot infra; core fires value_name only)
+- [/] Telemetry ⭐ `HKLM\SYSTEM\Registry\WatcherStats` HitCount/LastFiredMs -> Deferred: in-section (needs the Registry substrate key; counts already tracked in `reg_watcher_t`)
+- [/] Priority-based dispatch ⭐ (`priority` field, system>high>normal fire order) -> Deferred: in-section (needs theme/display/service consumers)
+- [/] `REG_NOTIFY_THREAD_AGNOSTIC (0x10000000)` + `task` process/thread watcher lists + `thread_exit`/`task_exit` cleanup -> Deferred: in-section (needs new `task` fields; §3 cleans on key delete)
+- [/] SD-change notification (`REG_NOTIFY_CHANGE_SECURITY`) -- `reg_set_security_descriptor` does not exist, per-key SDs read-only today -> Deferred: `02-kernel-core/TODO-15 §5` (mutable per-key SD + registry SeAccessCheck)
 
-- [ ] `reg_dispatch_notify(key, change_type, value_name)` -- called at the end of `RegSetValueEx`, `RegDeleteValue`, `RegCreateKeyEx`, `RegDeleteKey`, and `reg_set_security_descriptor`:
-  1. Walk `key->watcher_list`; for each watcher where `(watcher->filter & change_type) != 0`:
-     - Subtree check: if `!watcher->watch_subtree`, only fire if `key == watcher->key`; if `watcher->watch_subtree`, fire if `key` is a descendant of `watcher->key` (walk parent pointers)
-     - **Coalescing** ⭐: if `watcher->coalesce_ms > 0` and `now_ms - watcher->last_fired_ms < coalesce_ms` → skip (dedup)
-     - Set `watcher->last_fired_ms = now_ms`; increment `watcher->hit_count`
-     - If async event: `SetEvent(watcher->hEvent)`
-     - If sync: `semaphore_signal(watcher->sem)` to unblock the caller
-     - If callback watcher (§3): call `watcher->callback(key_path, change_type, value_name, watcher->ctx)`
-  2. After firing: if `!fAsynchronous` watcher is one-shot -- mark `watcher->active = false` (Win32 contract: synchronous watchers fire once and must be re-registered)
+- [x] Commit: `"kernel/registry: change notifications, subtree watching, coalescing, detail payloads"`
 
-- [ ] Subtree walk: `reg_is_descendant(ancestor, key)` -- follow `key->parent` chain up to the root; return true if `ancestor` is found
-- [ ] On `RegCloseKey`: call `reg_notify_unregister_all(key)` -- mark all watchers for this key `active = false`; wake any blocked callers with `ERROR_KEY_DELETED`
-- [ ] On `RegDeleteKey`: before deletion, call `reg_dispatch_notify(key, REG_NOTIFY_CHANGE_NAME, NULL)` for all ancestor watchers watching the parent; then `reg_notify_unregister_all(key)`
-- [ ] `RegUnregisterNotify(watcher_id)` (non-Win32 internal API) -- mark watcher inactive; used by kernel subsystems that registered watchers directly (e.g., theme system watching `HKCU\...\Theme`)
+**Test checkpoint:** Register a callback watcher with `REG_NOTIFY_CHANGE_LAST_SET`; `RegSetValueEx("Width", 1920)` → callback fires once with `value_name="Width"`, `change_type=LAST_SET`; after `RegUnregisterNotify` no further fire. Subtree: a `watch_subtree` watcher on the parent fires for a child value change, a non-subtree one does not. Coalescing: with a large `coalesce_ms`, two back-to-back writes fire once. NAME: sub-key create AND delete each fire a parent NAME watcher. Cleanup: deleting the watched key makes `RegUnregisterNotify` report `ERROR_FILE_NOT_FOUND` (slot freed). Test on: QEMU WHPX + TCG.
 
-- [ ] **Change-detail payloads** ⭐ -- extend `reg_notify_fn` signature to include `old_value` and `new_value` blobs when `change_type == REG_NOTIFY_CHANGE_LAST_SET`; store old value snapshot before mutation in `reg_dispatch_notify` and pass to callback; enables zero-parse diff for settings watchers
-- [ ] **Telemetry** ⭐ -- expose `HKLM\SYSTEM\Registry\WatcherStats\<key_path>` with `HitCount` (REG_QWORD) and `LastFiredMs` (REG_QWORD) auto-updated on each dispatch; survives reboots via hive flush
-- [ ] **Priority-based dispatch** ⭐ -- add `uint8_t priority` field (0=normal, 1=high, 2=system) to `reg_watcher_t`; `reg_dispatch_notify` fires `priority=2` watchers first (in-order), then `priority=1`, then `priority=0`; system-priority watchers are those registered by `theme_init`, `display_init`, and `service_manager_init`
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 159 suites, 0 failures
 
-- [ ] `REG_NOTIFY_THREAD_AGNOSTIC (0x10000000)` -- new flag for `NtNotifyChangeKey`'s `CompletionFilter` parameter; when set, the notification registration is owned by the *process* rather than the calling thread; the watcher survives thread exit and is only cleaned up when the HKEY is closed or the process terminates
-- [ ] Without this flag (default Win32 behavior): watcher is cleaned up when the registering thread exits, even if the HKEY is still open
-- [ ] Implementation: if `(filter & REG_NOTIFY_THREAD_AGNOSTIC)`, attach `reg_watcher_t` to `task->process_watcher_list` instead of `task->thread_watcher_list`; `thread_exit()` only cleans up thread-local watchers; `process_exit()` cleans up process-level watchers
-
-- [ ] Commit: `"kernel/registry: change notifications, subtree watching, coalescing, detail payloads"`
-
-**Test checkpoint:** Register watcher on `HKLM\SYSTEM\Display` with `REG_NOTIFY_CHANGE_LAST_SET`. `RegSetValueEx("Width", 1920)` → callback fires with `value_name="Width"`. Coalescing: set `coalesce_ms=100`, fire 10 writes in 50ms → callback fires at most once. Priority: system watcher fires before normal watcher. `REG_NOTIFY_THREAD_AGNOSTIC`: register from thread A, exit thread A → watcher survives; modify key → notification fires. Serial log: `"[REG] Notify: %s change=0x%x watcher=%u"`. Test on: QEMU WHPX + TCG.
+> **Notes:**
+> - Shipped the kernel-internal change-notification callback engine in `registry.c` (`reg_watcher_pool[64]`, register/dispatch/unregister, subtree walk, coalescing) + `reg_watcher_t`/filters in `registry.h`; 5 new `test_registry.c` suites.
+> - Dispatch fires from the value/name mutation chokepoints; `reg_notify_unregister_all` runs at every key tombstone so a freed 64-slot pool entry never stays linked.
+> - Lock-free (registry-wide SMP sync owned by §14, same regime as the KCB cache); Codex design adoptions in the commit message.
+> - Canonical doc: notification API in [`include/registry.h`](../../include/registry.h).
+> - Scope boundary: §3 owns the callback engine; the Win32 `RegNotifyChangeKeyValue`/`NtNotifyChangeKey` event/semaphore path is §4; ⭐ advanced features + THREAD_AGNOSTIC are deferred `[/]` in-section; SD-change is TODO-15 §5.
 
 ---
 
@@ -324,6 +295,7 @@ title: "TODO-14 -- Registry System Completion"
   - `KeySetHandleTagsInformation` (5): set handle tags
   - `KeySetLayerInformation` (6): layered-key set metadata -- DEFERRED with layered keys / hive stacking (see Deferred features note)
 - [ ] `NtNotifyChangeKey`: **replace the existing `STATUS_NOT_IMPLEMENTED` stub** in `src/kernel/nt/nt_registry.c::NtNotifyChangeKey_handler` (currently tagged `SCOPE-GAP-ALLOWED: blocked on TODO-14 §4`) with real wiring: validates `KeyHandle`, resolves to `reg_key_t`, calls `reg_notify_register()` from §4; if `Asynchronous == FALSE`, blocks calling thread on the watcher's semaphore (interruptible via APC). Remove the `SCOPE-GAP-ALLOWED` comment when the stub is replaced.
+- [ ] Win32 `RegNotifyChangeKeyValue`(hKey, hEvent, fAsync): KEY_NOTIFY-gated; references hEvent (`ObReferenceObjectByHandle`, deref on close); sync semaphore + `ERROR_KEY_DELETED`; `RegCloseKey` handle-scoped unregister -> XREF §3
 - [ ] APC completion: if `ApcRoutine != NULL`, queue a user-mode APC to the calling thread when the notification fires (→ XREF `05-storage-filesystems/TODO-05-win32-file-io-api.md §9`)
 - [ ] `NtNotifyChangeMultipleKeys(MasterKeyHandle, Count, SubordinateObjects[], ...)`: register notifications on `MasterKeyHandle` plus up to `Count` additional subordinate keys in a single call; fires when *any* of the watched keys changes; shares implementation with §3 but registers multiple watchers atomically
 - [ ] `NtSetInformationKey(KeyHandle, KeySetInfoClass, KeySetInfo, Length)`: set key metadata; initial implementation covers `KeyWriteTimeInformation` (set `LastWriteTime`) and `KeyControlFlagsInformation` (set virtualization control flags -- see §6)
@@ -658,7 +630,7 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 | 💎   | Volatile keys (`REG_OPTION_VOLATILE`)| ✅ Full                      | ❌ N/A                             | ✅ Done -- RAM-only, no-persist (§2) |
 | 💎   | `RegSaveKey` / `RegRestoreKey`       | ✅ SeBackup/SeRestore        | ❌ N/A                             | 🔄 fail-closed; body T15 §2 (§2) |
 | ⭐   | KCB hot-key close-cache              | ✅ CmpCache pushlock         | ❌ N/A                             | ✅ Done -- 32-entry LRU (§2) |
-| 💎   | Change notifications                 | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | ⬜ §3                          |
+| 💎   | Change notifications                 | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | 🔄 callback engine (§3); Win32 event path §4 |
 | 💎   | `REG_NOTIFY_THREAD_AGNOSTIC`         | ✅ Win8+                     | ❌ N/A                             | ⬜ §3                          |
 | 💎   | Full NT registry syscall surface     | ✅ 30+ syscalls              | ❌ No registry concept             | ⬜ §4                          |
 | 💎   | `KEY_INFORMATION_CLASS` completeness | ✅ 10 info classes           | ❌ N/A                             | ⬜ §4                          |

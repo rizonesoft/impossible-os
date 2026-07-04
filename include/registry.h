@@ -90,6 +90,13 @@
 #define REG_FLAG_HKCR_MERGED    0x10   /* HKCR: merged HKLM+HKCU Classes view */
 #define REG_FLAG_ALLOCATED      0x80   /* Pool slot is in use                 */
 
+/* ---- Change-notification filters (Win32 RegNotifyChangeKeyValue) ---- */
+
+#define REG_NOTIFY_CHANGE_NAME       0x01 /* sub-key create/delete       */
+#define REG_NOTIFY_CHANGE_ATTRIBUTES 0x02 /* key metadata change         */
+#define REG_NOTIFY_CHANGE_LAST_SET   0x04 /* value create/modify/delete  */
+#define REG_NOTIFY_CHANGE_SECURITY   0x08 /* security descriptor change  */
+
 /* ---- Registry value ---- */
 
 typedef struct reg_value {
@@ -101,6 +108,8 @@ typedef struct reg_value {
 } reg_value_t;
 
 /* ---- Registry key ---- */
+
+struct reg_watcher;   /* forward decl -- change-notification watcher (below) */
 
 typedef struct reg_key {
     char               name[REG_MAX_KEY_NAME + 1];
@@ -116,7 +125,36 @@ typedef struct reg_key {
     /* Self-relative SD blob; NOT owned (points at the static SeCreateDefaultSD
      * default) -- never freed. */
     const void        *security_descriptor;
+    /* Head of the singly-linked list of change-notification watchers on this
+     * key (threaded via reg_watcher_t.next; slots live in reg_watcher_pool). */
+    struct reg_watcher *watchers;
 } reg_key_t;
+
+/* ---- Change-notification watcher ----
+ *
+ * A callback registered against a key (and optionally its subtree) that fires
+ * when a matching mutation (name/value/attributes) occurs.  The Win32-facing
+ * event/semaphore-driven RegNotifyChangeKeyValue + NtNotifyChangeKey path (with
+ * KEY_NOTIFY enforcement + hEvent object references) lands with the registry
+ * syscall work; this is the kernel-internal callback engine that subsystems
+ * (theme, display) use. */
+typedef void (*reg_notify_fn)(const char *key_path, uint32_t change_type,
+                              const char *value_name,  /* NULL if not applicable */
+                              void *ctx);
+
+typedef struct reg_watcher {
+    uint32_t            watcher_id;   /* monotonic id (0 = never a valid id)  */
+    reg_key_t          *key;          /* key this watcher is attached to      */
+    uint32_t            filter;       /* REG_NOTIFY_CHANGE_* bitmask          */
+    int                 watch_subtree;
+    reg_notify_fn       callback;
+    void               *ctx;
+    int                 active;       /* 0 once unregistered/torn down        */
+    uint64_t            hit_count;    /* telemetry: total fires               */
+    uint64_t            coalesce_ms;  /* min ms between fires (0 = off)       */
+    uint64_t            last_fired_ms;/* last fire timestamp (ms)             */
+    struct reg_watcher *next;         /* next watcher on the same key         */
+} reg_watcher_t;
 
 /* ---- HKEY handle ---- */
 
@@ -315,6 +353,35 @@ long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags);
  * for the recently-accessed (parent, name) -> child resolution cache.  Used by
  * the unit test to assert the hot-key hit rate; either pointer may be NULL. */
 void reg_kcb_get_stats(uint64_t *hits, uint64_t *misses);
+
+/* ---- Change notifications (kernel-internal callback engine) ---- */
+
+/* Register a change-notification callback on hKey (and its subtree if
+ * watch_subtree).  filter is a REG_NOTIFY_CHANGE_* bitmask; coalesce_ms rate-
+ * limits fires (0 = every change).  Returns a non-zero watcher id, or 0 on a
+ * bad handle / exhausted 64-slot pool.  Kernel-internal + trusted: no
+ * KEY_NOTIFY check (the Win32 hKey path enforces access). */
+uint32_t reg_notify_register(HKEY hKey, uint32_t filter, int watch_subtree,
+                             reg_notify_fn callback, void *ctx,
+                             uint64_t coalesce_ms);
+
+/* Deactivate + unlink a single watcher by id.  Returns ERROR_SUCCESS or
+ * ERROR_FILE_NOT_FOUND if no live watcher has that id. */
+long RegUnregisterNotify(uint32_t watcher_id);
+
+/* Deactivate + unlink every watcher on `key` (called before a key is
+ * tombstoned so a freed slot cannot stay linked). */
+void reg_notify_unregister_all(reg_key_t *key);
+
+/* Fire all matching watchers on `key` and its watch_subtree ancestors for a
+ * change of `change_type` (a single REG_NOTIFY_CHANGE_* bit); value_name is the
+ * affected value or NULL.  Hooked into the mutation paths. */
+void reg_dispatch_notify(reg_key_t *key, uint32_t change_type,
+                         const char *value_name);
+
+/* True if `ancestor` is `key` or an ancestor of `key` (subtree membership
+ * primitive; the dispatch walk uses the parent chain directly). */
+int reg_is_descendant(reg_key_t *ancestor, reg_key_t *key);
 
 /* Unload a hive subtree: recursively free all children, values, and the
  * key itself.  Used by NtUnloadKey.  Returns ERROR_ACCESS_DENIED for roots. */

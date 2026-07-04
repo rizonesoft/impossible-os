@@ -975,6 +975,294 @@ static void test_nt_rename_key_collision(void)
         ssdt_dispatch(SSDT_NtDeleteKey, (uint64_t)(uintptr_t)hb, 0, 0, 0, 0, 0);
 }
 
+/* ---- Section 3: change-notification callback engine ---- */
+
+static uint32_t s_notify_fires;
+static uint32_t s_notify_last_change;
+static char     s_notify_last_value[64];
+
+static void notify_test_cb(const char *key_path, uint32_t change_type,
+                           const char *value_name, void *ctx)
+{
+    (void)key_path; (void)ctx;
+    s_notify_fires++;
+    s_notify_last_change = change_type;
+    s_notify_last_value[0] = '\0';
+    if (value_name) {
+        uint32_t i = 0;
+        while (value_name[i] && i < sizeof(s_notify_last_value) - 1) {
+            s_notify_last_value[i] = value_name[i];
+            i++;
+        }
+        s_notify_last_value[i] = '\0';
+    }
+}
+
+static int notify_streq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    while (a[i] && b[i]) { if (a[i] != b[i]) return 0; i++; }
+    return a[i] == b[i];
+}
+
+/* Basic value-change notification + value_name delivery + unregister. */
+static void test_registry_notify_basic(void)
+{
+    HKEY hk;
+    uint32_t id, val = 1920;
+    long rc;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyBasic", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create NotifyBasic");
+    if (rc != ERROR_SUCCESS) return;
+
+    s_notify_fires = 0;
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "reg_notify_register returns a valid id");
+
+    RegSetValueEx(hk, "Width", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(s_notify_fires == 1, "LAST_SET watcher fired once on RegSetValueEx");
+    TEST_ASSERT(s_notify_last_change == REG_NOTIFY_CHANGE_LAST_SET, "change_type is LAST_SET");
+    TEST_ASSERT(notify_streq(s_notify_last_value, "Width"), "value_name delivered as Width");
+
+    /* A NAME-only filter must NOT fire on a value change. */
+    rc = RegUnregisterNotify(id);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "RegUnregisterNotify succeeds");
+    s_notify_fires = 0;
+    RegSetValueEx(hk, "Width", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(s_notify_fires == 0, "no fire after unregister");
+
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyBasic");
+}
+
+/* Subtree vs non-subtree scope; reg_is_descendant primitive. */
+static void test_registry_notify_subtree(void)
+{
+    HKEY hpar, hchild;
+    uint32_t idsub, idflat, val = 7;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyPar", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    if (RegCreateKeyEx(hpar, "Child", 0, NULL, 0, KEY_ALL_ACCESS, NULL,
+                       &hchild, NULL) != ERROR_SUCCESS) { RegCloseKey(hpar); return; }
+
+    idsub  = reg_notify_register(hpar, REG_NOTIFY_CHANGE_LAST_SET, 1, notify_test_cb, NULL, 0);
+    /* A second, non-subtree watcher on the parent must not fire for a child change. */
+    idflat = reg_notify_register(hpar, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(idsub != 0 && idflat != 0, "both watchers registered");
+
+    s_notify_fires = 0;
+    RegSetValueEx(hchild, "V", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(s_notify_fires == 1, "only the subtree watcher fires for a child change");
+
+    RegUnregisterNotify(idsub);
+    RegUnregisterNotify(idflat);
+    RegCloseKey(hchild);
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyPar");
+}
+
+/* Coalescing suppresses a rapid second fire within the window. */
+static void test_registry_notify_coalesce(void)
+{
+    HKEY hk;
+    uint32_t id, val = 0;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyCoal", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
+        return;
+    /* Very large window so the two back-to-back writes land in one window. */
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL,
+                             1000000000ULL);
+    TEST_ASSERT(id != 0, "coalescing watcher registered");
+    s_notify_fires = 0;
+    RegSetValueEx(hk, "A", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    RegSetValueEx(hk, "A", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(s_notify_fires == 1, "coalesced: two rapid writes fire once");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyCoal");
+}
+
+/* NAME notification on sub-key create/delete; cleanup on delete leaves no fire. */
+static void test_registry_notify_name(void)
+{
+    HKEY hpar, hchild;
+    uint32_t id;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyName", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    id = reg_notify_register(hpar, REG_NOTIFY_CHANGE_NAME, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "NAME watcher registered");
+
+    s_notify_fires = 0;
+    if (RegCreateKeyEx(hpar, "Sub", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hchild, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hchild);
+    TEST_ASSERT(s_notify_fires == 1, "NAME watcher fires on sub-key create");
+    TEST_ASSERT(s_notify_last_change == REG_NOTIFY_CHANGE_NAME, "change_type is NAME");
+
+    s_notify_fires = 0;
+    RegDeleteKey(hpar, "Sub");
+    TEST_ASSERT(s_notify_fires == 1, "NAME watcher fires on sub-key delete");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyName");
+}
+
+/* Deleting the watched key tears down its watchers (no fire, no stale slot). */
+static void test_registry_notify_cleanup_on_delete(void)
+{
+    HKEY hpar, hk;
+    uint32_t id, val = 1;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyDel", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    if (RegCreateKeyEx(hpar, "Victim", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        != ERROR_SUCCESS) { RegCloseKey(hpar); return; }
+
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "victim watcher registered");
+    RegCloseKey(hk);
+
+    RegDeleteKey(hpar, "Victim");
+    /* The watcher was torn down by the delete; unregister now reports not-found. */
+    TEST_ASSERT(RegUnregisterNotify(id) == ERROR_FILE_NOT_FOUND,
+                "watcher slot freed by key delete");
+
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyDel");
+    (void)val;
+}
+
+/* Deep-path notification: a deep key must build its callback path iteratively
+ * (no per-level recursion) without exhausting the kernel stack. */
+static void test_registry_notify_deep_path(void)
+{
+    HKEY hk;
+    uint32_t id, val = 3;
+    /* ~40 components -- a recursive path builder would risk the kernel stack. */
+    const char *deep =
+        "Software\\d0\\d1\\d2\\d3\\d4\\d5\\d6\\d7\\d8\\d9\\d10\\d11\\d12\\d13"
+        "\\d14\\d15\\d16\\d17\\d18\\d19\\d20\\d21\\d22\\d23\\d24\\d25\\d26\\d27"
+        "\\d28\\d29\\d30\\d31\\d32\\d33\\d34\\d35\\d36\\d37\\d38";
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, deep, 0, NULL, 0, KEY_ALL_ACCESS,
+                       NULL, &hk, NULL) != ERROR_SUCCESS)
+        return;
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "deep-key watcher registered");
+    s_notify_fires = 0;
+    RegSetValueEx(hk, "V", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    TEST_ASSERT(s_notify_fires == 1, "deep-path notification fires without stack overflow");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\d0");
+}
+
+/* Re-entrant callback that writes the watched key -- must terminate (bounded by
+ * the dispatch depth guard), never recurse the stack to death. */
+static HKEY  s_reentrant_key;
+static void notify_reentrant_cb(const char *key_path, uint32_t change_type,
+                                const char *value_name, void *ctx)
+{
+    uint32_t v = 1;
+    (void)key_path; (void)change_type; (void)value_name; (void)ctx;
+    s_notify_fires++;
+    /* Write the watched key again -- this re-enters reg_dispatch_notify. */
+    RegSetValueEx(s_reentrant_key, "R", 0, REG_DWORD, (const uint8_t *)&v, sizeof(v));
+}
+
+static void test_registry_notify_reentrant(void)
+{
+    HKEY hk;
+    uint32_t id, val = 1;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyReent", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hk, NULL) != ERROR_SUCCESS)
+        return;
+    s_reentrant_key = hk;
+    id = reg_notify_register(hk, REG_NOTIFY_CHANGE_LAST_SET, 0, notify_reentrant_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "reentrant watcher registered");
+    s_notify_fires = 0;
+    RegSetValueEx(hk, "R", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    /* Bounded by REG_NOTIFY_MAX_DEPTH (8) -- terminated, did not hang. */
+    TEST_ASSERT(s_notify_fires >= 1 && s_notify_fires <= 8,
+                "reentrant callback terminates within the depth guard");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hk);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyReent");
+}
+
+/* Multi-component create: a NAME watcher on an EXISTING parent must see the
+ * first new component created directly under it (not only the deepest parent). */
+static void test_registry_notify_multicomponent(void)
+{
+    HKEY hpar, hk;
+    uint32_t id;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyMC", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    id = reg_notify_register(hpar, REG_NOTIFY_CHANGE_NAME, 0, notify_test_cb, NULL, 0);
+    TEST_ASSERT(id != 0, "multi-component NAME watcher registered");
+    s_notify_fires = 0;
+    /* Creates A (under NotifyMC), then B under A, then C under B. */
+    if (RegCreateKeyEx(hpar, "A\\B\\C", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hk);
+    TEST_ASSERT(s_notify_fires >= 1,
+                "parent NAME watcher sees the first new component of a deep create");
+
+    RegUnregisterNotify(id);
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyMC");
+}
+
+/* RegDeleteTree (recursive delete API) must fire NAME on the affected parent. */
+static void test_registry_notify_deletetree(void)
+{
+    HKEY hpar, hk;
+    uint32_t idsub, idflat;
+
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\NotifyDT", 0, NULL, 0,
+                       KEY_ALL_ACCESS, NULL, &hpar, NULL) != ERROR_SUCCESS)
+        return;
+    if (RegCreateKeyEx(hpar, "Sub\\Leaf", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hk);
+
+    /* Subtree watcher on the parent sees a RegDeleteTree(parent, "Sub"). */
+    idsub = reg_notify_register(hpar, REG_NOTIFY_CHANGE_NAME, 1, notify_test_cb, NULL, 0);
+    TEST_ASSERT(idsub != 0, "deletetree subtree watcher registered");
+    s_notify_fires = 0;
+    RegDeleteTree(hpar, "Sub");
+    TEST_ASSERT(s_notify_fires >= 1, "RegDeleteTree(parent, subkey) fires NAME");
+    RegUnregisterNotify(idsub);
+
+    /* Non-subtree watcher on the parent sees a RegDeleteTree(parent, NULL) clear. */
+    if (RegCreateKeyEx(hpar, "C1", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hk);
+    idflat = reg_notify_register(hpar, REG_NOTIFY_CHANGE_NAME, 0, notify_test_cb, NULL, 0);
+    s_notify_fires = 0;
+    RegDeleteTree(hpar, NULL);
+    TEST_ASSERT(s_notify_fires >= 1, "RegDeleteTree(parent, NULL) fires NAME on the clear");
+    RegUnregisterNotify(idflat);
+
+    RegCloseKey(hpar);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\NotifyDT");
+}
+
 void test_register_registry(void)
 {
     test_suite_register_cat("Registry: CopyTree", test_registry_copytree, TEST_CAT_ABI);
@@ -984,6 +1272,15 @@ void test_register_registry(void)
     test_suite_register_cat("Registry: volatile keys", test_registry_volatile, TEST_CAT_ABI);
     test_suite_register_cat("Registry: save/restore fail-closed", test_registry_save_restore_failclosed, TEST_CAT_ABI);
     test_suite_register_cat("Registry: KCB hit rate", test_registry_kcb_hitrate, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify basic", test_registry_notify_basic, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify subtree", test_registry_notify_subtree, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify coalesce", test_registry_notify_coalesce, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify name", test_registry_notify_name, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify cleanup on delete", test_registry_notify_cleanup_on_delete, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify deep path", test_registry_notify_deep_path, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify reentrant", test_registry_notify_reentrant, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify multi-component", test_registry_notify_multicomponent, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: notify deletetree", test_registry_notify_deletetree, TEST_CAT_ABI);
     test_suite_register_cat("Registry: access enforcement", test_registry_access_enforcement, TEST_CAT_ABI);
     test_suite_register_cat("Registry: API limits", test_registry_api_limits, TEST_CAT_ABI);
     test_suite_register_cat("Registry: reg_check_access", test_reg_check_access_basic, TEST_CAT_ABI);
