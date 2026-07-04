@@ -87,6 +87,34 @@ uint32_t RtlLengthSid(const SID *sid)
     return 8 + 4 * (uint32_t)sid->SubAuthorityCount;
 }
 
+uint32_t RtlLengthSidBounded(const SID *sid, uint32_t avail)
+{
+    uint32_t count, len;
+
+    if (!sid)
+        return 0;
+
+    /* Need the fixed 8-byte header (Revision + count + 6-byte authority)
+     * readable before we may look at SubAuthorityCount. */
+    if (avail < 8)
+        return 0;
+
+    if (sid->Revision != SID_REVISION)
+        return 0;
+
+    count = (uint32_t)sid->SubAuthorityCount;
+    if (count > SID_MAX_SUB_AUTHORITIES)
+        return 0;
+
+    /* len = 8 + 4*count; count <= 15 so this cannot overflow uint32.
+     * Bound in subtraction form to avoid any wrap concern. */
+    len = 8 + 4 * count;
+    if (len > avail)
+        return 0;
+
+    return len;
+}
+
 int RtlValidSid(const SID *sid)
 {
     if (!sid)

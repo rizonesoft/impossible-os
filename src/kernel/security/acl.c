@@ -118,16 +118,9 @@ int RtlSetSaclSecurityDescriptor(SECURITY_DESCRIPTOR *sd, int present, ACL *sacl
  *   [DACL bytes]
  *
  * Offsets are uint32_t from the start of the buffer (0 = not present).
+ * The SECURITY_DESCRIPTOR_RELATIVE header type + its size/offset asserts now
+ * live in acl.h so untrusted-input consumers can parse offsets safely.
  */
-typedef struct {
-    uint8_t  Revision;
-    uint8_t  Sbz1;
-    uint16_t Control;
-    uint32_t OffsetOwner;
-    uint32_t OffsetGroup;
-    uint32_t OffsetSacl;
-    uint32_t OffsetDacl;
-} SECURITY_DESCRIPTOR_RELATIVE;
 
 int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
                                 void *rel_buf, uint32_t *rel_len)
@@ -186,7 +179,18 @@ int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
     return 0;
 }
 
-int RtlSelfRelativeToAbsoluteSD(const void *rel,
+/* Validate one self-relative component offset: 0 (absent) is handled by the
+ * caller. A present offset must clear the fixed header and stay inside the
+ * source buffer. Returns the bytes available at the offset (>= 1), or 0 if
+ * the offset is out of range. Bounds are subtraction-form (no uint32 wrap). */
+static uint32_t sr_offset_avail(uint32_t off, uint32_t rel_len)
+{
+    if (off < sizeof(SECURITY_DESCRIPTOR_RELATIVE) || off >= rel_len)
+        return 0;
+    return rel_len - off;
+}
+
+int RtlSelfRelativeToAbsoluteSD(const void *rel, uint32_t rel_len,
                                 SECURITY_DESCRIPTOR *abs,
                                 void *abs_buf, uint32_t abs_buf_len)
 {
@@ -194,9 +198,15 @@ int RtlSelfRelativeToAbsoluteSD(const void *rel,
     const uint8_t *base;
     uint8_t *wp;
     uint32_t used = 0;
-    uint32_t len;
+    uint32_t off, avail, len;
 
     if (!rel || !abs || !abs_buf)
+        return -1;
+
+    /* The fixed header must be fully readable before any offset field is
+     * touched. Everything below is bounds-checked against rel_len -- rel may
+     * point at an untrusted (attacker-controlled) buffer. */
+    if (rel_len < sizeof(SECURITY_DESCRIPTOR_RELATIVE))
         return -1;
 
     sr   = (const SECURITY_DESCRIPTOR_RELATIVE *)rel;
@@ -207,41 +217,62 @@ int RtlSelfRelativeToAbsoluteSD(const void *rel,
     abs->Revision = sr->Revision;
     abs->Control  = sr->Control & ~SE_SELF_RELATIVE;
 
-    /* Copy Owner SID */
-    if (sr->OffsetOwner) {
-        const SID *src = (const SID *)(base + sr->OffsetOwner);
-        len = RtlLengthSid(src);
-        if (used + len > abs_buf_len) return -1;
+    /* Copy Owner SID (bounded) */
+    off = sr->OffsetOwner;
+    if (off) {
+        const SID *src;
+        avail = sr_offset_avail(off, rel_len);
+        if (!avail) return -1;
+        src = (const SID *)(base + off);
+        len = RtlLengthSidBounded(src, avail);
+        if (!len) return -1;
+        /* used <= abs_buf_len invariant holds -> subtraction cannot wrap */
+        if (len > abs_buf_len - used) return -1;
         memcpy(wp + used, src, len);
         abs->Owner = (SID *)(wp + used);
         used += len;
     }
 
-    /* Copy Group SID */
-    if (sr->OffsetGroup) {
-        const SID *src = (const SID *)(base + sr->OffsetGroup);
-        len = RtlLengthSid(src);
-        if (used + len > abs_buf_len) return -1;
+    /* Copy Group SID (bounded) */
+    off = sr->OffsetGroup;
+    if (off) {
+        const SID *src;
+        avail = sr_offset_avail(off, rel_len);
+        if (!avail) return -1;
+        src = (const SID *)(base + off);
+        len = RtlLengthSidBounded(src, avail);
+        if (!len) return -1;
+        if (len > abs_buf_len - used) return -1;
         memcpy(wp + used, src, len);
         abs->Group = (SID *)(wp + used);
         used += len;
     }
 
-    /* Copy SACL */
-    if (sr->OffsetSacl) {
-        const ACL *src = (const ACL *)(base + sr->OffsetSacl);
-        len = src->AclSize;
-        if (used + len > abs_buf_len) return -1;
+    /* Copy SACL (bounded) */
+    off = sr->OffsetSacl;
+    if (off) {
+        const ACL *src;
+        avail = sr_offset_avail(off, rel_len);
+        if (!avail) return -1;
+        src = (const ACL *)(base + off);
+        if (!RtlValidAcl(src, avail)) return -1;
+        len = (uint32_t)src->AclSize;   /* RtlValidAcl proved AclSize <= avail */
+        if (len > abs_buf_len - used) return -1;
         memcpy(wp + used, src, len);
         abs->Sacl = (ACL *)(wp + used);
         used += len;
     }
 
-    /* Copy DACL */
-    if (sr->OffsetDacl) {
-        const ACL *src = (const ACL *)(base + sr->OffsetDacl);
-        len = src->AclSize;
-        if (used + len > abs_buf_len) return -1;
+    /* Copy DACL (bounded) */
+    off = sr->OffsetDacl;
+    if (off) {
+        const ACL *src;
+        avail = sr_offset_avail(off, rel_len);
+        if (!avail) return -1;
+        src = (const ACL *)(base + off);
+        if (!RtlValidAcl(src, avail)) return -1;
+        len = (uint32_t)src->AclSize;
+        if (len > abs_buf_len - used) return -1;
         memcpy(wp + used, src, len);
         abs->Dacl = (ACL *)(wp + used);
         used += len;
@@ -346,6 +377,123 @@ int RtlGetAce(const ACL *acl, uint32_t index, ACE_HEADER **ace)
     p = (const uint8_t *)acl + sizeof(ACL);
     for (i = 0; i < index; i++)
         p += ((const ACE_HEADER *)p)->AceSize;
+
+    *ace = (ACE_HEADER *)p;
+    return 0;
+}
+
+/* ---- Bounded ACL validation (untrusted input) -------------------------- */
+
+/* ACE types that carry an inline SID immediately after ACE_HEADER + Mask. */
+static int ace_is_sid_bearing(uint8_t ace_type)
+{
+    switch (ace_type) {
+    case ACCESS_ALLOWED_ACE_TYPE:
+    case ACCESS_DENIED_ACE_TYPE:
+    case SYSTEM_AUDIT_ACE_TYPE:
+    case SYSTEM_ALARM_ACE_TYPE:
+    case SYSTEM_MANDATORY_LABEL_ACE_TYPE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Validate one ACE against the bytes remaining in the ACL from this ACE's
+ * start: header fits, AceSize is non-zero / header-sized / within `remaining`,
+ * and (for SID-bearing types) the inline SID after header + 4-byte Mask is
+ * well-formed and fits inside THIS ACE (AceSize - 8), not merely the ACL.
+ * Returns the ACE size (>= sizeof(ACE_HEADER)) on success, 0 on failure.
+ * Shared by RtlValidAcl and RtlGetAceEx so both apply identical bounds. */
+static uint32_t ace_body_valid(const ACE_HEADER *hdr, uint32_t remaining)
+{
+    uint32_t ace_size;
+
+    if (remaining < sizeof(ACE_HEADER))
+        return 0;
+
+    ace_size = (uint32_t)hdr->AceSize;
+    if (ace_size < sizeof(ACE_HEADER) || ace_size > remaining)
+        return 0;
+
+    if (ace_is_sid_bearing(hdr->AceType)) {
+        uint32_t sid_off = sizeof(ACE_HEADER) + sizeof(uint32_t); /* 8 */
+        const SID *sid;
+        if (ace_size < sid_off)
+            return 0;
+        sid = (const SID *)((const uint8_t *)hdr + sid_off);
+        if (RtlLengthSidBounded(sid, ace_size - sid_off) == 0)
+            return 0;
+    }
+
+    return ace_size;
+}
+
+int RtlValidAcl(const ACL *acl, uint32_t avail)
+{
+    uint32_t acl_size, ace_count, cursor, i;
+    const uint8_t *p;
+
+    if (!acl)
+        return 0;
+
+    /* The 8-byte ACL header must be readable before AclSize/AceCount. */
+    if (avail < sizeof(ACL))
+        return 0;
+
+    acl_size  = (uint32_t)acl->AclSize;    /* widen from uint16_t */
+    ace_count = (uint32_t)acl->AceCount;
+
+    /* AclSize must cover the header and not exceed the readable window. */
+    if (acl_size < sizeof(ACL) || acl_size > avail)
+        return 0;
+
+    /* Walk every ACE, keeping the cursor within AclSize (subtraction-form). */
+    p      = (const uint8_t *)acl + sizeof(ACL);
+    cursor = sizeof(ACL);
+    for (i = 0; i < ace_count; i++) {
+        uint32_t ace_size = ace_body_valid((const ACE_HEADER *)p,
+                                           acl_size - cursor);
+        if (!ace_size)
+            return 0;
+        p      += ace_size;
+        cursor += ace_size;
+    }
+
+    return 1;
+}
+
+int RtlGetAceEx(const ACL *acl, uint32_t index, ACE_HEADER **ace, uint32_t avail)
+{
+    uint32_t acl_size, cursor, i;
+    const uint8_t *p;
+
+    if (!acl || !ace)
+        return -1;
+    if (avail < sizeof(ACL))
+        return -1;
+
+    acl_size = (uint32_t)acl->AclSize;
+    if (acl_size < sizeof(ACL) || acl_size > avail)
+        return -1;
+    if (index >= (uint32_t)acl->AceCount)
+        return -1;
+
+    p      = (const uint8_t *)acl + sizeof(ACL);
+    cursor = sizeof(ACL);
+    for (i = 0; i < index; i++) {
+        uint32_t ace_size = ace_body_valid((const ACE_HEADER *)p,
+                                           acl_size - cursor);
+        if (!ace_size)
+            return -1;
+        p      += ace_size;
+        cursor += ace_size;
+    }
+
+    /* The target ACE must be FULLY valid (size + inline SID), not merely have
+     * a readable header -- callers read the mask/SID from the returned ACE. */
+    if (!ace_body_valid((const ACE_HEADER *)p, acl_size - cursor))
+        return -1;
 
     *ace = (ACE_HEADER *)p;
     return 0;

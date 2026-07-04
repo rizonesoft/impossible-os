@@ -89,8 +89,20 @@ extern const SID *const SeILSystem;                  /* S-1-16-16384  */
 
 /* --- SID utility functions ----------------------------------------------- */
 
-/* Return total byte length of a SID: 8 + 4 * SubAuthorityCount */
+/* Return total byte length of a SID: 8 + 4 * SubAuthorityCount.
+ * TRUSTED-input only: assumes the full SID is readable and well-formed.
+ * Handing this an attacker-controlled pointer risks OOB (SubAuthorityCount
+ * is not bounded here). For untrusted input (self-relative SD / ACL import)
+ * use RtlLengthSidBounded. */
 uint32_t RtlLengthSid(const SID *sid);
+
+/* Bounded length for UNTRUSTED SIDs. `avail` is the number of bytes known
+ * to be readable at `sid`. Validates that the fixed SID header fits, that
+ * Revision == SID_REVISION and SubAuthorityCount <= SID_MAX_SUB_AUTHORITIES,
+ * and that the full length fits within `avail` (all checks subtraction-form
+ * to avoid uint32 wrap). Returns the length on success, 0 if the SID is
+ * malformed or would read past `avail`. */
+uint32_t RtlLengthSidBounded(const SID *sid, uint32_t avail);
 
 /* Compare two SIDs for equality */
 int RtlEqualSid(const SID *a, const SID *b);

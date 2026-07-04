@@ -250,23 +250,23 @@ title: "TODO-15 -- Security Reference Monitor"
   - `OB_TYPE_PROCESS` -- `(A;;GA;;;SY)(A;;0x1FFFFF;;;BA)(A;;0x1000;;;WD)` (create/terminate restricted for Everyone)
   - `OB_TYPE_TOKEN` -- `(A;;GA;;;SY)(A;;0x0008;;;OW)` (Query only for owner)
   - `OB_TYPE_REGISTRY_KEY` -- `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` (BuiltinUsers=Read)
-- [ ] SECURITY [Critical, latent]: `RtlSelfRelativeToAbsoluteSD` (acl.c:189) reads attacker `Offset*` with no source-length param -> OOB. Add a `rel_len` arg + bounds-validate header/offsets before deref, before the untrusted-SD import path.
-- [ ] SECURITY [H, latent]: bounded ACL/ACE walk -- `acl_append_ace`/`RtlGetAce` (acl.c:273-350) trust `AceCount`/`AceSize` past `AclSize`; add `RtlValidAcl` + bounded `RtlGetAceEx`; append must fail if `used > AclSize`.
-- [ ] SECURITY [H, latent]: `RtlLengthSid` (sid.c:83) has no `SID_MAX_SUB_AUTHORITIES` (15) check -> OOB on untrusted SID. Add `RtlLengthSidBounded`; SD/ACL import + append require `RtlValidSid` + length proof.
+- [x] SECURITY [Critical]: `RtlSelfRelativeToAbsoluteSD` gained a `rel_len` arg (acl.c); each `Offset*` bounds-checked (clears 20B header, `< rel_len`) before deref, SID/ACL via bounded helpers, dest subtraction-form.
+- [x] SECURITY [H]: bounded ACL/ACE walk `RtlValidAcl(acl,avail)` + `RtlGetAceEx(acl,index,ace,avail)` (acl.c) -- AclSize/AceSize bounds + per-ACE inline-SID fits `AceSize-8`. Trusted `RtlGetAce`/`acl_append_ace` unchanged.
+- [x] SECURITY [H]: `RtlLengthSidBounded(sid,avail)` (sid.c) -- `avail>=8`, Revision, `count<=15`, `len<=avail` (subtraction-form). Trusted `RtlLengthSid` kept; untrusted import uses the bounded variant only.
 - [ ] Select per-type default SD: ob.c always uses `SE_SD_TYPE_DEFAULT`; map `ObpProcessType`->PROCESS, `ObpTokenType`->TOKEN so process/token get the §3 DACLs once §5 honors `hdr->security`. -> XREF: 02-kernel-core/TODO-15 §5
-- [ ] Move a canonical `SECURITY_DESCRIPTOR_RELATIVE` typedef into `acl.h` with size/offset `_Static_assert`s (currently private in acl.c; consumers cannot inspect self-relative offsets safely).
+- [x] Moved `SECURITY_DESCRIPTOR_RELATIVE` typedef into `acl.h` with size (20) + offset `_Static_assert`s; removed the private acl.c copy so untrusted parsers can inspect offsets.
 - [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 **Test checkpoint:** `RtlCreateSecurityDescriptor` + `RtlSetDaclSecurityDescriptor` + `RtlAbsoluteToSelfRelativeSD` round-trips (self-relative buffer parses back to identical ACEs via `RtlSelfRelativeToAbsoluteSD`). `SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY)` yields the `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` DACL. `RtlAclToCStr` dumps `D:(A;;FA;;;SY)`. `RtlGetAce` walks each ACE by index. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | on implementation of the bounded validators
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1034 passed, 0 failures
 > **Notes:**
-> - Shipped: the Win32 SD/ACL/ACE types + Rtl* helpers (acl.c/acl.h, size `_Static_assert`s) + `SeCreateDefaultSD` object-type DACL blobs (default_sds.c). Types + trusted-path helpers work.
-> - Downgraded [x]->[/]: review found the untrusted-input parsers (self-relative SD unmarshal, ACL/ACE walk, `RtlLengthSid`) are NOT memory-safe -- bounded validators filed above as SECURITY items.
-> - Latent: all three OOB findings have NO production caller today (import paths IXFS/registry/`NtSetSecurityObject` unwired); they MUST land before that wiring. Process/token default-SD selection is a §5 wiring gap.
-> - Scope boundary: §5 owns SeAccessCheck (honoring `hdr->security`); the SD-import safety must precede it.
-> **Deferred:** [Critical] `RtlSelfRelativeToAbsoluteSD` OOB on untrusted self-relative SD (no `rel_len` bounds) -- latent, no live caller -> XREF: 02-kernel-core/TODO-15 §3 (item: "RtlSelfRelativeToAbsoluteSD" at the §3 checklist)
-> **Deferred:** [H] unbounded ACL/ACE walk + `RtlLengthSid` SID-max both allow OOB on untrusted input -- latent -> XREF: 02-kernel-core/TODO-15 §3 (item: "bounded ACL/ACE walk" at the §3 checklist)
+> - Shipped: Win32 SD/ACL/ACE types + Rtl* helpers + `SeCreateDefaultSD` blobs, plus bounded untrusted-input validators `RtlLengthSidBounded` (sid.c), `RtlValidAcl`/`RtlGetAceEx` and a `rel_len`-guarded `RtlSelfRelativeToAbsoluteSD` (acl.c).
+> - Safety model: self-relative SD import bounds-checks every offset/SID/ACL against `rel_len` before deref (subtraction-form); trusted `RtlLengthSid`/`RtlGetAce` kept for kernel-built data, untrusted paths use bounded variants.
+> - Tests: 3 new security tests exercise valid + malformed/OOB inputs (avail<hdr, count>15, offset-past/inside-header, AceSize overrun/zero); malformed cases run without faulting -- `SUITE=security` 1034 passed, 0 failed.
+> - Latent: the three OOB fixes have NO production caller yet (IXFS/registry/`NtSetSecurityObject` import unwired); validators land ahead of that wiring. `SECURITY_DESCRIPTOR_RELATIVE` now in acl.h with size/offset asserts.
+> - Scope boundary: §5 owns SeAccessCheck honoring `hdr->security`; per-type default-SD selection in ob.c (item 4) stays open, blocked on that §5 wiring.
+> **Deferred:** [M] per-type default-SD selection in ob.c (`ObpProcessType`/`ObpTokenType` -> PROCESS/TOKEN DACLs) blocked until §5 honors `hdr->security` -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(object->SecurityDescriptor ...)`")
 > **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) | 1M fixed (MIC constant drift), 1Crit+3H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -381,7 +381,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] **Authorize process-termination syscalls**: the `SYS_KILL` (INT 0x80) handler in `src/kernel/sched/syscall.c` and `NtTerminateProcess` in `src/kernel/nt/nt_process.c` today let ANY ring-3 task mark ANY other task `TASK_DEAD` via PID lookup -- no parentage check, no ACL check, no privilege check. Required mask per Windows SDK winnt.h: `PROCESS_TERMINATE = 0x0001`. After `ObpReferenceObjectByHandle` + process OB type land, retrofit both handlers to: (a) accept only handle-based addressing (reject the current PID-only SYS_KILL shape), (b) require `PROCESS_TERMINATE` in the handle's granted_access, (c) honour the process OB type's security descriptor. Add a negative user-mode test (extend `00-infrastructure/TODO-04 §12 test_process.exe`) that asserts killing an unrelated task (non-child, e.g. the launcher task PID) fails with `STATUS_ACCESS_DENIED` or `-1`. Until this lands, SYS_KILL stamps a "cross-task kill authorization not gated" Accepted XREF via 00-infrastructure/TODO-04 §12.
 - [ ] `TOKEN_WRITE_RESTRICTED` (§9): run the restricted-SID second DACL pass ONLY for write-class desired access (write mask via the object `GENERIC_MAPPING`); non-write access skips it. -> XREF: 02-kernel-core/TODO-15 §9
 - [ ] Conditional/callback ACEs (`*_CALLBACK_ACE` 0x9/0xA): until expr-eval exists, DENY not skip -- an unknown conditional ACE whose Mask intersects desired with a matchable SID returns `STATUS_ACCESS_DENIED`. -> XREF: 02-kernel-core/TODO-15 §3
-- [ ] BLOCKED: SeAccessCheck DACL-walk + SD-normalize unsafe until §3's bounded validators land (rel_len parse, `RtlValidAcl`/`RtlGetAceEx`, bounded SID); normalize once to a validated canonical ABSOLUTE form. -> XREF: 02-kernel-core/TODO-15 §3
+- [ ] SeAccessCheck DACL-walk + SD-normalize: §3's bounded validators (`RtlValidAcl`/`RtlGetAceEx`/`RtlLengthSidBounded`/`rel_len`) landed -- normalize untrusted SDs through them to a canonical ABSOLUTE form. -> XREF: 02-kernel-core/TODO-15 §3
 - [ ] Ordering (escalation-critical): MIC pre-check runs BEFORE any final DACL grant; owner-bypass only ACCUMULATES `READ_CONTROL|WRITE_DAC` (no early return); a matching DENY ACE wins over any later ALLOW.
 - [ ] SHIP FIRST (unblocks §4, independent of the DACL core): the `resolve_token_handle_access` granted_access item below is a standalone commit -- reads `HANDLE_TABLE_ENTRY.granted_access` only, no ACL walk.
 - [ ] Commit: `"kernel/security: SeAccessCheck engine and ObpReferenceObjectByHandle integration"`

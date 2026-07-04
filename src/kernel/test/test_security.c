@@ -354,6 +354,174 @@ static void test_sid_valid_reject(void)
                 "RtlEqualSid rejects malformed SID");
 }
 
+/* ---- RtlLengthSidBounded rejects untrusted / OOB SIDs ---- */
+
+static void test_sid_length_bounded(void)
+{
+    uint8_t buf[68];
+    SID *sid = (SID *)buf;
+
+    memset(buf, 0, sizeof(buf));
+    sid->Revision = SID_REVISION;
+    sid->SubAuthorityCount = 1;
+
+    /* Valid 1-subauth SID is 12 bytes when avail is ample. */
+    TEST_ASSERT_EQ(RtlLengthSidBounded(sid, sizeof(buf)), 12,
+                   "RtlLengthSidBounded valid SID -> 12");
+    /* avail below the fixed 8-byte header -> 0 (cannot read count safely). */
+    TEST_ASSERT_EQ(RtlLengthSidBounded(sid, 7), 0,
+                   "RtlLengthSidBounded rejects avail < 8");
+    /* Full length (12) exceeds avail (11) -> 0. */
+    TEST_ASSERT_EQ(RtlLengthSidBounded(sid, 11), 0,
+                   "RtlLengthSidBounded rejects len > avail");
+    /* SubAuthorityCount > 15 -> 0 even with a large window. */
+    sid->SubAuthorityCount = 16;
+    TEST_ASSERT_EQ(RtlLengthSidBounded(sid, sizeof(buf)), 0,
+                   "RtlLengthSidBounded rejects SubAuthorityCount > 15");
+    /* Wrong revision -> 0. */
+    sid->Revision = 99;
+    sid->SubAuthorityCount = 1;
+    TEST_ASSERT_EQ(RtlLengthSidBounded(sid, sizeof(buf)), 0,
+                   "RtlLengthSidBounded rejects bad revision");
+    /* NULL -> 0. */
+    TEST_ASSERT_EQ(RtlLengthSidBounded((const SID *)0, 64), 0,
+                   "RtlLengthSidBounded rejects NULL");
+}
+
+/* ---- RtlValidAcl / RtlGetAceEx bounded ACL walk ---- */
+
+static void test_acl_valid_bounded(void)
+{
+    uint8_t acl_buf[256];
+    uint8_t bad_buf[256];
+    ACL *acl = (ACL *)acl_buf;
+    ACL *bad = (ACL *)bad_buf;
+    ACE_HEADER *ace;
+    ACE_HEADER *h0;
+
+    RtlCreateAcl(acl, sizeof(acl_buf), ACL_REVISION);
+    RtlAddAccessAllowedAce(acl, ACL_REVISION, 0x1F01FF, SeLocalSystemSid);
+    RtlAddAccessDeniedAce(acl, ACL_REVISION, 0x01, SeWorldSid);
+
+    /* Well-formed ACL accepted when avail >= AclSize. */
+    TEST_ASSERT(RtlValidAcl(acl, acl->AclSize) == 1,
+                "RtlValidAcl accepts well-formed ACL");
+    TEST_ASSERT(RtlValidAcl(acl, sizeof(acl_buf)) == 1,
+                "RtlValidAcl accepts with larger avail");
+    /* avail below AclSize / below the header -> reject. */
+    TEST_ASSERT(RtlValidAcl(acl, acl->AclSize - 1) == 0,
+                "RtlValidAcl rejects avail < AclSize");
+    TEST_ASSERT(RtlValidAcl(acl, 4) == 0,
+                "RtlValidAcl rejects avail < sizeof(ACL)");
+
+    /* Bounded walk reaches both ACEs and rejects an out-of-range index. */
+    TEST_ASSERT(RtlGetAceEx(acl, 0, &ace, acl->AclSize) == 0 &&
+                ace->AceType == ACCESS_ALLOWED_ACE_TYPE,
+                "RtlGetAceEx(0) -> allowed ACE");
+    TEST_ASSERT(RtlGetAceEx(acl, 1, &ace, acl->AclSize) == 0 &&
+                ace->AceType == ACCESS_DENIED_ACE_TYPE,
+                "RtlGetAceEx(1) -> denied ACE");
+    TEST_ASSERT(RtlGetAceEx(acl, 2, &ace, acl->AclSize) == -1,
+                "RtlGetAceEx rejects index >= AceCount");
+
+    /* An ACE whose AceSize overruns AclSize -> reject. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceSize = bad->AclSize;
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 0,
+                "RtlValidAcl rejects ACE overrunning AclSize");
+
+    /* Zero AceSize (would never advance) -> reject. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceSize = 0;
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 0,
+                "RtlValidAcl rejects zero AceSize");
+
+    /* AclSize larger than the readable window -> reject. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    bad->AclSize = (uint16_t)(bad->AclSize + 100);
+    TEST_ASSERT(RtlValidAcl(bad, acl->AclSize) == 0,
+                "RtlValidAcl rejects AclSize > avail");
+
+    /* RtlGetAceEx must reject a malformed TARGET ACE (index 0), not only the
+     * ACEs it walks past: a SID-bearing ACE with AceSize 8 has no room for a
+     * SID, and AceSize 4 is smaller than a SID-bearing ACE's fixed prefix. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceSize = 8;
+    TEST_ASSERT(RtlGetAceEx(bad, 0, &ace, bad->AclSize) == -1,
+                "RtlGetAceEx rejects SID-bearing target ACE with no SID room");
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceSize = 4;
+    TEST_ASSERT(RtlGetAceEx(bad, 0, &ace, bad->AclSize) == -1,
+                "RtlGetAceEx rejects target ACE with AceSize < SID prefix");
+}
+
+/* ---- RtlSelfRelativeToAbsoluteSD bounded untrusted import ---- */
+
+static void test_sd_selfrel_import_bounded(void)
+{
+    uint8_t owner_sid[16];
+    uint8_t acl_buf[128];
+    uint8_t rel_buf[256];
+    uint8_t abs_buf[256];
+    uint8_t bad[256];
+    SECURITY_DESCRIPTOR sd_abs, sd_out;
+    SECURITY_DESCRIPTOR_RELATIVE *sr;
+    ACL *dacl = (ACL *)acl_buf;
+    SID *owner = (SID *)owner_sid;
+    uint32_t rel_len = sizeof(rel_buf);
+    int rc;
+
+    /* Build an absolute SD: Owner = LocalSystem, DACL with one allow ACE. */
+    memset(owner_sid, 0, sizeof(owner_sid));
+    RtlCopySid(owner_sid, sizeof(owner_sid), SeLocalSystemSid);
+    RtlCreateAcl(dacl, sizeof(acl_buf), ACL_REVISION);
+    RtlAddAccessAllowedAce(dacl, ACL_REVISION, 0x1F01FF, SeLocalSystemSid);
+    RtlCreateSecurityDescriptor(&sd_abs, SECURITY_DESCRIPTOR_REVISION);
+    RtlSetOwnerSecurityDescriptor(&sd_abs, owner, 0);
+    RtlSetDaclSecurityDescriptor(&sd_abs, 1, dacl, 0);
+
+    /* Marshal to a self-relative blob. */
+    rc = RtlAbsoluteToSelfRelativeSD(&sd_abs, rel_buf, &rel_len);
+    TEST_ASSERT(rc == 0, "RtlAbsoluteToSelfRelativeSD marshals");
+
+    /* Correct rel_len imports and recovers Owner + DACL. */
+    rc = RtlSelfRelativeToAbsoluteSD(rel_buf, rel_len, &sd_out,
+                                     abs_buf, sizeof(abs_buf));
+    TEST_ASSERT(rc == 0, "RtlSelfRelativeToAbsoluteSD valid import");
+    TEST_ASSERT(sd_out.Owner != (SID *)0 &&
+                RtlEqualSid(sd_out.Owner, SeLocalSystemSid) == 1,
+                "imported Owner matches LocalSystem");
+    TEST_ASSERT(sd_out.Dacl != (ACL *)0, "imported SD has DACL");
+
+    /* rel_len shorter than the fixed header -> reject. */
+    rc = RtlSelfRelativeToAbsoluteSD(rel_buf, 8, &sd_out, abs_buf, sizeof(abs_buf));
+    TEST_ASSERT(rc == -1, "rejects rel_len < header");
+
+    /* OffsetOwner pointing past rel_len -> reject. */
+    memcpy(bad, rel_buf, sizeof(bad));
+    sr = (SECURITY_DESCRIPTOR_RELATIVE *)bad;
+    sr->OffsetOwner = rel_len + 100;
+    rc = RtlSelfRelativeToAbsoluteSD(bad, rel_len, &sd_out, abs_buf, sizeof(abs_buf));
+    TEST_ASSERT(rc == -1, "rejects OffsetOwner past rel_len");
+
+    /* OffsetOwner pointing inside the fixed header -> reject. */
+    memcpy(bad, rel_buf, sizeof(bad));
+    sr = (SECURITY_DESCRIPTOR_RELATIVE *)bad;
+    sr->OffsetOwner = 4;
+    rc = RtlSelfRelativeToAbsoluteSD(bad, rel_len, &sd_out, abs_buf, sizeof(abs_buf));
+    TEST_ASSERT(rc == -1, "rejects OffsetOwner inside header");
+
+    /* rel_len that truncates the Owner SID mid-body -> reject. */
+    rc = RtlSelfRelativeToAbsoluteSD(rel_buf,
+                                     sizeof(SECURITY_DESCRIPTOR_RELATIVE) + 4,
+                                     &sd_out, abs_buf, sizeof(abs_buf));
+    TEST_ASSERT(rc == -1, "rejects rel_len cutting Owner SID");
+}
+
 /* ============================================================================
  * NT token syscall tests (SSDT dispatch path)
  * ============================================================================ */
@@ -593,6 +761,10 @@ void test_register_security(void)
     test_suite_register_cat("Security: service SID", test_service_sid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: LUID allocator", test_luid_allocator, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID validation reject", test_sid_valid_reject, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: RtlLengthSidBounded", test_sid_length_bounded, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: RtlValidAcl/RtlGetAceEx bounded", test_acl_valid_bounded, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: self-relative SD bounded import",
+                            test_sd_selfrel_import_bounded, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

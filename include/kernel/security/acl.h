@@ -52,6 +52,34 @@ struct security_descriptor {
  * ob.h has a matching forward declaration -- both are compatible. */
 typedef struct security_descriptor SECURITY_DESCRIPTOR;
 
+/* ---- SECURITY_DESCRIPTOR (self-relative form -- flat buffer) ------------ */
+
+/* Self-relative layout: a fixed header followed by the Owner SID, Group SID,
+ * SACL, and DACL packed in-line. Offsets are uint32_t byte offsets from the
+ * start of the buffer (0 = the component is absent). This is the on-disk /
+ * on-wire form; consumers that parse UNTRUSTED buffers must bounds-check
+ * every offset against the buffer length (RtlSelfRelativeToAbsoluteSD). */
+typedef struct {
+    uint8_t  Revision;
+    uint8_t  Sbz1;
+    uint16_t Control;      /* includes SE_SELF_RELATIVE */
+    uint32_t OffsetOwner;
+    uint32_t OffsetGroup;
+    uint32_t OffsetSacl;
+    uint32_t OffsetDacl;
+} SECURITY_DESCRIPTOR_RELATIVE;
+
+/* Bulletproofing: the self-relative header is the parse contract for
+ * untrusted import -- pin its size and every offset field position. */
+_Static_assert(sizeof(SECURITY_DESCRIPTOR_RELATIVE) == 20,
+    "SECURITY_DESCRIPTOR_RELATIVE must be 20 bytes (Windows self-relative ABI)");
+_Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, Control) == 2,
+    "SECURITY_DESCRIPTOR_RELATIVE.Control at offset 2");
+_Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetOwner) == 4,
+    "SECURITY_DESCRIPTOR_RELATIVE.OffsetOwner at offset 4");
+_Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetDacl) == 16,
+    "SECURITY_DESCRIPTOR_RELATIVE.OffsetDacl at offset 16");
+
 /* ---- ACL ---------------------------------------------------------------- */
 
 #define ACL_REVISION  2
@@ -185,10 +213,13 @@ int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
                                 void *rel_buf, uint32_t *rel_len);
 
 /* Unmarshal a self-relative SD back to absolute form.
- * Allocates SID/ACL copies from the supplied abs_buf workspace.
- * abs_buf_len must be large enough for the SD struct + all SIDs + ACLs.
- * Returns 0 on success, -1 on error. */
-int RtlSelfRelativeToAbsoluteSD(const void *rel,
+ * `rel_len` is the number of bytes readable at `rel` -- it is the trust
+ * boundary: EVERY offset and sub-structure is bounds-checked against it
+ * before any deref, so `rel` may point at an UNTRUSTED buffer (imported SD
+ * from disk / registry / NtSetSecurityObject). Copies SID/ACL bodies into
+ * the caller-supplied abs_buf workspace (must fit the SD struct + all SIDs +
+ * ACLs). Returns 0 on success, -1 on error or malformed input. */
+int RtlSelfRelativeToAbsoluteSD(const void *rel, uint32_t rel_len,
                                 SECURITY_DESCRIPTOR *abs,
                                 void *abs_buf, uint32_t abs_buf_len);
 
@@ -209,8 +240,24 @@ int RtlAddAccessDeniedAce(ACL *acl, uint8_t rev, uint32_t mask, const SID *sid);
 int RtlAddMandatoryAce(ACL *acl, uint8_t rev, uint8_t flags,
                        uint32_t mask, uint8_t type, const SID *integrity_sid);
 
-/* Get the Nth ACE (0-based). Returns 0 and sets *ace, or -1 if OOB. */
+/* Get the Nth ACE (0-based). Returns 0 and sets *ace, or -1 if OOB.
+ * TRUSTED-input only: walks AceCount ACEs trusting each AceSize. For an
+ * UNTRUSTED ACL use RtlValidAcl first, then RtlGetAceEx. */
 int RtlGetAce(const ACL *acl, uint32_t index, ACE_HEADER **ace);
+
+/* Validate an UNTRUSTED ACL. `avail` is the number of bytes readable at
+ * `acl`. Confirms the 8-byte header fits, AclSize is in [sizeof(ACL), avail],
+ * and every one of AceCount ACEs has AceSize >= sizeof(ACE_HEADER), is
+ * non-zero, stays cumulatively within AclSize, and (for SID-bearing ACE
+ * types) carries an inline SID that fits within AceSize - 8. All bounds are
+ * subtraction-form. Returns 1 if the ACL is well-formed, 0 otherwise. */
+int RtlValidAcl(const ACL *acl, uint32_t avail);
+
+/* Bounded RtlGetAce for UNTRUSTED input: like RtlGetAce but validates every
+ * walked ACE against min(AclSize, avail) so a corrupt AceSize cannot walk the
+ * cursor out of bounds. Returns 0 and sets *ace, or -1 on OOB / malformed.
+ * Callers that walk the whole ACL should prefer a single RtlValidAcl pass. */
+int RtlGetAceEx(const ACL *acl, uint32_t index, ACE_HEADER **ace, uint32_t avail);
 
 /* Format an ACL as SDDL-like string: "(A;;FA;;;SY)(D;;GA;;;BA)..."
  * Returns chars written (excluding NUL), or -1 on error. */
