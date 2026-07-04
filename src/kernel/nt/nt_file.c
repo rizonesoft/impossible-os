@@ -66,6 +66,40 @@ static uint32_t ascii_to_utf16(const char *src, uint16_t *dst, uint32_t max_char
     return i * 2;  /* byte count */
 }
 
+/* Narrow a counted UTF-16 name to an ASCII C string in out[cap], validating the
+ * full counted-string contract and failing closed. Callers MUST pass values
+ * ALREADY snapshotted from caller-owned memory into locals (len_bytes/max_bytes/
+ * buf read once), so the validation is bound to the data used -- no TOCTOU
+ * re-read of a mutable UNICODE_STRING between the check and the copy. Rejects:
+ * odd len (not whole WCHARs), len past the declared capacity, over-long (> cap-1
+ * chars), embedded NUL (would truncate the counted name into a SHORTER aliased C
+ * string), and any non-ASCII code unit (a lossy fold would alias to an unrelated
+ * path). Real UTF-16/code-page conversion at this boundary is deferred; this is
+ * the fail-closed ASCII narrowing shared by the file-name syscalls. */
+static NTSTATUS nt_wname_to_ascii(const uint16_t *buf, uint32_t len_bytes,
+                                  uint32_t max_bytes, char *out, uint32_t cap,
+                                  uint32_t *out_chars)
+{
+    uint32_t chars, i;
+    if (!buf || cap == 0)
+        return STATUS_INVALID_PARAMETER;
+    if ((len_bytes & 1u) || len_bytes > max_bytes)
+        return STATUS_OBJECT_NAME_INVALID;
+    chars = len_bytes / 2u;
+    if (chars + 1u > cap)
+        return STATUS_NAME_TOO_LONG;
+    for (i = 0; i < chars; i++) {
+        uint16_t wc = buf[i];
+        if (wc == 0u || wc > 0x7Fu)
+            return STATUS_OBJECT_NAME_INVALID;
+        out[i] = (char)wc;
+    }
+    out[chars] = '\0';
+    if (out_chars)
+        *out_chars = chars;
+    return STATUS_SUCCESS;
+}
+
 /* ---- NtQueryInformationFile --------------------------------------------- */
 
 /* Fill st from the file's VFS node (stat op, else raw vfs_node fields). Called
@@ -311,30 +345,29 @@ static NTSTATUS NtSetInformationFile_handler(
     case FileRenameInformation: {
         FILE_RENAME_INFORMATION *ri;
         char ascii_name[260];
-        uint32_t i, chars, fixed_size;
+        uint32_t fixed_size, fnl;
+        NTSTATUS rns;
         /* Fixed header: ReplaceIfExists(1) + pad(7) + RootDirectory(8) + FileNameLength(4) = 20 */
         fixed_size = 20;
         if (length < fixed_size)
             return STATUS_BUFFER_TOO_SMALL;
         ri = (FILE_RENAME_INFORMATION *)info;
-        /* Reject malformed name lengths: zero (empty rename) or odd (not
-         * UTF-16-aligned, so the last byte would be silently dropped and the
-         * file renamed to a truncated name). Either would create an invalid
-         * or inaccessible directory entry rather than failing cleanly. */
-        if (ri->FileNameLength == 0 || (ri->FileNameLength & 1))
+        /* Snapshot the caller-controlled name length ONCE (the info buffer is
+         * caller memory), reject empty, and bound it against the info buffer
+         * with subtraction (fixed_size + fnl can wrap; length >= fixed_size was
+         * checked above). */
+        fnl = ri->FileNameLength;
+        if (fnl == 0)
             return STATUS_OBJECT_NAME_INVALID;
-        /* Validate with subtraction: fixed_size + FileNameLength can wrap in
-         * uint32_t (FileNameLength is caller-controlled), which would bypass
-         * the size check and let the copy loop overread the buffer. length
-         * >= fixed_size was checked above, so length - fixed_size is safe. */
-        if (ri->FileNameLength > length - fixed_size)
+        if (fnl > length - fixed_size)
             return STATUS_BUFFER_TOO_SMALL;
-        chars = ri->FileNameLength / 2;
-        /* Reject an over-long rename target rather than truncating it. */
-        if (chars > 259) return STATUS_NAME_TOO_LONG;
-        for (i = 0; i < chars; i++)
-            ascii_name[i] = (char)(ri->FileName[i] & 0x7F);
-        ascii_name[chars] = '\0';
+        /* Fail-closed narrow (odd length, embedded NUL, non-ASCII, over-long all
+         * rejected before any rename) -- same helper as NtDeleteFile so a rename
+         * target cannot lossily alias to an unrelated path. */
+        rns = nt_wname_to_ascii(ri->FileName, fnl, fnl, ascii_name,
+                                sizeof(ascii_name), (uint32_t *)0);
+        if (rns != STATUS_SUCCESS)
+            return rns;
         if (node->parent && node->parent->ops && node->parent->ops->rename) {
             if (node->parent->ops->rename(node->parent, node->name, ascii_name, 0) != 0)
                 return STATUS_UNSUCCESSFUL;
@@ -378,36 +411,24 @@ static NTSTATUS NtDeleteFile_handler(
     /* a1 = OBJECT_ATTRIBUTES* (we extract the path) */
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a1;
     char path[260];
-    uint32_t i, chars;
     int ret;
+    NTSTATUS ns;
 
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
 
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
         return STATUS_INVALID_PARAMETER;
 
-    /* Malformed counted string: an odd byte Length is not whole WCHARs, and a
-     * Length past the declared MaximumLength would read WCHARs outside the
-     * buffer the caller validly provided. */
-    if ((oa->ObjectName->Length & 1u) ||
-        oa->ObjectName->Length > oa->ObjectName->MaximumLength)
-        return STATUS_OBJECT_NAME_INVALID;
-    chars = oa->ObjectName->Length / 2;
-    /* Reject an over-long name rather than truncating it -- a silently
-     * shortened path resolves to a DIFFERENT object than the caller named. */
-    if (chars > 259) return STATUS_NAME_TOO_LONG;
-    for (i = 0; i < chars; i++) {
-        uint16_t wc = oa->ObjectName->Buffer[i];
-        /* Fail closed on an embedded NUL (would truncate the counted name into a
-         * SHORTER C string -- "victim\0suffix" -> "victim") and on any non-ASCII
-         * code unit (a lossy fold, e.g. U+00E9 & 0x7F = 'i', would alias to an
-         * unrelated path). Both would target the WRONG object. Real UTF-16/
-         * code-page conversion at the boundary is deferred. */
-        if (wc == 0u || wc > 0x7Fu)
-            return STATUS_OBJECT_NAME_INVALID;
-        path[i] = (char)wc;
+    /* Snapshot the mutable UNICODE_STRING fields ONCE, then validate + narrow
+     * only the snapshot via the fail-closed helper (no TOCTOU re-read). */
+    {
+        const uint16_t *buf = oa->ObjectName->Buffer;
+        uint32_t nlen = oa->ObjectName->Length;
+        uint32_t nmax = oa->ObjectName->MaximumLength;
+        ns = nt_wname_to_ascii(buf, nlen, nmax, path, sizeof(path), (uint32_t *)0);
+        if (ns != STATUS_SUCCESS)
+            return ns;
     }
-    path[chars] = '\0';
 
     ret = vfs_unlink(path);
     return (ret == 0) ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -651,37 +672,25 @@ static NTSTATUS NtQueryAttributesFile_handler(
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a1;
     FILE_BASIC_INFORMATION *bi = (FILE_BASIC_INFORMATION *)a2;
     char path[260];
-    uint32_t i, chars;
     struct vfs_stat st;
     int ret;
+    NTSTATUS ns;
 
     (void)a3; (void)a4; (void)a5; (void)a6;
 
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer || !bi)
         return STATUS_INVALID_PARAMETER;
 
-    /* Malformed counted string: an odd byte Length is not whole WCHARs, and a
-     * Length past the declared MaximumLength would read WCHARs outside the
-     * buffer the caller validly provided. */
-    if ((oa->ObjectName->Length & 1u) ||
-        oa->ObjectName->Length > oa->ObjectName->MaximumLength)
-        return STATUS_OBJECT_NAME_INVALID;
-    chars = oa->ObjectName->Length / 2;
-    /* Reject an over-long name rather than truncating it -- a silently
-     * shortened path resolves to a DIFFERENT object than the caller named. */
-    if (chars > 259) return STATUS_NAME_TOO_LONG;
-    for (i = 0; i < chars; i++) {
-        uint16_t wc = oa->ObjectName->Buffer[i];
-        /* Fail closed on an embedded NUL (would truncate the counted name into a
-         * SHORTER C string -- "victim\0suffix" -> "victim") and on any non-ASCII
-         * code unit (a lossy fold, e.g. U+00E9 & 0x7F = 'i', would alias to an
-         * unrelated path). Both would target the WRONG object. Real UTF-16/
-         * code-page conversion at the boundary is deferred. */
-        if (wc == 0u || wc > 0x7Fu)
-            return STATUS_OBJECT_NAME_INVALID;
-        path[i] = (char)wc;
+    /* Snapshot the mutable UNICODE_STRING fields ONCE, then validate + narrow
+     * only the snapshot via the fail-closed helper (no TOCTOU re-read). */
+    {
+        const uint16_t *buf = oa->ObjectName->Buffer;
+        uint32_t nlen = oa->ObjectName->Length;
+        uint32_t nmax = oa->ObjectName->MaximumLength;
+        ns = nt_wname_to_ascii(buf, nlen, nmax, path, sizeof(path), (uint32_t *)0);
+        if (ns != STATUS_SUCCESS)
+            return ns;
     }
-    path[chars] = '\0';
 
     ret = vfs_stat(path, &st);
     if (ret != 0)

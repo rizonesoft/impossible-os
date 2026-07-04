@@ -12,8 +12,6 @@
 
 extern void *memset(void *s, int c, size_t n);
 extern size_t strlen(const char *s);
-extern int strcmp(const char *a, const char *b);
-extern int strncmp(const char *a, const char *b, size_t n);
 extern char *strncpy(char *dst, const char *src, size_t n);
 
 /* --- Root directory ------------------------------------------------------ */

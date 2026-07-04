@@ -281,7 +281,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [x] Registry key/value lookup folds through the canonical `rtl_upcase_char_inline` (`reg_stricmp` + `reg_fnv1a`) and preserves original casing (stored name unchanged; only compare/hash fold).
 - [x] Environment-variable matching (`reg_lookup_env_var` over HKLM\System\Environment) is case-insensitive via the same registry `reg_stricmp` canonical fold.
 - [/] PE import lookup keeps its ASCII fast path (PE/COFF names are 8-bit ASCII, correct as-is). UTF-16 module-path input DEFERRED: no `LoadLibraryW`/wide-`CreateProcess` caller exists yet. (parity §9)
-- [/] File-name APIs fail closed on non-ASCII (`NtDeleteFile`/`NtQueryAttributesFile` return `STATUS_OBJECT_NAME_INVALID`, no lossy `&0x7F` alias). Full UTF-16 code-page conversion at the OA->VFS boundary DEFERRED. (Codex §9)
+- [/] File-name APIs fail closed on non-ASCII/NUL/malformed via the shared `nt_wname_to_ascii` (`NtDeleteFile`/`NtQueryAttributesFile`/`FileRenameInformation`; snapshot-once, no TOCTOU). `NtCreateFile` decode + full UTF-16 ABI DEFERRED. (Codex §9)
+- [ ] `NtCreateFile`/`NtOpenFile` name decode: `oa_extract_path` casts UTF-16 `Buffer` to `char*` with NO decode (reads 1 char of a real UTF-16 name); route through `nt_wname_to_ascii`. (parity §9)
+- [ ] Thread `OBJ_CASE_INSENSITIVE` through `dir_find`/`dir_name_eq` so a caller can request case-SENSITIVE OB lookup (NT default for named objects); OB is unconditionally case-insensitive today. (parity §9)
+- [ ] OB/registry full-BMP (U+0100+) case-insensitivity needs a COMPILE-TIME BMP fold table (the disk `nls_upcase_char` is barred from security compares); ASCII+Latin-1 only today. (parity §9)
 - [ ] Commit: `"kernel: nls -- retrofit OB/registry/env/PE/file consumers onto canonical compare"`
 
 > **Scope boundary (gap-audit):** The USER window-message atom pool (`RegisterWindowMessage`/`RegisterClass`/`RegisterClipboardFormat`, distinct from the global object-atom table) is owned by the win32k/desktop compositor TODO -> XREF that consumer, not §3. The console-vs-ANSI code-page split (`CHCP`) is owned by the shell TODO. IXFS filesystem-layer opt-in casefold/normalize (ext4 `EXT4_CASEFOLD_FL` analog, disk-persisted charset) is owned by the filesystem/IXFS TODO. OUT OF SCOPE for this kernel NLS TODO: IDN/punycode (`IdnToAscii`/`IdnToUnicode` -- user-mode library on Windows, no NT syscall) and non-Gregorian calendar metadata (`LOCALE_ICALENDARTYPE`); revisit only if a kernel consumer proves need.
@@ -296,6 +299,13 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** closes the §4 accepted disk-fold-trust [H] + inline-fast-path [M]; OB/registry are now Latin-1 case-insensitive, not just ASCII.
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlstr.h`](../../include/kernel/nt/nt_rtlstr.h).
 > - **Scope boundary:** §9 folds the existing byte-name consumers; the systemic UTF-16 `OBJECT_ATTRIBUTES` ABI (real wide file names, `LoadLibraryW` wide paths) is deferred to its future owner.
+
+> **Verified:** 2026-07-04 | commit `ab27e7c2` | 5/10 items ([/] partial) | build OK | nls 345 + ob 429 PASS
+> **Accepted:** [H] file-name handlers cast a1 to OBJECT_ATTRIBUTES* without ProbeForRead (systemic ssdt previous_mode probe-gating gap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 116)
+> **Deferred:** [H] `NtCreateFile`/`NtOpenFile` `oa_extract_path` casts UTF-16 to char* with no decode -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "`NtCreateFile`/`NtOpenFile` name decode" at line 285)
+> **Deferred:** [H] OB lookup unconditionally case-insensitive; OBJ_CASE_INSENSITIVE unread -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Thread `OBJ_CASE_INSENSITIVE`" at line 286)
+> **Deferred:** [M] OB/registry full-BMP case-insensitivity foreclosed on the compiled fold -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "OB/registry full-BMP" at line 287)
+> **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M+1L fixed, 2H+1M deferred, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -324,7 +334,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
-| 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive via compiled fold (§9); UTF-16 file ABI deferred |
+| 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive, compiled ASCII+Latin-1 fold (§9); full-BMP needs compile-time table |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); C1-C3 + full fold §4/§8 |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
