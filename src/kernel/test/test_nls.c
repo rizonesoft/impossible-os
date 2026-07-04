@@ -1100,6 +1100,10 @@ static void test_nls_locale_lookup(void)
     TEST_ASSERT_EQ((uint64_t)nls_locale_by_bcp47("en-US")->lcid, 0x0409u, "BCP-47 round-trips");
     TEST_ASSERT_EQ((uint64_t)(nls_locale_by_lcid(NLS_LCID_INVARIANT) != 0), 1u,
                    "invariant always resolvable");
+    /* The invariant locale's Windows name is "" -- it must round-trip by name. */
+    TEST_ASSERT_EQ((uint64_t)(nls_locale_by_bcp47("") != 0), 1u, "invariant name resolves");
+    TEST_ASSERT_EQ((uint64_t)nls_locale_by_bcp47("")->lcid, (uint64_t)NLS_LCID_INVARIANT,
+                   "invariant \"\" -> 0x007F");
     TEST_ASSERT_EQ((uint64_t)(nls_locale_by_lcid(0xDEADu) == 0), 1u, "unknown LCID -> NULL");
     TEST_ASSERT_EQ((uint64_t)(nls_locale_by_bcp47("xx-XX") == 0), 1u, "unknown name -> NULL");
     TEST_ASSERT_EQ((uint64_t)(nls_locale_by_bcp47(0) == 0), 1u, "NULL name -> NULL");

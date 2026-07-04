@@ -176,7 +176,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nls_cp.h`](../../include/kernel/nt/nls_cp.h).
 > - **Scope boundary:** S5 owns UTF-8 + the three SBCS providers + policy + metadata. DBCS providers, best-fit corpus beyond the ASCII lookalikes, and Win32/SSDT exposure are out of scope. UTF-7 not implemented.
 > **Verified:** 2026-07-04 | commit `fbe79801` | 9/9 items | build OK | nls 71/71 PASS
-> **Accepted:** [M] ACP/OEMCP cache snapshots at populate-defaults time, before any hive load (no persisted-policy load exists today) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "When `registry_load_hives()` is wired" at line 191)
+> **Accepted:** [M] ACP/OEMCP cache snapshots at populate-defaults time, before any hive load (no persisted-policy load exists today) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 194)
 > **Quality reviewed:** 2026-07-04 | Codex 12x (design, adversarial, re-adversarial, consistency, perf) | 3H+9M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -204,6 +204,13 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Downstream effects:** gives the TODO-12 §23 query handlers registry backing; the privileged `NtSetDefault*` setter stays fail-closed pending the SRM privilege check.
 > - **Canonical doc:** [`include/kernel/nt/nls_locale.h`](../../include/kernel/nt/nls_locale.h).
 > - **Scope boundary:** §6 owns records + registry-policy query binding + MUI fallback. Privileged setter -> SRM; WM_SETTINGCHANGE -> TODO-15 §25; tz display -> clock-time §5; CP_THREAD_ACP + hive-refresh deferred (blocked).
+> **Verified:** 2026-07-04 | commit `cea10cbc` | 4/9 items | build OK | nls 75/75 PASS
+> **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 447)
+> **Accepted:** [M] locale-formatted timezone display names -> XREF: 08-graphics-ui/TODO-12-clock-time.md §5 (item: "Timezone database" at line 49)
+> **Deferred:** [M] privileged NtSetDefaultLocale/UILanguage binding stays fail-closed pending the SRM privilege check -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Registry policy" at line 188)
+> **Deferred:** [M] per-thread CP_THREAD_ACP wiring needs per-thread locale storage -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Per-thread `CP_THREAD_ACP`" at line 193)
+> **Deferred:** [L] NLS cache refresh after registry_load_hives -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 194)
+> **Quality reviewed:** 2026-07-04 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
 

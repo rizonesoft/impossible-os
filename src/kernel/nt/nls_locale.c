@@ -58,6 +58,9 @@ const nls_locale_t *nls_locale_by_bcp47(const char *name)
     uint32_t i;
     if (!name)
         return 0;
+    /* The invariant locale's Windows name is the empty string; round-trip it. */
+    if (name[0] == '\0')
+        return nls_locale_by_lcid(NLS_LCID_INVARIANT);
     for (i = 0; i < NLS_LOCALE_COUNT; i++)
         if (s_locales[i].bcp47[0] && strcmp(s_locales[i].bcp47, name) == 0)
             return &s_locales[i];
