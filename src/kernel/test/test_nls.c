@@ -19,6 +19,10 @@
 #include "registry.h"              /* S5: HKLM\SYSTEM\Nls policy preservation test */
 #include "kernel/kchecksum.h"      /* kcrc32 for synthetic table blobs */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
+#include "kernel/nt/ssdt.h"        /* S8: ssdt_dispatch for the NLS/MUI syscalls */
+#include "kernel/nt/service_numbers.h" /* S8: SSDT_Nt* service numbers */
+#include "kernel/nt/nls_syscall_info.h" /* S8: SystemNlsInformation + MUI_REGISTRY_INFO */
+#include "kernel/nt/nt_misc.h"     /* S8: nt_locale_get_ui_language */
 
 /* Helper: build a UNICODE_STRING over a kernel WCHAR literal. */
 static void make_us(UNICODE_STRING *us, uint16_t *buf, uint16_t len_bytes,
@@ -1376,6 +1380,144 @@ static void test_nls_fold_narrow_passthrough(void)
                    "non-covered compatibility char passes through unchanged (narrow coverage)");
 }
 
+/* ---- Section 8: native NLS/locale/MUI syscalls (via ssdt_dispatch) -------- */
+
+/* NtQuerySystemInformation(SystemNlsInformation): two-pass length contract +
+ * field snapshot. Runs in kernel previous-mode so the probes are no-ops and
+ * copy_to_user targets the kernel-stack buffer directly. */
+static void test_nls_syscall_system_nls_info(void)
+{
+    SYSTEM_NLS_INFORMATION info;
+    uint32_t retlen = 0xDEADBEEF;
+    /* Zero-size reports the required length, no copy. */
+    NTSTATUS st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemNlsInformation,
+                                (uint64_t)(uintptr_t)&info, 0,
+                                (uint64_t)(uintptr_t)&retlen, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INFO_LENGTH_MISMATCH, "0-size -> mismatch");
+    TEST_ASSERT_EQ((uint64_t)retlen, 24u, "required length reported = 24");
+    /* Exactly one byte short (23) still fails at the boundary. */
+    retlen = 0;
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemNlsInformation,
+                       (uint64_t)(uintptr_t)&info, sizeof(info) - 1,
+                       (uint64_t)(uintptr_t)&retlen, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INFO_LENGTH_MISMATCH, "23 -> mismatch");
+    TEST_ASSERT_EQ((uint64_t)retlen, 24u, "required length still 24 at boundary");
+    /* NULL buffer with adequate size still mismatches (no copy target). */
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemNlsInformation,
+                       0, sizeof(info), (uint64_t)(uintptr_t)&retlen, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INFO_LENGTH_MISMATCH, "NULL buffer -> mismatch");
+    /* return_length == NULL is allowed on the success path. */
+    memset(&info, 0, sizeof(info));
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemNlsInformation,
+                       (uint64_t)(uintptr_t)&info, sizeof(info), 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "NULL return_length ok on success");
+    /* Full success from a sentinel retlen: every field matches the live accessors. */
+    retlen = 0;
+    st = ssdt_dispatch(SSDT_NtQuerySystemInformation, SystemNlsInformation,
+                       (uint64_t)(uintptr_t)&info, sizeof(info),
+                       (uint64_t)(uintptr_t)&retlen, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "SystemNlsInformation ok");
+    TEST_ASSERT_EQ((uint64_t)retlen, 24u, "return_length written from sentinel");
+    TEST_ASSERT_EQ((uint64_t)info.AnsiCodePage, (uint64_t)nls_cp_get_acp(), "ACP");
+    TEST_ASSERT_EQ((uint64_t)info.OemCodePage, (uint64_t)nls_cp_get_oemcp(), "OEMCP");
+    TEST_ASSERT_EQ((uint64_t)info.SystemLcid, (uint64_t)nls_locale_get_system(), "system LCID");
+    TEST_ASSERT_EQ((uint64_t)info.UserLcid, (uint64_t)nls_locale_get_user(), "user LCID");
+    TEST_ASSERT_EQ((uint64_t)info.NlsVersion, (uint64_t)nls_get_version(), "NLS version");
+    TEST_ASSERT_EQ((uint64_t)info.UiLangId, (uint64_t)nt_locale_get_ui_language(), "UI langid");
+    TEST_ASSERT_EQ((uint64_t)info.InstallUiLangId,
+                   (uint64_t)nt_locale_get_install_ui_language(), "install langid");
+}
+
+/* NtIsUILanguageComitted: active UI language is committed; a different one is not. */
+static void test_nls_syscall_is_ui_committed(void)
+{
+    uint16_t active = nt_locale_get_ui_language();
+    uint8_t committed = 0xFF;
+    NTSTATUS st = ssdt_dispatch(SSDT_NtIsUILanguageComitted, active,
+                                (uint64_t)(uintptr_t)&committed, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "committed query ok");
+    TEST_ASSERT_EQ((uint64_t)committed, 1u, "active UI language is committed");
+    committed = 0xFF;
+    st = ssdt_dispatch(SSDT_NtIsUILanguageComitted, (uint16_t)(active ^ 0x0F0F),
+                       (uint64_t)(uintptr_t)&committed, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "non-active query ok");
+    TEST_ASSERT_EQ((uint64_t)committed, 0u, "other UI language not committed");
+    /* NULL out pointer rejected. */
+    st = ssdt_dispatch(SSDT_NtIsUILanguageComitted, active, 0, 0, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INVALID_PARAMETER, "NULL out rejected");
+}
+
+/* NtFlushInstallUILanguage: fail-closed for any language/flags, state unchanged. */
+static void test_nls_syscall_flush_fail_closed(void)
+{
+    uint16_t active = nt_locale_get_ui_language();
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtFlushInstallUILanguage, active,
+                   0, 0, 0, 0, 0), (uint64_t)STATUS_PRIVILEGE_NOT_HELD,
+                   "flush active fail-closed");
+    /* A different language + nonzero commit flag is also denied. */
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtFlushInstallUILanguage,
+                   (uint16_t)(active ^ 0x0F0F), 1, 0, 0, 0, 0),
+                   (uint64_t)STATUS_PRIVILEGE_NOT_HELD, "flush other lang + flag fail-closed");
+    /* The denied calls left the UI/install language policy untouched. */
+    TEST_ASSERT_EQ((uint64_t)nt_locale_get_ui_language(), (uint64_t)active,
+                   "UI language unchanged after denied flush");
+}
+
+/* NtGetMUIRegistryInfo: in/out size contract (capacity in, required out) proven
+ * against the caller buffer BEFORE any copy. */
+static void test_nls_syscall_mui_registry_info(void)
+{
+    MUI_REGISTRY_INFO info;
+    uint32_t size, i;
+    /* Every capacity below the required 16 reports the required size, rewrites
+     * *size to 16, and leaves the output blob byte-for-byte untouched. */
+    for (i = 0; i < sizeof(MUI_REGISTRY_INFO); i++) {
+        memset(&info, 0xAB, sizeof(info));
+        size = i;
+        NTSTATUS st = ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0,
+                                    (uint64_t)(uintptr_t)&size,
+                                    (uint64_t)(uintptr_t)&info, 0, 0, 0);
+        TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INFO_LENGTH_MISMATCH, "cap<16 -> mismatch");
+        TEST_ASSERT_EQ((uint64_t)size, 16u, "required size 16 written on mismatch");
+        TEST_ASSERT_EQ((uint64_t)((const uint8_t *)&info)[0], 0xABu, "blob untouched on mismatch");
+    }
+    /* NULL buffer with adequate capacity still mismatches, size still reported. */
+    size = sizeof(info);
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0,
+                   (uint64_t)(uintptr_t)&size, 0, 0, 0, 0),
+                   (uint64_t)STATUS_INFO_LENGTH_MISMATCH, "NULL buffer -> mismatch");
+    TEST_ASSERT_EQ((uint64_t)size, 16u, "required size written even with NULL buffer");
+    /* Oversized capacity from a sentinel: success rewrites *size to 16 and fills. */
+    memset(&info, 0, sizeof(info));
+    size = 0xDEAD;
+    NTSTATUS st = ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0, (uint64_t)(uintptr_t)&size,
+                                (uint64_t)(uintptr_t)&info, 0, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS, "oversized cap ok");
+    TEST_ASSERT_EQ((uint64_t)size, 16u, "size rewritten to 16 on success");
+    TEST_ASSERT_EQ((uint64_t)info.SystemLocale, (uint64_t)nls_locale_get_system(), "system locale");
+    TEST_ASSERT_EQ((uint64_t)info.UserLocale, (uint64_t)nls_locale_get_user(), "user locale");
+    TEST_ASSERT_EQ((uint64_t)info.UILanguage, (uint64_t)nls_locale_get_ui_language(), "UI language");
+    TEST_ASSERT_EQ((uint64_t)info.NlsVersion, (uint64_t)nls_get_version(), "NLS version");
+    /* size_ptr aliasing the output buffer is rejected before the blob copy can
+     * clobber the required-size word (in/out ABI integrity). */
+    memset(&info, 0, sizeof(info));
+    *(uint32_t *)&info = sizeof(info);   /* cap = 16, aliased into the buffer */
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0,
+                   (uint64_t)(uintptr_t)&info, (uint64_t)(uintptr_t)&info, 0, 0, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "size/buffer alias rejected");
+    /* Partial overlap (size word straddling the output buffer) is also rejected. */
+    uint8_t scratch[24];
+    uint32_t *sz = (uint32_t *)&scratch[8];   /* size word inside [scratch, scratch+16) */
+    *sz = sizeof(info);
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0,
+                   (uint64_t)(uintptr_t)sz, (uint64_t)(uintptr_t)scratch, 0, 0, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "partial size/buffer overlap rejected");
+    /* NULL size pointer rejected. */
+    TEST_ASSERT_EQ((uint64_t)ssdt_dispatch(SSDT_NtGetMUIRegistryInfo, 0, 0,
+                   (uint64_t)(uintptr_t)&info, 0, 0, 0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL size rejected");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -1556,4 +1698,13 @@ void test_register_nls(void)
                             test_nls_fold_narrow_passthrough, TEST_CAT_NLS);
     test_suite_register_cat("nls: bad length rejected",
                             test_nls_bad_length_rejected, TEST_CAT_NLS);
+    /* Section 8: native NLS/locale/MUI syscalls. */
+    test_suite_register_cat("nls: syscall SystemNlsInformation",
+                            test_nls_syscall_system_nls_info, TEST_CAT_NLS);
+    test_suite_register_cat("nls: syscall IsUILanguageComitted",
+                            test_nls_syscall_is_ui_committed, TEST_CAT_NLS);
+    test_suite_register_cat("nls: syscall FlushInstallUILanguage fail-closed",
+                            test_nls_syscall_flush_fail_closed, TEST_CAT_NLS);
+    test_suite_register_cat("nls: syscall GetMUIRegistryInfo",
+                            test_nls_syscall_mui_registry_info, TEST_CAT_NLS);
 }

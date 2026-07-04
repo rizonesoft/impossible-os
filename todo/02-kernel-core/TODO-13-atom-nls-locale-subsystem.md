@@ -46,7 +46,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 5 | Code page conversion providers | §4 | [x] |
 | 💎 | 6 | Locale and LCID metadata | §4 | [/] |
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [x] |
-| 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [ ] |
+| 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [/] |
 | ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [ ] |
 | 💎 | 10 | Tests and compatibility corpus | §1..§9 | [ ] |
 
@@ -244,17 +244,26 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 8. Native Atom/NLS/Locale Syscalls
 
-- [ ] Wire `NtGetNlsSectionPtr` equivalent as a safe table-query API. Implement it as a read-only SECTION mapped into each process (amortized zero-syscall user-mode `RtlUpcaseUnicodeString`), NOT a per-call syscall. (gap-audit)
-- [ ] Add `SystemNlsInformation` to `NtQuerySystemInformation`.
-- [ ] Add `NtGetMUIRegistryInfo` (SSDT 0x0263), `NtIsUILanguageComitted` (0x0264), `NtFlushInstallUILanguage` (0x0265) -- orphaned in the SSDT master table after T12 §23 closed; this section owns them. (gap-audit)
-- [ ] Expose `GetNLSVersionEx` (NLS/collation version query) over the §4 version chunk. (gap-audit)
+- [ ] Wire `NtGetNlsSectionPtr` as a read-only per-process-mapped NLS SECTION. DEFERRED: needs SECTION objects + per-process address space (user pages share kernel frames today). (gap-audit)
+- [x] Add `SystemNlsInformation` (class 0x1001) to `NtQuerySystemInformation`: `nt_query_nls_information` snapshots ACP/OEMCP/LCIDs/langids/NLS version, two-pass length contract. (`nls_syscall_info.h`)
+- [x] Wire the orphaned MUI SSDT trio: `NtIsUILanguageComitted` (0x0264 query), `NtFlushInstallUILanguage` (0x0265 fail-closed until SRM), `NtGetMUIRegistryInfo` (0x0263 in/out-size marshaller). (gap-audit)
+- [/] `GetNLSVersionEx` version via `SystemNlsInformation.NlsVersion` (`nls_get_version()`). DEFERRED: full `NLSVERSIONINFOEX` (DefinedVersion/EffectiveId/GuidCustomVersion) needs the NLS ABI to carry them. (gap-audit)
 - [ ] Public `FoldStringW` folds the full Nd digit set + compatibility zone (§4 FOLD_* / §10 corpus), failing closed on uncovered fold-relevant units so success never masks a partial fold. (Codex §7)
 - [ ] Surface `LCMapStringEx`/`CompareStringEx` over §7 sort keys; the public key needs droppable diacritic + case tiers so `NORM_IGNORENONSPACE`/`IGNORESYMBOLS` + word-sort flags are honorable (§7 key is 2-band ordinal). (parity §7)
 - [ ] Commit: `"kernel: nls -- NtGetNlsSectionPtr + SystemNlsInformation + MUI/version query APIs"`
 
-> **Note:** `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` are already wired in TODO-12 §23 (`src/kernel/nt/nt_misc.c`, SSDT 0x00D8-0x00E2) over a global atom table + global LCID/LANGID storage. This section retrofits those handlers onto the NLS case-folding authority (§2), local atom tables (§3), and full LCID metadata (§6); `NtGetNlsSectionPtr` + `SystemNlsInformation` remain unshipped.
+> **Note:** `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` are already wired in TODO-12 §23 (`src/kernel/nt/nt_misc.c`, SSDT 0x00D8-0x00E2) over a global atom table + global LCID/LANGID storage. `SystemNlsInformation` + the orphaned MUI trio ship here; `NtGetNlsSectionPtr` (per-process mapped section) is deferred on SECTION/per-process-VA infra.
 
-**Test checkpoint:** `NtGetNlsSectionPtr` returns a read-only table pointer for a valid NLS section type and `STATUS_INVALID_PARAMETER` for an unknown type. `NtQuerySystemInformation(SystemNlsInformation)` fills the caller buffer or returns `STATUS_INFO_LENGTH_MISMATCH` with the required length.
+**Test checkpoint:** `NtQuerySystemInformation(SystemNlsInformation)` fills the caller buffer with the ACP/OEMCP/LCID/langid/NLS-version snapshot or returns `STATUS_INFO_LENGTH_MISMATCH` with the required length. `NtGetMUIRegistryInfo` proves the caller's in/out capacity before copying and rewrites the required size on every outcome. `NtFlushInstallUILanguage` returns `STATUS_PRIVILEGE_NOT_HELD`. `NtIsUILanguageComitted` reports TRUE only for the active UI language.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 91 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nls_syscall_info.h` (SYSTEM_NLS_INFORMATION + MUI_REGISTRY_INFO ABI) + `nt_query_nls_information` in `nt_syscall.c` (NtQuerySystemInformation class 0x1001) + the MUI SSDT trio 0x0263-0x0265 in `nt_misc.c`.
+> - **How it integrates:** all handlers snapshot already-published NLS state (boot-cached ACP/OEMCP, atomic locale caches, immutable NLS version) so no lock is held; probes/copies go through ProbeFor*IfUser + copy_{to,from}_user.
+> - **Downstream effects:** GetNLSVersionEx callers read the version via SystemNlsInformation; the write path (NtFlushInstallUILanguage) stays fail-closed until the SRM privilege check exists.
+> - **Canonical doc:** [`include/kernel/nt/nls_syscall_info.h`](../../include/kernel/nt/nls_syscall_info.h).
+> - **Scope boundary:** §8 ships the read-only NLS/MUI query syscalls; NtGetNlsSectionPtr (section infra), full public FoldStringW (§10 corpus), and LCMapStringEx/CompareStringEx (multi-tier key) are deferred to their owners.
 
 ---
 
@@ -305,6 +314,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); C1-C3 + full fold §4/§8 |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
 | ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ✅ `nls_locale_ui_fallback` ordered chain (§6) |
+| 💎 | NLS/MUI native query syscalls | ✅ `NtQuerySystemInformation` / `GetNLSVersionEx` | ⚠️ `/proc` + `localedef` | 🔄 SystemNlsInformation + MUI trio (§8); section-ptr deferred |
 
 Win11 provides the deepest NLS surface (per-locale `.nls` tables, linguistic collation, normalization) but couples case-insensitivity into the kernel object manager. Linux pushes locale to userspace (ICU/glibc) and keeps the VFS bytewise. Impossible OS centralizes one kernel case-fold authority (§2) that OB, registry, and environment all consume (§9), keeps culture-aware collation in user-mode (§7), and refuses silent normalization of object names.
 

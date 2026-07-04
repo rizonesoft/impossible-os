@@ -29,6 +29,11 @@
 #include "kernel/tunables.h"   /* tunable count + lock phase for the config query */
 #include "kernel/feature.h"    /* feature count for the config query */
 #include "kernel/nt/sysconfig_info.h" /* SYSTEM_KERNEL_CONFIG_INFORMATION ABI */
+#include "kernel/nt/nls_syscall_info.h" /* SYSTEM_NLS_INFORMATION ABI */
+#include "kernel/nt/nls.h"             /* nls_get_version */
+#include "kernel/nt/nls_cp.h"          /* nls_cp_get_acp / nls_cp_get_oemcp */
+#include "kernel/nt/nls_locale.h"      /* nls_locale_get_system / _user */
+#include "kernel/nt/nt_misc.h"         /* nt_locale_get_ui_language / _install */
 #include "kernel/policy_lock.h"       /* kernel_lockdown_level_get */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
@@ -872,6 +877,45 @@ NTSTATUS nt_query_kernel_config_information(void *buffer, uint32_t buf_size,
     return STATUS_SUCCESS;
 }
 
+/* SYSTEM_NLS_INFORMATION marshaller (Impossible OS extension 0x1001): a
+ * read-only snapshot of the active code-page / locale / UI-language policy and
+ * the NLS/collation version. All source values are published (boot-cached ACP/
+ * OEMCP, atomic locale caches, immutable NLS version) so no lock is held.
+ * Non-static so the NLS syscall unit tests exercise the marshalling directly. */
+NTSTATUS nt_query_nls_information(void *buffer, uint32_t buf_size,
+                                 uint32_t *return_length)
+{
+    SYSTEM_NLS_INFORMATION info;
+    const uint32_t need = (uint32_t)sizeof(info);
+
+    /* Report the required size to a two-pass caller before the capacity check. */
+    if (return_length) {
+        NTSTATUS pst = ProbeForWriteIfUser(return_length,
+                                           (uint32_t)sizeof(uint32_t), 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        if (copy_to_user(return_length, &need, (uint32_t)sizeof(uint32_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (!buffer || buf_size < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+
+    info.AnsiCodePage    = nls_cp_get_acp();
+    info.OemCodePage     = nls_cp_get_oemcp();
+    info.SystemLcid      = nls_locale_get_system();
+    info.UserLcid        = nls_locale_get_user();
+    info.NlsVersion      = nls_get_version();
+    info.UiLangId        = nt_locale_get_ui_language();
+    info.InstallUiLangId = nt_locale_get_install_ui_language();
+
+    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_to_user(buffer, &info, need) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1221,6 +1265,8 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
     }
     case SystemKernelConfigInformation:
         return nt_query_kernel_config_information(buffer, buf_size, return_length);
+    case SystemNlsInformation:
+        return nt_query_nls_information(buffer, buf_size, return_length);
     default:
         /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
          * SystemInformationClass values; Windows ntoskrnl returns the

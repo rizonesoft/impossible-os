@@ -24,6 +24,8 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char -- the NLS case-fold authority */
 #include "kernel/nt/nls_locale.h"  /* nls_locale_get_system -- system-locale query */
+#include "kernel/nt/nls.h"             /* nls_get_version -- MUI/version snapshot */
+#include "kernel/nt/nls_syscall_info.h" /* MUI_REGISTRY_INFO ABI */
 #include "kernel/nt/service_numbers.h"
 #include "kernel/ob/peb.h"
 #include "kernel/sched/spinlock.h"
@@ -578,6 +580,92 @@ static NTSTATUS NtQueryInstallUILanguage_handler(uint64_t langid_out, uint64_t a
     return STATUS_SUCCESS;
 }
 
+/* ---- MUI / UI-language syscalls (SSDT 0x0263-0x0265) --------------------- */
+
+/* NtIsUILanguageComitted(LANGID LanguageId, PBOOLEAN Committed) -- reports
+ * whether LanguageId is the active (committed) UI language. Read-only; the
+ * active UI language is the atomic policy cache, so no lock is held. */
+static NTSTATUS NtIsUILanguageComitted_handler(uint64_t langid, uint64_t committed_out,
+                                               uint64_t a3, uint64_t a4,
+                                               uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    if (!committed_out)
+        return STATUS_INVALID_PARAMETER;
+    uint8_t committed = ((uint16_t)langid == nt_locale_get_ui_language()) ? 1 : 0;
+    if (ProbeForWriteIfUser((void *)committed_out, sizeof(uint8_t), sizeof(uint8_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_to_user((void *)committed_out, &committed, sizeof(uint8_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
+/* NtFlushInstallUILanguage(LANGID InstallUILanguage, ULONG SetComittedFlag) --
+ * commits the install-time UI language machine-wide. Fail closed: this mutates
+ * global boot policy with no SRM privilege check or per-user hive yet, exactly
+ * like NtSetDefaultLocale/NtSetDefaultUILanguage. */
+static NTSTATUS NtFlushInstallUILanguage_handler(uint64_t langid, uint64_t flags,
+                                                 uint64_t a3, uint64_t a4,
+                                                 uint64_t a5, uint64_t a6)
+{
+    (void)langid; (void)flags; (void)a3; (void)a4; (void)a5; (void)a6;
+    return STATUS_PRIVILEGE_NOT_HELD;
+}
+
+/* NtGetMUIRegistryInfo(ULONG Flags, PULONG Size, PVOID Buffer) -- read-only
+ * snapshot of HKLM\SYSTEM\Nls (system/user locale + UI language + NLS version).
+ * Size is an IN/OUT arg: caller buffer capacity on entry, required bytes on exit
+ * (NOT the NtQuerySystemInformation ReturnLength contract -- the required size
+ * must be proven against the caller's own capacity before any buffer copy). */
+static NTSTATUS NtGetMUIRegistryInfo_handler(uint64_t flags, uint64_t size_ptr,
+                                             uint64_t buffer, uint64_t a4,
+                                             uint64_t a5, uint64_t a6)
+{
+    (void)flags; (void)a4; (void)a5; (void)a6;
+    MUI_REGISTRY_INFO info;
+    const uint32_t need = (uint32_t)sizeof(info);
+    uint32_t cap = 0;
+
+    if (!size_ptr)
+        return STATUS_INVALID_PARAMETER;
+    /* Read the caller-provided capacity from the in/out size pointer. */
+    if (ProbeForReadIfUser((void *)size_ptr, sizeof(uint32_t), sizeof(uint32_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_from_user(&cap, (void *)size_ptr, sizeof(uint32_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    /* Write the required size back on every outcome (two-pass caller). */
+    if (ProbeForWriteIfUser((void *)size_ptr, sizeof(uint32_t), sizeof(uint32_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (copy_to_user((void *)size_ptr, &need, sizeof(uint32_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    if (!buffer || cap < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+
+    /* Probe the output buffer first (bounds it below MM_USER_PROBE_ADDRESS for a
+     * user caller), THEN reject any overlap between the in/out size word and the
+     * output buffer: an aliasing caller (size_ptr inside [buffer, buffer+need))
+     * would otherwise have the blob copy clobber the required-size word we just
+     * returned, so a SUCCESS would leave *size holding blob bytes instead of 16.
+     * Both pointers are now probe-bounded, so the +need/+sizeof arithmetic cannot
+     * wrap. */
+    if (ProbeForWriteIfUser((void *)buffer, need, 4) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    {
+        uintptr_t s0 = (uintptr_t)size_ptr, b0 = (uintptr_t)buffer;
+        if (s0 < b0 + need && b0 < s0 + (uintptr_t)sizeof(uint32_t))
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    info.SystemLocale = nls_locale_get_system();
+    info.UserLocale   = nls_locale_get_user();
+    info.UILanguage   = nls_locale_get_ui_language();
+    info.NlsVersion   = nls_get_version();
+
+    if (copy_to_user((void *)buffer, &info, need) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 /* ---- Misc syscalls ------------------------------------------------------- */
 
 /* NtDisplayString(PUNICODE_STRING String) -- writes text to the kernel log
@@ -678,6 +766,9 @@ void nt_misc_register_ssdt(void)
     ssdt_register(SSDT_NtQueryDefaultUILanguage, (SSDT_HANDLER)NtQueryDefaultUILanguage_handler);
     ssdt_register(SSDT_NtSetDefaultUILanguage,   (SSDT_HANDLER)NtSetDefaultUILanguage_handler);
     ssdt_register(SSDT_NtQueryInstallUILanguage, (SSDT_HANDLER)NtQueryInstallUILanguage_handler);
+    ssdt_register(SSDT_NtGetMUIRegistryInfo,     (SSDT_HANDLER)NtGetMUIRegistryInfo_handler);
+    ssdt_register(SSDT_NtIsUILanguageComitted,   (SSDT_HANDLER)NtIsUILanguageComitted_handler);
+    ssdt_register(SSDT_NtFlushInstallUILanguage, (SSDT_HANDLER)NtFlushInstallUILanguage_handler);
     ssdt_register(SSDT_NtAddAtom,                (SSDT_HANDLER)NtAddAtom_handler);
     ssdt_register(SSDT_NtFindAtom,               (SSDT_HANDLER)NtFindAtom_handler);
     ssdt_register(SSDT_NtDeleteAtom,             (SSDT_HANDLER)NtDeleteAtom_handler);
