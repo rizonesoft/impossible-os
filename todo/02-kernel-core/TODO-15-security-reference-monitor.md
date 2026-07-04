@@ -61,7 +61,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [/]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [/]   |
-| 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [ ]   |
+| 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [/]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [ ]   |
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [ ]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
@@ -380,10 +380,22 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] **Enforce per-handle `granted_access` on section syscalls**: TODO-12 §18 handlers (`NtMapViewOfSection`, `NtExtendSection`, `NtQuerySection`) in `src/kernel/nt/nt_section.c` currently call `ObpLookupHandle` + type check, then operate on `SECTION_OBJECT*` without inspecting `HANDLE_TABLE_ENTRY.granted_access`. Required masks per Windows SDK winnt.h: `SECTION_MAP_READ = 0x0004` for read-mapping, `SECTION_MAP_WRITE = 0x0002` for read-write map, `SECTION_MAP_EXECUTE = 0x0008` for image/exec, `SECTION_EXTEND_SIZE = 0x0010` for `NtExtendSection`, `SECTION_QUERY = 0x0001` for `NtQuerySection`. After the `ObpReferenceObjectByHandle` primitive lands (-> XREF `TODO-05 §2`), add an inline check `if ((granted & required) != required) return STATUS_ACCESS_DENIED;` at the top of each section handler. Add a unit test in `test_ob.c` opening a section with `SECTION_QUERY` only and asserting `NtMapViewOfSection` returns `STATUS_ACCESS_DENIED`. This auto-closes TODO-12 §18 Accepted (section handle granted_access not enforced).
 - [ ] **Authorize process-termination syscalls**: the `SYS_KILL` (INT 0x80) handler in `src/kernel/sched/syscall.c` and `NtTerminateProcess` in `src/kernel/nt/nt_process.c` today let ANY ring-3 task mark ANY other task `TASK_DEAD` via PID lookup -- no parentage check, no ACL check, no privilege check. Required mask per Windows SDK winnt.h: `PROCESS_TERMINATE = 0x0001`. After `ObpReferenceObjectByHandle` + process OB type land, retrofit both handlers to: (a) accept only handle-based addressing (reject the current PID-only SYS_KILL shape), (b) require `PROCESS_TERMINATE` in the handle's granted_access, (c) honour the process OB type's security descriptor. Add a negative user-mode test (extend `00-infrastructure/TODO-04 §12 test_process.exe`) that asserts killing an unrelated task (non-child, e.g. the launcher task PID) fails with `STATUS_ACCESS_DENIED` or `-1`. Until this lands, SYS_KILL stamps a "cross-task kill authorization not gated" Accepted XREF via 00-infrastructure/TODO-04 §12.
 - [ ] `TOKEN_WRITE_RESTRICTED` (§9): run the restricted-SID second DACL pass ONLY for write-class desired access (write mask via the object `GENERIC_MAPPING`); non-write access skips it. -> XREF: 02-kernel-core/TODO-15 §9
-- [ ] Conditional/callback ACEs (`*_CALLBACK_ACE` 0x9/0xA, SDDL `XA`/`XD`): until expression eval exists, treat an unknown conditional ACE as NON-matching and FAIL CLOSED (Win11 client ACLs ship these). -> XREF: 02-kernel-core/TODO-15 §3
+- [ ] Conditional/callback ACEs (`*_CALLBACK_ACE` 0x9/0xA): until expr-eval exists, DENY not skip -- an unknown conditional ACE whose Mask intersects desired with a matchable SID returns `STATUS_ACCESS_DENIED`. -> XREF: 02-kernel-core/TODO-15 §3
+- [ ] BLOCKED: SeAccessCheck DACL-walk + SD-normalize unsafe until §3's bounded validators land (rel_len parse, `RtlValidAcl`/`RtlGetAceEx`, bounded SID); normalize once to a validated canonical ABSOLUTE form. -> XREF: 02-kernel-core/TODO-15 §3
+- [ ] Ordering (escalation-critical): MIC pre-check runs BEFORE any final DACL grant; owner-bypass only ACCUMULATES `READ_CONTROL|WRITE_DAC` (no early return); a matching DENY ACE wins over any later ALLOW.
+- [ ] SHIP FIRST (unblocks §4, independent of the DACL core): the `resolve_token_handle_access` granted_access item below is a standalone commit -- reads `HANDLE_TABLE_ENTRY.granted_access` only, no ACL walk.
 - [ ] Commit: `"kernel/security: SeAccessCheck engine and ObpReferenceObjectByHandle integration"`
 
 **Test checkpoint:** `SeAccessCheck` with KernelMode → always grants. SD with deny-ACE for BA before allow-ACE → BA token denied (deny takes precedence). SD with NULL DACL → all granted. SD with empty DACL (AceCount=0) → all denied. Owner requesting READ_CONTROL → granted via owner bypass. Restricted token with restricting SID not in DACL → denied even though normal SIDs match. Serial log: `"[SRM] SeAccessCheck: desired=0x%x granted=0x%x result=%s"`. Test on: QEMU WHPX + TCG (pure kernel logic, no hardware).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | on implementation
+> **Notes:**
+> - Design-specced (Codex): SeAccessCheck 8-step engine + GENERIC_MAPPING + subject context + granted_access enforcement; ordering rules deny-before-allow, owner-bypass-accumulate-only, MIC-before-grant, conditional-ACE DENY-not-skip.
+> - BLOCKED: the DACL-walk + SD-normalize core is unsafe until §3's bounded validators land (rel_len, RtlValidAcl/RtlGetAceEx, bounded SID); use a canonical validated absolute form.
+> - Ships-first subset: `resolve_token_handle_access` granted_access enforcement is independent of the ACL walk and unblocks §4's setters.
+> - Scope boundary: §3 owns the bounded SD/ACL validators; §6 owns the MIC pre-check; §7 owns token-to-process wiring.
+> **Deferred:** [Critical] SeAccessCheck DACL-walk/SD-normalize core BLOCKED on §3's bounded validators (else OOB in the auth path) -> XREF: 02-kernel-core/TODO-15 §3 (item: "bounded ACL/ACE walk")
+> **Deferred:** [H] granted_access enforcement (`resolve_token_handle_access`) ships first + the ACE-ordering/owner-bypass/WRITE_RESTRICTED/conditional-ACE engine, design-captured -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
 
 ---
 
