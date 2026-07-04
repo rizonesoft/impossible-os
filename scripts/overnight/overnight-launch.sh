@@ -278,6 +278,11 @@ OVERNIGHT_MODEL_EFFECTIVE="${OVERNIGHT_MODEL:-opus}"
 [ "$OVERNIGHT_MODEL_EFFECTIVE" != "inherit" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL_EFFECTIVE")
 MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-sonnet}")
 echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback" >> "$REPORT"
+# Snapshot for the post-run circuit breaker: a run that ends with HEAD
+# unmoved, a nonzero exit, or a sub-15-min zero-commit session counts as
+# unproductive (run-outcome.py classifies; Codex-runner lesson 2026-07-04).
+RUN_START_EPOCH="$(date +%s)"
+START_HEAD="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
 "$CLAUDE" -p "$CLAUDE_PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
@@ -352,5 +357,25 @@ epoch = int(time.mktime(until.timetuple()))
 open(sys.argv[1], "w").write(str(epoch))
 print(f"usage limit detected (resets {hint}); snoozing launches until {until.isoformat()}")
 PYEOF
+
+# Unproductive-run circuit breaker (Codex-runner lesson, 2026-07-04): classify
+# this run; after 3 consecutive dead runs, run-outcome.py writes the same
+# watchdog-backoff-until file the pre-flight honors (30 min escalating to a
+# 60 min cap) so a persistent environment failure cannot burn tokens at full
+# watchdog cadence all night. The run stays ARMED (doctrine: only a verified
+# fixpoint or the operator disarms); the trip is surfaced to the operator.
+# A usage-limit death is excluded -- the snooze file above already governs it.
+SNOOZED_ARG=()
+if [ -f "$SNOOZE_FILE" ]; then SNOOZED_ARG=(--snoozed); fi
+OUTCOME_JSON="$(python3 "$SCRIPT_DIR/run-outcome.py" "$PROJECT_DIR" \
+  --exit "$AGENT_EXIT" --start-head "${START_HEAD:-}" \
+  --run-secs "$(( $(date +%s) - RUN_START_EPOCH ))" \
+  ${SNOOZED_ARG[@]+"${SNOOZED_ARG[@]}"} 2>>"$REPORT" || true)"
+echo "run outcome: ${OUTCOME_JSON:-unavailable}" >> "$REPORT"
+if printf '%s' "$OUTCOME_JSON" | grep -q '"breaker": true'; then
+  python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+  bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
+    "Circuit breaker tripped: consecutive unproductive runs; watchdog backing off (still armed). Check $REPORT" 2>/dev/null || true
+fi
 
 echo "overnight-sequencer unattended run finished $(date -Is)" >> "$REPORT"

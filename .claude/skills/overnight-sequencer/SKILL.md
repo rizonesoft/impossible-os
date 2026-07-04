@@ -118,6 +118,11 @@ AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
 ### 1. PREFLIGHT (`phase PREFLIGHT`)
 
 - `bash scripts/todo-graph/build-and-validate.sh --keep-cache` (refresh the oracle).
+- `python3 scripts/overnight/preflight-stamp.py . check` -- exit 0 means the
+  build+test baseline below is ALREADY green for this exact tree (HEAD + dirty
+  diff unchanged since the recorded stamp, < 12h old): note the cached summary
+  in the report and SKIP the `build.sh` + `test.sh` gates, jump to the CI
+  check. Exit 1 (any tree change or expiry) -> run the gates as written.
 - `bash scripts/build.sh` then `tail -1 build/build.log`. If HEAD does NOT show
   `=== BUILD OK ===`, the tree is broken before any work: try to fix the root
   cause (it is usually a half-committed change); if it cannot be made green,
@@ -125,6 +130,10 @@ AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
   and stop (relaunching cannot help a broken HEAD).
 - `bash scripts/test.sh QUIET=1` -- a green baseline. A FAIL here is the same
   broken-HEAD case.
+- After BOTH gates are green:
+  `python3 scripts/overnight/preflight-stamp.py . record --summary "<BUILD OK + test PASS line>"`
+  -- an unchanged tree never pays the build+test baseline twice (any commit,
+  tracked edit, or new untracked path invalidates the stamp automatically).
 - **CI check (self-heal red CI instead of pushing past it).** After the local
   baseline is green, dispatch `Agent(subagent_type="gh-query-runner", ...)` to
   report the latest `build.yml` + `todo-graph.yml` conclusions and head SHAs
