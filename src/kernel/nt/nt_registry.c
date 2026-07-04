@@ -146,6 +146,8 @@ static NTSTATUS reg_win32_to_nt(long err)
     case ERROR_NO_MORE_ITEMS:    return STATUS_NO_MORE_ENTRIES;
     case ERROR_KEY_DELETED:      return STATUS_KEY_DELETED;
     case ERROR_REGISTRY_IO_FAILED: return STATUS_REGISTRY_IO_FAILED;
+    case ERROR_ALREADY_EXISTS:   return STATUS_OBJECT_NAME_COLLISION;
+    case ERROR_PRIVILEGE_NOT_HELD: return STATUS_PRIVILEGE_NOT_HELD;
     default:                     return STATUS_UNSUCCESSFUL;
     }
 }
@@ -804,38 +806,6 @@ static reg_key_t *resolve_hkey(HKEY hkey)
 
 /* ---- Helper: resolve FILE handle from current task to VFS path --------- */
 
-/* Looks up a FILE handle in the calling task's handle table, verifies it
- * is a FILE_OBJECT (via OB type header), follows it to the underlying
- * vfs_node, and reconstructs the canonical path.
- * Returns bytes written (excluding NUL) or 0 on failure. */
-extern const OBJECT_TYPE *ObpFileType;
-
-static uint32_t resolve_file_handle_path(HANDLE file_handle,
-                                         char *buf, uint32_t buf_size)
-{
-    HANDLE_TABLE_ENTRY *entry;
-    OBJECT_HEADER *hdr;
-    FILE_OBJECT *file_obj;
-
-    if (file_handle == INVALID_HANDLE_VALUE || !buf || buf_size == 0)
-        return 0;
-
-    entry = ObpLookupHandle(&task_current()->handle_table, file_handle);
-    if (!entry || !entry->object)
-        return 0;
-
-    /* Type-check: reject non-file handles before casting */
-    hdr = OB_HEADER_FROM_BODY(entry->object);
-    if (hdr->type != ObpFileType)
-        return 0;
-
-    file_obj = (FILE_OBJECT *)entry->object;
-    if (!file_obj->vfs_node)
-        return 0;
-
-    return vfs_get_path_from_node(file_obj->vfs_node, buf, buf_size);
-}
-
 /* ======================================================================== */
 /* NtFlushKey (SSDT 0x009C)                                                */
 /*                                                                          */
@@ -918,6 +888,11 @@ static NTSTATUS NtRenameKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
+    /* Direct-pointer path bypasses the Win32 chokepoint; renaming destroys the
+     * old key name, so require DELETE on the handle. */
+    if (reg_check_access(hkey, DELETE) != ERROR_SUCCESS)
+        return STATUS_ACCESS_DENIED;
+
     name_str = (const char *)nn->Buffer;
     rc = RegRenameKeyDirect(key, name_str);
     return reg_win32_to_nt(rc);
@@ -938,10 +913,9 @@ static NTSTATUS NtSaveKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                   uint64_t a4, uint64_t a5, uint64_t a6)
 {
     HKEY hkey = (HKEY)(uintptr_t)a1;
-    HANDLE file_handle = (HANDLE)(int32_t)a2;
     reg_key_t *key;
-    char path[REG_MAX_PATH];
-    uint32_t path_len;
+
+    (void)a2;
 
     (void)a3; (void)a4; (void)a5; (void)a6;
 
@@ -952,14 +926,12 @@ static NTSTATUS NtSaveKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    path_len = resolve_file_handle_path(file_handle, path, sizeof(path));
-    if (path_len == 0)
-        return STATUS_INVALID_HANDLE;
-
-    if (hive_save(key, path) != 0)
-        return STATUS_UNSUCCESSFUL;
-
-    return STATUS_SUCCESS;
+    /* Subtree export is privilege-gated (SeBackupPrivilege).  No evaluator
+     * exists yet (TODO-15 s2) -- fail closed so any handle holder cannot export
+     * an arbitrary subtree.  Trusted kernel code uses hive_save() directly. */
+    if (reg_check_access(hkey, KEY_READ) != ERROR_SUCCESS)
+        return STATUS_ACCESS_DENIED;
+    return STATUS_PRIVILEGE_NOT_HELD;
 }
 
 /* ======================================================================== */
@@ -976,13 +948,9 @@ static NTSTATUS NtRestoreKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                      uint64_t a4, uint64_t a5, uint64_t a6)
 {
     HKEY hkey = (HKEY)(uintptr_t)a1;
-    HANDLE file_handle = (HANDLE)(int32_t)a2;
     reg_key_t *key;
-    char path[REG_MAX_PATH];
-    uint32_t path_len;
-    int values_loaded;
 
-    (void)a3; (void)a4; (void)a5; (void)a6;
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
 
     if (!hkey)
         return STATUS_INVALID_HANDLE;
@@ -991,16 +959,13 @@ static NTSTATUS NtRestoreKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    path_len = resolve_file_handle_path(file_handle, path, sizeof(path));
-    if (path_len == 0)
-        return STATUS_INVALID_HANDLE;
-
-    values_loaded = hive_load(path, key);
-    if (values_loaded < 0)
-        return STATUS_REGISTRY_CORRUPT;
-
-    registry_mark_dirty(key);
-    return STATUS_SUCCESS;
+    /* Subtree import is privilege-gated (SeRestorePrivilege).  No evaluator
+     * exists yet (TODO-15 s2) -- fail closed so any handle holder cannot
+     * overwrite a subtree from an arbitrary file.  Trusted kernel code uses
+     * hive_load() directly. */
+    if (reg_check_access(hkey, KEY_WRITE) != ERROR_SUCCESS)
+        return STATUS_ACCESS_DENIED;
+    return STATUS_PRIVILEGE_NOT_HELD;
 }
 
 /* ======================================================================== */

@@ -710,6 +710,124 @@ long reg_check_access(HKEY hKey, uint32_t required_mask)
     return ERROR_ACCESS_DENIED;
 }
 
+/* ---- KCB (Key Control Block) LRU cache ----
+ *
+ * Accelerates repeated resolution of hot keys (e.g. HKLM\SYSTEM\Display opened
+ * and closed in a tight loop) by remembering recently-accessed (parent, name)
+ * -> child bindings, so reg_walk_path skips the per-component reg_find_child
+ * hash-chain walk on a hit.  Keys live in a monotonic pool that never reissues
+ * a slot and tombstones deletions via name[0]='\0', so a cached child pointer
+ * is stable: a hit is validated live (child->name[0]!=0), still under the same
+ * parent, and still bearing the cached name (guards against rename + delete +
+ * slot reuse -- all three make the cache miss, never mis-resolve).  Populated
+ * on every resolved walk hop and promoted on RegCloseKey (the hot close-then-
+ * reopen pattern).  Purged from the delete/rename/unload paths so a freed or
+ * renamed slot cannot even briefly serve a hit before the liveness check.
+ *
+ * Lock-free, consistent with the rest of registry.c; registry-wide SMP
+ * synchronization (this cache included) is owned by TODO-14 s14. */
+#define REG_KCB_CACHE_SIZE 32
+
+typedef struct {
+    reg_key_t *parent;                     /* immediate parent (key part 1)   */
+    reg_key_t *child;                      /* cached resolved child           */
+    char       name[REG_MAX_KEY_NAME + 1]; /* child name (key part 2)         */
+    uint64_t   lru;                        /* last-access stamp (0 = empty)   */
+} reg_kcb_entry_t;
+
+static reg_kcb_entry_t reg_kcb_cache[REG_KCB_CACHE_SIZE];
+static uint64_t        reg_kcb_clock  = 0;   /* monotonic LRU stamp source    */
+static uint64_t        reg_kcb_hits   = 0;
+static uint64_t        reg_kcb_misses = 0;
+
+/* Look up (parent, name).  Returns the cached child on a validated-live hit
+ * (promoted to MRU) or NULL on miss/stale.  Does NOT touch hit/miss counters --
+ * the caller records them at hop granularity. */
+static reg_key_t *reg_kcb_lookup(reg_key_t *parent, const char *name)
+{
+    uint32_t i;
+
+    if (!parent || !name || name[0] == '\0')
+        return (reg_key_t *)0;
+
+    for (i = 0; i < REG_KCB_CACHE_SIZE; i++) {
+        reg_kcb_entry_t *e = &reg_kcb_cache[i];
+        if (e->lru == 0 || e->parent != parent)
+            continue;
+        if (reg_stricmp(e->name, name) != 0)
+            continue;
+        /* Validate the cached child is still the exact live key it was cached
+         * as -- guards rename (name changed), delete (tombstoned), and the
+         * theoretical slot-reuse the monotonic pool never actually performs. */
+        if (!e->child || e->child->name[0] == '\0' ||
+            e->child->parent != parent ||
+            reg_stricmp(e->child->name, name) != 0) {
+            e->lru = 0;             /* stale -- drop the entry */
+            continue;
+        }
+        e->lru = ++reg_kcb_clock;   /* promote to MRU */
+        return e->child;
+    }
+    return (reg_key_t *)0;
+}
+
+/* Insert or refresh (parent, child->name) -> child, evicting the LRU slot when
+ * the cache is full.  Ignores roots (no parent) and tombstoned keys. */
+static void reg_kcb_insert(reg_key_t *parent, reg_key_t *child)
+{
+    uint32_t i, victim;
+    uint64_t oldest;
+
+    if (!parent || !child || child->name[0] == '\0')
+        return;
+
+    /* Refresh an existing entry for this (parent, name) before allocating. */
+    for (i = 0; i < REG_KCB_CACHE_SIZE; i++) {
+        reg_kcb_entry_t *e = &reg_kcb_cache[i];
+        if (e->lru != 0 && e->parent == parent &&
+            reg_stricmp(e->name, child->name) == 0) {
+            e->child = child;
+            e->lru   = ++reg_kcb_clock;
+            return;
+        }
+    }
+
+    /* Pick an empty slot, else the least-recently-used one. */
+    victim = 0;
+    oldest = reg_kcb_cache[0].lru;
+    for (i = 0; i < REG_KCB_CACHE_SIZE; i++) {
+        if (reg_kcb_cache[i].lru == 0) { victim = i; break; }
+        if (reg_kcb_cache[i].lru < oldest) { oldest = reg_kcb_cache[i].lru; victim = i; }
+    }
+
+    reg_kcb_cache[victim].parent = parent;
+    reg_kcb_cache[victim].child  = child;
+    reg_strcpy(reg_kcb_cache[victim].name, child->name, REG_MAX_KEY_NAME + 1);
+    reg_kcb_cache[victim].lru    = ++reg_kcb_clock;
+}
+
+/* Drop every cache entry that references `key` as either parent or child.
+ * Called from the delete/rename/unload paths. */
+static void reg_kcb_purge_key(reg_key_t *key)
+{
+    uint32_t i;
+
+    if (!key)
+        return;
+    for (i = 0; i < REG_KCB_CACHE_SIZE; i++) {
+        reg_kcb_entry_t *e = &reg_kcb_cache[i];
+        if (e->lru != 0 && (e->child == key || e->parent == key))
+            e->lru = 0;
+    }
+}
+
+/* Test/diagnostic accessor: current cumulative KCB hit / miss counts. */
+void reg_kcb_get_stats(uint64_t *hits, uint64_t *misses)
+{
+    if (hits)   *hits   = reg_kcb_hits;
+    if (misses) *misses = reg_kcb_misses;
+}
+
 /* ---- Path walker ---- */
 
 /* Walk a backslash-separated path from 'start'.
@@ -755,12 +873,24 @@ static reg_key_t *reg_walk_path(reg_key_t *start, const char *path, int create)
         }
 
         {
-            reg_key_t *child = reg_find_child(cur, component);
+            /* KCB fast path: a validated cache hit skips the reg_find_child
+             * hash-chain walk.  On a miss, resolve normally and populate the
+             * cache so the next walk of this hop hits. */
+            reg_key_t *child = reg_kcb_lookup(cur, component);
+            if (child) {
+                reg_kcb_hits++;
+            } else {
+                reg_kcb_misses++;
+                child = reg_find_child(cur, component);
+                if (child)
+                    reg_kcb_insert(cur, child);
+            }
             if (child) {
                 cur = child;
             } else if (create) {
                 child = reg_create_child(cur, component);
                 if (!child) return (reg_key_t *)0;
+                reg_kcb_insert(cur, child);
                 cur = child;
             } else {
                 return (reg_key_t *)0;
@@ -987,7 +1117,6 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
 
     (void)dwReserved;
     (void)lpClass;
-    (void)dwOptions;
     (void)lpSecurityAttributes;
 
     if (!phkResult)
@@ -1054,6 +1183,11 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
             : REG_CREATED_NEW_KEY;
     }
 
+    /* REG_OPTION_VOLATILE marks a newly-created key RAM-only (excluded from
+     * hive serialization); never flips an existing persisted key. */
+    if (!pre_existing && (dwOptions & REG_OPTION_VOLATILE))
+        target->flags |= REG_FLAG_VOLATILE;
+
     handle->key = target;   /* bind the reserved slot to the resolved key */
     *phkResult = handle;
     return ERROR_SUCCESS;
@@ -1066,6 +1200,15 @@ long RegCloseKey(HKEY hKey)
     /* Predefined handles are never closed */
     if (!hKey || reg_is_predefined(hKey))
         return ERROR_SUCCESS;
+
+    /* Promote the closing key in the KCB cache: close-then-reopen of the same
+     * key is the hot pattern the cache targets.  Only cache live, non-root
+     * keys (a tombstoned or root key is rejected by reg_kcb_insert). */
+    {
+        reg_key_t *k = reg_resolve_key(hKey);
+        if (k && k->parent && k->name[0] != '\0')
+            reg_kcb_insert(k->parent, k);
+    }
 
     reg_free_handle(hKey);
     return ERROR_SUCCESS;
@@ -1174,6 +1317,9 @@ long RegDeleteKeyDirect(reg_key_t *key)
     reg_free_values(key);
     reg_remove_child(key->parent, key);
 
+    /* Drop any KCB entry pointing at this slot before tombstoning it. */
+    reg_kcb_purge_key(key);
+
     /* Mark key slot as freed */
     key->name[0] = '\0';
     key->flags = 0;
@@ -1194,10 +1340,19 @@ long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
     if (!parent)
         return ERROR_ACCESS_DENIED;  /* cannot rename root */
 
-    /* Validate name length */
+    /* The (parent, old-name) KCB binding is about to become wrong; drop it. */
+    reg_kcb_purge_key(key);
+
+    /* Validate name: single component only (a '\\' would be stored literally but
+     * read back as a path separator, making the key unreachable / undeletable by
+     * its enumerated name), non-empty, within length. */
     {
         uint32_t len = 0;
-        while (new_name[len]) len++;
+        while (new_name[len]) {
+            if (new_name[len] == '\\')
+                return ERROR_INVALID_PARAMETER;
+            len++;
+        }
         if (len > REG_MAX_KEY_NAME)
             return ERROR_INVALID_PARAMETER;
     }
@@ -1207,7 +1362,7 @@ long RegRenameKeyDirect(reg_key_t *key, const char *new_name)
     {
         reg_key_t *existing = reg_find_child(parent, new_name);
         if (existing && existing != key)
-            return ERROR_ACCESS_DENIED;  /* collision with different sibling */
+            return ERROR_ALREADY_EXISTS;  /* collision with different sibling */
         if (existing == key) {
             /* Same key: update name in place for case-only changes, mark
              * dirty, and return without touching hash buckets. */
@@ -1271,6 +1426,9 @@ long RegUnloadHive(reg_key_t *key)
     /* Unlink from parent */
     reg_remove_child(key->parent, key);
 
+    /* Drop any KCB entry pointing at this slot before tombstoning it. */
+    reg_kcb_purge_key(key);
+
     /* Mark slot freed */
     key->name[0] = '\0';
     key->flags = 0;
@@ -1301,6 +1459,9 @@ static void reg_delete_subtree(reg_key_t *key)
 
     /* Free own values */
     reg_free_values(key);
+
+    /* Drop any KCB entry pointing at this slot before tombstoning it. */
+    reg_kcb_purge_key(key);
 
     /* Mark as freed */
     key->name[0] = '\0';
@@ -1456,6 +1617,235 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
         return acc;
 
     return reg_set_value_direct(key, lpValueName, dwType, lpData, cbData);
+}
+
+/* ---- RegCopyTree ----
+ *
+ * Recursively copy all values + sub-keys of `src` into `dst`.  Follows the same
+ * per-bucket depth-first walk as hive_serialize_key / reg_delete_subtree; uses
+ * reg_set_value_direct (no per-value handle/access churn) since src/dst were
+ * already access-checked at the RegCopyTree entry point. */
+
+/* Count every descendant key + value under `src` (conservatively -- merges into
+ * pre-existing dst keys/values are not discounted).  Used to reserve pool
+ * capacity BEFORE mutating dst, so a mid-copy allocation failure cannot leave a
+ * permanent half-copy in the monotonic (tombstone-only) key/value pools. */
+static void reg_count_subtree(reg_key_t *src, uint32_t *nkeys, uint32_t *nvals)
+{
+    reg_value_t *v;
+    uint32_t b;
+
+    if (!src)
+        return;
+    for (v = src->values; v; v = v->next)
+        (*nvals)++;
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = src->children[b];
+        while (c) {
+            (*nkeys)++;
+            reg_count_subtree(c, nkeys, nvals);
+            c = c->hash_next;
+        }
+    }
+}
+
+static long reg_copy_subtree(reg_key_t *src, reg_key_t *dst,
+                             uint32_t *nkeys, uint32_t *nvals)
+{
+    reg_value_t *v;
+    uint32_t b;
+
+    if (!src || !dst)
+        return ERROR_INVALID_PARAMETER;
+
+    for (v = src->values; v; v = v->next) {
+        long rc = reg_set_value_direct(dst, v->name, v->type, v->data, v->data_size);
+        if (rc != ERROR_SUCCESS)
+            return rc;
+        (*nvals)++;
+    }
+
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = src->children[b];
+        while (c) {
+            reg_key_t *dc = reg_create_child(dst, c->name);
+            long rc;
+            if (!dc)
+                return ERROR_OUTOFMEMORY;
+            dc->last_write_time = reg_get_uptime_ns();
+            (*nkeys)++;
+            rc = reg_copy_subtree(c, dc, nkeys, nvals);
+            if (rc != ERROR_SUCCESS)
+                return rc;
+            c = c->hash_next;
+        }
+    }
+    return ERROR_SUCCESS;
+}
+
+long RegCopyTree(HKEY hKeySrc, const char *lpSubKey, HKEY hKeyDest)
+{
+    reg_key_t *src, *dst, *src_root;
+    long acc;
+
+    src = reg_resolve_key(hKeySrc);
+    if (!src)
+        return ERROR_INVALID_HANDLE;
+    dst = reg_resolve_key(hKeyDest);
+    if (!dst)
+        return ERROR_INVALID_HANDLE;
+
+    /* KEY_READ on source, KEY_WRITE on destination (Win32 contract). */
+    acc = reg_check_access(hKeySrc, KEY_READ);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+    acc = reg_check_access(hKeyDest, KEY_WRITE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
+    if (lpSubKey && lpSubKey[0] != '\0') {
+        acc = reg_validate_path_limits(lpSubKey);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+        src_root = reg_walk_path(src, lpSubKey, 0);
+    } else {
+        src_root = src;
+    }
+    if (!src_root)
+        return ERROR_FILE_NOT_FOUND;
+
+    /* Reject any lineage overlap between src_root and dst (either direction):
+     *   - dst inside (or equal to) src_root: copying src into its own descendant
+     *     self-amplifies (creates B\B\B...) until pool/stack exhaustion.
+     *   - dst an ancestor of src_root: a source child whose name collides with an
+     *     existing key on the dst->src_root path makes reg_create_child(dst,...)
+     *     return a node INSIDE the source subtree, so the copy would write into
+     *     the tree it is still walking (and insert not-precounted nodes).
+     * With both directions rejected, reg_create_child(dst,name) can only ever
+     * return a node disjoint from the source subtree. */
+    {
+        reg_key_t *p = dst;
+        while (p) {                       /* dst descendant-or-equal of src_root */
+            if (p == src_root)
+                return ERROR_INVALID_PARAMETER;
+            p = p->parent;
+        }
+    }
+    {
+        reg_key_t *p = src_root;
+        while (p) {                       /* dst ancestor-or-equal of src_root */
+            if (p == dst)
+                return ERROR_INVALID_PARAMETER;
+            p = p->parent;
+        }
+    }
+
+    /* Reserve pool capacity before touching dst: a mid-copy alloc failure would
+     * otherwise leave a permanent partial copy (pools are monotonic, deletes only
+     * tombstone).  Count is conservative -- merges into pre-existing dst
+     * keys/values are not discounted, so this can only over-reserve, never
+     * under-reserve. */
+    {
+        uint32_t need_keys = 0, need_vals = 0;
+        reg_count_subtree(src_root, &need_keys, &need_vals);
+        if (need_keys > (REG_KEY_POOL_SIZE - reg_key_pool_next) ||
+            need_vals > (REG_VALUE_POOL_SIZE - reg_value_pool_next))
+            return ERROR_OUTOFMEMORY;
+    }
+
+    {
+        uint32_t nkeys = 0, nvals = 0;
+        long rc = reg_copy_subtree(src_root, dst, &nkeys, &nvals);
+        if (rc == ERROR_SUCCESS) {
+            /* Structure-only copies never touch reg_set_value_direct, so mark
+             * the destination hive dirty here or a value-less copy would not be
+             * persisted by the lazy flush path. */
+            dst->last_write_time = reg_get_uptime_ns();
+            registry_mark_dirty(dst);
+            klog(LOG_DEBUG, "registry", "CopyTree: %s -> %s (%u keys, %u values)",
+                 src_root->name, dst->name, (uint64_t)nkeys, (uint64_t)nvals);
+        }
+        return rc;
+    }
+}
+
+/* ---- RegRenameKey (Win32, in-place) ---- */
+
+long RegRenameKey(HKEY hKey, const char *lpSubKeyName, const char *lpNewKeyName)
+{
+    reg_key_t *base, *target;
+    long acc;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+    if (!lpNewKeyName || lpNewKeyName[0] == '\0' ||
+        reg_strlen(lpNewKeyName) > REG_MAX_KEY_NAME)
+        return ERROR_INVALID_PARAMETER;
+
+    /* Renaming destroys the old key name -- require DELETE. */
+    acc = reg_check_access(hKey, DELETE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
+    if (lpSubKeyName && lpSubKeyName[0] != '\0') {
+        acc = reg_validate_path_limits(lpSubKeyName);
+        if (acc != ERROR_SUCCESS)
+            return acc;
+        target = reg_walk_path(base, lpSubKeyName, 0);
+    } else {
+        target = base;
+    }
+    if (!target)
+        return ERROR_FILE_NOT_FOUND;
+
+    /* Win32 collision: reject only if a DIFFERENT sibling has the new name.
+     * A match on target itself (same-name / case-only rename) must fall through
+     * to RegRenameKeyDirect, which treats it as a no-op / case update. */
+    if (target->parent) {
+        reg_key_t *existing = reg_find_child(target->parent, lpNewKeyName);
+        if (existing && existing != target)
+            return ERROR_ALREADY_EXISTS;
+    }
+
+    /* In-place unlink/relink (no copy, no pool churn). */
+    return RegRenameKeyDirect(target, lpNewKeyName);
+}
+
+/* ---- RegSaveKey / RegRestoreKey (privilege-gated, fail-closed) ----
+ *
+ * The hive_save/hive_load subtree infrastructure exists, but SeBackupPrivilege /
+ * SeRestorePrivilege have no evaluator yet (TODO-15 s2).  Failing closed keeps
+ * subtree export/import from being available to any handle holder; the trusted
+ * kernel-mode path uses hive_save/hive_load directly. */
+long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes)
+{
+    reg_key_t *key;
+    (void)lpSecurityAttributes;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+    if (!lpFile)
+        return ERROR_INVALID_PARAMETER;
+    if (reg_check_access(hKey, KEY_READ) != ERROR_SUCCESS)
+        return ERROR_ACCESS_DENIED;             /* handle lacks read access */
+    return ERROR_PRIVILEGE_NOT_HELD;            /* SeBackupPrivilege not held (fail-closed) */
+}
+
+long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags)
+{
+    reg_key_t *key;
+    (void)dwFlags;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+    if (!lpFile)
+        return ERROR_INVALID_PARAMETER;
+    if (reg_check_access(hKey, KEY_WRITE) != ERROR_SUCCESS)
+        return ERROR_ACCESS_DENIED;             /* handle lacks write access */
+    return ERROR_PRIVILEGE_NOT_HELD;            /* SeRestorePrivilege not held (fail-closed) */
 }
 
 /* ---- RegQueryValueEx ---- */
@@ -2401,7 +2791,10 @@ static void hive_count(reg_key_t *key, uint32_t *nkeys, uint32_t *nvals)
     for (b = 0; b < REG_CHILD_BUCKETS; b++) {
         reg_key_t *c = key->children[b];
         while (c) {
-            hive_count(c, nkeys, nvals);
+            /* Volatile subtrees are RAM-only -- exclude from header totals so
+             * they match hive_serialize_key's emitted payload. */
+            if (!(c->flags & REG_FLAG_VOLATILE))
+                hive_count(c, nkeys, nvals);
             c = c->hash_next;
         }
     }
@@ -2412,9 +2805,20 @@ static int hive_serialize_key(hive_buf_t *buf, reg_key_t *key)
 {
     uint16_t name_len = (uint16_t)reg_strlen(key->name);
     uint16_t val_count = (uint16_t)key->value_count;
-    uint16_t child_count = (uint16_t)key->child_count;
+    uint16_t child_count = 0;
     reg_value_t *v;
     uint32_t b;
+
+    /* Count only NON-volatile children: volatile keys are RAM-only and are not
+     * emitted below, so the written child_count must match the records actually
+     * serialized or reload walks past the payload. */
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            if (!(c->flags & REG_FLAG_VOLATILE)) child_count++;
+            c = c->hash_next;
+        }
+    }
 
     /* Write key record: [name_len][name][value_count][child_count] */
     if (hive_buf_write_u16(buf, name_len) < 0) return -1;
@@ -2434,11 +2838,13 @@ static int hive_serialize_key(hive_buf_t *buf, reg_key_t *key)
         }
     }
 
-    /* Recurse into children (depth-first across all hash buckets) */
+    /* Recurse into non-volatile children (depth-first across all hash buckets) */
     for (b = 0; b < REG_CHILD_BUCKETS; b++) {
         reg_key_t *c = key->children[b];
         while (c) {
-            if (hive_serialize_key(buf, c) < 0) return -1;
+            if (!(c->flags & REG_FLAG_VOLATILE)) {
+                if (hive_serialize_key(buf, c) < 0) return -1;
+            }
             c = c->hash_next;
         }
     }

@@ -52,6 +52,9 @@
 #define ERROR_NO_MORE_ITEMS    259
 #define ERROR_KEY_DELETED     1018
 #define ERROR_REGISTRY_IO_FAILED 1016  /* hive flush/save I/O failure */
+#define ERROR_ALREADY_EXISTS   183   /* RegRenameKey: target name in use */
+#define ERROR_PRIVILEGE_NOT_HELD 1314 /* RegSaveKey/RestoreKey: SeBackup/SeRestore not held */
+#define REG_FORCE_RESTORE      0x00000008  /* RegRestoreKey: wipe existing subtree first */
 
 /* ---- Access rights (match Win32 subset) ---- */
 
@@ -77,6 +80,9 @@
 #endif
 
 /* ---- Security / key flags ---- */
+
+#define REG_OPTION_NON_VOLATILE 0x00000000  /* RegCreateKeyEx dwOptions: persisted */
+#define REG_OPTION_VOLATILE     0x00000001  /* RegCreateKeyEx dwOptions: RAM-only  */
 
 #define REG_FLAG_VOLATILE       0x01   /* Key not persisted to disk           */
 #define REG_FLAG_READONLY       0x02   /* Key is read-only                    */
@@ -281,8 +287,34 @@ long RegDeleteKeyDirect(reg_key_t *key);
 /* Rename a key by its internal reg_key_t pointer.
  * Validates new_name length and uniqueness within the parent.
  * Re-links the key in the parent's hash bucket under the new name.
- * Returns ERROR_ACCESS_DENIED if name collides or key is a root. */
+ * Returns ERROR_ALREADY_EXISTS if the new name collides with a different
+ * sibling, ERROR_INVALID_PARAMETER for an empty/over-long name or one
+ * containing a '\\' separator, ERROR_ACCESS_DENIED if key is a root. */
 long RegRenameKeyDirect(reg_key_t *key, const char *new_name);
+
+/* ---- Advanced key operations (Win32) ---- */
+
+/* Recursively copy all sub-keys + values of hKeySrc\lpSubKey into hKeyDest.
+ * Requires KEY_READ on source, KEY_WRITE on destination. */
+long RegCopyTree(HKEY hKeySrc, const char *lpSubKey, HKEY hKeyDest);
+
+/* Rename a sub-key in place (unlink/relink under the new name in the parent's
+ * hash bucket).  Returns ERROR_ALREADY_EXISTS if lpNewKeyName already exists. */
+long RegRenameKey(HKEY hKey, const char *lpSubKeyName, const char *lpNewKeyName);
+
+/* Serialize the sub-tree rooted at hKey to a standalone .hive file at lpFile.
+ * Requires SeBackupPrivilege (fail-closed until TODO-15 s2 supplies the check). */
+long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes);
+
+/* Restore a .hive file into the sub-tree rooted at hKey.  REG_FORCE_RESTORE
+ * (0x8) wipes the existing sub-tree first.  Requires SeRestorePrivilege
+ * (fail-closed until TODO-15 s2). */
+long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags);
+
+/* KCB (Key Control Block) LRU cache diagnostics: cumulative hit / miss counts
+ * for the recently-accessed (parent, name) -> child resolution cache.  Used by
+ * the unit test to assert the hot-key hit rate; either pointer may be NULL. */
+void reg_kcb_get_stats(uint64_t *hits, uint64_t *misses);
 
 /* Unload a hive subtree: recursively free all children, values, and the
  * key itself.  Used by NtUnloadKey.  Returns ERROR_ACCESS_DENIED for roots. */

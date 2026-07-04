@@ -434,6 +434,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] `NtSetSystemTime` -- `SeSinglePrivilegeCheck(SeSystemtimePrivilege, UserMode)`
 - [ ] `NtCreateSymbolicLinkObject` -- `SeSinglePrivilegeCheck( SeCreateSymbolicLinkPrivilege, UserMode)` for permanent symlinks
 - [ ] `NtQuerySystemInformation(SystemPerformanceInformation)` -- requires `SeSystemProfilePrivilege` if `mode == UserMode`
+- [ ] `RegSaveKey`/`RegRestoreKey` (+ `NtSaveKey`/`NtRestoreKey`) -- `SeSinglePrivilegeCheck(SeBackup/SeRestorePrivilege, UserMode)` then run the `hive_save`/`hive_load` body (today fail-closed) -> XREF: 02-kernel-core/TODO-14 §2
 
 ### 8.3 Commit
 

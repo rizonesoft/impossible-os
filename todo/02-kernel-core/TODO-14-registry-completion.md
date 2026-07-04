@@ -26,7 +26,7 @@ title: "TODO-14 -- Registry System Completion"
 > - `reg_key_t.last_write_time` (PIT tick counter updated on every mutation; returned by `RegQueryInfoKey`)
 > - `REG_LINK` type, `REG_FLAG_LINK` flag, `reg_key_is_link()`/`reg_key_get_link_target()` helpers, transparent symlink resolution in `reg_resolve_path()`
 > - `%VAR%` expansion helpers: `reg_lookup_env_var()` / `reg_expand_sz()` (kernel boot path; full `NtQueryValueKey` / enumerate for env blocks is still TODO-22 + §4)
-> **What is NOT done** (scope of this TODO): access rights enforcement, API limits, `RegFlushKey`, `RegCopyTree`, `RegRenameKey`, `RegSaveKey`, `RegRestoreKey`, `REG_OPTION_VOLATILE`, delayed close cache, change notifications, all Nt/Zw syscalls, `advapi32.dll` stubs, UTF-16 A/W variants, HKCR merged view, registry virtualization, `.reg` import/export, `regedit` command, dual-log WAJ, incremental delta flush, hive integrity reporter, format versioning, compaction, transactions, search API, snapshot/diff, per-PID quota, and performance optimisations (mmap, B-tree).
+> **What is NOT done** (scope of this TODO): `RegSaveKey`/`RegRestoreKey` bodies (privilege-gated, fail-closed until TODO-15 §8), change notifications, all Nt/Zw syscalls, `advapi32.dll` stubs, UTF-16 A/W variants, HKCR merged view, registry virtualization, `.reg` import/export, `regedit` command, dual-log WAJ, incremental delta flush, hive integrity reporter, format versioning, compaction, transactions, search API, snapshot/diff, per-PID quota, and performance optimisations (mmap, B-tree). (§1 access rights + API limits + `RegFlushKey`; §2 `RegCopyTree`/`RegRenameKey`/volatile/KCB shipped.)
 
 > [!CAUTION]
 > **Memory rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KiB (hive file read/write, large binary values). `kmalloc` is only for small structs ≤ 4 KiB. Violating this silently corrupts the 2 MiB kernel heap.
@@ -68,7 +68,7 @@ title: "TODO-14 -- Registry System Completion"
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
-| 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
+| 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [/]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
 | 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)         | §4                           |  [ ]   |
@@ -129,7 +129,6 @@ title: "TODO-14 -- Registry System Completion"
 > - Downstream: the §4 per-key `NtFlushKey` scope item is satisfied here; §2/§4 NT rename/save/restore/unload mask enforcement filed as concrete items with reciprocal XREF §1.
 > - Scope boundary: value name/data size expansion is §15; SMP locking is §14; real DACL `SeAccessCheck` is TODO-15 §5.
 > **Verified:** 2026-07-04 | commit `45c1f862` | 17/19 items | build OK | tests 1074/1074 PASS + smoke PASS 3.0s
-> **Accepted:** [H] NT direct-pointer handlers `NtRenameKey`/`NtSaveKey`/`NtRestoreKey` bypass `reg_check_access` -> XREF: 02-kernel-core/TODO-14 §2 (item: "NT raw-HKEY access enforcement: route `NtRenameKey`/`NtSaveKey`/`NtRestoreKey`" at the §2 checklist)
 > **Accepted:** [H] NT `NtUnloadKey`/`NtLoadKey` bypass `reg_check_access` -> XREF: 02-kernel-core/TODO-14 §4 (item: "NT raw-HKEY access enforcement: route `NtUnloadKey`/`NtLoadKey`/`NtUnloadKey2`" at the §4 checklist)
 > **Deferred:** [M] value-name 16383 + value-data 1 MiB size expansion (heap-backed migration + 5 stack-buffer conversion, bare-metal stack hazard) -> XREF: 02-kernel-core/TODO-14 §15 (item: "Migrate `reg_value_t.name`" at the §15 checklist)
 > **Quality reviewed:** 2026-07-04 | Codex 10x (design, adversarial, consistency, perf, re-adversarial) | 6H+5M fixed, 2H accepted-XREF, 1M accepted | scope: kernel-code-quality
@@ -138,24 +137,33 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 2. Advanced Key Operations
 
-- [ ] `RegCopyTree(hKeySrc, lpSubKey, hKeyDest)` -- recursively copy all sub-keys and values from `hKeySrc\lpSubKey` into `hKeyDest`; preserves value types, data, and sub-key structure; uses existing `RegCreateKeyEx` + `RegSetValueEx` internally; requires `KEY_READ` on source and `KEY_WRITE` on destination
-- [ ] `RegRenameKey(hKey, lpSubKeyName, lpNewKeyName)` -- rename a sub-key in place: create new key, copy all values and children (recursive `RegCopyTree`), delete old key tree; atomic under `hKey->lock` spinlock; return `ERROR_ALREADY_EXISTS` if `lpNewKeyName` already exists
+- [x] `RegCopyTree(hKeySrc, lpSubKey, hKeyDest)` -- recursive value+subkey copy via `reg_copy_subtree`; `KEY_READ` src + `KEY_WRITE` dst; rejects dst inside src subtree (self-amplify guard); `klog` count line
+- [x] `RegRenameKey(hKey, lpSubKeyName, lpNewKeyName)` -- in-place via `RegRenameKeyDirect` (unlink/relink, not copy+delete); `DELETE` right; `ERROR_ALREADY_EXISTS`(183) for a different sibling only, same-name no-op
 
-- [ ] `RegSaveKey(hKey, lpFile, lpSecurityAttributes)` -- serialise the sub-tree rooted at `hKey` to a standalone `.hive` file at `lpFile` (write a new hive header + all keys/values in the sub-tree; use the existing `hive_write_key` path); requires `SeBackupPrivilege` (→ XREF `TODO-15-security-reference-monitor.md §2`)
-- [ ] `RegRestoreKey(hKey, lpFile, dwFlags)` -- replace the sub-tree rooted at `hKey` with the contents of a `.hive` file; `REG_FORCE_RESTORE (0x8)` allows replacing in-use keys; requires `SeRestorePrivilege`
+- [/] `RegSaveKey(hKey, lpFile, lpSecurityAttributes)` -- API + fail-closed: handle+`KEY_READ` then `ERROR_PRIVILEGE_NOT_HELD`(1314); `hive_save` -> Deferred: `TODO-15-security-reference-monitor.md §8` (SePrivilegeCheck/SeBackup)
+- [/] `RegRestoreKey(hKey, lpFile, dwFlags)` -- API + fail-closed: handle+`KEY_WRITE` then `ERROR_PRIVILEGE_NOT_HELD`(1314); `REG_FORCE_RESTORE (0x8)` reserved; `hive_load` -> Deferred: `TODO-15-security-reference-monitor.md §8`
 
-- [ ] `RegCreateKeyEx` with `dwOptions = REG_OPTION_VOLATILE (0x1)`: set `REG_FLAG_VOLATILE` on the new `reg_key_t`; volatile keys are excluded from `hive_flush` and `hive_write_key`; they are destroyed on reboot
-- [ ] `RegFlushKey` on a volatile key returns `ERROR_SUCCESS` (no-op, not an error)
-- [ ] `RegQueryInfoKey` correctly reports `REG_OPTION_VOLATILE` in its `lpdwClass` output for volatile keys
+- [x] `RegCreateKeyEx(REG_OPTION_VOLATILE 0x1)` sets `REG_FLAG_VOLATILE` on new-create only; excluded from `hive_count` + `child_count` + `hive_serialize_key` recursion (all three, else reload corrupts); RAM-only, gone on reboot
+- [x] `RegFlushKey` on a volatile key returns `ERROR_SUCCESS` (no-op -- no hive backing)
+- [/] `RegQueryInfoKey` volatility -- N/A by Win32 design (`lpClass` is a class string, no query API exposes volatility); confirmed no mis-report, classes not stored -> Accepted: not-applicable (Codex design verdict)
 
-- [ ] Add an LRU cache of 32 recently closed `reg_key_t*` pointers; on `RegCloseKey`: if the key still exists in the tree, move its handle to the LRU cache instead of immediately freeing the pool slot
-- [ ] On `RegOpenKeyEx`: check the LRU cache first (O(1) name hash compare); if hit, promote the entry, bump refcount, return immediately -- avoids tree walk for hot keys like `HKLM\SYSTEM\Display` that are opened and closed in a tight loop
-- [ ] Cache entries are evicted on LRU overflow or when the underlying key is deleted; eviction releases the pool slot
-- [ ] NT raw-HKEY access enforcement: route `NtRenameKey`/`NtSaveKey`/`NtRestoreKey` through the §1 checked resolver with write / SeBackup / SeRestore masks so direct-pointer paths cannot bypass access checks -> XREF §1
+- [x] KCB LRU cache: 32 `(parent, name) -> child` bindings (`reg_kcb_cache`); `RegCloseKey` promotes the closing key; populated on every resolved `reg_walk_path` hop
+- [x] `reg_walk_path` checks `reg_kcb_lookup` before `reg_find_child`; hit validated live (name[0]!=0 + parent + name -- stale misses, never mis-resolves); `reg_kcb_get_stats` feeds the >90% test
+- [x] Cache evicted on LRU overflow + purged via `reg_kcb_purge_key` from `RegDeleteKeyDirect`/`reg_delete_subtree`/`RegUnloadHive`/`RegRenameKeyDirect`; lock-free (SMP sync owned by §14)
+- [x] NT raw-HKEY enforcement: `NtRenameKey`(DELETE)/`NtSaveKey`(`KEY_READ`)/`NtRestoreKey`(`KEY_WRITE`) via `reg_check_access`, save/restore return `STATUS_PRIVILEGE_NOT_HELD` -> XREF §1
 
-- [ ] Commit: `"kernel/registry: RegCopyTree, RegRenameKey, RegSaveKey/RestoreKey, volatile keys, KCB cache"`
+- [x] Commit: `"kernel/registry: RegCopyTree, RegRenameKey, RegSaveKey/RestoreKey, volatile keys, KCB cache"`
 
-**Test checkpoint:** `RegCopyTree(hSrc, NULL, hDst)` → all subkeys and values copied recursively. `RegRenameKey(hKey, "Old", "New")` → old key gone, new key has same values; rename to existing name → `ERROR_ALREADY_EXISTS`. `RegCreateKeyEx(REG_OPTION_VOLATILE)` → reboot → key absent. Delayed close: open/close/reopen same key 1000x → KCB cache hit rate > 90%. Serial log: `"[REG] CopyTree: %s -> %s (%u keys, %u values)"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `RegCopyTree(hSrc, NULL, hDst)` → all subkeys and values copied recursively; copy into own descendant → `ERROR_INVALID_PARAMETER`. `RegRenameKey(hKey, "Old", "New")` → old key gone, new key has same values; rename to existing name → `ERROR_ALREADY_EXISTS`; same-name rename → no-op success. `RegCreateKeyEx(REG_OPTION_VOLATILE)` → `RegFlushKey` no-op success (reboot-absence is a bare-metal serial check). `RegSaveKey`/`RegRestoreKey` with access → `ERROR_PRIVILEGE_NOT_HELD`; restore w/o `KEY_WRITE` → `ERROR_ACCESS_DENIED`. Delayed close: open/close/reopen same key 1000x → KCB cache hit rate > 90%. Serial log: `"CopyTree: %s -> %s (%u keys, %u values)"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 154 suites, 0 failures
+
+> **Notes:**
+> - Shipped `RegCopyTree`/`RegRenameKey`/`RegSaveKey`/`RegRestoreKey` + `REG_OPTION_VOLATILE` + a 32-entry KCB LRU cache in `registry.c`; 5 new `test_registry.c` suites (CopyTree, RenameKey, volatile, save/restore, KCB hit-rate).
+> - KCB caches `(parent, name) -> child`; monotonic-pool + tombstone make pointers stable, and a 3-part liveness check makes a stale entry miss (never mis-resolve); >90% hit rate asserted over a 1000x open/close loop.
+> - `RegSaveKey`/`RegRestoreKey` fail closed with `ERROR_PRIVILEGE_NOT_HELD`; the `hive_save`/`hive_load` bodies Deferred to `TODO-15 §2` SePrivilegeCheck (Codex design adoption in the commit message).
+> - Canonical doc: registry API surface in [`include/registry.h`](../../include/registry.h); §2 design decisions in `.claude/state/live-gotchas.md`.
+> - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck`/privilege eval is TODO-15 §2/§5.
 
 ---
 
@@ -641,6 +649,10 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 | 💎   | Key `LastWriteTime` (FILETIME)       | ✅ Every key                 | ❌ N/A                             | ✅ FILETIME read-time (§1)     |
 | 💎   | KEY_* access rights enforcement      | ✅ Full                      | ❌ N/A                             | 🔄 handle-mask enforced (§1); DACL SeAccessCheck T15 §5 |
 | 💎   | Registry symlinks (REG_LINK)         | ✅ CurrentControlSet, etc.   | ❌ N/A                             | ⚠️ Resolution done; API ⬜ §12 |
+| 💎   | `RegCopyTree` / `RegRenameKey`       | ✅ Full                      | ❌ N/A                             | ✅ Done -- recursive copy + in-place rename (§2) |
+| 💎   | Volatile keys (`REG_OPTION_VOLATILE`)| ✅ Full                      | ❌ N/A                             | ✅ Done -- RAM-only, no-persist (§2) |
+| 💎   | `RegSaveKey` / `RegRestoreKey`       | ✅ SeBackup/SeRestore        | ❌ N/A                             | 🔄 fail-closed; body T15 §2 (§2) |
+| ⭐   | KCB hot-key close-cache              | ✅ CmpCache pushlock         | ❌ N/A                             | ✅ Done -- 32-entry LRU (§2) |
 | 💎   | Change notifications                 | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | ⬜ §3                          |
 | 💎   | `REG_NOTIFY_THREAD_AGNOSTIC`         | ✅ Win8+                     | ❌ N/A                             | ⬜ §3                          |
 | 💎   | Full NT registry syscall surface     | ✅ 30+ syscalls              | ❌ No registry concept             | ⬜ §4                          |

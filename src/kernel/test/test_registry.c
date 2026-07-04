@@ -679,8 +679,292 @@ static void test_reg_check_access_basic(void)
                 "NULL handle is invalid");
 }
 
+/* Section 2: RegCopyTree copies values + sub-keys recursively. */
+static void test_registry_copytree(void)
+{
+    HKEY hsrc, hdst, hverify;
+    long rc;
+    uint32_t val = 77, out = 0, cb;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\CopySrc", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hsrc, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create CopySrc");
+    if (rc != ERROR_SUCCESS) return;
+    RegSetValueEx(hsrc, "SV", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    {
+        HKEY hsub;
+        if (RegCreateKeyEx(hsrc, "Child", 0, NULL, 0, KEY_ALL_ACCESS, NULL,
+                           &hsub, NULL) == ERROR_SUCCESS)
+            RegCloseKey(hsub);
+    }
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\CopyDst", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hdst, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create CopyDst");
+
+    rc = RegCopyTree(hsrc, NULL, hdst);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "RegCopyTree src->dst");
+
+    cb = sizeof(out);
+    rc = RegQueryValueEx(hdst, "SV", NULL, NULL, (uint8_t *)&out, &cb);
+    TEST_ASSERT(rc == ERROR_SUCCESS && out == 77, "copied value present");
+
+    rc = RegOpenKeyEx(hdst, "Child", 0, KEY_READ, &hverify);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "copied subkey present");
+    if (rc == ERROR_SUCCESS) RegCloseKey(hverify);
+
+    /* Copying into a descendant of the source is rejected (no self-amplify). */
+    {
+        HKEY hdesc;
+        if (RegOpenKeyEx(hsrc, "Child", 0, KEY_ALL_ACCESS, &hdesc) == ERROR_SUCCESS) {
+            rc = RegCopyTree(hsrc, NULL, hdesc);
+            TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "copy into own descendant rejected");
+            RegCloseKey(hdesc);
+        }
+    }
+
+    /* Copying a subtree into one of its ANCESTORS is rejected: a name collision
+     * on the ancestor->source path would otherwise alias a source node. */
+    {
+        HKEY hanc, hleaf;
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\Anc\\Mid\\Leaf", 0, NULL,
+                           0, KEY_ALL_ACCESS, NULL, &hleaf, NULL) == ERROR_SUCCESS) {
+            if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\Anc", 0, KEY_ALL_ACCESS,
+                             &hanc) == ERROR_SUCCESS) {
+                rc = RegCopyTree(hleaf, NULL, hanc);
+                TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "copy into own ancestor rejected");
+                RegCloseKey(hanc);
+            }
+            RegCloseKey(hleaf);
+        }
+        RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\Anc");
+    }
+
+    RegCloseKey(hsrc);
+    RegCloseKey(hdst);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\CopySrc");
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\CopyDst");
+}
+
+/* Section 2: RegRenameKey (in-place) + ERROR_ALREADY_EXISTS collision. */
+static void test_registry_rename(void)
+{
+    HKEY hk, hv;
+    long rc;
+    uint32_t val = 55, out = 0, cb;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\RenOld", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create RenOld");
+    if (rc != ERROR_SUCCESS) return;
+    RegSetValueEx(hk, "RV", 0, REG_DWORD, (const uint8_t *)&val, sizeof(val));
+    RegCloseKey(hk);
+
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "Software\\RenOld", "RenNew");
+    TEST_ASSERT(rc == ERROR_SUCCESS, "RegRenameKey RenOld->RenNew");
+
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\RenOld", 0, KEY_READ, &hv);
+    TEST_ASSERT(rc == ERROR_FILE_NOT_FOUND, "old name gone after rename");
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\RenNew", 0, KEY_READ, &hv);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "new name present after rename");
+    if (rc == ERROR_SUCCESS) {
+        cb = sizeof(out);
+        rc = RegQueryValueEx(hv, "RV", NULL, NULL, (uint8_t *)&out, &cb);
+        TEST_ASSERT(rc == ERROR_SUCCESS && out == 55, "renamed key retains value");
+        RegCloseKey(hv);
+    }
+
+    {
+        HKEY hd;
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\RenDup", 0, NULL, 0,
+                           KEY_ALL_ACCESS, NULL, &hd, NULL) == ERROR_SUCCESS)
+            RegCloseKey(hd);
+    }
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "Software\\RenNew", "RenDup");
+    TEST_ASSERT(rc == ERROR_ALREADY_EXISTS, "rename to existing name -> ALREADY_EXISTS");
+
+    /* Renaming a key to its own current name is a no-op success, not a collision. */
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "Software\\RenNew", "RenNew");
+    TEST_ASSERT(rc == ERROR_SUCCESS, "same-name rename is a no-op success");
+
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\RenNew");
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\RenDup");
+}
+
+/* Section 2: REG_OPTION_VOLATILE create + RegFlushKey no-op success. */
+static void test_registry_volatile(void)
+{
+    HKEY hvol, hperm, hre;
+    long rc;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\VolKey", 0, NULL,
+                        REG_OPTION_VOLATILE, KEY_ALL_ACCESS, NULL, &hvol, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create volatile key");
+    if (rc != ERROR_SUCCESS) return;
+
+    /* RegFlushKey on a volatile key is a no-op success (no hive backing). */
+    rc = RegFlushKey(hvol);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "RegFlushKey(volatile) -> success no-op");
+
+    /* A non-volatile sibling created without the flag is persistent; both are
+     * openable while the volatile one lives in RAM. */
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\PermKey", 0, NULL,
+                        REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hperm, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create persistent sibling");
+
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\VolKey", 0, KEY_READ, &hre);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "volatile key openable this boot");
+    if (rc == ERROR_SUCCESS) RegCloseKey(hre);
+
+    RegCloseKey(hvol);
+    RegCloseKey(hperm);
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\VolKey");
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\PermKey");
+    /* Reboot-absence of the volatile key is a bare-metal serial-log check
+     * (hive round-trip needs a mounted C: volume); excluded is verified in
+     * hive_count / hive_serialize_key by construction (REG_FLAG_VOLATILE). */
+}
+
+/* Section 2: RegSaveKey / RegRestoreKey fail closed and distinguish a missing
+ * privilege (ERROR_PRIVILEGE_NOT_HELD) from a handle-access failure. */
+static void test_registry_save_restore_failclosed(void)
+{
+    HKEY hfull, hnoacc;
+    long rc;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\SaveMe", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hfull, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create SaveMe");
+    if (rc != ERROR_SUCCESS) return;
+
+    /* Full-access handle: fails on the privilege gate, NOT on access. */
+    rc = RegSaveKey(hfull, "C:\\save.hive", NULL);
+    TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
+                "RegSaveKey w/ access but no SeBackup -> PRIVILEGE_NOT_HELD");
+    rc = RegRestoreKey(hfull, "C:\\save.hive", 0);
+    TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
+                "RegRestoreKey w/ access but no SeRestore -> PRIVILEGE_NOT_HELD");
+
+    /* Read-only handle: RegRestoreKey needs KEY_WRITE, so the access-mask
+     * branch fires first -> ACCESS_DENIED, distinct from the privilege path. */
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\SaveMe", 0, KEY_READ, &hnoacc);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "reopen SaveMe read-only");
+    if (rc == ERROR_SUCCESS) {
+        rc = RegRestoreKey(hnoacc, "C:\\save.hive", 0);
+        TEST_ASSERT(rc == ERROR_ACCESS_DENIED,
+                    "RegRestoreKey w/o KEY_WRITE -> ACCESS_DENIED (mask branch)");
+        RegCloseKey(hnoacc);
+    }
+
+    RegCloseKey(hfull);
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\SaveMe");
+}
+
+/* Section 2: KCB cache -- a close/reopen tight loop must resolve via the cache
+ * on > 90% of hops after warmup. */
+static void test_registry_kcb_hitrate(void)
+{
+    HKEY hbase, hk;
+    long rc;
+    uint64_t h0 = 0, m0 = 0, h1 = 0, m1 = 0, hits, misses;
+    int i;
+
+    /* Open a stable base handle, then repeatedly open/close a single-component
+     * child under it -- the hot HKLM\SYSTEM\Display-style pattern. */
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\KcbBase", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hbase, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create KcbBase");
+    if (rc != ERROR_SUCCESS) return;
+    if (RegCreateKeyEx(hbase, "Hot", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, NULL)
+        == ERROR_SUCCESS)
+        RegCloseKey(hk);
+
+    /* Warm the cache once so the first cold miss is not counted. */
+    if (RegOpenKeyEx(hbase, "Hot", 0, KEY_READ, &hk) == ERROR_SUCCESS)
+        RegCloseKey(hk);
+
+    reg_kcb_get_stats(&h0, &m0);
+    for (i = 0; i < 1000; i++) {
+        if (RegOpenKeyEx(hbase, "Hot", 0, KEY_READ, &hk) == ERROR_SUCCESS)
+            RegCloseKey(hk);
+    }
+    reg_kcb_get_stats(&h1, &m1);
+
+    hits   = h1 - h0;
+    misses = m1 - m0;
+    TEST_ASSERT(hits + misses >= 1000, "KCB counters advanced over the loop");
+    /* > 90% hit rate: hits*10 > (hits+misses)*9. */
+    TEST_ASSERT(hits * 10 > (hits + misses) * 9,
+                "KCB hot-key hit rate exceeds 90%");
+
+    RegCloseKey(hbase);
+    RegDeleteTree(HKEY_LOCAL_MACHINE, "Software\\KcbBase");
+}
+
+/* Section 2: RegRenameKey rejects a new name containing a path separator (a
+ * literal '\' would corrupt the namespace -- unreachable/undeletable by name). */
+static void test_registry_rename_separator(void)
+{
+    HKEY hk;
+    long rc;
+
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\SepRen", 0, NULL, 0,
+                        KEY_ALL_ACCESS, NULL, &hk, NULL);
+    TEST_ASSERT(rc == ERROR_SUCCESS, "create SepRen");
+    if (rc == ERROR_SUCCESS) RegCloseKey(hk);
+
+    rc = RegRenameKey(HKEY_LOCAL_MACHINE, "Software\\SepRen", "Bad\\Name");
+    TEST_ASSERT(rc == ERROR_INVALID_PARAMETER, "rename to name with '\\' rejected");
+
+    RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\SepRen");
+}
+
+/* Section 2: NtRenameKey reports a sibling-name collision as a collision
+ * (STATUS_OBJECT_NAME_COLLISION), not STATUS_ACCESS_DENIED. */
+static void test_nt_rename_key_collision(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    UNICODE_STRING new_name_us;
+    HANDLE ha = INVALID_HANDLE_VALUE, hb = INVALID_HANDLE_VALUE;
+    NTSTATUS status;
+    const char *new_name = "NtRenColB";
+
+    build_oa(&oa, &us, "\\Registry\\Machine\\Software\\NtRenColA");
+    status = ssdt_dispatch(SSDT_NtCreateKey, (uint64_t)(uintptr_t)&ha,
+                           (uint64_t)KEY_ALL_ACCESS, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateKey A");
+    if (!NT_SUCCESS(status)) return;
+
+    build_oa(&oa, &us, "\\Registry\\Machine\\Software\\NtRenColB");
+    status = ssdt_dispatch(SSDT_NtCreateKey, (uint64_t)(uintptr_t)&hb,
+                           (uint64_t)KEY_ALL_ACCESS, (uint64_t)(uintptr_t)&oa, 0, 0, 0);
+    TEST_ASSERT(NT_SUCCESS(status), "NtCreateKey B");
+
+    /* Rename A -> "NtRenColB": a different sibling already holds that name. */
+    new_name_us.Buffer = (uint16_t *)(uintptr_t)new_name;
+    new_name_us.Length = 9;
+    new_name_us.MaximumLength = 10;
+    status = ssdt_dispatch(SSDT_NtRenameKey, (uint64_t)(uintptr_t)ha,
+                           (uint64_t)(uintptr_t)&new_name_us, 0, 0, 0, 0);
+    TEST_ASSERT(status == STATUS_OBJECT_NAME_COLLISION,
+                "NtRenameKey sibling collision -> OBJECT_NAME_COLLISION");
+
+    if (ha != INVALID_HANDLE_VALUE)
+        ssdt_dispatch(SSDT_NtDeleteKey, (uint64_t)(uintptr_t)ha, 0, 0, 0, 0, 0);
+    if (hb != INVALID_HANDLE_VALUE)
+        ssdt_dispatch(SSDT_NtDeleteKey, (uint64_t)(uintptr_t)hb, 0, 0, 0, 0, 0);
+}
+
 void test_register_registry(void)
 {
+    test_suite_register_cat("Registry: CopyTree", test_registry_copytree, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: RenameKey", test_registry_rename, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: RenameKey separator", test_registry_rename_separator, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: NtRenameKey collision", test_nt_rename_key_collision, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: volatile keys", test_registry_volatile, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: save/restore fail-closed", test_registry_save_restore_failclosed, TEST_CAT_ABI);
+    test_suite_register_cat("Registry: KCB hit rate", test_registry_kcb_hitrate, TEST_CAT_ABI);
     test_suite_register_cat("Registry: access enforcement", test_registry_access_enforcement, TEST_CAT_ABI);
     test_suite_register_cat("Registry: API limits", test_registry_api_limits, TEST_CAT_ABI);
     test_suite_register_cat("Registry: reg_check_access", test_reg_check_access_basic, TEST_CAT_ABI);
