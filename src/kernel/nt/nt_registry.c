@@ -539,23 +539,18 @@ static NTSTATUS NtEnumerateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_SUCCESS;
     }
     case KeyFullInformation: {
-        /* Open the child key temporarily to query its metadata */
-        HKEY child_hkey;
-        long child_rc = RegOpenKeyEx(hkey, name, 0, KEY_ALL_ACCESS, &child_hkey);
-        if (child_rc != ERROR_SUCCESS)
-            return reg_win32_to_nt(child_rc);
+        /* Read the child's metadata directly under the parent's enumeration
+         * right -- an access-capped re-open of the child would spuriously fail
+         * for an enumeration-only handle and would convert LastWriteTime twice. */
         {
             uint32_t sub_keys = 0, child_values = 0;
             uint32_t max_subkey_len = 0, max_value_name_len = 0, max_value_data_len = 0;
             uint64_t child_last_write = 0;
             uint32_t needed = sizeof(KEY_FULL_INFORMATION);
-            long q_rc = RegQueryInfoKey(child_hkey, (char *)0, (uint32_t *)0, (uint32_t *)0,
-                            &sub_keys, &max_subkey_len, (uint32_t *)0,
-                            &child_values, &max_value_name_len, &max_value_data_len,
-                            (uint32_t *)0, &child_last_write);
-            RegCloseKey(child_hkey);
-            /* Surface a clear error rather than STATUS_SUCCESS with zeroed
-             * metadata if the (access-capped) child query was denied. */
+            long q_rc = reg_query_child_full_info(hkey, name,
+                            &sub_keys, &child_values, &max_subkey_len,
+                            &max_value_name_len, &max_value_data_len,
+                            &child_last_write);
             if (q_rc != ERROR_SUCCESS)
                 return reg_win32_to_nt(q_rc);
             if (result_len) *result_len = needed;

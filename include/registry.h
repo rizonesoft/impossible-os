@@ -67,6 +67,14 @@
 #define DELETE             0x00010000   /* DELETE standard right (RegDeleteKey) */
 #define MAXIMUM_ALLOWED    0x02000000   /* samDesired: grant the maximum the DACL permits */
 #define REG_MAX_KEY_DEPTH  512          /* Max key path depth (backslash-separated levels) */
+/* GENERIC_* rights (mapped onto KEY_* by reg_effective_access); guarded so a
+ * TU that also pulls acl.h / nt_types.h does not double-define. */
+#ifndef GENERIC_READ
+#define GENERIC_READ       0x80000000
+#define GENERIC_WRITE      0x40000000
+#define GENERIC_EXECUTE    0x20000000
+#define GENERIC_ALL        0x10000000
+#endif
 
 /* ---- Security / key flags ---- */
 
@@ -96,9 +104,12 @@ typedef struct reg_key {
     uint32_t           child_count;  /* Number of child keys         */
     reg_value_t       *values;       /* Linked list of values        */
     uint32_t           value_count;  /* Number of values             */
-    uint64_t           last_write_time; /* monotonic uptime_ns() at last mutation; converted to FILETIME at query time */
+    /* monotonic uptime_ns() at last mutation; converted to FILETIME at query time */
+    uint64_t           last_write_time;
     uint32_t           flags;        /* REG_FLAG_* bits              */
-    const void        *security_descriptor; /* self-relative SD blob; NOT owned (points at the static SeCreateDefaultSD default) -- never freed */
+    /* Self-relative SD blob; NOT owned (points at the static SeCreateDefaultSD
+     * default) -- never freed. */
+    const void        *security_descriptor;
 } reg_key_t;
 
 /* ---- HKEY handle ---- */
@@ -315,6 +326,15 @@ long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
 
 /* Delete a named value from hKey. */
 long RegDeleteValue(HKEY hKey, const char *lpValueName);
+
+/* Read an enumerated child key's full metadata under the parent's enumeration
+ * right, without opening a capped handle to the child.  Used by
+ * NtEnumerateKey(KeyFullInformation).  LastWriteTime is returned as FILETIME.
+ * Requires KEY_ENUMERATE_SUB_KEYS on hKeyParent.  Any out pointer may be NULL. */
+long reg_query_child_full_info(HKEY hKeyParent, const char *child_name,
+                               uint32_t *sub_keys, uint32_t *values,
+                               uint32_t *max_subkey_len, uint32_t *max_val_name,
+                               uint32_t *max_val_data, uint64_t *last_write_ft);
 
 /* Check that an open HKEY was granted at least `required_mask` (KEY_* bits).
  * Predefined root sentinels have implicit full access.  Returns ERROR_SUCCESS

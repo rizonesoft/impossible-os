@@ -122,13 +122,17 @@ title: "TODO-14 -- Registry System Completion"
 
 **Test checkpoint:** `RegOpenKeyEx(HKLM\SOFTWARE, KEY_SET_VALUE)` from a Medium-IL process against an Admins-only DACL → `ERROR_ACCESS_DENIED`; as SYSTEM → `ERROR_SUCCESS`. `RegCreateKeyEx` with 256-char name → `ERROR_INVALID_PARAMETER`; 255-char → succeeds. `RegQueryInfoKey.ftLastWriteTime` returns non-zero FILETIME after `RegSetValueEx`. `RegFlushKey` on volatile key → `ERROR_SUCCESS` (no-op). Serial log: `"[REG] Access denied: %s mask=0x%x required=0x%x"`. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1072 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1074 suites, 0 failures
 > **Notes:**
 > - Shipped: `reg_check_access` KEY_* chokepoint on all public `RegXxx` + NT `DesiredAccess` propagation; `reg_last_write_filetime` read-time FILETIME; per-hive `RegFlushKey`; `reg_validate_path_limits`; default DACL via `SeCreateDefaultSD`.
 > - Integrates: enforcement gates every public entry plus the `NtDeleteKey`/`NtFlushKey` direct-pointer paths; SeAccessCheck stubbed always-grant with an anti-escalation source-grant cap until TODO-15 §5 lands the real DACL check.
 > - Downstream: the §4 per-key `NtFlushKey` scope item is satisfied here; §2/§4 NT rename/save/restore/unload mask enforcement filed as concrete items with reciprocal XREF §1.
 > - Scope boundary: value name/data size expansion is §15; SMP locking is §14; real DACL `SeAccessCheck` is TODO-15 §5.
+> **Verified:** 2026-07-04 | commit `45c1f862` | 17/19 items | build OK | tests 1074/1074 PASS + smoke PASS 3.0s
+> **Accepted:** [H] NT direct-pointer handlers `NtRenameKey`/`NtSaveKey`/`NtRestoreKey` bypass `reg_check_access` -> XREF: 02-kernel-core/TODO-14 §2 (item: "NT raw-HKEY access enforcement: route `NtRenameKey`/`NtSaveKey`/`NtRestoreKey`" at the §2 checklist)
+> **Accepted:** [H] NT `NtUnloadKey`/`NtLoadKey` bypass `reg_check_access` -> XREF: 02-kernel-core/TODO-14 §4 (item: "NT raw-HKEY access enforcement: route `NtUnloadKey`/`NtLoadKey`/`NtUnloadKey2`" at the §4 checklist)
 > **Deferred:** [M] value-name 16383 + value-data 1 MiB size expansion (heap-backed migration + 5 stack-buffer conversion, bare-metal stack hazard) -> XREF: 02-kernel-core/TODO-14 §15 (item: "Migrate `reg_value_t.name`" at the §15 checklist)
+> **Quality reviewed:** 2026-07-04 | Codex 10x (design, adversarial, consistency, perf, re-adversarial) | 6H+5M fixed, 2H accepted-XREF, 1M accepted | scope: kernel-code-quality
 
 ---
 

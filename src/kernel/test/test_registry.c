@@ -621,6 +621,22 @@ static void test_registry_access_enforcement(void)
         }
     }
 
+    /* GENERIC_READ maps to KEY_READ: the handle can query but not set. */
+    {
+        HKEY hk4;
+        uint32_t d = 9;
+        rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\AccessTest", 0,
+                          GENERIC_READ, &hk4);
+        if (rc == ERROR_SUCCESS) {
+            uint32_t out = 0, cb = sizeof(out);
+            rc = RegQueryValueEx(hk4, "V", NULL, NULL, (uint8_t *)&out, &cb);
+            TEST_ASSERT(rc == ERROR_SUCCESS, "GENERIC_READ handle can query");
+            rc = RegSetValueEx(hk4, "V", 0, REG_DWORD, (const uint8_t *)&d, sizeof(d));
+            TEST_ASSERT(rc == ERROR_ACCESS_DENIED, "GENERIC_READ handle cannot set");
+            RegCloseKey(hk4);
+        }
+    }
+
     RegDeleteKey(HKEY_LOCAL_MACHINE, "Software\\AccessTest");
 }
 

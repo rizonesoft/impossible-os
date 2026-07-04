@@ -831,9 +831,22 @@ uint64_t reg_last_write_filetime(uint64_t stored_uptime_ns)
  * reg_check_access enforces per operation. */
 static uint32_t reg_effective_access(uint32_t sam_desired)
 {
-    if (sam_desired == 0 || (sam_desired & MAXIMUM_ALLOWED))
+    uint32_t out = sam_desired;
+
+    /* Map GENERIC_* rights onto the registry-key GENERIC_MAPPING so a caller
+     * requesting GENERIC_READ/WRITE/ALL gets usable specific KEY_* bits rather
+     * than a zero-rights handle (KEY_EXECUTE == KEY_READ). */
+    if (sam_desired & GENERIC_READ)    out |= KEY_READ;
+    if (sam_desired & GENERIC_WRITE)   out |= KEY_WRITE;
+    if (sam_desired & GENERIC_EXECUTE) out |= KEY_READ;
+    if (sam_desired & GENERIC_ALL)     out |= KEY_ALL_ACCESS;
+    out &= ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
+
+    /* samDesired 0 (legacy "RegCreateKey" full request) and MAXIMUM_ALLOWED
+     * both map to full access while SeAccessCheck is stubbed. */
+    if (out == 0 || (sam_desired & MAXIMUM_ALLOWED))
         return KEY_ALL_ACCESS;
-    return sam_desired;
+    return out;
 }
 
 /* Anti-escalation cap: until SeAccessCheck evaluates the key DACL at open time,
@@ -871,6 +884,49 @@ static long reg_validate_path_limits(const char *path)
     if (depth > REG_MAX_KEY_DEPTH)
         return ERROR_INVALID_PARAMETER;
     return ERROR_SUCCESS;
+}
+
+/* Count the trailing path components under `base` that do not yet exist (and so
+ * would be newly created).  RegCreateKeyEx uses this to fail with
+ * ERROR_OUTOFMEMORY BEFORE linking anything when the key pool cannot hold the
+ * whole path, so a mid-walk allocation failure never leaves a partial path. */
+static uint32_t reg_count_missing_components(reg_key_t *base, const char *path)
+{
+    reg_key_t *cur = base;
+    char component[REG_MAX_KEY_NAME + 1];
+    uint32_t ci, missing = 0;
+    int creating = 0;
+    const char *p;
+
+    if (!base || !path)
+        return 0;
+
+    p = path;
+    if (*p == '\\') p++;
+
+    while (1) {
+        ci = 0;
+        while (*p && *p != '\\' && ci < REG_MAX_KEY_NAME)
+            component[ci++] = *p++;
+        component[ci] = '\0';
+        if (*p && *p != '\\')     /* over-long component (validated elsewhere) */
+            return missing;
+        if (ci == 0)
+            break;
+
+        if (creating) {
+            missing++;            /* everything past the first miss is new */
+        } else {
+            reg_key_t *child = reg_find_child(cur, component);
+            if (child)
+                cur = child;
+            else { creating = 1; missing++; }
+        }
+
+        while (*p == '\\') p++;
+        if (!*p) break;
+    }
+    return missing;
 }
 
 /* ---- RegOpenKeyEx ---- */
@@ -960,6 +1016,12 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
         long acc = reg_check_access(hKey, KEY_CREATE_SUB_KEY);
         if (acc != ERROR_SUCCESS)
             return acc;
+
+        /* Fail before linking anything if the key pool cannot hold the whole
+         * path -- a mid-walk allocation failure must not leave a partial path. */
+        if (reg_count_missing_components(base, lpSubKey) >
+            (REG_KEY_POOL_SIZE - reg_key_pool_next))
+            return ERROR_OUTOFMEMORY;
     }
 
     /* Atomic create-or-fail: reserve the handle slot (key = NULL) BEFORE
@@ -1794,6 +1856,65 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
         if (lpcbMaxValueLen)     *lpcbMaxValueLen = max_data;
     }
 
+    return ERROR_SUCCESS;
+}
+
+/* Read an enumerated child key's full metadata directly under the PARENT's
+ * enumeration right (KEY_ENUMERATE_SUB_KEYS), without opening a fresh handle to
+ * the child.  NtEnumerateKey(KeyFullInformation) uses this so an enumeration-
+ * only handle can report child counts (an access-capped re-open of the child
+ * would spuriously fail the KEY_QUERY_VALUE check).  LastWriteTime is returned
+ * as a FILETIME.  Any output pointer may be NULL. */
+long reg_query_child_full_info(HKEY hKeyParent, const char *child_name,
+                               uint32_t *sub_keys, uint32_t *values,
+                               uint32_t *max_subkey_len, uint32_t *max_val_name,
+                               uint32_t *max_val_data, uint64_t *last_write_ft)
+{
+    reg_key_t *parent, *child;
+    reg_value_t *v;
+    uint32_t b;
+    long acc;
+
+    parent = reg_resolve_key(hKeyParent);
+    if (!parent)
+        return ERROR_INVALID_HANDLE;
+
+    acc = reg_check_access(hKeyParent, KEY_ENUMERATE_SUB_KEYS);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
+    if (!child_name)
+        return ERROR_INVALID_PARAMETER;
+    child = reg_find_child(parent, child_name);
+    if (!child)
+        return ERROR_FILE_NOT_FOUND;
+
+    if (sub_keys)      *sub_keys = child->child_count;
+    if (values)        *values = child->value_count;
+    if (last_write_ft) *last_write_ft = reg_last_write_filetime(child->last_write_time);
+
+    if (max_subkey_len) {
+        uint32_t m = 0;
+        for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+            reg_key_t *c = child->children[b];
+            while (c) {
+                uint32_t l = reg_strlen(c->name);
+                if (l > m) m = l;
+                c = c->hash_next;
+            }
+        }
+        *max_subkey_len = m;
+    }
+    if (max_val_name || max_val_data) {
+        uint32_t mn = 0, md = 0;
+        for (v = child->values; v; v = v->next) {
+            uint32_t l = reg_strlen(v->name);
+            if (l > mn) mn = l;
+            if (v->data_size > md) md = v->data_size;
+        }
+        if (max_val_name) *max_val_name = mn;
+        if (max_val_data) *max_val_data = md;
+    }
     return ERROR_SUCCESS;
 }
 
