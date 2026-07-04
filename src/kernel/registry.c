@@ -1399,25 +1399,19 @@ static reg_value_t *reg_find_value_in_key(reg_key_t *key, const char *name)
 
 /* ---- RegSetValueEx ---- */
 
-long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
-                   uint32_t dwType, const uint8_t *lpData, uint32_t cbData)
+/* Internal value writer that operates on an already-resolved reg_key_t*, with
+ * no HKEY resolution or access check.  The hive restore path holds the real key
+ * pointer, not a handle -- casting reg_key_t* to HKEY would misread the key's
+ * name bytes as a reg_handle_t and (post-access-enforcement) fail the check. */
+static long reg_set_value_direct(reg_key_t *key, const char *lpValueName,
+                                 uint32_t dwType, const uint8_t *lpData,
+                                 uint32_t cbData)
 {
-    reg_key_t *key;
     reg_value_t *v;
     const char *vname;
 
-    (void)Reserved;
-
-    key = reg_resolve_key(hKey);
     if (!key)
         return ERROR_INVALID_HANDLE;
-
-    {
-        long acc = reg_check_access(hKey, KEY_SET_VALUE);
-        if (acc != ERROR_SUCCESS)
-            return acc;
-    }
-
     if (cbData > REG_MAX_VALUE_SIZE)
         return ERROR_INVALID_PARAMETER;
 
@@ -1430,25 +1424,38 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
         v = reg_alloc_value(vname, dwType);
         if (!v)
             return ERROR_OUTOFMEMORY;
-        /* Add to key's value list */
         v->next = key->values;
         key->values = v;
         key->value_count++;
     }
 
-    /* Update value */
     v->type = dwType;
     v->data_size = cbData;
     if (lpData && cbData > 0)
         reg_memcpy(v->data, lpData, cbData);
 
-    /* Timestamp */
     key->last_write_time = reg_get_uptime_ns();
-
-    /* Mark hive dirty for periodic flush */
     registry_mark_dirty(key);
-
     return ERROR_SUCCESS;
+}
+
+long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
+                   uint32_t dwType, const uint8_t *lpData, uint32_t cbData)
+{
+    reg_key_t *key;
+    long acc;
+
+    (void)Reserved;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    acc = reg_check_access(hKey, KEY_SET_VALUE);
+    if (acc != ERROR_SUCCESS)
+        return acc;
+
+    return reg_set_value_direct(key, lpValueName, dwType, lpData, cbData);
 }
 
 /* ---- RegQueryValueEx ---- */
@@ -2734,13 +2741,11 @@ static int hive_deserialize_key(hive_buf_t *buf, reg_key_t *parent,
         if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
             uint8_t vdata[REG_MAX_VALUE_SIZE];
             if (hive_buf_read_bytes(buf, vdata, vdata_size) < 0) return -1;
-            RegSetValueEx((HKEY)(uintptr_t)key, vname, 0, vtype,
-                          vdata, vdata_size);
-            (*loaded_values)++;
+            if (reg_set_value_direct(key, vname, vtype, vdata, vdata_size) == ERROR_SUCCESS)
+                (*loaded_values)++;
         } else if (vdata_size == 0) {
-            RegSetValueEx((HKEY)(uintptr_t)key, vname, 0, vtype,
-                          (const uint8_t *)0, 0);
-            (*loaded_values)++;
+            if (reg_set_value_direct(key, vname, vtype, (const uint8_t *)0, 0) == ERROR_SUCCESS)
+                (*loaded_values)++;
         } else {
             /* Skip oversized values */
             buf->pos += vdata_size;
@@ -2878,13 +2883,11 @@ int hive_load(const char *filepath, reg_key_t *root)
             if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
                 uint8_t vdata[REG_MAX_VALUE_SIZE];
                 if (hive_buf_read_bytes(&deser, vdata, vdata_size) < 0) goto fail;
-                RegSetValueEx((HKEY)(uintptr_t)root, vname, 0, vtype,
-                              vdata, vdata_size);
-                loaded_values++;
+                if (reg_set_value_direct(root, vname, vtype, vdata, vdata_size) == ERROR_SUCCESS)
+                    loaded_values++;
             } else if (vdata_size == 0) {
-                RegSetValueEx((HKEY)(uintptr_t)root, vname, 0, vtype,
-                              (const uint8_t *)0, 0);
-                loaded_values++;
+                if (reg_set_value_direct(root, vname, vtype, (const uint8_t *)0, 0) == ERROR_SUCCESS)
+                    loaded_values++;
             } else {
                 deser.pos += vdata_size;
             }
