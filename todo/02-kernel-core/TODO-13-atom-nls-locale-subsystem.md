@@ -47,7 +47,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 6 | Locale and LCID metadata | §4 | [/] |
 | 💎 | 7 | Sort keys and normalization policy | §2, §6 | [x] |
 | 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [/] |
-| ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [ ] |
+| ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [/] |
 | 💎 | 10 | Tests and compatibility corpus | §1..§9 | [ ] |
 
 ---
@@ -147,8 +147,6 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nls.h`](../../include/kernel/nt/nls.h).
 > - **Scope boundary:** S4 owns format + loader + validation + fallback + accessors. GetStringTypeW/GetNLSVersionEx are S8; fold/collation payload S7; transcoding S5; consumer retrofit S9. CRC32 detects accidental corruption only.
 > **Verified:** 2026-07-04 | commit `3487af07` | 6/6 items | build OK | nls 53/53 PASS | smoke PASS
-> **Accepted:** [H] disk-sourced U+0100+ fold must not back unauthenticated security name-compare -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Disk-fold trust decision" at line 215)
-> **Accepted:** [M] ASCII fold routes through the out-of-line `nls_upcase_char` wrapper; hot name loops need an inline fast path -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §9 (item: "Name-compare/hash loops must use an inline ASCII fast path" at line 216)
 > **Quality reviewed:** 2026-07-04 | Codex 10x (design, adversarial, re-adversarial, test-coverage, consistency, perf) | 6M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -277,18 +275,27 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 9. Retrofit Kernel Consumers
 
-- [ ] Object Manager namespace lookup uses canonical Unicode compare.
-- [ ] Disk-fold trust decision: keep OB/registry security compare on compiled `rtl_upcase_char`; do not fold U+0100+ via disk-sourced `nls_upcase_char` unless the table is authenticated (§4 trust = CRC + volume ACL). (Codex §4)
-- [ ] Name-compare/hash loops must use an inline ASCII fast path (no out-of-line `nls_upcase_char` wrapper per code unit; no LTO); verify generated asm for the OB/registry/atom retrofit. (Codex §4 perf)
-- [ ] Registry key/value lookup uses canonical Unicode compare and preserves original casing.
-- [ ] Environment variables use Windows-compatible case-insensitive matching.
-- [ ] PE loader import lookup preserves ASCII fast path but supports UTF-16 path inputs.
-- [ ] File APIs pass code-page conversion requests to filesystem/user-mode boundary without lossy truncation.
+- [x] OB namespace lookup is case-insensitive via the compiled fold: `dir_name_eq` (`ob_ns.c`) folds each name byte through `rtl_upcase_char_inline`, so `\BaseNamedObjects\Foo` and `...\foo` resolve to the same object.
+- [x] Disk-fold trust decision (DECIDED): OB/registry/atom SECURITY compares stay on the compiled `rtl_upcase_char`/`_inline`, NEVER the disk-backed `nls_upcase_char`; the `nls.h` contract records it. (Codex §4)
+- [x] Hot name-compare/hash loops fold through inline `rtl_upcase_char_inline` (ASCII fast path; non-ASCII delegates to the one authority): OB `dir_name_eq`, registry `reg_stricmp`/`reg_fnv1a`, atom `atom_name_eq`/`atom_name_hash`. (Codex §4 perf)
+- [x] Registry key/value lookup folds through the canonical `rtl_upcase_char_inline` (`reg_stricmp` + `reg_fnv1a`) and preserves original casing (stored name unchanged; only compare/hash fold).
+- [x] Environment-variable matching (`reg_lookup_env_var` over HKLM\System\Environment) is case-insensitive via the same registry `reg_stricmp` canonical fold.
+- [/] PE import lookup keeps its ASCII fast path (PE/COFF names are 8-bit ASCII, correct as-is). UTF-16 module-path input DEFERRED: no `LoadLibraryW`/wide-`CreateProcess` caller exists yet. (parity §9)
+- [/] File-name APIs fail closed on non-ASCII (`NtDeleteFile`/`NtQueryAttributesFile` return `STATUS_OBJECT_NAME_INVALID`, no lossy `&0x7F` alias). Full UTF-16 code-page conversion at the OA->VFS boundary DEFERRED. (Codex §9)
 - [ ] Commit: `"kernel: nls -- retrofit OB/registry/env/PE/file consumers onto canonical compare"`
 
 > **Scope boundary (gap-audit):** The USER window-message atom pool (`RegisterWindowMessage`/`RegisterClass`/`RegisterClipboardFormat`, distinct from the global object-atom table) is owned by the win32k/desktop compositor TODO -> XREF that consumer, not §3. The console-vs-ANSI code-page split (`CHCP`) is owned by the shell TODO. IXFS filesystem-layer opt-in casefold/normalize (ext4 `EXT4_CASEFOLD_FL` analog, disk-persisted charset) is owned by the filesystem/IXFS TODO. OUT OF SCOPE for this kernel NLS TODO: IDN/punycode (`IdnToAscii`/`IdnToUnicode` -- user-mode library on Windows, no NT syscall) and non-Gregorian calendar metadata (`LOCALE_ICALENDARTYPE`); revisit only if a kernel consumer proves need.
 
 **Test checkpoint:** Creating `\BaseNamedObjects\Foo` then opening `\BaseNamedObjects\foo` resolves the same object via the canonical compare. A registry key stored as "Software" opens case-insensitively but reports its original casing. `PATH` and `Path` resolve to the same environment variable.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) + `run-ob-tests.bat` (SUITE=ob) + `run-abi-tests.bat` (SUITE=abi) | 0 failures
+
+> **Notes:**
+> - **What shipped:** `rtl_upcase_char_inline` (`nt_rtlstr.h` inline ASCII fast path) + retrofitted consumers OB `dir_name_eq`, registry `reg_stricmp`/`reg_fnv1a`, atom `atom_name_*`, plus file-name fail-closed on non-ASCII (`nt_file.c`).
+> - **How it integrates:** every security name compare/hash folds through the COMPILED authority (ASCII inline, Latin-1 + BMP delegated); the disk-backed `nls_upcase_char` is never on a security path (trust boundary recorded in `nls.h`).
+> - **Downstream effects:** closes the §4 accepted disk-fold-trust [H] + inline-fast-path [M]; OB/registry are now Latin-1 case-insensitive, not just ASCII.
+> - **Canonical doc:** [`include/kernel/nt/nt_rtlstr.h`](../../include/kernel/nt/nt_rtlstr.h).
+> - **Scope boundary:** §9 folds the existing byte-name consumers; the systemic UTF-16 `OBJECT_ATTRIBUTES` ABI (real wide file names, `LoadLibraryW` wide paths) is deferred to its future owner.
 
 ---
 
@@ -317,7 +324,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
 | 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
-| 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
+| 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive via compiled fold (§9); UTF-16 file ABI deferred |
 | ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); C1-C3 + full fold §4/§8 |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |

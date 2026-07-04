@@ -63,7 +63,7 @@ static DEFINE_SPINLOCK(s_locale_lock);
 static int atom_name_eq(const uint16_t *a, const uint16_t *b, uint32_t len)
 {
     for (uint32_t i = 0; i < len; i++) {
-        if (rtl_upcase_char(a[i]) != rtl_upcase_char(b[i]))
+        if (rtl_upcase_char_inline(a[i]) != rtl_upcase_char_inline(b[i]))
             return 0;
     }
     return 1;
@@ -76,7 +76,7 @@ static uint32_t atom_name_hash(const uint16_t *name, uint32_t len)
 {
     uint32_t h = 2166136261u;            /* FNV-1a offset basis */
     for (uint32_t i = 0; i < len; i++) {
-        h ^= (uint32_t)rtl_upcase_char(name[i]);
+        h ^= (uint32_t)rtl_upcase_char_inline(name[i]);
         h *= 16777619u;                  /* FNV-1a prime */
     }
     return h;

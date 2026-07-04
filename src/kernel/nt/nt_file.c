@@ -386,12 +386,27 @@ static NTSTATUS NtDeleteFile_handler(
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
         return STATUS_INVALID_PARAMETER;
 
+    /* Malformed counted string: an odd byte Length is not whole WCHARs, and a
+     * Length past the declared MaximumLength would read WCHARs outside the
+     * buffer the caller validly provided. */
+    if ((oa->ObjectName->Length & 1u) ||
+        oa->ObjectName->Length > oa->ObjectName->MaximumLength)
+        return STATUS_OBJECT_NAME_INVALID;
     chars = oa->ObjectName->Length / 2;
     /* Reject an over-long name rather than truncating it -- a silently
      * shortened path resolves to a DIFFERENT object than the caller named. */
     if (chars > 259) return STATUS_NAME_TOO_LONG;
-    for (i = 0; i < chars; i++)
-        path[i] = (char)(oa->ObjectName->Buffer[i] & 0x7F);
+    for (i = 0; i < chars; i++) {
+        uint16_t wc = oa->ObjectName->Buffer[i];
+        /* Fail closed on an embedded NUL (would truncate the counted name into a
+         * SHORTER C string -- "victim\0suffix" -> "victim") and on any non-ASCII
+         * code unit (a lossy fold, e.g. U+00E9 & 0x7F = 'i', would alias to an
+         * unrelated path). Both would target the WRONG object. Real UTF-16/
+         * code-page conversion at the boundary is deferred. */
+        if (wc == 0u || wc > 0x7Fu)
+            return STATUS_OBJECT_NAME_INVALID;
+        path[i] = (char)wc;
+    }
     path[chars] = '\0';
 
     ret = vfs_unlink(path);
@@ -645,12 +660,27 @@ static NTSTATUS NtQueryAttributesFile_handler(
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer || !bi)
         return STATUS_INVALID_PARAMETER;
 
+    /* Malformed counted string: an odd byte Length is not whole WCHARs, and a
+     * Length past the declared MaximumLength would read WCHARs outside the
+     * buffer the caller validly provided. */
+    if ((oa->ObjectName->Length & 1u) ||
+        oa->ObjectName->Length > oa->ObjectName->MaximumLength)
+        return STATUS_OBJECT_NAME_INVALID;
     chars = oa->ObjectName->Length / 2;
     /* Reject an over-long name rather than truncating it -- a silently
      * shortened path resolves to a DIFFERENT object than the caller named. */
     if (chars > 259) return STATUS_NAME_TOO_LONG;
-    for (i = 0; i < chars; i++)
-        path[i] = (char)(oa->ObjectName->Buffer[i] & 0x7F);
+    for (i = 0; i < chars; i++) {
+        uint16_t wc = oa->ObjectName->Buffer[i];
+        /* Fail closed on an embedded NUL (would truncate the counted name into a
+         * SHORTER C string -- "victim\0suffix" -> "victim") and on any non-ASCII
+         * code unit (a lossy fold, e.g. U+00E9 & 0x7F = 'i', would alias to an
+         * unrelated path). Both would target the WRONG object. Real UTF-16/
+         * code-page conversion at the boundary is deferred. */
+        if (wc == 0u || wc > 0x7Fu)
+            return STATUS_OBJECT_NAME_INVALID;
+        path[i] = (char)wc;
+    }
     path[chars] = '\0';
 
     ret = vfs_stat(path, &st);

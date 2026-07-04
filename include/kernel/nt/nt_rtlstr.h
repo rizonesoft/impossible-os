@@ -46,6 +46,28 @@
 uint16_t rtl_upcase_char(uint16_t c);
 
 /*
+ * rtl_upcase_char_inline -- inline ASCII fast path for HOT name-compare/hash
+ * loops (OB directory walk, registry lookup, atom table -- all fold per code
+ * unit under a spinlock, so an out-of-line call per char is a real cost; this
+ * build has no LTO to inline it away). ASCII (< 0x80) folds inline with no
+ * call; every non-ASCII code unit delegates to the out-of-line rtl_upcase_char
+ * so there is ONE fold table (no divergence). Use this in loops; use
+ * rtl_upcase_char where a function pointer or a single call is needed.
+ * SECURITY: this is the COMPILED invariant fold; security name compares (OB /
+ * registry / atom) MUST route here or through rtl_upcase_char, NEVER through
+ * the disk-backed nls_upcase_char (a tampered NLS table must not be able to
+ * collapse two distinct secured names).
+ */
+static inline uint16_t rtl_upcase_char_inline(uint16_t c)
+{
+    if (c >= 0x61u && c <= 0x7Au)   /* ASCII a-z: the hot case */
+        return (uint16_t)(c - 0x20u);
+    if (c < 0x80u)                  /* any other ASCII never folds */
+        return c;
+    return rtl_upcase_char(c);      /* non-ASCII: the full compiled authority */
+}
+
+/*
  * RtlUpcaseUnicodeString -- write the invariant uppercase of src into the
  * caller-provided dst buffer. dst->Buffer / dst->MaximumLength describe the
  * destination; dst->Length is set to the byte count written on success (upcase

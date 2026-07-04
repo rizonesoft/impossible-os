@@ -8,6 +8,7 @@
 #include "kernel/ob/ob_ns.h"
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
+#include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char_inline -- canonical compiled fold */
 
 extern void *memset(void *s, int c, size_t n);
 extern size_t strlen(const char *s);
@@ -21,13 +22,31 @@ void *ObpRootDirectory = NULL;
 
 /* --- Helper: find entry by name in a directory --------------------------- */
 
+/* Case-insensitive object-name compare via the compiled invariant fold (the
+ * same authority the atom table + registry use). The NT object namespace is
+ * case-insensitive by default, so "\BaseNamedObjects\Foo" and "...\foo" resolve
+ * to the same object. Names are byte strings today; each byte is folded as its
+ * invariant upcase. Security compares route through the COMPILED fold, never the
+ * disk-backed nls_upcase_char. */
+static int dir_name_eq(const char *stored, const char *name, size_t name_len)
+{
+    size_t i;
+    if (strlen(stored) != name_len)
+        return 0;
+    for (i = 0; i < name_len; i++) {
+        if (rtl_upcase_char_inline((uint8_t)stored[i]) !=
+            rtl_upcase_char_inline((uint8_t)name[i]))
+            return 0;
+    }
+    return 1;
+}
+
 static OBJECT_DIRECTORY_ENTRY *dir_find(OBJECT_DIRECTORY *dir, const char *name,
                                         size_t name_len)
 {
     OBJECT_DIRECTORY_ENTRY *e = dir->first;
     while (e) {
-        if (strlen(e->name) == name_len &&
-            strncmp(e->name, name, name_len) == 0)
+        if (dir_name_eq(e->name, name, name_len))
             return e;
         e = e->next;
     }

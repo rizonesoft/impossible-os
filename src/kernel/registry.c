@@ -19,6 +19,7 @@
 #include "registry.h"
 #include "kernel/nt/nls_cp.h"
 #include "kernel/nt/nls_locale.h"
+#include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char_inline -- canonical compiled fold */
 #include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
@@ -85,9 +86,11 @@ static uint32_t reg_fnv1a(const char *name)
     const char *p = name;
 
     while (*p) {
-        /* Case-insensitive: fold to lowercase */
-        uint8_t c = (uint8_t)*p;
-        if (c >= 'A' && c <= 'Z') c += 32;
+        /* Case-insensitive via the compiled invariant fold (the same authority
+         * reg_stricmp + the atom/OB namespace use; ASCII + Latin-1, never the
+         * disk NLS table). Insert and lookup both hash through here, so buckets
+         * stay consistent; collisions are resolved by reg_stricmp. */
+        uint16_t c = rtl_upcase_char_inline((uint8_t)*p);
         hash ^= c;
         hash *= prime;
         p++;
@@ -361,16 +364,17 @@ const char *reg_type_name(uint32_t type)
 /* Case-insensitive compare for variable names */
 static int reg_stricmp(const char *a, const char *b)
 {
+    /* Case-insensitive via the compiled invariant fold (ASCII + Latin-1, never
+     * the disk NLS table). Original casing is preserved in the stored key; only
+     * the compare folds. */
     while (*a && *b) {
-        uint8_t ca = (uint8_t)*a, cb = (uint8_t)*b;
-        if (ca >= 'A' && ca <= 'Z') ca += 32;
-        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        uint16_t ca = rtl_upcase_char_inline((uint8_t)*a);
+        uint16_t cb = rtl_upcase_char_inline((uint8_t)*b);
         if (ca != cb) return (int)ca - (int)cb;
         a++; b++;
     }
-    uint8_t ca = (uint8_t)*a, cb = (uint8_t)*b;
-    if (ca >= 'A' && ca <= 'Z') ca += 32;
-    if (cb >= 'A' && cb <= 'Z') cb += 32;
+    uint16_t ca = rtl_upcase_char_inline((uint8_t)*a);
+    uint16_t cb = rtl_upcase_char_inline((uint8_t)*b);
     return (int)ca - (int)cb;
 }
 

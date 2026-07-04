@@ -536,9 +536,27 @@ static void test_nt_registry_advanced_registered(void)
     }
 }
 
+/* Registry key lookup folds through the compiled invariant authority, so a
+ * Latin-1 case pair (caf-e-acute vs CAF-E-acute) hashes into the same bucket and
+ * matches -- not just ASCII A-Z. Guards the reg_fnv1a + reg_stricmp retrofit. */
+static void test_registry_latin1_casefold(void)
+{
+    HKEY hKey = 0, hOpen = 0;
+    long rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "Software\\caf\xE9", 0, NULL, 0, 0,
+                             NULL, &hKey, NULL);
+    TEST_ASSERT(rc == 0, "create Software\\caf<e-acute>");
+    /* Open with the UPPERCASE Latin-1 variant: the canonical fold must resolve
+     * the same key (0xE9 e-acute folds to 0xC9 E-acute). */
+    rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "Software\\CAF\xC9", 0, 0, &hOpen);
+    TEST_ASSERT(rc == 0, "open Software\\CAF<E-acute> resolves the same key");
+    if (hOpen) RegCloseKey(hOpen);
+    if (hKey) RegCloseKey(hKey);
+}
+
 /* Registration */
 void test_register_registry(void)
 {
+    test_suite_register_cat("Registry: Latin-1 casefold", test_registry_latin1_casefold, TEST_CAT_ABI);
     test_suite_register_cat("Registry: DWORD", test_registry_dword, TEST_CAT_ABI);
     test_suite_register_cat("Registry: string", test_registry_string, TEST_CAT_ABI);
     test_suite_register_cat("Registry: NtCreateKey", test_nt_create_key, TEST_CAT_ABI);

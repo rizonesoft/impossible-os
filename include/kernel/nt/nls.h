@@ -16,14 +16,17 @@
  *     therefore never depends on disk-sourced data (CRC32 detects accidental
  *     corruption only; it is not an authenticity guarantee).
  *   - nls_upcase_char() is the FULL-BMP superset that adds U+0100..U+FFFF from
- *     the loaded table. OB/Registry/atom consumers stay on rtl_upcase_char
- *     (fallback-only) until the section 9 consumer retrofit switches them over.
- *     SECTION 9 TRUST BOUNDARY: the U+0100+ fold is disk-sourced, and the loader
+ *     the loaded table. It is for NON-SECURITY paths only (display, sort keys,
+ *     FoldStringW); it must NEVER back a security name comparison.
+ *     TRUST BOUNDARY (DECIDED): the U+0100+ fold is disk-sourced, and the loader
  *     authenticates a table only by CRC32 + the system-volume ACL (the Windows
- *     l_intl.nls trust model, not a signature). Section 9 must therefore decide
- *     whether SECURITY-sensitive namespace comparison may fold U+0100+ through
- *     this accessor or must stay on a compiled/trusted fold (see TODO-13 section
- *     9's checklist item on the disk-fold trust decision).
+ *     l_intl.nls trust model, not a signature), so a tampered table could
+ *     collapse two distinct names. Therefore SECURITY-sensitive namespace
+ *     comparison (OB / Registry / atom) MUST use the COMPILED
+ *     rtl_upcase_char / rtl_upcase_char_inline authority and MUST NOT route
+ *     through nls_upcase_char. The retrofitted consumers (dir_name_eq,
+ *     reg_stricmp/reg_fnv1a, atom_name_eq/atom_name_hash) all fold through the
+ *     compiled authority.
  *
  * The full-BMP GetStringTypeW/GetStringTypeEx and GetNLSVersionEx PUBLIC syscall
  * surface is owned by section 8; this layer only defines the format chunks and

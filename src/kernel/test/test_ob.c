@@ -2355,10 +2355,30 @@ static void test_ob_framestats_pseudo_file(void)
     }
 }
 
+/* The NT object namespace is case-insensitive (dir_find folds each name byte
+ * through the compiled invariant authority): the same directory resolves under
+ * any case variant of its path, so "\BaseNamedObjects" and "\basenamedobjects"
+ * (and the uppercase form) all return the SAME object body. Leak-free -- every
+ * referenced result is dereferenced. */
+static void test_ob_namespace_case_insensitive(void)
+{
+    void *r1 = (void *)0, *r2 = (void *)0, *r3 = (void *)0;
+    int rc1 = ObLookupObjectByName("\\BaseNamedObjects", (void *)0, 0, &r1);
+    int rc2 = ObLookupObjectByName("\\basenamedobjects", (void *)0, 0, &r2);
+    int rc3 = ObLookupObjectByName("\\BASENAMEDOBJECTS", (void *)0, 0, &r3);
+    TEST_ASSERT(rc1 == 0 && r1, "exact-case lookup finds \\BaseNamedObjects");
+    TEST_ASSERT(rc2 == 0 && r2 == r1, "lowercase lookup resolves the SAME object");
+    TEST_ASSERT(rc3 == 0 && r3 == r1, "uppercase lookup resolves the SAME object");
+    if (r1) ObDereferenceObject(r1);
+    if (r2) ObDereferenceObject(r2);
+    if (r3) ObDereferenceObject(r3);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
 {
+    test_suite_register_cat("OB: namespace case-insensitive", test_ob_namespace_case_insensitive, TEST_CAT_OB);
     test_suite_register_cat("OB: alloc+header roundtrip", test_ob_alloc_header_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: refcount lifecycle", test_ob_refcount_lifecycle, TEST_CAT_OB);
     test_suite_register_cat("OB: handle table", test_ob_handle_table, TEST_CAT_OB);

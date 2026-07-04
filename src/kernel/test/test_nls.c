@@ -1518,6 +1518,71 @@ static void test_nls_syscall_mui_registry_info(void)
                    (uint64_t)STATUS_INVALID_PARAMETER, "NULL size rejected");
 }
 
+/* ---- Section 9: consumer retrofit (inline fold fast path) ----------------- */
+
+/* The hot-loop inline fast path MUST fold identically to the out-of-line
+ * authority for every code unit -- OB/registry/atom all fold through the inline
+ * now, so any divergence (wrong ASCII boundary, missed Latin-1, dropped
+ * delegation) would silently split the namespace. Exhaustive over the BMP. */
+static void test_nls_upcase_inline_matches_authority(void)
+{
+    uint32_t c;
+    uint32_t mismatches = 0;
+    for (c = 0; c <= 0xFFFFu; c++) {
+        if (rtl_upcase_char_inline((uint16_t)c) != rtl_upcase_char((uint16_t)c))
+            mismatches++;
+    }
+    TEST_ASSERT_EQ((uint64_t)mismatches, 0u,
+                   "inline fold matches the out-of-line authority for all BMP units");
+    /* Spot-check the load-bearing cases the retrofit relies on. */
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char_inline('a'), (uint64_t)'A', "ASCII a->A inline");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char_inline(0x007Fu), 0x007Fu, "0x7F passthrough");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char_inline(0x00E9u), 0x00C9u, "Latin-1 e-acute folds");
+    TEST_ASSERT_EQ((uint64_t)rtl_upcase_char_inline(0x00FFu), 0x0178u, "y-diaeresis -> U+0178");
+}
+
+/* File-name APIs fail closed on a non-ASCII code unit instead of masking it to
+ * an aliased ASCII path (which would target the WRONG file). */
+static void test_nls_file_nonascii_fail_closed(void)
+{
+    uint16_t name[2] = { 'x', 0x00E9 };     /* "x" + e-acute (non-ASCII) */
+    UNICODE_STRING us;
+    OBJECT_ATTRIBUTES oa;
+    uint8_t fbi[64];   /* non-NULL out buffer so NtQueryAttributesFile reaches the name check */
+    us.Length = 4; us.MaximumLength = 4; us.Buffer = name;
+    memset(&oa, 0, sizeof(oa));
+    oa.ObjectName = &us;
+    TEST_ASSERT_EQ((uint64_t)(int64_t)ssdt_dispatch(SSDT_NtDeleteFile,
+                   (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0),
+                   (uint64_t)(int64_t)STATUS_OBJECT_NAME_INVALID,
+                   "NtDeleteFile non-ASCII name fail-closed");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)ssdt_dispatch(SSDT_NtQueryAttributesFile,
+                   (uint64_t)(uintptr_t)&oa, (uint64_t)(uintptr_t)fbi, 0, 0, 0, 0),
+                   (uint64_t)(int64_t)STATUS_OBJECT_NAME_INVALID,
+                   "NtQueryAttributesFile non-ASCII name fail-closed");
+    /* Embedded NUL must be rejected, not truncate "vic\0tim" into "vic" (which
+     * would unlink a DIFFERENT object than the counted name). */
+    uint16_t embnul[3] = { 'a', 0x0000, 'b' };
+    us.Length = 6; us.MaximumLength = 6; us.Buffer = embnul;
+    TEST_ASSERT_EQ((uint64_t)(int64_t)ssdt_dispatch(SSDT_NtDeleteFile,
+                   (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0),
+                   (uint64_t)(int64_t)STATUS_OBJECT_NAME_INVALID,
+                   "NtDeleteFile embedded-NUL name fail-closed");
+    /* Odd byte Length is not whole WCHARs -> rejected before any path use. */
+    uint16_t ascii[2] = { 'a', 'b' };
+    us.Length = 3; us.MaximumLength = 4; us.Buffer = ascii;
+    TEST_ASSERT_EQ((uint64_t)(int64_t)ssdt_dispatch(SSDT_NtDeleteFile,
+                   (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0),
+                   (uint64_t)(int64_t)STATUS_OBJECT_NAME_INVALID,
+                   "NtDeleteFile odd-Length name fail-closed");
+    /* Length past MaximumLength would read WCHARs outside the declared buffer. */
+    us.Length = 4; us.MaximumLength = 2; us.Buffer = ascii;
+    TEST_ASSERT_EQ((uint64_t)(int64_t)ssdt_dispatch(SSDT_NtDeleteFile,
+                   (uint64_t)(uintptr_t)&oa, 0, 0, 0, 0, 0),
+                   (uint64_t)(int64_t)STATUS_OBJECT_NAME_INVALID,
+                   "NtDeleteFile Length>MaximumLength fail-closed");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -1707,4 +1772,9 @@ void test_register_nls(void)
                             test_nls_syscall_flush_fail_closed, TEST_CAT_NLS);
     test_suite_register_cat("nls: syscall GetMUIRegistryInfo",
                             test_nls_syscall_mui_registry_info, TEST_CAT_NLS);
+    /* Section 9: consumer retrofit. */
+    test_suite_register_cat("nls: inline fold matches authority",
+                            test_nls_upcase_inline_matches_authority, TEST_CAT_NLS);
+    test_suite_register_cat("nls: file non-ASCII name fail-closed",
+                            test_nls_file_nonascii_fail_closed, TEST_CAT_NLS);
 }
