@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-03T18:51:55+02:00",
-  "total_suites": 1703,
-  "total_assertions": 6126,
+  "timestamp": "2026-07-04T03:38:35+02:00",
+  "total_suites": 1756,
+  "total_assertions": 6299,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -18,7 +18,7 @@
     {"file": "test_boot_health_check.c", "suites": 35, "assertions": 46},
     {"file": "test_boot_history.c", "suites": 13, "assertions": 28},
     {"file": "test_boot_info.c", "suites": 66, "assertions": 128},
-    {"file": "test_boot_init.c", "suites": 24, "assertions": 86},
+    {"file": "test_boot_init.c", "suites": 24, "assertions": 87},
     {"file": "test_boot_perf_budget.c", "suites": 15, "assertions": 22},
     {"file": "test_boot_policy.c", "suites": 50, "assertions": 196},
     {"file": "test_boot_reserved.c", "suites": 15, "assertions": 48},
@@ -53,7 +53,7 @@
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},
     {"file": "test_mat_violation.c", "suites": 6, "assertions": 15},
     {"file": "test_mmap.c", "suites": 1, "assertions": 2},
-    {"file": "test_nls.c", "suites": 33, "assertions": 71},
+    {"file": "test_nls.c", "suites": 86, "assertions": 243},
     {"file": "test_nt_audit.c", "suites": 8, "assertions": 27},
     {"file": "test_nt_misc.c", "suites": 10, "assertions": 40},
     {"file": "test_nt_sync.c", "suites": 12, "assertions": 71},

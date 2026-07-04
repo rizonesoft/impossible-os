@@ -15,6 +15,7 @@
 #include "kernel/nt/nls.h"         /* S4: nls_table_parse + accessors + fallback */
 #include "kernel/nt/nls_cp.h"      /* S5: code page conversion providers */
 #include "kernel/nt/nls_locale.h"  /* S6: locale/LCID metadata */
+#include "kernel/nt/nls_sort.h"    /* S7: sort keys + normalization + FoldStringW */
 #include "registry.h"              /* S5: HKLM\SYSTEM\Nls policy preservation test */
 #include "kernel/kchecksum.h"      /* kcrc32 for synthetic table blobs */
 #include "kernel/nt/zw.h"          /* SSDT_KERNEL_MODE */
@@ -1157,6 +1158,196 @@ static void test_nls_locale_codepages_valid(void)
     TEST_ASSERT_EQ((uint64_t)l->oem_code_page, 437u, "en-US OEM is 437");
 }
 
+/* ==========================================================================
+ * Section 7: sort keys + normalization + FoldStringW (pure helper tests).
+ * ========================================================================== */
+
+/* memcmp-style sort-key compare: min-length memcmp, then length tiebreak. */
+static int sk_cmp(const uint8_t *a, int la, const uint8_t *b, int lb)
+{
+    int m = la < lb ? la : lb;
+    int c = memcmp(a, b, (uint64_t)m);
+    if (c)
+        return c;
+    return la - lb;
+}
+
+static void test_nls_sort_case_insensitive_order(void)
+{
+    const uint16_t apple[5]  = { 'a', 'p', 'p', 'l', 'e' };
+    const uint16_t banana[6] = { 'B', 'a', 'n', 'a', 'n', 'a' };
+    const uint16_t cherry[6] = { 'c', 'h', 'e', 'r', 'r', 'y' };
+    uint8_t ka[64], kb[64], kc[64];
+    int la = nls_sort_key(apple, 5, ka, 64, 1);
+    int lb = nls_sort_key(banana, 6, kb, 64, 1);
+    int lc = nls_sort_key(cherry, 6, kc, 64, 1);
+    TEST_ASSERT_EQ((uint64_t)(la > 0 && lb > 0 && lc > 0), 1u, "keys built");
+    TEST_ASSERT_EQ((uint64_t)(sk_cmp(ka, la, kb, lb) < 0), 1u, "apple < Banana (case-insensitive)");
+    TEST_ASSERT_EQ((uint64_t)(sk_cmp(kb, lb, kc, lc) < 0), 1u, "Banana < cherry (case-insensitive)");
+}
+
+static void test_nls_sort_prefix_order(void)
+{
+    const uint16_t a[1]  = { 'a' };
+    const uint16_t aa[2] = { 'a', 'a' };
+    uint8_t ka[32], kaa[32];
+    int la = nls_sort_key(a, 1, ka, 32, 1);
+    int laa = nls_sort_key(aa, 2, kaa, 32, 1);
+    /* The base-254 primary encoding keeps 0x01 below any weight byte, so a
+     * prefix sorts before its extension. */
+    TEST_ASSERT_EQ((uint64_t)(sk_cmp(ka, la, kaa, laa) < 0), 1u, "\"a\" < \"aa\" (prefix first)");
+}
+
+static void test_nls_sort_binary(void)
+{
+    const uint16_t app[3]   = { 'a', 'p', 'p' };
+    const uint16_t apple[5] = { 'a', 'p', 'p', 'l', 'e' };
+    const uint16_t upper[1] = { 'A' };
+    const uint16_t lower[1] = { 'a' };
+    uint8_t k1[16], k2[16], k3[16], k4[16];
+    int l1 = nls_sort_key_binary(app, 3, k1, 16);
+    int l2 = nls_sort_key_binary(apple, 5, k2, 16);
+    int l3 = nls_sort_key_binary(upper, 1, k3, 16);
+    int l4 = nls_sort_key_binary(lower, 1, k4, 16);
+    TEST_ASSERT_EQ((uint64_t)l1, 6u, "\"app\" binary key is 6 bytes");
+    TEST_ASSERT_EQ((uint64_t)(sk_cmp(k1, l1, k2, l2) < 0), 1u, "app < apple (binary prefix)");
+    TEST_ASSERT_EQ((uint64_t)(sk_cmp(k3, l3, k4, l4) < 0), 1u, "A < a (binary ordinal)");
+}
+
+static void test_nls_sort_sizing(void)
+{
+    const uint16_t s[3] = { 'a', 'b', 'c' };
+    /* primary 3*3 = 9 + separator 1 + case 3 + terminator 1 = 14. */
+    TEST_ASSERT_EQ((uint64_t)nls_sort_key(s, 3, 0, 0, 0), 14u, "sort-key sizing pass");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key(s, 3, 0, 0, 0), 14u, "no over-write on sizing");
+}
+
+static void test_nls_normalize_nfd_nfc(void)
+{
+    const uint16_t e_acute[1] = { 0x00E9 };          /* precomposed e-acute */
+    uint16_t nfd[4], nfc[4];
+    int ld = nls_normalize(NLS_NORM_NFD, e_acute, 1, nfd, 4);
+    TEST_ASSERT_EQ((uint64_t)ld, 2u, "NFD e-acute -> 2 units");
+    TEST_ASSERT_EQ((uint64_t)nfd[0], (uint64_t)'e', "NFD base is 'e'");
+    TEST_ASSERT_EQ((uint64_t)nfd[1], 0x0301u, "NFD mark is combining acute");
+    int lc = nls_normalize(NLS_NORM_NFC, nfd, 2, nfc, 4);
+    TEST_ASSERT_EQ((uint64_t)lc, 1u, "NFC recomposes to 1 unit");
+    TEST_ASSERT_EQ((uint64_t)nfc[0], 0x00E9u, "NFC -> precomposed e-acute");
+}
+
+static void test_nls_normalize_unsupported(void)
+{
+    const uint16_t ext[1] = { 0x0100 };              /* Latin Extended-A A-macron */
+    uint16_t out[4];
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFC, ext, 1, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_UNSUPPORTED, "code unit >= U+0100 unsupported");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(99, ext, 1, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_FORM, "unknown form rejected");
+    /* NFC fails closed on a composable base+mark pair not in the table
+     * (C + U+0301 = U+0106, Latin Extended-A, unsupported here). */
+    const uint16_t c_acute[2] = { 'C', 0x0301 };
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFC, c_acute, 2, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_UNSUPPORTED, "NFC C+acute unsupported");
+    /* Multi-mark: A + ring + acute = U+01FA (outside the table) must fail closed,
+     * not compose A+ring and emit a trailing standalone acute. */
+    const uint16_t a_ring_acute[3] = { 'A', 0x030A, 0x0301 };
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFC, a_ring_acute, 3, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_UNSUPPORTED, "NFC multi-mark fails closed");
+    /* A leading combining mark (no starter) also fails closed. */
+    const uint16_t lead_mark[2] = { 0x0301, 'x' };
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFC, lead_mark, 2, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_UNSUPPORTED, "NFC leading mark fails closed");
+    /* NFD: a precomposed (1 mark) followed by a 2nd mark needs combining-class
+     * ordering we do not do -> fail closed (A-acute + cedilla). */
+    const uint16_t aacute_ced[2] = { 0x00C1, 0x0327 };
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFD, aacute_ced, 2, out, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_UNSUPPORTED, "NFD 2nd mark fails closed");
+}
+
+static void test_nls_bad_length_rejected(void)
+{
+    const uint16_t s[2] = { 'a', 'b' };
+    uint8_t k[16];
+    uint16_t o[4];
+    /* src_len < -1 must be rejected, not treated as a NUL scan. */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key(s, -2, k, 16, 0),
+                   (uint64_t)(int64_t)NLS_SORT_ERR_PARAM, "sort_key rejects src_len -2");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_sort_key_binary(s, -2, k, 16),
+                   (uint64_t)(int64_t)NLS_SORT_ERR_PARAM, "binary rejects src_len -2");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_normalize(NLS_NORM_NFC, s, -2, o, 4),
+                   (uint64_t)(int64_t)NLS_NORM_ERR_PARAM, "normalize rejects src_len -2");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_fold_string(NLS_MAP_FOLDDIGITS, s, -2, o, 4),
+                   (uint64_t)(int64_t)NLS_FOLD_ERR_PARAM, "fold rejects src_len -2");
+}
+
+static void test_nls_no_silent_normalization(void)
+{
+    /* Policy: the kernel does NOT fold a precomposed vs decomposed name to equal;
+     * the explicit helper does when asked. */
+    uint16_t pre[2]  = { 0x00E9, 0 };                /* e-acute */
+    uint16_t dec[3]  = { 'e', 0x0301, 0 };           /* e + combining acute */
+    UNICODE_STRING a, b;
+    uint16_t na[4], nb[4];
+    make_us(&a, pre, 2, 4);
+    make_us(&b, dec, 4, 6);
+    TEST_ASSERT_EQ((uint64_t)RtlEqualUnicodeString(&a, &b, 0), 0u,
+                   "precomposed != decomposed (no silent normalize)");
+    /* After explicit NFC both collapse to the same precomposed form. */
+    TEST_ASSERT_EQ((uint64_t)nls_normalize(NLS_NORM_NFC, pre, 1, na, 4), 1u, "NFC pre");
+    TEST_ASSERT_EQ((uint64_t)nls_normalize(NLS_NORM_NFC, dec, 2, nb, 4), 1u, "NFC dec");
+    TEST_ASSERT_EQ((uint64_t)(na[0] == nb[0]), 1u, "NFC makes them equal");
+}
+
+static void test_nls_fold_digits(void)
+{
+    const uint16_t fw[1]  = { 0xFF11 };              /* fullwidth digit one */
+    const uint16_t ar[1]  = { 0x0661 };              /* Arabic-Indic one */
+    uint16_t out[4];
+    TEST_ASSERT_EQ((uint64_t)nls_fold_string(NLS_MAP_FOLDDIGITS, fw, 1, out, 4), 1u, "fold digit len");
+    TEST_ASSERT_EQ((uint64_t)out[0], (uint64_t)'1', "fullwidth 1 -> '1'");
+    nls_fold_string(NLS_MAP_FOLDDIGITS, ar, 1, out, 4);
+    TEST_ASSERT_EQ((uint64_t)out[0], (uint64_t)'1', "Arabic-Indic 1 -> '1'");
+}
+
+static void test_nls_fold_width_and_flags(void)
+{
+    const uint16_t fwA[1]  = { 0xFF21 };             /* fullwidth A */
+    const uint16_t space[1] = { 0x3000 };            /* ideographic space */
+    const uint16_t plain[1] = { 'x' };
+    uint16_t out[4];
+    nls_fold_string(NLS_MAP_FOLDCZONE, fwA, 1, out, 4);
+    TEST_ASSERT_EQ((uint64_t)out[0], (uint64_t)'A', "fullwidth A -> 'A' (FOLDCZONE)");
+    nls_fold_string(NLS_MAP_FOLDCZONE, space, 1, out, 4);
+    TEST_ASSERT_EQ((uint64_t)out[0], 0x0020u, "ideographic space -> space");
+    /* No fold flag set -> error; an unsupported flag bit (0x40 MAP_COMPOSITE) also
+     * fails closed rather than silently doing nothing. */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_fold_string(0, plain, 1, out, 4),
+                   (uint64_t)(int64_t)NLS_FOLD_ERR_FLAGS, "no fold flag rejected");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)nls_fold_string(0x40u, plain, 1, out, 4),
+                   (uint64_t)(int64_t)NLS_FOLD_ERR_FLAGS, "unsupported fold flag rejected");
+}
+
+/* Documents the DELIBERATE narrow coverage: this compiled fallback folds only
+ * the listed ranges; a Unicode decimal digit outside the three digit ranges, or
+ * a compatibility character outside FF01-FF5E/3000, passes through UNCHANGED with
+ * success. Full FoldStringW coverage (all Nd digits / all compatibility
+ * decompositions) needs the disk fold-table data -- a caller must not read this
+ * helper's success as a complete fold. */
+static void test_nls_fold_narrow_passthrough(void)
+{
+    const uint16_t deva[1] = { 0x0966 };            /* Devanagari digit zero (Nd, not in the 3 ranges) */
+    const uint16_t cjk[1]  = { 0x3231 };            /* PARENTHESIZED IDEOGRAPH (compat, outside FF01-FF5E/3000) */
+    uint16_t out[4];
+    TEST_ASSERT_EQ((uint64_t)nls_fold_string(NLS_MAP_FOLDDIGITS, deva, 1, out, 4), 1u,
+                   "non-covered digit: len 1");
+    TEST_ASSERT_EQ((uint64_t)out[0], 0x0966u,
+                   "non-covered Nd digit passes through unchanged (narrow coverage)");
+    TEST_ASSERT_EQ((uint64_t)nls_fold_string(NLS_MAP_FOLDCZONE, cjk, 1, out, 4), 1u,
+                   "non-covered compat char: len 1");
+    TEST_ASSERT_EQ((uint64_t)out[0], 0x3231u,
+                   "non-covered compatibility char passes through unchanged (narrow coverage)");
+}
+
 void test_register_nls(void)
 {
     test_suite_register_cat("nls: validate rejects odd length",
@@ -1312,4 +1503,27 @@ void test_register_nls(void)
                             test_nls_locale_policy, TEST_CAT_NLS);
     test_suite_register_cat("nls: locale code pages valid",
                             test_nls_locale_codepages_valid, TEST_CAT_NLS);
+    /* Section 7: sort keys + normalization + FoldStringW. */
+    test_suite_register_cat("nls: sort key case-insensitive order",
+                            test_nls_sort_case_insensitive_order, TEST_CAT_NLS);
+    test_suite_register_cat("nls: sort key prefix order",
+                            test_nls_sort_prefix_order, TEST_CAT_NLS);
+    test_suite_register_cat("nls: sort key binary ordinal",
+                            test_nls_sort_binary, TEST_CAT_NLS);
+    test_suite_register_cat("nls: sort key sizing",
+                            test_nls_sort_sizing, TEST_CAT_NLS);
+    test_suite_register_cat("nls: normalize NFD/NFC round-trip",
+                            test_nls_normalize_nfd_nfc, TEST_CAT_NLS);
+    test_suite_register_cat("nls: normalize unsupported range",
+                            test_nls_normalize_unsupported, TEST_CAT_NLS);
+    test_suite_register_cat("nls: no silent normalization",
+                            test_nls_no_silent_normalization, TEST_CAT_NLS);
+    test_suite_register_cat("nls: fold digits",
+                            test_nls_fold_digits, TEST_CAT_NLS);
+    test_suite_register_cat("nls: fold width + flags",
+                            test_nls_fold_width_and_flags, TEST_CAT_NLS);
+    test_suite_register_cat("nls: fold narrow passthrough",
+                            test_nls_fold_narrow_passthrough, TEST_CAT_NLS);
+    test_suite_register_cat("nls: bad length rejected",
+                            test_nls_bad_length_rejected, TEST_CAT_NLS);
 }

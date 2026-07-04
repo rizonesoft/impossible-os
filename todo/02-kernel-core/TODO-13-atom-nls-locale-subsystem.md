@@ -45,7 +45,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | 4 | NLS table file format and loader | VFS, T03 | [x] |
 | 💎 | 5 | Code page conversion providers | §4 | [x] |
 | 💎 | 6 | Locale and LCID metadata | §4 | [/] |
-| 💎 | 7 | Sort keys and normalization policy | §2, §6 | [ ] |
+| 💎 | 7 | Sort keys and normalization policy | §2, §6 | [x] |
 | 💎 | 8 | Native atom/NLS/locale syscalls | T12 | [ ] |
 | ⭐ | 9 | Retrofit kernel consumers | T05, T14, T22 | [ ] |
 | 💎 | 10 | Tests and compatibility corpus | §1..§9 | [ ] |
@@ -216,16 +216,25 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 7. Sort Keys and Normalization Policy
 
-- [ ] Implement invariant binary sort and case-insensitive sort keys.
-- [ ] Defer full culture-aware collation to user-mode unless a kernel consumer proves it needs it.
-- [ ] Define normalization policy: kernel accepts valid UTF-16, does not silently normalize object names, and exposes helper for explicit normalization.
-- [ ] Add path/registry comparison tests for composed/decomposed tricky cases.
-- [ ] Name the normalization forms the explicit helper implements: NFC + NFD (FS/name interop) now; NFKC/NFKD flagged as user-mode/deferred; state completeness (narrow FS-interop vs full UAX #15). (gap-audit)
-- [ ] Add `FoldStringW` transformations (MAP_FOLDCZONE compatibility, MAP_FOLDDIGITS, width fold) over the §4 folding tables. (gap-audit)
-- [ ] Define the `LCMapStringEx`+`LCMAP_SORTKEY` opaque sort-key byte format (primary/diacritic/case weight bands, `0x01` separators); Impossible's format need not match Windows' internal layout. (gap-audit)
-- [ ] Commit: `"kernel: nls -- invariant sort keys + normalization policy"`
+- [x] `nls_sort_key` (invariant collation) + `nls_sort_key_binary` (ordinal) in `nls_sort.c`; case-insensitive via the `ignore_case` band drop.
+- [x] Culture-aware collation deferred to user-mode: the kernel ships only the invariant sort key (no per-locale collation weights).
+- [x] Normalization policy: OB/registry compare stays code-unit-exact (no silent normalize); `nls_normalize` is the explicit opt-in helper.
+- [x] Composed/decomposed comparison test (`test_nls_no_silent_normalization`): precomposed != decomposed under `RtlEqualUnicodeString`; explicit NFC makes them equal.
+- [x] Forms named: NFC + NFD over ASCII+Latin-1 now; NFKC/NFKD + full UAX #15 deferred to user-mode; `nls_normalize` returns `NLS_NORM_ERR_UNSUPPORTED` for code units >= U+0100 (honest coverage). (gap-audit)
+- [x] `nls_fold_string` (FoldStringW): MAP_FOLDDIGITS + MAP_FOLDCZONE compiled ranges; non-covered units pass through unchanged (narrow coverage, documented in the header). Full Nd/compat fold owned by §8 public export + §10 corpus. (gap-audit)
+- [x] `LCMAP_SORTKEY` opaque byte format: base-254 primary band (bytes >= 0x02) + `0x01` separator + case band + `0x00` terminator, so memcmp is a correct total order (prefix sorts first). (gap-audit)
+- [x] Commit: `"kernel: nls -- invariant sort keys + normalization policy"`
 
 **Test checkpoint:** Case-insensitive sort keys order "apple" < "Banana" < "cherry". The kernel does NOT fold a composed vs decomposed object name to equal (no silent normalization); the explicit normalization helper does when asked. A binary sort key is stable and comparison-consistent.
+
+> **Test runner:** `scripts\debug\kernel\run-nls-tests.bat` (SUITE=nls) | 86 suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nls_sort.h` + `nls_sort.c` -- invariant + ordinal sort keys (LCMAP_SORTKEY base-254 memcmp-order format), the explicit ASCII+Latin-1 `nls_normalize` (NFD/NFC round-trip), and `nls_fold_string` (FoldStringW digit/width/compat).
+> - **How it integrates:** stateless/re-entrant kernel functions (no boot init, no locks); sort keys fold via the §2/§4 `nls_upcase_char` authority; normalization + fold are pure over compiled tables.
+> - **Downstream effects:** §8 owns the Win32 LCMapStringEx/FoldStringW/CompareStringEx export + SSDT surface; wiring FoldStringW to consult the §4 FOLD_* chunks lands with the §10 fold-data corpus.
+> - **Canonical doc:** [`include/kernel/nt/nls_sort.h`](../../include/kernel/nt/nls_sort.h).
+> - **Scope boundary:** §7 owns the invariant sort key + narrow normalization + compiled FoldStringW. Culture-aware collation, NFKC/NFKD, and full UAX #15 are user-mode; disk fold-table data is §10.
 
 ---
 
@@ -235,6 +244,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 - [ ] Add `SystemNlsInformation` to `NtQuerySystemInformation`.
 - [ ] Add `NtGetMUIRegistryInfo` (SSDT 0x0263), `NtIsUILanguageComitted` (0x0264), `NtFlushInstallUILanguage` (0x0265) -- orphaned in the SSDT master table after T12 §23 closed; this section owns them. (gap-audit)
 - [ ] Expose `GetNLSVersionEx` (NLS/collation version query) over the §4 version chunk. (gap-audit)
+- [ ] Public `FoldStringW` folds the full Nd digit set + compatibility zone (§4 FOLD_* / §10 corpus), failing closed on uncovered fold-relevant units so success never masks a partial fold. (Codex §7)
 - [ ] Commit: `"kernel: nls -- NtGetNlsSectionPtr + SystemNlsInformation + MUI/version query APIs"`
 
 > **Note:** `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` are already wired in TODO-12 §23 (`src/kernel/nt/nt_misc.c`, SSDT 0x00D8-0x00E2) over a global atom table + global LCID/LANGID storage. This section retrofits those handlers onto the NLS case-folding authority (§2), local atom tables (§3), and full LCID metadata (§6); `NtGetNlsSectionPtr` + `SystemNlsInformation` remain unshipped.
@@ -283,10 +293,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 | 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant fold + Rtl compare (§2); full-BMP §4 |
 | 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5) |
 | 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
-| 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ⬜ §7 invariant + case-insensitive keys |
+| 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode |
 | 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
 | 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | ⬜ §9 canonical OB/registry compare |
-| ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | ⬜ §7 no-silent-normalize + explicit helper |
+| ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode |
 | 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | ⬜ §4/§7 C1-C3 + FoldString |
 | 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
 | ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ✅ `nls_locale_ui_fallback` ordered chain (§6) |
