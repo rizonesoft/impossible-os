@@ -8,6 +8,8 @@ title: "TODO-14 -- Registry System Completion"
 
 # TODO-14 -- Registry System Completion
 
+> **Validated:** 2026-07-04 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+
 > **Goal:** The core registry engine (`reg_key_t`, Win32 registry API surface per MSDN ch. 2.1 through 2.4, hive persistence, crash-safe WAJ journaling) is fully implemented in `src/kernel/registry.c` (2 536 lines). This TODO delivers everything that is still pending: access rights enforcement, advanced key operations, change notifications, Nt/Zw user-mode syscalls, the `advapi32.dll` compatibility layer, registry virtualization, a `regedit` shell tool, advanced hive features (dual-log WAJ, delta flush, compaction), and the exclusive stretch features (atomic transactions, search API, snapshot diff, per-PID quota).
 > When complete, Impossible OS has a native Windows-compatible registry that exceeds both Windows 11 and Linux's configuration store in every dimension.
 
@@ -35,7 +37,7 @@ title: "TODO-14 -- Registry System Completion"
 - `src/kernel/registry.c` -- 2 536-line implementation (engine complete)
 - `include/registry.h` -- types, constants, API declarations
 - → XREF: `TODO-12-native-api-ssdt.md §14, §15` -- SSDT: core registry entry points in §14 (0x0090--0x009B), advanced (flush/notify/save/hive) in §15 (0x009C--0x00A6 + extended range); §14 must exist before §5 of this TODO
-- → XREF: `TODO-08-time-filetime-management.md §4` -- `ticks_to_filetime()` conversion needed by §5 for `LastWriteTime` FILETIME output
+- → XREF: `TODO-08-time-filetime-management.md §1` -- `ticks_to_filetime()` conversion needed by §1 for `LastWriteTime` FILETIME output (TODO-08 §1 is [x] done)
 - → XREF: `TODO-15-security-reference-monitor.md §6,§7,§8` -- `SECURITY_DESCRIPTOR` + `SeAccessCheck` are used to enforce `KEY_*` access rights on `RegOpenKeyEx` / `NtOpenKey`
 - → XREF: `TODO-05-object-manager.md §2` -- registry `HKEY` handles must eventually be registered in the per-process handle table for `DuplicateHandle` parity; deferred to §3 of this TODO as a note
 - → XREF: `TODO-22-environment-variables.md §2` -- system env vars from `Session Manager\Environment` once `NtEnumerateValueKey` / `NtQueryValueKey` (this file §4) are wired; boot uses `reg_expand_sz` today
@@ -64,7 +66,7 @@ title: "TODO-14 -- Registry System Completion"
 
 | ⭐  | Order | Deliverable                                        | Depends On                   | Status |
 | --- | :---: | -------------------------------------------------- | ---------------------------- | :----: |
-| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-17 §4 |  [ ]   |
+| 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey  | TODO-05 §2,§3, TODO-08 §1 |  [ ]   |
 | 💎  |   2   | Advanced key ops (copy, rename, save, volatile)    | §1                           |  [ ]   |
 | 💎  |   3   | Change notifications (core + exclusive extras)     | §2                           |  [ ]   |
 | 💎  |   4   | Nt/Zw registry syscalls & pointer validation       | §1, TODO-12 §14, §15         |  [ ]   |
@@ -107,7 +109,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Total key count: soft warn at 90% of pool; hard limit returns `ERROR_OUTOFMEMORY`; pool size comment documents the limit
 - [ ] **`RegCreateKeyEx` atomic create-or-fail** -- links the key, then allocates the `HKEY` separately; handle-pool exhaustion leaves a linked-but-handleless key. Reserve the handle before linking or roll back on failure. (TODO-09-boot §9.)
 
-- [ ] `reg_key_t.last_write_time` currently stores raw PIT ticks; convert to Windows `FILETIME` (100-ns intervals since 1601-01-01) via `ticks_to_filetime()` (→ XREF `TODO-08-time-filetime-management.md §4`); if `ticks_to_filetime()` is not yet available, implement a minimal stub (`ticks * PIT_NS_PER_TICK / 100 + FILETIME_EPOCH_BIAS`) inline -- full implementation in TODO-17 §4
+- [ ] `reg_key_t.last_write_time` currently stores raw PIT ticks; convert to Windows `FILETIME` (100-ns intervals since 1601-01-01) via `ticks_to_filetime()` (→ XREF `TODO-08-time-filetime-management.md §1`, now [x] done); if the conversion helper is unavailable, implement a minimal stub (`ticks * PIT_NS_PER_TICK / 100 + FILETIME_EPOCH_BIAS`) inline -- canonical implementation is TODO-08 §1
 - [ ] `RegQueryInfoKey` `lpftLastWriteTime` output: return the FILETIME, not raw ticks
 - [ ] `NtQueryKey(KeyBasicInformation)`, `NtQueryKey(KeyNodeInformation)`, `NtQueryKey(KeyFullInformation)` -- all return `LARGE_INTEGER LastWriteTime` in FILETIME format; output structs must match NT definitions
 
