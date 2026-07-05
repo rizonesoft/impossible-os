@@ -65,7 +65,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [/]   |
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [x]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [x]   |
-| 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
+| 💎  |   9   | UAC token split & NtFilterToken                   | §4, §5, §6, §7      |  [/]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [ ]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [ ]   |
@@ -524,6 +524,12 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] Commit: `"kernel/security: NtFilterToken, linked token pair, UAC elevation protocol"`
 
 **Test checkpoint:** `NtFilterToken` with `DISABLE_MAX_PRIVILEGE` → new token has only SeChangeNotifyPrivilege enabled. `NtFilterToken` with SidsToDisable=[BA] → BA group has `SE_GROUP_USE_FOR_DENY_ONLY`. Linked token pair: `NtQueryInformationToken(TokenLinkedToken)` on filtered → returns handle to full admin token. `ElevationType` of filtered == `TokenElevationTypeLimited`. Serial log: `"[SRM] NtFilterToken: %u privileges removed, %u groups disabled"`. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - DEFERRED at design review (2026-07-05, Codex 1C+3H no-ship) before any code: exposing restricted/deny-only tokens without §5's enforcement is false security.
+> - Blocked on `SeAccessCheck` restricted-SID + deny-only-group second DACL walk (§5), owned RestrictedSids storage (TODO-12 §29), and the desktop consent UI + a `ProcessAccessToken` info class (`NtRequestTokenElevation`).
+> - Safe-to-build-later design: NtFilterToken via NtDuplicateToken deep-copy; linked tokens use a WEAK peer pointer + `token_on_delete` unlink (mutual Ob refs leak); TokenLinkedToken as a handler-level access-aware HANDLE-return gated on SeTcb.
+> **Deferred:** [Critical] §9 UAC token split blocked -- restricted-SID/deny-only/WRITE_RESTRICTED tokens report false sandboxing until §5 enforces + owned SID storage exists; NtRequestTokenElevation needs desktop consent UI + a ProcessAccessToken info class -> XREF: 02-kernel-core/TODO-15 §5 (item: "Restricted token check ... second DACL walk"), 02-kernel-core/TODO-12 §29 (owned restricted-SID storage), 09-desktop-shell/TODO-06 §11 (consent UI)
 
 ---
 
