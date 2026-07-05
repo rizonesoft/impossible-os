@@ -66,7 +66,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [x]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [x]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §5, §6, §7      |  [/]   |
-| 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [ ]   |
+| 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [/]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [ ]   |
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [ ]   |
@@ -558,6 +558,13 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] Commit: `"kernel/security: Win32 token, SID, and security descriptor API wrappers"`
 
 **Test checkpoint:** `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)` → valid handle. `GetTokenInformation(TokenUser)` → returns correct UserSid. `ConvertSidToStringSidW(SeLocalSystemSid)` → `"S-1-5-18"`. `ConvertStringSecurityDescriptorToSecurityDescriptorW("D:(A;;GA;;;SY)")` → valid SD with one ACE. `AdjustTokenPrivileges` enable/disable round-trip succeeds. Serial log: `"[SRM] Win32 security API test passed"`. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - Deferred at design review (2026-07-05, Codex 1C+3H needs-attention) before any code: bundles ready + blocked APIs across three groups (token / SID / security-descriptor); no pinned layer or error contract.
+> - Layer (design-pinned): kernel-mode `src/kernel/win32/token_api.c` + `sid_api.c` + `include/kernel/win32/`, per the TODO-05 file-I/O precedent; `user/lib/win32.c` shim out of scope until the advapi32 trampoline exists.
+> - Blocked: SD group + SDDL (direct `ObSetSecurityDescriptor` bypasses the SRM) -> §12; CreateRestrictedToken + elevation -> §9; SetTokenInformation wrapper -> §4 setter; string->SID + SDDL parsers are new items.
+> - Ready token/SID subset needs a new per-thread kernel Win32 last-error facility (kernel in-process wrappers cannot `SetLastError`) and has no live ring-3 caller yet, so it defers with the rest.
+> **Deferred:** [Critical] §10 Win32 wrappers need a spec revision + a per-thread kernel Win32 last-error facility, and the SD group must not bypass the SRM -> XREF: 02-kernel-core/TODO-15 §12 (`NtQuerySecurityObject`/`NtSetSecurityObject`), 02-kernel-core/TODO-15 §9 (CreateRestrictedToken/elevation), 02-kernel-core/TODO-15 §4 (`NtSetInformationToken` setters)
 
 ---
 
