@@ -36,6 +36,7 @@ static const char *cat_names[] = {
     [TEST_CAT_DESKTOP]  = "desktop",
     [TEST_CAT_EX]       = "ex",
     [TEST_CAT_NLS]      = "nls",
+    [TEST_CAT_KNF]      = "knf",
 };
 
 static const char *cat_labels[] = {
@@ -53,6 +54,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_DESKTOP]  = "Desktop UI",
     [TEST_CAT_EX]       = "Executive Support",
     [TEST_CAT_NLS]      = "Atom/NLS/Locale",
+    [TEST_CAT_KNF]      = "Notification Facility",
 };
 
 /* ---- Global test state ---- */
@@ -453,6 +455,7 @@ extern void test_register_harness(void);
 extern void test_register_desktop(void);
 extern void test_register_ex(void);
 extern void test_register_nls(void);
+extern void test_register_knf(void);
 
 void test_runner_init(void)
 {
@@ -579,6 +582,9 @@ void test_runner_init(void)
 
     /* Atom/NLS/locale subsystem */
     test_register_nls();
+
+    /* Kernel Notification Facility */
+    test_register_knf();
 
     klog(LOG_INFO, test_tag(), "%u suite(s) registered",
          (uint64_t)g_test_state.suite_count);

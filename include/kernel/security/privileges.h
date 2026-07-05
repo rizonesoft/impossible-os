@@ -27,6 +27,7 @@
 #define SE_PROF_SINGLE_PROCESS_PRIVILEGE    SE_PRIVILEGE_LUID(13)
 #define SE_INC_BASE_PRIORITY_PRIVILEGE      SE_PRIVILEGE_LUID(14)
 #define SE_CREATE_PAGEFILE_PRIVILEGE        SE_PRIVILEGE_LUID(15)
+#define SE_CREATE_PERMANENT_PRIVILEGE       SE_PRIVILEGE_LUID(16)
 #define SE_BACKUP_PRIVILEGE                 SE_PRIVILEGE_LUID(17)
 #define SE_RESTORE_PRIVILEGE                SE_PRIVILEGE_LUID(18)
 #define SE_SHUTDOWN_PRIVILEGE               SE_PRIVILEGE_LUID(19)
@@ -56,6 +57,7 @@ extern const LUID SeSystemtimePrivilege;
 extern const LUID SeProfileSingleProcessPrivilege;
 extern const LUID SeIncreaseBasePriorityPrivilege;
 extern const LUID SeCreatePagefilePrivilege;
+extern const LUID SeCreatePermanentPrivilege;
 extern const LUID SeBackupPrivilege;
 extern const LUID SeRestorePrivilege;
 extern const LUID SeShutdownPrivilege;

@@ -42,7 +42,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | Notification state object type | T05 | [ ] |
+| 💎 | 1 | Notification state object type | T05 | [x] |
 | 💎 | 2 | Kernel publish/subscribe API | §1 | [ ] |
 | 💎 | 3 | Waitable user subscriptions | T12, T07 | [ ] |
 | 💎 | 4 | Security and namespace policy | T15 | [ ] |
@@ -55,15 +55,26 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 1. Notification State Object Type
 
-- [ ] Define `KNF_STATE` body: name, sequence, payload type, payload bytes, ACL, subscriber list, retention policy.
-- [ ] Register Object Manager type `NotificationState`.
-- [ ] Create root directories: `\Notifications`, `\Notifications\Kernel`, `\Notifications\Power`, `\Notifications\Security`, `\Notifications\Session`.
-- [ ] Support volatile states and persistent state registration metadata in Registry.
-- [ ] Lifetime classes: WellKnown / Permanent / Persistent / Temporary; creating a Permanent state requires `SeCreatePermanentPrivilege` (matches WNF; gated via §4 access check).
-- [ ] `DataScope` (System/Session/User/Machine): decide v1 = single-instance-per-state (scope advisory only); document that per-scope isolated payload instances are a later item, not v1. Keep the field in `KNF_STATE` for forward-compat.
-- [ ] `KNF_STATE` carries an optional `WNF_TYPE_ID` (GUID) typing the payload blob; publishers/consumers agree on the type tag (blob stays opaque to the kernel).
+- [x] `KNF_STATE` body in `include/kernel/knf/knf.h`: name, atomic64 sequence, lifetime, scope, `KNF_TYPE_ID` + has_type_id; forward-reserved payload pointer/len/cap + subscriber-list head + per-state spinlock (payload is a pointer, not inline).
+- [x] Register Object Manager type `NotificationState` (`ob_knf_type_init` via `ob_create_type`; `knf_state_on_delete` frees any retained payload). Singleton `ObpNotificationStateType`.
+- [x] Create root directories in `knf_init`: `\Notifications` + `Kernel` / `Power` / `Security` / `Session` (the built-in-catalog section adds Device/System/Registry).
+- [x] `knf_create_state` / `knf_lookup_state` / `knf_delete_state` primitives (create-or-open on collision; delete unlinks + frees). Leaf name capped at `OB_NAME_MAX` (static-asserted; a state is a namespace component).
+- [x] Volatile (Temporary) states freed at last close via `knf_delete_state`; persistent reboot survival owned by the retention section (item: "Persistent-lifetime registry backing" in §7).
+- [x] Lifetime classes WellKnown/Permanent/Persistent/Temporary in `KNF_LIFETIME`; non-Temporary sets `OB_FLAG_PERMANENT`. User-mode Permanent/Persistent create needs `SE_CREATE_PERMANENT_PRIVILEGE` (LUID 16); KernelMode bypasses.
+- [x] `KNF_DATA_SCOPE` (System/Session/User/Machine/Process): v1 = single-instance-per-state (scope advisory only); per-scope isolated payload instances are a later item. Field kept for forward-compat.
+- [x] `KNF_STATE` carries an optional `WNF_TYPE_ID` (16-byte GUID) typing the payload blob; publishers/consumers agree on the tag (blob stays opaque to the kernel).
+- [x] Commit: `"kernel/knf: NotificationState Ob type + \\Notifications namespace + create/lookup/delete + SeCreatePermanentPrivilege"`
 
-**Test checkpoint:** `test_knf` asserts the `NotificationState` Ob type is registered (`ObpLookupType` non-NULL), `knf_create_state("Kernel/Test")` returns a `KNF_STATE` with `sequence == 0`, and the 5 root directories (`\Notifications`, `\Notifications\Kernel/Power/Security/Session`) resolve via `ob_ns_lookup`. Serial: `"[KNF] N notification states registered"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf` (TEST_CAT_KNF) asserts `ObpNotificationStateType != NULL`, `knf_create_state("Kernel","UtestState")` returns a `KNF_STATE` with `sequence == 0`, the 5 directories resolve via `ObLookupObjectByName`, create-or-open returns one object per name, arg validation rejects NULL/empty/over-length/unknown-category, header flags match lifetime + Security category, the leaf name-length boundary holds, user-mode Permanent/Persistent create is denied without the privilege, kernel-mode bypasses, and `SeCreatePermanentPrivilege` maps to LUID 16. Serial: `"[knf] Namespace: \\Notifications + N categories"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 10 suites, 0 failures
+> **Notes:**
+> - Shipped `include/kernel/knf/knf.h` + `src/kernel/knf/knf.c`: `NotificationState` Ob type, `\Notifications` namespace tree, and `knf_create_state`/`knf_lookup_state`/`knf_delete_state` (object-model CRUD).
+> - `knf_init()` runs in boot_phase2 after the registry (POST16 0x20E0/0x20E1); single-threaded pre-scheduler so the tree build races nothing; runtime paths use the per-state spinlock + atomic64 sequence.
+> - Added `SE_CREATE_PERMANENT_PRIVILEGE` (LUID 16) to privileges.h/.c + name table; Permanent/Persistent user-mode creation is privilege-gated (KernelMode bypasses); leaf name capped at `OB_NAME_MAX` via `_Static_assert`.
+> - Codex design + test-coverage adoptions (pointer payload, gate Persistent, name-boundary fix, flag/deny tests) in the commit message; restricted-token fixture filed to §4, persistent registry backing to §7.
+> - Canonical doc: this TODO; publish/subscribe/security/retention are the later sections.
+> - Scope boundary: §1 owns the object type + namespace + lifetime/scope/type-id metadata; §2/§3 own publish/subscribe + teardown, §4 owns DACL/token enforcement, §7 owns coalescing/retention + persistent registry backing.
 
 ---
 
@@ -102,6 +113,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Default policy: kernel-only publish for security, code integrity, power source, and device states.
 - [ ] Permit user-mode publish only for explicit app/session-local states.
 - [ ] Audit denied publish attempts.
+- [ ] Test the create-privilege gate with a restricted-token fixture: a token WITHOUT `SeCreatePermanentPrivilege` is denied a user-mode Permanent/Persistent create; one WITH it is allowed (§1 covers the ambient-token deny + kernel-mode bypass).
+- [ ] Gate create-or-open opens by DACL so a user-mode Temporary create that collides with an existing privileged state is not a backdoor. Test: kernel creates Permanent `X`; user-mode Temporary create of `X` without rights is denied.
 - [ ] Design note (code header): reuse the SRM SID/token/`SECURITY_DESCRIPTOR` infrastructure for access checks, NOT a bespoke capability-metadata scheme -- Linux kdbus was rejected from mainline (2015) for exactly that NIH design.
 
 **Test checkpoint:** `test_knf` builds a state with a DACL granting SUBSCRIBE but not PUBLISH to a user token, then asserts `knf_publish` under that token returns `STATUS_ACCESS_DENIED` while `knf_subscribe` succeeds; a kernel-only security state rejects a user-mode publish; the denied attempt increments the audit counter. Serial: `"[KNF] publish denied sid=%s"`. Test on: QEMU WHPX + TCG.
@@ -140,6 +153,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Retain last payload for query-after-miss.
 - [ ] Keep a bounded missed-update counter per subscriber.
 - [ ] Add policy for secret payload redaction before user-mode query.
+- [ ] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state's metadata (name/class/scope/type-id) to the registry on create and restore them at `knf_init` so they survive reboot (§1 classifies persistent states).
 - [ ] Commit: `"kernel/knf: coalescing + last-payload retention + per-subscriber missed counter + redaction"`
 
 **Test checkpoint:** `test_knf` publishes 5 rapid updates to a coalescing (level-triggered) state and asserts a slow subscriber sees only the latest payload with the missed-update counter == 4; an edge-triggered state delivers all 5; a query-after-miss returns the retained last payload; a redacted secret state returns zeroed bytes to a user-mode query. Serial: `"[KNF] coalesced=%u missed=%u"`. Test on: QEMU WHPX + TCG.
@@ -187,6 +201,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
 | --- | --- | --- | --- | --- |
 | 💎 | Kernel state-change notify | ✅ WNF | ⚠️ netlink/inotify | ⬜ knf §1-§2 |
+| 💎 | State object + lifetime/scope/type | ✅ WNF lifetimes | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
 | 💎 | Waitable user subscriptions | ✅ WNF+Nt* | ⚠️ epoll/poll | ⬜ §3 |
 | 💎 | Per-state security descriptor | ✅ Full | ⚠️ DAC only | ⬜ §4 |
 | 💎 | Lost-update sequence numbers | ✅ WNF change stamp | ❌ N/A | ⬜ §2 |

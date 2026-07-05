@@ -25,6 +25,7 @@ const LUID SeSystemtimePrivilege           = SE_SYSTEMTIME_PRIVILEGE;
 const LUID SeProfileSingleProcessPrivilege = SE_PROF_SINGLE_PROCESS_PRIVILEGE;
 const LUID SeIncreaseBasePriorityPrivilege = SE_INC_BASE_PRIORITY_PRIVILEGE;
 const LUID SeCreatePagefilePrivilege       = SE_CREATE_PAGEFILE_PRIVILEGE;
+const LUID SeCreatePermanentPrivilege      = SE_CREATE_PERMANENT_PRIVILEGE;
 const LUID SeBackupPrivilege               = SE_BACKUP_PRIVILEGE;
 const LUID SeRestorePrivilege              = SE_RESTORE_PRIVILEGE;
 const LUID SeShutdownPrivilege             = SE_SHUTDOWN_PRIVILEGE;
@@ -56,6 +57,7 @@ static const struct {
     { 13, "SeProfileSingleProcessPrivilege" },
     { 14, "SeIncreaseBasePriorityPrivilege" },
     { 15, "SeCreatePagefilePrivilege"       },
+    { 16, "SeCreatePermanentPrivilege"      },
     { 17, "SeBackupPrivilege"               },
     { 18, "SeRestorePrivilege"              },
     { 19, "SeShutdownPrivilege"             },

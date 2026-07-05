@@ -2873,6 +2873,7 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "desktop"))  cfg->test_suite = 11;
         else if (ascii_streq(val, "ex"))       cfg->test_suite = 12;
         else if (ascii_streq(val, "nls"))      cfg->test_suite = 13;
+        else if (ascii_streq(val, "knf"))      cfg->test_suite = 14;
         else                                   cfg->test_suite = 0xFF;
     }
     else if (ascii_streq(key, "test_quiet")) {

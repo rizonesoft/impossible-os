@@ -52,6 +52,7 @@ typedef enum {
     TEST_CAT_DESKTOP,   /* desktop UI test framework (fb snapshot, input inject, WM state) */
     TEST_CAT_EX,        /* Executive support runtime (SLIST, rundown, callbacks, locks, ...) */
     TEST_CAT_NLS,       /* Atom/NLS/locale subsystem (UNICODE_STRING, case fold, code page) */
+    TEST_CAT_KNF,       /* Kernel Notification Facility (WNF-style state notifications) */
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF,
 } test_category_t;

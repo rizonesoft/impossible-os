@@ -51,6 +51,7 @@
 #include "kernel/timer.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_trace.h"
+#include "kernel/knf/knf.h"
 #include "kernel/ex.h"
 #include "main/main_internal.h"
 
@@ -865,6 +866,13 @@ void boot_phase2(void)
      * applied, so the panic-path registry write (gated on this flag) is safe. */
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
     boot_progress(2, "REGISTRY", POST16_REGISTRY_OK);
+
+    /* --- Kernel Notification Facility: \Notifications namespace + type.
+     * After Ob + registry (persistent-state metadata will live in the
+     * registry); still single-threaded here (pre-scheduler), so the tree
+     * build races nothing. --- */
+    knf_init();
+    boot_progress(2, "KNF", POST16_KNF_OK);
 
     /* --- NLS table loader: requires VFS + C: mount (nls_init sets readiness) --- */
     POST16(POST16_NLS);
