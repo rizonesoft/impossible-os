@@ -213,6 +213,15 @@ int RtlSelfRelativeToAbsoluteSD(const void *rel, uint32_t rel_len,
     base = (const uint8_t *)rel;
     wp   = (uint8_t *)abs_buf;
 
+    /* NT input-shape invariants (RtlValidSecurityDescriptor model): the header
+     * revision must match, and a self-relative descriptor MUST carry
+     * SE_SELF_RELATIVE. Reject malformed/absolute headers rather than parsing
+     * them with self-relative offset semantics. */
+    if (sr->Revision != SECURITY_DESCRIPTOR_REVISION)
+        return -1;
+    if (!(sr->Control & SE_SELF_RELATIVE))
+        return -1;
+
     memset(abs, 0, sizeof(*abs));
     abs->Revision = sr->Revision;
     abs->Control  = sr->Control & ~SE_SELF_RELATIVE;
@@ -384,7 +393,13 @@ int RtlGetAce(const ACL *acl, uint32_t index, ACE_HEADER **ace)
 
 /* ---- Bounded ACL validation (untrusted input) -------------------------- */
 
-/* ACE types that carry an inline SID immediately after ACE_HEADER + Mask. */
+/* ACE types that carry an inline SID immediately after ACE_HEADER + Mask.
+ * The callback variants (0x09/0x0A/0x0D/0x0E) share the same Header+Mask+
+ * SidStart prefix as the basic ACEs -- the SID is at +8; a conditional-
+ * expression BLOB (if any) follows the SID, still inside AceSize -- so their
+ * inline SID must be bounds-validated exactly like the basic types. Object
+ * ACEs (variable Flags+GUID prefix before the SID) are deliberately NOT here:
+ * they have no fixed SID offset and are treated bounds-only until supported. */
 static int ace_is_sid_bearing(uint8_t ace_type)
 {
     switch (ace_type) {
@@ -393,6 +408,10 @@ static int ace_is_sid_bearing(uint8_t ace_type)
     case SYSTEM_AUDIT_ACE_TYPE:
     case SYSTEM_ALARM_ACE_TYPE:
     case SYSTEM_MANDATORY_LABEL_ACE_TYPE:
+    case ACCESS_ALLOWED_CALLBACK_ACE_TYPE:
+    case ACCESS_DENIED_CALLBACK_ACE_TYPE:
+    case SYSTEM_AUDIT_CALLBACK_ACE_TYPE:
+    case SYSTEM_ALARM_CALLBACK_ACE_TYPE:
         return 1;
     default:
         return 0;
@@ -407,7 +426,8 @@ static int ace_is_sid_bearing(uint8_t ace_type)
  * Shared by RtlValidAcl and RtlGetAceEx so both apply identical bounds. */
 static uint32_t ace_body_valid(const ACE_HEADER *hdr, uint32_t remaining)
 {
-    uint32_t ace_size;
+    uint32_t ace_size, sid_off;
+    const SID *sid;
 
     if (remaining < sizeof(ACE_HEADER))
         return 0;
@@ -416,17 +436,44 @@ static uint32_t ace_body_valid(const ACE_HEADER *hdr, uint32_t remaining)
     if (ace_size < sizeof(ACE_HEADER) || ace_size > remaining)
         return 0;
 
-    if (ace_is_sid_bearing(hdr->AceType)) {
-        uint32_t sid_off = sizeof(ACE_HEADER) + sizeof(uint32_t); /* 8 */
-        const SID *sid;
-        if (ace_size < sid_off)
-            return 0;
-        sid = (const SID *)((const uint8_t *)hdr + sid_off);
-        if (RtlLengthSidBounded(sid, ace_size - sid_off) == 0)
-            return 0;
-    }
+    /* Every ACE type we support is SID-bearing (fixed Header+Mask+SidStart).
+     * Reject any other type: object/unknown ACEs have a variable Flags+GUID
+     * prefix we do not parse yet, and approving one would let a consumer that
+     * reads Mask/SID at fixed offsets (e.g. RtlAclToCStr) overread past
+     * AceSize on a validator-approved ACL. */
+    if (!ace_is_sid_bearing(hdr->AceType))
+        return 0;
+
+    /* The inline SID (after header + 4-byte Mask) must be well-formed AND fit
+     * inside THIS ACE (AceSize - 8), not merely inside the ACL. */
+    sid_off = sizeof(ACE_HEADER) + sizeof(uint32_t); /* 8 */
+    if (ace_size < sid_off)
+        return 0;
+    sid = (const SID *)((const uint8_t *)hdr + sid_off);
+    if (RtlLengthSidBounded(sid, ace_size - sid_off) == 0)
+        return 0;
 
     return ace_size;
+}
+
+/* Validate the fixed ACL header for UNTRUSTED input: the 8-byte header must be
+ * readable, AclRevision must be one of the two defined revisions (ACL_REVISION
+ * for basic ACEs, ACL_REVISION_DS when object ACEs are present -- NT RtlValidAcl
+ * model), and AclSize must cover the header without exceeding `avail`. Returns
+ * the widened AclSize on success, 0 on failure. Shared by RtlValidAcl and
+ * RtlGetAceEx so both untrusted-input APIs agree on what a valid ACL header is. */
+static uint32_t acl_header_valid(const ACL *acl, uint32_t avail)
+{
+    uint32_t acl_size;
+
+    if (!acl || avail < sizeof(ACL))
+        return 0;
+    if (acl->AclRevision != ACL_REVISION && acl->AclRevision != ACL_REVISION_DS)
+        return 0;
+    acl_size = (uint32_t)acl->AclSize;   /* widen from uint16_t */
+    if (acl_size < sizeof(ACL) || acl_size > avail)
+        return 0;
+    return acl_size;
 }
 
 int RtlValidAcl(const ACL *acl, uint32_t avail)
@@ -434,19 +481,10 @@ int RtlValidAcl(const ACL *acl, uint32_t avail)
     uint32_t acl_size, ace_count, cursor, i;
     const uint8_t *p;
 
-    if (!acl)
+    acl_size = acl_header_valid(acl, avail);
+    if (!acl_size)
         return 0;
-
-    /* The 8-byte ACL header must be readable before AclSize/AceCount. */
-    if (avail < sizeof(ACL))
-        return 0;
-
-    acl_size  = (uint32_t)acl->AclSize;    /* widen from uint16_t */
     ace_count = (uint32_t)acl->AceCount;
-
-    /* AclSize must cover the header and not exceed the readable window. */
-    if (acl_size < sizeof(ACL) || acl_size > avail)
-        return 0;
 
     /* Walk every ACE, keeping the cursor within AclSize (subtraction-form). */
     p      = (const uint8_t *)acl + sizeof(ACL);
@@ -468,13 +506,12 @@ int RtlGetAceEx(const ACL *acl, uint32_t index, ACE_HEADER **ace, uint32_t avail
     uint32_t acl_size, cursor, i;
     const uint8_t *p;
 
-    if (!acl || !ace)
-        return -1;
-    if (avail < sizeof(ACL))
+    if (!ace)
         return -1;
 
-    acl_size = (uint32_t)acl->AclSize;
-    if (acl_size < sizeof(ACL) || acl_size > avail)
+    /* Same untrusted ACL-header validation as RtlValidAcl (incl. AclRevision). */
+    acl_size = acl_header_valid(acl, avail);
+    if (!acl_size)
         return -1;
     if (index >= (uint32_t)acl->AceCount)
         return -1;

@@ -77,12 +77,17 @@ _Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, Control) == 2,
     "SECURITY_DESCRIPTOR_RELATIVE.Control at offset 2");
 _Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetOwner) == 4,
     "SECURITY_DESCRIPTOR_RELATIVE.OffsetOwner at offset 4");
+_Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetGroup) == 8,
+    "SECURITY_DESCRIPTOR_RELATIVE.OffsetGroup at offset 8");
+_Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetSacl) == 12,
+    "SECURITY_DESCRIPTOR_RELATIVE.OffsetSacl at offset 12");
 _Static_assert(__builtin_offsetof(SECURITY_DESCRIPTOR_RELATIVE, OffsetDacl) == 16,
     "SECURITY_DESCRIPTOR_RELATIVE.OffsetDacl at offset 16");
 
 /* ---- ACL ---------------------------------------------------------------- */
 
-#define ACL_REVISION  2
+#define ACL_REVISION     2   /* basic ACEs */
+#define ACL_REVISION_DS  4   /* required when the ACL contains object ACEs */
 
 struct acl {
     uint8_t  AclRevision;  /* ACL_REVISION (2) */
@@ -102,6 +107,17 @@ _Static_assert(sizeof(ACL) == 8, "ACL header must be 8 bytes (Windows ABI)");
 #define SYSTEM_AUDIT_ACE_TYPE            0x02
 #define SYSTEM_ALARM_ACE_TYPE            0x03
 #define SYSTEM_MANDATORY_LABEL_ACE_TYPE  0x11
+
+/* Callback ACE types: identical Header + Mask + SidStart layout as the basic
+ * ACEs above (SID at +8), with an optional conditional-expression BLOB AFTER
+ * the SID. They ARE SID-bearing -- their inline SID must be bounds-validated
+ * like any other. (Object ACE types 0x05-0x08 / 0x0B-0x0C have a variable
+ * Flags+GUID prefix before the SID and are not yet supported -- object-ACE
+ * support is future SeAccessCheck work.) */
+#define ACCESS_ALLOWED_CALLBACK_ACE_TYPE 0x09
+#define ACCESS_DENIED_CALLBACK_ACE_TYPE  0x0A
+#define SYSTEM_AUDIT_CALLBACK_ACE_TYPE   0x0D
+#define SYSTEM_ALARM_CALLBACK_ACE_TYPE   0x0E
 
 /* ---- ACE flags --------------------------------------------------------- */
 
@@ -216,9 +232,10 @@ int RtlAbsoluteToSelfRelativeSD(const SECURITY_DESCRIPTOR *abs,
  * `rel_len` is the number of bytes readable at `rel` -- it is the trust
  * boundary: EVERY offset and sub-structure is bounds-checked against it
  * before any deref, so `rel` may point at an UNTRUSTED buffer (imported SD
- * from disk / registry / NtSetSecurityObject). Copies SID/ACL bodies into
- * the caller-supplied abs_buf workspace (must fit the SD struct + all SIDs +
- * ACLs). Returns 0 on success, -1 on error or malformed input. */
+ * from disk / registry / NtSetSecurityObject). The SECURITY_DESCRIPTOR itself
+ * is written to `abs`; the Owner/Group SIDs and SACL/DACL bodies are copied
+ * into the caller-supplied abs_buf workspace (which must fit those bodies).
+ * Returns 0 on success, -1 on error or malformed input. */
 int RtlSelfRelativeToAbsoluteSD(const void *rel, uint32_t rel_len,
                                 SECURITY_DESCRIPTOR *abs,
                                 void *abs_buf, uint32_t abs_buf_len);

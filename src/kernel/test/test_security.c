@@ -457,6 +457,41 @@ static void test_acl_valid_bounded(void)
     h0->AceSize = 4;
     TEST_ASSERT(RtlGetAceEx(bad, 0, &ace, bad->AclSize) == -1,
                 "RtlGetAceEx rejects target ACE with AceSize < SID prefix");
+
+    /* Callback ACEs (0x09) are SID-bearing (Header+Mask+SidStart, SID at +8):
+     * their inline SID must be validated just like a basic ACE. Flip the
+     * first ACE to a callback type and corrupt its SID's SubAuthorityCount
+     * (SID at ACE+8, count at SID offset 1) -> RtlValidAcl must reject. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceType = ACCESS_ALLOWED_CALLBACK_ACE_TYPE;
+    ((uint8_t *)h0)[sizeof(ACE_HEADER) + sizeof(uint32_t) + 1] = 200;
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 0,
+                "RtlValidAcl rejects callback ACE with corrupt inline SID");
+    /* Same ACL as a callback ACE but with the SID intact -> accepted. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceType = ACCESS_ALLOWED_CALLBACK_ACE_TYPE;
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 1,
+                "RtlValidAcl accepts callback ACE with valid inline SID");
+
+    /* Object/unknown ACE types (e.g. 0x05) have a variable prefix we do not
+     * parse -> rejected, so a validator-approved ACL never carries an ACE that
+     * a fixed-offset consumer (RtlAclToCStr) would overread. */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    h0 = (ACE_HEADER *)(bad_buf + sizeof(ACL));
+    h0->AceType = 0x05;  /* ACCESS_ALLOWED_OBJECT_ACE_TYPE (unsupported) */
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 0,
+                "RtlValidAcl rejects unparseable object/unknown ACE type");
+
+    /* An invalid AclRevision must be rejected CONSISTENTLY by both bounded
+     * untrusted-input APIs (shared acl_header_valid). */
+    memcpy(bad_buf, acl_buf, sizeof(bad_buf));
+    bad->AclRevision = 99;
+    TEST_ASSERT(RtlValidAcl(bad, bad->AclSize) == 0,
+                "RtlValidAcl rejects invalid AclRevision");
+    TEST_ASSERT(RtlGetAceEx(bad, 0, &ace, bad->AclSize) == -1,
+                "RtlGetAceEx rejects invalid AclRevision (consistency)");
 }
 
 /* ---- RtlSelfRelativeToAbsoluteSD bounded untrusted import ---- */

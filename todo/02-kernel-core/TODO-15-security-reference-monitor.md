@@ -241,7 +241,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] `RtlGetOwnerSecurityDescriptor(sd, owner, defaulted)`
 - [x] `RtlGetDaclSecurityDescriptor(sd, present, dacl, defaulted)`
 - [x] `RtlAbsoluteToSelfRelativeSD(abs, rel_buf, rel_len)` -- marshal to flat buffer
-- [x] `RtlSelfRelativeToAbsoluteSD(rel, abs_buf, ...)` -- unmarshal from flat buffer
+- [x] `RtlSelfRelativeToAbsoluteSD(rel, rel_len, abs, abs_buf, abs_buf_len)` -- bounded unmarshal from an untrusted flat buffer
 - [x] `SeCreateDefaultSD(type)` -- returns a self-relative SD with:
   - Owner = `SeLocalSystemSid`
   - DACL: `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;WD)` -- System+Admins=FullControl, Everyone=ReadControl
@@ -255,19 +255,26 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] SECURITY [H]: `RtlLengthSidBounded(sid,avail)` (sid.c) -- `avail>=8`, Revision, `count<=15`, `len<=avail` (subtraction-form). Trusted `RtlLengthSid` kept; untrusted import uses the bounded variant only.
 - [ ] Select per-type default SD: ob.c always uses `SE_SD_TYPE_DEFAULT`; map `ObpProcessType`->PROCESS, `ObpTokenType`->TOKEN so process/token get the §3 DACLs once §5 honors `hdr->security`. -> XREF: 02-kernel-core/TODO-15 §5
 - [x] Moved `SECURITY_DESCRIPTOR_RELATIVE` typedef into `acl.h` with size (20) + offset `_Static_assert`s; removed the private acl.c copy so untrusted parsers can inspect offsets.
+- [x] SECURITY [H]: callback ACEs (0x09/0x0A/0x0D/0x0E) treated SID-bearing so `ace_body_valid` bounds-validates their inline SID; `RtlValidAcl` rejects bad `AclRevision`; import rejects wrong Revision / non-self-relative headers.
+- [ ] Object ACE types (0x05-0x08/0x0B-0x0C): variable Flags+GUID prefix before the SID; `RtlValidAcl` now REJECTS them (unparseable). Add constants + Flags-aware SID offset to SUPPORT them when AD-style extended-rights ACEs are needed.
+- [ ] `RtlSelfRelativeToAbsoluteSD` packs SID/ACL bodies contiguously into `abs_buf`; an ACL body can land unaligned -> strict-alignment arch (ARM64) fault. Align each component copy to 4 bytes when the import path is wired.
 - [x] Commit: `"kernel/security: SECURITY_DESCRIPTOR, ACL, ACE types and helpers"`
 
 **Test checkpoint:** `RtlCreateSecurityDescriptor` + `RtlSetDaclSecurityDescriptor` + `RtlAbsoluteToSelfRelativeSD` round-trips (self-relative buffer parses back to identical ACEs via `RtlSelfRelativeToAbsoluteSD`). `SeCreateDefaultSD(SE_SD_TYPE_REGISTRY_KEY)` yields the `(A;;GA;;;SY)(A;;GA;;;BA)(A;;GR;;;BU)` DACL. `RtlAclToCStr` dumps `D:(A;;FA;;;SY)`. `RtlGetAce` walks each ACE by index. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1034 passed, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1041 passed, 0 failures
 > **Notes:**
 > - Shipped: Win32 SD/ACL/ACE types + Rtl* helpers + `SeCreateDefaultSD` blobs, plus bounded untrusted-input validators `RtlLengthSidBounded` (sid.c), `RtlValidAcl`/`RtlGetAceEx` and a `rel_len`-guarded `RtlSelfRelativeToAbsoluteSD` (acl.c).
 > - Safety model: self-relative SD import bounds-checks every offset/SID/ACL against `rel_len` before deref (subtraction-form); trusted `RtlLengthSid`/`RtlGetAce` kept for kernel-built data, untrusted paths use bounded variants.
-> - Tests: 3 new security tests exercise valid + malformed/OOB inputs (avail<hdr, count>15, offset-past/inside-header, AceSize overrun/zero); malformed cases run without faulting -- `SUITE=security` 1034 passed, 0 failed.
+> - Tests: 3 new security tests exercise valid + malformed/OOB inputs (avail<hdr, count>15, offset in/past header, AceSize overrun/zero, callback-ACE corrupt SID, object-ACE reject, bad AclRevision); malformed cases run without faulting -- `SUITE=security` 1041 passed, 0 failed.
 > - Latent: the three OOB fixes have NO production caller yet (IXFS/registry/`NtSetSecurityObject` import unwired); validators land ahead of that wiring. `SECURITY_DESCRIPTOR_RELATIVE` now in acl.h with size/offset asserts.
 > - Scope boundary: §5 owns SeAccessCheck honoring `hdr->security`; per-type default-SD selection in ob.c (item 4) stays open, blocked on that §5 wiring.
+> **Verified:** 2026-07-05 | commit `9c12e1d8` (+ review fixes) | 25/28 items | build OK | tests 1041/1041 PASS
 > **Deferred:** [M] per-type default-SD selection in ob.c (`ObpProcessType`/`ObpTokenType` -> PROCESS/TOKEN DACLs) blocked until §5 honors `hdr->security` -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(object->SecurityDescriptor ...)`")
-> **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) | 1M fixed (MIC constant drift), 1Crit+3H+1M deferred | scope: kernel-code-quality
+> **Deferred:** [L] object ACE type SUPPORT (0x05-0x08/0x0B-0x0C) not implemented -- `RtlValidAcl` now REJECTS them (no OOB), support deferred -> XREF: 02-kernel-core/TODO-15 §3 (item: "Object ACE types (0x05-0x08/0x0B-0x0C)")
+> **Deferred:** [L] `abs_buf` component copies can land unaligned -> strict-align arch (ARM64) fault when the import path is wired -> XREF: 02-kernel-core/TODO-15 §3 (item: "`RtlSelfRelativeToAbsoluteSD` packs SID/ACL bodies")
+> **Deferred:** [L] `SE_DACL_PRESENT`/`OffsetDacl` presence-vs-flag cross-check on import -> XREF: 02-kernel-core/TODO-15 §5 (item: "Normalize: cross-check `SE_DACL_PRESENT`")
+> **Quality reviewed:** 2026-07-05 | Codex 13x (design, adversarial, re-adversarial, consistency, perf) | 3H+3M+3L fixed, 1M+3L deferred | scope: kernel-code-quality
 
 ---
 
@@ -382,6 +389,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] `TOKEN_WRITE_RESTRICTED` (§9): run the restricted-SID second DACL pass ONLY for write-class desired access (write mask via the object `GENERIC_MAPPING`); non-write access skips it. -> XREF: 02-kernel-core/TODO-15 §9
 - [ ] Conditional/callback ACEs (`*_CALLBACK_ACE` 0x9/0xA): until expr-eval exists, DENY not skip -- an unknown conditional ACE whose Mask intersects desired with a matchable SID returns `STATUS_ACCESS_DENIED`. -> XREF: 02-kernel-core/TODO-15 §3
 - [ ] SeAccessCheck DACL-walk + SD-normalize: §3's bounded validators (`RtlValidAcl`/`RtlGetAceEx`/`RtlLengthSidBounded`/`rel_len`) landed -- normalize untrusted SDs through them to a canonical ABSOLUTE form. -> XREF: 02-kernel-core/TODO-15 §3
+- [ ] Normalize: cross-check `SE_DACL_PRESENT`/`SE_SACL_PRESENT` control flags against non-zero `OffsetDacl`/`OffsetSacl` on import so the flags cannot disagree with actual DACL/SACL presence. -> XREF: 02-kernel-core/TODO-15 §3
 - [ ] Ordering (escalation-critical): MIC pre-check runs BEFORE any final DACL grant; owner-bypass only ACCUMULATES `READ_CONTROL|WRITE_DAC` (no early return); a matching DENY ACE wins over any later ALLOW.
 - [ ] SHIP FIRST (unblocks §4, independent of the DACL core): the `resolve_token_handle_access` granted_access item below is a standalone commit -- reads `HANDLE_TABLE_ENTRY.granted_access` only, no ACL walk.
 - [ ] Commit: `"kernel/security: SeAccessCheck engine and ObpReferenceObjectByHandle integration"`
@@ -391,10 +399,10 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | on implementation
 > **Notes:**
 > - Design-specced (Codex): SeAccessCheck 8-step engine + GENERIC_MAPPING + subject context + granted_access enforcement; ordering rules deny-before-allow, owner-bypass-accumulate-only, MIC-before-grant, conditional-ACE DENY-not-skip.
-> - BLOCKED: the DACL-walk + SD-normalize core is unsafe until §3's bounded validators land (rel_len, RtlValidAcl/RtlGetAceEx, bounded SID); use a canonical validated absolute form.
+> - Unblocked: §3's bounded validators (rel_len, RtlValidAcl/RtlGetAceEx, RtlLengthSidBounded) have LANDED; the DACL-walk/SD-normalize core now normalizes untrusted SDs through them to a canonical validated absolute form.
 > - Ships-first subset: `resolve_token_handle_access` granted_access enforcement is independent of the ACL walk and unblocks §4's setters.
 > - Scope boundary: §3 owns the bounded SD/ACL validators; §6 owns the MIC pre-check; §7 owns token-to-process wiring.
-> **Deferred:** [Critical] SeAccessCheck DACL-walk/SD-normalize core BLOCKED on §3's bounded validators (else OOB in the auth path) -> XREF: 02-kernel-core/TODO-15 §3 (item: "bounded ACL/ACE walk")
+> **Deferred:** [Critical] SeAccessCheck DACL-walk/SD-normalize engine design-captured but not yet implemented; §3's bounded validators now available to build it safely -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`")
 > **Deferred:** [H] granted_access enforcement (`resolve_token_handle_access`) ships first + the ACE-ordering/owner-bypass/WRITE_RESTRICTED/conditional-ACE engine, design-captured -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
 
 ---
