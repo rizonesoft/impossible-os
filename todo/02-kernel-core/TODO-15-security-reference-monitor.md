@@ -459,6 +459,11 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Codex design F1: token inheritance on the creation edge, not `task_exec` (in-place, preserves token); F2: SYSTEM token to PID 0 in Phase 3 (ObpTokenType/PID 0 absent in Phase 0).
 > - Codex adversarial (3H) fixed: inheritance extended to `task_create`/`task_create_user`; `g_primary_tokens_active` fail-closes tokenless-parent-after-init; primary + impersonation token teardown in `task_cleanup`.
 > - Deferred: cross-thread impersonation (§4 lock) + `SeQuerySubjectContextToken` Ob-referenced effective-token capture (§5, design F3 SMP race).
+> **Verified:** 2026-07-05 | commit `5c254cee` | 6/8 items | build OK | tests 1074/1074 PASS, smoke PASS
+> **Accepted:** [H] full SMP token-slot lifetime lock (all raw readers -- `NtOpenProcessToken` etc. -- pin under it) -- safe on the single-cursor scheduler (`task_cleanup` reaps only off-CPU DEAD tasks) -> XREF: 02-kernel-core/TODO-15 §4 (item: "Per-token lock for SMP safety")
+> **Accepted:** [M] lockless `num_tasks` slot allocator can leak a token under concurrent task creation -- pre-existing scheduler race, safe single-cursor -> XREF: 02-kernel-core/TODO-15 §4 (item: "Per-token lock for SMP safety")
+> **Deferred:** [H] `SeQuerySubjectContextToken` Ob-referenced effective-token capture + cross-thread `NtImpersonateThread` -> XREF: 02-kernel-core/TODO-15 §5 (item: "SeCaptureSubjectContext")
+> **Quality reviewed:** 2026-07-05 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 5H+1M+1L fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
