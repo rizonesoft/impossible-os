@@ -23,7 +23,7 @@ static int sid_is_integrity_label(const SID *sid)
         return 0;
     if (sid->Revision != SID_REVISION || sid->SubAuthorityCount != 1)
         return 0;
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < sizeof(sid->IdentifierAuthority); i++)
         if (sid->IdentifierAuthority[i] != mandatory_auth[i])
             return 0;
     return 1;
@@ -38,6 +38,7 @@ static int find_mandatory_label(const SECURITY_DESCRIPTOR *sd,
                                 uint32_t *il, uint32_t *policy)
 {
     const ACL *sacl;
+    const uint8_t *p;
     uint32_t count, i;
 
     *il     = SECURITY_MANDATORY_MEDIUM_RID;
@@ -53,16 +54,20 @@ static int find_mandatory_label(const SECURITY_DESCRIPTOR *sd,
     if (!RtlValidAcl(sacl, sacl->AclSize))
         return -1;  /* malformed -> fail closed */
 
+    /* Linear cursor walk: RtlValidAcl already proved every ACE header + AceSize
+     * stays within AclSize, so advancing by AceSize is bounded. (Indexed
+     * RtlGetAceEx per ACE would re-walk from the head each time -> O(n^2).) */
     count = (uint32_t)sacl->AceCount;
+    p     = (const uint8_t *)sacl + sizeof(ACL);
     for (i = 0; i < count; i++) {
-        ACE_HEADER *ace;
+        const ACE_HEADER *ace = (const ACE_HEADER *)p;
         const SYSTEM_MANDATORY_LABEL_ACE *lbl;
         const SID *sid;
 
-        if (RtlGetAceEx(sacl, i, &ace, sacl->AclSize) != 0)
-            return -1;
-        if (ace->AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE)
+        if (ace->AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE) {
+            p += ace->AceSize;
             continue;
+        }
 
         lbl = (const SYSTEM_MANDATORY_LABEL_ACE *)ace;
         sid = (const SID *)&lbl->SidStart;

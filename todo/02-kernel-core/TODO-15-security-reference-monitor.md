@@ -352,13 +352,7 @@ title: "TODO-15 -- Security Reference Monitor"
   ```
 - [ ] `SeCaptureSubjectContext(ctx)` -- reads `task_current()->token` (primary) and TEB impersonation token (if any) into `ctx`; thread-safe snapshot
 - [ ] `SeReleaseSubjectContext(ctx)` -- dereferences token pointers
-- [ ] Define `GENERIC_MAPPING` per object type in `include/kernel/security/generic_mapping.h`:
-  ```c
-  typedef struct {
-      uint32_t GenericRead; uint32_t GenericWrite;
-      uint32_t GenericExecute; uint32_t GenericAll;
-  } GENERIC_MAPPING;
-  ```
+- [ ] The `GENERIC_MAPPING` type already exists in `include/kernel/security/generic_mapping.h` (shipped in §6); define the per-object-type INSTANCES against it, not a second typedef.
 - [ ] Declare mappings for: File (standard Unix rwx mapping), Process, Thread, Token, Registry Key, Event, Mutex, Semaphore, Waitable Timer
 - [ ] `RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/ `EXECUTE`/`ALL` bits with type-specific masks in-place
 - [ ] Implement `SeAccessCheck(sd, ctx, ctx_locked, desired, prev_granted, privs, mapping, mode, granted, status)`:
@@ -366,7 +360,7 @@ title: "TODO-15 -- Security Reference Monitor"
   1. **Kernel bypass**: if `mode == KernelMode` → `*granted = desired`, return `TRUE`
   2. **Owner bypass**: if `ctx->PrimaryToken->UserSid` == SD owner → set `READ_CONTROL | WRITE_DAC` bits in accumulated access without DACL check
   3. **DACL absent**: if `sd->Dacl == NULL` → grant all; if DACL present but empty (AceCount=0) → deny all
-  4. **MIC pre-check**: call `SeCheckMandatoryAccess(ctx, sd, desired)` (§6); if MIC denies → `*status = STATUS_ACCESS_DENIED`, return `FALSE`
+  4. **MIC pre-check**: call `SeCheckMandatoryAccess(ctx->effective_token, sd, desired, mapping)` (§6 signature -- pass the object `GENERIC_MAPPING` so object-specific rights are classified); if MIC denies → `*status = STATUS_ACCESS_DENIED`, return `FALSE`. Hold a token reference across the check (IL SID torn-read guard).
   5. **ACE walk**: iterate DACL ACEs in order; for each ACE:
      - `ACCESS_DENIED_ACE`: if any SID in token groups or user matches ACE SID AND `(desired & ACE->Mask) != 0` → deny immediately
      - `ACCESS_ALLOWED_ACE`: if SID matches AND ACE was not `INHERIT_ONLY` → accumulate `ACE->Mask` bits into granted mask
@@ -423,19 +417,25 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] `SeCheckMandatoryAccess` folds the object `GENERIC_MAPPING` (`generic_mapping.h`) into its access classes so object-specific rights cannot bypass No-*-Up; §5 owns per-type instances.
 - [ ] Default object IL assignment: kernel objects created by System process get `SeILSystem`; objects created by user process inherit creator's IL
 - [ ] UIPI note: MIC also gates cross-IL window-message sends (UIPI), but that path is compositor/Win32k-owned, not an SRM object DACL check. -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserChangeWindowMessageFilterEx")
-- [ ] When `NtCreateProcess` copies the parent token (§7), child token IL = `min(parent_IL, process_image_IL)`; image IL read from PE/ELF resource (`RT_MANIFEST`, requested execution level: `asInvoker`→same, `requireAdministrator`→High)
+- [ ] `NtCreateProcess` child token IL = `min(parent_IL, image_IL)` via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN`; image IL from PE/ELF `RT_MANIFEST` exec level. -> XREF: 02-kernel-core/TODO-15 §7
+- [ ] Mandatory-label WRITE (`SeRelabelPrivilege`): raising an object IL above the caller's own token IL needs the privilege; add to §2 + enforce in `NtSetSecurityObject` SACL path. -> XREF: 02-kernel-core/TODO-15 §12
 - [ ] Low IL sandbox mode: token with `SeILLow` is denied write to `%USERPROFILE%\*` (only `%LOCALAPPDATA%\Low\*` writable); enforced by MIC at `SeCheckMandatoryAccess` time
-- [ ] Commit: `"kernel/security: Mandatory Integrity Control, No-Write-Up policy"`
+- [x] Commit: `"kernel/security: Mandatory Integrity Control, No-Write-Up policy"`
 
 **Test checkpoint:** `SeCheckMandatoryAccess` with Low IL token + GENERIC_WRITE on Medium IL object → `STATUS_ACCESS_DENIED` (No-Write-Up). System IL writing Medium IL → allowed. No-Read-Up policy set, Low IL reading Medium IL → denied. Default policy (No-Write-Up only), Low IL reading Medium IL → allowed. Child process spawned from Medium IL parent → child IL == Medium. Serial log: `"[SRM] MIC: subject_il=%u object_il=%u policy=0x%x result=%s"`. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1058 passed, 0 failures
 > **Notes:**
 > - Shipped: `mic.c`/`mic.h` -- `SeGetTokenIntegrityLevel`, `SeGetObjectIntegrityLevel`, `SeCompareMandatoryLevels`, `SeCheckMandatoryAccess` (No-*-Up, `GENERIC_MAPPING`-aware) + IL-RID/`MIC_*_MASK` constants + shared `generic_mapping.h`.
-> - Integration: pure functions on a caller token/SD (no global state/locks/alloc); SACL walk uses §3's `RtlValidAcl`+`RtlGetAceEx` (imported SD cannot OOB; malformed SACL fails closed). No live caller yet -- SeAccessCheck consumes them.
+> - Integration: pure functions on a caller token/SD (no global state/locks/alloc); the SACL is validated once via §3's `RtlValidAcl` then a linear `AceSize` cursor finds the label (imported SD cannot OOB; malformed SACL fails closed). No live caller yet -- SeAccessCheck consumes them.
 > - Tests: `test_mic` covers token IL (incl non-IL-authority reject), object IL (Medium/High/System-fail-closed), compare, No-Write-Up + No-Read-Up, object-specific-bit bypass closed via mapping, malformed-SACL fail-closed; `SUITE=security` 1058 passed, 0 failed.
 > - Design (Codex): `SeCheckMandatoryAccess(token, ...)` not `ctx` (SUBJECT_CONTEXT deferred); defensive SACL validation; Medium default on valid-but-unlabeled, fail-closed on malformed.
 > - Scope boundary: SeAccessCheck owns MIC-before-DACL wiring + `GENERIC_MAPPING` precision + the `[SRM] MIC:` log; token assignment owns child-IL=min; object-IL-at-creation + Low-IL FS sandbox stay open.
+> **Verified:** 2026-07-05 | commit `d6d9fc44` (+ review fixes) | 5/10 items | build OK | tests 1061/1061 PASS
+> **Deferred:** [M] child token IL = min(parent, image) via `TOKEN_MANDATORY_POLICY_NEW_PROCESS_MIN` (process-creation-time, not a read-only helper) -> XREF: 02-kernel-core/TODO-15 §6 (item: "`NtCreateProcess` child token IL")
+> **Deferred:** [M] mandatory-label WRITE enforcement (`SeRelabelPrivilege`) on the `NtSetSecurityObject` SACL path -> XREF: 02-kernel-core/TODO-15 §6 (item: "Mandatory-label WRITE (`SeRelabelPrivilege`)")
+> **Accepted:** [L] `token->IntegrityLevelSid` read without a token reference -- the live SeAccessCheck path must hold one (torn-read guard) -> XREF: 02-kernel-core/TODO-15 §5 (item: "MIC pre-check")
+> **Quality reviewed:** 2026-07-05 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 3H+3M+3L fixed, 1M rejected | scope: kernel-code-quality
 
 ---
 

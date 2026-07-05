@@ -18,3 +18,7 @@ typedef struct generic_mapping {
     ACCESS_MASK GenericExecute;
     ACCESS_MASK GenericAll;
 } GENERIC_MAPPING;
+
+/* Windows ABI: four ACCESS_MASK (uint32) fields, 16 bytes. */
+_Static_assert(sizeof(GENERIC_MAPPING) == 16,
+    "GENERIC_MAPPING must be 16 bytes (4x ACCESS_MASK, Windows ABI)");

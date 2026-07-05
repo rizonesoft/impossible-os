@@ -71,7 +71,12 @@ int SeCompareMandatoryLevels(uint32_t subject_il, uint32_t object_il);
  * `mapping` is the object type's GENERIC_MAPPING: it lets the check treat
  * object-specific rights (FILE_WRITE_DATA, KEY_SET_VALUE, ...) as write/read/
  * execute so they cannot bypass the policy. It may be NULL, in which case only
- * the generic + standard bits (MIC_*_MASK) are classified. */
+ * the generic + standard bits (MIC_*_MASK) are classified.
+ *
+ * This is a conservative boolean GATE, not an access resolver: a lower-IL
+ * MAXIMUM_ALLOWED request is denied outright (fail-safe) rather than resolved
+ * to a reduced grant. The SeAccessCheck engine owns MAXIMUM_ALLOWED resolution
+ * against the DACL; a deny here means "MIC blocks this", not the final answer. */
 NTSTATUS SeCheckMandatoryAccess(const ACCESS_TOKEN *token,
                                 const SECURITY_DESCRIPTOR *sd,
                                 ACCESS_MASK desired,
