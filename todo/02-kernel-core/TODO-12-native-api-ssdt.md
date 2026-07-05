@@ -766,7 +766,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: token-adjust success paths + PreviousState size edge cases (0/header-only/one-entry) + valid-class query positive paths are untested.
 > **Verified:** 2026-07-02 | commit `7183b1bd` | 9/10 items | build OK | security 1010/1010 PASS
 > **Deferred:** [H] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState can hold the old-state entries, so an undersized buffer loses rollback state -> XREF: 02-kernel-core/TODO-12 §16 (item: "NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState" at line 758)
-> **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 296)
+> **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 325)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit+2H fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 
@@ -1212,7 +1212,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] `NtCreateToken(TokenHandle, DesiredAccess, ObjectAttributes, TokenType, AuthenticationId, ExpirationTime, User, Groups, Privileges, Owner, PrimaryGroup, DefaultDacl, Source)` → SSDT 0x00BA
 - [ ] `NtAccessCheck(SecurityDescriptor, ClientToken, DesiredAccess, GenericMapping, PrivilegeSet, PrivilegeSetLength, GrantedAccess, AccessStatus)` → SSDT 0x00BC:
   - Core SRM decision point; routes to `SeAccessCheck()` in the Security Reference Monitor
-- [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF
+- [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- shipped in TODO-15 §12 (nt_token.c NtPrivilegeCheck_handler + token-explicit SePrivilegeCheckToken)
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
 - [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
 - [ ] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
@@ -1223,7 +1223,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] [Critical] Namespace + token syscalls deref raw user pointers (`nt_namespace.c`, `nt_token.c`): out-HANDLE, Context/ReturnLength, OBJECT_ATTRIBUTES, symlink target, token buffers -- probe + copy-in/out via kernel buffers. (§16/§17)
 - [ ] **Foundation: per-token SMP lock** (`token.h`/`token.c`): add a spinlock to `ACCESS_TOKEN` taken by every read/mutate path so a privilege decision cannot observe a torn `Privileges[]` mid-adjust. (§29 design)
 - [ ] **Foundation: owned restricted-SID storage** (`token.c`): replace the single `RestrictedSids`+count with owned per-entry storage (bounded usercopy, deep-dup, `token_on_delete` free) before `NtFilterToken`. (§29 design)
-- [ ] **Foundation: access-mask-aware token resolution** (`nt_token.c`): `resolve_token_handle` must enforce per-op `TOKEN_*` bits from `granted_access`; restrict `NtOpenProcessToken` to authorized handles until DACL enforcement lands. (§29 design)
+- [ ] **Foundation: lifetime-pinned + access-mask token resolution** (`nt_token.c`): `resolve_token_handle` must `ObReferenceObjectByHandle`-pin the token (`NtClose` UAF today) AND enforce per-op `TOKEN_*` bits; retrofit all handlers. (§29)
 - [ ] **Foundation: default-token privilege policy** (`SeCreateUserToken`): do NOT enable `SeShutdownPrivilege` for standard users, else the shutdown gate is meaningless; require elevation + negative test. (§29 design)
 - [ ] **Foundation: shared privilege-gated shutdown helper** (`nt_syscall.c`, `sched/syscall.c`): route `NtShutdownSystem` AND legacy `SYS_REBOOT`/`SYS_SHUTDOWN` through one `SeShutdownPrivilege` check. (§29 design)
 - [ ] `NtAccessCheck`/`SeAccessCheck` DACL engine + `GENERIC_MAPPING` type are external prerequisites -> XREF: `TODO-15-security-reference-monitor.md §5,§8`.

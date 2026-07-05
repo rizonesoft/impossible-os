@@ -605,7 +605,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 - [ ] `NtDuplicateToken(ExistingHandle, DesiredAccess, ObjAttrs, EffectiveOnly, TokenType, NewHandle)` → SSDT 0x00B8 -- deferred to TODO-12 §29 (lifecycle)
 - [ ] `NtFilterToken(ExistingHandle, Flags, SidsToDisable, PrivsToDelete, RestrictedSids, NewHandle)` → SSDT 0x00B9
 - [ ] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
-- [ ] `NtCreateLowBoxToken(NewToken, ExistingToken, DesiredAccess, ObjectAttributes, AppContainerSid, CapabilityCount, Capabilities, HandleCount, Handles)` → SSDT 0x00BB: route to AppContainer token creation (§14)
+- [ ] `NtCompareTokens(FirstTokenHandle, SecondTokenHandle, Equal)` → SSDT 0x00BB -- deferred (token lifecycle); NtCreateLowBoxToken is SSDT 0x02A0, owned by §14 (AppContainer)
 - [ ] `NtAccessCheck(SD, ClientToken, DesiredAccess, GenericMapping, PrivSet, PrivSetLen, GrantedAccess, AccessStatus)` → SSDT 0x00BC: route to `SeAccessCheck()` (§5)
 - [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- nt_token.c: decodes ClientToken + `PRIVILEGE_SET`, kernel-scratch bounded copy, calls new token-explicit `SePrivilegeCheckToken()` (satisfies TODO-12 §12)
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1 -- deferred: needs self-relative SD import + real access check (→ XREF §5 `SeAccessCheck`, §3 SD unmarshal)
@@ -623,8 +623,12 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 > **Notes:**
 > - Partial ship: NtPrivilegeCheck (SSDT 0x00BF) wired to the new token-explicit `SePrivilegeCheckToken()`; section stays `[/]` while SeAccessCheck/lifecycle rows remain `[ ]`.
 > - Design review adoptions in the ship commit: decode a1=ClientToken (was mis-specced), add the token-explicit primitive, kernel-scratch copy the variable-length `PRIVILEGE_SET` before use.
-> - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "access-mask-aware token resolution" at line 1226).
+> - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights + unref'd token lifetime = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226).
 > - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
+> **Verified:** 2026-07-05 | commit `993bcd60` | 9/20 items | build OK | tests compile (security + ob; runtime on WHPX)
+> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226)
+> **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement SeAccessCheck" at line 630)
+> **Quality reviewed:** 2026-07-05 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -697,7 +701,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 - [ ] `NtQueryInformationToken(TokenIsAppContainer)` -- return `TRUE` for AppContainer tokens
 - [ ] `NtQueryInformationToken(TokenAppContainerSid)` -- return the AppContainer SID
 - [ ] `NtQueryInformationToken(TokenCapabilities)` -- return capability SID list
-- [ ] Wire `NtCreateLowBoxToken` to SSDT (index 0x00BB per NT convention)
+- [ ] Wire `NtCreateLowBoxToken` to SSDT (index 0x02A0 per `service_numbers.h`; 0x00BB is NtCompareTokens)
 - [ ] Derived capability SIDs (`RtlDeriveCapabilitySidsFromName`): uppercase + SHA-256 (§16/Monocypher) a cap name into `S-1-15-3-1024-<4 subauth>`; needed for mic/webcam/location/custom caps beyond the 10 fixed RIDs. Add test vectors.
 - [ ] Add remaining fixed well-known capability SIDs (Appointments, Contacts, etc. per `WELL_KNOWN_SID_TYPE`) + the `ALL_RESTRICTED_APPLICATION_PACKAGES` SID (`S-1-15-2-2`) alongside `ALL_APPLICATION_PACKAGES`.
 - [ ] Commit: `"kernel/security: AppContainer -- NtCreateLowBoxToken, capability SIDs, sandbox access check"`
