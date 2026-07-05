@@ -76,6 +76,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 | 7 | User-mode libc shims (`user/lib/libc.lib`) | 💎 | §6 CRT0; `kernel32.dll` stubs |
 | 8 | Fiber API | ⭐ | §1 TEB FiberData; §6 thread-to-fiber conversion |
 | 9 | Local atom tables (RtlAtomTable + kernel32 AddAtom) | 💎 | §2 RtlHeap; `D02T13 §3` (kernel global `NtAddAtom` stays global-only) |
+| 10 | WNF user runtime (RtlPublish/Subscribe + dispatch worker) | 💎 | §1 TEB; §2 RtlHeap; `D02 T16 §3 §8` (kernel KNF/WNF SSDT surface) |
 
 ---
 
@@ -372,6 +373,22 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ---
 
+## 10. WNF User Runtime (RtlPublish / RtlSubscribe) `[Sonnet]`
+
+> The user-mode Rtl surface over the kernel notification facility (WNF-compatible SSDT surface owned by `D02 T16 §8`). Windows keeps the WNF `Rtl*` layer in `ntdll`: it owns the per-process subscription table + the single delivery worker that turns a kernel wake into user callback dispatch, while the kernel owns state storage, coalescing, and the syscall boundary. This section owns ONLY the user-mode half; it must not duplicate kernel state. **Source file:** `src/user/ntdll/ntdll_wnf.c`. -> XREF: D02 T16 §3 (waitable user subscriptions), D02 T16 §8 (WNF-compatible SSDT surface).
+
+- [ ] **`RtlPublishWnfStateData`**: thin wrapper over `NtUpdateWnfStateData`; validates `Length` against the state's max size and returns the syscall status unchanged.
+- [ ] **`RtlSubscribeWnfStateChangeNotification`**: allocate a per-process subscription node from `RtlHeap`, register it in the process subscription table, and arm the kernel wait via `NtSubscribeWnfStateChange`.
+- [ ] **`RtlUnsubscribeWnfStateChangeNotification`**: detach from the process table, call `NtUnsubscribeWnfStateChange`, and retire-then-free the node (free only once the dispatch worker is not inside its callback -- no UAF on a concurrent publish).
+- [ ] **Single delivery worker**: one per-process thread waits on the kernel wake, queries the payload via `NtQueryWnfStateData`, and fans out to each matching subscription's callback; callbacks serialized per Windows WNF semantics.
+- [ ] **`RtlQueryWnfStateData` / `RtlWnfDllUnloadCallback`**: synchronous one-shot read; teardown hook that unsubscribes every live node at DLL unload / `ExitProcess` so no kernel subscription outlives the process.
+- [ ] Process-exit cleanup: CRT0 teardown (§6) drains the subscription table so a crashing/exiting process leaves no dangling kernel subscription (mirrors kernel-side teardown-on-exit in `D02 T16 §3`).
+- [ ] Commit: `"ntdll: WNF user runtime (RtlPublish/Subscribe + single dispatch worker + process-exit cleanup)"`
+
+**Test checkpoint:** A process subscribes to a state, another publishes, and the subscriber's callback fires once with the new `ChangeStamp` + payload. `RtlUnsubscribe` during a concurrent publish does not use-after-free (retire-then-free). Process exit with a live subscription leaves no kernel subscription (verified via the KNF diagnostics counter, `D02 T16 §9`). Test on: QEMU WHPX + TCG.
+
+---
+
 ## OS Comparison
 
 
@@ -384,6 +401,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 | 💎 | Process CRT startup              | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry   | ✅ glibc `__libc_start_main`                                | ⬜ §6 -- heap+Ldr+TLS init → `.ctors` walk                           |
 | 💎 | User-mode libc shims             | ✅ `msvcrt.dll` / `ucrt.dll`                                | ✅ glibc                                                    | ⬜ §7 -- `libc.lib` thin wrappers over Win32                         |
 | ⭐ | Fiber API                        | ✅ Windows fibers                                           | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 -- `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
+| 💎 | WNF user runtime (Rtl publish/subscribe) | ✅ `ntdll!RtlSubscribeWnfStateChangeNotification` + dispatch | ✅ inotify/`sd-bus`/kdbus signals (different model) | ⬜ §10 -- Rtl wrappers over kernel KNF; per-process table + 1 worker |
 
 Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies**
 and issues raw `SYSCALL` instructions for all `Nt*` functions -- identical to Windows NT's design.
@@ -406,4 +424,5 @@ Run `bash scripts/build.sh run` for each verification step.
 - [ ] **CRT0**: `hello.exe` with `int main(int argc, char **argv) { printf("Hello\n"); }` compiles and runs; `argc >= 1`; `argv[0]` = executable path; static constructor (file-scope `struct Foo { Foo() { klog(...); } }`) runs before `main`
 - [ ] **libc shims**: `printf("test %d\n", 42)` prints to console; `malloc(100)` → non-null; `free` → no crash; `fopen`/`fwrite`/`fclose` writes file to `C:\Temp\test.txt`; `fopen` on missing file → NULL
 - [ ] **Fiber**: `CreateFiber(65536, fn, param)` → non-null; `ConvertThreadToFiber(NULL)` → returns current thread as fiber; `SwitchToFiber(fiber)` → `fn` executes; `SwitchToFiber(original)` → returns to caller; `DeleteFiber` → no crash
+- [ ] **WNF runtime**: A subscribes, B `RtlPublish` → A's callback fires once with the new `ChangeStamp` + payload; unsubscribe during a concurrent publish → no crash; process exit with a live subscription → no leaked kernel subscription
 - [ ] Commit: `"win32: ntdll RtlHeap, LdrLoadDll, TLS, VEH, CRT0, libc shims, fiber API"`

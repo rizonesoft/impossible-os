@@ -10,6 +10,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 > **Validated:** 2026-07-05 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 
+> **Gap-audited:** 2026-07-05 | parity (WNF / kdbus / sd-bus) + codex-gap-audit red-team. Filed: state lifetime classes + `SeCreatePermanentPrivilege` + `WNF_TYPE_ID` (§1); `MatchingChangeStamp` CAS + payload-type enforcement + DISPATCH_LEVEL no-alloc publish (§2); subscription teardown on NtClose/exit + close-vs-publish race (§3); device fanout through KNF (§5, reciprocal D04 T01 §7 / T10 §8); WNF ABI compat-level + delete-data-not-teardown semantics (§8); teardown tests (§10). Cross-TODO: WNF user runtime (Rtl publish/subscribe + dispatch worker) filed as new D12 T04 §10 with reciprocal XREF. FS change-notify explicitly out of scope (VFS domain).
+
 > **Goal:** Add a WNF-style kernel notification facility for low-cost state changes and event fanout. Logging records what happened; notifications wake consumers that need to react. Power changes, device arrival, session changes, registry policy updates, code-integrity decisions, network state, time changes, and security events need one kernel-owned publication path with access checks and user subscriptions.
 
 > [!IMPORTANT]
@@ -34,6 +36,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - Security descriptors gate who may publish and who may subscribe.
 - Notifications bridge to ETW/klog optionally but are not stored as logs by default.
 - Lost-update detection is explicit via sequence numbers.
+- Scope boundary: this is state-change notification (WNF-style), NOT filesystem change notification -- directory-change watching (`ReadDirectoryChangesW`/`NtNotifyChangeDirectoryFile`, inotify analog) is owned by the filesystem/VFS domain, not this facility.
 
 ## Implementation Order
 
@@ -56,7 +59,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Register Object Manager type `NotificationState`.
 - [ ] Create root directories: `\Notifications`, `\Notifications\Kernel`, `\Notifications\Power`, `\Notifications\Security`, `\Notifications\Session`.
 - [ ] Support volatile states and persistent state registration metadata in Registry.
-- [ ] Commit: `"kernel/knf: NotificationState Ob type + KNF_STATE body + root namespace directories"`
+- [ ] Lifetime classes: WellKnown / Permanent / Persistent / Temporary; creating a Permanent state requires `SeCreatePermanentPrivilege` (matches WNF; gated via §4 access check).
+- [ ] `DataScope` (System/Session/User/Machine): decide v1 = single-instance-per-state (scope advisory only); document that per-scope isolated payload instances are a later item, not v1. Keep the field in `KNF_STATE` for forward-compat.
+- [ ] `KNF_STATE` carries an optional `WNF_TYPE_ID` (GUID) typing the payload blob; publishers/consumers agree on the type tag (blob stays opaque to the kernel).
 
 **Test checkpoint:** `test_knf` asserts the `NotificationState` Ob type is registered (`ObpLookupType` non-NULL), `knf_create_state("Kernel/Test")` returns a `KNF_STATE` with `sequence == 0`, and the 5 root directories (`\Notifications`, `\Notifications\Kernel/Power/Security/Session`) resolve via `ob_ns_lookup`. Serial: `"[KNF] N notification states registered"`. Test on: QEMU WHPX + TCG.
 
@@ -68,7 +73,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Publish increments a 64-bit sequence atomically.
 - [ ] Subscribers receive previous and new sequence numbers.
 - [ ] Payload cap defaults to 4096 bytes; larger payloads must use ALPC or file-backed data and publish a reference.
-- [ ] Commit: `"kernel/knf: publish/subscribe API + atomic 64-bit sequence + payload cap"`
+- [ ] Conditional (CAS) publish: `knf_publish` accepts an optional `MatchingChangeStamp`; publish only if the current sequence equals it, else return `STATUS_UNSUCCESSFUL` (mirrors WNF, avoids lost read-modify-write updates).
+- [ ] Enforce the declared payload type: reject a publish whose `WNF_TYPE_ID` does not match the state's registered type (not just the byte-size cap).
+- [ ] Publish-context constraint: `knf_publish` must be callable from DISPATCH_LEVEL/DPC without allocating (pre-allocated wake path); document the max IRQL and no-blocking rule.
 
 **Test checkpoint:** `test_knf` publishes twice to one state and asserts the returned sequence advances 0 -> 1 -> 2 atomically; a subscriber sees `(prev=1, new=2)`; `knf_publish` with a 5000-byte payload returns `STATUS_INVALID_PARAMETER` (over the 4096 cap). Serial: `"[KNF] publish seq=%llu"`. Test on: QEMU WHPX + TCG.
 
@@ -80,7 +87,10 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] `NtWaitForSingleObject` wakes when sequence advances past caller's last seen value.
 - [ ] Support timeout, alertable wait integration, and APC delivery for async subscriptions.
 - [ ] Multi-subscriber fanout must not allocate at DISPATCH_LEVEL.
-- [ ] Commit: `"kernel/knf: waitable subscription handles + sequence-advance wakeup + APC delivery"`
+- [ ] Subscription teardown: remove the subscriber node on `NtClose` of the handle AND on owning process/thread exit (Ob close callback or reference-owned subscriber lifetime) so a killed process leaves no retained/leaked node.
+- [ ] Close-vs-publish race: a publish concurrent with a subscription close must not wake a freed node or wake after the owner is gone; the subscriber lifetime is reference-counted across the wake path.
+- [ ] (Later, competitive edge) Lightweight non-handle sequence-wait path (`WaitOnAddress`/futex analog) for hot consumers that do not need full Ob-handle semantics -- v2, not blocking.
+- [ ] The user-mode `Rtl*` subscription table + delivery worker (per-process, one dispatch thread) that turns these kernel wakes into WNF callbacks is owned by `D12 T04 §10`, NOT this section; this section owns the kernel wait/wake primitive only.
 
 **Test checkpoint:** `test_knf` blocks a thread on a subscription handle via `NtWaitForSingleObject`, publishes from another thread, and asserts the waiter wakes exactly when the sequence passes its last-seen value; a timeout wait returns `STATUS_TIMEOUT` when no publish occurs; fanout to 3 subscribers allocates zero at DISPATCH_LEVEL (pre-allocated wait blocks). Serial: `"[KNF] subscriber woke seq=%llu"`. Test on: QEMU WHPX + TCG.
 
@@ -92,7 +102,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Default policy: kernel-only publish for security, code integrity, power source, and device states.
 - [ ] Permit user-mode publish only for explicit app/session-local states.
 - [ ] Audit denied publish attempts.
-- [ ] Commit: `"kernel/knf: SRM access masks + kernel-only-publish default policy + denied-publish audit"`
+- [ ] Design note (code header): reuse the SRM SID/token/`SECURITY_DESCRIPTOR` infrastructure for access checks, NOT a bespoke capability-metadata scheme -- Linux kdbus was rejected from mainline (2015) for exactly that NIH design.
 
 **Test checkpoint:** `test_knf` builds a state with a DACL granting SUBSCRIBE but not PUBLISH to a user token, then asserts `knf_publish` under that token returns `STATUS_ACCESS_DENIED` while `knf_subscribe` succeeds; a kernel-only security state rejects a user-mode publish; the denied attempt increments the audit counter. Serial: `"[KNF] publish denied sid=%s"`. Test on: QEMU WHPX + TCG.
 
@@ -106,6 +116,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Security: token elevation, CI allow/deny, audit policy update, credential change, policy-lock tamper/change (TODO-02 §9 `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish`).
 - [ ] System: time changed, timezone changed, config changed, safe mode, degraded mode, crash recovered.
 - [ ] Registry: key policy changed, hive loaded/unloaded, transaction committed.
+- [ ] Device states publish through KNF, not a bespoke driver-side queue. KNF §5 owns the `Device/*` catalog state names + payload schema; PnP producers call `knf_publish` on hot-plug (-> XREF: D04 T01 §7, D04 T10 §8).
 - [ ] Commit: `"kernel/knf: built-in state-name catalog (power/device/session/security/system/registry)"`
 
 **Test checkpoint:** `test_knf` asserts every catalog state name resolves via `ob_ns_lookup` under its category directory; publishing `Security/PolicyTamper` from `policy_lock.c` (TODO-02 §9) delivers to a subscriber with the expected `ETW_EVT_POLICY_TAMPER` payload. Serial: `"[KNF] catalog: %u states across 6 categories"`. Test on: QEMU WHPX + TCG.
@@ -140,7 +151,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Reserve SSDT entries for `NtCreateWnfStateName`, `NtUpdateWnfStateData`, `NtQueryWnfStateData`, `NtSubscribeWnfStateChange`, `NtUnsubscribeWnfStateChange`, and `NtDeleteWnfStateData`.
 - [ ] Provide compatibility structs with explicit little-endian fields.
 - [ ] Return `STATUS_NO_MORE_ENTRIES` when sequence has not advanced.
-- [ ] Commit: `"kernel/knf: WNF-compatible SSDT surface (NtCreate/Update/Query/Subscribe/Unsubscribe/DeleteWnfStateData)"`
+- [ ] DECIDE + document the `WNF_STATE_NAME` compat level: byte-compatible 64-bit encoded/XOR-obfuscated names (real Windows constants round-trip) vs syscall-arg-shape only (KNF maps names to internal OB paths). ABI-defining, cannot change post-ship.
+- [ ] `NtDeleteWnfStateData` clears the payload ONLY -- it does NOT remove the StateName registration or detach subscribers (they keep waiting; next publish resumes). Distinct from object teardown.
+- [ ] Specify create/open/query status semantics + max state size: `NtCreateWnfStateName` dup/exists handling, `NtQueryWnfStateData` returns the change stamp (+`STATUS_NO_MORE_ENTRIES` when unchanged), and the size-cap status code.
 
 **Test checkpoint:** `test_knf` drives each `Nt*WnfStateData` handler through the SSDT: `NtCreateWnfStateName` returns a 64-bit state name, `NtUpdateWnfStateData` advances the sequence, `NtQueryWnfStateData` returns the payload + change stamp, an unchanged query returns `STATUS_NO_MORE_ENTRIES`, and `NtSubscribeWnfStateChange` wakes on the next update. Serial: `"[KNF] WNF syscalls: 6 SSDT slots live"`. Test on: QEMU WHPX + TCG.
 
@@ -162,6 +175,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Kernel tests: create/publish/query, coalescing, missed sequence detection, ACL denied publish, wait wakeup.
 - [ ] Boot test: publish `System/ShellReady` and verify a service-manager subscriber wakes once.
 - [ ] Stress: 1000 states, 100 subscribers, no leaks after unsubscribe.
+- [ ] Subscription lifetime tests: teardown on `NtClose`, teardown on process/thread exit (no retained node), a close-vs-publish race (no wake of a freed node), and a publish-after-owner-exit (no wake of a gone task).
 - [ ] Commit: `"kernel/knf: test_knf suite (create/publish/query/coalesce/ACL/wait) + ShellReady boot test"`
 
 **Test checkpoint:** `test_knf` (TEST_CAT_KNF) runs green: create/publish/query, coalescing, missed-sequence detection, ACL-denied publish, and wait-wakeup all pass; the boot test publishes `System/ShellReady` and a service-manager subscriber wakes exactly once; the 1000-state/100-subscriber stress path reports 0 leaks after unsubscribe. Serial: `"[KNF] test_knf: N suites, 0 failures"`. Test on: QEMU WHPX + TCG.

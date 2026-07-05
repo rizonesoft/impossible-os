@@ -91,6 +91,7 @@ title: "TODO-01 -- PCI/PCIe, PnP & Resource Manager"
 - [ ] Convert PCIe hot-plug signals into device-tree add/remove events.
 - [ ] Notify bound drivers before remove when possible.
 - [ ] Mark surprise-removed devices unhealthy and block new I/O.
+- [ ] Publish arrival/removal via `knf_publish` on the `Device/*` catalog states (not a bespoke queue); KNF owns the state names + payload schema, this section owns the producer side (-> XREF: D02 T16 §5).
 - [ ] Commit: `"drivers: PCIe hot-plug device events"`
 
 ## 8. Device Power States

@@ -200,6 +200,7 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
   - If HID: call `usb_hid_disconnect(dev)`; PS/2 re-activates via §6
 - [ ] `usb_device_detach(slot)`: cancel all pending TRBs on all endpoints (Stop Endpoint command); Disable Slot command; free slot context
 - [ ] Boot log: `[xHCI] Port %u: device connected` / `Port %u: device disconnected`
+- [ ] Publish connect/disconnect via `knf_publish` on the `Device/*` catalog states (in addition to the desktop toast), so system subscribers observe USB hot-plug through the kernel notification facility (-> XREF: D02 T16 §5).
 - [ ] Commit: `"drivers: xHCI hot-plug -- Port Status Change TRB, attach/detach, MSC unmount, HID disconnect"`
 
 ## 9. USB Hub Class Driver `[Opus]`
