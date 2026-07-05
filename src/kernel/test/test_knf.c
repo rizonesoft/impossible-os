@@ -569,6 +569,66 @@ static void test_knf_open_state(void)
     knf_delete_state("Kernel", "OpenMe");
 }
 
+/* ---- Poll argument validation ------------------------------------------- */
+
+static void test_knf_poll_invalid(void)
+{
+    struct knf_subscriber node;
+    uint64_t              p = 0, n = 0;
+
+    TEST_ASSERT_EQ((uint32_t)knf_subscription_poll((struct knf_subscriber *)0,
+                                                   &p, &n),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "poll of NULL subscriber -> INVALID_PARAMETER");
+
+    memset(&node, 0, sizeof(node));   /* node.state == NULL */
+    TEST_ASSERT_EQ((uint32_t)knf_subscription_poll(&node, &p, &n),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "poll of subscriber with NULL state -> INVALID_PARAMETER");
+}
+
+/* ---- Subscriber cap (bounds the under-lock fanout walk) ----------------- */
+
+static struct knf_subscriber *g_cap_subs[KNF_MAX_SUBSCRIBERS_PER_STATE];
+
+static void test_knf_subscriber_cap(void)
+{
+    KNF_STATE             *st;
+    struct knf_subscriber *extra = (struct knf_subscriber *)0;
+    NTSTATUS               s;
+    uint32_t               i, n = 0;
+
+    st = knf_create_state("Kernel", "PubCap", KNF_LIFETIME_TEMPORARY,
+                          KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0,
+                          KNF_KERNEL_MODE);
+    TEST_ASSERT_NOT_NULL(st, "create PubCap");
+    if (!st) return;
+
+    for (i = 0; i < KNF_MAX_SUBSCRIBERS_PER_STATE; i++) {
+        if (knf_subscribe(st, &g_cap_subs[i]) != STATUS_SUCCESS)
+            break;
+        n++;
+    }
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)KNF_MAX_SUBSCRIBERS_PER_STATE,
+                   "all subscribers up to the cap accepted");
+    TEST_ASSERT_EQ((uint64_t)st->subscriber_count,
+                   (uint64_t)KNF_MAX_SUBSCRIBERS_PER_STATE,
+                   "subscriber_count sits at the cap");
+
+    s = knf_subscribe(st, &extra);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "subscribe past the cap rejected");
+    TEST_ASSERT_NULL((void *)extra, "over-cap subscribe left the handle NULL");
+
+    for (i = 0; i < n; i++)
+        knf_unsubscribe(&g_cap_subs[i]);
+    TEST_ASSERT_EQ((uint64_t)st->subscriber_count, 0ull,
+                   "subscriber_count back to 0 after unsubscribe all");
+
+    ObDereferenceObject(st);
+    knf_delete_state("Kernel", "PubCap");
+}
+
 /* ---- Conditional (CAS) publish ------------------------------------------ */
 
 static void test_knf_cas_publish(void)
@@ -761,6 +821,10 @@ void test_register_knf(void)
                             test_knf_multi_subscriber_coalesce, TEST_CAT_KNF);
     test_suite_register_cat("knf: open-state (resolve existing, no create)",
                             test_knf_open_state, TEST_CAT_KNF);
+    test_suite_register_cat("knf: poll argument validation",
+                            test_knf_poll_invalid, TEST_CAT_KNF);
+    test_suite_register_cat("knf: subscriber cap bounds the fanout walk",
+                            test_knf_subscriber_cap, TEST_CAT_KNF);
     test_suite_register_cat("knf: conditional (CAS) publish",
                             test_knf_cas_publish, TEST_CAT_KNF);
     test_suite_register_cat("knf: typed-payload enforcement",

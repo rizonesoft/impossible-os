@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-05T22:14:40+02:00",
-  "total_suites": 1821,
-  "total_assertions": 6718,
+  "timestamp": "2026-07-05T23:08:20+02:00",
+  "total_suites": 1823,
+  "total_assertions": 6726,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -50,7 +50,7 @@
     {"file": "test_kernel_config.c", "suites": 49, "assertions": 309},
     {"file": "test_klibs.c", "suites": 24, "assertions": 310},
     {"file": "test_klog.c", "suites": 33, "assertions": 115},
-    {"file": "test_knf.c", "suites": 18, "assertions": 126},
+    {"file": "test_knf.c", "suites": 20, "assertions": 134},
     {"file": "test_kworker.c", "suites": 5, "assertions": 20},
     {"file": "test_mat_violation.c", "suites": 6, "assertions": 15},
     {"file": "test_mmap.c", "suites": 1, "assertions": 2},

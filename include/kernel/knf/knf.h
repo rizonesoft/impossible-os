@@ -27,6 +27,13 @@
 #define KNF_NAME_MAX     64     /* leaf state name, null-terminated */
 #define KNF_MAX_PAYLOAD  4096   /* max published payload bytes (publish enforces) */
 
+/* Per-state subscriber cap. Publish walks the subscriber list under the state
+ * spinlock (IRQs disabled), so the list length bounds the lock-hold time on the
+ * DPC/DISPATCH_LEVEL publish path. Cap it so one hot state cannot grow an
+ * unbounded list and inflate interrupt latency. Generous vs the 100-subscriber
+ * stress target; knf_subscribe returns STATUS_INSUFFICIENT_RESOURCES at the cap. */
+#define KNF_MAX_SUBSCRIBERS_PER_STATE 4096
+
 /* --- Lifetime classes (mirror WNF_STATE_NAME_LIFETIME) ------------------- */
 
 typedef enum knf_lifetime {
@@ -66,14 +73,17 @@ typedef struct knf_type_id {
  * be freed (via knf_delete_state) while any subscriber references it, and
  * knf_state_on_delete always observes an empty subscriber list.
  *
- * All fields are guarded by KNF_STATE.lock (the node is only ever touched while
- * that lock is held, except its own allocation/free which bracket the lock). */
+ * LOCKING: `state` is immutable for the node's whole lifetime (set once in
+ * knf_subscribe, never rewritten), so poll/unsubscribe read it locklessly to
+ * find the lock to take -- safe under the single-owner contract below. All
+ * OTHER fields (list linkage + last_seen/pending_prev/has_pending) are mutated
+ * only under KNF_STATE.lock. The node's own kmalloc/kfree bracket the lock. */
 struct knf_subscriber {
-    struct knf_subscriber *next;          /* per-state list linkage */
-    struct knf_state      *state;         /* ref-pinned owning state */
-    uint64_t               last_seen;     /* highest sequence acknowledged */
-    uint64_t               pending_prev;  /* sequence before the pending publish */
-    int                    has_pending;   /* a publish advanced past last_seen */
+    struct knf_subscriber *next;          /* per-state list linkage (lock) */
+    struct knf_state      *state;         /* ref-pinned owning state (immutable) */
+    uint64_t               last_seen;     /* highest sequence acknowledged (lock) */
+    uint64_t               pending_prev;  /* sequence before the pending publish (lock) */
+    int                    has_pending;   /* a publish advanced past last_seen (lock) */
 };
 
 /* --- KNF_STATE object body ----------------------------------------------- */
@@ -92,8 +102,11 @@ typedef struct knf_state {
      * buffer. */
     void           *payload;             /* retention: allocated on publish */
     uint32_t        payload_len;         /* bytes valid in payload */
-    uint32_t        payload_cap;         /* allocated capacity of payload */
+    uint32_t        payload_cap;         /* allocated capacity (grows only, under lock;
+                                          * publish reads it locklessly-relaxed to gate
+                                          * pre-lock alloc, then re-checks under lock) */
     struct knf_subscriber *subscribers;  /* subscriber list head */
+    uint32_t        subscriber_count;    /* len(subscribers); bounds lock-hold walk */
 
     spinlock_t      lock;                /* guards payload + subscribers + publish */
 } KNF_STATE;
@@ -141,9 +154,11 @@ KNF_STATE *knf_lookup_state(const char *category, const char *name);
  * knf_delete_state -- unlink \Notifications\<category>\<name> from the
  * namespace and free the state (regardless of lifetime class). The native
  * NtDeleteWnfStateName surface will wrap this. Returns 0 on success, -1 if
- * the category or state does not exist. NOTE: does not yet tear down live
- * subscribers -- that ordering is owned by the subscription-teardown path;
- * in the object-model layer a deleted state has none.
+ * the category or state does not exist. Deleting a state that still has live
+ * subscribers is safe: each subscription pins the body via an Ob reference, so
+ * the delete only unlinks it from the namespace; the body is freed once the
+ * last subscriber unsubscribes. Delete does not proactively tear down
+ * subscribers (they keep polling a still-referenced but unnamed state).
  */
 int knf_delete_state(const char *category, const char *name);
 
@@ -182,11 +197,14 @@ NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap);
  *           STATUS_UNSUCCESSFUL without changing state.
  * out_prev/out_new : optional; receive the pre- and post-publish sequence.
  *
- * IRQL: callable at <= DISPATCH_LEVEL. At DISPATCH_LEVEL the payload buffer is
- * NOT grown (no allocation under a raised IRQL) -- a publish whose len exceeds
- * the current payload capacity returns STATUS_INSUFFICIENT_RESOURCES unless the
- * state was pre-sized via knf_reserve_payload at PASSIVE_LEVEL. Never blocks;
- * never calls out while holding the per-state lock.
+ * IRQL: callable at <= DISPATCH_LEVEL. A caller ABOVE DISPATCH_LEVEL (DIRQL /
+ * device ISR) is rejected with STATUS_UNSUCCESSFUL BEFORE any work -- the
+ * publish takes an IRQ-disabling spinlock and copies up to KNF_MAX_PAYLOAD
+ * bytes, which must not run at ISR/DIRQL priority. At DISPATCH_LEVEL the payload
+ * buffer is NOT grown (no allocation under a raised IRQL) -- a publish whose len
+ * exceeds the current payload capacity returns STATUS_INSUFFICIENT_RESOURCES
+ * unless the state was pre-sized via knf_reserve_payload at PASSIVE_LEVEL. Never
+ * blocks; never allocates or calls out while holding the per-state lock.
  *
  * The change stamp is strictly monotonic and never wraps: a publish at the
  * maximum sequence (UINT64_MAX) is rejected with STATUS_INVALID_PARAMETER so
@@ -206,8 +224,10 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
  * knf_subscribe -- register an in-kernel subscription on `st`. Captures the
  * current sequence as the subscription's baseline (only future publishes
  * notify) and takes an Ob reference on the state (see struct knf_subscriber).
- * Returns STATUS_SUCCESS with *out_sub set, STATUS_INVALID_PARAMETER, or
- * STATUS_INSUFFICIENT_RESOURCES. Call at PASSIVE_LEVEL (allocates).
+ * Returns STATUS_SUCCESS with *out_sub set, STATUS_INVALID_PARAMETER,
+ * STATUS_UNSUCCESSFUL (called at >= DISPATCH_LEVEL -- allocates, PASSIVE-only),
+ * or STATUS_INSUFFICIENT_RESOURCES (OOM, or the per-state subscriber cap
+ * KNF_MAX_SUBSCRIBERS_PER_STATE is reached). Call at PASSIVE_LEVEL (allocates).
  */
 NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub);
 
@@ -234,8 +254,10 @@ NTSTATUS knf_unsubscribe(struct knf_subscriber **psub);
  * If a publish has advanced the sequence past the subscriber's last-seen value,
  * reports (*out_prev = sequence before that advance, *out_new = current
  * sequence), advances the subscriber's baseline, and returns STATUS_SUCCESS.
- * Otherwise returns STATUS_NO_MORE_ENTRIES. (The blocking wait that wakes a
- * consumer before it polls is the waitable-user-subscriptions layer.)
+ * Returns STATUS_NO_MORE_ENTRIES when nothing is pending, or
+ * STATUS_INVALID_PARAMETER for a NULL / consumed subscriber handle. (The
+ * blocking wait that wakes a consumer before it polls is the
+ * waitable-user-subscriptions layer.)
  */
 NTSTATUS knf_subscription_poll(struct knf_subscriber *sub,
                                uint64_t *out_prev, uint64_t *out_new);

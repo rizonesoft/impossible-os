@@ -97,12 +97,16 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 **Test checkpoint:** `test_knf` publishes twice and asserts the sequence advances 0 -> 1 -> 2 atomically; a subscriber sees `(prev=1, new=2)`; a 5000-byte publish returns `STATUS_INVALID_PARAMETER`; a stale CAS stamp returns `STATUS_UNSUCCESSFUL`; a typed state rejects a wrong `WNF_TYPE_ID` with `STATUS_OBJECT_TYPE_MISMATCH`; `knf_reserve_payload` pre-sizes without advancing the sequence; a state deleted while a subscriber is live stays pinned and still delivers. Serial: `"[KNF] publish seq=%llu"`. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 18 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 20 suites, 0 failures
 > **Notes:**
-> - Shipped `knf_open_state`/`knf_publish`/`knf_subscribe`/`knf_unsubscribe`/`knf_subscription_poll`/`knf_reserve_payload` in `src/kernel/knf/knf.c` + prototypes and the full `struct knf_subscriber` in `include/kernel/knf/knf.h`; 8 new `test_knf` suites.
-> - Publish serializes under the per-state `spin_lock_irqsave`; all buffer alloc/free is outside the lock (pre-alloc before, free-unused after) so publish is DISPATCH_LEVEL-safe against a `knf_reserve_payload`-sized buffer.
-> - Codex design review adoptions (subscriber state-pin lifetime + non-notifying reserve for the DPC path) in the commit message; waitable wait/wake + teardown races owned by the waitable-user-subscriptions section.
+> - Shipped `knf_open_state`/`knf_publish`/`knf_subscribe`/`knf_unsubscribe`/`knf_subscription_poll`/`knf_reserve_payload` + the full `struct knf_subscriber` in `src/kernel/knf/knf.{c,h}`; 10 new `test_knf` suites.
+> - Publish serializes under the per-state `spin_lock_irqsave`, all buffer alloc/free outside the lock, IRQL>DISPATCH rejected, subscriber list capped -- DISPATCH_LEVEL-safe against a pre-reserved buffer.
+> - Codex adoptions (state-pin lifetime, non-notifying reserve, consume-and-null unsubscribe, UINT64_MAX no-wrap, subscriber cap) in the commit messages; waitable wait/wake + teardown races owned by the waitable section.
 > - Canonical doc: this TODO; §1 owns the object type/namespace, §2 the publish/subscribe primitive, §3 the Ob-handle waitable wait/wake, §4 DACL/token enforcement, §7 coalescing/retention.
+> **Verified:** 2026-07-05 | commit `b59f6e6f` | 8/8 items | build OK | knf tests 134/134 PASS
+> **Accepted:** [M] concurrent unsubscribe/poll on the same handle races the pre-lock `sub->state` read -> XREF: 02-kernel-core/TODO-16 §3 (item: "Concurrent-teardown safety" at line 121)
+> **Accepted:** [M] publish copies up to 4096 bytes under the per-state spinlock (bounded DPC lock-hold) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold" at line 176)
+> **Quality reviewed:** 2026-07-05 | Codex 9x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+4L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -169,6 +173,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Keep a bounded missed-update counter per subscriber.
 - [ ] Add policy for secret payload redaction before user-mode query.
 - [ ] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state's metadata (name/class/scope/type-id) to the registry on create and restore them at `knf_init` so they survive reboot (§1 classifies persistent states).
+- [ ] Shrink publish lock-hold: `knf_publish` (§2) copies up to 4096 bytes under the IRQ-disabling per-state spinlock; add double-buffered staging (fill before the lock, swap the pointer under it) so the DPC path holds it O(1).
 - [ ] Commit: `"kernel/knf: coalescing + last-payload retention + per-subscriber missed counter + redaction"`
 
 **Test checkpoint:** `test_knf` publishes 5 rapid updates to a coalescing (level-triggered) state and asserts a slow subscriber sees only the latest payload with the missed-update counter == 4; an edge-triggered state delivers all 5; a query-after-miss returns the retained last payload; a redacted secret state returns zeroed bytes to a user-mode query. Serial: `"[KNF] coalesced=%u missed=%u"`. Test on: QEMU WHPX + TCG.

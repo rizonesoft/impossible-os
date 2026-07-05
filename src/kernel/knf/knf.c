@@ -59,8 +59,9 @@ static void knf_state_on_delete(void *body)
 
     /* Retention payload is a heap pointer once the publish path allocates it;
      * free it here so a state teardown never leaks its last payload. The
-     * subscriber list is torn down by the subscription-teardown path before a
-     * state can reach refcount 0, so it is NULL here in the object-model layer. */
+     * subscriber list is guaranteed empty here: each live subscription holds an
+     * Ob reference on the state (knf_subscribe), so on_delete only runs once the
+     * last subscriber has unsubscribed and dropped its pin (refcount 0). */
     if (st->payload) {
         kfree(st->payload);
         st->payload = NULL;
@@ -349,6 +350,15 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     if (!st || len > KNF_MAX_PAYLOAD || (len > 0 && !data))
         return STATUS_INVALID_PARAMETER;
 
+    /* Contract: callable at <= DISPATCH_LEVEL only. Fail closed on an IRQL
+     * violation BEFORE any work -- publish takes an IRQ-disabling spinlock and
+     * copies up to KNF_MAX_PAYLOAD bytes, which must never run at ISR/DIRQL
+     * priority (the only IRQL-sensitive branch below is the alloc gate, so
+     * without this a DIRQL caller with a reserved buffer would silently do heavy
+     * publish work at interrupt priority). */
+    if (KeGetCurrentIrql() > DISPATCH_LEVEL)
+        return STATUS_UNSUCCESSFUL;
+
     /* Typed states accept only a payload carrying the registered tag; the blob
      * stays opaque to the kernel but the type contract is enforced. */
     if (st->has_type_id) {
@@ -359,10 +369,14 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     /* Pre-allocate any growth BEFORE taking the lock -- kmalloc must never run
      * under a spinlock. Only PASSIVE_LEVEL callers may allocate; a
      * DISPATCH_LEVEL publish relies on a prior knf_reserve_payload and installs
-     * nothing new here (newbuf stays NULL -> the grow branch below fails). The
-     * payload_cap read is racy but only ever grows under the lock, so a stale
-     * small read just over-allocates a spare buffer we free after unlock. */
-    if (len > 0 && KeGetCurrentIrql() < DISPATCH_LEVEL && len > st->payload_cap) {
+     * nothing new here (newbuf stays NULL -> the grow branch below fails).
+     * payload_cap is read with a relaxed atomic load (not a plain load): it only
+     * grows and only under the lock, so a stale-small read just over-allocates a
+     * spare buffer we free after unlock, and the value is re-checked under the
+     * lock before any install -- the relaxed load only avoids the C-memory-model
+     * data race, it is not relied on for ordering. */
+    if (len > 0 && KeGetCurrentIrql() < DISPATCH_LEVEL &&
+        len > __atomic_load_n(&st->payload_cap, __ATOMIC_RELAXED)) {
         newbuf = kmalloc(len);
         if (!newbuf)
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -450,6 +464,11 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
         return STATUS_INVALID_PARAMETER;
     *out_sub = NULL;
 
+    /* Subscribe allocates the node, so it is PASSIVE-only (symmetric with
+     * knf_reserve_payload). Fail closed on a raised-IRQL caller. */
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+        return STATUS_UNSUCCESSFUL;
+
     sub = (struct knf_subscriber *)kmalloc(sizeof(*sub));
     if (!sub)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -461,11 +480,20 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
     sub->state = st;
 
     spin_lock_irqsave(&st->lock, &flags);
+    /* Bound the list length so publish's under-lock walk stays bounded (the
+     * lock-hold time on the DPC publish path is O(subscriber_count)). */
+    if (st->subscriber_count >= KNF_MAX_SUBSCRIBERS_PER_STATE) {
+        spin_unlock_irqrestore(&st->lock, flags);
+        ObDereferenceObject(st);      /* undo the pin taken above */
+        kfree(sub);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
     /* Baseline at the current sequence: only future publishes notify. */
     sub->last_seen   = (uint64_t)atomic64_read(&st->sequence);
     sub->has_pending = 0;
     sub->next        = st->subscribers;
     st->subscribers  = sub;
+    st->subscriber_count++;
     spin_unlock_irqrestore(&st->lock, flags);
 
     *out_sub = sub;
@@ -492,15 +520,23 @@ NTSTATUS knf_unsubscribe(struct knf_subscriber **psub)
     spin_lock_irqsave(&st->lock, &flags);
     for (pp = &st->subscribers; *pp; pp = &(*pp)->next) {
         if (*pp == sub) {
-            *pp   = sub->next;
+            *pp = sub->next;
+            st->subscriber_count--;
             found = 1;
             break;
         }
     }
     spin_unlock_irqrestore(&st->lock, flags);
 
+    /* !found means the node is not on this state's list -- a single-owner
+     * contract violation (the node was never subscribed here, or a raw alias is
+     * being unsubscribed twice). We deliberately do NOT kfree/deref here: the
+     * node may still be owned+linked elsewhere and freeing it would be the very
+     * double-free the consume-and-null contract exists to prevent. The caller
+     * that misused the handle owns the resulting node/pin; a correct owner never
+     * hits this path. */
     if (!found)
-        return STATUS_NOT_FOUND;      /* node not on its state's list */
+        return STATUS_NOT_FOUND;
 
     kfree(sub);                       /* free the node OUTSIDE the lock */
     ObDereferenceObject(st);          /* drop the pin taken by knf_subscribe */
