@@ -70,8 +70,8 @@ title: "TODO-15 -- Security Reference Monitor"
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [/]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [ ]   |
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [ ]   |
-| 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [ ]   |
-| ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [ ]   |
+| 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [/]   |
+| ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [/]   |
 | 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5          |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -696,6 +696,11 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 
 **Test checkpoint:** Create an AppContainer token from the system token. Verify `TokenIsAppContainer` returns TRUE. Verify `TokenIntegrityLevel` returns Low. Create a file with no AppContainer ACE -- verify AppContainer token gets `STATUS_ACCESS_DENIED`. Add `ALL_APPLICATION_PACKAGES` ACE to the file -- verify access granted. `CreateAppContainerProfile("TestApp")` returns a deterministic SID. Serial log: `"[SRM] AppContainer token created: S-1-15-2-<hash>"`. Test on: QEMU WHPX + TCG.
 
+> **Notes:**
+> - Deferred (cascade): `NtCreateLowBoxToken` strips a duplicated token (the §9 `NtFilterToken` machinery, deferred), and the AppContainer default-deny check lives inside `SeAccessCheck` (§5, deferred).
+> - Capability-SID derivation (`RtlDeriveCapabilitySidsFromName`) needs SHA-256 owned by §16 / TODO-03 §5 Monocypher, not yet built; fixed cap-SID constants alone ship no sandbox, so the section defers together.
+> **Deferred:** [High] AppContainer/LowBox tokens are blocked on token filtering + the access-check engine + capability-SID crypto -> XREF: 02-kernel-core/TODO-15 §9 (`NtFilterToken` token restriction), 02-kernel-core/TODO-15 §5 (`SeAccessCheck` AppContainer default-deny), 02-kernel-core/TODO-15 §16 (SHA-256 capability-SID derivation)
+
 ---
 
 ## 15. Access Denial Explainer
@@ -736,6 +741,11 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 - [ ] Commit: `"kernel/security: access denial explainer -- NtQueryAccessDenialReason, accesswhy.exe"`
 
 **Test checkpoint:** Create file with DACL denying Everyone read. Call `NtQueryAccessDenialReason` with `FILE_READ_DATA` -- verify `ReasonCode == DENIAL_REASON_DACL_ACE` and `DeniedBySid == SeWorldSid`. Create Medium IL file, query with Low IL token and write access -- verify `ReasonCode == DENIAL_REASON_MIC`. Run `accesswhy.exe C:\test.txt` -- verify human-readable output on serial. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - Deferred (cascade): the section extends `SeAccessCheck` (§5, deferred) with a `DenialReason` out-param for DACL/MIC/privilege/AppContainer/restricted-SID denials -- no denial-recording surface exists until the access-check engine ships.
+> - The AppContainer denial path additionally depends on §14 (also deferred); `accesswhy.exe` needs the §10 Win32 wrapper layer for path resolution.
+> **Deferred:** [High] The access denial explainer cannot record a reason until the access-check engine exists -> XREF: 02-kernel-core/TODO-15 §5 (`SeAccessCheck` denial-reason out-param), 02-kernel-core/TODO-15 §14 (AppContainer denial path), 02-kernel-core/TODO-15 §10 (Win32 path-resolution wrapper for `accesswhy.exe`)
 
 ---
 
