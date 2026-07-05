@@ -3523,6 +3523,29 @@ if echo "$BOR_OUT2" | grep -q "checks-runner offload"; then
 else
     t_fail "build_offload_sections  expected checks-runner reminder, got: $BOR_OUT2"
 fi
+# Freshness must be checks-runner-SPECIFIC (regression fixed 2026-07-05): a
+# fresh dispatch of an UNRELATED agent type must NOT suppress the reminder --
+# the original bug treated any recent Agent dispatch as cover, letting 99
+# in-context build/test calls slip through a live overnight run silently.
+NOW_NS="$(date +%s%N)"
+printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"kernel-explorer": {"timestamp_ns": %s}}}' \
+    "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
+BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
+    python3 "$BOR_HOOK" 2>/dev/null)"
+if echo "$BOR_OUT3" | grep -q "checks-runner offload"; then
+    t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
+else
+    t_fail "build_offload_type_specific  expected reminder despite unrelated dispatch, got: $BOR_OUT3"
+fi
+printf '{"timestamp_ns": %s, "subagent_type": "checks-runner", "by_type": {"checks-runner": {"timestamp_ns": %s}}}' \
+    "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
+BOR_OUT4="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
+    python3 "$BOR_HOOK" 2>/dev/null)"
+if [ -z "$BOR_OUT4" ]; then
+    t_pass "build_offload_type_specific  fresh checks-runner dispatch DOES suppress the reminder"
+else
+    t_fail "build_offload_type_specific  expected silence after checks-runner dispatch, got: $BOR_OUT4"
+fi
 rm -f "$BOR_SEQ" "$BOR_DISP"
 [ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
 [ -n "$BOR_DISP_BAK" ] && printf '%s' "$BOR_DISP_BAK" > "$BOR_DISP"

@@ -205,6 +205,7 @@ class SectionMetrics:
     def __init__(self, path: str | None) -> None:
         self.path = path
         self.index = 0
+        self.model_seen: str | None = None  # run-level, NOT reset per section
         self._reset()
 
     def _reset(self) -> None:
@@ -213,6 +214,28 @@ class SectionMetrics:
         self.agent_dispatches = 0
         self.grep_calls = 0
         self.lsp_calls = 0
+
+    def note_model(self, model) -> None:
+        """Log the ACTUAL model id from each assistant turn's API response --
+        not just the --model flag the launcher was invoked with. Closes a
+        real gap: overnight-launch.sh echoes its own CLI args at startup, but
+        nothing confirmed which model actually produced the work, or caught a
+        mid-run fallback-to-sonnet (or a wrong-default regression) silently.
+        """
+        if not isinstance(model, str) or not model:
+            return
+        if self.model_seen is None:
+            self.model_seen = model
+            expected = (os.environ.get("OVERNIGHT_MODEL") or "opus").lower()
+            if expected != "inherit" and expected not in model.lower():
+                emit(f"model confirmed: {model}  ** WARNING: expected '{expected}' "
+                     f"per OVERNIGHT_MODEL/arm default -- check overnight-arm.sh model drop-in **")
+            else:
+                emit(f"model confirmed: {model}")
+        elif model != self.model_seen:
+            emit(f"model changed: {self.model_seen} -> {model} "
+                 f"(fallback engaged mid-run, or an override took effect)")
+            self.model_seen = model
 
     def add_usage(self, usage) -> None:
         if not isinstance(usage, dict):
@@ -243,6 +266,7 @@ class SectionMetrics:
             "agent_dispatches": self.agent_dispatches,
             "grep_calls": self.grep_calls,
             "lsp_calls": self.lsp_calls,
+            "model": self.model_seen,
         }
         with open(self.path, "a", encoding="ascii") as fh:
             fh.write(json.dumps(rec) + "\n")
@@ -254,6 +278,7 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
     kind = event.get("type")
     if kind == "assistant":
         message = event.get("message") or {}
+        metrics.note_model(message.get("model"))
         metrics.add_usage(message.get("usage"))
         for block in message.get("content") or []:
             if block.get("type") == "text" and block.get("text"):

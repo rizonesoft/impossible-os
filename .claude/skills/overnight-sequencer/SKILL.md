@@ -106,6 +106,15 @@ AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
 - While a wait is armed you may do UNRELATED forward work (prep the next
   section's reads, update the cursor) -- what you may not do is spend turns
   checking or narrating the wait itself.
+- **The "one wait mechanism" rule also covers Monitor's OWN resume cadence.**
+  The 2026-07-04/05 run cut the antipattern above dramatically (67 `Holding`
+  turns / 0 manual re-polls / 29 Monitor arms, vs the 2026-07-02 531/610/40 --
+  real progress) but still showed 3 clusters of 15-20s-interval "Holding..."
+  turns with zero work done between them (a stalled/slow Monitor resuming
+  itself repeatedly). If Monitor keeps handing control back before its
+  condition is met, that is still "checking the wait" even without a manual
+  Bash poll -- do not add a narrator line on every resume; only act (or
+  narrate) once real state changed.
 
 ## Procedure
 

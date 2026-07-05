@@ -6,9 +6,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "stream-report.py"
 
 
-def _run(events, metrics_path):
+def _run(events, metrics_path, extra_env=None):
     payload = "".join(json.dumps(e) + "\n" for e in events)
     env = {**os.environ, "OVERNIGHT_METRICS_FILE": str(metrics_path)}
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run(
         [sys.executable, str(SCRIPT)],
         input=payload, text=True, capture_output=True, env=env,
@@ -17,7 +19,7 @@ def _run(events, metrics_path):
     return proc.stdout
 
 
-def _assistant(usage=None, tools=None):
+def _assistant(usage=None, tools=None, model=None):
     content = []
     if tools:
         for name, inp in tools:
@@ -25,6 +27,8 @@ def _assistant(usage=None, tools=None):
     msg = {"content": content}
     if usage is not None:
         msg["usage"] = usage
+    if model is not None:
+        msg["model"] = model
     return {"type": "assistant", "message": msg}
 
 
@@ -59,6 +63,48 @@ def test_two_sections_split_on_progress():
         assert s1["lsp_calls"] == 1
 
 
+def test_model_confirmed_matches_expected_no_warning():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=1), model="claude-opus-4-1-20250805"),
+            {"type": "result", "result": "done", "usage": _usage(o=1)},
+        ]
+        out = _run(events, mp, {"OVERNIGHT_MODEL": "opus"})
+        assert "model confirmed: claude-opus-4-1-20250805" in out
+        assert "WARNING" not in out
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        assert recs[-1]["model"] == "claude-opus-4-1-20250805"
+
+
+def test_model_mismatch_warns():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [_assistant(_usage(o=1), model="claude-sonnet-5-20260101")]
+        out = _run(events, mp, {"OVERNIGHT_MODEL": "opus"})
+        assert "WARNING" in out and "expected 'opus'" in out
+
+
+def test_model_change_mid_run_logged():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=1), model="claude-opus-4-1-20250805"),
+            _assistant(_usage(o=1), model="claude-sonnet-5-20260101"),
+        ]
+        out = _run(events, mp, {"OVERNIGHT_MODEL": "opus"})
+        assert "model changed: claude-opus-4-1-20250805 -> claude-sonnet-5-20260101" in out
+
+
+def test_model_inherit_skips_validation():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [_assistant(_usage(o=1), model="claude-sonnet-5-20260101")]
+        out = _run(events, mp, {"OVERNIGHT_MODEL": "inherit"})
+        assert "WARNING" not in out
+        assert "model confirmed: claude-sonnet-5-20260101" in out
+
+
 def test_no_env_writes_nothing():
     payload = json.dumps(_assistant(_usage(o=1))) + "\n"
     env = {k: v for k, v in os.environ.items() if k != "OVERNIGHT_METRICS_FILE"}
@@ -69,5 +115,9 @@ def test_no_env_writes_nothing():
 
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
+    test_model_confirmed_matches_expected_no_warning()
+    test_model_mismatch_warns()
+    test_model_change_mid_run_logged()
+    test_model_inherit_skips_validation()
     test_no_env_writes_nothing()
     print("PASS: stream-report metrics")

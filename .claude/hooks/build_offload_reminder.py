@@ -5,11 +5,18 @@
 
 When the overnight sequencer is in SECTIONS phase and the main loop runs a
 bare verification script (build.sh / test.sh / test-smoke.sh / lint.sh /
-test-tooling.sh) via Bash with no fresh checks-runner-capable Agent dispatch,
-inject a systemMessage reminding it of the checks-runner route. Measured
+test-tooling.sh) via Bash with no fresh checks-runner dispatch, inject a
+systemMessage reminding it of the checks-runner route. Measured
 (run-20260702-141810.log): 91 in-context build/test invocations, 0
 checks-runner dispatches across 29 pipeline passes -- the skill text alone
 does not hold overnight.
+
+Freshness MUST be checks-runner-specific (fixed 2026-07-05): the original
+check treated ANY recent Agent dispatch as cover, so a kernel-explorer or
+parity-research-analyst call minutes earlier silenced the reminder while the
+actual build/test still ran inline. Measured regression from that bug
+(run-20260704-213648.log): 99 in-context build.sh/test.sh calls -- WORSE than
+the 91-call baseline that motivated this hook in the first place.
 
 Warning-only by design: the checks-runner subagent executes these same
 scripts via Bash and its calls traverse this hook too; a BLOCK would break
@@ -58,14 +65,16 @@ def _in_sections(root: Path) -> bool:
     return bool(st.get("active")) and st.get("phase") == "SECTIONS"
 
 
-def _recent_agent_dispatch(root: Path) -> bool:
+def _recent_checks_runner_dispatch(root: Path) -> bool:
     try:
         st = json.loads(
             (root / ".claude" / "state" /
              "last-agent-dispatch.json").read_text())
     except Exception:
         return False
-    ts = st.get("timestamp_ns")
+    by_type = st.get("by_type")
+    entry = by_type.get("checks-runner") if isinstance(by_type, dict) else None
+    ts = entry.get("timestamp_ns") if isinstance(entry, dict) else None
     return isinstance(ts, int) and (time.time_ns() - ts) <= FRESH_NS
 
 
@@ -83,7 +92,7 @@ def main() -> int:
     root = _repo_root()
     if root is None or not _in_sections(root):
         return 0
-    if _recent_agent_dispatch(root):
+    if _recent_checks_runner_dispatch(root):
         return 0
     print(json.dumps({"systemMessage": _MSG.format(script=m.group(0))}))
     return 0
