@@ -46,7 +46,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎   |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
 | 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
 | 💎   |   4   | Security and namespace policy         | T15        |  [/]   |
-| ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [ ]   |
+| ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [ ]   |
 | ⭐   |   7   | Coalescing and payload retention      | §2         |  [ ]   |
 | 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [ ]   |
@@ -156,9 +156,13 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] System: time changed, timezone changed, config changed, safe mode, degraded mode, crash recovered.
 - [ ] Registry: key policy changed, hive loaded/unloaded, transaction committed.
 - [ ] Device states publish through KNF, not a bespoke driver-side queue. KNF §5 owns the `Device/*` catalog state names + payload schema; PnP producers call `knf_publish` on hot-plug (-> XREF: D04 T01 §7, D04 T10 §8).
+- [ ] Fail-closed provisioning: `knf_init` must count expected catalog states, log the missing category/name on any create failure, set a KNF init-health flag, and fail KNF readiness rather than boot green with a partial well-known namespace.
+- [ ] Typed payload schemas: give each catalog state a `WNF_TYPE_ID` (not `type_id=NULL`) so `knf_publish` enforces the payload type; define the per-state payload schema for Device/Power/Security/System/Registry names.
 - [ ] Commit: `"kernel/knf: built-in state-name catalog (power/device/session/security/system/registry)"`
 
 **Test checkpoint:** `test_knf` asserts every catalog state name resolves via `ob_ns_lookup` under its category directory; publishing `Security/PolicyTamper` from `policy_lock.c` (TODO-02 §9) delivers to a subscriber with the expected `ETW_EVT_POLICY_TAMPER` payload. Serial: `"[KNF] catalog: %u states across 6 categories"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] §5 not started -- catalog is ordered after §4 (security policy); provisioning permanent well-known Security/Device/Power states before the DACL/publish access checks exist is a security-ordering hazard (Codex design HIGH). Also needs fail-closed provisioning + typed payload schemas -> XREF: 02-kernel-core/TODO-16 §4 (item: "Apply SRM access masks" at line 135)
 
 ---
 
