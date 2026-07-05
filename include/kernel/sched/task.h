@@ -136,6 +136,12 @@ struct thread {
     uint8_t     in_audit;           /* 1 while this thread is running a syscall-audit hook;
                                      * per-thread (migration-safe) recursion guard so a hook's
                                      * own syscall is not itself re-audited. Zero-init. */
+    uint8_t     in_knf_trace;       /* 1 while this thread is running the KNF publish
+                                     * observability bridge; recursion guard so a klog/ETW
+                                     * path that re-publishes a KNF state cannot recurse.
+                                     * Acquired/released via atomic exchange in knf.c: the
+                                     * global scheduler cursor can alias one thread across
+                                     * CPUs, so a plain set/clear could tear. Zero-init. */
     /* --- Impersonation (SRM token assignment) --- */
     void       *impersonation_token; /* ACCESS_TOKEN *; thread-level override, NULL = use the
                                       * owning task's primary token. Swapped only by the current

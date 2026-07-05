@@ -34,6 +34,40 @@
  * stress target; knf_subscribe returns STATUS_INSUFFICIENT_RESOURCES at the cap. */
 #define KNF_MAX_SUBSCRIBERS_PER_STATE 4096
 
+/* --- Observability bridge flags (KNF_TRACE_*) --------------------------- *
+ * Per-state, opt-in (default 0). When set, knf_publish mirrors the publish to
+ * klog and/or ETW after releasing the state lock. The bridge runs ONLY below
+ * DISPATCH_LEVEL (a DPC/DISPATCH publish skips tracing -- observability is
+ * best-effort, never at ISR/DPC priority) and is guarded against re-entry.   */
+#define KNF_TRACE_ETW     0x1u   /* emit an ETW_EVT_KNF_PUBLISH record on publish */
+#define KNF_TRACE_KLOG    0x2u   /* emit one klog line on publish */
+#define KNF_PERSIST_LAST  0x4u   /* retain last payload for query-after-miss;
+                                  * reserved -- retention owned by the coalescing section */
+#define KNF_TRACE_ALL     (KNF_TRACE_ETW | KNF_TRACE_KLOG | KNF_PERSIST_LAST)
+
+/* --- ETW publish record (ABI: consumed by ETW session readers) ---------- *
+ * knf_publish emits this as ETW_EVT_KNF_PUBLISH (see <kernel/etw.h>) when a
+ * state carries KNF_TRACE_ETW. Little-endian, PACKED: the layout is pinned so
+ * out-of-tree readers decode it identically. Do NOT reorder or drop the packed
+ * attribute -- a natural (unpacked) struct with these fields tail-pads to
+ * 2*KNF_NAME_MAX + 24 on x86-64, which would misalign every consumer that
+ * recreates it from the event id. The size is asserted so the writer and any
+ * in-tree reader that includes this header agree on the wire format.
+ * category+name together are the state's unique identity: KNF leaf names are
+ * only unique within a category directory (\Notifications\<category>\<name>),
+ * so a record MUST carry both to disambiguate e.g. Kernel\Foo from Power\Foo. */
+typedef struct knf_etw_record {
+    char     category[KNF_NAME_MAX];/* namespace category (Kernel/Power/... NUL-pad) */
+    char     name[KNF_NAME_MAX];   /* leaf state name (NUL-padded)            */
+    uint64_t sequence;             /* change stamp after this publish         */
+    uint32_t pid;                  /* best-effort publisher PID               */
+    uint32_t tid;                  /* best-effort publisher TID               */
+    int32_t  status;               /* NTSTATUS of the publish                 */
+} __attribute__((packed)) KNF_ETW_RECORD;
+
+_Static_assert(sizeof(KNF_ETW_RECORD) == 2 * KNF_NAME_MAX + 20,
+               "KNF_ETW_RECORD is a pinned ETW ABI record -- layout must not drift");
+
 /* --- Lifetime classes (mirror WNF_STATE_NAME_LIFETIME) ------------------- */
 
 typedef enum knf_lifetime {
@@ -90,6 +124,7 @@ struct knf_subscriber {
 
 typedef struct knf_state {
     char            name[KNF_NAME_MAX];  /* leaf name under category dir */
+    char            category[KNF_NAME_MAX]; /* owning category dir name (trace identity) */
     atomic64_t      sequence;            /* monotonic change stamp (0 at create) */
     KNF_LIFETIME    lifetime;
     KNF_DATA_SCOPE  scope;
@@ -107,6 +142,7 @@ typedef struct knf_state {
                                           * pre-lock alloc, then re-checks under lock) */
     struct knf_subscriber *subscribers;  /* subscriber list head */
     uint32_t        subscriber_count;    /* len(subscribers); bounds lock-hold walk */
+    uint32_t        trace_flags;         /* KNF_TRACE_* bridge opt-ins (set/read under lock) */
 
     spinlock_t      lock;                /* guards payload + subscribers + publish */
 } KNF_STATE;
@@ -182,6 +218,31 @@ KNF_STATE *knf_open_state(const char *category, const char *name);
  * PASSIVE-only), or STATUS_INSUFFICIENT_RESOURCES (OOM).
  */
 NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap);
+
+/*
+ * knf_set_trace_flags -- set the KNF_TRACE_* observability opt-ins on a state
+ * (replaces the current set; guarded by the state lock). Only KNF_TRACE_* bits
+ * are honored. Returns STATUS_SUCCESS or STATUS_INVALID_PARAMETER.
+ */
+NTSTATUS knf_set_trace_flags(KNF_STATE *st, uint32_t flags);
+
+/*
+ * knf_trace_drops_at_dispatch_count -- number of traced publishes that were
+ * dropped because they ran at >= DISPATCH_LEVEL (the klog/ETW bridge takes
+ * locks in thread context and cannot run at DPC/ISR priority). Exposed so the
+ * best-effort bridge's losses are observable rather than silent (the KNF
+ * diagnostics counters surface this).
+ */
+uint64_t knf_trace_drops_at_dispatch_count(void);
+
+/*
+ * knf_trace_skips_guard_count -- number of traced publishes suppressed by the
+ * recursion guard: same-CPU re-entry from a klog/ETW re-publish, a concurrent
+ * trace aliased onto the same thread by the global scheduler cursor, OR a
+ * pre-scheduler publish with no current thread to arm the guard. Counted so
+ * every intentional trace-suppression path is observable, not silently lost.
+ */
+uint64_t knf_trace_skips_guard_count(void);
 
 /*
  * knf_publish -- publish a new payload + advance the change stamp.

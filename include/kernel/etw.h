@@ -152,6 +152,7 @@ NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
 #define ETW_EVT_WM_FRAME_PRESENTED  0x1001
 #define ETW_EVT_POLICY_TAMPER       0x1100  /* security: blocked/panicked policy mutation */
 #define ETW_EVT_POLICY_CHANGE       0x1101  /* security: applied (allowed) policy mutation */
+#define ETW_EVT_KNF_PUBLISH         0x1200  /* KNF: a notification state was published */
 
 /* Byte layout of the SHARED payload for both policy-lock audit events
  * (policy_lock.c): ETW_EVT_POLICY_TAMPER (a blocked/panicked attempt) and

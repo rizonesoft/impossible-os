@@ -14,6 +14,8 @@
 #include "kernel/mm/heap.h"
 #include "kernel/security/privileges.h"
 #include "kernel/sched/irql.h"
+#include "kernel/sched/task.h"
+#include "kernel/etw.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 
@@ -189,6 +191,8 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
      * subscribers=NULL, spinlock flag=0 (its init state) all hold already. */
     strncpy(st->name, name, KNF_NAME_MAX - 1);
     st->name[KNF_NAME_MAX - 1] = '\0';
+    strncpy(st->category, category, KNF_NAME_MAX - 1);
+    st->category[KNF_NAME_MAX - 1] = '\0';
     atomic64_set(&st->sequence, 0);
     st->lifetime = lifetime;
     st->scope    = scope;
@@ -338,6 +342,114 @@ NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap)
     return STATUS_SUCCESS;
 }
 
+NTSTATUS knf_set_trace_flags(KNF_STATE *st, uint32_t flags)
+{
+    uint64_t lflags;
+
+    if (!st || (flags & ~KNF_TRACE_ALL))
+        return STATUS_INVALID_PARAMETER;
+
+    spin_lock_irqsave(&st->lock, &lflags);
+    st->trace_flags = flags;
+    spin_unlock_irqrestore(&st->lock, lflags);
+    return STATUS_SUCCESS;
+}
+
+/* --- Observability bridge (klog + ETW) ---------------------------------- */
+
+/* Best-effort observability accounting -- relaxed atomic tallies, never a control
+ * decision. Every intentional trace-suppression path is counted so diagnostics
+ * never read zero while records were actually dropped: _drops_at_dispatch (IRQL
+ * too high to take the klog/ETW locks) and _skips_guard (recursion guard held --
+ * same-CPU re-entry, a concurrent trace aliased onto the same thread by the
+ * global scheduler cursor, or a pre-scheduler publish with no thread to arm the
+ * guard). The KNF_ETW_RECORD ABI lives in <kernel/knf/knf.h> so readers share it. */
+static atomic64_t knf_trace_drops_at_dispatch;
+static atomic64_t knf_trace_skips_guard;
+
+uint64_t knf_trace_drops_at_dispatch_count(void)
+{
+    return (uint64_t)atomic64_read(&knf_trace_drops_at_dispatch);
+}
+
+uint64_t knf_trace_skips_guard_count(void)
+{
+    return (uint64_t)atomic64_read(&knf_trace_skips_guard);
+}
+
+/* Mirror a completed publish to klog and/or ETW. Runs AFTER the state lock is
+ * released, ONLY below DISPATCH_LEVEL (klog/ETW take their own locks and run in
+ * thread context, never at DPC/ISR priority), guarded per-thread so a klog/ETW
+ * path that itself re-publishes a traced KNF state cannot recurse. name/seq/
+ * flags are a snapshot taken under the state lock by the caller. PID/TID are
+ * the scheduler's current-context attribution: best-effort on SMP with the
+ * present global scheduler cursor (authoritative per-CPU attribution awaits
+ * per-CPU run queues; same accepted limitation as klog's pid/tid). */
+static void knf_trace_publish(const char *category, const char *name,
+                              uint64_t seq, uint32_t flags)
+{
+    struct thread *thr;
+    struct task   *t;
+    uint32_t       pid, tid;
+
+    /* A traced publish that lands at >= DISPATCH_LEVEL (a DPC/driver producer
+     * with a pre-reserved payload -- a documented knf_publish context) cannot
+     * be mirrored: klog/ETW take locks in thread context. Drop it, but COUNT
+     * the drop so the loss is observable to diagnostics, not silent. */
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL) {
+        __atomic_fetch_add(&knf_trace_drops_at_dispatch.val, 1, __ATOMIC_RELAXED);
+        return;
+    }
+
+    /* No current thread (a pre-scheduler boot publish): the recursion guard
+     * lives on the thread, so without one it cannot arm -- skip emission and
+     * count the skip so the suppression is observable. */
+    thr = thread_current();
+    if (!thr) {
+        __atomic_fetch_add(&knf_trace_skips_guard.val, 1, __ATOMIC_RELAXED);
+        return;
+    }
+
+    /* Acquire the recursion guard with an atomic exchange, not a plain
+     * read-then-write: thread_current() is backed by the GLOBAL scheduler
+     * cursor (no per-CPU current thread yet, task.c current_task/current_thread),
+     * so two CPUs can resolve the same struct thread. A plain set/clear would
+     * let a second CPU clear the flag while this CPU is still inside the bridge,
+     * re-opening the very recursion it guards. Only the CPU that observes the
+     * 0->1 transition owns the guard and clears it on exit; a caller that finds
+     * it already held -- same-CPU re-entry from a klog/ETW re-publish, OR a
+     * concurrent trace sharing the global cursor -- bails and counts the skip
+     * (a dropped trace is acceptable for a best-effort bridge; a torn guard and
+     * a silent drop are not). */
+    if (__atomic_exchange_n(&thr->in_knf_trace, 1, __ATOMIC_ACQ_REL)) {
+        __atomic_fetch_add(&knf_trace_skips_guard.val, 1, __ATOMIC_RELAXED);
+        return;
+    }
+
+    t   = task_current();
+    pid = t ? t->pid : 0;
+    tid = thr->id;
+
+    if (flags & KNF_TRACE_KLOG)
+        klog(LOG_INFO, "knf", "publish '%s\\%s' seq=%llu pid=%u",
+             category, name, (uint64_t)seq, pid);
+
+    if (flags & KNF_TRACE_ETW) {
+        KNF_ETW_RECORD rec;
+        memset(&rec, 0, sizeof(rec));
+        strncpy(rec.category, category, KNF_NAME_MAX - 1);
+        strncpy(rec.name, name, KNF_NAME_MAX - 1);
+        rec.sequence = seq;
+        rec.pid      = pid;
+        rec.tid      = tid;
+        rec.status   = (int32_t)STATUS_SUCCESS;
+        /* ETW level 4 = informational (0=critical .. 5=verbose). */
+        etw_emit_kernel_event(ETW_EVT_KNF_PUBLISH, 4, &rec, (uint32_t)sizeof(rec));
+    }
+
+    __atomic_store_n(&thr->in_knf_trace, 0, __ATOMIC_RELEASE);
+}
+
 NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
                      const void *data, uint32_t len,
                      const uint64_t *matching_change_stamp,
@@ -346,6 +458,9 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     void                  *newbuf = NULL, *oldbuf = NULL;
     uint64_t               flags, prev, next_seq;
     struct knf_subscriber *sub;
+    uint32_t               trace_flags = 0;
+    char                   trace_name[KNF_NAME_MAX];
+    char                   trace_category[KNF_NAME_MAX];
 
     if (!st || len > KNF_MAX_PAYLOAD || (len > 0 && !data))
         return STATUS_INVALID_PARAMETER;
@@ -441,12 +556,25 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
         }
     }
 
+    /* Snapshot the trace opt-ins + identity (category + leaf) UNDER the lock so
+     * the post-unlock bridge never reads a torn/stale trace_flags racing
+     * knf_set_trace_flags. category+name together identify the state. */
+    trace_flags = st->trace_flags;
+    if (trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW)) {
+        memcpy(trace_name, st->name, KNF_NAME_MAX);
+        memcpy(trace_category, st->category, KNF_NAME_MAX);
+    }
+
     spin_unlock_irqrestore(&st->lock, flags);
 
     if (newbuf)
         kfree(newbuf);                /* pre-alloced but buffer already sufficed */
     if (oldbuf)
         kfree(oldbuf);                /* replaced buffer, freed outside the lock */
+
+    /* Observability bridge: klog/ETW mirror, off the lock, below DISPATCH only. */
+    if (trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW))
+        knf_trace_publish(trace_category, trace_name, next_seq, trace_flags);
 
     if (out_prev)
         *out_prev = prev;

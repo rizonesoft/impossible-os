@@ -789,6 +789,97 @@ static void test_knf_sequence_no_wrap(void)
     knf_delete_state("Kernel", "PubWrap");
 }
 
+/* ---- ETW/klog trace bridge ---------------------------------------------- */
+
+static void test_knf_trace_flags(void)
+{
+    KNF_STATE *st;
+    uint64_t   prev = 0, cur = 0, drops, skips;
+    NTSTATUS   s;
+    char       payload[4] = { 0 };
+
+    st = knf_create_state("Kernel", "PubTrace", KNF_LIFETIME_TEMPORARY,
+                          KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0,
+                          KNF_KERNEL_MODE);
+    TEST_ASSERT_NOT_NULL(st, "create PubTrace");
+    if (!st) return;
+
+    /* Set the opt-ins; they are stored verbatim under the lock. */
+    s = knf_set_trace_flags(st, KNF_TRACE_KLOG | KNF_TRACE_ETW);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "set trace flags OK");
+    TEST_ASSERT_EQ((uint64_t)st->trace_flags,
+                   (uint64_t)(KNF_TRACE_KLOG | KNF_TRACE_ETW),
+                   "trace_flags stored");
+
+    /* Unknown bits are rejected and leave the flags unchanged. */
+    s = knf_set_trace_flags(st, 0x100u);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "unknown trace bits rejected");
+    TEST_ASSERT_EQ((uint64_t)st->trace_flags,
+                   (uint64_t)(KNF_TRACE_KLOG | KNF_TRACE_ETW),
+                   "rejected set left trace_flags unchanged");
+    TEST_ASSERT_EQ((uint32_t)knf_set_trace_flags((KNF_STATE *)0, KNF_TRACE_KLOG),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL state rejected");
+
+    /* Publish with the bridge enabled runs klog + ETW off the lock and still
+     * advances the sequence normally (bridge is side-band, never blocks it).
+     * At PASSIVE_LEVEL (the test context) the bridge emits and must NOT record
+     * a DISPATCH-level drop -- the drop counter only ticks when tracing is
+     * skipped at >= DISPATCH_LEVEL. */
+    drops = knf_trace_drops_at_dispatch_count();
+    skips = knf_trace_skips_guard_count();
+    s = knf_publish(st, (const KNF_TYPE_ID *)0, payload, 4, (const uint64_t *)0,
+                    &prev, &cur);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "traced publish OK");
+    TEST_ASSERT_EQ(cur, 1ull, "traced publish advanced the sequence");
+    TEST_ASSERT_EQ(knf_trace_drops_at_dispatch_count(), drops,
+                   "PASSIVE traced publish did not count as a DISPATCH drop");
+    TEST_ASSERT_EQ(knf_trace_skips_guard_count(), skips,
+                   "un-nested traced publish did not count as a guard skip");
+
+    /* Clearing the flags disables the bridge (publish still succeeds). */
+    TEST_ASSERT_EQ((uint32_t)knf_set_trace_flags(st, 0),
+                   (uint32_t)STATUS_SUCCESS, "clear trace flags OK");
+    s = knf_publish(st, (const KNF_TYPE_ID *)0, payload, 4, (const uint64_t *)0,
+                    &prev, &cur);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "untraced publish OK");
+    TEST_ASSERT_EQ(cur, 2ull, "untraced publish advanced the sequence");
+
+    ObDereferenceObject(st);
+    knf_delete_state("Kernel", "PubTrace");
+}
+
+/* KNF leaf names are only unique within a category directory, so the trace
+ * record's identity is category+leaf. Prove two same-leaf states in different
+ * categories carry distinct categories (the field the ETW/klog record emits),
+ * so records for Kernel\Dup and Power\Dup are disambiguable. */
+static void test_knf_trace_category_identity(void)
+{
+    KNF_STATE *k, *p;
+
+    k = knf_create_state("Kernel", "Dup", KNF_LIFETIME_TEMPORARY,
+                         KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE);
+    p = knf_create_state("Power", "Dup", KNF_LIFETIME_TEMPORARY,
+                         KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE);
+    TEST_ASSERT_NOT_NULL(k, "create Kernel\\Dup");
+    TEST_ASSERT_NOT_NULL(p, "create Power\\Dup");
+    if (!k || !p) goto out;
+
+    /* Same leaf, different objects, different category identity. */
+    TEST_ASSERT(k != p, "same leaf in two categories are distinct states");
+    TEST_ASSERT_EQ((uint32_t)(strcmp(k->name, p->name) == 0), 1u,
+                   "leaf names match");
+    TEST_ASSERT_EQ((uint32_t)(strcmp(k->category, "Kernel") == 0), 1u,
+                   "Kernel\\Dup category stored");
+    TEST_ASSERT_EQ((uint32_t)(strcmp(p->category, "Power") == 0), 1u,
+                   "Power\\Dup category stored");
+    TEST_ASSERT_EQ((uint32_t)(strcmp(k->category, p->category) != 0), 1u,
+                   "categories disambiguate the two records");
+out:
+    if (k) { ObDereferenceObject(k); knf_delete_state("Kernel", "Dup"); }
+    if (p) { ObDereferenceObject(p); knf_delete_state("Power", "Dup"); }
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_knf(void)
@@ -833,6 +924,10 @@ void test_register_knf(void)
                             test_knf_reserve_and_live_delete, TEST_CAT_KNF);
     test_suite_register_cat("knf: sequence-wrap boundary (no wrap through 0)",
                             test_knf_sequence_no_wrap, TEST_CAT_KNF);
+    test_suite_register_cat("knf: ETW/klog trace bridge flags",
+                            test_knf_trace_flags, TEST_CAT_KNF);
+    test_suite_register_cat("knf: trace record category+leaf identity",
+                            test_knf_trace_category_identity, TEST_CAT_KNF);
 }
 
 #endif /* KERNEL_TESTS */

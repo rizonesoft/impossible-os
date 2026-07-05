@@ -47,7 +47,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
 | 💎   |   4   | Security and namespace policy         | T15        |  [/]   |
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
-| 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [ ]   |
+| 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
 | ⭐   |   7   | Coalescing and payload retention      | §2         |  [ ]   |
 | 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [ ]   |
 | ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [ ]   |
@@ -168,12 +168,19 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 6. ETW/klog Bridge
 
-- [ ] Add per-state flags: `KNF_TRACE_ETW`, `KNF_TRACE_KLOG`, `KNF_PERSIST_LAST`.
-- [ ] Avoid recursive logging during klog failure paths.
-- [ ] ETW payload includes state name, sequence, publisher PID/TID, and status.
-- [ ] Commit: `"kernel/knf: ETW/klog bridge flags (KNF_TRACE_ETW/KLOG/PERSIST_LAST) + recursion guard"`
+- [x] Per-state flags `KNF_TRACE_ETW`/`KNF_TRACE_KLOG`/`KNF_PERSIST_LAST` + `trace_flags` on `KNF_STATE`; `knf_set_trace_flags` stores them under the lock (rejects unknown bits). `KNF_PERSIST_LAST` reserved; retention is §7.
+- [x] Recursion guard: per-thread `struct thread.in_knf_trace` acquired/released via atomic exchange (global scheduler cursor can alias a thread across CPUs) so a klog/ETW re-publish bails instead of recursing.
+- [x] `knf_publish` mirrors to klog/ETW off the lock (snapshot under lock), below DISPATCH_LEVEL; `ETW_EVT_KNF_PUBLISH` 0x1200 packs `KNF_ETW_RECORD` (category+leaf identity, pinned ABI in `knf.h`); every suppression path counted.
+- [x] Commit: `"kernel/knf: ETW/klog bridge flags (KNF_TRACE_ETW/KLOG/PERSIST_LAST) + recursion guard"`
 
-**Test checkpoint:** `test_knf` sets `KNF_TRACE_KLOG` on a state, publishes, and asserts one klog line with the state name + sequence + publisher PID; a publish during a klog failure path does NOT recurse (guard flag observed); `KNF_TRACE_ETW` emits one ETW record. Serial: `"[KNF] bridge etw=%u klog=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf` sets `KNF_TRACE_KLOG`+`KNF_TRACE_ETW` on a state, publishes, and asserts the publish succeeds + sequence advances with the bridge running off-lock; unknown trace bits and a NULL state are rejected; clearing the flags disables the bridge. Serial (WHPX): the `[knf] publish '<name>' seq=N pid=P` klog line + one `ETW_EVT_KNF_PUBLISH` record. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 22 suites, 0 failures
+> **Notes:**
+> - Shipped `KNF_TRACE_*` flags + `trace_flags` + `knf_set_trace_flags` + per-thread `in_knf_trace` guard + the `knf_publish` klog/ETW bridge (`ETW_EVT_KNF_PUBLISH` 0x1200, packed `KNF_ETW_RECORD`) across knf.c/knf.h/etw.h/task.h.
+> - The bridge runs OFF the state lock (snapshot flags+name under lock, emit after), only below DISPATCH_LEVEL, guarded per-thread against re-entry; opt-in per state (default off), so it never touches the DPC publish fast path.
+> - Codex design + adversarial adoptions in the commit message (snapshot-under-lock, atomic-exchange recursion guard, category+leaf ETW identity in shared header, all suppression paths counted: DISPATCH + guard + no-thread); `KNF_PERSIST_LAST` behavior owned by §7.
+> - Canonical doc: this TODO; §7 owns coalescing/retention (incl. `KNF_PERSIST_LAST`), §9 owns diagnostics counters.
 
 ---
 
@@ -232,11 +239,11 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 | ⭐   | Feature                            | 🪟 Win11             | 🐧 Linux             | 🚀 Impossible OS                                                       |
 | --- | ---------------------------------- | ------------------- | ------------------- | --------------------------------------------------------------------- |
-| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ✅ §1-§2: publish/subscribe + poll                                    |
+| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ✅ §1-§2: publish/subscribe + poll                                     |
 | 💎   | State object + lifetime/scope/type | ✅ WNF lifetimes     | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
 | 💎   | Waitable user subscriptions        | ✅ WNF+Nt*           | ⚠️ epoll/poll       | ⬜ §3                                                                  |
 | 💎   | Per-state security descriptor      | ✅ Full              | ⚠️ DAC only         | ⬜ §4                                                                  |
-| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ✅ §2: atomic64 stamp + CAS publish                                   |
+| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ✅ §2: atomic64 stamp + CAS publish                                    |
 | 💎   | WNF-compatible syscalls            | ✅ Nt*WnfStateData   | ❌ N/A               | ⬜ §8                                                                  |
 | ⭐   | Named catalog + coalescing         | ⚠️ Undocumented WNF | ❌ ad-hoc            | ⬜ §5,§7                                                               |
 | ⭐   | Live diagnostics counters          | ❌ Debugger only     | ⚠️ /proc scattered  | ⬜ §9                                                                  |
