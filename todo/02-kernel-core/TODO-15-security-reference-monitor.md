@@ -427,7 +427,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1058 passed, 0 failures
 > **Notes:**
 > - Shipped: `mic.c`/`mic.h` -- `SeGetTokenIntegrityLevel`, `SeGetObjectIntegrityLevel`, `SeCompareMandatoryLevels`, `SeCheckMandatoryAccess` (No-*-Up, `GENERIC_MAPPING`-aware) + IL-RID/`MIC_*_MASK` constants + shared `generic_mapping.h`.
-> - Integration: pure functions on a caller token/SD (no global state/locks/alloc); the SACL is validated once via §3's `RtlValidAcl` then a linear `AceSize` cursor finds the label (imported SD cannot OOB; malformed SACL fails closed). No live caller yet -- SeAccessCheck consumes them.
+> - Integration: pure functions on a caller token/SD (no locks/alloc); the SACL is validated once via §3's `RtlValidAcl` then a linear `AceSize` cursor stays within AclSize (malformed fails closed); raw self-relative SD normalize is §3/§5, not MIC.
 > - Tests: `test_mic` covers token IL (incl non-IL-authority reject), object IL (Medium/High/System-fail-closed), compare, No-Write-Up + No-Read-Up, object-specific-bit bypass closed via mapping, malformed-SACL fail-closed; `SUITE=security` 1058 passed, 0 failed.
 > - Design (Codex): `SeCheckMandatoryAccess(token, ...)` not `ctx` (SUBJECT_CONTEXT deferred); defensive SACL validation; Medium default on valid-but-unlabeled, fail-closed on malformed.
 > - Scope boundary: SeAccessCheck owns MIC-before-DACL wiring + `GENERIC_MAPPING` precision + the `[SRM] MIC:` log; token assignment owns child-IL=min; object-IL-at-creation + Low-IL FS sandbox stay open.
