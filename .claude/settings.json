@@ -420,6 +420,18 @@
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_retry_reminder.py\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

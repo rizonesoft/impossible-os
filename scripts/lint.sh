@@ -1119,6 +1119,29 @@ else
 fi
 
 # ============================================================================
+# Check 17: TODO table column alignment (informational -- WARN only)
+# ============================================================================
+# Cosmetic-only: renderers ignore source whitespace in tables entirely, so a
+# ragged table is never a correctness problem, only harder to skim in a raw
+# editor/terminal. scripts/format-md-tables.py already skips prose-heavy
+# tables (History/Notes logs) on its own -- see its docstring -- so this
+# check only flags the short, genuinely tabular tables worth aligning.
+# Skip via SKIP_LINT_TABLE_ALIGN=1.
+if [ "${SKIP_LINT_TABLE_ALIGN:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 17 (table-column-align) skipped via SKIP_LINT_TABLE_ALIGN=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    # One summary line, not one per file -- this is repo-wide-scan cosmetic
+    # debt (measured 2026-07-05: 213/251 todo/*.md files), and per-file WARN
+    # spam here would drown out every other check on every future commit.
+    TABLE_ALIGN_COUNT=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } | wc -l | tr -d ' ')
+    if [ "${TABLE_ALIGN_COUNT:-0}" -gt 0 ]; then
+        echo -e "${YELLOW}warn${NC}: Check 17 (table-column-align) $TABLE_ALIGN_COUNT todo/*.md file(s) have unaligned table columns (cosmetic; fix with: python3 scripts/format-md-tables.py todo/)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
