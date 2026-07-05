@@ -136,6 +136,13 @@ struct thread {
     uint8_t     in_audit;           /* 1 while this thread is running a syscall-audit hook;
                                      * per-thread (migration-safe) recursion guard so a hook's
                                      * own syscall is not itself re-audited. Zero-init. */
+    /* --- Impersonation (SRM token assignment) --- */
+    void       *impersonation_token; /* ACCESS_TOKEN *; thread-level override, NULL = use the
+                                      * owning task's primary token. Swapped only by the current
+                                      * thread (ImpersonateSelf/RevertToSelf) via __atomic exchange
+                                      * so a future effective-token reader never sees a torn ptr.
+                                      * MUST be reset to NULL on thread-slot (re)creation -- a stale
+                                      * pointer from a prior tenant would silently impersonate. */
 };
 
 /* Task Control Block */
@@ -227,6 +234,12 @@ typedef void (*task_entry_t)(void);
 /* Initialize the scheduler (makes the current execution context PID 0).
  * Returns BOOT_OK on success. */
 boot_result_t task_init(void);
+
+/* Assign the SYSTEM primary token to PID 0 (the initial system process).
+ * Called from boot_phase3 immediately after task_init(), once ObpTokenType is
+ * registered and before any later kernel task is created -- descendants inherit
+ * their parent's token at fork/create time, so PID 0 must own one first. */
+void task_assign_initial_token(void);
 
 /* Create a new kernel thread. Returns PID or -1 on failure. */
 int task_create(task_entry_t entry, const char *name);

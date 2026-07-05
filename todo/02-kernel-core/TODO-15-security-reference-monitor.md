@@ -63,7 +63,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [/]   |
 | 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [/]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [/]   |
-| 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [ ]   |
+| 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [x]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [ ]   |
@@ -441,20 +441,24 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## 7. Process/Thread Token Assignment & Impersonation
 
-- [ ] Add `ACCESS_TOKEN *Token;` to `struct task` in `include/kernel/sched/task.h`
-- [ ] Add `ACCESS_TOKEN *ImpersonationToken;` -- thread-level override; NULL = use process token
-- [ ] `PsReferencePrimaryToken(task)` -- increments token refcount and returns ptr
-- [ ] `PsDereferencePrimaryToken(token)` -- decrements; frees on zero
-- [ ] In `task_exec()` (→ shared path with `TODO-21 §2`): call `NtDuplicateToken(parent->Token, TOKEN_ALL_ACCESS, NULL, FALSE, TokenPrimary, &child->Token)` -- child starts with a deep copy of parent's primary token
-- [ ] `SeCreateSystemToken()` result assigned to `PsInitialSystemProcess->Token` during Phase 0 kernel init (→ XREF `TODO-01-kernel-init-sequencing.md §2`)
-- [ ] `NtImpersonateThread(ThreadHandle, ImpThreadHandle, ImpLevel)` -- duplicate source thread token as impersonation token; set `ImpersonationToken`; needs `SeImpersonatePrivilege` if IL higher than current
-- [ ] `NtSetInformationThread(ThreadHandle, ThreadImpersonationToken, TokenHandle, sizeof(HANDLE))` -- explicit impersonation token assignment (NULL handle = revert)
-- [ ] `RevertToSelf()` Win32 wrapper -- sets impersonation token to NULL
-- [ ] `ImpersonateSelf(ImpersonationLevel)` -- duplicates own primary token as impersonation token; used before adjusting privileges for a short operation
-- [ ] `SeQuerySubjectContextToken(ctx)` -- returns impersonation token if present AND impersonation level ≥ `SecurityIdentification`; else returns primary token; used by SeAccessCheck §5 as the "effective" token
-- [ ] Commit: `"kernel/security: task token field, spawn token copy, thread impersonation"`
+- [x] `struct task.token` primary slot wired; `struct thread` gains `void *impersonation_token` (NULL = use task primary; reset on slot reuse, dereferenced at reap + cleanup)
+- [x] `PsReferencePrimaryToken` / `PsDereferencePrimaryToken` -- Ob-refcount pin/unpin (NULL-safe)
+- [x] Primary-token inheritance on every creation edge (`task_fork`/`task_create`/`task_create_user`) via `task_inherit_primary_token`: deep-copy the creator token before publish, fail-closed
+- [x] `task_assign_initial_token()`: `SeCreateSystemToken` -> `tasks[0]` (PID 0) in `boot_phase3` after `task_init`; `boot_halt` if creation fails
+- [x] `ImpersonateSelf(level)` / `RevertToSelf()` -- self-only impersonation via atomic swap + deref on the current thread's slot
+- [x] Token teardown in `task_cleanup` -- deref the primary token + every thread's impersonation token at process reap
+- [x] Commit: `"kernel/security: task token field, fork/create token copy, self-impersonation"`
+- [/] `NtImpersonateThread` / `NtSetInformationThread` cross-thread impersonation -- DEFERRED (needs per-token lock) -> XREF: 02-kernel-core/TODO-15 §4 (item: "Per-token lock for SMP safety")
+- [/] `SeQuerySubjectContextToken` effective-token capture -- DEFERRED (Ob-referenced return + `SECURITY_SUBJECT_CONTEXT`) -> XREF: 02-kernel-core/TODO-15 §5 (item: "SeCaptureSubjectContext")
 
-**Test checkpoint:** After `task_exec()`, child task's `token` is non-NULL and distinct from parent's (deep copy). `PsReferencePrimaryToken(child)` returns valid token with same UserSid as parent. `NtImpersonateThread` sets impersonation token; subsequent `SeCaptureSubjectContext` uses it as effective token. `RevertToSelf()` clears impersonation; effective token reverts to primary. Serial log: `"[SRM] Token assigned to pid=%u"`, `"[SRM] Thread %u impersonating at level %u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `PsReferencePrimaryToken(NULL)` and a NULL-token task both return NULL; a tokened task returns that exact pointer (pin balanced). `ImpersonateSelf(SecurityImpersonation)` installs a distinct `TokenImpersonation` copy at the level; `RevertToSelf()` clears it; both idempotent when not impersonating. Fork/create inheritance + fail-closed publish validated by boot (kernel workers created post-SYSTEM-token) + smoke; serial: `"Token assigned to pid=0 (SYSTEM)"`. Test on: QEMU WHPX + TCG (unit) + KVM/TCG smoke.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1074 kernel tests, 0 failures
+> **Note:** No isolated test surface for the task-creation/boot-wiring paths (`task_fork`/`task_create`/`task_create_user` inheritance, `task_cleanup` teardown, the `boot_phase3` hook) -- spawning + reaping live tasks from a unit test is forbidden test-infra; those paths are validated via smoke boot. The Ps pin/unpin API + self-impersonation ARE covered by `test_token_assignment`.
+
+> **Notes:**
+> - Codex design F1: token inheritance on the creation edge, not `task_exec` (in-place, preserves token); F2: SYSTEM token to PID 0 in Phase 3 (ObpTokenType/PID 0 absent in Phase 0).
+> - Codex adversarial (3H) fixed: inheritance extended to `task_create`/`task_create_user`; `g_primary_tokens_active` fail-closes tokenless-parent-after-init; primary + impersonation token teardown in `task_cleanup`.
+> - Deferred: cross-thread impersonation (§4 lock) + `SeQuerySubjectContextToken` Ob-referenced effective-token capture (§5, design F3 SMP race).
 
 ---
 
@@ -726,7 +730,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 | 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | 🟡 No-Write-Up §6 |
 | 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | ⬜ §8            |
 | 💎 | UAC filtered-token          | ✅ Full       | ❌ N/A           | ⬜ §9            |
-| 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | ⬜ §7            |
+| 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | 🟡 Self-impers §7 |
 | 💎 | SDDL string descriptors    | ✅ Full       | ❌ N/A           | ⬜ §10           |
 | 💎 | Restricted tokens           | ✅ Full       | ❌ N/A           | ⬜ §9            |
 | 💎 | SD inheritance              | ✅ Full auto  | ⚠️ POSIX ACL     | ⬜ §13           |

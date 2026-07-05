@@ -17,6 +17,7 @@
 #include "kernel/security/privileges.h"
 #include "kernel/security/stack_canary.h"
 #include "kernel/ob/ob.h"
+#include "kernel/sched/task.h"   /* task/thread, task_current/thread_current for token assignment */
 #include "libc/string.h"
 
 /* ---- SID comparison ---- */
@@ -902,6 +903,72 @@ static void test_mic(void)
     }
 }
 
+/* Process/thread token assignment + self-impersonation. Exercises the primary-
+ * token pin/unpin (NULL-safety + identity) and the ImpersonateSelf/RevertToSelf
+ * round-trip against the current thread, restoring the current task's token so
+ * the test is side-effect free. */
+static void test_token_assignment(void)
+{
+    ACCESS_TOKEN *systok;
+    struct task  *cur = task_current();
+    struct thread *thr = thread_current();
+    void         *saved_task_token;
+
+    TEST_ASSERT(cur != (struct task *)0, "task_current() non-NULL in test ctx");
+    TEST_ASSERT(thr != (struct thread *)0, "thread_current() non-NULL in test ctx");
+
+    /* PsReferencePrimaryToken NULL-safety. */
+    TEST_ASSERT(PsReferencePrimaryToken((struct task *)0) == (ACCESS_TOKEN *)0,
+                "PsReferencePrimaryToken(NULL task) -> NULL");
+
+    systok = SeCreateSystemToken();
+    TEST_ASSERT(systok != (ACCESS_TOKEN *)0, "SeCreateSystemToken -> non-NULL");
+
+    /* A task with a token: pin returns the same pointer; balance the pin. */
+    saved_task_token = cur->token;
+    cur->token = systok;
+    {
+        ACCESS_TOKEN *pinned = PsReferencePrimaryToken(cur);
+        TEST_ASSERT(pinned == systok, "PsReferencePrimaryToken returns the task's token");
+        PsDereferencePrimaryToken(pinned);   /* balance the pin (refcount back to 1) */
+    }
+
+    /* A task with a NULL token pins to NULL. */
+    cur->token = (void *)0;
+    TEST_ASSERT(PsReferencePrimaryToken(cur) == (ACCESS_TOKEN *)0,
+                "PsReferencePrimaryToken(task with NULL token) -> NULL");
+
+    /* RevertToSelf is idempotent when not impersonating. */
+    RevertToSelf();
+    TEST_ASSERT(thr->impersonation_token == (void *)0,
+                "RevertToSelf() with no impersonation leaves NULL");
+
+    /* ImpersonateSelf with a NULL primary token is a no-op (nothing to copy). */
+    ImpersonateSelf(SecurityImpersonation);
+    TEST_ASSERT(thr->impersonation_token == (void *)0,
+                "ImpersonateSelf() with NULL primary token stays NULL");
+
+    /* ImpersonateSelf/RevertToSelf round-trip with a real primary token. */
+    cur->token = systok;
+    ImpersonateSelf(SecurityImpersonation);
+    {
+        ACCESS_TOKEN *imp = (ACCESS_TOKEN *)thr->impersonation_token;
+        TEST_ASSERT(imp != (ACCESS_TOKEN *)0, "ImpersonateSelf installs an impersonation token");
+        TEST_ASSERT_EQ((uint64_t)imp->TokenType, (uint64_t)TokenImpersonation,
+                       "impersonation token is TokenImpersonation");
+        TEST_ASSERT_EQ((uint64_t)imp->ImpersonationLevel, (uint64_t)SecurityImpersonation,
+                       "impersonation token carries the requested level");
+        TEST_ASSERT(imp != systok, "impersonation token is a distinct copy, not the primary");
+    }
+    RevertToSelf();
+    TEST_ASSERT(thr->impersonation_token == (void *)0,
+                "RevertToSelf() clears the impersonation token");
+
+    /* Restore the current task's real token; drop our test token's owning ref. */
+    cur->token = saved_task_token;
+    ObDereferenceObject(systok);
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -928,6 +995,7 @@ void test_register_security(void)
     test_suite_register_cat("Security: self-relative SD bounded import",
                             test_sd_selfrel_import_bounded, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: Mandatory Integrity Control", test_mic, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: token assignment + impersonation", test_token_assignment, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

@@ -102,6 +102,35 @@ ACCESS_TOKEN *SeCreateSystemToken(void);
  */
 ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin);
 
+/* --- Primary token assignment + thread impersonation --------------------- */
+
+struct task;   /* forward decl -- primary-token API takes a task pointer */
+
+/*
+ * PsReferencePrimaryToken -- pin a task's primary token and return it. Takes an
+ * Ob reference so the token cannot be freed while the caller holds the pointer;
+ * the caller MUST balance it with PsDereferencePrimaryToken. Returns NULL when
+ * the task is NULL or has no token assigned yet.
+ */
+ACCESS_TOKEN *PsReferencePrimaryToken(struct task *task);
+
+/* PsDereferencePrimaryToken -- drop a reference taken by PsReferencePrimaryToken
+ * (or by a self-impersonation swap). NULL-safe. */
+void PsDereferencePrimaryToken(ACCESS_TOKEN *token);
+
+/*
+ * ImpersonateSelf -- duplicate the current thread's process token as an
+ * impersonation token at `level` and install it on the current thread. Used
+ * before adjusting privileges for a short operation. A prior impersonation
+ * token on the thread is dereferenced. Self-only: it swaps the CURRENT thread's
+ * own field, so there is no cross-thread writer race in this path.
+ */
+void ImpersonateSelf(SECURITY_IMPERSONATION_LEVEL level);
+
+/* RevertToSelf -- clear the current thread's impersonation token (revert to the
+ * process primary token) and dereference the impersonation token. */
+void RevertToSelf(void);
+
 /* --- Token mutation functions -------------------------------------------- */
 
 #define STATUS_NOT_ALL_ASSIGNED ((int32_t)0x00000106)

@@ -98,6 +98,12 @@ void boot_phase3(void)
     kernel_subsystem_set_ready(SUBSYS_SCHED, true);
     boot_progress(3, "SCHED", POST16_SCHED_OK);
 
+    /* Assign the SYSTEM primary token to PID 0 now that the scheduler and PID 0
+     * exist and ObpTokenType is registered (ob_init, prior phase). This must
+     * precede any later task creation (DPC worker, kworker pool) so descendants
+     * inherit a non-NULL primary token at fork/create time. */
+    task_assign_initial_token();
+
     ahci_enable_events();  /* safe now: yield handler registered */
 
     /* Start the threaded DPC worker (needs scheduler). Unconditional at boot so

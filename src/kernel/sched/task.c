@@ -28,6 +28,7 @@
 #include "kernel/ob/ob_thread.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
+#include "kernel/security/token.h"  /* SeCreateSystemToken, NtDuplicateToken, primary-token API */
 #include "kernel/nt/syscall_filter.h"
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
@@ -40,6 +41,7 @@
 #include "kernel/elf.h"
 #include "kernel/csprng.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_halt.h"  /* boot_halt: fatal SRM baseline failure */
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
 #define YIELD_INT_VECTOR VECTOR_YIELD
@@ -60,6 +62,7 @@ static volatile uint32_t sched_ticks = 0;    /* ticks since last switch */
 /* Forward declarations */
 static uint64_t yield_irq_handler(struct interrupt_frame *frame);
 uint64_t schedule_now(struct interrupt_frame *frame);
+static int task_inherit_primary_token(uint32_t parent_pid, ACCESS_TOKEN **out);
 
 /* exec_pending stuck detection threshold (ticks).
  * If exec_pending has been set for more than this many ticks without the
@@ -433,6 +436,7 @@ int task_create(task_entry_t entry, const char *name)
     uint32_t pid;
     uint8_t *stack;
     uint64_t *sp;
+    ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
 
     if (num_tasks >= TASK_MAX) {
         klog(LOG_ERROR, "sched", "task_create: max tasks reached");
@@ -440,6 +444,17 @@ int task_create(task_entry_t entry, const char *name)
     }
 
     pid = num_tasks;
+
+    /* Inherit the creating task's primary token before allocating anything, so
+     * a fail-closed policy miss costs nothing to unwind. A kernel task created
+     * after SRM init runs as a copy of its creator's token (PID 0 = SYSTEM at
+     * boot); the slot's token pointer is overwritten below, clearing any stale
+     * tenant. */
+    if (task_inherit_primary_token(current_task, &inherited_token) < 0) {
+        klog(LOG_ERROR, "sched",
+             "task_create: primary-token inheritance failed; failing closed");
+        return -1;
+    }
 
     /* Allocate task stack from PMM with guard page at the bottom.
      * Stack grows down, so guard page catches overflow before it
@@ -449,6 +464,8 @@ int task_create(task_entry_t entry, const char *name)
         uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
         if (!stack_base) {
             klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
+            if (inherited_token)
+                PsDereferencePrimaryToken(inherited_token);
             return -1;
         }
         vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
@@ -529,6 +546,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -543,6 +561,11 @@ int task_create(task_entry_t entry, const char *name)
         spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
     }
     tasks[pid].num_threads = 1;
+    /* Primary token slot: explicit assignment doubles as the stale-slot reset
+     * (a prior tenant's pointer must never survive a reused slot). Set before
+     * num_tasks++ so the task is never published token-less; the slot owns the
+     * dup's reference (NULL only pre-SRM-init, tolerated for KernelMode). */
+    tasks[pid].token = inherited_token;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
     num_tasks++;
@@ -562,6 +585,7 @@ int task_create_user(task_entry_t entry, const char *name)
     uint32_t pid;
     uint8_t *kstack, *ustack;
     uint64_t *sp;
+    ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
 
     if (num_tasks >= TASK_MAX) {
         klog(LOG_ERROR, "sched", "task_create_user: max tasks reached");
@@ -570,10 +594,24 @@ int task_create_user(task_entry_t entry, const char *name)
 
     pid = num_tasks;
 
+    /* A user task MUST carry a primary token (ring-3 code is subject to token
+     * checks): inherit the creator's token before allocating anything and fail
+     * closed on a policy miss. Unlike kernel task_create, a NULL result (the
+     * helper's pre-SRM-init tolerance) is ALSO fail-closed here -- no ring-3
+     * task may be published token-less, even in the pre-init window. */
+    if (task_inherit_primary_token(current_task, &inherited_token) < 0 ||
+        !inherited_token) {
+        klog(LOG_ERROR, "sched",
+             "task_create_user: primary-token inheritance failed; failing closed");
+        return -1;
+    }
+
     /* Allocate kernel stack (for interrupt/syscall handling) */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_create_user: cannot allocate kernel stack");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
         return -1;
     }
 
@@ -666,6 +704,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -680,6 +719,9 @@ int task_create_user(task_entry_t entry, const char *name)
         spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
     }
     tasks[pid].num_threads = 1;
+    /* Primary token slot: explicit assignment before num_tasks++ (never publish
+     * a token-less user task) and stale-slot reset; the slot owns the dup ref. */
+    tasks[pid].token = inherited_token;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
     num_tasks++;
@@ -1127,6 +1169,59 @@ void scheduler_disable(void)
     sched_enabled = 0;
 }
 
+/* Set once PID 0 owns the SYSTEM primary token. After this point every task is
+ * a descendant of a tokened process, so a NULL parent token at fork/create time
+ * is an error (tokenless publication == authorization gap) and fails closed.
+ * Before it (early kernel-thread bring-up) a NULL token is expected and
+ * tolerated -- those threads run KernelMode, which bypasses token checks. */
+static int g_primary_tokens_active = 0;
+
+/* Duplicate the creating task's primary token for a new child slot, enforcing
+ * the fail-closed policy. Returns 1 with *out set to a fresh Ob-owned primary
+ * token (the child owns the reference); 0 with *out = NULL when there is no
+ * token to inherit yet (pre-init only); -1 when inheritance must fail closed
+ * (parent tokenless after SRM init, or duplication failed). */
+static int task_inherit_primary_token(uint32_t parent_pid, ACCESS_TOKEN **out)
+{
+    ACCESS_TOKEN *pt = (ACCESS_TOKEN *)tasks[parent_pid].token;
+
+    *out = (ACCESS_TOKEN *)0;
+    if (pt) {
+        ACCESS_TOKEN *dup = NtDuplicateToken(pt, 0, 0, TokenPrimary);
+        if (!dup)
+            return -1;      /* dup failure -> fail closed */
+        *out = dup;
+        return 1;
+    }
+    if (__atomic_load_n(&g_primary_tokens_active, __ATOMIC_ACQUIRE))
+        return -1;          /* tokenless parent after init -> fail closed */
+    return 0;               /* pre-init: NULL token tolerated */
+}
+
+void task_assign_initial_token(void)
+{
+    /* PID 0 (the initial system process) must own the SYSTEM primary token
+     * before any later kernel task is created: children inherit their parent's
+     * token at fork/create time, so a token-less PID 0 would leave every
+     * descendant token-less (an authorization hole). Called from boot_phase3
+     * right after task_init() -- ObpTokenType is registered by ob_init in the
+     * prior phase, and no DPC/kworker task has been spawned yet. Idempotent. */
+    if (tasks[0].token)
+        return;
+    tasks[0].token = SeCreateSystemToken();
+    if (!tasks[0].token) {
+        /* No SYSTEM token means no security baseline: every descendant would be
+         * tokenless. This is unreachable in practice (heap is up, the token is
+         * small) -- treat an actual failure as fatal rather than boot into a
+         * broken authorization model. */
+        boot_halt("SRM: PID 0 SYSTEM token creation failed");
+    }
+    /* Release-store so a concurrent task_inherit_primary_token on another CPU
+     * that acquire-loads the flag also observes tasks[0].token (set above). */
+    __atomic_store_n(&g_primary_tokens_active, 1, __ATOMIC_RELEASE);
+    klog(LOG_INFO, "security", "Token assigned to pid=0 (SYSTEM)");
+}
+
 struct task *task_current(void)
 {
     return &tasks[current_task];
@@ -1163,6 +1258,7 @@ int task_fork(struct interrupt_frame *frame)
     uint64_t *sp;
     uint64_t parent_pid_val = current_task;
     struct syscall_filter *inherited_filter = (struct syscall_filter *)0;
+    ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
 
     if (num_tasks >= TASK_MAX) {
         klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
@@ -1193,10 +1289,27 @@ int task_fork(struct interrupt_frame *frame)
         }
     }
 
+    /* Primary token: a fork child must start with a deep copy of the parent's
+     * primary token, assigned BEFORE the child is schedulable -- otherwise the
+     * child could run token-less, an authorization hole. Duplicate FIRST (like
+     * the filter clone) so a failure fails the fork CLOSED without leaking the
+     * child stacks. The dup is Ob-allocated with refcount 1, owned by the
+     * child's token slot once assigned; dereferenced on any later failure. A
+     * tokenless parent after SRM init also fails closed (see the helper). */
+    if (task_inherit_primary_token((uint32_t)parent_pid_val, &inherited_token) < 0) {
+        klog(LOG_ERROR, "sched",
+             "task_fork: primary-token inheritance failed; failing fork closed");
+        if (inherited_filter)
+            kfree(inherited_filter);
+        return -1;
+    }
+
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate kernel stack");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
         return -1;
@@ -1207,6 +1320,8 @@ int task_fork(struct interrupt_frame *frame)
     if (!ustack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate user stack");
         kfree(kstack);
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
         return -1;
@@ -1298,6 +1413,14 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].syscall_filter_counted = 0;
     if (inherited_filter)
         syscall_filter_attach(&tasks[child_pid], inherited_filter);
+
+    /* Primary token slot: explicit assignment doubles as the stale-slot reset
+     * (a prior tenant's token pointer must never survive into a reused slot).
+     * Set before num_tasks++ so the child is never published token-less. The
+     * child now owns the dup's refcount. Fresh main thread must likewise not
+     * inherit a prior tenant's impersonation token. */
+    tasks[child_pid].token = inherited_token;
+    tasks[child_pid].threads[0].impersonation_token = (void *)0;
 
     num_tasks++;
 
@@ -2341,6 +2464,38 @@ void task_cleanup(uint32_t pid)
         }
     }
 
+    /* Release this process's security tokens before the slot is reclaimable.
+     * The primary token is an Ob-owned dup assigned at fork/create; every thread
+     * slot may hold an Ob-owned impersonation token if it exited without calling
+     * RevertToSelf. Without this teardown a process that forked or impersonated
+     * leaks token objects, and a reused slot would carry a stale primary-token
+     * pointer (stale security state). Loop ALL threads (thread 0 included; the
+     * secondary loop above starts at 1); the exchange-to-NULL is idempotent so a
+     * slot already cleared by thread_reap_kernel_slot derefs nothing twice. */
+    {
+        uint32_t ti;
+        for (ti = 0; ti < tasks[pid].num_threads; ti++) {
+            ACCESS_TOKEN *imp = (ACCESS_TOKEN *)__atomic_exchange_n(
+                &tasks[pid].threads[ti].impersonation_token, (void *)0,
+                __ATOMIC_ACQ_REL);
+            if (imp)
+                PsDereferencePrimaryToken(imp);
+        }
+        {
+            /* Exchange-to-NULL BEFORE the deref, same discipline as the
+             * impersonation tokens above: clear the published slot pointer
+             * before dropping the last Ob reference so a reader that loads the
+             * slot after this point sees NULL, never a freed pointer. (Full
+             * reader/teardown mutual exclusion is the deferred per-token-lock
+             * protocol -- safe today on the single-cursor scheduler, which
+             * reaps only off-CPU DEAD tasks.) */
+            ACCESS_TOKEN *pt = (ACCESS_TOKEN *)__atomic_exchange_n(
+                &tasks[pid].token, (void *)0, __ATOMIC_ACQ_REL);
+            if (pt)
+                PsDereferencePrimaryToken(pt);
+        }
+    }
+
     /* Free user stack.
      *
      * Same heap-vs-user-VA hazard as the kernel stack above: this field
@@ -2747,6 +2902,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
+    t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
     t->threads[tid].kernel_stack_base = (uint8_t *)0;
     t->threads[tid].kernel_stack_pages = 0;
@@ -2962,6 +3118,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
+    t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
 
     /* Per-thread kernel stack ownership (for thread_free_stacks) */
     t->threads[tid].kernel_rsp = (uint64_t)(kstack + kstack_pages * 4096);
@@ -3093,6 +3250,16 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
      * lifetime field that gates security -- previous_mode gates ProbeFor*IfUser
      * -- must be reset before the slot is advertised, not after. */
     thr->previous_mode = 0;  /* KernelMode */
+    /* Release any impersonation token before the slot is advertised for reuse:
+     * a thread that exited while impersonating (never called RevertToSelf) would
+     * otherwise leak the token's reference and leave a stale pointer for the next
+     * tenant. Exchange-then-deref mirrors RevertToSelf. */
+    {
+        ACCESS_TOKEN *imp = (ACCESS_TOKEN *)__atomic_exchange_n(
+            &thr->impersonation_token, (void *)0, __ATOMIC_ACQ_REL);
+        if (imp)
+            PsDereferencePrimaryToken(imp);
+    }
     /* Publish THREAD_FREE under the APC lock so a concurrent cross-thread
      * KeInsertQueueApc observes a consistent exiting/reaped state and rejects
      * (no APC enqueued onto a slot being reaped for reuse). */
