@@ -126,9 +126,14 @@ title: "TODO-15 -- Security Reference Monitor"
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security), 11 suites, 0 failures expected
 
-> **Verified** (2026-04-13): SID struct at sid.h:25-30 matches Windows ABI (_Static_assert at sid.h:33-40). 13 well-known SIDs initialized in sid.c:34-50 with correct S-1-X-Y values. 7 SID utility functions implemented (RtlLengthSid, RtlEqualSid, RtlCopySid, RtlInitializeSid, RtlSubAuthoritySid, RtlConvertSidToString, RtlCreateServiceSid). LUID at luid.h:15-18, NtAllocateLocallyUniqueId at luid.c:13-19 (atomic counter, SMP-safe). All consumer functions guard with RtlValidSid. RtlInitializeSid clamps count to SID_MAX_SUB_AUTHORITIES. 48-bit authority formatting handles values above 32 bits. Build clean.
-> **Accepted:** FNV-1a service SID derivation (32-bit entropy, not Windows SHA-1 compatible; acceptable for < 100 services) -> XREF: 02-kernel-core/TODO-15 §16, 09-desktop-shell/TODO-07 §1. LUID 32-bit counter (HighPart always 0; wrap at ~4B allocations) -> XREF: 02-kernel-core/TODO-15 §16. RtlEqualSid uses memcmp (timing variable; no user-mode oracle exists) -> XREF: 02-kernel-core/TODO-15 §16, 09-desktop-shell/TODO-07 §1.
-> **Quality reviewed** (2026-04-13): dead code clean (all well-known SIDs consumed by token.c, acl.c, default_sds.c). Struct layouts consistent (RtlLengthSid and RtlValidSid agree on 8+4*N). Stack usage bounded (sid_str[80] in RtlAclToCStr). fnv1a_hash_name not in hot path (service registration only). RtlAclToCStr handles invalid SID from RtlConvertSidToString failure (emits "<invalid-sid>"). 3 new tests added: service SID generation, LUID allocator, malformed SID rejection.
+> **Notes:**
+> - SID & LUID primitives: `struct SID` + 18 well-known SID globals (`.rodata`), bounded/unbounded length + validation helpers, SID<->string, `RtlCreateServiceSid`, LUID type + `NtAllocateLocallyUniqueId` (64-bit atomic, upgraded in §16).
+> - Trusted/untrusted split: `RtlLengthSid`/`RtlEqualSid` assume a valid SID (documented sid.h:92-97, Windows-consistent); untrusted callers use `RtlLengthSidBounded`/`RtlValidSid`.
+> - Scope boundary: §16 owns the SHA-1 service-SID + const-time-compare hardening; token-syscall bounding of untrusted SIDs is the systemic NT trust-boundary gap (TODO-12 §29).
+> **Verified:** 2026-07-05 | commit `4a0943d3` | 6/6 items | build OK | 11 security suites
+> **Accepted:** [H] NtAdjustGroupsToken feeds raw caller SIDs into unbounded RtlEqualSid (kernel overread) -- the §1 primitive is correct-as-documented trusted input; the syscall handler must bound untrusted SIDs -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1223)
+> **Accepted:** [M] FNV-1a service-SID derivation (not Windows SHA-1) + non-constant-time RtlEqualSid -> XREF: 02-kernel-core/TODO-15 §16 (item: "SHA-1 service SID derivation" at line 782, "Constant-time SID comparison" at line 784)
+> **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) + Opus kernel-quality-auditor | 2L fixed, 1H+1M accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---
 

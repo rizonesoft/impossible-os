@@ -5,13 +5,11 @@
  * ============================================================================ */
 
 #include "kernel/security/sid.h"
-#include "kernel/klog.h"
 
 extern void *memcpy(void *dst, const void *src, size_t n);
 extern void *memset(void *s, int c, size_t n);
 extern int   memcmp(const void *a, const void *b, size_t n);
 extern int   snprintf(char *buf, size_t size, const char *fmt, ...);
-extern size_t strlen(const char *s);
 
 /* ============================================================================
  * Well-known SID constants
