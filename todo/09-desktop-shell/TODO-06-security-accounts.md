@@ -160,6 +160,7 @@ Full-screen window before desktop loads: blurred wallpaper background, OS logo, 
 - [ ] Password textbox: `ctrl_textbox_set_masked(textbox, 1)` -- bullet substitution
 - [ ] Sign-in button callback: call `auth_login()`; on `AUTH_OK`: `login_screen_hide()` + `desktop_start()`; on fail: trigger shake (§7)
 - [ ] Power icon: `sys_shutdown()` / `sys_reboot()` via existing syscalls
+- [ ] Route the Start Menu power button (`desktop.c` `acpi_shutdown()` direct call) through the SeShutdownPrivilege-gated `sys_shutdown()` syscall, not the raw ACPI primitive -> XREF: 02-kernel-core/TODO-15 §8
 - [ ] Network icon: show network status flyout stub (forward ref to TODO-09 tray)
 - [ ] Commit: `"login: login screen UI -- blurred bg, avatar, bullet password, sign-in button, power/network icons"`
 

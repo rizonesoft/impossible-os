@@ -125,6 +125,7 @@ Parse an `ET_REL`/`EM_X86_64` ELF file from disk, allocate PMM-backed executable
 
 - [ ] Define `loaded_module_t { char name[64]; void *base; size_t size; void (*init)(void); void (*cleanup)(void); loaded_module_t *next; }`
 - [ ] `module_load(path)`:
+  - [ ] User-requested load: `SeSinglePrivilegeCheck(&SeLoadDriverPrivilege, UserMode)` first, `STATUS_PRIVILEGE_NOT_HELD` if not held (KernelMode boot auto-load bypasses) -> XREF: 02-kernel-core/TODO-15 §8
   - [ ] VFS `read` into a temporary buffer
   - [ ] Verify ELF magic, `e_type == ET_REL`, `e_machine == EM_X86_64`
   - [ ] Enumerate section headers; sum sizes of `SHF_ALLOC` sections to compute `total_size`

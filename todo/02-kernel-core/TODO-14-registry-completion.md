@@ -140,8 +140,9 @@ title: "TODO-14 -- Registry System Completion"
 - [x] `RegCopyTree(hKeySrc, lpSubKey, hKeyDest)` -- recursive value+subkey copy via `reg_copy_subtree`; `KEY_READ` src + `KEY_WRITE` dst; rejects dst inside src subtree (self-amplify guard); `klog` count line
 - [x] `RegRenameKey(hKey, lpSubKeyName, lpNewKeyName)` -- in-place via `RegRenameKeyDirect` (unlink/relink, not copy+delete); `DELETE` right; `ERROR_ALREADY_EXISTS`(183) for a different sibling only, same-name no-op
 
-- [/] `RegSaveKey(hKey, lpFile, lpSecurityAttributes)` -- API + fail-closed: handle+`KEY_READ` then `ERROR_PRIVILEGE_NOT_HELD`(1314); `hive_save` -> Deferred: `TODO-15-security-reference-monitor.md §8` (SePrivilegeCheck/SeBackup)
-- [/] `RegRestoreKey(hKey, lpFile, dwFlags)` -- API + fail-closed: handle+`KEY_WRITE` then `ERROR_PRIVILEGE_NOT_HELD`(1314); `REG_FORCE_RESTORE (0x8)` reserved; `hive_load` -> Deferred: `TODO-15-security-reference-monitor.md §8`
+- [/] `RegSaveKey`/`RegRestoreKey` -- handle + SeBackup/SeRestorePrivilege gates shipped (`TODO-15 §8`); both return `ERROR_NOT_SUPPORTED` until the hive I/O bodies exist
+- [ ] `RegSaveKey`/`RegRestoreKey` hive I/O bodies -- probe/copy lpFile into a bounded kernel buffer (no TOCTOU), drive `hive_save`; restore stages into a scratch tree + atomic swap (removes stale entries, preserves original on failure)
+- [/] `NtSaveKey`/`NtRestoreKey` FileHandle hive body -- resolve FileHandle->path then the same hive bodies (privilege gate done in `TODO-15 §8`; FileHandle path still open) -> XREF: 02-kernel-core/TODO-15 §8
 
 - [x] `RegCreateKeyEx(REG_OPTION_VOLATILE 0x1)` sets `REG_FLAG_VOLATILE` on new-create only; excluded from `hive_count` + `child_count` + `hive_serialize_key` recursion (all three, else reload corrupts); RAM-only, gone on reboot
 - [x] `RegFlushKey` on a volatile key returns `ERROR_SUCCESS` (no-op -- no hive backing)
@@ -161,10 +162,11 @@ title: "TODO-14 -- Registry System Completion"
 > **Notes:**
 > - Shipped `RegCopyTree`/`RegRenameKey`/`RegSaveKey`/`RegRestoreKey` + `REG_OPTION_VOLATILE` + a 32-entry KCB LRU cache in `registry.c`; 7 new `test_registry.c` suites.
 > - KCB caches `(parent, name) -> child`; monotonic-pool + tombstone make pointers stable, and a 3-part liveness check makes a stale entry miss (never mis-resolve); >90% hit rate asserted over a 1000x open/close loop.
-> - `RegSaveKey`/`RegRestoreKey` fail closed with `ERROR_PRIVILEGE_NOT_HELD`; the `hive_save`/`hive_load` bodies Deferred to `TODO-15 §8` SePrivilegeCheck (Codex design adoption in the commit message).
+> - `RegSaveKey`/`RegRestoreKey` gate on SeBackup/SeRestorePrivilege (`TODO-15 §8`) but return `ERROR_NOT_SUPPORTED`; the hive I/O bodies (kernel-buffer path marshaling + scratch-tree atomic replace) and the NT FileHandle path stay open.
 > - Canonical doc: registry API surface in [`include/registry.h`](../../include/registry.h); §2 design decisions in `.claude/state/live-gotchas.md`.
 > - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck` is TODO-15 §5, privilege eval is §8.
-> **Verified:** 2026-07-04 | commit `a5b7b219` | 8/11 items | build OK | tests 1108 ABI PASS
+> **Verified:** 2026-07-04 | commit `a5b7b219` | 8/13 items | build OK | tests 1108 ABI PASS
+> **Note:** RegSaveKey/RegRestoreKey SePrivilegeCheck gates wired 2026-07-05 by TODO-15 §8; the hive I/O bodies + NT FileHandle path stay `[/]`.
 > **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 291)
 > **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 622)
 > **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H+2M+2L fixed, 1H+1L accepted-XREF | scope: kernel-code-quality
