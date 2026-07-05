@@ -56,17 +56,17 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                    | Depends On              | Status |
-| --- | :---: | ---------------------------------------------- | ----------------------- | :----: |
-| ⭐  |   1   | Range overlap validation (normative rule 2)    | --                      |  [ ]   |
-| 💎  |   2   | Segment permission enforcement (R/W/X PTE)     | §1                      |  [ ]   |
-| ⭐  |   3   | Module registration for EIF                    | T17 §6                  |  [ ]   |
-| ⭐  |   4   | API version gating                             | §1                      |  [ ]   |
-| ⭐  |   5   | Metadata section parser                        | §1                      |  [ ]   |
-| ⭐  |   6   | LZ4 compressed segments                        | §2, T03 §3              |  [ ]   |
-| ⭐  |   7   | Optional import stubs                          | §3, T17 §4, T17 §13     |  [ ]   |
-| ⭐  |   8   | EIF ASLR (load_base=0 randomization)           | §2, T17 §15, T03 §5     |  [ ]   |
-| ⭐  |   9   | Per-process dispatch table isolation           | §3, D01 T12 §8, D03 T01 §3 |  [ ]   |
+| ⭐   | Order | Deliverable                                 | Depends On                 | Status |
+| --- | :---: | ------------------------------------------- | -------------------------- | :----: |
+| ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [ ]   |
+| 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [ ]   |
+| ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [ ]   |
+| ⭐   |   4   | API version gating                          | §1                         |  [ ]   |
+| ⭐   |   5   | Metadata section parser                     | §1                         |  [ ]   |
+| ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
+| ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
+| ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
+| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T12 §8, D03 T01 §3 |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.

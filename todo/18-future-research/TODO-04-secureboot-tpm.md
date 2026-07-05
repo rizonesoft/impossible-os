@@ -64,14 +64,14 @@ bare-metal deployment.
 
 ## Implementation Order
 
-| Step | Section | 💎/⭐ | Dependency |
-|------|---------|-------|-----------|
-| 1 | TPM 2.0 CSPRNG integration + `swtpm` dev setup | ⭐ | `D01T13 §8` TPM driver; entropy pool |
-| 2 | Measured boot chain (PCR 8–10 extensions) | ⭐ | §1 TPM commands; bootloader PCR extend |
-| 3 | UEFI Secure Boot PK/KEK/db hierarchy | ⭐ | `TODO-01` shim; `D09T07 §7` code signing |
-| 4 | AES-256-XTS full disk encryption (FDE) | ⭐ | §1 TPM sealing; §2 PCR policy; `cng_sha256`; `crypto_argon2i` |
-| 5 | vTPM for ImpossibleHV guests | ⭐ | `TODO-02` ImpossibleHV Phase 2; §1–§5 TPM architecture |
-| 6 | Research deliverables (`secure-boot-tpm-plan.md`) | ⭐ | §1–§5 complete |
+| Step | Section                                           | 💎/⭐ | Dependency                                                    |
+| ---- | ------------------------------------------------- | --- | ------------------------------------------------------------- |
+| 1    | TPM 2.0 CSPRNG integration + `swtpm` dev setup    | ⭐   | `D01T13 §8` TPM driver; entropy pool                          |
+| 2    | Measured boot chain (PCR 8–10 extensions)         | ⭐   | §1 TPM commands; bootloader PCR extend                        |
+| 3    | UEFI Secure Boot PK/KEK/db hierarchy              | ⭐   | `TODO-01` shim; `D09T07 §7` code signing                      |
+| 4    | AES-256-XTS full disk encryption (FDE)            | ⭐   | §1 TPM sealing; §2 PCR policy; `cng_sha256`; `crypto_argon2i` |
+| 5    | vTPM for ImpossibleHV guests                      | ⭐   | `TODO-02` ImpossibleHV Phase 2; §1–§5 TPM architecture        |
+| 6    | Research deliverables (`secure-boot-tpm-plan.md`) | ⭐   | §1–§5 complete                                                |
 
 ---
 
@@ -107,12 +107,12 @@ bare-metal deployment.
 
 - [ ] **PCR assignment policy** (document for §6 deliverable):
 
-  | PCR | Owner | Content hashed | When extended |
-  |-----|-------|----------------|---------------|
-  | 0–7 | UEFI firmware | Firmware + boot config | By firmware automatically |
-  | 8 | Bootloader (`bootx64.c`) | SHA-256 of `kernel.exe` file contents | Before `ExitBootServices()` |
-  | 9 | Kernel | SHA-256 of each `.kmod` loaded | In `kmod_load()` before `init_fn()` |
-  | 10 | Kernel | SHA-256 of first user-process image | On first `task_create()` with user ELF |
+| PCR | Owner                    | Content hashed                        | When extended                          |
+| --- | ------------------------ | ------------------------------------- | -------------------------------------- |
+| 0–7 | UEFI firmware            | Firmware + boot config                | By firmware automatically              |
+| 8   | Bootloader (`bootx64.c`) | SHA-256 of `kernel.exe` file contents | Before `ExitBootServices()`            |
+| 9   | Kernel                   | SHA-256 of each `.kmod` loaded        | In `kmod_load()` before `init_fn()`    |
+| 10  | Kernel                   | SHA-256 of first user-process image   | On first `task_create()` with user ELF |
 
 - [ ] **PCR 8 -- kernel hash extension** (in `src/boot/uefi/bootx64.c`):
   - After loading `kernel.exe` ELF into memory, before `ExitBootServices()`:
@@ -239,15 +239,15 @@ bare-metal deployment.
   - **Secure Boot key hierarchy diagram**: PK → KEK → db → `BOOTX64.EFI` → `kernel.exe` chain; MOK shim layer from `TODO-01`; enrollment scripts
   - **TPM 2.0 command table** (which commands needed + byte-level encoding reference):
 
-    | Command | CC | Used in | Byte layout reference |
-    |---------|-----|---------|----------------------|
-    | `TPM2_CC_Startup` | `0x144` | boot | Part 3 §12.1 |
-    | `TPM2_CC_GetRandom` | `0x17B` | CSPRNG | Part 3 §16.1 |
-    | `TPM2_CC_PCR_Extend` | `0x182` | measured boot | Part 3 §22.2 |
-    | `TPM2_CC_PCR_Read` | `0x17E` | attestation | Part 3 §22.4 |
-    | `TPM2_CC_Create` | `0x153` | FDE key seal | Part 3 §13.2 |
-    | `TPM2_CC_Unseal` | `0x15E` | FDE boot unlock | Part 3 §13.3 |
-    | `TPM2_CC_Quote` | `0x158` | remote attestation | Part 3 §18.4 |
+| Command              | CC      | Used in            | Byte layout reference |
+| -------------------- | ------- | ------------------ | --------------------- |
+| `TPM2_CC_Startup`    | `0x144` | boot               | Part 3 §12.1          |
+| `TPM2_CC_GetRandom`  | `0x17B` | CSPRNG             | Part 3 §16.1          |
+| `TPM2_CC_PCR_Extend` | `0x182` | measured boot      | Part 3 §22.2          |
+| `TPM2_CC_PCR_Read`   | `0x17E` | attestation        | Part 3 §22.4          |
+| `TPM2_CC_Create`     | `0x153` | FDE key seal       | Part 3 §13.2          |
+| `TPM2_CC_Unseal`     | `0x15E` | FDE boot unlock    | Part 3 §13.3          |
+| `TPM2_CC_Quote`      | `0x158` | remote attestation | Part 3 §18.4          |
 
   - **Measured boot PCR assignment table**: PCR 0–10, owner, content, when extended (from §2)
   - **FDE architecture diagram**: boot flow (TPM unseal → volume key → FDE blkdev → VFS); recovery key path; `bitlocker.cpl` UI
@@ -262,14 +262,14 @@ bare-metal deployment.
 ## OS Comparison
 
 
-| ⭐ | Feature                                   | 🪟 Win11                                       | 🐧 Linux                                           | 🚀 Impossible OS                                                                |
-|----|-------------------------------------------|---------------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------|
-| 💎 | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 -- PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
-| 💎 | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 -- PCR 8–10 extended by bootloader                                      |
-| 💎 | Full disk encryption sealed to TPM PCR    | ✅ BitLocker TPM 2.0 PCR policy             | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM    | ⬜ §4 -- AES-256-XTS; TPM2 `CC_Create` PCR policy                             |
-| 💎 | Remote attestation via TPM Quote          | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation    | ⬜ §2 -- `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
-| ⭐ | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 -- `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
-| 💎 | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 -- `vtpm_t` per ImpossibleHV VM; co-process                             |
+| ⭐   | Feature                                   | 🪟 Win11                                    | 🐧 Linux                                        | 🚀 Impossible OS                                                              |
+| --- | ----------------------------------------- | ------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| 💎   | UEFI Secure Boot chain of trust           | ✅ Required for Win11; PK/KEK/db +          | ✅ shim + MOK (distro-signed); grub2            | ⬜ §3 -- PK/KEK/db hierarchy; `sbsign`; `TODO-01` shim                        |
+| 💎   | TPM 2.0 measured boot                     | ✅ Bitlocker PCR policy; Windows VSB        | ✅ IMA (Integrity Measurement Architecture) PCR | ⬜ §2 -- PCR 8–10 extended by bootloader                                      |
+| 💎   | Full disk encryption sealed to TPM PCR    | ✅ BitLocker TPM 2.0 PCR policy             | ✅ `cryptsetup` LUKS2 with `clevis-tpm2` TPM    | ⬜ §4 -- AES-256-XTS; TPM2 `CC_Create` PCR policy                             |
+| 💎   | Remote attestation via TPM Quote          | ✅ Windows Health Attestation Service; WDAC | ✅ `tpm2-quote` + Keylime remote attestation    | ⬜ §2 -- `tpm2_quote()` + `attest.exe`; `HKLM\SYSTEM\SecureBoot\ExpectedPCRs` |
+| ⭐   | Hardware entropy from TPM fed into CSPRNG | ✅ Windows uses TPM RNG in                  | ✅ Linux: `hwrng` → `/dev/random`; `tpm_core`   | ⬜ §1 -- `tpm2_get_random()` → `csprng_add_entropy()` every 30                |
+| 💎   | vTPM per VM guest                         | ✅ Hyper-V vTPM (1.2 + 2.0                  | ✅ QEMU `swtpm` + `libtpms` per-VM              | ⬜ §5 -- `vtpm_t` per ImpossibleHV VM; co-process                             |
 
 Impossible OS's `⭐` advantage: the `tpm2_get_random()` → CSPRNG entropy feed runs
 on a background task every 30 minutes -- not just at boot -- so entropy quality improves

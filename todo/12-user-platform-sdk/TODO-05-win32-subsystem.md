@@ -162,14 +162,14 @@ process in future iteration)
 - [ ] **`BOOL UnregisterClass(name, hInstance)`**: find entry; if `refcount > 0`: return FALSE + `ERROR_CLASS_HAS_WINDOWS`; else clear entry
 - [ ] **`BOOL GetClassInfo(hInstance, name, WNDCLASSEX *out)`**: copy entry to `out`; return TRUE on found
 - [ ] **Built-in system classes** (registered at subsystem init with `hInstance=NULL`, `WndProc` = internal handler):
-  | Class name | Backing implementation |
-  |-----------|----------------------|
-  | `"BUTTON"` | `CTRL_BUTTON` (`controls.h`) |
-  | `"EDIT"` | `CTRL_TEXTBOX` (`controls.h`) |
-  | `"STATIC"` | `CTRL_LABEL` (`controls.h`) |
-  | `"LISTBOX"` | `CTRL_LISTBOX` (`controls.h`) |
-  | `"COMBOBOX"` | `CTRL_COMBOBOX` (`controls.h`) |
-  | `"SCROLLBAR"` | `CTRL_SCROLLBAR` (`controls.h`) |
+| Class name    | Backing implementation          |
+| ------------- | ------------------------------- |
+| `"BUTTON"`    | `CTRL_BUTTON` (`controls.h`)    |
+| `"EDIT"`      | `CTRL_TEXTBOX` (`controls.h`)   |
+| `"STATIC"`    | `CTRL_LABEL` (`controls.h`)     |
+| `"LISTBOX"`   | `CTRL_LISTBOX` (`controls.h`)   |
+| `"COMBOBOX"`  | `CTRL_COMBOBOX` (`controls.h`)  |
+| `"SCROLLBAR"` | `CTRL_SCROLLBAR` (`controls.h`) |
 - [ ] **`CreateWindowExA(exStyle, className, title, style, x, y, w, h, parent, menu, hInstance, param)`**:
   - Resolve class from per-process table then global table; `ERROR_CLASS_DOES_NOT_EXIST` if not found
   - `wm_create_window(title, x, y, w, h, flags_from_style)` → internal window handle; allocate `HWND` from global HWND table (`g_hwnd_table[4096]`, dense array, index + 1 = HWND)

@@ -36,18 +36,18 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | `KIMAGE_ENTRY` data model | -- | [ ] |
-| 💎 | 2 | Global and per-process image registries | T05, T17 | [ ] |
-| 💎 | 3 | Address range index | Ex generic table | [ ] |
-| 💎 | 4 | Symbol provider abstraction | symtab | [ ] |
-| 💎 | 5 | Unwind metadata registry | T23 | [ ] |
-| 💎 | 6 | Loader integration | T17, T20, SDK T05 | [ ] |
-| ⭐ | 7 | Image notifications and callbacks | T06, T16 | [ ] |
-| 💎 | 8 | KD/crash dump integration | T27, T29 | [ ] |
-| ⭐ | 9 | Provenance, CI, and hotpatch metadata | T19 | [ ] |
-| 💎 | 10 | Tests and consistency verifier | §1..§9 | [ ] |
+| ⭐   | Order | Deliverable                             | Depends On        | Status |
+| --- | :---: | --------------------------------------- | ----------------- | :----: |
+| 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [ ]   |
+| 💎   |   2   | Global and per-process image registries | T05, T17          |  [ ]   |
+| 💎   |   3   | Address range index                     | Ex generic table  |  [ ]   |
+| 💎   |   4   | Symbol provider abstraction             | symtab            |  [ ]   |
+| 💎   |   5   | Unwind metadata registry                | T23               |  [ ]   |
+| 💎   |   6   | Loader integration                      | T17, T20, SDK T05 |  [ ]   |
+| ⭐   |   7   | Image notifications and callbacks       | T06, T16          |  [ ]   |
+| 💎   |   8   | KD/crash dump integration               | T27, T29          |  [ ]   |
+| ⭐   |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [ ]   |
+| 💎   |  10   | Tests and consistency verifier          | §1..§9            |  [ ]   |
 
 ## 1. `KIMAGE_ENTRY` Data Model
 

@@ -50,19 +50,19 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable                                 | Depends On                          | Status |
-| --- | :---: | ------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [x] |
-| 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [x] |
-| 💎 | 3 | Registry-backed policy merge                    | §2, §4, T14 §8, §12, §13           | [/] |
-| 💎 | 4 | ControlSet and LastKnownGood selection          | §2, §10, T14 §12, D01 T21 §4, §5   | [/] |
-| 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [/] |
-| 💎 | 6 | Runtime tunable registry                        | §2                                  | [/] |
-| ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [/] |
-| 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [/] |
-| ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [/] |
-| 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [/] |
-| 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [/] |
+| ⭐   | Order | Deliverable                                  | Depends On                       | Status |
+| --- | :---: | -------------------------------------------- | -------------------------------- | :----: |
+| 💎   |   1   | Boot argument schema and parser              | D01 T07 §3, §5                   |  [x]   |
+| 💎   |   2   | `kernel_config_t` immutable Phase 0 snapshot | §1, T01 §2, §6                   |  [x]   |
+| 💎   |   3   | Registry-backed policy merge                 | §2, §4, T14 §8, §12, §13         |  [/]   |
+| 💎   |   4   | ControlSet and LastKnownGood selection       | §2, §10, T14 §12, D01 T21 §4, §5 |  [/]   |
+| 💎   |   5   | Safe Mode and recovery policy object         | §2, §4, D01 T07 §5               |  [/]   |
+| 💎   |   6   | Runtime tunable registry                     | §2                               |  [/]   |
+| ⭐   |   7   | Feature flag gates and experiment cohorts    | §6                               |  [/]   |
+| 💎   |   8   | Native query/set config syscalls             | §2, §6, T12 §10, T15 §8          |  [/]   |
+| ⭐   |   9   | Policy lock phases and tamper audit          | §2, §3                           |  [/]   |
+| 💎   |  10   | Boot status policy and boot success ledger   | §4, §5, D01 T21 §5, T30 §7       |  [/]   |
+| 💎   |  11   | Config dump, tests, and docs                 | §1-10, T11 §11, T31 §2           |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
 > ⭐ = exclusive work: Impossible OS adds provenance, rollout, and tamper semantics neither platform exposes as one kernel-owned plane.
@@ -152,7 +152,7 @@ Turn `Select` values and boot outcomes into deterministic control-set choice ins
 
 **Test checkpoint:** With `Current=2`, `Default=1`, and `LastKnownGood=3`, a failed boot before ready logs `"[CONF] control set rollback: ControlSet002 -> ControlSet003"` and the next boot selects `ControlSet003`. Successful boot updates `LastKnownGood` only after registry flush succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] §4 is blocked on three prerequisites: (a) `registry_init` creates only `HKLM\SYSTEM` -- the `SYSTEM\Select` / `ControlSetNNN` / `CurrentControlSet`-link substrate §4 must read does not exist yet (T14 §12); (b) LastKnownGood update, boot-pending, failed-boot writeback, and D01 T21 rollback-hint all gate on the §10 acceptance ledger (unimplemented); (c) persisting the chosen control-set id cannot go into the immutable §2 `kernel_config_t` -- it needs the SAME Phase-2 effective-policy object §3 also needs (operator-reserved architecture). The clean slice (validate Select, resolve `CurrentControlSet`->`ControlSetNNN`, publish selected id+reason in a Phase-2 object) unblocks §3 but still requires (a). -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`" at line 155); -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion" at line 544)
+> **Deferred:** [H] §4 is blocked on three prerequisites: (a) `registry_init` creates only `HKLM\SYSTEM` -- the `SYSTEM\Select` / `ControlSetNNN` / `CurrentControlSet`-link substrate §4 must read does not exist yet (T14 §12); (b) LastKnownGood update, boot-pending, failed-boot writeback, and D01 T21 rollback-hint all gate on the §10 acceptance ledger (unimplemented); (c) persisting the chosen control-set id cannot go into the immutable §2 `kernel_config_t` -- it needs the SAME Phase-2 effective-policy object §3 also needs (operator-reserved architecture). The clean slice (validate Select, resolve `CurrentControlSet`->`ControlSetNNN`, publish selected id+reason in a Phase-2 object) unblocks §3 but still requires (a). -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`" at line 155); -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion" at line 594)
 
 ---
 
@@ -266,7 +266,7 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 
 > **Verified:** 2026-06-20 | commit `2f22daeb` | 3/5 items | build OK | tests 3058/3058 PASS
 > **Accepted:** [H] `copy_to_user` is not fault-recoverable -- an in-range-but-unmapped user pointer faults the kernel (systemic to every Probe + `copy_to_user` syscall, not new in this class) -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 377)
-> **Deferred:** [H] Set/write path + `SeSystemProfilePrivilege` enforcement (items above, `[/]`) need a SMP-safe privilege check -> XREF: 02-kernel-core/TODO-15 §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 426)
+> **Deferred:** [H] Set/write path + `SeSystemProfilePrivilege` enforcement (items above, `[/]`) need a SMP-safe privilege check -> XREF: 02-kernel-core/TODO-15 §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 471)
 > **Quality reviewed:** 2026-06-20 | Codex 7x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 1C+1H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---

@@ -28,18 +28,18 @@ title: "TODO-25 -- Driver Hardware Certification Matrix"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Certification schema and support tiers | -- | [ ] |
-| Parity | 2 | VM driver test matrix | §1 | [ ] |
-| Parity | 3 | Desktop/laptop bare-metal matrix | §1 | [ ] |
-| Parity | 4 | USB/peripheral matrix | §1 | [ ] |
-| Parity | 5 | Network/wireless/Bluetooth matrix | §1 | [ ] |
-| Parity | 6 | Suspend/resume and hot-plug matrix | §1 | [ ] |
-| Parity | 7 | Firmware and license matrix | §1, TODO-06 | [ ] |
-| Parity | 8 | Failure injection and recovery suite | §1 | [ ] |
-| Exclusive | 9 | Support bundle and hardware fingerprint | §1-§8 | [ ] |
-| Parity | 10 | Release gate automation | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                             | Depends On  | Status |
+| --------- | :---: | --------------------------------------- | ----------- | :----: |
+| Parity    |   1   | Certification schema and support tiers  | --          |  [ ]   |
+| Parity    |   2   | VM driver test matrix                   | §1          |  [ ]   |
+| Parity    |   3   | Desktop/laptop bare-metal matrix        | §1          |  [ ]   |
+| Parity    |   4   | USB/peripheral matrix                   | §1          |  [ ]   |
+| Parity    |   5   | Network/wireless/Bluetooth matrix       | §1          |  [ ]   |
+| Parity    |   6   | Suspend/resume and hot-plug matrix      | §1          |  [ ]   |
+| Parity    |   7   | Firmware and license matrix             | §1, TODO-06 |  [ ]   |
+| Parity    |   8   | Failure injection and recovery suite    | §1          |  [ ]   |
+| Exclusive |   9   | Support bundle and hardware fingerprint | §1-§8       |  [ ]   |
+| Parity    |  10   | Release gate automation                 | §1-§9       |  [ ]   |
 
 ## 1. Certification Schema and Support Tiers
 
@@ -99,9 +99,9 @@ title: "TODO-25 -- Driver Hardware Certification Matrix"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | Hardware certification | HLK/WHQL | distro hardware QA | TODO-25 |
-| Parity | Support bundle | msinfo/Event logs | sosreport/hw-probe | TODO-25 §9 |
-| Exclusive | TODO-owner matrix | internal | scattered | TODO-25 §1 |
+| Priority  | Feature                | Windows           | Linux              | Impossible OS |
+| --------- | ---------------------- | ----------------- | ------------------ | ------------- |
+| Parity    | Hardware certification | HLK/WHQL          | distro hardware QA | TODO-25       |
+| Parity    | Support bundle         | msinfo/Event logs | sosreport/hw-probe | TODO-25 §9    |
+| Exclusive | TODO-owner matrix      | internal          | scattered          | TODO-25 §1    |
 

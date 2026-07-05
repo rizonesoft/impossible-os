@@ -53,24 +53,24 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                              | Depends On                             | Status |
-| --- | :---: | -------------------------------------------------------- | -------------------------------------- | :----: |
-| 💎  |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS            | TODO-12 §1                             |  [ ]   |
-| 💎  |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth   | §1, TODO-17 §3                         |  [ ]   |
-| 💎  |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP) | §1, TODO-23 §9, TODO-29 §4             |  [ ]   |
-| 💎  |   4   | Debugger first-chance / second-chance notification       | §1–§3, TODO-29 §4                      |  [ ]   |
-| 💎  |   5   | KiUserExceptionDispatcher -- ring-3 delivery              | §4, TODO-11 §2                         |  [ ]   |
-| 💎  |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)        | §1                                     |  [ ]   |
-| 💎  |   7   | Stack walking (RtlCaptureStackBackTrace)                 | §6, TODO-17 §3                         |  [ ]   |
-| 💎  |   8   | SEH chain walk + `__C_specific_handler`                  | §5, §6, TODO-11 §6                     |  [ ]   |
-| 💎  |   9   | RtlUnwindEx -- unwind to target frame                     | §6, §8                                 |  [ ]   |
-| 💎  |  10   | Vectored Exception Handlers (VEH)                        | §4, TODO-05 §2                         |  [ ]   |
-| 💎  |  11   | Vectored Continue Handlers (VCH)                         | §4, §10                                |  [ ]   |
-| 💎  |  12   | Unhandled exception filter + WER hook                    | §7, §8, §10                            |  [ ]   |
-| ⭐  |  13   | Kernel safe probing (ProbeForRead/Write)                 | §2                                     |  [ ]   |
-| 💎  |  14   | Kernel-mode `__try`/`__except` for drivers               | §6, §9, §13                            |  [ ]   |
-| 💎  |  15   | POSIX signal delivery from exceptions (Linux compat)     | §3, §5, D10T10 §8                  |  [ ]   |
-| ⭐  |  16   | Exception dispatch telemetry                             | §4, TODO-11 §1                         |  [ ]   |
+| ⭐   | Order | Deliverable                                              | Depends On                 | Status |
+| --- | :---: | -------------------------------------------------------- | -------------------------- | :----: |
+| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS            | TODO-12 §1                 |  [ ]   |
+| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth  | §1, TODO-17 §3             |  [ ]   |
+| 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP) | §1, TODO-23 §9, TODO-29 §4 |  [ ]   |
+| 💎   |   4   | Debugger first-chance / second-chance notification       | §1–§3, TODO-29 §4          |  [ ]   |
+| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery             | §4, TODO-11 §2             |  [ ]   |
+| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)        | §1                         |  [ ]   |
+| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                 | §6, TODO-17 §3             |  [ ]   |
+| 💎   |   8   | SEH chain walk + `__C_specific_handler`                  | §5, §6, TODO-11 §6         |  [ ]   |
+| 💎   |   9   | RtlUnwindEx -- unwind to target frame                    | §6, §8                     |  [ ]   |
+| 💎   |  10   | Vectored Exception Handlers (VEH)                        | §4, TODO-05 §2             |  [ ]   |
+| 💎   |  11   | Vectored Continue Handlers (VCH)                         | §4, §10                    |  [ ]   |
+| 💎   |  12   | Unhandled exception filter + WER hook                    | §7, §8, §10                |  [ ]   |
+| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                 | §2                         |  [ ]   |
+| 💎   |  14   | Kernel-mode `__try`/`__except` for drivers               | §6, §9, §13                |  [ ]   |
+| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)     | §3, §5, D10T10 §8          |  [ ]   |
+| ⭐   |  16   | Exception dispatch telemetry                             | §4, TODO-11 §1             |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -458,27 +458,27 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 ## OS Comparison
 
-| ⭐ | Feature                       | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS          |
-|----|-------------------------------|--------------------|--------------------|----------------------------|
-| 💎 | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                 | ⬜ §1                     |
-| 💎 | #PF user/kernel triage        | ✅                 | ✅                 | ⚠️ §2 kernel-only          |
-| 💎 | #DB/#BP debugger routing      | ✅                 | ✅ ptrace          | ⬜ §3                     |
-| 💎 | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+            | ⬜ §3 conditional          |
-| 💎 | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace          | ⬜ §4                     |
-| 💎 | KiUserExceptionDispatcher     | ✅                 | ❌                 | ⬜ §5                     |
-| 💎 | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame       | ⬜ §6                     |
-| 💎 | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace     | ⬜ §7                     |
-| 💎 | SEH + __C_specific_handler    | ✅                 | ❌                 | ⬜ §8                     |
-| 💎 | RtlUnwindEx + __finally       | ✅                 | ❌                 | ⬜ §9                     |
-| 💎 | VEH list                      | ✅                 | ❌                 | ⬜ §10                    |
-| 💎 | VCH list                      | ✅                 | ❌                 | ⬜ §11                    |
-| 💎 | Unhandled exception filter    | ✅ WER             | ✅ core dump       | ⬜ §12                    |
-| ⭐ | IRQL-aware safe probing       | ✅ ProbeForRead    | ✅ copy_from_user  | ⬜ §13                    |
-| 💎 | Kernel __try/__except         | ✅                 | ❌                 | ⬜ §14                    |
-| 💎 | POSIX signal from faults      | ❌                 | ✅                 | ⬜ §15 compat             |
-| 💎 | sigaltstack overflow          | ❌                 | ✅                 | ⬜ §15 compat             |
-| ⭐ | Dispatch telemetry            | ❌                 | ❌                 | ⬜ §16 JSON log           |
-| ⭐ | Exception budget / storm ctrl | ❌                 | ❌                 | ⬜ §16 rate-limit ext     |
+| ⭐   | Feature                       | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS      |
+| --- | ----------------------------- | ----------------- | ---------------- | -------------------- |
+| 💎   | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                | ⬜ §1                 |
+| 💎   | #PF user/kernel triage        | ✅                 | ✅                | ⚠️ §2 kernel-only    |
+| 💎   | #DB/#BP debugger routing      | ✅                 | ✅ ptrace         | ⬜ §3                 |
+| 💎   | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+           | ⬜ §3 conditional     |
+| 💎   | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace         | ⬜ §4                 |
+| 💎   | KiUserExceptionDispatcher     | ✅                 | ❌                | ⬜ §5                 |
+| 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ⬜ §6                 |
+| 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ⬜ §7                 |
+| 💎   | SEH + __C_specific_handler    | ✅                 | ❌                | ⬜ §8                 |
+| 💎   | RtlUnwindEx + __finally       | ✅                 | ❌                | ⬜ §9                 |
+| 💎   | VEH list                      | ✅                 | ❌                | ⬜ §10                |
+| 💎   | VCH list                      | ✅                 | ❌                | ⬜ §11                |
+| 💎   | Unhandled exception filter    | ✅ WER             | ✅ core dump      | ⬜ §12                |
+| ⭐   | IRQL-aware safe probing       | ✅ ProbeForRead    | ✅ copy_from_user | ⬜ §13                |
+| 💎   | Kernel __try/__except         | ✅                 | ❌                | ⬜ §14                |
+| 💎   | POSIX signal from faults      | ❌                 | ✅                | ⬜ §15 compat         |
+| 💎   | sigaltstack overflow          | ❌                 | ✅                | ⬜ §15 compat         |
+| ⭐   | Dispatch telemetry            | ❌                 | ❌                | ⬜ §16 JSON log       |
+| ⭐   | Exception budget / storm ctrl | ❌                 | ❌                | ⬜ §16 rate-limit ext |
 
 > **After parity items:** Impossible OS matches Windows on the full SEH/VEH/VCH pipeline and matches Linux on POSIX signal delivery. Exclusive differentiators: **dispatch telemetry** recording the full VEH → SEH → VCH handler chain into the JSON structured log (neither WER nor core dumps capture the decision sequence); **IRQL-aware safe probing** co-locating `safe_return_rip` with IRQL fields for zero-overhead probe checks in the #PF handler; and **exception storm control** rate-limiting per-process exceptions to prevent DoS from runaway JITs or intentional exception flooding.
 

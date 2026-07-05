@@ -28,18 +28,18 @@ title: "TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Runtime COM device model | existing serial | [ ] |
-| Parity | 2 | UART 16550A driver cleanup | §1 | [ ] |
-| Parity | 3 | PCI/PCIe multiport serial adapters | §1, TODO-01 | [ ] |
-| Parity | 4 | USB CDC-ACM integration | §1, TODO-10 §12 | [ ] |
-| Parity | 5 | KD/console/user ownership arbitration | §1, KD | [ ] |
-| Parity | 6 | Parallel/LPT port driver | §1 | [ ] |
-| Parity | 7 | GPIO controller framework | TODO-01 | [ ] |
-| Parity | 8 | SPI controller framework | §7 | [ ] |
-| Exclusive | 9 | Industrial I/O diagnostics | §1-§8 | [ ] |
-| Parity | 10 | Tests and loopback fixtures | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                           | Depends On      | Status |
+| --------- | :---: | ------------------------------------- | --------------- | :----: |
+| Parity    |   1   | Runtime COM device model              | existing serial |  [ ]   |
+| Parity    |   2   | UART 16550A driver cleanup            | §1              |  [ ]   |
+| Parity    |   3   | PCI/PCIe multiport serial adapters    | §1, TODO-01     |  [ ]   |
+| Parity    |   4   | USB CDC-ACM integration               | §1, TODO-10 §12 |  [ ]   |
+| Parity    |   5   | KD/console/user ownership arbitration | §1, KD          |  [ ]   |
+| Parity    |   6   | Parallel/LPT port driver              | §1              |  [ ]   |
+| Parity    |   7   | GPIO controller framework             | TODO-01         |  [ ]   |
+| Parity    |   8   | SPI controller framework              | §7              |  [ ]   |
+| Exclusive |   9   | Industrial I/O diagnostics            | §1-§8           |  [ ]   |
+| Parity    |  10   | Tests and loopback fixtures           | §1-§9           |  [ ]   |
 
 ## 1. Runtime COM Device Model
 
@@ -103,10 +103,10 @@ title: "TODO-20 -- Serial, Parallel, GPIO/SPI & Debug I/O Devices"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | COM devices | serial.sys | tty/serial core | TODO-20 |
-| Parity | USB serial | usbser.sys | cdc_acm | TODO-20 §4 |
-| Parity | GPIO/SPI | SPB/GPIO framework | gpiolib/spi | TODO-20 §7-§8 |
-| Exclusive | KD ownership report | limited | console params | TODO-20 §5 |
+| Priority  | Feature             | Windows            | Linux           | Impossible OS |
+| --------- | ------------------- | ------------------ | --------------- | ------------- |
+| Parity    | COM devices         | serial.sys         | tty/serial core | TODO-20       |
+| Parity    | USB serial          | usbser.sys         | cdc_acm         | TODO-20 §4    |
+| Parity    | GPIO/SPI            | SPB/GPIO framework | gpiolib/spi     | TODO-20 §7-§8 |
+| Exclusive | KD ownership report | limited            | console params  | TODO-20 §5    |
 

@@ -26,18 +26,18 @@ title: "TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Printer/scanner device class model | TODO-01 | [ ] |
-| Parity | 2 | USB printer class transport | §1, TODO-10 | [ ] |
-| Parity | 3 | IPP-over-USB discovery boundary | §2 | [ ] |
-| Parity | 4 | Parallel/LPT printer transport | §1, TODO-20 §6 | [ ] |
-| Parity | 5 | Multifunction device composition | §1-§4 | [ ] |
-| Parity | 6 | Scanner transport handoff | §1, TODO-22 §7 | [ ] |
-| Parity | 7 | Status, ink/toner, and paper errors | §2-§6 | [ ] |
-| Parity | 8 | Permissions and sandbox handoff | §1, SRM | [ ] |
-| Exclusive | 9 | Device Manager print/imaging diagnostics | §1-§8 | [ ] |
-| Parity | 10 | Tests and hardware matrix | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                              | Depends On     | Status |
+| --------- | :---: | ---------------------------------------- | -------------- | :----: |
+| Parity    |   1   | Printer/scanner device class model       | TODO-01        |  [ ]   |
+| Parity    |   2   | USB printer class transport              | §1, TODO-10    |  [ ]   |
+| Parity    |   3   | IPP-over-USB discovery boundary          | §2             |  [ ]   |
+| Parity    |   4   | Parallel/LPT printer transport           | §1, TODO-20 §6 |  [ ]   |
+| Parity    |   5   | Multifunction device composition         | §1-§4          |  [ ]   |
+| Parity    |   6   | Scanner transport handoff                | §1, TODO-22 §7 |  [ ]   |
+| Parity    |   7   | Status, ink/toner, and paper errors      | §2-§6          |  [ ]   |
+| Parity    |   8   | Permissions and sandbox handoff          | §1, SRM        |  [ ]   |
+| Exclusive |   9   | Device Manager print/imaging diagnostics | §1-§8          |  [ ]   |
+| Parity    |  10   | Tests and hardware matrix                | §1-§9          |  [ ]   |
 
 ## 1. Device Class Model
 
@@ -96,9 +96,9 @@ title: "TODO-23 -- Printing, Scanning & Imaging Peripheral Device Path"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | USB printer | usbprint.sys | usblp/IPP | TODO-23 §2 |
-| Parity | IPP-over-USB | print stack | ipp-usb | TODO-23 §3 |
-| Parity | Scanner path | WIA driver | sane backends | TODO-23 §6 |
+| Priority | Feature      | Windows      | Linux         | Impossible OS |
+| -------- | ------------ | ------------ | ------------- | ------------- |
+| Parity   | USB printer  | usbprint.sys | usblp/IPP     | TODO-23 §2    |
+| Parity   | IPP-over-USB | print stack  | ipp-usb       | TODO-23 §3    |
+| Parity   | Scanner path | WIA driver   | sane backends | TODO-23 §6    |
 

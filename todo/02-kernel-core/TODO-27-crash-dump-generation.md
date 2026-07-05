@@ -63,18 +63,18 @@ title: "TODO-27 -- Crash Dump Generation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                    | Depends On          | Status |
-| --- | :---: | ---------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --                  |  [x]   |
-| 💎  |   2   | FPU/XMM/XSAVE state capture                   | §1                  |  [x]   |
-| 💎  |   3   | Module registry (wire `exec_register_module`)  | T17 §6              |  [x]   |
-| 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3        |  [x]   |
-| 💎  |   5   | Minidump writer (crashing thread + memory)     | §4                  |  [ ]   |
-| 💎  |   6   | Kernel dump & full dump variants               | §5                  |  [ ]   |
-| 💎  |   7   | Raw-partition dump sink (VFS bypass)            | §5, T26 §4         |  [ ]   |
-| 💎  |   8   | Post-boot crash recovery + shutdown dialog     | §7, T01 §4         |  [ ]   |
-| ⭐  |   9   | `dmpanalyze.exe` crash analyzer                | §4, §8              |  [ ]   |
-| ⭐  |  10   | Dump policy, WinDbg interop, confidentiality  | §4, §6, T04 §6      |  [ ]   |
+| ⭐   | Order | Deliverable                                    | Depends On     | Status |
+| --- | :---: | ---------------------------------------------- | -------------- | :----: |
+| 💎   |   1   | Bugcheck codes & `KeBugCheckEx`                | --             |  [x]   |
+| 💎   |   2   | FPU/XMM/XSAVE state capture                    | §1             |  [x]   |
+| 💎   |   3   | Module registry (wire `exec_register_module`)  | T17 §6         |  [x]   |
+| 💎   |   4   | MDMP binary format: header, directory, streams | §1, §2, §3     |  [x]   |
+| 💎   |   5   | Minidump writer (crashing thread + memory)     | §4             |  [ ]   |
+| 💎   |   6   | Kernel dump & full dump variants               | §5             |  [ ]   |
+| 💎   |   7   | Raw-partition dump sink (VFS bypass)           | §5, T26 §4     |  [ ]   |
+| 💎   |   8   | Post-boot crash recovery + shutdown dialog     | §7, T01 §4     |  [ ]   |
+| ⭐   |   9   | `dmpanalyze.exe` crash analyzer                | §4, §8         |  [ ]   |
+| ⭐   |  10   | Dump policy, WinDbg interop, confidentiality   | §4, §6, T04 §6 |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -350,7 +350,7 @@ Windows 11 exposes multiple crash-dump settings (small, kernel, complete, automa
 ## OS Comparison
 
 | ⭐   | Feature                 | 🪟 Win11        | 🐧 Linux         | 🚀 Impossible OS |
-| --- | ----------------------- | --------------- | ---------------- | ---------------- |
+| --- | ----------------------- | -------------- | --------------- | --------------- |
 | 💎   | Text panic log          | ✅ Event log    | ✅ dmesg journal | ✅ crashdump.log |
 | 💎   | STOP bugcheck codes     | ✅ Full codes   | ❌ OOPS differs  | ✅ Done §1       |
 | 💎   | FPU XMM in dump         | ✅ CONTEXT      | ✅ ptrace core   | ✅ Done §2       |

@@ -27,18 +27,18 @@ title: "TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | External expansion topology model | TODO-01 | [ ] |
-| Parity | 2 | USB-C dock and hub classification | §1, TODO-10 | [ ] |
-| Parity | 3 | Thunderbolt/USB4 security policy | §1, TODO-04 | [ ] |
-| Parity | 4 | PCIe tunneling and authorization | §3, TODO-01 | [ ] |
-| Parity | 5 | DisplayPort alt-mode/eGPU boundary | §1, TODO-17 | [ ] |
-| Parity | 6 | Dock power, wake, and button events | §1, TODO-03 | [ ] |
-| Parity | 7 | Hot-plug storm resilience | §1-§6 | [ ] |
-| Parity | 8 | Device Manager dock topology | §1, TODO-07 | [ ] |
-| Exclusive | 9 | External DMA risk report | §3, TODO-04 | [ ] |
-| Parity | 10 | Dock/Thunderbolt certification matrix | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                           | Depends On  | Status |
+| --------- | :---: | ------------------------------------- | ----------- | :----: |
+| Parity    |   1   | External expansion topology model     | TODO-01     |  [ ]   |
+| Parity    |   2   | USB-C dock and hub classification     | §1, TODO-10 |  [ ]   |
+| Parity    |   3   | Thunderbolt/USB4 security policy      | §1, TODO-04 |  [ ]   |
+| Parity    |   4   | PCIe tunneling and authorization      | §3, TODO-01 |  [ ]   |
+| Parity    |   5   | DisplayPort alt-mode/eGPU boundary    | §1, TODO-17 |  [ ]   |
+| Parity    |   6   | Dock power, wake, and button events   | §1, TODO-03 |  [ ]   |
+| Parity    |   7   | Hot-plug storm resilience             | §1-§6       |  [ ]   |
+| Parity    |   8   | Device Manager dock topology          | §1, TODO-07 |  [ ]   |
+| Exclusive |   9   | External DMA risk report              | §3, TODO-04 |  [ ]   |
+| Parity    |  10   | Dock/Thunderbolt certification matrix | §1-§9       |  [ ]   |
 
 ## 1. External Expansion Topology Model
 
@@ -99,9 +99,9 @@ title: "TODO-24 -- Docking, Thunderbolt, USB4 & External Expansion"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | Dock topology | USB/TBT stack | bolt/sysfs | TODO-24 |
-| Parity | TBT security | Kernel DMA Protection | thunderbolt security | TODO-24 §3 |
-| Exclusive | DMA risk report | Security Center partial | scattered | TODO-24 §9 |
+| Priority  | Feature         | Windows                 | Linux                | Impossible OS |
+| --------- | --------------- | ----------------------- | -------------------- | ------------- |
+| Parity    | Dock topology   | USB/TBT stack           | bolt/sysfs           | TODO-24       |
+| Parity    | TBT security    | Kernel DMA Protection   | thunderbolt security | TODO-24 §3    |
+| Exclusive | DMA risk report | Security Center partial | scattered            | TODO-24 §9    |
 

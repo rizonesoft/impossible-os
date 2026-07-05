@@ -31,18 +31,18 @@ title: "TODO-01 -- PCI/PCIe, PnP & Resource Manager"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Canonical device node and bus path schema | TODO-05 §3 | [ ] |
-| Parity | 2 | Full PCI/PCIe enumeration with multifunction and bridges | §1 | [ ] |
-| Parity | 3 | BAR sizing and resource window allocator | §2, TODO-08 §1 | [ ] |
-| Parity | 4 | ACPI `_ADR` / `_PRT` / `_CRS` correlation | §1, TODO-03 §1 | [ ] |
-| Parity | 5 | Central IRQ routing and MSI/MSI-X handoff | §4, TODO-02 §3 | [ ] |
-| Parity | 6 | Driver bind/unbind/probe/remove state machine | §1, TODO-05 §3 | [ ] |
-| Parity | 7 | PCIe hot-plug and surprise-removal events | §3, TODO-08 §6 | [ ] |
-| Parity | 8 | Device power states and wake capabilities | §1, TODO-03 | [ ] |
-| Exclusive | 9 | Resource conflict diagnostics and recovery | §1-§8 | [ ] |
-| Parity | 10 | Unit, VM, and hardware PCI matrix | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                                              | Depends On     | Status |
+| --------- | :---: | -------------------------------------------------------- | -------------- | :----: |
+| Parity    |   1   | Canonical device node and bus path schema                | TODO-05 §3     |  [ ]   |
+| Parity    |   2   | Full PCI/PCIe enumeration with multifunction and bridges | §1             |  [ ]   |
+| Parity    |   3   | BAR sizing and resource window allocator                 | §2, TODO-08 §1 |  [ ]   |
+| Parity    |   4   | ACPI `_ADR` / `_PRT` / `_CRS` correlation                | §1, TODO-03 §1 |  [ ]   |
+| Parity    |   5   | Central IRQ routing and MSI/MSI-X handoff                | §4, TODO-02 §3 |  [ ]   |
+| Parity    |   6   | Driver bind/unbind/probe/remove state machine            | §1, TODO-05 §3 |  [ ]   |
+| Parity    |   7   | PCIe hot-plug and surprise-removal events                | §3, TODO-08 §6 |  [ ]   |
+| Parity    |   8   | Device power states and wake capabilities                | §1, TODO-03    |  [ ]   |
+| Exclusive |   9   | Resource conflict diagnostics and recovery               | §1-§8          |  [ ]   |
+| Parity    |  10   | Unit, VM, and hardware PCI matrix                        | §1-§9          |  [ ]   |
 
 ## 1. Canonical Device Node and Bus Path Schema
 
@@ -115,10 +115,10 @@ title: "TODO-01 -- PCI/PCIe, PnP & Resource Manager"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | PnP device tree | PnP Manager | driver core | TODO-01 |
-| Parity | PCI resources | PnP/ACPI arbiter | pci core | TODO-01 §3 |
-| Parity | Hot-plug | PCI bus driver | pciehp | TODO-01 §7 |
-| Exclusive | Conflict report | Device Manager codes | dmesg/sysfs | TODO-01 §9 |
+| Priority  | Feature         | Windows              | Linux       | Impossible OS |
+| --------- | --------------- | -------------------- | ----------- | ------------- |
+| Parity    | PnP device tree | PnP Manager          | driver core | TODO-01       |
+| Parity    | PCI resources   | PnP/ACPI arbiter     | pci core    | TODO-01 §3    |
+| Parity    | Hot-plug        | PCI bus driver       | pciehp      | TODO-01 §7    |
+| Exclusive | Conflict report | Device Manager codes | dmesg/sysfs | TODO-01 §9    |
 

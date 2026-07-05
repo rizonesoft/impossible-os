@@ -40,16 +40,16 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                              | Depends On            | Status |
-| --- | :---: | ------------------------------------------------------- | --------------------- | :----: |
-| 💎  |   1   | Memory-map design + canonical layout decision           | --                    |  [ ]   |
-| 💎  |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1                    |  [ ]   |
-| 💎  |   3   | `entry.asm` higher-half bring-up + direct map           | §1, §2                |  [ ]   |
-| 💎  |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                    |  [ ]   |
-| 💎  |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §3, D01 T01 §8        |  [ ]   |
-| 💎  |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8        |  [ ]   |
-| 💎  |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                    |  [ ]   |
-| ⭐  |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3                |  [ ]   |
+| ⭐   | Order | Deliverable                                             | Depends On     | Status |
+| --- | :---: | ------------------------------------------------------- | -------------- | :----: |
+| 💎   |   1   | Memory-map design + canonical layout decision           | --             |  [ ]   |
+| 💎   |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1             |  [ ]   |
+| 💎   |   3   | `entry.asm` higher-half bring-up + direct map           | §1, §2         |  [ ]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3             |  [ ]   |
+| 💎   |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §3, D01 T01 §8 |  [ ]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8 |  [ ]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6             |  [ ]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3         |  [ ]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -173,16 +173,16 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 
 ## OS Comparison
 
-| ⭐ | Feature                          | 🪟 Win11                       | 🐧 Linux                          | 🚀 Impossible OS                       |
-|----|----------------------------------|--------------------------------|-----------------------------------|----------------------------------------|
-| 💎 | Kernel in upper canonical half   | ✅ `0xFFFF800000000000`+       | ✅ `0xffffffff80000000` (-2 GiB)  | ⬜ Planned -- §1-§3 (now low `0x100000`) |
-| 💎 | 128 TB user / 128 TB kernel split | ✅ 48-bit split                | ✅ 48-bit split                   | ⬜ Planned -- §1, §7                    |
-| 💎 | Per-process address space        | ✅ per-process                 | ✅ `mm_struct` per task           | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
-| 💎 | Kernel/user page-table isolation | ✅ KVA Shadow                  | ✅ KPTI                           | ⬜ Unblocked by §6 (D03 T02 §6)        |
-| 💎 | KASLR                            | ✅ kernel ASLR                 | ✅ KASLR                          | ⬜ Unblocked by §3 (D03 T02 §2)        |
-| 💎 | SMEP / SMAP clean split          | ✅ enforced                    | ✅ enforced                       | ⬜ Unblocked by §6 (D03 T02 §4/§5)     |
-| 💎 | No hardcoded user ceiling        | ✅ no low ceiling              | ✅ no low ceiling                 | ⬜ §7 retires `0x800000`               |
-| ⭐ | 5-level paging (LA57, 128 PiB)   | ❌ not supported               | ✅ unconditional (6.10+)          | ⬜ Planned -- §8 (surpasses Win11)     |
+| ⭐   | Feature                           | 🪟 Win11                 | 🐧 Linux                         | 🚀 Impossible OS                              |
+| --- | --------------------------------- | ----------------------- | ------------------------------- | -------------------------------------------- |
+| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⬜ Planned -- §1-§3 (now low `0x100000`)      |
+| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⬜ Planned -- §1, §7                          |
+| 💎   | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
+| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D03 T02 §6)               |
+| 💎   | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D03 T02 §2)               |
+| 💎   | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D03 T02 §4/§5)            |
+| 💎   | No hardcoded user ceiling         | ✅ no low ceiling        | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                      |
+| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported         | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)            |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.

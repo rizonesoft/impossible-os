@@ -26,18 +26,18 @@ title: "TODO-21 -- Game Controllers, HID Force Feedback & Haptics"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Controller class API | TODO-11 | [ ] |
-| Parity | 2 | HID gamepad parser and mapper | §1, TODO-10 | [ ] |
-| Parity | 3 | XInput-compatible profile layer | §1, SDK | [ ] |
-| Parity | 4 | Bluetooth controller support | §1, TODO-16 | [ ] |
-| Parity | 5 | Force feedback and rumble output | §1-§4 | [ ] |
-| Parity | 6 | Battery, LED, and player index support | §1 | [ ] |
-| Parity | 7 | Calibration and dead-zone profiles | §1 | [ ] |
-| Parity | 8 | Hot-plug and low-latency event routing | §1, TODO-11 | [ ] |
-| Exclusive | 9 | Controller diagnostics panel | §1-§8 | [ ] |
-| Parity | 10 | Controller test matrix | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                            | Depends On  | Status |
+| --------- | :---: | -------------------------------------- | ----------- | :----: |
+| Parity    |   1   | Controller class API                   | TODO-11     |  [ ]   |
+| Parity    |   2   | HID gamepad parser and mapper          | §1, TODO-10 |  [ ]   |
+| Parity    |   3   | XInput-compatible profile layer        | §1, SDK     |  [ ]   |
+| Parity    |   4   | Bluetooth controller support           | §1, TODO-16 |  [ ]   |
+| Parity    |   5   | Force feedback and rumble output       | §1-§4       |  [ ]   |
+| Parity    |   6   | Battery, LED, and player index support | §1          |  [ ]   |
+| Parity    |   7   | Calibration and dead-zone profiles     | §1          |  [ ]   |
+| Parity    |   8   | Hot-plug and low-latency event routing | §1, TODO-11 |  [ ]   |
+| Exclusive |   9   | Controller diagnostics panel           | §1-§8       |  [ ]   |
+| Parity    |  10   | Controller test matrix                 | §1-§9       |  [ ]   |
 
 ## 1. Controller Class API
 
@@ -101,9 +101,9 @@ title: "TODO-21 -- Game Controllers, HID Force Feedback & Haptics"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | Gamepad HID | HIDClass/XInput | hid/input/evdev | TODO-21 |
-| Parity | Rumble | XInput FF | ff-memless | TODO-21 §5 |
-| Exclusive | Unified live tester | joy.cpl partial | evtest/jstest | TODO-21 §9 |
+| Priority  | Feature             | Windows         | Linux           | Impossible OS |
+| --------- | ------------------- | --------------- | --------------- | ------------- |
+| Parity    | Gamepad HID         | HIDClass/XInput | hid/input/evdev | TODO-21       |
+| Parity    | Rumble              | XInput FF       | ff-memless      | TODO-21 §5    |
+| Exclusive | Unified live tester | joy.cpl partial | evtest/jstest   | TODO-21 §9    |
 

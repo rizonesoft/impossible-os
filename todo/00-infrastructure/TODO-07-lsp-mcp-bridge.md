@@ -42,27 +42,27 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                | Depends On                        | Status |
+| ⭐   | Order | Deliverable                                                                | Depends On                        | Status |
 | --- | :---: | -------------------------------------------------------------------------- | --------------------------------- | :----: |
-| 💎  |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
-| 💎  |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
-| 💎  |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
-| 💎  |   4   | bash-language-server integration (shell)                                   | §1                                |  [x]   |
-| 💎  |   5   | pyright integration (Python)                                               | §1                                |  [x]   |
-| 💎  |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [x]   |
-| ⭐  |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [x]   |
-| ⭐  |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [x]   |
-| 💎  |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
-| ⭐  |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
-| 💎  |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
-| 💎  |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
-| ⭐  |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
-| 💎  |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
-| ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
-| ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
-| ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
-| 💎  |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
-| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
+| 💎   |   1   | Bridge skeleton + LSP JSON-RPC client + subprocess mgmt                    | --                                |  [x]   |
+| 💎   |   2   | clangd integration (C / H) with freestanding flags                         | §1                                |  [x]   |
+| 💎   |   3   | asm-lsp integration (NASM flavor)                                          | §1                                |  [x]   |
+| 💎   |   4   | bash-language-server integration (shell)                                   | §1                                |  [x]   |
+| 💎   |   5   | pyright integration (Python)                                               | §1                                |  [x]   |
+| 💎   |   6   | PowerShellEditorServices integration (ps1)                                 | §1                                |  [x]   |
+| ⭐   |   7   | Six MCP tools (hover / def / refs / diag / sym x2)                         | §1, §2-§6                         |  [x]   |
+| ⭐   |   8   | Extension routing + per-LSP lock + concurrent-call safety                  | §1, §7                            |  [x]   |
+| 💎   |   9   | Setup deps, manifest, Makefile target, docs, boundary                      | §1, §2-§6, §7, §8, T01 §1, T02 §5 |  [x]   |
+| ⭐   |  10   | Unit tests, --self-test harness, test-tooling surface                      | §1-§9                             |  [x]   |
+| 💎   |  11   | Extended LSP tools (completion, signature/nav/call-hierarchy, code_action) | §1, §7                            |  [x]   |
+| 💎   |  12   | File-change lifecycle (didChange / didSave / didClose forwarding)          | §1, §7                            |  [x]   |
+| ⭐   |  13   | LSP subprocess health monitoring + auto-restart (exp backoff)              | §1                                |  [x]   |
+| 💎   |  14   | Structured JSON logging + request correlation IDs                          | §1                                |  [x]   |
+| ⭐   |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
+| ⭐   |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
+| ⭐   |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
+| 💎   |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
+| 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -669,30 +669,30 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 ## OS Comparison
 
-| ⭐ | Feature                                                         | 🪟 Win11                          | 🐧 Linux                             | 🚀 Impossible OS                   |
-| --- | --------------------------------------------------------------- | --------------------------------- | ------------------------------------- | ---------------------------------- |
-| 💎 | C / C++ LSP for editors                                         | ✅ clangd in VS Code              | ✅ clangd in Emacs/Vim/Neovim        | ✅ clangd-19 + §2 MCP wrapper      |
-| 💎 | NASM LSP                                                        | ⚠️ asm-lsp via VS Code            | ✅ asm-lsp packaged                  | ✅ §3 asm-lsp NASM-pinned          |
-| 💎 | Shell LSP                                                       | ⚠️ via WSL VS Code                | ✅ standard                          | ✅ §4 + shellcheck diag            |
-| 💎 | Python LSP                                                      | ✅ pyright default (VS Code)      | ✅ pyright / pylsp / ruff-lsp        | ✅ §5 pyright                      |
-| 💎 | PowerShell LSP                                                  | ✅ PSES in VS Code                | ✅ PSES via pwsh 7.x                 | ✅ §6 PSES via pwsh                |
-| ⭐ | AI-agent MCP transport for language servers                     | ❌ closed (Copilot-only indexing) | ❌ 3rd-party only (isaacphi, jonrad) | ✅ §7 six tools, five langs        |
-| ⭐ | Cross-language unified MCP surface                              | ❌ per-ext VS Code LSP clients    | ❌ per-editor LSP client             | ✅ §7 one surface routes to 5 LSPs |
-| ⭐ | Read-only boundary audit baked in                               | ❌ no boundary concept            | ❌ 3rd-party bridges expose writes   | ✅ §9 grep-audit + manifest        |
-| ⭐ | On-demand LSP spawn (zero idle cost)                            | ⚠️ editor-initiated only          | ⚠️ editor-initiated only             | ✅ §1 on-demand + atexit           |
-| 💎 | `--self-test` harness for the bridge                            | ❌ N/A                            | ❌ not shipped by 3rd-party bridges  | ✅ §10 37 sub-tests + boundary, CI |
-| ⭐ | Repo-tracked MCP manifest (auto-register with Claude Code)      | ❌ user-local settings            | ❌ user-local                        | ✅ §9 `.claude/mcp.json`           |
-| ⭐ | Boundary-compliant repo-tracked MCP (no credentials, read-only) | ❌ no policy                      | ❌ no policy                         | ✅ §9 complies with T02 §8         |
-| 💎 | LSP `completion` + `signature_help` tools                       | ✅ VS Code + Copilot inline       | ✅ every LSP-capable editor          | ✅ §11 via MCP                     |
-| 💎 | LSP call hierarchy (incoming / outgoing)                        | ✅ VS Code call-hierarchy view    | ✅ Emacs/Neovim call-hierarchy modes | ✅ §11 exposed as MCP tools        |
-| 💎 | LSP type hierarchy (supertypes / subtypes)                      | ✅ VS Code type-hierarchy view    | ✅ Emacs/Neovim type-hierarchy modes | ✅ §18 read-only MCP tools         |
-| 💎 | Read-only `code_action` listing (no execute)                    | ✅ VS Code quick-fix popup        | ✅ code-actions in Emacs/Neovim      | ✅ §11 metadata-only (boundary)    |
-| 💎 | File-change lifecycle forwarding (didChange/didSave/didClose)   | ✅ native in every LSP client     | ✅ native in every LSP client        | ✅ §12 forwarded via bridge        |
-| ⭐ | LSP subprocess auto-restart on crash                            | ❌ editor prompts to restart      | ❌ editor prompts to restart         | ✅ §13 watchdog + exp backoff      |
-| 💎 | Structured JSON logs + correlation IDs                          | ⚠️ VS Code output panel (text)    | ⚠️ per-editor log format             | ✅ §14 JSON-lines + UUID           |
-| ⭐ | Workspace-bound path sandboxing                                 | ❌ editor trusts every path       | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace        |
-| ⭐ | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates          | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN             |
-| ⭐ | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start  | ✅ §17 daemon thread + publish gate |
+| ⭐   | Feature                                                         | 🪟 Win11                           | 🐧 Linux                             | 🚀 Impossible OS                    |
+| --- | --------------------------------------------------------------- | --------------------------------- | ----------------------------------- | ---------------------------------- |
+| 💎   | C / C++ LSP for editors                                         | ✅ clangd in VS Code               | ✅ clangd in Emacs/Vim/Neovim        | ✅ clangd-19 + §2 MCP wrapper       |
+| 💎   | NASM LSP                                                        | ⚠️ asm-lsp via VS Code            | ✅ asm-lsp packaged                  | ✅ §3 asm-lsp NASM-pinned           |
+| 💎   | Shell LSP                                                       | ⚠️ via WSL VS Code                | ✅ standard                          | ✅ §4 + shellcheck diag             |
+| 💎   | Python LSP                                                      | ✅ pyright default (VS Code)       | ✅ pyright / pylsp / ruff-lsp        | ✅ §5 pyright                       |
+| 💎   | PowerShell LSP                                                  | ✅ PSES in VS Code                 | ✅ PSES via pwsh 7.x                 | ✅ §6 PSES via pwsh                 |
+| ⭐   | AI-agent MCP transport for language servers                     | ❌ closed (Copilot-only indexing)  | ❌ 3rd-party only (isaacphi, jonrad) | ✅ §7 six tools, five langs         |
+| ⭐   | Cross-language unified MCP surface                              | ❌ per-ext VS Code LSP clients     | ❌ per-editor LSP client             | ✅ §7 one surface routes to 5 LSPs  |
+| ⭐   | Read-only boundary audit baked in                               | ❌ no boundary concept             | ❌ 3rd-party bridges expose writes   | ✅ §9 grep-audit + manifest         |
+| ⭐   | On-demand LSP spawn (zero idle cost)                            | ⚠️ editor-initiated only          | ⚠️ editor-initiated only            | ✅ §1 on-demand + atexit            |
+| 💎   | `--self-test` harness for the bridge                            | ❌ N/A                             | ❌ not shipped by 3rd-party bridges  | ✅ §10 37 sub-tests + boundary, CI  |
+| ⭐   | Repo-tracked MCP manifest (auto-register with Claude Code)      | ❌ user-local settings             | ❌ user-local                        | ✅ §9 `.claude/mcp.json`            |
+| ⭐   | Boundary-compliant repo-tracked MCP (no credentials, read-only) | ❌ no policy                       | ❌ no policy                         | ✅ §9 complies with T02 §8          |
+| 💎   | LSP `completion` + `signature_help` tools                       | ✅ VS Code + Copilot inline        | ✅ every LSP-capable editor          | ✅ §11 via MCP                      |
+| 💎   | LSP call hierarchy (incoming / outgoing)                        | ✅ VS Code call-hierarchy view     | ✅ Emacs/Neovim call-hierarchy modes | ✅ §11 exposed as MCP tools         |
+| 💎   | LSP type hierarchy (supertypes / subtypes)                      | ✅ VS Code type-hierarchy view     | ✅ Emacs/Neovim type-hierarchy modes | ✅ §18 read-only MCP tools          |
+| 💎   | Read-only `code_action` listing (no execute)                    | ✅ VS Code quick-fix popup         | ✅ code-actions in Emacs/Neovim      | ✅ §11 metadata-only (boundary)     |
+| 💎   | File-change lifecycle forwarding (didChange/didSave/didClose)   | ✅ native in every LSP client      | ✅ native in every LSP client        | ✅ §12 forwarded via bridge         |
+| ⭐   | LSP subprocess auto-restart on crash                            | ❌ editor prompts to restart       | ❌ editor prompts to restart         | ✅ §13 watchdog + exp backoff       |
+| 💎   | Structured JSON logs + correlation IDs                          | ⚠️ VS Code output panel (text)    | ⚠️ per-editor log format            | ✅ §14 JSON-lines + UUID            |
+| ⭐   | Workspace-bound path sandboxing                                 | ❌ editor trusts every path        | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace         |
+| ⭐   | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates           | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN              |
+| ⭐   | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start   | ✅ §17 daemon thread + publish gate |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.

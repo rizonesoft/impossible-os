@@ -55,24 +55,24 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                       | Depends On          | Status |
-| --- | :---: | ------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | SID & LUID primitives                             | --                  |  [x]   |
-| 💎  |   2   | Privilege constants & PRIVILEGE_SET               | §1                  |  [x]   |
-| 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [/]   |
-| 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [/]   |
-| 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [/]   |
-| 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [/]   |
-| 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [x]   |
-| 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [x]   |
-| 💎  |   9   | UAC token split & NtFilterToken                   | §4, §5, §6, §7      |  [/]   |
-| 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [/]   |
-| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [/]   |
-| 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [/]   |
-| 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [/]   |
-| 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [/]   |
-| ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [/]   |
-| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5          |  [/]   |
+| ⭐   | Order | Deliverable                                                       | Depends On         | Status |
+| --- | :---: | ----------------------------------------------------------------- | ------------------ | :----: |
+| 💎   |   1   | SID & LUID primitives                                             | --                 |  [x]   |
+| 💎   |   2   | Privilege constants & PRIVILEGE_SET                               | §1                 |  [x]   |
+| 💎   |   3   | SECURITY_DESCRIPTOR, ACL, ACE types                               | §1                 |  [/]   |
+| 💎   |   4   | ACCESS_TOKEN object (primary)                                     | §1, §2, §3, T05 §1 |  [/]   |
+| 💎   |   5   | SeAccessCheck engine                                              | §3, §4             |  [/]   |
+| 💎   |   6   | Mandatory Integrity Control (MIC)                                 | §4, §5             |  [/]   |
+| 💎   |   7   | Process/thread token assignment & impersonation                   | §4                 |  [x]   |
+| 💎   |   8   | SePrivilegeCheck & per-privilege enforcement                      | §2, §4, §5         |  [x]   |
+| 💎   |   9   | UAC token split & NtFilterToken                                   | §4, §5, §6, §7     |  [/]   |
+| 💎   |  10   | Win32 security API wrappers                                       | §4–§9, T12 §1      |  [/]   |
+| ⭐   |  11   | Live token inspector (`whoami.exe` + tray popout)                 | §4–§10             |  [/]   |
+| 💎   |  12   | Security/token syscalls wired to SSDT                             | §4, §8, T12 §4     |  [/]   |
+| 💎   |  13   | SD inheritance / SeAssignSecurity                                 | §3, §4, §5, T05 §1 |  [/]   |
+| 💎   |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9     |  [/]   |
+| ⭐   |  15   | Access denial explainer                                           | §5, §6, §8, §14    |  [/]   |
+| 💎   |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5         |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -92,21 +92,21 @@ title: "TODO-15 -- Security Reference Monitor"
   ```
 - [x] Define well-known SID constants as initialised globals in `src/kernel/security/sid.c`:
 
-  | Constant                      | Value          |
-  |-------------------------------|----------------|
-  | `SeNullSid`                   | `S-1-0-0`      |
-  | `SeWorldSid` (Everyone)       | `S-1-1-0`      |
-  | `SeCreatorOwnerSid`           | `S-1-3-0`      |
-  | `SeNtAuthoritySid`            | `S-1-5`        |
-  | `SeInteractiveSid`            | `S-1-5-4`      |
-  | `SeServiceSid`                | `S-1-5-6`      |
-  | `SeAnonymousLogonSid`         | `S-1-5-7`      |
-  | `SeLocalSystemSid`            | `S-1-5-18`     |
-  | `SeLocalServiceSid`           | `S-1-5-19`     |
-  | `SeNetworkServiceSid`         | `S-1-5-20`     |
-  | `SeBuiltinAdministratorsSid`  | `S-1-5-32-544` |
-  | `SeBuiltinUsersSid`           | `S-1-5-32-545` |
-  | `SeBuiltinGuestsSid`          | `S-1-5-32-546` |
+| Constant                     | Value          |
+| ---------------------------- | -------------- |
+| `SeNullSid`                  | `S-1-0-0`      |
+| `SeWorldSid` (Everyone)      | `S-1-1-0`      |
+| `SeCreatorOwnerSid`          | `S-1-3-0`      |
+| `SeNtAuthoritySid`           | `S-1-5`        |
+| `SeInteractiveSid`           | `S-1-5-4`      |
+| `SeServiceSid`               | `S-1-5-6`      |
+| `SeAnonymousLogonSid`        | `S-1-5-7`      |
+| `SeLocalSystemSid`           | `S-1-5-18`     |
+| `SeLocalServiceSid`          | `S-1-5-19`     |
+| `SeNetworkServiceSid`        | `S-1-5-20`     |
+| `SeBuiltinAdministratorsSid` | `S-1-5-32-544` |
+| `SeBuiltinUsersSid`          | `S-1-5-32-545` |
+| `SeBuiltinGuestsSid`         | `S-1-5-32-546` |
 
 - [x] Implement SID utilities:
   - `RtlLengthSid(sid)` → `8 + 4 * SubAuthorityCount`
@@ -141,32 +141,32 @@ title: "TODO-15 -- Security Reference Monitor"
 
 - [x] Define all standard privilege LUIDs in `include/kernel/security/privileges.h` as `const LUID` values with `HighPart=0`, `LowPart=<n>`:
 
-  | Constant                          | LP | When needed                       |
-  |-----------------------------------|----|-----------------------------------|
-  | `SeCreateTokenPrivilege`          |  2 | NtCreateToken                     |
-  | `SeAssignPrimaryTokenPrivilege`   |  3 | NtAssignProcessToJobObject        |
-  | `SeLockMemoryPrivilege`           |  4 | MmLockPages                       |
-  | `SeIncreaseQuotaPrivilege`        |  5 | NtSetInformationProcess quota     |
-  | `SeTcbPrivilege`                  |  7 | Token ops bypassing checks        |
-  | `SeSecurityPrivilege`             |  8 | SACL read/write                   |
-  | `SeTakeOwnershipPrivilege`        |  9 | Write owner without DACL          |
-  | `SeLoadDriverPrivilege`           | 10 | `module_load()`                   |
-  | `SeSystemProfilePrivilege`        | 11 | NtQuerySystemInformation (perf)   |
-  | `SeSystemtimePrivilege`           | 12 | NtSetSystemTime                   |
-  | `SeProfileSingleProcessPrivilege` | 13 | per-process profiling             |
-  | `SeIncreaseBasePriorityPrivilege` | 14 | REALTIME_PRIORITY_CLASS           |
-  | `SeCreatePagefilePrivilege`       | 15 | NtCreatePagingFile                |
-  | `SeBackupPrivilege`               | 17 | read files ignoring DACL          |
-  | `SeRestorePrivilege`              | 18 | write files ignoring DACL         |
-  | `SeShutdownPrivilege`             | 19 | NtShutdownSystem                  |
-  | `SeDebugPrivilege`                | 20 | NtOpenProcess any PID             |
-  | `SeAuditPrivilege`                | 21 | NtAccessCheckAndAuditAlarm        |
-  | `SeChangeNotifyPrivilege`         | 23 | bypass traverse-check (always on) |
-  | `SeUndockPrivilege`               | 25 | laptop undock                     |
-  | `SeManageVolumePrivilege`         | 28 | direct volume I/O                 |
-  | `SeImpersonatePrivilege`          | 29 | NtImpersonateThread at higher IL  |
-  | `SeCreateGlobalPrivilege`         | 30 | objects in global namespace       |
-  | `SeCreateSymbolicLinkPrivilege`   | 35 | NtCreateSymbolicLinkObject        |
+| Constant                          | LP  | When needed                       |
+| --------------------------------- | --- | --------------------------------- |
+| `SeCreateTokenPrivilege`          | 2   | NtCreateToken                     |
+| `SeAssignPrimaryTokenPrivilege`   | 3   | NtAssignProcessToJobObject        |
+| `SeLockMemoryPrivilege`           | 4   | MmLockPages                       |
+| `SeIncreaseQuotaPrivilege`        | 5   | NtSetInformationProcess quota     |
+| `SeTcbPrivilege`                  | 7   | Token ops bypassing checks        |
+| `SeSecurityPrivilege`             | 8   | SACL read/write                   |
+| `SeTakeOwnershipPrivilege`        | 9   | Write owner without DACL          |
+| `SeLoadDriverPrivilege`           | 10  | `module_load()`                   |
+| `SeSystemProfilePrivilege`        | 11  | NtQuerySystemInformation (perf)   |
+| `SeSystemtimePrivilege`           | 12  | NtSetSystemTime                   |
+| `SeProfileSingleProcessPrivilege` | 13  | per-process profiling             |
+| `SeIncreaseBasePriorityPrivilege` | 14  | REALTIME_PRIORITY_CLASS           |
+| `SeCreatePagefilePrivilege`       | 15  | NtCreatePagingFile                |
+| `SeBackupPrivilege`               | 17  | read files ignoring DACL          |
+| `SeRestorePrivilege`              | 18  | write files ignoring DACL         |
+| `SeShutdownPrivilege`             | 19  | NtShutdownSystem                  |
+| `SeDebugPrivilege`                | 20  | NtOpenProcess any PID             |
+| `SeAuditPrivilege`                | 21  | NtAccessCheckAndAuditAlarm        |
+| `SeChangeNotifyPrivilege`         | 23  | bypass traverse-check (always on) |
+| `SeUndockPrivilege`               | 25  | laptop undock                     |
+| `SeManageVolumePrivilege`         | 28  | direct volume I/O                 |
+| `SeImpersonatePrivilege`          | 29  | NtImpersonateThread at higher IL  |
+| `SeCreateGlobalPrivilege`         | 30  | objects in global namespace       |
+| `SeCreateSymbolicLinkPrivilege`   | 35  | NtCreateSymbolicLinkObject        |
 
 - [x] Define types:
   ```c
@@ -806,25 +806,25 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 
 ## OS Comparison
 
-| ⭐ | Feature                     | 🪟 Win11         | 🐧 Linux            | 🚀 Impossible OS    |
-|----|-----------------------------|---------------|------------------|------------------|
-| 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | 🟡 ACCESS_TOKEN §4 |
-| 💎 | DACL access check           | ✅ Full       | ⚠️ POSIX perms   | ⬜ §5            |
-| 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | 🟡 No-Write-Up §6 |
-| 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | 🟡 SePrivilegeCheck §8 |
-| 💎 | UAC filtered-token          | ✅ Full       | ❌ N/A           | ⬜ §9            |
-| 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | 🟡 Self-impers §7 |
-| 💎 | SDDL string descriptors    | ✅ Full       | ❌ N/A           | ⬜ §10           |
-| 💎 | Restricted tokens           | ✅ Full       | ❌ N/A           | ⬜ §9            |
-| 💎 | SD inheritance              | ✅ Full auto  | ⚠️ POSIX ACL     | 🟡 SeAssignSecurity §13 |
-| 💎 | AppContainer sandbox        | ✅ Win8+      | ⚠️ ns + seccomp  | ⬜ §14           |
-| 💎 | Restricted token dual check | ✅ Full       | ❌ N/A           | ⬜ §5            |
-| ⭐ | Live token inspector        | ❌ CLI only   | ❌ CLI only      | ⬜ §11           |
-| ⭐ | IL badge in File Mgr        | ❌ Hidden     | ❌ N/A           | ⬜ §11 + shell   |
-| ⭐ | ACL denial toast            | ❌ Event log  | ❌ auditd        | ⬜ Planned       |
-| ⭐ | Access denial explainer     | ❌ No API     | ❌ EACCES only   | ⬜ §15           |
-| 💎 | Constant-time SID compare   | ✅ Implicit   | ✅ Implicit      | ⬜ §16           |
-| 💎 | SHA-1 service SID parity    | ✅ Native     | ❌ N/A           | ⬜ §16           |
+| ⭐   | Feature                     | 🪟 Win11     | 🐧 Linux           | 🚀 Impossible OS        |
+| --- | --------------------------- | ----------- | ----------------- | ---------------------- |
+| 💎   | Token-based identity        | ✅ Full      | ⚠️ UID/GID only   | 🟡 ACCESS_TOKEN §4      |
+| 💎   | DACL access check           | ✅ Full      | ⚠️ POSIX perms    | ⬜ §5                   |
+| 💎   | Mandatory Integrity Ctrl    | ✅ Vista+    | ⚠️ SELinux add-on | 🟡 No-Write-Up §6       |
+| 💎   | Privilege separation        | ✅ Full      | ⚠️ Capabilities   | 🟡 SePrivilegeCheck §8  |
+| 💎   | UAC filtered-token          | ✅ Full      | ❌ N/A             | ⬜ §9                   |
+| 💎   | Thread impersonation        | ✅ Full      | ❌ N/A             | 🟡 Self-impers §7       |
+| 💎   | SDDL string descriptors     | ✅ Full      | ❌ N/A             | ⬜ §10                  |
+| 💎   | Restricted tokens           | ✅ Full      | ❌ N/A             | ⬜ §9                   |
+| 💎   | SD inheritance              | ✅ Full auto | ⚠️ POSIX ACL      | 🟡 SeAssignSecurity §13 |
+| 💎   | AppContainer sandbox        | ✅ Win8+     | ⚠️ ns + seccomp   | ⬜ §14                  |
+| 💎   | Restricted token dual check | ✅ Full      | ❌ N/A             | ⬜ §5                   |
+| ⭐   | Live token inspector        | ❌ CLI only  | ❌ CLI only        | ⬜ §11                  |
+| ⭐   | IL badge in File Mgr        | ❌ Hidden    | ❌ N/A             | ⬜ §11 + shell          |
+| ⭐   | ACL denial toast            | ❌ Event log | ❌ auditd          | ⬜ Planned              |
+| ⭐   | Access denial explainer     | ❌ No API    | ❌ EACCES only     | ⬜ §15                  |
+| 💎   | Constant-time SID compare   | ✅ Implicit  | ✅ Implicit        | ⬜ §16                  |
+| 💎   | SHA-1 service SID parity    | ✅ Native    | ❌ N/A             | ⬜ §16                  |
 
 After §1–§13, Impossible OS reaches full Windows 11 security architecture parity -- SID tokens, DACL/SACL access checks with inheritance, MIC integrity levels, privilege separation, UAC elevation, and restricted tokens are all present. §14 (AppContainer) adds the modern sandboxing mechanism used by all UWP apps and browsers. Linux with only POSIX permissions and optional MAC add-ons (SELinux/AppArmor) is strictly weaker. The access denial explainer (§15), tray token inspector (§11), and integrated IL badges in the File Manager are exclusive features that make Impossible OS's security model visible, diagnosable, and actionable.
 

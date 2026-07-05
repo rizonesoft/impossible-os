@@ -46,7 +46,7 @@ Every **named** `shell32.dll` export that appears on a shipping Windows 11 machi
 ## Tier 1 -- Paths, icons, folder resolution (from TODO-08 Section 12)
 
 | Export               | Category     | Owner                     | Done | Notes                                                     |
-| ---------------------- | -------------- | --------------------------- | ------ | ----------------------------------------------------------- |
+| -------------------- | ------------ | ------------------------- | ---- | --------------------------------------------------------- |
 | `ExtractIconExA`     | Icon         | T08 Section 12            | [ ]  | PE / ico / system                                         |
 | `ExtractIconExW`     | Icon         | T08 Section 12            | [ ]  |                                                           |
 | `SHGetFileInfoA`     | File info    | T08 Section 12            | [ ]  |                                                           |
@@ -70,7 +70,7 @@ Every **named** `shell32.dll` export that appears on a shipping Windows 11 machi
 ## Tier 1b -- Shell execute (from TODO-08 Section 14)
 
 | Export                | Category | Owner          | Done | Notes             |
-| ----------------------- | ---------- | ---------------- | ------ | ------------------- |
+| --------------------- | -------- | -------------- | ---- | ----------------- |
 | `ShellExecuteA`       | Execute  | T08 Section 14 | [ ]  | `file_assoc_open` |
 | `ShellExecuteW`       | Execute  | T08 Section 14 | [ ]  |                   |
 | `ShellExecuteExA`     | Execute  | T08 Section 14 | [ ]  |                   |
@@ -107,7 +107,7 @@ Microsoft does not publish one MSDN page per `shell32.dll` export. Use two layer
 ## Tier 3 -- Full named export roster (alphabetical, Wine scaffold)
 
 | Export                                        | Category   | Owner          | Done | Notes                                          |
-| ----------------------------------------------- | ------------ | ---------------- | ------ | ------------------------------------------------ |
+| --------------------------------------------- | ---------- | -------------- | ---- | ---------------------------------------------- |
 | `AddCommasW`                                  | General    | NO_OWNING_TODO | [ ]  | Wine `shell32.spec`; reconcile with Win11 dump |
 | `ArrangeWindows`                              | General    | NO_OWNING_TODO | [ ]  | Wine `shell32.spec`; reconcile with Win11 dump |
 | `CDefFolderMenu_Create2`                      | General    | NO_OWNING_TODO | [ ]  | Wine `shell32.spec`; reconcile with Win11 dump |
@@ -562,8 +562,8 @@ Microsoft does not publish one MSDN page per `shell32.dll` export. Use two layer
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                           | 🐧 Linux              | 🚀 Impossible OS                                             |
-| --- | -------------------------------- | --------------------------------- | -------------------- | ----------------------------------------------------------- |
+| ⭐   | Feature                             | 🪟 Win11                              | 🐧 Linux                        | 🚀 Impossible OS                                              |
+| --- | ----------------------------------- | ------------------------------------ | ------------------------------ | ------------------------------------------------------------ |
 | 💎   | Shell paths + icons (`shell32.dll`) | shell32 `SH*` APIs + icon index maps | `xdg-user-dir` + desktop files | Tier 1 rows; icon index kernel maps stay per `TODO-11` Notes |
 
 ## Unit Tests

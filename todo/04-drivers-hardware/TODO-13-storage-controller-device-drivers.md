@@ -30,18 +30,18 @@ title: "TODO-13 -- Storage Controller & Removable Media Drivers"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Storage driver capability matrix | existing blkdev | [ ] |
-| Parity | 2 | AHCI/SATA parity completion | §1 | [ ] |
-| Parity | 3 | ATA/ATAPI and optical media path | §1 | [ ] |
-| Parity | 4 | VirtIO-blk production integration | §1, TODO-01 | [ ] |
-| Parity | 5 | SDHCI/eMMC/SD card driver | TODO-01 | [ ] |
-| Parity | 6 | USB card-reader and multi-LUN policy | TODO-10 | [ ] |
-| Parity | 7 | Storage identity, health, and SMART/NVMe log bridge | §2-§6 | [ ] |
-| Parity | 8 | Surprise removal and media-change events | §2-§6, TODO-01 | [ ] |
-| Exclusive | 9 | Unified storage driver diagnostics report | §7 | [ ] |
-| Parity | 10 | VM and bare-metal storage matrix | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                                         | Depends On      | Status |
+| --------- | :---: | --------------------------------------------------- | --------------- | :----: |
+| Parity    |   1   | Storage driver capability matrix                    | existing blkdev |  [ ]   |
+| Parity    |   2   | AHCI/SATA parity completion                         | §1              |  [ ]   |
+| Parity    |   3   | ATA/ATAPI and optical media path                    | §1              |  [ ]   |
+| Parity    |   4   | VirtIO-blk production integration                   | §1, TODO-01     |  [ ]   |
+| Parity    |   5   | SDHCI/eMMC/SD card driver                           | TODO-01         |  [ ]   |
+| Parity    |   6   | USB card-reader and multi-LUN policy                | TODO-10         |  [ ]   |
+| Parity    |   7   | Storage identity, health, and SMART/NVMe log bridge | §2-§6           |  [ ]   |
+| Parity    |   8   | Surprise removal and media-change events            | §2-§6, TODO-01  |  [ ]   |
+| Exclusive |   9   | Unified storage driver diagnostics report           | §7              |  [ ]   |
+| Parity    |  10   | VM and bare-metal storage matrix                    | §1-§9           |  [ ]   |
 
 ## 1. Storage Driver Capability Matrix
 
@@ -107,10 +107,10 @@ title: "TODO-13 -- Storage Controller & Removable Media Drivers"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | AHCI/SATA | storahci | libata/ahci | TODO-13 §2 |
-| Parity | SD/eMMC | sdstor | sdhci/mmc | TODO-13 §5 |
-| Parity | Storage health | Storage Spaces/SMART | smartctl/sysfs | TODO-13 §7 |
-| Exclusive | Unified driver report | scattered tools | sysfs/dmesg | TODO-13 §9 |
+| Priority  | Feature               | Windows              | Linux          | Impossible OS |
+| --------- | --------------------- | -------------------- | -------------- | ------------- |
+| Parity    | AHCI/SATA             | storahci             | libata/ahci    | TODO-13 §2    |
+| Parity    | SD/eMMC               | sdstor               | sdhci/mmc      | TODO-13 §5    |
+| Parity    | Storage health        | Storage Spaces/SMART | smartctl/sysfs | TODO-13 §7    |
+| Exclusive | Unified driver report | scattered tools      | sysfs/dmesg    | TODO-13 §9    |
 

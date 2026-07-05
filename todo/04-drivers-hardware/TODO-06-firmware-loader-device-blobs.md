@@ -29,18 +29,18 @@ title: "TODO-06 -- Firmware Loader & Device Blob Policy"
 
 ## Implementation Order
 
-| Priority | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| Parity | 1 | Firmware directory and manifest format | VFS | [ ] |
-| Parity | 2 | `request_firmware()` kernel API | §1 | [ ] |
-| Parity | 3 | Pinning, lifetime, and DMA-safe copy rules | §2 | [ ] |
-| Parity | 4 | Integrity, signature, and hash policy | §1, TODO-04 | [ ] |
-| Parity | 5 | Version matching and fallback order | §1 | [ ] |
-| Parity | 6 | Firmware update and rollback path | §4 | [ ] |
-| Parity | 7 | Device Manager and log integration | §2, TODO-07 | [ ] |
-| Exclusive | 8 | License/NOTICE audit report | §1 | [ ] |
-| Parity | 9 | Driver conversion pass | §2 | [ ] |
-| Parity | 10 | Tests and fixture blobs | §1-§9 | [ ] |
+| Priority  | Order | Deliverable                                | Depends On  | Status |
+| --------- | :---: | ------------------------------------------ | ----------- | :----: |
+| Parity    |   1   | Firmware directory and manifest format     | VFS         |  [ ]   |
+| Parity    |   2   | `request_firmware()` kernel API            | §1          |  [ ]   |
+| Parity    |   3   | Pinning, lifetime, and DMA-safe copy rules | §2          |  [ ]   |
+| Parity    |   4   | Integrity, signature, and hash policy      | §1, TODO-04 |  [ ]   |
+| Parity    |   5   | Version matching and fallback order        | §1          |  [ ]   |
+| Parity    |   6   | Firmware update and rollback path          | §4          |  [ ]   |
+| Parity    |   7   | Device Manager and log integration         | §2, TODO-07 |  [ ]   |
+| Exclusive |   8   | License/NOTICE audit report                | §1          |  [ ]   |
+| Parity    |   9   | Driver conversion pass                     | §2          |  [ ]   |
+| Parity    |  10   | Tests and fixture blobs                    | §1-§9       |  [ ]   |
 
 ## 1. Firmware Directory and Manifest Format
 
@@ -108,9 +108,9 @@ title: "TODO-06 -- Firmware Loader & Device Blob Policy"
 
 ## OS Comparison
 
-| Priority | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| Parity | Firmware API | WDF/PNP package | request_firmware | TODO-06 |
-| Parity | License metadata | driver package catalog | linux-firmware licenses | TODO-06 §8 |
-| Exclusive | BlackBox firmware failures | Event Viewer | dmesg | TODO-06 §7 |
+| Priority  | Feature                    | Windows                | Linux                   | Impossible OS |
+| --------- | -------------------------- | ---------------------- | ----------------------- | ------------- |
+| Parity    | Firmware API               | WDF/PNP package        | request_firmware        | TODO-06       |
+| Parity    | License metadata           | driver package catalog | linux-firmware licenses | TODO-06 §8    |
+| Exclusive | BlackBox firmware failures | Event Viewer           | dmesg                   | TODO-06 §7    |
 

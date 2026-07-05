@@ -46,22 +46,22 @@ title: "TODO-21 -- Process Model Extensions"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                          | Depends On                    | Status |
-| --- | :---: | ---------------------------------------------------- | ----------------------------- | :----: |
-| 💎  |   1   | Working directory (`cwd` field + Nt/VFS wiring)      | VFS                           |  [ ]   |
-| 💎  |   2   | Standard handle pre-wiring at process creation       | TODO-05 §2                    |  [ ]   |
-| 💎  |   3   | User-mode program break (brk/sbrk Linux compat)      | VMM, TODO-17 §5               |  [ ]   |
-| 💎  |   4   | Process priority class (Win32 `SetPriorityClass`)    | sched (exists)                |  [ ]   |
-| 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)     | 4                             |  [ ]   |
-| 💎  |   6   | Process capabilities and privilege bitmask           | --                            |  [ ]   |
-| ⭐  |   7   | Capability inheritance and drop-only policy          | 6                             |  [ ]   |
-| 💎  |   8   | Process accounting fields (times, I/O, VM counters)  | 1                             |  [ ]   |
-| 💎  |   9   | Per-process resource limits (rlimits)                | 3, 6                          |  [ ]   |
-| 💎  |  10   | CPU affinity per process                             | 4, TODO-05-sched §6           |  [ ]   |
-| 💎  |  11   | Per-process mitigation policy                        | 6, TODO-10 §1                 |  [ ]   |
-| ⭐  |  12   | Pledge/unveil-style process restriction              | 6, 7                          |  [ ]   |
-| 💎  |  13   | Job Object syscalls wired to SSDT                    | 6, TODO-12 §5                 |  [ ]   |
-| 💎  |  14   | Process exit cleanup -- release all per-process resources | §8, §9                   |  [ ]   |
+| ⭐   | Order | Deliverable                                               | Depends On          | Status |
+| --- | :---: | --------------------------------------------------------- | ------------------- | :----: |
+| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS                 |  [ ]   |
+| 💎   |   2   | Standard handle pre-wiring at process creation            | TODO-05 §2          |  [ ]   |
+| 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, TODO-17 §5     |  [ ]   |
+| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists)      |  [ ]   |
+| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | 4                   |  [ ]   |
+| 💎   |   6   | Process capabilities and privilege bitmask                | --                  |  [ ]   |
+| ⭐   |   7   | Capability inheritance and drop-only policy               | 6                   |  [ ]   |
+| 💎   |   8   | Process accounting fields (times, I/O, VM counters)       | 1                   |  [ ]   |
+| 💎   |   9   | Per-process resource limits (rlimits)                     | 3, 6                |  [ ]   |
+| 💎   |  10   | CPU affinity per process                                  | 4, TODO-05-sched §6 |  [ ]   |
+| 💎   |  11   | Per-process mitigation policy                             | 6, TODO-10 §1       |  [ ]   |
+| ⭐   |  12   | Pledge/unveil-style process restriction                   | 6, 7                |  [ ]   |
+| 💎   |  13   | Job Object syscalls wired to SSDT                         | 6, TODO-12 §5       |  [ ]   |
+| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9              |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -339,23 +339,23 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 ## OS Comparison
 
-| ⭐ | Feature                       | 🪟 Win11                       | 🐧 Linux                        | 🚀 Impossible OS                 |
-|----|-------------------------------|-----------------------------|------------------------------|-------------------------------|
-| 💎 | Per-process CWD               | ✅ SetCurrentDirectory      | ✅ chdir / getcwd            | ⬜ §1                        |
-| 💎 | STD handle pre-wiring         | ✅ CreateProcess inherit     | ✅ fd 0/1/2 via fork         | ⬜ §2                        |
-| 💎 | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory  | ✅ brk / sbrk                | ⬜ §3                        |
-| 💎 | Process priority class        | ✅ SetPriorityClass          | ✅ nice / setpriority        | ⬜ §4                        |
-| 💎 | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS  | ✅ SCHED_FIFO / SCHED_IDLE   | ⬜ §5                        |
-| 💎 | Capability / privilege model  | ✅ Access tokens             | ✅ POSIX capabilities        | ⬜ §6                        |
-| 💎 | Process accounting            | ✅ ProcessTimes + IoCounters | ✅ getrusage / times         | ⬜ §8                        |
-| 💎 | Per-process resource limits   | ✅ Job Object quotas         | ✅ getrlimit / setrlimit     | ⬜ §9                        |
-| 💎 | Process CPU affinity          | ✅ SetProcessAffinityMask   | ✅ sched_setaffinity          | ⬜ §10                       |
-| 💎 | Per-process mitigation policy | ✅ SetProcessMitigationPolicy| ⚠️ prctl + seccomp           | ⬜ §11                       |
-| 💎 | Job Objects / cgroups         | ✅ NtCreateJobObject         | ✅ cgroups v2                | ⬜ §13                       |
-| 💎 | Process exit cleanup          | ✅ PspExitProcess            | ✅ do_exit + __put_task      | ⬜ §14                       |
-| 💎 | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get             | ⬜ Deferred (→ TODO-12 §10)  |
-| ⭐ | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient     | ⬜ §7 -- monotonic decrease   |
-| ⭐ | Pledge/unveil restriction     | ❌ None                      | ❌ No simple equivalent      | ⬜ §12 -- OpenBSD-inspired    |
+| ⭐   | Feature                       | 🪟 Win11                      | 🐧 Linux                   | 🚀 Impossible OS            |
+| --- | ----------------------------- | ---------------------------- | ------------------------- | -------------------------- |
+| 💎   | Per-process CWD               | ✅ SetCurrentDirectory        | ✅ chdir / getcwd          | ⬜ §1                       |
+| 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit      | ✅ fd 0/1/2 via fork       | ⬜ §2                       |
+| 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory    | ✅ brk / sbrk              | ⬜ §3                       |
+| 💎   | Process priority class        | ✅ SetPriorityClass           | ✅ nice / setpriority      | ⬜ §4                       |
+| 💎   | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS    | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                       |
+| 💎   | Capability / privilege model  | ✅ Access tokens              | ✅ POSIX capabilities      | ⬜ §6                       |
+| 💎   | Process accounting            | ✅ ProcessTimes + IoCounters  | ✅ getrusage / times       | ⬜ §8                       |
+| 💎   | Per-process resource limits   | ✅ Job Object quotas          | ✅ getrlimit / setrlimit   | ⬜ §9                       |
+| 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask     | ✅ sched_setaffinity       | ⬜ §10                      |
+| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy | ⚠️ prctl + seccomp        | ⬜ §11                      |
+| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject          | ✅ cgroups v2              | ⬜ §13                      |
+| 💎   | Process exit cleanup          | ✅ PspExitProcess             | ✅ do_exit + __put_task    | ⬜ §14                      |
+| 💎   | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10) |
+| ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease |
+| ⭐   | Pledge/unveil restriction     | ❌ None                       | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired  |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.

@@ -33,18 +33,18 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | Resource type registry | -- | [ ] |
-| 💎 | 2 | Quota block and charge API | §1 | [ ] |
-| 💎 | 3 | Process/token/job ownership model | T21, T15 | [ ] |
-| 💎 | 4 | Object and handle quota integration | T05 | [ ] |
-| 💎 | 5 | Pool and allocation quota integration | D03 | [ ] |
-| 💎 | 6 | Registry, ALPC, notification quotas | T24, T14, T16 | [ ] |
-| ⭐ | 7 | CPU, I/O, and wakeup accounting | T08, T21 | [ ] |
-| 💎 | 8 | Native query/set quota syscalls | T12 | [ ] |
-| ⭐ | 9 | Resource pressure events and recovery hooks | T16, T30 | [ ] |
-| 💎 | 10 | Tests, leak sweeps, and dashboards | §1..§9 | [ ] |
+| ⭐   | Order | Deliverable                                 | Depends On    | Status |
+| --- | :---: | ------------------------------------------- | ------------- | :----: |
+| 💎   |   1   | Resource type registry                      | --            |  [ ]   |
+| 💎   |   2   | Quota block and charge API                  | §1            |  [ ]   |
+| 💎   |   3   | Process/token/job ownership model           | T21, T15      |  [ ]   |
+| 💎   |   4   | Object and handle quota integration         | T05           |  [ ]   |
+| 💎   |   5   | Pool and allocation quota integration       | D03           |  [ ]   |
+| 💎   |   6   | Registry, ALPC, notification quotas         | T24, T14, T16 |  [ ]   |
+| ⭐   |   7   | CPU, I/O, and wakeup accounting             | T08, T21      |  [ ]   |
+| 💎   |   8   | Native query/set quota syscalls             | T12           |  [ ]   |
+| ⭐   |   9   | Resource pressure events and recovery hooks | T16, T30      |  [ ]   |
+| 💎   |  10   | Tests, leak sweeps, and dashboards          | §1..§9        |  [ ]   |
 
 ## 1. Resource Type Registry
 

@@ -40,18 +40,18 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | Notification state object type | T05 | [x] |
-| 💎 | 2 | Kernel publish/subscribe API | §1 | [ ] |
-| 💎 | 3 | Waitable user subscriptions | T12, T07 | [ ] |
-| 💎 | 4 | Security and namespace policy | T15 | [ ] |
-| ⭐ | 5 | Built-in state-name catalog | §1..§4 | [ ] |
-| 💎 | 6 | ETW/klog bridge | T04, T32 | [ ] |
-| ⭐ | 7 | Coalescing and payload retention | §2 | [ ] |
-| 💎 | 8 | Native WNF-compatible syscall surface | T12 | [ ] |
-| ⭐ | 9 | Diagnostics browser and counters | §1..§8 | [ ] |
-| 💎 | 10 | Unit/boot tests | §1..§9 | [ ] |
+| ⭐   | Order | Deliverable                           | Depends On | Status |
+| --- | :---: | ------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Notification state object type        | T05        |  [x]   |
+| 💎   |   2   | Kernel publish/subscribe API          | §1         |  [ ]   |
+| 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [ ]   |
+| 💎   |   4   | Security and namespace policy         | T15        |  [ ]   |
+| ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [ ]   |
+| 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [ ]   |
+| ⭐   |   7   | Coalescing and payload retention      | §2         |  [ ]   |
+| 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [ ]   |
+| ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [ ]   |
+| 💎   |  10   | Unit/boot tests                       | §1..§9     |  [ ]   |
 
 ## 1. Notification State Object Type
 
@@ -75,7 +75,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Codex design + test-coverage adoptions (pointer payload, gate Persistent, name-boundary fix, flag/deny tests) in the commit message; restricted-token fixture filed to §4, persistent registry backing to §7.
 > - Canonical doc: this TODO; publish/subscribe/security/retention are the later sections.
 > - Scope boundary: §1 owns the object type + namespace + lifetime/scope/type-id metadata; §2/§3 own publish/subscribe + teardown, §4 owns DACL/token enforcement, §7 owns coalescing/retention + persistent registry backing.
-> **Verified:** 2026-07-05 | commit `REVIEWHASH` | 8/8 items | build OK | smoke PASS (KVM 3.29s) + test-knf 10/10
+> **Verified:** 2026-07-05 | commit `678fbd3c` | 8/8 items | build OK | smoke PASS (KVM 3.29s) + test-knf 10/10
 > **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 185)
 > **Deferred:** [L] create-or-open can open an existing privileged state via a Temporary request -> XREF: 02-kernel-core/TODO-16 §4 (item: "Gate create-or-open opens by DACL" at line 122)
 > **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 197)
@@ -204,16 +204,16 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | Kernel state-change notify | ✅ WNF | ⚠️ netlink/inotify | ⬜ knf §1-§2 |
-| 💎 | State object + lifetime/scope/type | ✅ WNF lifetimes | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
-| 💎 | Waitable user subscriptions | ✅ WNF+Nt* | ⚠️ epoll/poll | ⬜ §3 |
-| 💎 | Per-state security descriptor | ✅ Full | ⚠️ DAC only | ⬜ §4 |
-| 💎 | Lost-update sequence numbers | ✅ WNF change stamp | ❌ N/A | ⬜ §2 |
-| 💎 | WNF-compatible syscalls | ✅ Nt*WnfStateData | ❌ N/A | ⬜ §8 |
-| ⭐ | Named catalog + coalescing | ⚠️ Undocumented WNF | ❌ ad-hoc | ⬜ §5,§7 |
-| ⭐ | Live diagnostics counters | ❌ Debugger only | ⚠️ /proc scattered | ⬜ §9 |
+| ⭐   | Feature                            | 🪟 Win11             | 🐧 Linux             | 🚀 Impossible OS                                                       |
+| --- | ---------------------------------- | ------------------- | ------------------- | --------------------------------------------------------------------- |
+| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ⬜ knf §1-§2                                                           |
+| 💎   | State object + lifetime/scope/type | ✅ WNF lifetimes     | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
+| 💎   | Waitable user subscriptions        | ✅ WNF+Nt*           | ⚠️ epoll/poll       | ⬜ §3                                                                  |
+| 💎   | Per-state security descriptor      | ✅ Full              | ⚠️ DAC only         | ⬜ §4                                                                  |
+| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ⬜ §2                                                                  |
+| 💎   | WNF-compatible syscalls            | ✅ Nt*WnfStateData   | ❌ N/A               | ⬜ §8                                                                  |
+| ⭐   | Named catalog + coalescing         | ⚠️ Undocumented WNF | ❌ ad-hoc            | ⬜ §5,§7                                                               |
+| ⭐   | Live diagnostics counters          | ❌ Debugger only     | ⚠️ /proc scattered  | ⬜ §9                                                                  |
 
 > 💎 = parity work (Win11/Linux already do it). ⭐ = exclusive/superior work.
 
