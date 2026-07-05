@@ -15,6 +15,7 @@
 #include "kernel/security/mic.h"
 #include "kernel/security/token.h"
 #include "kernel/security/privileges.h"
+#include "kernel/security/assign_security.h"
 #include "kernel/security/stack_canary.h"
 #include "kernel/ob/ob.h"
 #include "kernel/sched/task.h"   /* task/thread, task_current/thread_current for token assignment */
@@ -1101,6 +1102,94 @@ static void test_se_privilege_check_token(void)
     ObDereferenceObject(systok);
 }
 
+/* SeAssignSecurity: SD inheritance, canonical ordering, propagation flags,
+ * SE_DACL_PROTECTED, fallback, and owned-storage teardown. */
+static void test_se_assign_security(void)
+{
+    uint8_t pbuf[256];
+    ACL *pdacl = (ACL *)pbuf;
+    ACE_HEADER *ace;
+    SECURITY_DESCRIPTOR parent, creator;
+    SECURITY_DESCRIPTOR *child;
+    NTSTATUS st;
+
+    /* Parent DACL: allow SYSTEM (CI|OI), deny World (OI-only). */
+    RtlCreateAcl(pdacl, sizeof(pbuf), ACL_REVISION);
+    RtlAddAccessAllowedAce(pdacl, ACL_REVISION, GENERIC_ALL, SeLocalSystemSid);
+    RtlGetAce(pdacl, 0, &ace);
+    ace->AceFlags = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
+    RtlAddAccessDeniedAce(pdacl, ACL_REVISION, GENERIC_WRITE, SeWorldSid);
+    RtlGetAce(pdacl, 1, &ace);
+    ace->AceFlags = OBJECT_INHERIT_ACE;
+
+    RtlCreateSecurityDescriptor(&parent, SECURITY_DESCRIPTOR_REVISION);
+    RtlSetOwnerSecurityDescriptor(&parent, (SID *)SeLocalSystemSid, 0);
+    RtlSetDaclSecurityDescriptor(&parent, 1, pdacl, 0);
+
+    /* Creator SD with only an owner -> forces inheritance. */
+    RtlCreateSecurityDescriptor(&creator, SECURITY_DESCRIPTOR_REVISION);
+    RtlSetOwnerSecurityDescriptor(&creator, (SID *)SeLocalSystemSid, 0);
+
+    /* File child: both ACEs carry OI so both inherit; leaves keep only
+     * INHERITED_ACE; canonical order puts the deny ACE first. */
+    child = (SECURITY_DESCRIPTOR *)0;
+    st = SeAssignSecurity(&parent, &creator, 0, (struct access_token *)0, &child);
+    TEST_ASSERT(st == STATUS_SUCCESS && child != (SECURITY_DESCRIPTOR *)0,
+                "file child assigned");
+    TEST_ASSERT(child->Dacl && child->Dacl->AceCount == 2,
+                "file inherits 2 ACEs");
+    RtlGetAce(child->Dacl, 0, &ace);
+    TEST_ASSERT(ace->AceType == ACCESS_DENIED_ACE_TYPE,
+                "canonical order: deny ACE first");
+    TEST_ASSERT((ace->AceFlags & INHERITED_ACE) &&
+                !(ace->AceFlags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE |
+                                   INHERIT_ONLY_ACE)),
+                "file ACE has INHERITED only (no propagation)");
+    SeDeassignSecurity(&child);
+    TEST_ASSERT(child == (SECURITY_DESCRIPTOR *)0, "SeDeassignSecurity NULLs ptr");
+
+    /* Directory child: allow CI|OI applies to the dir and keeps propagation;
+     * deny OI-only becomes INHERIT_ONLY (propagates to file grandchildren). */
+    st = SeAssignSecurity(&parent, &creator, 1, (struct access_token *)0, &child);
+    TEST_ASSERT(st == STATUS_SUCCESS && child, "dir child assigned");
+    TEST_ASSERT(child->Dacl->AceCount == 2, "dir inherits 2 ACEs");
+    /* deny first (canonical); it is the OI-only -> INHERIT_ONLY case */
+    RtlGetAce(child->Dacl, 0, &ace);
+    TEST_ASSERT(ace->AceType == ACCESS_DENIED_ACE_TYPE &&
+                (ace->AceFlags & INHERIT_ONLY_ACE) &&
+                (ace->AceFlags & OBJECT_INHERIT_ACE) &&
+                (ace->AceFlags & INHERITED_ACE),
+                "dir OI-only deny -> INHERITED|INHERIT_ONLY|OI");
+    RtlGetAce(child->Dacl, 1, &ace);
+    TEST_ASSERT(ace->AceType == ACCESS_ALLOWED_ACE_TYPE &&
+                !(ace->AceFlags & INHERIT_ONLY_ACE) &&
+                (ace->AceFlags & CONTAINER_INHERIT_ACE) &&
+                (ace->AceFlags & INHERITED_ACE),
+                "dir CI|OI allow applies + propagates (no INHERIT_ONLY)");
+    SeDeassignSecurity(&child);
+
+    /* SE_DACL_PROTECTED on the child: inheritance blocked, no token DefaultDacl
+     * -> fail-closed fallback (owner + SYSTEM + World-read = 3 ACEs). */
+    creator.Control |= SE_DACL_PROTECTED;
+    st = SeAssignSecurity(&parent, &creator, 1, (struct access_token *)0, &child);
+    TEST_ASSERT(st == STATUS_SUCCESS && child, "protected child assigned");
+    TEST_ASSERT(child->Dacl && child->Dacl->AceCount == 3,
+                "protected -> fail-closed fallback 3-ACE DACL (never NULL)");
+    TEST_ASSERT((child->Control & SE_DACL_PROTECTED) != 0,
+                "SE_DACL_PROTECTED preserved on the output descriptor");
+    SeDeassignSecurity(&child);
+    creator.Control &= (uint16_t)~SE_DACL_PROTECTED;
+
+    /* No resolvable owner (no creator owner, no token) fails closed. */
+    {
+        SECURITY_DESCRIPTOR empty;
+        RtlCreateSecurityDescriptor(&empty, SECURITY_DESCRIPTOR_REVISION);
+        st = SeAssignSecurity(&parent, &empty, 0, (struct access_token *)0, &child);
+        TEST_ASSERT(st == STATUS_INVALID_PARAMETER,
+                    "no resolvable owner -> STATUS_INVALID_PARAMETER");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -1131,6 +1220,8 @@ void test_register_security(void)
     test_suite_register_cat("Security: SePrivilegeCheck", test_privilege_check, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SePrivilegeCheckToken (token-explicit)",
                             test_se_privilege_check_token, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SeAssignSecurity SD inheritance",
+                            test_se_assign_security, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

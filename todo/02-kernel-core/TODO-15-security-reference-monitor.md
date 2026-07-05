@@ -69,7 +69,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [/]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [/]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [/]   |
-| 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [ ]   |
+| 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [/]   |
 | 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [/]   |
 | ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [/]   |
 | 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5          |  [ ]   |
@@ -636,31 +636,39 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 
 When a new object is created (file, directory, registry key, process) without an explicit security descriptor, the SRM must build one by inheriting ACEs from the parent container's DACL/SACL. Without this, every object gets a static default SD and fine-grained per-directory permissions are impossible.
 
-- [ ] Define `SeAssignSecurity(ParentSD, CreatorSD, NewSD, IsDirectory, SubjectContext, GenericMapping, PoolType)`:
-  1. If `CreatorSD` is non-NULL and has an explicit DACL (`SE_DACL_PRESENT` without `SE_DACL_DEFAULTED`): use `CreatorSD->Dacl` as the new DACL
+- [x] Define `SeAssignSecurity(ParentSD, CreatorSD, IsDirectory, CreatorToken, NewSD)` + `SeDeassignSecurity` (assign_security.c); interim `ACCESS_TOKEN*`, no SubjectContext/GenericMapping/PoolType/SACL. DACL source:
+  1. If `CreatorSD` is non-NULL and has an explicit DACL (`SE_DACL_PRESENT` without `SE_DACL_DEFAULTED`): use `CreatorSD->Dacl` (explicit NULL DACL honored as grant-all)
   2. Else if `ParentSD` has inheritable ACEs: build new DACL from parent's inheritable ACEs (see inheritance rules below)
-  3. Else: use the `DefaultDacl` from the creator's token (`SubjectContext->PrimaryToken->DefaultDacl`)
-  4. Owner = `CreatorSD->Owner` if specified, else `SubjectContext->PrimaryToken->UserSid`
-  5. Group = `CreatorSD->Group` if specified, else `SubjectContext->PrimaryToken->PrimaryGroup`
-  6. Apply same logic for SACL (requires `SeSecurityPrivilege` to specify explicit SACL)
-- [ ] ACE inheritance rules -- for each ACE in `ParentSD->Dacl`:
+  3. Else: the creator token's `DefaultDacl`; if NULL, a fail-closed creator/SYSTEM/World default (never a NULL DACL)
+  4. Owner = `CreatorSD->Owner` if specified, else `CreatorToken->UserSid` (required; fails closed if unresolvable)
+  5. Group = `CreatorSD->Group` if specified, else `CreatorToken->PrimaryGroup`
+  6. SACL inheritance + `SeSecurityPrivilege` explicit SACL: DEFERRED (needs the SeAccessCheck subject context)
+- [x] ACE inheritance rules -- for each ACE in `ParentSD->Dacl` (assign_security.c `inherit_child_flags`):
   - `OBJECT_INHERIT_ACE` flag: ACE is inherited by non-container children (files)
   - `CONTAINER_INHERIT_ACE` flag: ACE is inherited by container children (directories)
   - `NO_PROPAGATE_INHERIT` flag: inherited ACE does NOT propagate to grandchildren
   - `INHERIT_ONLY_ACE` flag: ACE applies only to children, not to the parent itself
   - Inherited ACEs get the `INHERITED_ACE` flag set to distinguish them from explicit ACEs
-- [ ] Canonical ACE ordering in the new DACL:
+- [x] Canonical ACE ordering (assign_security.c: two passes emit deny before allow). SeAssignSecurity picks ONE DACL source (no explicit+inherited merge), so the full explicit-then-inherited order below applies only once merging exists:
   1. Explicit deny ACEs
   2. Explicit allow ACEs
   3. Inherited deny ACEs (in parent order)
   4. Inherited allow ACEs (in parent order)
-- [ ] `SeAssignSecurityEx(ParentSD, CreatorSD, NewSD, ObjectType, IsDirectory, AutoInheritFlags, SubjectContext, GenericMapping, PoolType)` -- extended version with `SEF_DACL_AUTO_INHERIT` / `SEF_SACL_AUTO_INHERIT` flags for automatic propagation to existing children
-- [ ] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): when creating a named object in a directory, pass the parent directory's SD as `ParentSD`
-- [ ] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode creation inherits parent directory's SD
-- [ ] `SE_DACL_PROTECTED` flag on child SD: if set, blocks all ACE inheritance from parent (child uses only its explicit ACEs)
-- [ ] Commit: `"kernel/security: SeAssignSecurity -- SD inheritance, ACE propagation, canonical ordering"`
+- [ ] `SeAssignSecurityEx` with `SEF_DACL_AUTO_INHERIT` / `SEF_SACL_AUTO_INHERIT` -- automatic propagation to EXISTING children -- DEFERRED: needs the object-tree enumeration + re-stamp path
+- [ ] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): pass the parent directory's SD as `ParentSD` -- DEFERRED: `ob_alloc_object` takes no parent-SD/parent-object parameter (needs a signature change or wrapper)
+- [ ] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode inherits parent SD -- DEFERRED: IXFS has no per-inode security-descriptor storage yet
+- [x] `SE_DACL_PROTECTED` flag on child SD blocks ACE inheritance from parent (assign_security.c `child_protected` skips the inherit source -> fail-closed default)
+- [x] Commit: `"kernel/security: SeAssignSecurity -- SD inheritance, ACE propagation, canonical ordering"`
 
-**Test checkpoint:** Create directory with DACL granting BA full control with `CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE`. Create file inside directory with no explicit SD. Verify file's DACL contains inherited ACE for BA with `INHERITED_ACE` flag set. Create subdirectory -- verify inherited ACE propagates. Create file in subdirectory with `SE_DACL_PROTECTED` -- verify no inherited ACEs. Serial log: `"[SRM] SeAssignSecurity: inherited N ACEs from parent"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_se_assign_security` (SUITE=security) builds a parent DACL (allow SYSTEM CI|OI, deny World OI-only) and calls `SeAssignSecurity` directly: file child inherits both ACEs with `INHERITED_ACE` only (no propagation), deny-before-allow canonical order; directory child gets the CI|OI allow applied+propagating and the OI-only deny as `INHERITED_ACE|INHERIT_ONLY_ACE|OBJECT_INHERIT_ACE`; `SE_DACL_PROTECTED` -> 3-ACE fail-closed fallback (never a NULL DACL); no resolvable owner -> `STATUS_INVALID_PARAMETER`; `SeDeassignSecurity` NULLs the pointer. End-to-end file/dir creation via serial log is deferred with the VFS/IXFS wiring. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | N suites, 0 failures
+
+> **Notes:**
+> - Partial ship: `SeAssignSecurity`/`SeDeassignSecurity` (assign_security.c/.h) -- DACL-source selection, ACE inheritance with the 4 propagation flags, canonical deny-before-allow ordering, `SE_DACL_PROTECTED`, owned single-block SD/DACL/Owner/Group.
+> - Interim: subject is `ACCESS_TOKEN*` (no `SECURITY_SUBJECT_CONTEXT`), matching mic.c/privileges.c; `GenericMapping`/`PoolType`/SACL out of scope; DACL sourced from ONE origin (no explicit+inherited merge).
+> - Design review adoptions in the ship commit: NULL token DefaultDacl -> fail-closed default (never NULL DACL); NewSD owns copied Owner/Group SIDs; OI-only ACEs propagate to directory children as INHERIT_ONLY.
+> - Deferred (need object-path infra): `SeAssignSecurityEx` auto-inherit, `ObCreateObject` wiring (no parent-SD param), VFS/IXFS wiring (no per-inode SD storage) -- items kept `[ ]` in this section.
 
 ---
 
