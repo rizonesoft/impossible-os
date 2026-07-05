@@ -189,11 +189,12 @@ title: "TODO-15 -- Security Reference Monitor"
 - [x] Commit: `"kernel/security: privilege LUID table and PRIVILEGE_SET types"`
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security), 12 suites, 57 assertions, 0 failures
-> **Verified on WHPX** (2026-04-14): 57 tests passed, 0 failed (0.3s)
-
-> **Verified** (2026-04-14): 24 privilege LUID constants at privileges.h:46-69, all with HighPart=0 via SE_PRIVILEGE_LUID macro. LowPart values match Windows SDK exactly (gaps at 6,16,22,24,26,27 intentional). LUID_AND_ATTRIBUTES at privileges.h:79-82 (12 bytes, _Static_assert). PRIVILEGE_SET at privileges.h:89-93 (base 8 bytes, Control at offset 4, _Static_assert). TOKEN_PRIVILEGES at privileges.h:97-100 (base 4 bytes, _Static_assert). SE_PRIVILEGE_* attribute values match Windows SDK (ENABLED_BY_DEFAULT=1, ENABLED=2, REMOVED=4, USED_FOR_ACCESS=0x80000000). RtlPrivilegeLuidToName at privileges.c:71-84 (bounded scan, 24 entries). RtlPrivilegeSetToString at privileges.c:88-137 (remaining-length safe, len < 8 guard). All 24 privileges consumed in token.c SeCreateSystemToken/SeCreateUserToken. Build clean.
-> **Accepted:** PRIVILEGE_SET_ALL_NECESSARY and SE_PRIVILEGE_USED_FOR_ACCESS defined but not consumed; these are ABI constants for struct completeness; consumers planned in -> XREF: 02-kernel-core/TODO-15 §3 (SePrivilegeCheck).
-> **Quality reviewed** (2026-04-14): dead code clean (all 24 privileges in g_priv_names[] + token.c). Consistency verified: g_priv_names[] index mapping validated by test iterating all 24 LUIDs. RtlPrivilegeSetToString: len < 8 guard prevents WHPX freeze in snprintf variadic truncation path (root cause: compiler code gen edge case with small buffer + variadic call inside loop; standalone snprintf passes; function-internal call freezes). Remaining-length arithmetic safe. Performance bounded: linear scan over 24 entries max. Tests: all-24-LUID name mapping, unknown LUID rejection, RtlPrivilegeSetToString output + NULL + guard (len=4) + truncation (len=32), privilege struct ABI sizes.
+> **Notes:**
+> - Privilege constants + structs: 24 Windows-numbered `SE_*_PRIVILEGE` LUIDs, the `LUID_AND_ATTRIBUTES`/`PRIVILEGE_SET`/`TOKEN_PRIVILEGES` ABI structs (`_Static_assert`s), `RtlPrivilegeLuidToName` + `RtlPrivilegeSetToString`.
+> - Consumed by `SePrivilegeCheck`/`SePrivilegeCheckToken` (§8): the `PRIVILEGE_SET_ALL_NECESSARY` control + `SE_PRIVILEGE_USED_FOR_ACCESS` marking (the earlier "not consumed" gap is resolved).
+> - Scope boundary: §8 owns the privilege-check engine; SID-primitive hardening (SHA-1/const-time) is §16.
+> **Verified:** 2026-07-05 | commit `3d419da4` | 3/3 items | build OK | 12 suites / 57 assertions (WHPX 2026-04-14)
+> **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) + Opus kernel-quality-auditor | 1M+1L fixed | scope: kernel-code-quality
 
 ---
 

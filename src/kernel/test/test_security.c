@@ -344,6 +344,13 @@ static void test_privilege_set_to_string(void)
         /* Truncation path: len=32 enters loop but truncates privilege name */
         rc = RtlPrivilegeSetToString(ps2, out, 32);
         TEST_ASSERT(rc >= 0, "RtlPrivilegeSetToString with len=32 truncates safely");
+
+        /* Malformed count: a 1-entry set claiming a count over TOKEN_MAX_PRIVS
+         * must fail closed rather than read past the backing array. */
+        ps2->PrivilegeCount = TOKEN_MAX_PRIVS + 1;
+        rc = RtlPrivilegeSetToString(ps2, out, sizeof(out));
+        TEST_ASSERT(rc == -1,
+                    "RtlPrivilegeSetToString rejects PrivilegeCount > TOKEN_MAX_PRIVS");
     }
 }
 

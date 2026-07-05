@@ -96,6 +96,13 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len)
     if (!ps || !buf || len < 4)
         return -1;
 
+    /* Fail closed on an implausibly large privilege count: this debug formatter
+     * has no byte-length span for `ps`, so a count above the maximum a subject
+     * can hold is malformed and iterating ps->Privilege[] would read past the
+     * backing storage. Matches the SePrivilegeCheck cap in this file. */
+    if (ps->PrivilegeCount > TOKEN_MAX_PRIVS)
+        return -1;
+
     /* Clamp to buffer: if caller passes a very small len, the snprintf
      * truncation path must not write past the buffer. Early return for
      * buffers too small to hold even a truncated privilege name. */
