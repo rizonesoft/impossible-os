@@ -45,7 +45,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎   |   1   | Notification state object type        | T05        |  [x]   |
 | 💎   |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
 | 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
-| 💎   |   4   | Security and namespace policy         | T15        |  [ ]   |
+| 💎   |   4   | Security and namespace policy         | T15        |  [/]   |
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [ ]   |
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [ ]   |
 | ⭐   |   7   | Coalescing and payload retention      | §2         |  [ ]   |
@@ -141,6 +141,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Design note (code header): reuse the SRM SID/token/`SECURITY_DESCRIPTOR` infrastructure for access checks, NOT a bespoke capability-metadata scheme -- Linux kdbus was rejected from mainline (2015) for exactly that NIH design.
 
 **Test checkpoint:** `test_knf` builds a state with a DACL granting SUBSCRIBE but not PUBLISH to a user token, then asserts `knf_publish` under that token returns `STATUS_ACCESS_DENIED` while `knf_subscribe` succeeds; a kernel-only security state rejects a user-mode publish; the denied attempt increments the audit counter. Serial: `"[KNF] publish denied sid=%s"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] §4 not started -- the DACL access masks (query/subscribe/publish/create/delete), DACL-gated create-or-open, and access-denied auditing all require the `SeAccessCheck` engine, which is itself deferred/blocked -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck`" at line 364)
+> **Deferred:** [M] restricted-token create-gate fixture needs a restricted token, also deferred -> XREF: 02-kernel-core/TODO-15 §9 (item: "`NtFilterToken(ExistingToken, Flags, SidsToDisable" at line 508)
 
 ---
 
