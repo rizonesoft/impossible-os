@@ -67,7 +67,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [x]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §5, §6, §7      |  [/]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [/]   |
-| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
+| ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [/]   |
 | 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [ ]   |
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [ ]   |
 | 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [ ]   |
@@ -583,6 +583,11 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] Commit: `"kernel/security: whoami.exe and token tray popout"`
 
 **Test checkpoint:** `whoami /all` in QEMU serial console shows: user SID (`S-1-5-18` for system), group list with attributes (Enabled/Disabled/DenyOnly), and privilege table with status column. Output columns are tab-aligned. `whoami /priv` shows at least 20 privilege entries. Tray popout (stretch): right-click tray → "Token Info" → flyout renders. Serial log: `"[SRM] whoami: user=%s groups=%u privs=%u"`. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - Deferred (cascade): the CLI calls Win32 `OpenProcessToken`/`GetTokenInformation`, which are the §10 wrapper layer -- deferred at design review pending the advapi32 trampoline + per-thread kernel Win32 last-error facility.
+> - Tray popout additionally needs the desktop compositor security integration (integrity-level badge + elevation flyout), which has no owning surface until the Win32 token wrappers land.
+> **Deferred:** [High] whoami.exe + token tray popout are blocked on the §10 Win32 security wrappers (no user-mode advapi32 surface yet) -> XREF: 02-kernel-core/TODO-15 §10 (Win32 security API wrappers, IO row 10)
 
 ---
 
