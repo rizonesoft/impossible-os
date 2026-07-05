@@ -257,8 +257,10 @@ static void test_luid_allocator(void)
     LUID a = NtAllocateLocallyUniqueId();
     LUID b = NtAllocateLocallyUniqueId();
 
-    /* Monotonically increasing */
-    TEST_ASSERT(b.LowPart > a.LowPart,
+    /* Monotonically increasing (compare the full 64-bit value, not just LowPart,
+     * so a value that straddled the 32-bit boundary would not read as a drop). */
+    TEST_ASSERT((((uint64_t)(uint32_t)b.HighPart << 32) | b.LowPart) >
+                (((uint64_t)(uint32_t)a.HighPart << 32) | a.LowPart),
                 "LUID allocator is monotonically increasing");
 
     /* Not equal */
@@ -598,7 +600,9 @@ static void test_nt_allocate_luid(void)
     status = ssdt_dispatch(SSDT_NtAllocateLocallyUniqueId,
                            (uint64_t)(uintptr_t)&b, 0, 0, 0, 0, 0);
     TEST_ASSERT(NT_SUCCESS(status), "Second SSDT dispatch succeeds");
-    TEST_ASSERT(b.LowPart > a.LowPart, "LUIDs are monotonically increasing");
+    TEST_ASSERT((((uint64_t)(uint32_t)b.HighPart << 32) | b.LowPart) >
+                (((uint64_t)(uint32_t)a.HighPart << 32) | a.LowPart),
+                "LUIDs are monotonically increasing (full 64-bit)");
 
     /* NULL out pointer returns INVALID_PARAMETER */
     status = ssdt_dispatch(SSDT_NtAllocateLocallyUniqueId, 0, 0, 0, 0, 0, 0);

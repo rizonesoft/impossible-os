@@ -792,6 +792,9 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > - Partial ship: 64-bit LUID allocator (luid.c) -- `atomic64_t` counter + `RtlLuidFromValue()` split; the identifier no longer recycles after ~4B allocations. Closes 1 of the 3 accepted §1-review findings.
 > - SMP-safe by construction: `atomic64_fetch_add(+1)` gives every caller a unique post-increment value with no lock; preserves the prior monotonic semantics (first alloc 1001).
 > - Deferred (crypto): SHA-1 service-SID derivation needs `cng_sha1()`, constant-time SID compare needs `cng_consttime_compare()` -- both open `[ ]` in 09-desktop-shell/TODO-07 §1 (`crypto/sha1.c` is not a substitute).
+> **Verified:** 2026-07-05 | commit `e2ea01d6` | 1/3 items | build OK | tests compile (security suite; runtime on WHPX)
+> **Deferred:** [M] SHA-1 service-SID derivation + constant-time SID compare are blocked on the CNG crypto primitives -> XREF: 09-desktop-shell/TODO-07 §1 (item: "`cng_sha1`" at line 79, item: "`cng_consttime_compare`" at line 78)
+> **Quality reviewed:** 2026-07-05 | Codex 4x (design, adversarial, consistency, perf) + Opus kernel-quality-auditor | 1L fixed | scope: kernel-code-quality
 
 ---
 
