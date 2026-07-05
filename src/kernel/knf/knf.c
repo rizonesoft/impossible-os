@@ -392,14 +392,9 @@ static void knf_trace_publish(const char *category, const char *name,
     struct task   *t;
     uint32_t       pid, tid;
 
-    /* A traced publish that lands at >= DISPATCH_LEVEL (a DPC/driver producer
-     * with a pre-reserved payload -- a documented knf_publish context) cannot
-     * be mirrored: klog/ETW take locks in thread context. Drop it, but COUNT
-     * the drop so the loss is observable to diagnostics, not silent. */
-    if (KeGetCurrentIrql() >= DISPATCH_LEVEL) {
-        __atomic_fetch_add(&knf_trace_drops_at_dispatch.val, 1, __ATOMIC_RELAXED);
-        return;
-    }
+    /* Caller (knf_publish) only reaches here below DISPATCH_LEVEL: a >= DISPATCH
+     * publish is counted as a drop and never enters the bridge (klog/ETW need
+     * thread context). So no IRQL check is needed here. */
 
     /* No current thread (a pre-scheduler boot publish): the recursion guard
      * lives on the thread, so without one it cannot arm -- skip emission and
@@ -432,13 +427,15 @@ static void knf_trace_publish(const char *category, const char *name,
 
     if (flags & KNF_TRACE_KLOG)
         klog(LOG_INFO, "knf", "publish '%s\\%s' seq=%llu pid=%u",
-             category, name, (uint64_t)seq, pid);
+             category, name, (uint64_t)seq, (uint64_t)pid);
 
     if (flags & KNF_TRACE_ETW) {
         KNF_ETW_RECORD rec;
         memset(&rec, 0, sizeof(rec));
-        strncpy(rec.category, category, KNF_NAME_MAX - 1);
-        strncpy(rec.name, name, KNF_NAME_MAX - 1);
+        /* category/name are already fixed-size KNF_NAME_MAX NUL-padded
+         * snapshots, so copy them whole -- no per-byte strncpy scan/pad. */
+        memcpy(rec.category, category, KNF_NAME_MAX);
+        memcpy(rec.name, name, KNF_NAME_MAX);
         rec.sequence = seq;
         rec.pid      = pid;
         rec.tid      = tid;
@@ -461,6 +458,7 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     uint32_t               trace_flags = 0;
     char                   trace_name[KNF_NAME_MAX];
     char                   trace_category[KNF_NAME_MAX];
+    int                    trace_below_dispatch;
 
     if (!st || len > KNF_MAX_PAYLOAD || (len > 0 && !data))
         return STATUS_INVALID_PARAMETER;
@@ -473,6 +471,14 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
      * publish work at interrupt priority). */
     if (KeGetCurrentIrql() > DISPATCH_LEVEL)
         return STATUS_UNSUCCESSFUL;
+
+    /* Capture whether the caller is below DISPATCH_LEVEL NOW, before the lock:
+     * a DISPATCH-level publish cannot be traced (the klog/ETW bridge needs
+     * thread context), so there is no point paying the 128-byte identity copy
+     * under the lock for it. Captured here because spin_lock_irqsave raises the
+     * software IRQL, so a read taken while the lock is held would not reflect
+     * the caller's true level. */
+    trace_below_dispatch = (KeGetCurrentIrql() < DISPATCH_LEVEL);
 
     /* Typed states accept only a payload carrying the registered tag; the blob
      * stays opaque to the kernel but the type contract is enforced. */
@@ -558,9 +564,11 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
 
     /* Snapshot the trace opt-ins + identity (category + leaf) UNDER the lock so
      * the post-unlock bridge never reads a torn/stale trace_flags racing
-     * knf_set_trace_flags. category+name together identify the state. */
+     * knf_set_trace_flags. category+name together identify the state. Skip the
+     * 128-byte identity copy for a DISPATCH-level publish -- it can never be
+     * emitted (it is counted as a drop after unlock instead). */
     trace_flags = st->trace_flags;
-    if (trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW)) {
+    if ((trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW)) && trace_below_dispatch) {
         memcpy(trace_name, st->name, KNF_NAME_MAX);
         memcpy(trace_category, st->category, KNF_NAME_MAX);
     }
@@ -572,9 +580,15 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     if (oldbuf)
         kfree(oldbuf);                /* replaced buffer, freed outside the lock */
 
-    /* Observability bridge: klog/ETW mirror, off the lock, below DISPATCH only. */
-    if (trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW))
-        knf_trace_publish(trace_category, trace_name, next_seq, trace_flags);
+    /* Observability bridge: klog/ETW mirror, off the lock, below DISPATCH only.
+     * A DISPATCH-level publish is counted as a drop here (its identity was never
+     * copied) rather than paying the bridge call just to bail. */
+    if (trace_flags & (KNF_TRACE_KLOG | KNF_TRACE_ETW)) {
+        if (trace_below_dispatch)
+            knf_trace_publish(trace_category, trace_name, next_seq, trace_flags);
+        else
+            __atomic_fetch_add(&knf_trace_drops_at_dispatch.val, 1, __ATOMIC_RELAXED);
+    }
 
     if (out_prev)
         *out_prev = prev;

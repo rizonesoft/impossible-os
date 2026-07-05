@@ -67,6 +67,15 @@ typedef struct knf_etw_record {
 
 _Static_assert(sizeof(KNF_ETW_RECORD) == 2 * KNF_NAME_MAX + 20,
                "KNF_ETW_RECORD is a pinned ETW ABI record -- layout must not drift");
+/* Pin every field OFFSET, not just the total size: the struct is packed, so a
+ * same-width reorder (e.g. swapping pid/tid) would keep sizeof at 2*NAME_MAX+20
+ * yet silently change the wire layout every reader decodes. */
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, category) == 0,               "KNF ABI: category offset");
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, name)     == KNF_NAME_MAX,     "KNF ABI: name offset");
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, sequence) == 2 * KNF_NAME_MAX, "KNF ABI: sequence offset");
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, pid)      == 2 * KNF_NAME_MAX + 8,  "KNF ABI: pid offset");
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, tid)      == 2 * KNF_NAME_MAX + 12, "KNF ABI: tid offset");
+_Static_assert(__builtin_offsetof(KNF_ETW_RECORD, status)   == 2 * KNF_NAME_MAX + 16, "KNF ABI: status offset");
 
 /* --- Lifetime classes (mirror WNF_STATE_NAME_LIFETIME) ------------------- */
 

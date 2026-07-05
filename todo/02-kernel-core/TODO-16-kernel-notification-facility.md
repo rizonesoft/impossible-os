@@ -173,7 +173,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [x] `knf_publish` mirrors to klog/ETW off the lock (snapshot under lock), below DISPATCH_LEVEL; `ETW_EVT_KNF_PUBLISH` 0x1200 packs `KNF_ETW_RECORD` (category+leaf identity, pinned ABI in `knf.h`); every suppression path counted.
 - [x] Commit: `"kernel/knf: ETW/klog bridge flags (KNF_TRACE_ETW/KLOG/PERSIST_LAST) + recursion guard"`
 
-**Test checkpoint:** `test_knf` sets `KNF_TRACE_KLOG`+`KNF_TRACE_ETW` on a state, publishes, and asserts the publish succeeds + sequence advances with the bridge running off-lock; unknown trace bits and a NULL state are rejected; clearing the flags disables the bridge. Serial (WHPX): the `[knf] publish '<name>' seq=N pid=P` klog line + one `ETW_EVT_KNF_PUBLISH` record. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf` sets `KNF_TRACE_KLOG`+`KNF_TRACE_ETW` on a state, publishes, and asserts the publish succeeds + sequence advances with the bridge running off-lock; unknown trace bits and a NULL state are rejected; clearing the flags disables the bridge; a duplicate leaf in two categories keeps distinct `category` identity. Serial (WHPX): the `[knf] publish '<category>\<name>' seq=N pid=P` klog line + one `ETW_EVT_KNF_PUBLISH` record. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 22 suites, 0 failures
 > **Notes:**
@@ -181,6 +181,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - The bridge runs OFF the state lock (snapshot flags+name under lock, emit after), only below DISPATCH_LEVEL, guarded per-thread against re-entry; opt-in per state (default off), so it never touches the DPC publish fast path.
 > - Codex design + adversarial adoptions in the commit message (snapshot-under-lock, atomic-exchange recursion guard, category+leaf ETW identity in shared header, all suppression paths counted: DISPATCH + guard + no-thread); `KNF_PERSIST_LAST` behavior owned by §7.
 > - Canonical doc: this TODO; §7 owns coalescing/retention (incl. `KNF_PERSIST_LAST`), §9 owns diagnostics counters.
+> **Verified:** 2026-07-06 | commit `bc708dc6` | 3/3 items | build OK | tests 154/154 PASS
+> **Quality reviewed:** 2026-07-06 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M+1L fixed | scope: kernel-code-quality
 
 ---
 
