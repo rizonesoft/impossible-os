@@ -268,6 +268,20 @@ static void test_luid_allocator(void)
     /* Not zero */
     TEST_ASSERT(RtlIsZeroLuid(&a) == 0,
                 "Allocated LUID is not zero");
+
+    /* 64-bit split: the value carries into HighPart past the 32-bit boundary,
+     * so the identifier no longer recycles after ~4 billion allocations. */
+    {
+        LUID lo   = RtlLuidFromValue(0xFFFFFFFFULL);
+        LUID wrap = RtlLuidFromValue(0x100000000ULL);
+        LUID hi   = RtlLuidFromValue(0x1FFFFFFFFULL);
+        TEST_ASSERT(lo.LowPart == 0xFFFFFFFFu && lo.HighPart == 0,
+                    "RtlLuidFromValue: max 32-bit value keeps HighPart 0");
+        TEST_ASSERT(wrap.LowPart == 0 && wrap.HighPart == 1,
+                    "RtlLuidFromValue: wrap carries into HighPart");
+        TEST_ASSERT(hi.LowPart == 0xFFFFFFFFu && hi.HighPart == 1,
+                    "RtlLuidFromValue: high dword above the wrap");
+    }
 }
 
 /* ---- RtlPrivilegeSetToString ---- */

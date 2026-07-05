@@ -32,7 +32,16 @@ static inline int RtlIsZeroLuid(const LUID *l)
 /* --- API ----------------------------------------------------------------- */
 
 /*
+ * RtlLuidFromValue -- split a 64-bit counter value into a LUID's LowPart /
+ * (signed) HighPart, matching the Windows LUID representation. Pure helper;
+ * exposed so the wrap-carry behavior is unit-testable without exhausting the
+ * 32-bit range.
+ */
+LUID RtlLuidFromValue(uint64_t value);
+
+/*
  * NtAllocateLocallyUniqueId -- return the next unique LUID.
- * Monotonically incrementing, SMP-safe (atomic counter).
+ * Monotonically incrementing, SMP-safe (64-bit atomic counter that carries into
+ * HighPart, so the identifier never wraps after ~4 billion allocations).
  */
 LUID NtAllocateLocallyUniqueId(void);

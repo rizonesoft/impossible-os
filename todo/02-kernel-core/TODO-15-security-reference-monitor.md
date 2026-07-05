@@ -72,7 +72,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [/]   |
 | 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [/]   |
 | ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [/]   |
-| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5          |  [ ]   |
+| 💎  |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5          |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -780,11 +780,18 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 > Addresses three accepted findings from the TODO-15 §1 review. These are correctness and hardening upgrades to the SID/LUID primitives that depend on a SHA library (`TODO-03-kernel-libraries.md §5` Monocypher for the kernel path; `09-desktop-shell/TODO-07 §1` CNG for the user path). Not blocking for current security functionality but required for Windows parity and long-term robustness.
 
 - [ ] **SHA-1 service SID derivation:** replace `fnv1a_hash_name()` in `RtlCreateServiceSid` with Windows-compatible derivation: uppercase-normalize service name, compute SHA-1 hash (via `cng_sha1()`), map 160 bits into 5 SubAuthority DWORDs. Verify against known Windows service SID vectors (e.g., `S-1-5-80-...` for "TrustedInstaller"). Remove `fnv1a_hash_name()` dead code after replacement. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_sha1()`)
-- [ ] **64-bit LUID allocator:** upgrade `NtAllocateLocallyUniqueId` in `luid.c` to use a 64-bit atomic counter (`atomic64_t`). Split counter value into `LowPart` and `HighPart` on return. Eliminates wrap-around after ~4B allocations. Add regression test: allocate 2 LUIDs, verify `HighPart` is populated correctly when `LowPart` would wrap. (-> XREF: kernel/atomic.h for `atomic64_t` support)
+- [x] **64-bit LUID allocator:** `NtAllocateLocallyUniqueId` (luid.c) uses `atomic64_t` + `atomic64_fetch_add(+1)`; new pure `RtlLuidFromValue()` splits into LowPart/(signed)HighPart, carrying past the 32-bit wrap (unit-tested).
 - [ ] **Constant-time SID comparison:** replace `memcmp` in `RtlEqualSid` with `cng_consttime_compare()` to eliminate timing side-channel on SID equality checks. Gate on `cng_ready()` flag (fall back to `memcmp` during early boot before CNG is initialized). Add unit test: verify `RtlEqualSid` returns correct result and call duration does not correlate with prefix match length. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_consttime_compare()`)
 - [ ] Commit: `"kernel/security: SID/LUID hardening -- SHA-1 service SIDs, 64-bit LUID, constant-time compare"`
 
-**Test checkpoint:** `RtlCreateServiceSid("TrustedInstaller")` produces the same SID as Windows (`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`). LUID allocator returns increasing values with non-zero `HighPart` after simulated 32-bit boundary. `RtlEqualSid` timing variance < 5% between full-match and first-byte-mismatch cases (kernel cycle counter measurement). Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `RtlCreateServiceSid("TrustedInstaller")` produces the same SID as Windows (`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`). LUID allocator returns increasing values with non-zero `HighPart` after simulated 32-bit boundary. `RtlEqualSid` timing variance < 5% between full-match and first-byte-mismatch cases (kernel cycle counter measurement). LUID shipped: `test_luid_allocator` asserts `RtlLuidFromValue(0xFFFFFFFF).HighPart==0`, `RtlLuidFromValue(0x100000000)` == {Low 0, High 1}, `RtlLuidFromValue(0x1FFFFFFFF)` == {Low 0xFFFFFFFF, High 1}, and consecutive allocations stay monotonic. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | N suites, 0 failures
+
+> **Notes:**
+> - Partial ship: 64-bit LUID allocator (luid.c) -- `atomic64_t` counter + `RtlLuidFromValue()` split; the identifier no longer recycles after ~4B allocations. Closes 1 of the 3 accepted §1-review findings.
+> - SMP-safe by construction: `atomic64_fetch_add(+1)` gives every caller a unique post-increment value with no lock; preserves the prior monotonic semantics (first alloc 1001).
+> - Deferred (crypto): SHA-1 service-SID derivation needs `cng_sha1()`, constant-time SID compare needs `cng_consttime_compare()` -- both open `[ ]` in 09-desktop-shell/TODO-07 §1 (`crypto/sha1.c` is not a substitute).
 
 ---
 
