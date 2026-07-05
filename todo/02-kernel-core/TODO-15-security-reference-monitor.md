@@ -657,10 +657,11 @@ When a new object is created (file, directory, registry key, process) without an
 - [ ] `SeAssignSecurityEx` with `SEF_DACL_AUTO_INHERIT` / `SEF_SACL_AUTO_INHERIT` -- automatic propagation to EXISTING children -- DEFERRED: needs the object-tree enumeration + re-stamp path
 - [ ] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): pass the parent directory's SD as `ParentSD` -- DEFERRED: `ob_alloc_object` takes no parent-SD/parent-object parameter (needs a signature change or wrapper)
 - [ ] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode inherits parent SD -- DEFERRED: IXFS has no per-inode security-descriptor storage yet
-- [x] `SE_DACL_PROTECTED` flag on child SD blocks ACE inheritance from parent (assign_security.c `child_protected` skips the inherit source -> fail-closed default)
+- [x] `SE_DACL_PROTECTED` on child SD blocks PARENT inheritance (assign_security.c: skips the inherit branch -> falls through to token DefaultDacl if present, else fail-closed default; flag preserved on output SD)
+- [ ] Inherit conditional (callback) ACEs preserving their condition BLOB -- assign_security.c FAILS CLOSED on an inheritable callback ACE today; needs SeAccessCheck conditional evaluation (→ XREF §5 item "Implement SeAccessCheck" at line 358)
 - [x] Commit: `"kernel/security: SeAssignSecurity -- SD inheritance, ACE propagation, canonical ordering"`
 
-**Test checkpoint:** `test_se_assign_security` (SUITE=security) builds a parent DACL (allow SYSTEM CI|OI, deny World OI-only) and calls `SeAssignSecurity` directly: file child inherits both ACEs with `INHERITED_ACE` only (no propagation), deny-before-allow canonical order; directory child gets the CI|OI allow applied+propagating and the OI-only deny as `INHERITED_ACE|INHERIT_ONLY_ACE|OBJECT_INHERIT_ACE`; `SE_DACL_PROTECTED` -> 3-ACE fail-closed fallback (never a NULL DACL); no resolvable owner -> `STATUS_INVALID_PARAMETER`; `SeDeassignSecurity` NULLs the pointer. End-to-end file/dir creation via serial log is deferred with the VFS/IXFS wiring. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_se_assign_security` (SUITE=security) builds a parent DACL (allow SYSTEM CI|OI, deny World OI-only) and calls `SeAssignSecurity` directly: file child inherits both ACEs with `INHERITED_ACE` only (no propagation), deny-before-allow canonical order; directory child gets the CI|OI allow applied+propagating and the OI-only deny as `INHERITED_ACE|INHERIT_ONLY_ACE|OBJECT_INHERIT_ACE`; `SE_DACL_PROTECTED` with no token DefaultDacl -> 3-ACE fail-closed fallback (never a NULL DACL) with the flag preserved on the output SD; no resolvable owner, a malformed owner SID, and an inheritable conditional (callback) ACE each -> `STATUS_INVALID_PARAMETER`; `SeDeassignSecurity` NULLs the pointer. End-to-end file/dir creation via serial log is deferred with the VFS/IXFS wiring. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | N suites, 0 failures
 
@@ -669,6 +670,10 @@ When a new object is created (file, directory, registry key, process) without an
 > - Interim: subject is `ACCESS_TOKEN*` (no `SECURITY_SUBJECT_CONTEXT`), matching mic.c/privileges.c; `GenericMapping`/`PoolType`/SACL out of scope; DACL sourced from ONE origin (no explicit+inherited merge).
 > - Design review adoptions in the ship commit: NULL token DefaultDacl -> fail-closed default (never NULL DACL); NewSD owns copied Owner/Group SIDs; OI-only ACEs propagate to directory children as INHERIT_ONLY.
 > - Deferred (need object-path infra): `SeAssignSecurityEx` auto-inherit, `ObCreateObject` wiring (no parent-SD param), VFS/IXFS wiring (no per-inode SD storage) -- items kept `[ ]` in this section.
+> - Review adversarial adoptions (commit message has evidence): fail closed on any inheritable conditional (callback) ACE (0x09/0x0A/0x0D/0x0E) rather than silently dropping it; RtlValidSid owner/group before sizing; SE_DACL_PROTECTED preserved on output.
+> **Verified:** 2026-07-05 | commit `8596fd6a` | 4/8 items | build OK | tests compile (security suite; runtime on WHPX)
+> **Accepted:** [M] `dacl_shape_ok` uses AclSize as the readable extent (a trusted-owned-kernel-SD assumption; an untrusted imported SD must be bounded first) -> XREF: 02-kernel-core/TODO-15 §12 (item: "`NtSetSecurityObject`" at line 611)
+> **Quality reviewed:** 2026-07-05 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) + Opus kernel-quality-auditor | 4H+6M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

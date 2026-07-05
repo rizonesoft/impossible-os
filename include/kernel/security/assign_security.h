@@ -9,6 +9,11 @@
  * than a SECURITY_SUBJECT_CONTEXT (that type is owned by the deferred
  * SeAccessCheck engine work); this matches the mic.c / privileges.c interim
  * convention. Owner/Group/DACL fallback defaults come from the token.
+ *
+ * ParentSD/CreatorSD/token DACLs MUST be TRUSTED owned kernel descriptors (their
+ * AclSize is used as the readable extent). An imported/untrusted SD must be
+ * bounded by RtlSelfRelativeToAbsoluteSD(known_len) at the syscall boundary
+ * (NtSetSecurityObject) before reaching this function.
  * ============================================================================ */
 
 #pragma once
@@ -45,8 +50,10 @@ struct access_token;
  *
  * *NewSD receives a single owned allocation containing the descriptor, its DACL,
  * and copied Owner/Group SIDs; free it with SeDeassignSecurity. Returns
- * STATUS_SUCCESS, STATUS_INVALID_PARAMETER (no owner resolvable / bad input), or
- * STATUS_INSUFFICIENT_RESOURCES (allocation failed / DACL exceeds one page).
+ * STATUS_SUCCESS; STATUS_INVALID_PARAMETER (no owner resolvable, malformed SID,
+ * malformed explicit DACL, or an unsupported inheritable conditional ACE);
+ * STATUS_INSUFFICIENT_RESOURCES (descriptor would exceed one page); or
+ * STATUS_NO_MEMORY (the backing allocation failed).
  */
 NTSTATUS SeAssignSecurity(const SECURITY_DESCRIPTOR *ParentSD,
                           const SECURITY_DESCRIPTOR *CreatorSD,

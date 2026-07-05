@@ -1188,6 +1188,41 @@ static void test_se_assign_security(void)
         TEST_ASSERT(st == STATUS_INVALID_PARAMETER,
                     "no resolvable owner -> STATUS_INVALID_PARAMETER");
     }
+
+    /* Malformed owner SID (SubAuthorityCount over the 15 cap) fails closed
+     * BEFORE any DACL sizing/copy touches it. */
+    {
+        uint8_t badsid[16] = {0};
+        SECURITY_DESCRIPTOR bad;
+        badsid[0] = 1;    /* Revision */
+        badsid[1] = 20;   /* SubAuthorityCount > SID_MAX_SUB_AUTHORITIES */
+        RtlCreateSecurityDescriptor(&bad, SECURITY_DESCRIPTOR_REVISION);
+        RtlSetOwnerSecurityDescriptor(&bad, (SID *)badsid, 0);
+        st = SeAssignSecurity(&parent, &bad, 0, (struct access_token *)0, &child);
+        TEST_ASSERT(st == STATUS_INVALID_PARAMETER,
+                    "malformed owner SID -> STATUS_INVALID_PARAMETER");
+    }
+
+    /* An inheritable conditional (callback) ACE on the parent fails closed
+     * rather than being silently dropped (would lose an inheritable deny). */
+    {
+        uint8_t cbuf[64];
+        ACL *cdacl = (ACL *)cbuf;
+        SECURITY_DESCRIPTOR cbparent, creator2;
+        RtlCreateAcl(cdacl, sizeof(cbuf), ACL_REVISION);
+        RtlAddAccessAllowedAce(cdacl, ACL_REVISION, GENERIC_ALL, SeLocalSystemSid);
+        RtlGetAce(cdacl, 0, &ace);
+        ace->AceType = SYSTEM_AUDIT_CALLBACK_ACE_TYPE;   /* 0x0D -- audit callback */
+        ace->AceFlags = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
+        RtlCreateSecurityDescriptor(&cbparent, SECURITY_DESCRIPTOR_REVISION);
+        RtlSetOwnerSecurityDescriptor(&cbparent, (SID *)SeLocalSystemSid, 0);
+        RtlSetDaclSecurityDescriptor(&cbparent, 1, cdacl, 0);
+        RtlCreateSecurityDescriptor(&creator2, SECURITY_DESCRIPTOR_REVISION);
+        RtlSetOwnerSecurityDescriptor(&creator2, (SID *)SeLocalSystemSid, 0);
+        st = SeAssignSecurity(&cbparent, &creator2, 0, (struct access_token *)0, &child);
+        TEST_ASSERT(st == STATUS_INVALID_PARAMETER,
+                    "inheritable callback ACE on parent -> fail closed");
+    }
 }
 
 /* ---- Registration ---- */

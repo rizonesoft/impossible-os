@@ -29,6 +29,13 @@ extern void *memcpy(void *dst, const void *src, size_t n);
  * rather than silently truncating a grant/deny set. */
 #define SE_ASSIGN_MAX_SD  4096u
 
+/* The DACL region size is cast to the uint16_t AclSize field; the 4 KB cap keeps
+ * every region well under 0xFFFF. Pin that coupling so raising the cap past a
+ * uint16 (which would also break the kmalloc <= 4 KB rule) fails to compile
+ * instead of silently truncating an ACL size. */
+_Static_assert(SE_ASSIGN_MAX_SD <= 0xFFFFu,
+    "SE_ASSIGN_MAX_SD must stay within the uint16_t ACL AclSize field");
+
 /* ---- ACE field accessors (ACCESS_ALLOWED/DENIED layout: Header, Mask, SID) - */
 
 static uint32_t ace_mask(const ACE_HEADER *h)
@@ -46,10 +53,15 @@ static int ace_is_dacl_type(uint8_t t)
     return t == ACCESS_ALLOWED_ACE_TYPE || t == ACCESS_DENIED_ACE_TYPE;
 }
 
-/* A source ACL is safe to copy/walk only if its header fits and every ACE stays
- * within its declared AclSize. Even in-kernel SDs are validated before we
- * republish or inherit from them: a malformed AclSize would otherwise make the
- * returned Dacl point at a partial header a later ACL walker reads past. */
+/* Validate the internal shape of a TRUSTED source ACL (an owned kernel
+ * allocation whose AclSize is truthful) before we republish or inherit from it:
+ * confirms the 8-byte header fits and every ACE stays within the declared
+ * AclSize, so a corrupt AceSize/count cannot make the returned Dacl point at a
+ * partial header a later walker reads past. This is NOT an untrusted-buffer
+ * bound check: AclSize is used as the readable extent, which only holds when the
+ * caller owns the allocation. An imported/attacker-controlled SD must first be
+ * bounded by RtlSelfRelativeToAbsoluteSD(known_len) at the syscall boundary
+ * (NtSetSecurityObject) BEFORE it reaches SeAssignSecurity. */
 static int dacl_shape_ok(const ACL *acl)
 {
     return acl && acl->AclSize >= sizeof(ACL) &&
@@ -109,6 +121,42 @@ static int parent_has_inheritable(const SECURITY_DESCRIPTOR *parent, int is_dir)
         if (RtlGetAce(parent->Dacl, i, &ace) != 0)
             break;
         if (ace_is_dacl_type(ace->AceType) &&
+            inherit_child_flags(ace->AceFlags, is_dir, &cf))
+            return 1;
+    }
+    return 0;
+}
+
+/* True for every CONDITIONAL (callback) ACE type RtlValidAcl accepts as a valid
+ * SID-bearing ACE: allow/deny (0x09/0x0A) plus audit/alarm (0x0D/0x0E). */
+static int ace_is_callback_type(uint8_t t)
+{
+    return t == ACCESS_ALLOWED_CALLBACK_ACE_TYPE ||
+           t == ACCESS_DENIED_CALLBACK_ACE_TYPE ||
+           t == SYSTEM_AUDIT_CALLBACK_ACE_TYPE ||
+           t == SYSTEM_ALARM_CALLBACK_ACE_TYPE;
+}
+
+/* Does the parent DACL carry an inheritable CONDITIONAL (callback) ACE? Callback
+ * ACEs are SID-bearing and pass RtlValidAcl, but inheriting them correctly needs
+ * the conditional-expression evaluation that lives in the deferred SeAccessCheck
+ * engine. Rebuilding them as basic ACEs would drop the condition, and silently
+ * skipping them would drop an inheritable DENY -- so callers fail closed when
+ * this returns 1. Covers every callback type the validator accepts (including a
+ * misplaced audit/alarm callback ACE in a DACL) so none is silently dropped. */
+static int parent_has_inheritable_callback(const SECURITY_DESCRIPTOR *parent,
+                                           int is_dir)
+{
+    ACE_HEADER *ace;
+    uint32_t i;
+    uint8_t cf;
+
+    if (!parent || !dacl_shape_ok(parent->Dacl))
+        return 0;
+    for (i = 0; i < parent->Dacl->AceCount; i++) {
+        if (RtlGetAce(parent->Dacl, i, &ace) != 0)
+            break;
+        if (ace_is_callback_type(ace->AceType) &&
             inherit_child_flags(ace->AceFlags, is_dir, &cf))
             return 1;
     }
@@ -218,10 +266,27 @@ NTSTATUS SeAssignSecurity(const SECURITY_DESCRIPTOR *ParentSD,
     group_sid = (CreatorSD && CreatorSD->Group) ? CreatorSD->Group
               : (tok ? tok->PrimaryGroup : (SID *)0);
 
+    /* Validate the SIDs up front: the fallback DACL and the size pre-pass both
+     * call RtlLengthSid/RtlAddAccessAllowedAce on the owner before the later
+     * RtlCopySid would catch a malformed SID, so a bad SubAuthorityCount would
+     * otherwise drive an out-of-bounds read. */
+    if (!RtlValidSid(owner_sid))
+        return STATUS_INVALID_PARAMETER;
+    if (group_sid && !RtlValidSid(group_sid))
+        return STATUS_INVALID_PARAMETER;
+
     /* Pick the DACL source. */
     creator_explicit = CreatorSD && (CreatorSD->Control & SE_DACL_PRESENT) &&
                        !(CreatorSD->Control & SE_DACL_DEFAULTED);
     child_protected  = CreatorSD && (CreatorSD->Control & SE_DACL_PROTECTED);
+
+    /* If we would consult the parent for inheritance, refuse to proceed when it
+     * carries an inheritable conditional (callback) ACE: we cannot evaluate or
+     * faithfully copy it yet, and dropping an inheritable callback DENY would
+     * grant access the parent intended to deny. Fail closed. */
+    if (!creator_explicit && !child_protected &&
+        parent_has_inheritable_callback(ParentSD, IsDirectory))
+        return STATUS_INVALID_PARAMETER;
 
     if (creator_explicit) {
         if (CreatorSD->Dacl) {
