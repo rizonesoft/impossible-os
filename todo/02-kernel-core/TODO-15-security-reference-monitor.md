@@ -64,7 +64,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [/]   |
 | 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [/]   |
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [x]   |
-| 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
+| 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [x]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [ ]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [ ]   |
@@ -469,22 +469,26 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## 8. SePrivilegeCheck & Per-Privilege Enforcement
 
-- [ ] `SePrivilegeCheck(PrivilegeSet, ctx, AccessMode)`:
-  - If `AccessMode == KernelMode` → return `TRUE`
-  - For each LUID in `PrivilegeSet->Privilege`: scan effective token's `Privileges[]` for matching LUID with `SE_PRIVILEGE_ENABLED` attribute; if `PRIVILEGE_SET_ALL_NECESSARY`, all LUIDs must match; otherwise any one match suffices
-  - Write SACL audit record if `SE_PRIVILEGE_USED_FOR_ACCESS` (future)
-- [ ] `SeSinglePrivilegeCheck(Privilege, AccessMode)` -- common single-LUID shortcut; called throughout kernel for specific privilege gates
-- [ ] `SeCheckPrivilegedObject(PrivReq, Object, Desired, Mode)` -- combines `SeSinglePrivilegeCheck` with `SeAccessCheck`; used by backup/restore paths
-- [ ] `module_load()` -- `SeSinglePrivilegeCheck(SeLoadDriverPrivilege, UserMode)` before loading any `.kmod` from user request
-- [ ] `NtShutdownSystem` / `NtReboot` -- `SeSinglePrivilegeCheck( SeShutdownPrivilege, UserMode)`
-- [ ] `NtSystemDebugControl` / `NtOpenProcess` with `PROCESS_ALL_ACCESS` on another-user's process -- `SeSinglePrivilegeCheck(SeDebugPrivilege, UserMode)`
-- [ ] `NtSetSystemTime` -- `SeSinglePrivilegeCheck(SeSystemtimePrivilege, UserMode)`
-- [ ] `NtCreateSymbolicLinkObject` -- `SeSinglePrivilegeCheck( SeCreateSymbolicLinkPrivilege, UserMode)` for permanent symlinks
-- [ ] `NtQuerySystemInformation(SystemPerformanceInformation)` -- requires `SeSystemProfilePrivilege` if `mode == UserMode`
-- [ ] `RegSaveKey`/`RegRestoreKey` (+ `NtSaveKey`/`NtRestoreKey`) -- `SeSinglePrivilegeCheck(SeBackup/SeRestorePrivilege, UserMode)` then run the `hive_save`/`hive_load` body (today fail-closed) -> XREF: 02-kernel-core/TODO-14 §2
-- [ ] Commit: `"kernel/security: SePrivilegeCheck, privilege gates for driver load, shutdown, debug"`
+- [x] `SePrivilegeCheck(PRIVILEGE_SET *, access_mode)` in `privileges.c` -- KernelMode bypasses; else scans the effective token for each LUID with `SE_PRIVILEGE_ENABLED` (ALL_NECESSARY vs any), fail-closed on NULL token
+- [x] `SeSinglePrivilegeCheck(const LUID *, access_mode)` -- single-LUID gate. Effective token = `thread->impersonation_token ?: task->token` (mic.c interim; `SECURITY_SUBJECT_CONTEXT` deferred)
+- [/] `SeCheckPrivilegedObject` (combines privilege + `SeAccessCheck`) -- DEFERRED: `SeAccessCheck` not implemented -> XREF: 02-kernel-core/TODO-15 §5 (item: "`SeAccessCheck(SubjectContext, ...)`")
+- [/] `module_load()` SeLoadDriverPrivilege gate -- DEFERRED: `module_load` not implemented -> XREF: 04-drivers-hardware/TODO-05 §4 (item: "SeLoadDriverPrivilege gate on user kmod load")
+- [x] `NtShutdownSystem`/`NtReboot` (nt_syscall.c) + legacy `SYS_REBOOT`/`SYS_SHUTDOWN` (syscall.c) -- SeShutdownPrivilege gate on BOTH the SSDT and INT 0x80 syscall paths
+- [x] `NtSetSystemTime` (wall_clock.c) -- SeSystemtimePrivilege gate (replaced the ASSERT_KERNEL_CALLER fail-closed)
+- [x] `NtCreateSymbolicLinkObject` (nt_namespace.c) -- SeCreateSymbolicLinkPrivilege gate on user-mode symlink creation
+- [x] `NtQuerySystemInformation(SystemPerformanceInformation)` (nt_syscall.c) -- SeSystemProfilePrivilege gate on that class
+- [/] `RegSaveKey`/`RegRestoreKey` (registry.c) -- SeBackup/SeRestorePrivilege gates shipped; both hive I/O bodies return `ERROR_NOT_SUPPORTED` (deferred) -> XREF: 02-kernel-core/TODO-14 §2 (item: "RegSaveKey/RegRestoreKey hive I/O bodies")
+- [/] `NtSystemDebugControl`/`NtOpenProcess` SeDebug gate -- DEFERRED: needs OB PROCESS handle-rights + cross-user SID compare -> XREF: 02-kernel-core/TODO-12 §7 (item: "NtOpenProcess raw PID -> real OB objects + rights")
+- [/] `NtSaveKey`/`NtRestoreKey` (nt_registry.c) FileHandle body -- DEFERRED: needs FileHandle->path resolution before `hive_save`/`hive_load` -> XREF: 02-kernel-core/TODO-14 §2 (item: "NtSaveKey/NtRestoreKey FileHandle hive body")
+- [ ] Commit: `"kernel/security: SePrivilegeCheck, privilege gates for shutdown, systemtime, symlink, backup/restore"`
 
-**Test checkpoint:** Token with SeShutdownPrivilege disabled: `SeSinglePrivilegeCheck(SeShutdownPrivilege, UserMode)` → FALSE. After `NtAdjustPrivilegesToken` to enable → TRUE. `PRIVILEGE_SET_ALL_NECESSARY` with two LUIDs, one missing → FALSE. KernelMode → always TRUE regardless of token. `NtShutdownSystem` from unprivileged token → `STATUS_PRIVILEGE_NOT_HELD`. Serial log: `"[SRM] SePrivilegeCheck: %s = %s"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `SeSinglePrivilegeCheck(&SeShutdownPrivilege, KernelMode)` → 1 (bypass); with a SYSTEM token as the current task token, `&SeShutdownPrivilege`/`&SeDebugPrivilege` UserMode → 1, an unknown LUID → 0; NULL token UserMode → 0 (fail-closed). `SePrivilegeCheck` ALL_NECESSARY with one missing → 0; any-mode with one held → 1 + marks that entry `SE_PRIVILEGE_USED_FOR_ACCESS`; empty ALL_NECESSARY → 1, empty any → 0. Wired gates return `STATUS_PRIVILEGE_NOT_HELD` to an unprivileged UserMode caller. Test on: QEMU WHPX + TCG.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1088 kernel tests, 0 failures
+
+> **Notes:**
+> - Shipped `SePrivilegeCheck`/`SeSinglePrivilegeCheck` in `privileges.c` + fully-wired gates on shutdown, systemtime, symlink-create, system-performance; RegSaveKey/RegRestoreKey ship the gate but return `ERROR_NOT_SUPPORTED` (hive bodies deferred).
+> - Effective token = `thread->impersonation_token ?: task->token`; no Ob reference / per-token lock (single-cursor-safe accept, same class as §6/§7) -> §4/§5.
+> - Deferred to owners: `SeCheckPrivilegedObject`+NtOpenProcess/NtSystemDebugControl (§5/§12), `module_load` (TODO-05 §4), RegSaveKey/RegRestoreKey + NtSaveKey/NtRestoreKey hive I/O bodies (TODO-14 §2).
 
 ---
 
@@ -733,7 +737,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 | 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | ⬜ §4            |
 | 💎 | DACL access check           | ✅ Full       | ⚠️ POSIX perms   | ⬜ §5            |
 | 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | 🟡 No-Write-Up §6 |
-| 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | ⬜ §8            |
+| 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | 🟡 SePrivilegeCheck §8 |
 | 💎 | UAC filtered-token          | ✅ Full       | ❌ N/A           | ⬜ §9            |
 | 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | 🟡 Self-impers §7 |
 | 💎 | SDDL string descriptors    | ✅ Full       | ❌ N/A           | ⬜ §10           |

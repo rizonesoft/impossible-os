@@ -19,6 +19,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"
+#include "kernel/security/privileges.h"  /* SeSinglePrivilegeCheck, SeSystemtimePrivilege */
 #include "kernel/cpu_security.h"
 #include "kernel/klog.h"
 #include "kernel/smp.h"
@@ -881,12 +882,11 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
     NTSTATUS pst;
     (void)a3; (void)a4; (void)a5; (void)a6;
 
-    /* Setting the wall clock requires SeSystemtimePrivilege. The SMP-safe
-     * per-token privilege check (SeSinglePrivilegeCheck) is not wired yet, so
-     * fail closed: reject UserMode callers entirely (a kernel/Zw caller is
-     * trusted). Replaced by a real SeSystemtimePrivilege check when the
-     * security reference monitor lands (see the Accepted XREF in the TODO). */
-    ASSERT_KERNEL_CALLER();
+    /* Setting the wall clock requires SeSystemtimePrivilege. A KernelMode / Zw
+     * caller is trusted (the check returns TRUE); a UserMode caller must hold
+     * the enabled privilege in its effective token, else STATUS_PRIVILEGE_NOT_HELD. */
+    if (!SeSinglePrivilegeCheck(&SeSystemtimePrivilege, ssdt_previous_mode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
 
     if (!new_ptr)
         return STATUS_ACCESS_VIOLATION;   /* required pointer; NULL is unreadable */

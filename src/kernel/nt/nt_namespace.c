@@ -19,6 +19,8 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/service_numbers.h"
+#include "kernel/nt/zw.h"                 /* ssdt_previous_mode */
+#include "kernel/security/privileges.h"   /* SeSinglePrivilegeCheck, SeCreateSymbolicLinkPrivilege */
 #include "kernel/sched/task.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
@@ -351,6 +353,14 @@ static NTSTATUS NtCreateSymbolicLinkObject_handler(uint64_t a1, uint64_t a2,
     HANDLE h;
 
     (void)a5; (void)a6;
+
+    /* Creating an object-namespace symbolic link requires
+     * SeCreateSymbolicLinkPrivilege for a UserMode caller (KernelMode is
+     * trusted). Windows gates all user-mode symlink creation on this privilege
+     * to prevent link-planting attacks. */
+    if (!SeSinglePrivilegeCheck(&SeCreateSymbolicLinkPrivilege,
+                                ssdt_previous_mode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
 
     if (!out)
         return STATUS_INVALID_PARAMETER;

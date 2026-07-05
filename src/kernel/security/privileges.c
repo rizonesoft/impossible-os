@@ -5,6 +5,8 @@
  * ============================================================================ */
 
 #include "kernel/security/privileges.h"
+#include "kernel/security/token.h"   /* ACCESS_TOKEN, Privileges[] */
+#include "kernel/sched/task.h"       /* task_current / thread_current, ->token */
 
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
@@ -131,4 +133,98 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len)
     }
 
     return (int)pos;
+}
+
+/* --- Privilege checks (SePrivilegeCheck) --------------------------------- */
+
+/* Effective token: the current thread's impersonation token if it has one,
+ * else the current task's primary token. Interim resolution shared with mic.c
+ * (SeQuerySubjectContextToken / SECURITY_SUBJECT_CONTEXT are owned by the
+ * SeAccessCheck section). No Ob reference is taken and no per-token lock is
+ * held -- both are the accepted single-cursor-safe SMP gaps tracked against the
+ * per-token-lock work; a torn read cannot occur on the flat scheduler today. */
+static ACCESS_TOKEN *sep_effective_token(void)
+{
+    struct thread *thr = thread_current();
+    struct task   *cur = task_current();
+    ACCESS_TOKEN  *tok = thr ? (ACCESS_TOKEN *)thr->impersonation_token
+                             : (ACCESS_TOKEN *)0;
+
+    if (!tok)
+        tok = cur ? (ACCESS_TOKEN *)cur->token : (ACCESS_TOKEN *)0;
+    return tok;
+}
+
+/* True iff `tok` holds `luid` with SE_PRIVILEGE_ENABLED. Fails closed on a
+ * PrivilegeCount above the fixed Privileges[TOKEN_MAX_PRIVS] backing array: a
+ * corrupt/over-large count is a malformed token, and scanning past the array
+ * would be an out-of-bounds read on the auth-critical path. */
+static int sep_token_holds(const ACCESS_TOKEN *tok, const LUID *luid)
+{
+    uint32_t i;
+
+    if (!tok || !luid || tok->PrivilegeCount > TOKEN_MAX_PRIVS)
+        return 0;
+    for (i = 0; i < tok->PrivilegeCount; i++) {
+        if (RtlEqualLuid(&tok->Privileges[i].Luid, luid) &&
+            (tok->Privileges[i].Attributes & SE_PRIVILEGE_ENABLED))
+            return 1;
+    }
+    return 0;
+}
+
+int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
+{
+    ACCESS_TOKEN *tok;
+    uint32_t i, held = 0;
+    int all_necessary;
+
+    if (access_mode == SE_KERNEL_MODE)
+        return 1;                       /* kernel code is trusted */
+    if (!ps)
+        return 0;                       /* fail closed */
+
+    /* Resolve the effective token FIRST and deny on absence: a UserMode subject
+     * with no token fails closed for EVERY check, including a degenerate empty
+     * ALL_NECESSARY set (otherwise an empty/malformed set would authorize a
+     * token-less subject -- a fail-open edge). */
+    tok = sep_effective_token();
+    if (!tok)
+        return 0;                       /* no effective token -> deny */
+
+    /* Fail closed on an implausibly large privilege count: a set requesting more
+     * than the maximum a subject can hold is malformed, and iterating (and
+     * writing SE_PRIVILEGE_USED_FOR_ACCESS into) ps->Privilege[] past its
+     * backing storage would be an out-of-bounds read/write. Any user-sourced
+     * PRIVILEGE_SET must also be byte-length-validated by its caller before
+     * reaching this primitive. */
+    if (ps->PrivilegeCount > TOKEN_MAX_PRIVS)
+        return 0;
+
+    all_necessary = (ps->Control & PRIVILEGE_SET_ALL_NECESSARY) != 0;
+
+    /* With a token present, an empty ALL_NECESSARY set is vacuously satisfied;
+     * an empty ANY set holds nothing (matches Windows: empty passes only for
+     * ALL_NECESSARY). */
+    if (ps->PrivilegeCount == 0)
+        return all_necessary ? 1 : 0;
+
+    for (i = 0; i < ps->PrivilegeCount; i++) {
+        if (sep_token_holds(tok, &ps->Privilege[i].Luid)) {
+            /* Windows marks the privileges actually used for the access. */
+            ps->Privilege[i].Attributes |= SE_PRIVILEGE_USED_FOR_ACCESS;
+            held++;
+        }
+    }
+
+    return all_necessary ? (held == ps->PrivilegeCount) : (held > 0);
+}
+
+int SeSinglePrivilegeCheck(const LUID *privilege, uint32_t access_mode)
+{
+    if (access_mode == SE_KERNEL_MODE)
+        return 1;
+    if (!privilege)
+        return 0;
+    return sep_token_holds(sep_effective_token(), privilege);
 }

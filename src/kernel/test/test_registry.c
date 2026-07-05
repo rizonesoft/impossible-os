@@ -72,6 +72,8 @@ static void test_registry_string(void)
  * ============================================================================ */
 
 #include "kernel/nt/ssdt.h"
+#include "kernel/nt/zw.h"        /* ssdt_previous_mode / ssdt_set_previous_mode, SSDT_USER_MODE */
+#include "kernel/sched/task.h"   /* task_current -- force UserMode/no-token for the privilege-denied path */
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/service_numbers.h"
@@ -837,13 +839,27 @@ static void test_registry_save_restore_failclosed(void)
     TEST_ASSERT(rc == ERROR_SUCCESS, "create SaveMe");
     if (rc != ERROR_SUCCESS) return;
 
-    /* Full-access handle: fails on the privilege gate, NOT on access. */
-    rc = RegSaveKey(hfull, "C:\\save.hive", NULL);
-    TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
-                "RegSaveKey w/ access but no SeBackup -> PRIVILEGE_NOT_HELD");
-    rc = RegRestoreKey(hfull, "C:\\save.hive", 0);
-    TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
-                "RegRestoreKey w/ access but no SeRestore -> PRIVILEGE_NOT_HELD");
+    /* Full-access handle: fails on the SePrivilegeCheck gate, NOT on access.
+     * The gate bypasses for a KernelMode caller (tests default to KernelMode),
+     * so force UserMode with no effective token -- SeSinglePrivilegeCheck then
+     * fails closed (no SeBackup/SeRestore held). Mode + token are restored. */
+    {
+        uint32_t saved_mode = ssdt_previous_mode();
+        void    *saved_token = task_current()->token;
+
+        task_current()->token = (void *)0;      /* no effective token */
+        ssdt_set_previous_mode(SSDT_USER_MODE);
+
+        rc = RegSaveKey(hfull, "C:\\save.hive", NULL);
+        TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
+                    "RegSaveKey UserMode no SeBackup -> PRIVILEGE_NOT_HELD");
+        rc = RegRestoreKey(hfull, "C:\\save.hive", 0);
+        TEST_ASSERT(rc == ERROR_PRIVILEGE_NOT_HELD,
+                    "RegRestoreKey UserMode no SeRestore -> PRIVILEGE_NOT_HELD");
+
+        ssdt_set_previous_mode(saved_mode);
+        task_current()->token = saved_token;
+    }
 
     /* Read-only handle: RegRestoreKey needs KEY_WRITE, so the access-mask
      * branch fires first -> ACCESS_DENIED, distinct from the privilege path. */

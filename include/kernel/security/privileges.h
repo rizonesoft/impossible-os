@@ -128,3 +128,39 @@ int RtlPrivilegeSetToString(const PRIVILEGE_SET *ps, char *buf, uint32_t len);
  * privilege LUID, or NULL if not recognized.
  */
 const char *RtlPrivilegeLuidToName(const LUID *luid);
+
+/* --- Privilege checks (SePrivilegeCheck) --------------------------------- */
+
+/*
+ * access_mode matches ssdt_previous_mode() (full width, no narrowing): ONLY the
+ * exact value 0 (`SE_KERNEL_MODE`/`SSDT_KERNEL_MODE`) bypasses; every other value
+ * -- 1 (UserMode) or any non-canonical value -- must hold the privilege or is
+ * denied (fail-closed; a truncating cast could otherwise turn 0x100 into a
+ * bypass). A KernelMode caller bypasses privilege checks (kernel code is trusted).
+ *
+ * The "effective token" is resolved as the current thread's impersonation
+ * token if present, else the current task's primary token (the same interim
+ * resolution mic.c's SeCheckMandatoryAccess uses -- SeQuerySubjectContextToken /
+ * SECURITY_SUBJECT_CONTEXT are owned by the SeAccessCheck section). A UserMode
+ * check with no effective token fails closed.
+ */
+#define SE_KERNEL_MODE  0
+
+/*
+ * SePrivilegeCheck -- does the current subject hold the privileges in `ps`?
+ * KernelMode returns 1. Otherwise scans the effective token's Privileges[] for
+ * each requested LUID with SE_PRIVILEGE_ENABLED. PRIVILEGE_SET_ALL_NECESSARY
+ * (ps->Control) requires all; otherwise any one held privilege suffices. Held
+ * privileges are marked SE_PRIVILEGE_USED_FOR_ACCESS in `ps` (Windows
+ * semantics), so `ps` is mutated. Returns 1 on pass, 0 on fail (fail-closed on
+ * a NULL effective token or NULL set).
+ */
+int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode);
+
+/*
+ * SeSinglePrivilegeCheck -- single-LUID shortcut. KernelMode returns 1; else 1
+ * iff the effective token holds `privilege` with SE_PRIVILEGE_ENABLED. NULL
+ * privilege or NULL effective token returns 0 (fail-closed). This is the gate
+ * kernel syscall handlers call before privileged operations.
+ */
+int SeSinglePrivilegeCheck(const LUID *privilege, uint32_t access_mode);

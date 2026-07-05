@@ -24,6 +24,7 @@
 #include "kernel/acpi.h"
 #include "kernel/smbios.h"
 #include "kernel/nt/zw.h"
+#include "kernel/security/privileges.h"  /* SeSinglePrivilegeCheck + privilege LUIDs */
 #include "kernel/cpu_security.h"
 #include "kernel/config.h"     /* SystemKernelConfigInformation snapshot source */
 #include "kernel/tunables.h"   /* tunable count + lock phase for the config query */
@@ -1001,6 +1002,11 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
             uint64_t CommitLimit;
         } *info = buffer;
 
+        /* System performance counters require SeSystemProfilePrivilege for a
+         * UserMode caller (KernelMode is trusted). */
+        if (!SeSinglePrivilegeCheck(&SeSystemProfilePrivilege, ssdt_previous_mode()))
+            return STATUS_PRIVILEGE_NOT_HELD;
+
         if (!buffer || buf_size < 24)
             return STATUS_BUFFER_TOO_SMALL;
 
@@ -1307,6 +1313,11 @@ static NTSTATUS NtShutdownSystem(uint64_t a1, uint64_t a2, uint64_t a3,
     uint32_t action = (uint32_t)a1;
 
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+
+    /* Shutting down / rebooting requires SeShutdownPrivilege (KernelMode/Zw is
+     * trusted). NtReboot is the ShutdownReboot action of this same syscall. */
+    if (!SeSinglePrivilegeCheck(&SeShutdownPrivilege, ssdt_previous_mode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
 
     switch (action) {
     case ShutdownReboot:

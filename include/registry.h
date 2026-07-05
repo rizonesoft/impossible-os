@@ -55,6 +55,7 @@
 #define ERROR_REGISTRY_IO_FAILED 1016  /* hive flush/save I/O failure */
 #define ERROR_ALREADY_EXISTS   183   /* RegRenameKey: target name in use */
 #define ERROR_PRIVILEGE_NOT_HELD 1314 /* RegSaveKey/RestoreKey: SeBackup/SeRestore not held */
+#define ERROR_NOT_SUPPORTED      50   /* operation valid but not yet implemented for this object */
 #define REG_FORCE_RESTORE      0x00000008  /* RegRestoreKey: wipe existing subtree first */
 
 /* ---- Access rights (match Win32 subset) ---- */

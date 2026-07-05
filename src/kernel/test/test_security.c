@@ -969,6 +969,83 @@ static void test_token_assignment(void)
     ObDereferenceObject(systok);
 }
 
+/* SePrivilegeCheck / SeSinglePrivilegeCheck. Exercises the KernelMode bypass,
+ * NULL-safety, fail-closed-on-no-token, the token Privileges[] scan, and the
+ * PRIVILEGE_SET ALL_NECESSARY-vs-any + empty-set semantics. Transiently sets the
+ * current task's token (restored at the end, refcount-balanced). */
+static void test_privilege_check(void)
+{
+    struct task  *cur = task_current();
+    void         *saved;
+    ACCESS_TOKEN *systok;
+    LUID          bogus = { 9999, 0 };
+
+    TEST_ASSERT(cur != (struct task *)0, "task_current() non-NULL");
+    saved = cur->token;
+
+    systok = SeCreateSystemToken();     /* all well-known privileges enabled */
+    TEST_ASSERT(systok != (ACCESS_TOKEN *)0, "SeCreateSystemToken -> non-NULL");
+
+    /* KernelMode bypasses the check regardless of token. */
+    TEST_ASSERT(SeSinglePrivilegeCheck(&SeShutdownPrivilege, SE_KERNEL_MODE) == 1,
+                "KernelMode bypass");
+    /* NULL privilege is denied. */
+    TEST_ASSERT(SeSinglePrivilegeCheck((const LUID *)0, 1) == 0,
+                "NULL privilege denied");
+
+    /* SYSTEM token holds every well-known privilege enabled. */
+    cur->token = systok;
+    TEST_ASSERT(SeSinglePrivilegeCheck(&SeShutdownPrivilege, 1) == 1,
+                "SYSTEM holds SeShutdownPrivilege");
+    TEST_ASSERT(SeSinglePrivilegeCheck(&SeDebugPrivilege, 1) == 1,
+                "SYSTEM holds SeDebugPrivilege");
+    TEST_ASSERT(SeSinglePrivilegeCheck(&bogus, 1) == 0,
+                "unknown privilege not held");
+
+    /* No effective token in UserMode fails closed. */
+    cur->token = (void *)0;
+    TEST_ASSERT(SeSinglePrivilegeCheck(&SeShutdownPrivilege, 1) == 0,
+                "no effective token -> deny");
+
+    /* PRIVILEGE_SET semantics. */
+    cur->token = systok;
+    {
+        uint64_t rawbuf[4];   /* 32 bytes, 8-aligned: PRIVILEGE_SET + 2 entries */
+        PRIVILEGE_SET *ps = (PRIVILEGE_SET *)rawbuf;
+
+        ps->PrivilegeCount = 2;
+        ps->Control = PRIVILEGE_SET_ALL_NECESSARY;
+        ps->Privilege[0].Luid = SeShutdownPrivilege; ps->Privilege[0].Attributes = 0;
+        ps->Privilege[1].Luid = bogus;               ps->Privilege[1].Attributes = 0;
+        TEST_ASSERT(SePrivilegeCheck(ps, 1) == 0,
+                    "ALL_NECESSARY with one privilege missing -> deny");
+
+        ps->Control = 0;   /* any-one suffices */
+        ps->Privilege[0].Attributes = 0; ps->Privilege[1].Attributes = 0;
+        TEST_ASSERT(SePrivilegeCheck(ps, 1) == 1,
+                    "any-mode with one held privilege -> allow");
+        /* The held privilege is marked used-for-access (Windows semantics). */
+        TEST_ASSERT((ps->Privilege[0].Attributes & SE_PRIVILEGE_USED_FOR_ACCESS) != 0,
+                    "held privilege marked SE_PRIVILEGE_USED_FOR_ACCESS");
+
+        TEST_ASSERT(SePrivilegeCheck(ps, SE_KERNEL_MODE) == 1,
+                    "KernelMode set-check bypass");
+    }
+
+    /* Empty set: vacuously true for ALL_NECESSARY, false for any. */
+    {
+        PRIVILEGE_SET empty;
+        empty.PrivilegeCount = 0;
+        empty.Control = PRIVILEGE_SET_ALL_NECESSARY;
+        TEST_ASSERT(SePrivilegeCheck(&empty, 1) == 1, "empty ALL_NECESSARY -> allow");
+        empty.Control = 0;
+        TEST_ASSERT(SePrivilegeCheck(&empty, 1) == 0, "empty any-set -> deny");
+    }
+
+    cur->token = saved;
+    ObDereferenceObject(systok);
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -996,6 +1073,7 @@ void test_register_security(void)
                             test_sd_selfrel_import_bounded, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: Mandatory Integrity Control", test_mic, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: token assignment + impersonation", test_token_assignment, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SePrivilegeCheck", test_privilege_check, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

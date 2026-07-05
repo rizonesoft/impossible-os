@@ -21,6 +21,8 @@
 #include "kernel/nt/nls_locale.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char_inline -- canonical compiled fold */
 #include "kernel/security/default_sds.h" /* SeCreateDefaultSD -- registry-key default DACL */
+#include "kernel/security/privileges.h"  /* SeSinglePrivilegeCheck, SeBackup/SeRestorePrivilege */
+#include "kernel/nt/zw.h"                 /* ssdt_previous_mode */
 #include "kernel/time/wall_clock.h"      /* KeQuerySystemTime -- LastWriteTime FILETIME conversion */
 #include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
@@ -2173,12 +2175,12 @@ long RegRenameKey(HKEY hKey, const char *lpSubKeyName, const char *lpNewKeyName)
     return RegRenameKeyDirect(target, lpNewKeyName);
 }
 
-/* ---- RegSaveKey / RegRestoreKey (privilege-gated, fail-closed) ----
+/* ---- RegSaveKey / RegRestoreKey (privilege-gated subtree export/import) ----
  *
- * The hive_save/hive_load subtree infrastructure exists, but SeBackupPrivilege /
- * SeRestorePrivilege have no evaluator yet (TODO-15 SePrivilegeCheck).  Failing closed keeps
- * subtree export/import from being available to any handle holder; the trusted
- * kernel-mode path uses hive_save/hive_load directly. */
+ * Now that SePrivilegeCheck exists, these are gated on SeBackupPrivilege /
+ * SeRestorePrivilege (a KernelMode/Zw caller is trusted; a UserMode caller must
+ * hold the enabled privilege). Once past the gate they drive the existing
+ * hive_save/hive_load subtree serializers directly (path-based). */
 long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes)
 {
     reg_key_t *key;
@@ -2191,7 +2193,18 @@ long RegSaveKey(HKEY hKey, const char *lpFile, void *lpSecurityAttributes)
         return ERROR_INVALID_PARAMETER;
     if (reg_check_access(hKey, KEY_READ) != ERROR_SUCCESS)
         return ERROR_ACCESS_DENIED;             /* handle lacks read access */
-    return ERROR_PRIVILEGE_NOT_HELD;            /* SeBackupPrivilege not held (fail-closed) */
+    if (!SeSinglePrivilegeCheck(&SeBackupPrivilege, ssdt_previous_mode()))
+        return ERROR_PRIVILEGE_NOT_HELD;        /* SeBackupPrivilege required */
+
+    /* SePrivilegeCheck (the gate this section owns) now guards subtree export.
+     * The hive_save BODY is deferred together with RegRestoreKey's: driving
+     * hive_save off a caller-owned lpFile needs a probe/copy of the path into a
+     * bounded kernel buffer (a UserMode caller could fault, or race the length
+     * check so the journal ".log"/".bak" paths differ from the final target),
+     * which is marshaling infrastructure owned by the registry save/restore
+     * completion work. Fail closed rather than key file I/O off a mutable
+     * caller pointer. */
+    return ERROR_NOT_SUPPORTED;
 }
 
 long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags)
@@ -2206,7 +2219,20 @@ long RegRestoreKey(HKEY hKey, const char *lpFile, uint32_t dwFlags)
         return ERROR_INVALID_PARAMETER;
     if (reg_check_access(hKey, KEY_WRITE) != ERROR_SUCCESS)
         return ERROR_ACCESS_DENIED;             /* handle lacks write access */
-    return ERROR_PRIVILEGE_NOT_HELD;            /* SeRestorePrivilege not held (fail-closed) */
+    if (!SeSinglePrivilegeCheck(&SeRestorePrivilege, ssdt_previous_mode()))
+        return ERROR_PRIVILEGE_NOT_HELD;        /* SeRestorePrivilege required */
+
+    /* SePrivilegeCheck (the gate this section owns) now guards restore. The
+     * restore BODY is deliberately NOT shipped here: a correct RegRestoreKey
+     * REPLACES the subtree (Windows semantics -- entries absent from the hive
+     * must be removed), which requires staging the hive into a scratch tree,
+     * validating it, then atomically swapping so a load/apply failure preserves
+     * the original subtree. A plain hive_load merges (stale keys survive, a
+     * rollback/recovery integrity failure) and a pre-clear risks irreversible
+     * data loss on a bad hive; both are wrong. Fail closed until the scratch-
+     * tree atomic-replace infrastructure lands in the registry save/restore
+     * completion work rather than report a false success. */
+    return ERROR_NOT_SUPPORTED;
 }
 
 /* ---- RegQueryValueEx ---- */

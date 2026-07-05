@@ -12,6 +12,8 @@
 #include "kernel/nt/nt_registry.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/nt/zw.h"                 /* ssdt_previous_mode, SSDT_KERNEL_MODE */
+#include "kernel/security/privileges.h"   /* SeSinglePrivilegeCheck, SeBackup/SeRestorePrivilege */
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/klog.h"
@@ -926,12 +928,16 @@ static NTSTATUS NtSaveKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    /* Subtree export is privilege-gated (SeBackupPrivilege).  No evaluator
-     * exists yet (TODO-15 SePrivilegeCheck) -- fail closed so any handle holder cannot export
-     * an arbitrary subtree.  Trusted kernel code uses hive_save() directly. */
+    /* Subtree export is gated on SeBackupPrivilege (mirrors the Win32
+     * RegSaveKey ordering). The FileHandle-to-path resolution + hive I/O body
+     * is deferred to the registry save/restore completion work, so a caller
+     * that passes the privilege gate gets STATUS_NOT_SUPPORTED, not a spurious
+     * privilege denial. */
     if (reg_check_access(hkey, KEY_READ) != ERROR_SUCCESS)
         return STATUS_ACCESS_DENIED;
-    return STATUS_PRIVILEGE_NOT_HELD;
+    if (!SeSinglePrivilegeCheck(&SeBackupPrivilege, ssdt_previous_mode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    return STATUS_NOT_SUPPORTED;   /* FileHandle->hive body deferred */
 }
 
 /* ======================================================================== */
@@ -959,13 +965,15 @@ static NTSTATUS NtRestoreKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!key)
         return STATUS_INVALID_HANDLE;
 
-    /* Subtree import is privilege-gated (SeRestorePrivilege).  No evaluator
-     * exists yet (TODO-15 SePrivilegeCheck) -- fail closed so any handle holder cannot
-     * overwrite a subtree from an arbitrary file.  Trusted kernel code uses
-     * hive_load() directly. */
+    /* Subtree import is gated on SeRestorePrivilege (mirrors the Win32
+     * RegRestoreKey ordering). The FileHandle-to-path resolution + atomic
+     * replace body is deferred to the registry save/restore completion work, so
+     * a caller past the privilege gate gets STATUS_NOT_SUPPORTED. */
     if (reg_check_access(hkey, KEY_WRITE) != ERROR_SUCCESS)
         return STATUS_ACCESS_DENIED;
-    return STATUS_PRIVILEGE_NOT_HELD;
+    if (!SeSinglePrivilegeCheck(&SeRestorePrivilege, ssdt_previous_mode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    return STATUS_NOT_SUPPORTED;   /* FileHandle->hive body deferred */
 }
 
 /* ======================================================================== */

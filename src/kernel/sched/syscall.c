@@ -12,6 +12,7 @@
 #include "kernel/vectors.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"
+#include "kernel/security/privileges.h"  /* SeSinglePrivilegeCheck, SeShutdownPrivilege */
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on SYS_KILL */
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
@@ -467,9 +468,21 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = (int64_t)uptime();
         break;
     case SYS_REBOOT:
+        /* Legacy INT 0x80 reboot: gate on SeShutdownPrivilege like the SSDT
+         * NtShutdownSystem wrapper, else this is an unprivileged bypass to a
+         * full-machine reboot. These SYS_* entries are ring-3-initiated, so the
+         * mode is UserMode. */
+        if (!SeSinglePrivilegeCheck(&SeShutdownPrivilege, SSDT_USER_MODE)) {
+            ret = -1;
+            break;
+        }
         acpi_reboot();
         break;
     case SYS_SHUTDOWN:
+        if (!SeSinglePrivilegeCheck(&SeShutdownPrivilege, SSDT_USER_MODE)) {
+            ret = -1;
+            break;
+        }
         acpi_shutdown();
         break;
     case SYS_PING: {
