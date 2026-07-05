@@ -44,7 +44,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | --- | :---: | ------------------------------------- | ---------- | :----: |
 | 💎   |   1   | Notification state object type        | T05        |  [x]   |
 | 💎   |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
-| 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [ ]   |
+| 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
 | 💎   |   4   | Security and namespace policy         | T15        |  [ ]   |
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [ ]   |
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [ ]   |
@@ -116,6 +116,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] `NtWaitForSingleObject` wakes when sequence advances past caller's last seen value.
 - [ ] Support timeout, alertable wait integration, and APC delivery for async subscriptions.
 - [ ] Multi-subscriber fanout must not allocate at DISPATCH_LEVEL.
+- [ ] Race-free wait: `NtWaitForSingleObject` infinite wait uses `event_wait`/`enqueue_and_block`, which has a documented lost-wakeup race (event.c state-read before enqueue; ex.h:149); a publish/close `event_set` in the gap hangs the waiter.
+- [ ] Two-phase wake: publish must not `event_set` up to the subscriber cap under `KNF_STATE.lock` (IRQ-off fanout); mark pending under lock, rundown-pin selected subscriptions, release, then `event_set` outside the lock (timer precedent).
 - [ ] Subscription teardown: remove the subscriber node on `NtClose` of the handle AND on owning process/thread exit (Ob close callback or reference-owned subscriber lifetime) so a killed process leaves no retained/leaked node.
 - [ ] Close-vs-publish race: a publish concurrent with a subscription close must not wake a freed node or wake after the owner is gone; the subscriber lifetime is reference-counted across the wake path.
 - [ ] Concurrent-teardown safety: `knf_subscription_poll`/`knf_unsubscribe` must take a live reference before the pre-lock `sub->state` read (§2 consume-and-null covers only sequential double-unsubscribe, not a cross-CPU alias race).
@@ -123,6 +125,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] The user-mode `Rtl*` subscription table + delivery worker (per-process, one dispatch thread) that turns these kernel wakes into WNF callbacks is owned by `D12 T04 §10`, NOT this section; this section owns the kernel wait/wake primitive only.
 
 **Test checkpoint:** `test_knf` blocks a thread on a subscription handle via `NtWaitForSingleObject`, publishes from another thread, and asserts the waiter wakes exactly when the sequence passes its last-seen value; a timeout wait returns `STATUS_TIMEOUT` when no publish occurs; fanout to 3 subscribers allocates zero at DISPATCH_LEVEL (pre-allocated wait blocks). Serial: `"[KNF] subscriber woke seq=%llu"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] §3 not started -- blocked on prerequisites owned elsewhere: alertable-wait + user-APC async delivery unimplemented, and the waitable core needs a race-free wait (kernel `event_t` lost-wakeup, ex.h:149) + two-phase rundown-pinned wake (Codex design verdict: No-ship on the naive event_wait design) -> XREF: 02-kernel-core/TODO-07 §12 (item: "Alertable-wait integration" at line 395)
 
 ---
 
