@@ -14,7 +14,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Goal:** Implement the Windows Security Reference Monitor (SRM) -- the kernel subsystem that enforces every resource access decision in the OS. The SRM owns three things: the `ACCESS_TOKEN` object (who you are, what groups you belong to, what privileges you hold), the `SECURITY_DESCRIPTOR` + ACL machinery (who is allowed to do what to a named resource), and the `SeAccessCheck` engine that compares the two to produce an allow/deny decision. Without SRM, the OS has no file permissions, no process isolation, no privilege separation, and no UAC -- it is a flat single-user system where every process can touch every resource.
 
 > [!IMPORTANT]
-> **Current state:** SID/LUID primitives (§1) and privilege constants (§2) are implemented + reviewed. SECURITY_DESCRIPTOR/ACL/ACE types (§3) and the core ACCESS_TOKEN object (§4) are implemented but partial: §3 reviewed + downgraded to [/] -- its Win32 SD/ACL/ACE types + trusted-path helpers work, but the review found the untrusted-input parsers (self-relative SD unmarshal, ACL/ACE walk, `RtlLengthSid`) need bounded validators (latent OOB, no live caller yet); §4 still has 3 open token-marshalling/lock items (safe `NtSetInformationToken` setters, query marshalling, per-token SMP lock -> TODO-12 §16). The Object Manager (TODO-05 §8) integrates security descriptors. Remaining: SeAccessCheck engine (§5), MIC (§6), token assignment at process spawn (§7), privilege enforcement (§8), UAC/NtFilterToken (§9), Win32 wrappers (§10), SSDT wiring (§12), SD inheritance (§13), AppContainer tokens (§14), and the access denial explainer (§15).
+> **Current state** (2026-07-05): SID/LUID primitives (§1), privilege constants (§2), MIC (§6), token assignment + impersonation (§7), and privilege enforcement (§8) are implemented + reviewed + stamped. `[/]` partials (shipped subset + tracked remainder): §3 SD/ACL/ACE types (untrusted-input bounded validators landed; no live caller yet), §4 ACCESS_TOKEN (3 open marshalling/lock items -> TODO-12 §16), §12 SSDT wiring (`NtPrivilegeCheck` 0x00BF shipped; SeAccessCheck/lifecycle rows blocked on §5/§9), §13 SD inheritance (`SeAssignSecurity` shipped; ob.c/VFS wiring deferred), §16 hardening (64-bit LUID shipped; SHA-1 SID + const-time compare blocked on TODO-07 §1 CNG). Deferred `[/]` (blocked, no code today): §5 SeAccessCheck engine, §9 UAC/NtFilterToken, §10 Win32 wrappers (advapi32 trampoline + per-thread kernel last-error), §11 whoami (cascade on §10), §14 AppContainer (cascade on §5/§9), §15 denial explainer (cascade on §5/§14). The Object Manager (TODO-05 §8) integrates security descriptors.
 
 ---
 
@@ -816,7 +816,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 | 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | 🟡 Self-impers §7 |
 | 💎 | SDDL string descriptors    | ✅ Full       | ❌ N/A           | ⬜ §10           |
 | 💎 | Restricted tokens           | ✅ Full       | ❌ N/A           | ⬜ §9            |
-| 💎 | SD inheritance              | ✅ Full auto  | ⚠️ POSIX ACL     | ⬜ §13           |
+| 💎 | SD inheritance              | ✅ Full auto  | ⚠️ POSIX ACL     | 🟡 SeAssignSecurity §13 |
 | 💎 | AppContainer sandbox        | ✅ Win8+      | ⚠️ ns + seccomp  | ⬜ §14           |
 | 💎 | Restricted token dual check | ✅ Full       | ❌ N/A           | ⬜ §5            |
 | ⭐ | Live token inspector        | ❌ CLI only   | ❌ CLI only      | ⬜ §11           |
