@@ -43,7 +43,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | ⭐   | Order | Deliverable                           | Depends On | Status |
 | --- | :---: | ------------------------------------- | ---------- | :----: |
 | 💎   |   1   | Notification state object type        | T05        |  [x]   |
-| 💎   |   2   | Kernel publish/subscribe API          | §1         |  [ ]   |
+| 💎   |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
 | 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [ ]   |
 | 💎   |   4   | Security and namespace policy         | T15        |  [ ]   |
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [ ]   |
@@ -85,15 +85,24 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 2. Kernel Publish/Subscribe API
 
-- [ ] Add `knf_create_state`, `knf_open_state`, `knf_publish`, `knf_subscribe`, `knf_unsubscribe`.
-- [ ] Publish increments a 64-bit sequence atomically.
-- [ ] Subscribers receive previous and new sequence numbers.
-- [ ] Payload cap defaults to 4096 bytes; larger payloads must use ALPC or file-backed data and publish a reference.
-- [ ] Conditional (CAS) publish: `knf_publish` accepts an optional `MatchingChangeStamp`; publish only if the current sequence equals it, else return `STATUS_UNSUCCESSFUL` (mirrors WNF, avoids lost read-modify-write updates).
-- [ ] Enforce the declared payload type: reject a publish whose `WNF_TYPE_ID` does not match the state's registered type (not just the byte-size cap).
-- [ ] Publish-context constraint: `knf_publish` must be callable from DISPATCH_LEVEL/DPC without allocating (pre-allocated wake path); document the max IRQL and no-blocking rule.
+- [x] `knf_open_state`/`knf_publish`/`knf_subscribe`/`knf_unsubscribe`/`knf_subscription_poll` in `knf.c`/`knf.h`; `struct knf_subscriber` is now a full node (ref-pinned state, `last_seen`/`pending_prev`/`has_pending`).
+- [x] Publish bumps the atomic64 change stamp under the per-state lock (`prev=atomic64_read`, `atomic64_set(prev+1)`); serialized writers keep lock-free readers monotonic.
+- [x] Subscribers baseline at the current sequence; `knf_subscription_poll` reports `(prev, new)` for a pending advance, `STATUS_NO_MORE_ENTRIES` when drained (blocking wait is the waitable section).
+- [x] `KNF_MAX_PAYLOAD` (4096) cap enforced pre-copy; `len > 4096` returns `STATUS_INVALID_PARAMETER` (larger payloads use ALPC / file-backed + a reference).
+- [x] Conditional (CAS) publish: optional `matching_change_stamp`; publishes only when it equals the current sequence, else `STATUS_UNSUCCESSFUL` with no state change (mirrors WNF).
+- [x] Typed-payload enforcement: a `has_type_id` state rejects a NULL or mismatched `WNF_TYPE_ID` with `STATUS_OBJECT_TYPE_MISMATCH` (blob opaque; tag contract enforced).
+- [x] DISPATCH_LEVEL/DPC-safe publish: growth pre-allocated before the spinlock (kmalloc only below DISPATCH_LEVEL), else `STATUS_INSUFFICIENT_RESOURCES` unless pre-sized via non-notifying `knf_reserve_payload`; no alloc/free/callout under the lock.
+- [x] Codex adoptions: subscribers Ob-reference their state (no dangle); `knf_reserve_payload` for DPC; `knf_unsubscribe` consumes+nulls the handle (no UAF); publish rejects at `UINT64_MAX` (no wrap). Details in commit.
+- [x] Commit: `"kernel/knf: publish/subscribe API (seq advance, CAS, typed payload, reserve, subscriber pin)"`
 
-**Test checkpoint:** `test_knf` publishes twice to one state and asserts the returned sequence advances 0 -> 1 -> 2 atomically; a subscriber sees `(prev=1, new=2)`; `knf_publish` with a 5000-byte payload returns `STATUS_INVALID_PARAMETER` (over the 4096 cap). Serial: `"[KNF] publish seq=%llu"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf` publishes twice and asserts the sequence advances 0 -> 1 -> 2 atomically; a subscriber sees `(prev=1, new=2)`; a 5000-byte publish returns `STATUS_INVALID_PARAMETER`; a stale CAS stamp returns `STATUS_UNSUCCESSFUL`; a typed state rejects a wrong `WNF_TYPE_ID` with `STATUS_OBJECT_TYPE_MISMATCH`; `knf_reserve_payload` pre-sizes without advancing the sequence; a state deleted while a subscriber is live stays pinned and still delivers. Serial: `"[KNF] publish seq=%llu"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 18 suites, 0 failures
+> **Notes:**
+> - Shipped `knf_open_state`/`knf_publish`/`knf_subscribe`/`knf_unsubscribe`/`knf_subscription_poll`/`knf_reserve_payload` in `src/kernel/knf/knf.c` + prototypes and the full `struct knf_subscriber` in `include/kernel/knf/knf.h`; 8 new `test_knf` suites.
+> - Publish serializes under the per-state `spin_lock_irqsave`; all buffer alloc/free is outside the lock (pre-alloc before, free-unused after) so publish is DISPATCH_LEVEL-safe against a `knf_reserve_payload`-sized buffer.
+> - Codex design review adoptions (subscriber state-pin lifetime + non-notifying reserve for the DPC path) in the commit message; waitable wait/wake + teardown races owned by the waitable-user-subscriptions section.
+> - Canonical doc: this TODO; §1 owns the object type/namespace, §2 the publish/subscribe primitive, §3 the Ob-handle waitable wait/wake, §4 DACL/token enforcement, §7 coalescing/retention.
 
 ---
 
@@ -105,6 +114,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Multi-subscriber fanout must not allocate at DISPATCH_LEVEL.
 - [ ] Subscription teardown: remove the subscriber node on `NtClose` of the handle AND on owning process/thread exit (Ob close callback or reference-owned subscriber lifetime) so a killed process leaves no retained/leaked node.
 - [ ] Close-vs-publish race: a publish concurrent with a subscription close must not wake a freed node or wake after the owner is gone; the subscriber lifetime is reference-counted across the wake path.
+- [ ] Concurrent-teardown safety: `knf_subscription_poll`/`knf_unsubscribe` must take a live reference before the pre-lock `sub->state` read (§2 consume-and-null covers only sequential double-unsubscribe, not a cross-CPU alias race).
 - [ ] (Later, competitive edge) Lightweight non-handle sequence-wait path (`WaitOnAddress`/futex analog) for hot consumers that do not need full Ob-handle semantics -- v2, not blocking.
 - [ ] The user-mode `Rtl*` subscription table + delivery worker (per-process, one dispatch thread) that turns these kernel wakes into WNF callbacks is owned by `D12 T04 §10`, NOT this section; this section owns the kernel wait/wake primitive only.
 
@@ -206,11 +216,11 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 | ⭐   | Feature                            | 🪟 Win11             | 🐧 Linux             | 🚀 Impossible OS                                                       |
 | --- | ---------------------------------- | ------------------- | ------------------- | --------------------------------------------------------------------- |
-| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ⬜ knf §1-§2                                                           |
+| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ✅ §1-§2: publish/subscribe + poll                                    |
 | 💎   | State object + lifetime/scope/type | ✅ WNF lifetimes     | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
 | 💎   | Waitable user subscriptions        | ✅ WNF+Nt*           | ⚠️ epoll/poll       | ⬜ §3                                                                  |
 | 💎   | Per-state security descriptor      | ✅ Full              | ⚠️ DAC only         | ⬜ §4                                                                  |
-| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ⬜ §2                                                                  |
+| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ✅ §2: atomic64 stamp + CAS publish                                   |
 | 💎   | WNF-compatible syscalls            | ✅ Nt*WnfStateData   | ❌ N/A               | ⬜ §8                                                                  |
 | ⭐   | Named catalog + coalescing         | ⚠️ Undocumented WNF | ❌ ad-hoc            | ⬜ §5,§7                                                               |
 | ⭐   | Live diagnostics counters          | ❌ Debugger only     | ⚠️ /proc scattered  | ⬜ §9                                                                  |
@@ -233,6 +243,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] `make test-knf` (TEST_CAT_KNF) passes with 0 failures.
 - [ ] `bash scripts/test.sh QUIET=1` green (no regressions).
 - [ ] Verify on QEMU WHPX (2 CPUs) + QEMU TCG + VirtualBox + bare metal -- notification wakeups + DISPATCH_LEVEL no-alloc fanout behave identically (VM behavior differs on real hardware).
+- [ ] Bare-metal DPC validation (real DISPATCH_LEVEL, not WSL-unit-testable): `knf_reserve_payload` -> `STATUS_UNSUCCESSFUL`; publish within a pre-reserved cap succeeds alloc-free; publish over `payload_cap` -> `STATUS_INSUFFICIENT_RESOURCES`.
 
 > **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | N suites, 0 failures
 

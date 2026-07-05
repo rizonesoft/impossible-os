@@ -13,11 +13,13 @@
 #include "kernel/ob/ob_ns.h"
 #include "kernel/mm/heap.h"
 #include "kernel/security/privileges.h"
+#include "kernel/sched/irql.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 
 extern void  *memset(void *s, int c, size_t n);
 extern void  *memcpy(void *d, const void *s, size_t n);
+extern int    memcmp(const void *a, const void *b, size_t n);
 extern size_t strlen(const char *s);
 extern char  *strncpy(char *dst, const char *src, size_t n);
 extern int    strcmp(const char *a, const char *b);
@@ -288,6 +290,250 @@ int knf_delete_state(const char *category, const char *name)
     ObDereferenceObject(st);    /* releases our lookup ref -> frees the state */
     ObDereferenceObject(dir);
     return 0;
+}
+
+/* --- Publish / subscribe (kernel API) ------------------------------------ */
+
+KNF_STATE *knf_open_state(const char *category, const char *name)
+{
+    /* Open-existing is exactly the object-model lookup (no create). */
+    return knf_lookup_state(category, name);
+}
+
+NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap)
+{
+    void    *newbuf, *oldbuf = NULL;
+    uint64_t flags;
+
+    if (!st || cap == 0 || cap > KNF_MAX_PAYLOAD)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Reserve exists precisely so a later DISPATCH_LEVEL publish need not
+     * allocate; the allocation itself must therefore happen at PASSIVE_LEVEL. */
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+        return STATUS_UNSUCCESSFUL;
+
+    newbuf = kmalloc(cap);          /* cap <= KNF_MAX_PAYLOAD (4096): kmalloc range */
+    if (!newbuf)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    spin_lock_irqsave(&st->lock, &flags);
+    if (st->payload_cap >= cap) {
+        /* Another path already grew the buffer at least this large. */
+        spin_unlock_irqrestore(&st->lock, flags);
+        kfree(newbuf);
+        return STATUS_SUCCESS;
+    }
+    if (st->payload && st->payload_len)
+        memcpy(newbuf, st->payload, st->payload_len);
+    oldbuf          = st->payload;
+    st->payload     = newbuf;
+    st->payload_cap = cap;
+    /* payload_len and sequence unchanged: reserve is NOT a publish. */
+    spin_unlock_irqrestore(&st->lock, flags);
+
+    if (oldbuf)
+        kfree(oldbuf);             /* free the old buffer OUTSIDE the lock */
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
+                     const void *data, uint32_t len,
+                     const uint64_t *matching_change_stamp,
+                     uint64_t *out_prev, uint64_t *out_new)
+{
+    void                  *newbuf = NULL, *oldbuf = NULL;
+    uint64_t               flags, prev, next_seq;
+    struct knf_subscriber *sub;
+
+    if (!st || len > KNF_MAX_PAYLOAD || (len > 0 && !data))
+        return STATUS_INVALID_PARAMETER;
+
+    /* Typed states accept only a payload carrying the registered tag; the blob
+     * stays opaque to the kernel but the type contract is enforced. */
+    if (st->has_type_id) {
+        if (!type_id || memcmp(type_id, &st->type_id, sizeof(st->type_id)) != 0)
+            return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
+    /* Pre-allocate any growth BEFORE taking the lock -- kmalloc must never run
+     * under a spinlock. Only PASSIVE_LEVEL callers may allocate; a
+     * DISPATCH_LEVEL publish relies on a prior knf_reserve_payload and installs
+     * nothing new here (newbuf stays NULL -> the grow branch below fails). The
+     * payload_cap read is racy but only ever grows under the lock, so a stale
+     * small read just over-allocates a spare buffer we free after unlock. */
+    if (len > 0 && KeGetCurrentIrql() < DISPATCH_LEVEL && len > st->payload_cap) {
+        newbuf = kmalloc(len);
+        if (!newbuf)
+            return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    spin_lock_irqsave(&st->lock, &flags);
+
+    prev = (uint64_t)atomic64_read(&st->sequence);
+
+    /* Strict monotonicity: never wrap the change stamp. At the maximum value a
+     * prev+1 would alias 0 (a fresh state) and the `last_seen < next_seq` arm
+     * below would silently drop the notification. Reject instead. (2^64 - 1
+     * publishes is unreachable in practice; this guards fault-injection and
+     * long-uptime correctness.) */
+    if (prev == (uint64_t)0xFFFFFFFFFFFFFFFFull) {
+        spin_unlock_irqrestore(&st->lock, flags);
+        if (newbuf)
+            kfree(newbuf);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Conditional (CAS) publish: bail if the caller's expected stamp is stale.
+     * The compare-and-bump runs under the per-state lock (all writers serialize
+     * here), so lock-free atomic64_read consumers see a monotonic sequence. */
+    if (matching_change_stamp && *matching_change_stamp != prev) {
+        spin_unlock_irqrestore(&st->lock, flags);
+        if (newbuf)
+            kfree(newbuf);
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    if (len > 0) {
+        if (len > st->payload_cap) {
+            if (!newbuf) {
+                /* DISPATCH_LEVEL publish with no reserved room: the contract is
+                 * to pre-size at PASSIVE via knf_reserve_payload. */
+                spin_unlock_irqrestore(&st->lock, flags);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            oldbuf          = st->payload;
+            st->payload     = newbuf;
+            st->payload_cap = len;
+            newbuf          = NULL;   /* installed; do not free below */
+        }
+        memcpy(st->payload, data, len);
+        st->payload_len = len;
+    } else {
+        st->payload_len = 0;          /* sequence-only signal publish */
+    }
+
+    next_seq = prev + 1;
+    atomic64_set(&st->sequence, (int64_t)next_seq);
+
+    /* Arm every subscriber that has not yet seen this advance. Coalescing (a
+     * subscriber that already has a pending notification keeps its earlier
+     * pending_prev) is the natural level-triggered behavior; the missed-update
+     * count + edge-triggered option are the coalescing/retention layer. */
+    for (sub = st->subscribers; sub; sub = sub->next) {
+        if (!sub->has_pending && sub->last_seen < next_seq) {
+            sub->pending_prev = sub->last_seen;
+            sub->has_pending  = 1;
+        }
+    }
+
+    spin_unlock_irqrestore(&st->lock, flags);
+
+    if (newbuf)
+        kfree(newbuf);                /* pre-alloced but buffer already sufficed */
+    if (oldbuf)
+        kfree(oldbuf);                /* replaced buffer, freed outside the lock */
+
+    if (out_prev)
+        *out_prev = prev;
+    if (out_new)
+        *out_new = next_seq;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
+{
+    struct knf_subscriber *sub;
+    uint64_t               flags;
+
+    if (!st || !out_sub)
+        return STATUS_INVALID_PARAMETER;
+    *out_sub = NULL;
+
+    sub = (struct knf_subscriber *)kmalloc(sizeof(*sub));
+    if (!sub)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(sub, 0, sizeof(*sub));
+
+    /* Pin the state so it cannot be torn down while this subscription is live
+     * (knf_unsubscribe drops this reference). */
+    ObReferenceObject(st);
+    sub->state = st;
+
+    spin_lock_irqsave(&st->lock, &flags);
+    /* Baseline at the current sequence: only future publishes notify. */
+    sub->last_seen   = (uint64_t)atomic64_read(&st->sequence);
+    sub->has_pending = 0;
+    sub->next        = st->subscribers;
+    st->subscribers  = sub;
+    spin_unlock_irqrestore(&st->lock, flags);
+
+    *out_sub = sub;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS knf_unsubscribe(struct knf_subscriber **psub)
+{
+    KNF_STATE              *st;
+    struct knf_subscriber  *sub;
+    struct knf_subscriber **pp;
+    uint64_t                flags;
+    int                     found = 0;
+
+    /* Consume the handle: once freed the node pointer must never be reused, so
+     * we take it by reference and null it on success. A second call therefore
+     * sees *psub == NULL and returns INVALID_PARAMETER instead of dereferencing
+     * freed memory (no use-after-free on a double unsubscribe). */
+    if (!psub || !*psub || !(*psub)->state)
+        return STATUS_INVALID_PARAMETER;
+    sub = *psub;
+    st  = sub->state;
+
+    spin_lock_irqsave(&st->lock, &flags);
+    for (pp = &st->subscribers; *pp; pp = &(*pp)->next) {
+        if (*pp == sub) {
+            *pp   = sub->next;
+            found = 1;
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&st->lock, flags);
+
+    if (!found)
+        return STATUS_NOT_FOUND;      /* node not on its state's list */
+
+    kfree(sub);                       /* free the node OUTSIDE the lock */
+    ObDereferenceObject(st);          /* drop the pin taken by knf_subscribe */
+    *psub = (struct knf_subscriber *)0;   /* consumed: caller cannot reuse it */
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS knf_subscription_poll(struct knf_subscriber *sub,
+                               uint64_t *out_prev, uint64_t *out_new)
+{
+    KNF_STATE *st;
+    uint64_t   flags, cur;
+    NTSTATUS   status;
+
+    if (!sub || !sub->state)
+        return STATUS_INVALID_PARAMETER;
+    st = sub->state;
+
+    spin_lock_irqsave(&st->lock, &flags);
+    if (sub->has_pending) {
+        cur = (uint64_t)atomic64_read(&st->sequence);
+        if (out_prev)
+            *out_prev = sub->pending_prev;
+        if (out_new)
+            *out_new = cur;
+        sub->last_seen   = cur;
+        sub->has_pending = 0;
+        status = STATUS_SUCCESS;
+    } else {
+        status = STATUS_NO_MORE_ENTRIES;
+    }
+    spin_unlock_irqrestore(&st->lock, flags);
+    return status;
 }
 
 /* --- Init ---------------------------------------------------------------- */

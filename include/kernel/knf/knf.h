@@ -17,6 +17,7 @@
 #include "kernel/types.h"
 #include "kernel/atomic.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/nt/ntstatus.h"
 
 /* --- Limits -------------------------------------------------------------- */
 
@@ -52,7 +53,28 @@ typedef struct knf_type_id {
     uint8_t bytes[16];
 } KNF_TYPE_ID;
 
-struct knf_subscriber;   /* defined by the waitable-subscriptions section */
+/* --- Subscriber node (kernel publish/subscribe, non-waitable) ------------ *
+ * An in-kernel subscription to a KNF_STATE. A subscriber remembers the last
+ * sequence it acknowledged; a publish that advances past it arms `has_pending`
+ * so a later knf_subscription_poll() reports (prev, new). The Ob-handle
+ * waitable wrapper (NtWaitForSingleObject), NtClose/exit teardown, and the
+ * close-vs-publish refcount race belong to the waitable-user-subscriptions
+ * layer -- this node is the primitive that layer wraps.
+ *
+ * LIFETIME: knf_subscribe() takes an Ob reference on the state; knf_unsubscribe()
+ * drops it. A live subscription therefore pins the KNF_STATE body, so it cannot
+ * be freed (via knf_delete_state) while any subscriber references it, and
+ * knf_state_on_delete always observes an empty subscriber list.
+ *
+ * All fields are guarded by KNF_STATE.lock (the node is only ever touched while
+ * that lock is held, except its own allocation/free which bracket the lock). */
+struct knf_subscriber {
+    struct knf_subscriber *next;          /* per-state list linkage */
+    struct knf_state      *state;         /* ref-pinned owning state */
+    uint64_t               last_seen;     /* highest sequence acknowledged */
+    uint64_t               pending_prev;  /* sequence before the pending publish */
+    int                    has_pending;   /* a publish advanced past last_seen */
+};
 
 /* --- KNF_STATE object body ----------------------------------------------- */
 
@@ -124,6 +146,99 @@ KNF_STATE *knf_lookup_state(const char *category, const char *name);
  * in the object-model layer a deleted state has none.
  */
 int knf_delete_state(const char *category, const char *name);
+
+/* --- Publish / subscribe (kernel API) ------------------------------------ */
+
+/*
+ * knf_open_state -- resolve an EXISTING \Notifications\<category>\<name> for
+ * publish/subscribe. Unlike knf_create_state (create-or-open) this never
+ * creates. Returns a referenced KNF_STATE body (caller ObDereferenceObject) or
+ * NULL if it does not exist / bad args.
+ */
+KNF_STATE *knf_open_state(const char *category, const char *name);
+
+/*
+ * knf_reserve_payload -- pre-size a state's payload buffer to `cap` bytes
+ * WITHOUT publishing (no sequence bump, no subscriber wake). This is the
+ * PASSIVE_LEVEL path that makes a later DISPATCH_LEVEL/DPC knf_publish() of up
+ * to `cap` bytes allocation-free. cap must be 1..KNF_MAX_PAYLOAD. Returns
+ * STATUS_SUCCESS (buffer now >= cap), STATUS_INVALID_PARAMETER (bad args),
+ * STATUS_UNSUCCESSFUL (called at DISPATCH_LEVEL or above -- reserve is
+ * PASSIVE-only), or STATUS_INSUFFICIENT_RESOURCES (OOM).
+ */
+NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap);
+
+/*
+ * knf_publish -- publish a new payload + advance the change stamp.
+ *
+ * type_id : must match the state's registered WNF_TYPE_ID when the state was
+ *           created typed (has_type_id); ignored for untyped states. NULL is
+ *           only valid for an untyped state.
+ * data/len: payload bytes; len 0 is a sequence-only (signal) publish. len must
+ *           be <= KNF_MAX_PAYLOAD.
+ * matching_change_stamp : optional CAS guard. When non-NULL the publish only
+ *           proceeds if the current sequence equals *matching_change_stamp
+ *           (mirrors WNF conditional update); a mismatch returns
+ *           STATUS_UNSUCCESSFUL without changing state.
+ * out_prev/out_new : optional; receive the pre- and post-publish sequence.
+ *
+ * IRQL: callable at <= DISPATCH_LEVEL. At DISPATCH_LEVEL the payload buffer is
+ * NOT grown (no allocation under a raised IRQL) -- a publish whose len exceeds
+ * the current payload capacity returns STATUS_INSUFFICIENT_RESOURCES unless the
+ * state was pre-sized via knf_reserve_payload at PASSIVE_LEVEL. Never blocks;
+ * never calls out while holding the per-state lock.
+ *
+ * The change stamp is strictly monotonic and never wraps: a publish at the
+ * maximum sequence (UINT64_MAX) is rejected with STATUS_INVALID_PARAMETER so
+ * the stamp can never alias 0 (a fresh state) or skip a subscriber arm.
+ *
+ * Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER (NULL state / oversize len /
+ * NULL data with len>0 / sequence at max), STATUS_OBJECT_TYPE_MISMATCH (typed
+ * state, wrong tag), STATUS_UNSUCCESSFUL (CAS mismatch), or
+ * STATUS_INSUFFICIENT_RESOURCES.
+ */
+NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
+                     const void *data, uint32_t len,
+                     const uint64_t *matching_change_stamp,
+                     uint64_t *out_prev, uint64_t *out_new);
+
+/*
+ * knf_subscribe -- register an in-kernel subscription on `st`. Captures the
+ * current sequence as the subscription's baseline (only future publishes
+ * notify) and takes an Ob reference on the state (see struct knf_subscriber).
+ * Returns STATUS_SUCCESS with *out_sub set, STATUS_INVALID_PARAMETER, or
+ * STATUS_INSUFFICIENT_RESOURCES. Call at PASSIVE_LEVEL (allocates).
+ */
+NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub);
+
+/*
+ * knf_unsubscribe -- unlink and free a subscription, dropping the state pin.
+ * CONSUMES the handle: on success the freed node pointer is nulled through
+ * `*psub` so a caller can never reuse (or double-free) a dangling pointer.
+ * Returns STATUS_SUCCESS (unlinked, freed, *psub set NULL),
+ * STATUS_INVALID_PARAMETER (NULL psub / already-consumed *psub), or
+ * STATUS_NOT_FOUND (node was not on its state's list). Call at PASSIVE_LEVEL.
+ *
+ * SINGLE-OWNER CONTRACT: a subscription handle has exactly one owner. Two
+ * concurrent knf_unsubscribe/knf_subscription_poll calls on the SAME handle
+ * (or a caller keeping a raw alias of a consumed handle) are undefined -- the
+ * consume-and-null closes the sequential double-unsubscribe window but not a
+ * cross-CPU alias race. The reference-counted, close-vs-publish-safe subscriber
+ * lifetime (needed for NtClose/process-exit teardown) is the waitable-user-
+ * subscriptions layer's job, which wraps this node in a refcounted Ob object.
+ */
+NTSTATUS knf_unsubscribe(struct knf_subscriber **psub);
+
+/*
+ * knf_subscription_poll -- non-blocking read of a pending notification.
+ * If a publish has advanced the sequence past the subscriber's last-seen value,
+ * reports (*out_prev = sequence before that advance, *out_new = current
+ * sequence), advances the subscriber's baseline, and returns STATUS_SUCCESS.
+ * Otherwise returns STATUS_NO_MORE_ENTRIES. (The blocking wait that wakes a
+ * consumer before it polls is the waitable-user-subscriptions layer.)
+ */
+NTSTATUS knf_subscription_poll(struct knf_subscriber *sub,
+                               uint64_t *out_prev, uint64_t *out_new);
 
 /* Registered "NotificationState" type singleton (NULL until ob_knf_type_init). */
 extern const struct object_type *ObpNotificationStateType;
