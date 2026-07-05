@@ -338,10 +338,10 @@ title: "TODO-15 -- Security Reference Monitor"
 > **Notes:**
 > - Shipped: the core `ACCESS_TOKEN` object + `SeCreateSystemToken`/`SeCreateUserToken` + `NtOpen*/Query/Adjust*` handlers (token.c/nt_token.c). Types + trusted-path token ops work.
 > - Downgraded [x]->[/]: design review specced the token-hardening (per-token lock, deep-copy setters, query-marshalling leak fix, `OwnerSid` field, `NtDuplicateToken` deep-copy) -- filed as precise [ ] items above.
-> - BLOCKED/latent: setters need §5's handle-rights gate before enabling; the query kernel-pointer-leak is latent (§7 unwired, no live process token). Lock/alloc ordering per spinlock rules.
+> - BLOCKED: setters need §5's handle-rights gate before enabling; the query kernel-pointer-leak is now REACHABLE (§7 shipped live process tokens 2026-07-05), tracked at TODO-12 §29. Lock/alloc ordering per spinlock rules.
 > - Scope boundary: §5 owns handle-rights enforcement + SeAccessCheck; §7 owns wiring tokens into processes.
 > **Deferred:** [Critical] `NtSetInformationToken` setters must gate on `TOKEN_ADJUST_DEFAULT` before enabling -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
-> **Deferred:** [H] token-hardening (per-token lock + deep-copy setters + query kernel-pointer-leak fix + OwnerSid + NtDuplicateToken deep-copy) design-specced, latent until §7 wires tokens into processes -> XREF: 02-kernel-core/TODO-15 §7 (item: "Add `ACCESS_TOKEN *Token;` to `struct task`")
+> **Deferred:** [H] token-hardening (per-token lock + deep-copy setters + query kernel-pointer-leak fix + OwnerSid + NtDuplicateToken deep-copy) design-specced (2026-07-05: §7 shipped live process tokens, so these are now REACHABLE not latent; hardening owned by the systemic NT trust-boundary work) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Foundation: per-token SMP lock")
 
 ---
 
@@ -486,7 +486,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [/] `RegSaveKey`/`RegRestoreKey` (registry.c) -- SeBackup/SeRestorePrivilege gates shipped; both hive I/O bodies return `ERROR_NOT_SUPPORTED` (deferred) -> XREF: 02-kernel-core/TODO-14 §2 (item: "RegSaveKey/RegRestoreKey hive I/O bodies")
 - [/] `NtSystemDebugControl`/`NtOpenProcess` SeDebug gate -- DEFERRED: needs OB PROCESS handle-rights + cross-user SID compare -> XREF: 02-kernel-core/TODO-12 §7 (item: "NtOpenProcess raw PID -> real OB objects + rights")
 - [/] `NtSaveKey`/`NtRestoreKey` (nt_registry.c) FileHandle body -- DEFERRED: needs FileHandle->path resolution before `hive_save`/`hive_load` -> XREF: 02-kernel-core/TODO-14 §2 (item: "NtSaveKey/NtRestoreKey FileHandle hive body")
-- [ ] Commit: `"kernel/security: SePrivilegeCheck, privilege gates for shutdown, systemtime, symlink, backup/restore"`
+- [x] Commit: `"kernel/security: SePrivilegeCheck, privilege gates for shutdown, systemtime, symlink, backup/restore"`
 
 **Test checkpoint:** `SeSinglePrivilegeCheck(&SeShutdownPrivilege, KernelMode)` → 1 (bypass); with a SYSTEM token as the current task token, `&SeShutdownPrivilege`/`&SeDebugPrivilege` UserMode → 1, an unknown LUID → 0; NULL token UserMode → 0 (fail-closed). `SePrivilegeCheck` ALL_NECESSARY with one missing → 0; any-mode with one held → 1 + marks that entry `SE_PRIVILEGE_USED_FOR_ACCESS`; empty ALL_NECESSARY → 1, empty any → 0. Wired gates return `STATUS_PRIVILEGE_NOT_HELD` to an unprivileged UserMode caller. Test on: QEMU WHPX + TCG.
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1088 kernel tests, 0 failures
@@ -620,7 +620,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 - [ ] `NtAccessCheckAndAuditAlarm(...)` → SSDT 0x00C4: access check + gate on `SeAuditPrivilege`; audit-record SINK deferred (see Deferred features) -- return the check result, do NOT claim an audit was written.
 - [ ] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` → SSDT 0x00C5: route to §15 denial explainer
 - [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-12 §1)
-- [ ] Commit: `"kernel/security: wire token and access control syscalls to SSDT (0x00B0–0x00C5)"`
+- [x] Commit: `"kernel/security: wire token and access control syscalls to SSDT (0x00B0–0x00C5)"`
 
 **Test checkpoint:** `NtOpenProcessToken` on current process returns valid handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against DACL returns correct granted access. `NtAdjustPrivilegesToken` enables `SeShutdownPrivilege`. NtPrivilegeCheck: `SePrivilegeCheckToken(SYSTEM, {SeShutdown})` == 1; supplied-token path allows while the effective-token path denies with no current token; SSDT 0x00BF is registered (not the not-implemented stub).
 
@@ -633,7 +633,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 > - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
 > **Verified:** 2026-07-05 | commit `993bcd60` | 9/20 items | build OK | tests compile (security + ob; runtime on WHPX)
 > **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226)
-> **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement SeAccessCheck" at line 630)
+> **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`" at line 364)
 > **Quality reviewed:** 2026-07-05 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -664,7 +664,7 @@ When a new object is created (file, directory, registry key, process) without an
 - [ ] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): pass the parent directory's SD as `ParentSD` -- DEFERRED: `ob_alloc_object` takes no parent-SD/parent-object parameter (needs a signature change or wrapper)
 - [ ] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode inherits parent SD -- DEFERRED: IXFS has no per-inode security-descriptor storage yet
 - [x] `SE_DACL_PROTECTED` on child SD blocks PARENT inheritance (assign_security.c: skips the inherit branch -> falls through to token DefaultDacl if present, else fail-closed default; flag preserved on output SD)
-- [ ] Inherit conditional (callback) ACEs preserving their condition BLOB -- assign_security.c FAILS CLOSED on an inheritable callback ACE today; needs SeAccessCheck conditional evaluation (→ XREF §5 item "Implement SeAccessCheck" at line 358)
+- [ ] Inherit conditional (callback) ACEs preserving their condition BLOB -- assign_security.c FAILS CLOSED on an inheritable callback ACE today; needs SeAccessCheck conditional evaluation (→ XREF §5 "Implement SeAccessCheck" at line 364)
 - [x] Commit: `"kernel/security: SeAssignSecurity -- SD inheritance, ACE propagation, canonical ordering"`
 
 **Test checkpoint:** `test_se_assign_security` (SUITE=security) builds a parent DACL (allow SYSTEM CI|OI, deny World OI-only) and calls `SeAssignSecurity` directly: file child inherits both ACEs with `INHERITED_ACE` only (no propagation), deny-before-allow canonical order; directory child gets the CI|OI allow applied+propagating and the OI-only deny as `INHERITED_ACE|INHERIT_ONLY_ACE|OBJECT_INHERIT_ACE`; `SE_DACL_PROTECTED` with no token DefaultDacl -> 3-ACE fail-closed fallback (never a NULL DACL) with the flag preserved on the output SD; no resolvable owner, a malformed owner SID, and an inheritable conditional (callback) ACE each -> `STATUS_INVALID_PARAMETER`; `SeDeassignSecurity` NULLs the pointer. End-to-end file/dir creation via serial log is deferred with the VFS/IXFS wiring. Test on: QEMU WHPX + TCG.
@@ -788,7 +788,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 - [ ] **SHA-1 service SID derivation:** replace `fnv1a_hash_name()` in `RtlCreateServiceSid` with Windows-compatible derivation: uppercase-normalize service name, compute SHA-1 hash (via `cng_sha1()`), map 160 bits into 5 SubAuthority DWORDs. Verify against known Windows service SID vectors (e.g., `S-1-5-80-...` for "TrustedInstaller"). Remove `fnv1a_hash_name()` dead code after replacement. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_sha1()`)
 - [x] **64-bit LUID allocator:** `NtAllocateLocallyUniqueId` (luid.c) uses `atomic64_t` + `atomic64_fetch_add(+1)`; new pure `RtlLuidFromValue()` splits into LowPart/(signed)HighPart, carrying past the 32-bit wrap (unit-tested).
 - [ ] **Constant-time SID comparison:** replace `memcmp` in `RtlEqualSid` with `cng_consttime_compare()` to eliminate timing side-channel on SID equality checks. Gate on `cng_ready()` flag (fall back to `memcmp` during early boot before CNG is initialized). Add unit test: verify `RtlEqualSid` returns correct result and call duration does not correlate with prefix match length. (-> XREF: 09-desktop-shell/TODO-07 §1 for `cng_consttime_compare()`)
-- [ ] Commit: `"kernel/security: SID/LUID hardening -- SHA-1 service SIDs, 64-bit LUID, constant-time compare"`
+- [x] Commit: `"kernel/security: SID/LUID hardening -- SHA-1 service SIDs, 64-bit LUID, constant-time compare"`
 
 **Test checkpoint:** `RtlCreateServiceSid("TrustedInstaller")` produces the same SID as Windows (`S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464`). LUID allocator returns increasing values with non-zero `HighPart` after simulated 32-bit boundary. `RtlEqualSid` timing variance < 5% between full-match and first-byte-mismatch cases (kernel cycle counter measurement). LUID shipped: `test_luid_allocator` asserts `RtlLuidFromValue(0xFFFFFFFF).HighPart==0`, `RtlLuidFromValue(0x100000000)` == {Low 0, High 1}, `RtlLuidFromValue(0x1FFFFFFFF)` == {Low 0xFFFFFFFF, High 1}, and consecutive allocations stay monotonic. Test on: QEMU WHPX + TCG.
 
@@ -808,7 +808,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 
 | ⭐ | Feature                     | 🪟 Win11         | 🐧 Linux            | 🚀 Impossible OS    |
 |----|-----------------------------|---------------|------------------|------------------|
-| 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | ⬜ §4            |
+| 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | 🟡 ACCESS_TOKEN §4 |
 | 💎 | DACL access check           | ✅ Full       | ⚠️ POSIX perms   | ⬜ §5            |
 | 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | 🟡 No-Write-Up §6 |
 | 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | 🟡 SePrivilegeCheck §8 |
