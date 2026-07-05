@@ -880,6 +880,79 @@ out:
     if (p) { ObDereferenceObject(p); knf_delete_state("Power", "Dup"); }
 }
 
+/* Coalescing/retention layer: level-triggered coalescing missed-update counter,
+ * kernel-private retention query (query-after-miss), + secret-mode policy flag. */
+static void test_knf_coalesce_retention(void)
+{
+    KNF_STATE             *st;
+    struct knf_subscriber *sub = (struct knf_subscriber *)0;
+    uint64_t               prev = 0, cur = 0, seq = 0;
+    uint32_t               qlen = 0;
+    NTSTATUS               s;
+    int                    i;
+    char                   payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    char                   qbuf[8]    = { 0 };
+
+    st = knf_create_state("Kernel", "PubCoal", KNF_LIFETIME_TEMPORARY,
+                          KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE);
+    TEST_ASSERT_NOT_NULL(st, "create PubCoal");
+    if (!st) return;
+
+    TEST_ASSERT_EQ((uint32_t)knf_subscribe(st, &sub),
+                   (uint32_t)STATUS_SUCCESS, "subscribe");
+
+    /* 5 rapid publishes; the slow subscriber sees only the latest and reports 4
+     * coalesced (missed) updates -- the first arms the pending, the next 4
+     * coalesce over it. */
+    for (i = 0; i < 5; i++)
+        knf_publish(st, (const KNF_TYPE_ID *)0, payload, 8, (const uint64_t *)0,
+                    (uint64_t *)0, (uint64_t *)0);   /* seq 1..5 */
+    TEST_ASSERT_EQ(knf_subscription_missed_count(sub), 4ull,
+                   "5 rapid publishes coalesced 4 missed updates");
+    TEST_ASSERT_EQ(knf_subscription_missed_count(sub), 0ull,
+                   "missed counter read-and-reset");
+
+    s = knf_subscription_poll(sub, &prev, &cur);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "poll delivered latest");
+    TEST_ASSERT_EQ(cur, 5ull, "poll delivered the latest sequence");
+
+    /* Retention: query-after-miss returns the retained last payload + stamp. */
+    s = knf_query_last_kernel(st, qbuf, sizeof(qbuf), &qlen, &seq);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "retention query OK");
+    TEST_ASSERT_EQ((uint64_t)qlen, 8ull, "retained payload length");
+    TEST_ASSERT_EQ(seq, 5ull, "retention query current stamp");
+    TEST_ASSERT_EQ((uint32_t)(qbuf[7] == 8), 1u, "retained payload bytes intact");
+
+    /* Buffer-too-small: partial copy + full length reported (WNF query shape). */
+    qlen = 0;
+    s = knf_query_last_kernel(st, qbuf, 4, &qlen, &seq);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "retention query reports too-small buffer");
+    TEST_ASSERT_EQ((uint64_t)qlen, 8ull, "too-small query still reports full length");
+
+    /* NULL output buffer is a length-only query: a non-empty payload must NOT
+     * report false success -- it returns BUFFER_TOO_SMALL with the full length. */
+    qlen = 0;
+    s = knf_query_last_kernel(st, (void *)0, 64, &qlen, &seq);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "NULL buffer with non-empty payload is not false success");
+    TEST_ASSERT_EQ((uint64_t)qlen, 8ull, "NULL-buffer length query reports full length");
+
+    /* Mode flags: secret opt-in stored; unknown bits + NULL rejected. */
+    TEST_ASSERT_EQ((uint32_t)knf_set_mode(st, KNF_MODE_SECRET),
+                   (uint32_t)STATUS_SUCCESS, "set secret mode");
+    TEST_ASSERT_EQ((uint64_t)st->mode_flags, (uint64_t)KNF_MODE_SECRET,
+                   "mode flags stored");
+    TEST_ASSERT_EQ((uint32_t)knf_set_mode(st, 0x80u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "unknown mode bits rejected");
+    TEST_ASSERT_EQ((uint32_t)knf_set_mode((KNF_STATE *)0, KNF_MODE_SECRET),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL state rejected");
+
+    knf_unsubscribe(&sub);
+    ObDereferenceObject(st);
+    knf_delete_state("Kernel", "PubCoal");
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_knf(void)
@@ -928,6 +1001,8 @@ void test_register_knf(void)
                             test_knf_trace_flags, TEST_CAT_KNF);
     test_suite_register_cat("knf: trace record category+leaf identity",
                             test_knf_trace_category_identity, TEST_CAT_KNF);
+    test_suite_register_cat("knf: coalescing missed counter + retention query",
+                            test_knf_coalesce_retention, TEST_CAT_KNF);
 }
 
 #endif /* KERNEL_TESTS */

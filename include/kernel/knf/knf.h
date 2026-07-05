@@ -45,6 +45,16 @@
                                   * reserved -- retention owned by the coalescing section */
 #define KNF_TRACE_ALL     (KNF_TRACE_ETW | KNF_TRACE_KLOG | KNF_PERSIST_LAST)
 
+/* --- Delivery / retention policy flags (KNF_MODE_*) --------------------- *
+ * Per-state, set under the state lock. KNF_MODE_SECRET marks a payload whose
+ * bytes must not cross to user mode un-redacted: the kernel-private retention
+ * query (knf_query_last_kernel) still returns the raw payload to KernelMode
+ * callers, but the user-mode WNF query surface (native syscalls) MUST redact a
+ * secret state's payload before returning it -- enforcement lands with that
+ * surface. Reserved-but-honored here as the policy source of truth.           */
+#define KNF_MODE_SECRET   0x1u   /* payload is secret: user-mode query must redact */
+#define KNF_MODE_ALL      (KNF_MODE_SECRET)
+
 /* --- ETW publish record (ABI: consumed by ETW session readers) ---------- *
  * knf_publish emits this as ETW_EVT_KNF_PUBLISH (see <kernel/etw.h>) when a
  * state carries KNF_TRACE_ETW. Little-endian, PACKED: the layout is pinned so
@@ -127,6 +137,9 @@ struct knf_subscriber {
     uint64_t               last_seen;     /* highest sequence acknowledged (lock) */
     uint64_t               pending_prev;  /* sequence before the pending publish (lock) */
     int                    has_pending;   /* a publish advanced past last_seen (lock) */
+    uint64_t               missed;        /* updates coalesced away since last poll (lock):
+                                           * level-triggered publishes that landed while a
+                                           * notification was already pending. Saturating. */
 };
 
 /* --- KNF_STATE object body ----------------------------------------------- */
@@ -152,6 +165,7 @@ typedef struct knf_state {
     struct knf_subscriber *subscribers;  /* subscriber list head */
     uint32_t        subscriber_count;    /* len(subscribers); bounds lock-hold walk */
     uint32_t        trace_flags;         /* KNF_TRACE_* bridge opt-ins (set/read under lock) */
+    uint32_t        mode_flags;          /* KNF_MODE_* delivery/retention policy (set/read under lock) */
 
     spinlock_t      lock;                /* guards payload + subscribers + publish */
 } KNF_STATE;
@@ -234,6 +248,33 @@ NTSTATUS knf_reserve_payload(KNF_STATE *st, uint32_t cap);
  * are honored. Returns STATUS_SUCCESS or STATUS_INVALID_PARAMETER.
  */
 NTSTATUS knf_set_trace_flags(KNF_STATE *st, uint32_t flags);
+
+/*
+ * knf_set_mode -- set the KNF_MODE_* delivery/retention policy on a state
+ * (replaces the current set; guarded by the state lock). Only KNF_MODE_* bits
+ * are honored. Returns STATUS_SUCCESS or STATUS_INVALID_PARAMETER.
+ */
+NTSTATUS knf_set_mode(KNF_STATE *st, uint32_t flags);
+
+/*
+ * knf_query_last_kernel -- KernelMode-only query-after-miss: copy the state's
+ * retained last payload (up to cap bytes) into buf and report the current
+ * change stamp, without a subscription. Snapshots under the state lock. A state
+ * with no payload yet returns STATUS_SUCCESS with *out_len == 0. This is
+ * deliberately kernel-private: the user-mode WNF query surface must layer
+ * KNF_MODE_SECRET redaction on top (a raw user-mode payload read would leak a
+ * secret state), so it is NOT the primitive user mode calls directly.
+ */
+NTSTATUS knf_query_last_kernel(KNF_STATE *st, void *buf, uint32_t cap,
+                               uint32_t *out_len, uint64_t *out_seq);
+
+/*
+ * knf_subscription_missed_count -- read-and-reset the subscriber's coalesced-
+ * update counter (number of publishes that landed while a notification was
+ * already pending, i.e. updates the subscriber will never see individually).
+ * Guarded by the state lock. Returns the count since the last call and clears it.
+ */
+uint64_t knf_subscription_missed_count(struct knf_subscriber *sub);
 
 /*
  * knf_trace_drops_at_dispatch_count -- number of traced publishes that were

@@ -48,7 +48,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎   |   4   | Security and namespace policy         | T15        |  [/]   |
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
-| ⭐   |   7   | Coalescing and payload retention      | §2         |  [ ]   |
+| ⭐   |   7   | Coalescing and payload retention      | §2         |  [/]   |
 | 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [ ]   |
 | ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [ ]   |
 | 💎   |  10   | Unit/boot tests                       | §1..§9     |  [ ]   |
@@ -188,15 +188,27 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 7. Coalescing and Payload Retention
 
-- [ ] Coalesce repeated updates by state name unless marked edge-triggered.
-- [ ] Retain last payload for query-after-miss.
-- [ ] Keep a bounded missed-update counter per subscriber.
-- [ ] Add policy for secret payload redaction before user-mode query.
-- [ ] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state's metadata (name/class/scope/type-id) to the registry on create and restore them at `knf_init` so they survive reboot (§1 classifies persistent states).
-- [ ] Shrink publish lock-hold: `knf_publish` (§2) copies up to 4096 bytes under the IRQ-disabling per-state spinlock; add double-buffered staging (fill before the lock, swap the pointer under it) so the DPC path holds it O(1).
-- [ ] Commit: `"kernel/knf: coalescing + last-payload retention + per-subscriber missed counter + redaction"`
+- [x] Level-triggered coalescing (default): a slow subscriber's poll collapses a burst to the latest `(pending_prev, latest)`; intermediate updates are counted, not delivered. Edge-triggered "deliver every update" mode deferred (Deferred stamp).
+- [x] Retain last payload for query-after-miss: kernel-private `knf_query_last_kernel` returns retained payload + stamp (WNF too-small shape). Kernel-only; user exposure + redaction owned by the WNF query surface.
+- [x] Bounded per-subscriber missed-update counter: `knf_subscriber.missed` (saturating at `UINT64_MAX`, bumped under the lock when a publish coalesces over an unread pending) + read-and-reset `knf_subscription_missed_count`.
+- [/] Secret-payload redaction before user-mode query: `KNF_MODE_SECRET` + `knf_set_mode` land now as the policy source of truth; redaction ENFORCEMENT deferred to the user-mode WNF query surface (raw user read would leak a secret state).
+- [/] Edge-triggered delivery (deliver every update, not just the latest): needs a bounded per-subscriber delivery ring; deferred (Deferred stamp).
+- [/] Persistent-lifetime registry backing: write a `KNF_LIFETIME_PERSISTENT` state metadata to the registry on create + restore at `knf_init` (reboot survival). Deferred (registry write/restore integration).
+- [/] Shrink publish lock-hold via active/spare double-buffer: the naive "copy before the lock" is unsafe (design review); needs a real active/inactive buffer model. The current under-lock copy is correct; this is a perf optimization. Deferred.
+- [x] Commit: `"kernel/knf: coalescing + last-payload retention + per-subscriber missed counter + secret-mode flag"`
 
-**Test checkpoint:** `test_knf` publishes 5 rapid updates to a coalescing (level-triggered) state and asserts a slow subscriber sees only the latest payload with the missed-update counter == 4; an edge-triggered state delivers all 5; a query-after-miss returns the retained last payload; a redacted secret state returns zeroed bytes to a user-mode query. Serial: `"[KNF] coalesced=%u missed=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf` publishes 5 rapid updates to a coalescing (level-triggered) state and asserts a slow subscriber's missed-update counter == 4 with poll delivering only the latest sequence; a query-after-miss (`knf_query_last_kernel`) returns the retained last payload + stamp and reports the full length on a too-small buffer; `knf_set_mode` stores `KNF_MODE_SECRET` and rejects unknown bits + a NULL state. (Edge-triggered delivery, secret redaction, persistence, and double-buffering are deferred -- see Deferred stamps.) Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 23 suites, 0 failures
+> **Notes:**
+> - Shipped the coalescing/retention layer (knf.c/knf.h): per-subscriber `missed` counter + `knf_subscription_missed_count` (read-and-reset), kernel-private `knf_query_last_kernel` (query-after-miss), and `KNF_MODE_SECRET` + `knf_set_mode` policy flag.
+> - Level-triggered coalescing is the default publish/poll behavior; `missed` is bumped under the per-state lock when a publish lands over an unread pending; the retention query snapshots payload+stamp under the same lock.
+> - Deferred (see stamps): edge-triggered delivery, secret redaction enforcement, persistent registry backing, active/spare double-buffering. Design review adoptions in the commit message.
+> - Canonical doc: this TODO; §8 owns the user-mode WNF query surface where `KNF_MODE_SECRET` redaction enforces, §9 owns diagnostics counters.
+> **Deferred:** [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Edge-triggered delivery" at line 194)
+> **Deferred:** [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Secret-payload redaction before user-mode query" at line 195)
+> **Deferred:** [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented -> XREF: 02-kernel-core/TODO-16 §7 (item: "Persistent-lifetime registry backing" at line 197)
+> **Deferred:** [L] publish lock-hold not yet shrunk; needs active/spare double-buffer -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold via active/spare double-buffer" at line 198)
 
 ---
 

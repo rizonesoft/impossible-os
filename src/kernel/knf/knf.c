@@ -355,6 +355,19 @@ NTSTATUS knf_set_trace_flags(KNF_STATE *st, uint32_t flags)
     return STATUS_SUCCESS;
 }
 
+NTSTATUS knf_set_mode(KNF_STATE *st, uint32_t flags)
+{
+    uint64_t lflags;
+
+    if (!st || (flags & ~KNF_MODE_ALL))
+        return STATUS_INVALID_PARAMETER;
+
+    spin_lock_irqsave(&st->lock, &lflags);
+    st->mode_flags = flags;
+    spin_unlock_irqrestore(&st->lock, lflags);
+    return STATUS_SUCCESS;
+}
+
 /* --- Observability bridge (klog + ETW) ---------------------------------- */
 
 /* Best-effort observability accounting -- relaxed atomic tallies, never a control
@@ -556,9 +569,16 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
      * pending_prev) is the natural level-triggered behavior; the missed-update
      * count + edge-triggered option are the coalescing/retention layer. */
     for (sub = st->subscribers; sub; sub = sub->next) {
-        if (!sub->has_pending && sub->last_seen < next_seq) {
+        if (sub->last_seen >= next_seq)
+            continue;
+        if (!sub->has_pending) {
             sub->pending_prev = sub->last_seen;
             sub->has_pending  = 1;
+        } else if (sub->missed != (uint64_t)~0ull) {
+            /* A publish landed while a notification was still pending: the
+             * subscriber will never see this intermediate value (level-triggered
+             * coalescing to the latest). Count it, saturating at UINT64_MAX. */
+            sub->missed++;
         }
     }
 
@@ -633,6 +653,7 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
     /* Baseline at the current sequence: only future publishes notify. */
     sub->last_seen   = (uint64_t)atomic64_read(&st->sequence);
     sub->has_pending = 0;
+    sub->missed      = 0;
     sub->next        = st->subscribers;
     st->subscribers  = sub;
     st->subscriber_count++;
@@ -710,6 +731,58 @@ NTSTATUS knf_subscription_poll(struct knf_subscriber *sub,
     } else {
         status = STATUS_NO_MORE_ENTRIES;
     }
+    spin_unlock_irqrestore(&st->lock, flags);
+    return status;
+}
+
+uint64_t knf_subscription_missed_count(struct knf_subscriber *sub)
+{
+    KNF_STATE *st;
+    uint64_t   flags, n;
+
+    if (!sub || !sub->state)
+        return 0;
+    st = sub->state;
+
+    spin_lock_irqsave(&st->lock, &flags);
+    n = sub->missed;
+    sub->missed = 0;                  /* read-and-reset: count since last query */
+    spin_unlock_irqrestore(&st->lock, flags);
+    return n;
+}
+
+NTSTATUS knf_query_last_kernel(KNF_STATE *st, void *buf, uint32_t cap,
+                               uint32_t *out_len, uint64_t *out_seq)
+{
+    uint64_t flags;
+    uint32_t len, ncopy;
+    NTSTATUS status = STATUS_SUCCESS;
+
+    if (!st)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Snapshot the retained payload + current stamp under the lock. A publish
+     * frees the OLD payload buffer only after unlock, and grows payload_cap only
+     * under the lock, so the copy here (under the lock) always sees a consistent
+     * (payload, payload_len) pair. */
+    spin_lock_irqsave(&st->lock, &flags);
+    /* Derive len from the buffer pointer so the payload_len>0 => payload!=NULL
+     * invariant holds even under fault injection: a NULL payload reports len 0. */
+    len = st->payload ? st->payload_len : 0;
+    /* A NULL output buffer is a length-only query (WNF pattern): normalize cap
+     * to 0 so a non-empty payload returns BUFFER_TOO_SMALL + full length rather
+     * than a false SUCCESS that copied nothing. */
+    if (!buf)
+        cap = 0;
+    ncopy = (len > cap) ? cap : len;
+    if (ncopy > 0)                          /* ncopy>0 => cap>0 => buf!=NULL, len>0 => payload!=NULL */
+        memcpy(buf, st->payload, ncopy);
+    if (len > cap)
+        status = STATUS_BUFFER_TOO_SMALL;   /* partial/no copy; out_len reports full size */
+    if (out_len)
+        *out_len = len;
+    if (out_seq)
+        *out_seq = (uint64_t)atomic64_read(&st->sequence);
     spin_unlock_irqrestore(&st->lock, flags);
     return status;
 }
