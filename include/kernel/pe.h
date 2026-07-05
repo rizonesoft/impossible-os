@@ -255,3 +255,8 @@ uint64_t pe_load(const uint8_t *data, uint64_t size);
  * Returns 0 if all tables are sorted, else the number of violations.
  * Intended for boot-time gating and unit tests. */
 int pe_exports_sorted_check(void);
+
+/* Resolve an ntdll export name to its SSDT index, or (uint32_t)-1 if the name
+ * is not exported. Lets tests assert a native syscall is reachable through the
+ * ntdll import surface, not merely registered in the SSDT. */
+uint32_t pe_ntdll_export_ssdt(const char *name);

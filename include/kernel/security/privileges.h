@@ -158,6 +158,19 @@ const char *RtlPrivilegeLuidToName(const LUID *luid);
 int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode);
 
 /*
+ * SePrivilegeCheckToken -- token-explicit form of SePrivilegeCheck. Checks the
+ * caller-supplied `token` (e.g. an NtPrivilegeCheck ClientToken handle's token)
+ * rather than the current subject's effective token. Same rules otherwise:
+ * KernelMode (access_mode 0) returns 1; NULL token or NULL set fails closed;
+ * PrivilegeCount above TOKEN_MAX_PRIVS fails closed; held privileges are marked
+ * SE_PRIVILEGE_USED_FOR_ACCESS in `ps`. SePrivilegeCheck is the effective-token
+ * wrapper around this primitive.
+ */
+struct access_token;
+int SePrivilegeCheckToken(struct access_token *token, PRIVILEGE_SET *ps,
+                          uint32_t access_mode);
+
+/*
  * SeSinglePrivilegeCheck -- single-LUID shortcut. KernelMode returns 1; else 1
  * iff the effective token holds `privilege` with SE_PRIVILEGE_ENABLED. NULL
  * privilege or NULL effective token returns 0 (fail-closed). This is the gate

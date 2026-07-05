@@ -287,6 +287,7 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtOpenThreadToken",           SSDT_NtOpenThreadToken },
     { "NtOpenThreadTokenEx",         SSDT_NtOpenThreadTokenEx },
     { "NtOpenTimer",                 SSDT_NtOpenTimer },
+    { "NtPrivilegeCheck",            SSDT_NtPrivilegeCheck },
     { "NtQueryDirectoryObject",      SSDT_NtQueryDirectoryObject },
     { "NtQueryInformationToken",     SSDT_NtQueryInformationToken },
     { "NtQueryKey",                  SSDT_NtQueryKey },
@@ -367,6 +368,21 @@ static uint32_t pe_lookup_export(const pe_dll_exports_t *dll, const char *name)
             hi = mid;
         else
             return dll->exports[mid].ssdt_index;
+    }
+    return (uint32_t)-1;
+}
+
+/* Public introspection: resolve an ntdll export name to its SSDT index, or
+ * (uint32_t)-1 if the name is not exported. Lets tests and boot-time gates
+ * assert that a newly-wired native syscall is actually reachable through the
+ * ntdll import surface (not just registered in the SSDT). */
+uint32_t pe_ntdll_export_ssdt(const char *name)
+{
+    uint32_t dll_i;
+
+    for (dll_i = 0; dll_i < PE_DLL_COUNT; dll_i++) {
+        if (pe_strcmp(s_dll_tables[dll_i].dll_name, "ntdll.dll") == 0)
+            return pe_lookup_export(&s_dll_tables[dll_i], name);
     }
     return (uint32_t)-1;
 }

@@ -710,6 +710,7 @@ static void test_nt_token_ssdt_registered(void)
         { SSDT_NtAdjustPrivilegesToken, "NtAdjustPrivilegesToken" },
         { SSDT_NtAdjustGroupsToken,     "NtAdjustGroupsToken" },
         { SSDT_NtAllocateLocallyUniqueId, "NtAllocateLocallyUniqueId" },
+        { SSDT_NtPrivilegeCheck,        "NtPrivilegeCheck" },
     };
     uint32_t i;
     char msg[96];
@@ -1046,6 +1047,60 @@ static void test_privilege_check(void)
     ObDereferenceObject(systok);
 }
 
+/* SePrivilegeCheckToken checks the SUPPLIED token, not the current subject's
+ * effective token -- the distinguishing behavior NtPrivilegeCheck relies on
+ * (it must answer for the ClientToken handle, not the caller). */
+static void test_se_privilege_check_token(void)
+{
+    struct task  *cur = task_current();
+    void         *saved;
+    ACCESS_TOKEN *systok;
+    LUID          bogus = { 9999, 0 };
+
+    TEST_ASSERT(cur != (struct task *)0, "task_current() non-NULL");
+    saved = cur->token;
+
+    systok = SeCreateSystemToken();
+    TEST_ASSERT(systok != (ACCESS_TOKEN *)0, "SeCreateSystemToken -> non-NULL");
+
+    /* KernelMode bypasses regardless of token (even NULL). */
+    TEST_ASSERT(SePrivilegeCheckToken((struct access_token *)0,
+                                      (PRIVILEGE_SET *)0, SE_KERNEL_MODE) == 1,
+                "KernelMode token-explicit bypass");
+    /* NULL token in UserMode fails closed. */
+    {
+        uint64_t rawbuf[3];   /* PRIVILEGE_SET + 1 entry */
+        PRIVILEGE_SET *ps = (PRIVILEGE_SET *)rawbuf;
+        ps->PrivilegeCount = 1;
+        ps->Control = PRIVILEGE_SET_ALL_NECESSARY;
+        ps->Privilege[0].Luid = SeShutdownPrivilege;
+        ps->Privilege[0].Attributes = 0;
+        TEST_ASSERT(SePrivilegeCheckToken((struct access_token *)0, ps, 1) == 0,
+                    "NULL token -> deny");
+
+        /* Critically: clear the current effective token, then pass systok
+         * EXPLICITLY. The effective-token path (SePrivilegeCheck) would deny;
+         * the token-explicit path allows because it honors the supplied token. */
+        cur->token = (void *)0;
+        TEST_ASSERT(SePrivilegeCheck(ps, 1) == 0,
+                    "effective-token path denies with no current token");
+        ps->Privilege[0].Attributes = 0;
+        TEST_ASSERT(SePrivilegeCheckToken((struct access_token *)systok, ps, 1) == 1,
+                    "token-explicit path allows the SUPPLIED token");
+        TEST_ASSERT((ps->Privilege[0].Attributes & SE_PRIVILEGE_USED_FOR_ACCESS) != 0,
+                    "used-for-access marked on the supplied token's held privilege");
+
+        /* An unheld privilege on the supplied token still denies. */
+        ps->Privilege[0].Luid = bogus;
+        ps->Privilege[0].Attributes = 0;
+        TEST_ASSERT(SePrivilegeCheckToken((struct access_token *)systok, ps, 1) == 0,
+                    "unheld privilege on supplied token -> deny");
+    }
+
+    cur->token = saved;
+    ObDereferenceObject(systok);
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -1074,6 +1129,8 @@ void test_register_security(void)
     test_suite_register_cat("Security: Mandatory Integrity Control", test_mic, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: token assignment + impersonation", test_token_assignment, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SePrivilegeCheck", test_privilege_check, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: SePrivilegeCheckToken (token-explicit)",
+                            test_se_privilege_check_token, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

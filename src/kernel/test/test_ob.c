@@ -1999,6 +1999,18 @@ static void test_pe_ntdll_exports_sorted(void)
     TEST_ASSERT(v == 0, "PE DLL export tables strictly sorted by name");
 }
 
+static void test_pe_ntdll_export_privcheck(void)
+{
+    /* NtPrivilegeCheck (SSDT 0x00BF) must be reachable through the ntdll import
+     * surface, not just registered in the SSDT: a PE importing
+     * ntdll!NtPrivilegeCheck otherwise resolves to the stub thunk. Also confirm
+     * a non-exported name returns the not-found sentinel. */
+    TEST_ASSERT(pe_ntdll_export_ssdt("NtPrivilegeCheck") == SSDT_NtPrivilegeCheck,
+                "ntdll!NtPrivilegeCheck resolves to SSDT_NtPrivilegeCheck");
+    TEST_ASSERT(pe_ntdll_export_ssdt("NtNoSuchExport") == (uint32_t)-1,
+                "unknown ntdll export -> not-found sentinel");
+}
+
 /* Shared ALPC slot table -- same pattern as s_lpc_slots above. */
 static const struct { uint32_t svc; const char *name; } s_alpc_slots[] = {
     { SSDT_NtAlpcCreatePort,             "NtAlpcCreatePort" },
@@ -2426,6 +2438,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT ALPC slots registered", test_nt_alpc_slots_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT ALPC pending features", test_nt_alpc_pending_features, TEST_CAT_OB);
     test_suite_register_cat("OB: PE ntdll exports sorted", test_pe_ntdll_exports_sorted, TEST_CAT_OB);
+    test_suite_register_cat("OB: PE ntdll NtPrivilegeCheck export", test_pe_ntdll_export_privcheck, TEST_CAT_OB);
     test_suite_register_cat("OB: namespace locking stress", test_ob_ns_locking_stress, TEST_CAT_OB);
     test_suite_register_cat("OB: info-file register+read", test_ob_info_file_register_and_read, TEST_CAT_OB);
     test_suite_register_cat("OB: \\ObjectManager\\FrameStats pseudo-file", test_ob_framestats_pseudo_file, TEST_CAT_OB);

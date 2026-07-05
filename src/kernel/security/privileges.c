@@ -173,9 +173,10 @@ static int sep_token_holds(const ACCESS_TOKEN *tok, const LUID *luid)
     return 0;
 }
 
-int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
+int SePrivilegeCheckToken(struct access_token *token, PRIVILEGE_SET *ps,
+                          uint32_t access_mode)
 {
-    ACCESS_TOKEN *tok;
+    ACCESS_TOKEN *tok = (ACCESS_TOKEN *)token;
     uint32_t i, held = 0;
     int all_necessary;
 
@@ -184,13 +185,11 @@ int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
     if (!ps)
         return 0;                       /* fail closed */
 
-    /* Resolve the effective token FIRST and deny on absence: a UserMode subject
-     * with no token fails closed for EVERY check, including a degenerate empty
-     * ALL_NECESSARY set (otherwise an empty/malformed set would authorize a
-     * token-less subject -- a fail-open edge). */
-    tok = sep_effective_token();
+    /* Deny on absence FIRST: a UserMode subject with no token fails closed for
+     * EVERY check, including a degenerate empty ALL_NECESSARY set (otherwise an
+     * empty/malformed set would authorize a token-less subject -- fail-open). */
     if (!tok)
-        return 0;                       /* no effective token -> deny */
+        return 0;                       /* no token -> deny */
 
     /* Fail closed on an implausibly large privilege count: a set requesting more
      * than the maximum a subject can hold is malformed, and iterating (and
@@ -218,6 +217,16 @@ int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
     }
 
     return all_necessary ? (held == ps->PrivilegeCount) : (held > 0);
+}
+
+/* Effective-token wrapper: resolve the current subject's token, then delegate
+ * to the token-explicit primitive above. */
+int SePrivilegeCheck(PRIVILEGE_SET *ps, uint32_t access_mode)
+{
+    if (access_mode == SE_KERNEL_MODE)
+        return 1;                       /* kernel code is trusted */
+    return SePrivilegeCheckToken((struct access_token *)sep_effective_token(),
+                                 ps, access_mode);
 }
 
 int SeSinglePrivilegeCheck(const LUID *privilege, uint32_t access_mode)

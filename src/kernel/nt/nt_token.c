@@ -24,7 +24,11 @@
 #include "kernel/ob/ob.h"
 #include "kernel/security/token.h"
 #include "kernel/security/luid.h"
+#include "kernel/security/privileges.h"  /* SePrivilegeCheckToken, PRIVILEGE_SET */
+#include "kernel/nt/zw.h"                 /* ssdt_previous_mode */
 #include "kernel/klog.h"
+
+extern void *memcpy(void *dst, const void *src, size_t n);
 
 /* ACCESS_TOKEN library entry points (defined in token.c) */
 extern int32_t NtOpenProcessToken(ACCESS_TOKEN *process_token, HANDLE_TABLE *ht,
@@ -489,6 +493,78 @@ static NTSTATUS NtAllocateLocallyUniqueId_handler(uint64_t a1, uint64_t a2,
     return STATUS_SUCCESS;
 }
 
+/* ======================================================================== */
+/* NtPrivilegeCheck (SSDT 0x00BF)                                           */
+/*                                                                          */
+/* a1 = HANDLE ClientToken                                                 */
+/* a2 = PRIVILEGE_SET* RequiredPrivileges (in/out: USED_FOR_ACCESS marks)   */
+/* a3 = BOOLEAN* Result (out)                                              */
+/*                                                                          */
+/* Checks the ClientToken's token (NOT the caller's effective token) against */
+/* the requested privileges. The variable-length RequiredPrivileges span is  */
+/* copied into a fixed kernel scratch before use: PrivilegeCount is part of   */
+/* this syscall's correctness contract, so the primitive must never read      */
+/* past a validated span. The generic ring-3 pointer-probe boundary and the   */
+/* ClientToken handle-rights (TOKEN_QUERY) check are the systemic NT trust-    */
+/* boundary gap owned by TODO-12 native-api-ssdt (NT ring-3 trust boundary).  */
+/* ======================================================================== */
+
+static NTSTATUS NtPrivilegeCheck_handler(uint64_t a1, uint64_t a2,
+                                         uint64_t a3, uint64_t a4,
+                                         uint64_t a5, uint64_t a6)
+{
+    HANDLE client_token = (HANDLE)(int32_t)a1;
+    PRIVILEGE_SET *user_ps = (PRIVILEGE_SET *)a2;
+    uint8_t *result = (uint8_t *)a3;
+    ACCESS_TOKEN *tok;
+    uint32_t count, span;
+    /* Fixed scratch large enough for the header + the maximum privilege count;
+     * zero-initialized so a shrinking/racing caller count can never expose stale
+     * stack to the privilege scan. */
+    uint8_t buf[sizeof(PRIVILEGE_SET) +
+                TOKEN_MAX_PRIVS * sizeof(LUID_AND_ATTRIBUTES)] = { 0 };
+    PRIVILEGE_SET *ps = (PRIVILEGE_SET *)buf;
+
+    (void)a4; (void)a5; (void)a6;
+
+    if (!user_ps || !result)
+        return STATUS_INVALID_PARAMETER;
+
+    tok = resolve_token_handle(client_token);
+    if (!tok)
+        return STATUS_INVALID_HANDLE;
+
+    /* Bound the count BEFORE the span multiply so it cannot overflow: with
+     * count <= TOKEN_MAX_PRIVS the span is at most sizeof(buf). */
+    count = user_ps->PrivilegeCount;
+    if (count > TOKEN_MAX_PRIVS)
+        return STATUS_INVALID_PARAMETER;
+
+    span = (uint32_t)sizeof(PRIVILEGE_SET) +
+           count * (uint32_t)sizeof(LUID_AND_ATTRIBUTES);
+    memcpy(ps, user_ps, span);
+
+    /* Pin the count to the validated value we sized the copy from: the memcpy
+     * re-copied the header (a concurrent SMP mutation could have enlarged the
+     * caller's PrivilegeCount after the check), so the scan must trust `count`,
+     * not the freshly-copied header field, or it would read past the copied
+     * entries. */
+    ps->PrivilegeCount = count;
+
+    /* access_mode is the caller's previous mode: a KernelMode caller (0) is
+     * trusted, a UserMode caller (1) must actually hold the privileges. */
+    if (SePrivilegeCheckToken((struct access_token *)tok, ps,
+                              ssdt_previous_mode()))
+        *result = 1;
+    else
+        *result = 0;
+
+    /* Propagate the SE_PRIVILEGE_USED_FOR_ACCESS marks back to the caller. */
+    memcpy(user_ps, ps, span);
+
+    return STATUS_SUCCESS;
+}
+
 /* ---- SSDT Registration -------------------------------------------------- */
 
 void nt_token_register_ssdt(void)
@@ -511,7 +587,9 @@ void nt_token_register_ssdt(void)
                   (SSDT_HANDLER)NtAdjustGroupsToken_handler);
     ssdt_register(SSDT_NtAllocateLocallyUniqueId,
                   (SSDT_HANDLER)NtAllocateLocallyUniqueId_handler);
+    ssdt_register(SSDT_NtPrivilegeCheck,
+                  (SSDT_HANDLER)NtPrivilegeCheck_handler);
 
     klog(LOG_INFO, "nt",
-         "NT token: 9 handlers registered (S16 open/query/adjust + LUID)");
+         "NT token: 10 handlers registered (open/query/adjust + LUID + privcheck)");
 }

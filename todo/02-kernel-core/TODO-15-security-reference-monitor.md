@@ -68,7 +68,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §5, §6, §7      |  [/]   |
 | 💎  |  10   | Win32 security API wrappers                       | §4–§9, T12 §1       |  [/]   |
 | ⭐  |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10              |  [/]   |
-| 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [ ]   |
+| 💎  |  12   | Security/token syscalls wired to SSDT             | §4, §8, T12 §4      |  [/]   |
 | 💎  |  13   | SD inheritance / SeAssignSecurity                 | §3, §4, §5, T05 §1  |  [ ]   |
 | 💎  |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9      |  [/]   |
 | ⭐  |  15   | Access denial explainer                                           | §5, §6, §8, §14     |  [/]   |
@@ -607,16 +607,24 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 - [ ] `NtCreateToken(...)` → SSDT 0x00BA: privileged operation for LSA
 - [ ] `NtCreateLowBoxToken(NewToken, ExistingToken, DesiredAccess, ObjectAttributes, AppContainerSid, CapabilityCount, Capabilities, HandleCount, Handles)` → SSDT 0x00BB: route to AppContainer token creation (§14)
 - [ ] `NtAccessCheck(SD, ClientToken, DesiredAccess, GenericMapping, PrivSet, PrivSetLen, GrantedAccess, AccessStatus)` → SSDT 0x00BC: route to `SeAccessCheck()` (§5)
-- [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF: route to `SePrivilegeCheck()` (§8)
-- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1
-- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2
+- [x] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF -- nt_token.c: decodes ClientToken + `PRIVILEGE_SET`, kernel-scratch bounded copy, calls new token-explicit `SePrivilegeCheckToken()` (satisfies TODO-12 §12)
+- [ ] `NtSetSecurityObject(Handle, SecurityInformation, SD)` → SSDT 0x00C1 -- deferred: needs self-relative SD import + real access check (→ XREF §5 `SeAccessCheck`, §3 SD unmarshal)
+- [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SD, Length, LengthNeeded)` → SSDT 0x00C2 -- deferred: must serialize SD self-relative to user (raw `ObGetSecurityDescriptor` ptr = kernel leak) (→ XREF §5, §3)
 - [x] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 -- wired in TODO-12 §16 (nt_token.c, SSDT wrapper around luid.c)
 - [ ] `NtAccessCheckAndAuditAlarm(...)` → SSDT 0x00C4: access check + gate on `SeAuditPrivilege`; audit-record SINK deferred (see Deferred features) -- return the check result, do NOT claim an audit was written.
 - [ ] `NtQueryAccessDenialReason(Handle, DesiredAccess, DenialReason)` → SSDT 0x00C5: route to §15 denial explainer
 - [ ] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-12 §1)
 - [ ] Commit: `"kernel/security: wire token and access control syscalls to SSDT (0x00B0–0x00C5)"`
 
-**Test checkpoint:** `NtOpenProcessToken` on current process returns valid handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against DACL returns correct granted access. `NtAdjustPrivilegesToken` enables `SeShutdownPrivilege`.
+**Test checkpoint:** `NtOpenProcessToken` on current process returns valid handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAccessCheck` against DACL returns correct granted access. `NtAdjustPrivilegesToken` enables `SeShutdownPrivilege`. NtPrivilegeCheck: `SePrivilegeCheckToken(SYSTEM, {SeShutdown})` == 1; supplied-token path allows while the effective-token path denies with no current token; SSDT 0x00BF is registered (not the not-implemented stub).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | N suites, 0 failures
+
+> **Notes:**
+> - Partial ship: NtPrivilegeCheck (SSDT 0x00BF) wired to the new token-explicit `SePrivilegeCheckToken()`; section stays `[/]` while SeAccessCheck/lifecycle rows remain `[ ]`.
+> - Design review adoptions in the ship commit: decode a1=ClientToken (was mis-specced), add the token-explicit primitive, kernel-scratch copy the variable-length `PRIVILEGE_SET` before use.
+> - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "access-mask-aware token resolution" at line 1226).
+> - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
 
 ---
 

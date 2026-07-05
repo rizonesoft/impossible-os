@@ -196,7 +196,7 @@ title: "SSDT Master Table"
 | 0x00BC | NtAccessCheck                    | §16 | T15 §4 (SeAccessCheck)   | [ ]  |
 | 0x00BD | NtAccessCheckAndAuditAlarm       | §16 | T15                      | [ ]  |
 | 0x00BE | NtAccessCheckByType              | §16 | T15                      | [ ]  |
-| 0x00BF | NtPrivilegeCheck                 | §16 | T15                      | [ ]  |
+| 0x00BF | NtPrivilegeCheck                 | §16 | T15 §12 (nt_token.c)     | [x]  |
 | 0x00C0 | NtPrivilegeObjectAuditAlarm      | §16 | T15                      | [ ]  |
 | 0x00C1 | NtSetSecurityObject              | §16 | T15                      | [ ]  |
 | 0x00C2 | NtQuerySecurityObject            | §16 | T15                      | [ ]  |
