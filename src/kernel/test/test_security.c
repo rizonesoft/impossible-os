@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/security/sid.h"
 #include "kernel/security/acl.h"
+#include "kernel/security/mic.h"
 #include "kernel/security/token.h"
 #include "kernel/security/privileges.h"
 #include "kernel/security/stack_canary.h"
@@ -775,6 +776,132 @@ static void test_canary_seed_desc_bounds(void)
                    "phys_start 0 rejected");
 }
 
+/* ---- Mandatory Integrity Control ---- */
+
+static void test_mic(void)
+{
+    ACCESS_TOKEN tok;
+    uint8_t sacl_buf[128];
+    ACL *sacl = (ACL *)sacl_buf;
+    SECURITY_DESCRIPTOR sd;
+
+    /* Token IL is the last SubAuthority of IntegrityLevelSid. */
+    memset(&tok, 0, sizeof(tok));
+    tok.IntegrityLevelSid = (SID *)SeILLow;
+    TEST_ASSERT_EQ(SeGetTokenIntegrityLevel(&tok), SECURITY_MANDATORY_LOW_RID,
+                   "SeGetTokenIntegrityLevel(Low) == 4096");
+    tok.IntegrityLevelSid = (SID *)SeILSystem;
+    TEST_ASSERT_EQ(SeGetTokenIntegrityLevel(&tok), SECURITY_MANDATORY_SYSTEM_RID,
+                   "SeGetTokenIntegrityLevel(System) == 16384");
+    TEST_ASSERT_EQ(SeGetTokenIntegrityLevel((const ACCESS_TOKEN *)0),
+                   SECURITY_MANDATORY_MEDIUM_RID,
+                   "SeGetTokenIntegrityLevel(NULL) == Medium default");
+
+    /* Level comparison. */
+    TEST_ASSERT(SeCompareMandatoryLevels(SECURITY_MANDATORY_LOW_RID,
+                SECURITY_MANDATORY_HIGH_RID) == -1, "Low < High");
+    TEST_ASSERT(SeCompareMandatoryLevels(SECURITY_MANDATORY_HIGH_RID,
+                SECURITY_MANDATORY_LOW_RID) == 1, "High > Low");
+    TEST_ASSERT(SeCompareMandatoryLevels(SECURITY_MANDATORY_MEDIUM_RID,
+                SECURITY_MANDATORY_MEDIUM_RID) == 0, "Medium == Medium");
+
+    /* Object IL: no SACL -> Medium default. */
+    RtlCreateSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+    TEST_ASSERT_EQ(SeGetObjectIntegrityLevel(&sd), SECURITY_MANDATORY_MEDIUM_RID,
+                   "SeGetObjectIntegrityLevel(no SACL) == Medium");
+
+    /* Object IL: SACL carrying a High mandatory label -> High. */
+    RtlCreateAcl(sacl, sizeof(sacl_buf), ACL_REVISION);
+    RtlAddMandatoryAce(sacl, ACL_REVISION, 0, SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
+                       SYSTEM_MANDATORY_LABEL_ACE_TYPE, SeILHigh);
+    RtlSetSaclSecurityDescriptor(&sd, 1, sacl, 0);
+    TEST_ASSERT_EQ(SeGetObjectIntegrityLevel(&sd), SECURITY_MANDATORY_HIGH_RID,
+                   "SeGetObjectIntegrityLevel(High label) == High");
+
+    /* No-Write-Up: Low subject writing a High object -> denied. */
+    tok.IntegrityLevelSid = (SID *)SeILLow;
+    TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, GENERIC_WRITE, (const GENERIC_MAPPING *)0)
+                == STATUS_ACCESS_DENIED,
+                "MIC: Low GENERIC_WRITE to High object -> denied");
+    /* Default policy is No-Write-Up only, so Low reading High is allowed. */
+    TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, GENERIC_READ, (const GENERIC_MAPPING *)0)
+                == STATUS_SUCCESS,
+                "MIC: Low GENERIC_READ to High (No-Write-Up only) -> allowed");
+    /* System subject (>= object IL) is not restricted. */
+    tok.IntegrityLevelSid = (SID *)SeILSystem;
+    TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, GENERIC_WRITE, (const GENERIC_MAPPING *)0)
+                == STATUS_SUCCESS,
+                "MIC: System GENERIC_WRITE to High object -> allowed");
+
+    /* Object-specific write bit (not a generic bit) bypasses the policy UNLESS
+     * the object's GENERIC_MAPPING classifies it. 0x2 = a fake object write. */
+    {
+        static const GENERIC_MAPPING map = { 0x1 /*R*/, 0x2 /*W*/, 0x4 /*X*/, 0x7 /*All*/ };
+        tok.IntegrityLevelSid = (SID *)SeILLow;
+        TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, 0x2, (const GENERIC_MAPPING *)0)
+                    == STATUS_SUCCESS,
+                    "MIC: object-specific write bit without a mapping -> not classified");
+        TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, 0x2, &map) == STATUS_ACCESS_DENIED,
+                    "MIC: object-specific write bit WITH mapping -> denied (no bypass)");
+    }
+
+    /* MAXIMUM_ALLOWED resolves to whatever the DACL grants, so a Low subject
+     * requesting it on a High object is restricted under No-Write-Up. */
+    tok.IntegrityLevelSid = (SID *)SeILLow;
+    TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, MAXIMUM_ALLOWED, (const GENERIC_MAPPING *)0)
+                == STATUS_ACCESS_DENIED,
+                "MIC: Low MAXIMUM_ALLOWED to High object -> denied (no bypass)");
+    /* READ_CONTROL is read access; under No-Write-Up-only it is allowed. */
+    TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd, READ_CONTROL, (const GENERIC_MAPPING *)0)
+                == STATUS_SUCCESS,
+                "MIC: Low READ_CONTROL to High (No-Write-Up only) -> allowed");
+
+    /* A token IL SID that is not an S-1-16 mandatory-label SID -> Medium. */
+    tok.IntegrityLevelSid = (SID *)SeLocalSystemSid;   /* S-1-5-18, not S-1-16 */
+    TEST_ASSERT_EQ(SeGetTokenIntegrityLevel(&tok), SECURITY_MANDATORY_MEDIUM_RID,
+                   "SeGetTokenIntegrityLevel(non-mandatory-label SID) -> Medium");
+
+    /* No-Read-Up label: Low subject reading High -> denied. */
+    {
+        uint8_t sacl2_buf[128];
+        ACL *sacl2 = (ACL *)sacl2_buf;
+        SECURITY_DESCRIPTOR sd2;
+        RtlCreateSecurityDescriptor(&sd2, SECURITY_DESCRIPTOR_REVISION);
+        RtlCreateAcl(sacl2, sizeof(sacl2_buf), ACL_REVISION);
+        RtlAddMandatoryAce(sacl2, ACL_REVISION, 0,
+                           SYSTEM_MANDATORY_LABEL_NO_WRITE_UP | SYSTEM_MANDATORY_LABEL_NO_READ_UP,
+                           SYSTEM_MANDATORY_LABEL_ACE_TYPE, SeILHigh);
+        RtlSetSaclSecurityDescriptor(&sd2, 1, sacl2, 0);
+        tok.IntegrityLevelSid = (SID *)SeILLow;
+        TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd2, GENERIC_READ, (const GENERIC_MAPPING *)0)
+                    == STATUS_ACCESS_DENIED,
+                    "MIC: Low GENERIC_READ to High with No-Read-Up -> denied");
+        TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd2, READ_CONTROL, (const GENERIC_MAPPING *)0)
+                    == STATUS_ACCESS_DENIED,
+                    "MIC: Low READ_CONTROL to High with No-Read-Up -> denied");
+    }
+
+    /* Malformed SACL fails closed: SeGetObjectIntegrityLevel -> System, and
+     * SeCheckMandatoryAccess -> denied regardless of the IL comparison. */
+    {
+        uint8_t bad_buf[128];
+        ACL *bad = (ACL *)bad_buf;
+        SECURITY_DESCRIPTOR sd3;
+        RtlCreateSecurityDescriptor(&sd3, SECURITY_DESCRIPTOR_REVISION);
+        RtlCreateAcl(bad, sizeof(bad_buf), ACL_REVISION);
+        RtlAddMandatoryAce(bad, ACL_REVISION, 0, SYSTEM_MANDATORY_LABEL_NO_WRITE_UP,
+                           SYSTEM_MANDATORY_LABEL_ACE_TYPE, SeILHigh);
+        bad->AceCount = 50;   /* claims 50 ACEs, only 1 built -> walk hits a zero ACE */
+        RtlSetSaclSecurityDescriptor(&sd3, 1, bad, 0);
+        TEST_ASSERT_EQ(SeGetObjectIntegrityLevel(&sd3), SECURITY_MANDATORY_SYSTEM_RID,
+                       "SeGetObjectIntegrityLevel(malformed SACL) fails closed to System");
+        tok.IntegrityLevelSid = (SID *)SeILLow;
+        TEST_ASSERT(SeCheckMandatoryAccess(&tok, &sd3, GENERIC_READ, (const GENERIC_MAPPING *)0)
+                    == STATUS_ACCESS_DENIED,
+                    "MIC: malformed SACL fails closed -> denied");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -800,6 +927,7 @@ void test_register_security(void)
     test_suite_register_cat("Security: RtlValidAcl/RtlGetAceEx bounded", test_acl_valid_bounded, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: self-relative SD bounded import",
                             test_sd_selfrel_import_bounded, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: Mandatory Integrity Control", test_mic, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: privilege set to string", test_privilege_set_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtAllocateLocallyUniqueId", test_nt_allocate_luid, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: NtOpenProcessToken", test_nt_open_process_token, TEST_CAT_SECURITY);

@@ -62,7 +62,7 @@ title: "TODO-15 -- Security Reference Monitor"
 | 💎  |   3   | SECURITY_DESCRIPTOR, ACL, ACE types               | §1                  |  [/]   |
 | 💎  |   4   | ACCESS_TOKEN object (primary)                     | §1, §2, §3, T05 §1  |  [/]   |
 | 💎  |   5   | SeAccessCheck engine                              | §3, §4              |  [/]   |
-| 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [ ]   |
+| 💎  |   6   | Mandatory Integrity Control (MIC)                 | §4, §5              |  [/]   |
 | 💎  |   7   | Process/thread token assignment & impersonation   | §4                  |  [ ]   |
 | 💎  |   8   | SePrivilegeCheck & per-privilege enforcement      | §2, §4, §5          |  [ ]   |
 | 💎  |   9   | UAC token split & NtFilterToken                   | §4, §6, §7          |  [ ]   |
@@ -409,10 +409,10 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## 6. Mandatory Integrity Control (MIC)
 
-- [ ] `SeGetTokenIntegrityLevel(token)` -- returns `uint32_t` from `token->IntegrityLevelSid->SubAuthority[0]` (0, 4096, 8192, 12288, 16384)
-- [ ] `SeGetObjectIntegrityLevel(sd)` -- reads `SYSTEM_MANDATORY_LABEL_ACE` from SACL; returns `SeILMedium` (8192) if no SACL or no mandatory label
-- [ ] `SeCompareMandatoryLevels(subject_il, object_il)` → `int` (-1 / 0 / +1)
-- [ ] `SeCheckMandatoryAccess(ctx, sd, desired_access)` -- called by §5 before DACL walk:
+- [x] `SeGetTokenIntegrityLevel(token)` (mic.c) -- last SubAuthority of `token->IntegrityLevelSid` (0/4096/8192/12288/16384); MEDIUM default on NULL/malformed.
+- [x] `SeGetObjectIntegrityLevel(sd)` (mic.c) -- SACL `SYSTEM_MANDATORY_LABEL_ACE` RID; MEDIUM if no SACL/label, SYSTEM (fail-closed) on malformed SACL via `RtlValidAcl`.
+- [x] `SeCompareMandatoryLevels(subject_il, object_il)` (mic.c) -> -1/0/+1.
+- [x] `SeCheckMandatoryAccess(token, sd, desired, mapping)` (mic.c; `token` not `ctx` -- SUBJECT_CONTEXT deferred; `mapping` is the object `GENERIC_MAPPING` so object-specific rights are classified) -- No-*-Up policy:
   - Compute `subject_il = SeGetTokenIntegrityLevel(effective_token)`
   - Compute `object_il = SeGetObjectIntegrityLevel(sd)`
   - Read `SYSTEM_MANDATORY_LABEL_ACE->Mask` policy bits:
@@ -420,6 +420,7 @@ title: "TODO-15 -- Security Reference Monitor"
     - `SYSTEM_MANDATORY_LABEL_NO_READ_UP (0x2)` -- optional; if `subject_il < object_il` AND `desired` contains read access bits → deny
     - `SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP (0x4)` -- if `subject_il < object_il` AND `desired` contains execute bits → deny
   - Returns `STATUS_ACCESS_DENIED` or `STATUS_SUCCESS`
+- [x] `SeCheckMandatoryAccess` folds the object `GENERIC_MAPPING` (`generic_mapping.h`) into its access classes so object-specific rights cannot bypass No-*-Up; §5 owns per-type instances.
 - [ ] Default object IL assignment: kernel objects created by System process get `SeILSystem`; objects created by user process inherit creator's IL
 - [ ] UIPI note: MIC also gates cross-IL window-message sends (UIPI), but that path is compositor/Win32k-owned, not an SRM object DACL check. -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserChangeWindowMessageFilterEx")
 - [ ] When `NtCreateProcess` copies the parent token (§7), child token IL = `min(parent_IL, process_image_IL)`; image IL read from PE/ELF resource (`RT_MANIFEST`, requested execution level: `asInvoker`→same, `requireAdministrator`→High)
@@ -427,6 +428,14 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] Commit: `"kernel/security: Mandatory Integrity Control, No-Write-Up policy"`
 
 **Test checkpoint:** `SeCheckMandatoryAccess` with Low IL token + GENERIC_WRITE on Medium IL object → `STATUS_ACCESS_DENIED` (No-Write-Up). System IL writing Medium IL → allowed. No-Read-Up policy set, Low IL reading Medium IL → denied. Default policy (No-Write-Up only), Low IL reading Medium IL → allowed. Child process spawned from Medium IL parent → child IL == Medium. Serial log: `"[SRM] MIC: subject_il=%u object_il=%u policy=0x%x result=%s"`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1058 passed, 0 failures
+> **Notes:**
+> - Shipped: `mic.c`/`mic.h` -- `SeGetTokenIntegrityLevel`, `SeGetObjectIntegrityLevel`, `SeCompareMandatoryLevels`, `SeCheckMandatoryAccess` (No-*-Up, `GENERIC_MAPPING`-aware) + IL-RID/`MIC_*_MASK` constants + shared `generic_mapping.h`.
+> - Integration: pure functions on a caller token/SD (no global state/locks/alloc); SACL walk uses §3's `RtlValidAcl`+`RtlGetAceEx` (imported SD cannot OOB; malformed SACL fails closed). No live caller yet -- SeAccessCheck consumes them.
+> - Tests: `test_mic` covers token IL (incl non-IL-authority reject), object IL (Medium/High/System-fail-closed), compare, No-Write-Up + No-Read-Up, object-specific-bit bypass closed via mapping, malformed-SACL fail-closed; `SUITE=security` 1058 passed, 0 failed.
+> - Design (Codex): `SeCheckMandatoryAccess(token, ...)` not `ctx` (SUBJECT_CONTEXT deferred); defensive SACL validation; Medium default on valid-but-unlabeled, fail-closed on malformed.
+> - Scope boundary: SeAccessCheck owns MIC-before-DACL wiring + `GENERIC_MAPPING` precision + the `[SRM] MIC:` log; token assignment owns child-IL=min; object-IL-at-creation + Low-IL FS sandbox stay open.
 
 ---
 
@@ -714,7 +723,7 @@ AppContainer is the primary process sandboxing mechanism in modern Windows (used
 |----|-----------------------------|---------------|------------------|------------------|
 | 💎 | Token-based identity        | ✅ Full       | ⚠️ UID/GID only  | ⬜ §4            |
 | 💎 | DACL access check           | ✅ Full       | ⚠️ POSIX perms   | ⬜ §5            |
-| 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | ⬜ §6            |
+| 💎 | Mandatory Integrity Ctrl    | ✅ Vista+     | ⚠️ SELinux add-on | 🟡 No-Write-Up §6 |
 | 💎 | Privilege separation        | ✅ Full       | ⚠️ Capabilities  | ⬜ §8            |
 | 💎 | UAC filtered-token          | ✅ Full       | ❌ N/A           | ⬜ §9            |
 | 💎 | Thread impersonation        | ✅ Full       | ❌ N/A           | ⬜ §7            |
