@@ -30,6 +30,14 @@ extern int    snprintf(char *buf, size_t size, const char *fmt, ...);
 _Static_assert(KNF_NAME_MAX <= OB_NAME_MAX,
                "KNF_NAME_MAX must fit a namespace component (OB_NAME_MAX)");
 
+/* Buffer for a full "\Notifications\<category>\<name>" path. Both category and
+ * name are validated components (each < KNF_NAME_MAX), so the worst case is the
+ * 15-char "\Notifications\" prefix + two max components + a separator + NUL.
+ * Sized off KNF_NAME_MAX so a name cap bump keeps the buffers in sync. */
+#define KNF_PATH_MAX (2 * KNF_NAME_MAX + 24)
+_Static_assert(KNF_PATH_MAX >= 15 + 2 * (KNF_NAME_MAX - 1) + 2,
+               "KNF_PATH_MAX must hold \\Notifications\\<cat>\\<name>");
+
 /* The registered type singleton (declared extern in knf.h). */
 const OBJECT_TYPE *ObpNotificationStateType = NULL;
 
@@ -94,11 +102,27 @@ static void *knf_mkdir(void *parent, const char *name)
     return dir;
 }
 
+/* A namespace component (category or leaf name) must be non-empty, fit a
+ * directory component, and carry NO path separator -- otherwise a value like
+ * "Security\\" or "" would let the single-component insert and the
+ * path-walking lookup disagree, aliasing the wrong directory/object. */
+static int knf_valid_component(const char *s)
+{
+    size_t n = strlen(s);
+    if (n == 0 || n >= KNF_NAME_MAX)
+        return 0;
+    for (size_t k = 0; k < n; k++) {
+        if (s[k] == '\\' || s[k] == '/')
+            return 0;
+    }
+    return 1;
+}
+
 /* Resolve \Notifications\<category> to a referenced directory body, or NULL.
  * Caller must ObDereferenceObject the result. */
 static void *knf_category_dir(const char *category)
 {
-    char path[KNF_NAME_MAX + 32];
+    char path[KNF_PATH_MAX];
     void *dir = NULL;
 
     snprintf(path, sizeof(path), "\\Notifications\\%s", category);
@@ -116,7 +140,6 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
     KNF_STATE     *st;
     OBJECT_HEADER *hdr;
     void          *dir;
-    size_t         nlen;
 
     if (!ObpNotificationStateType || !category || !name)
         return NULL;
@@ -126,17 +149,11 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
     if (lifetime < KNF_LIFETIME_WELLKNOWN || lifetime > KNF_LIFETIME_TEMPORARY)
         return NULL;
 
-    nlen = strlen(name);
-    if (nlen == 0 || nlen >= KNF_NAME_MAX)
+    /* Both the category and the leaf name are single namespace components:
+     * validate each (non-empty, bounded, no separator) so no crafted value
+     * aliases the wrong directory or object. */
+    if (!knf_valid_component(category) || !knf_valid_component(name))
         return NULL;
-
-    /* A leaf name is a single namespace component: reject path separators so
-     * the single-component insert and the path-walking lookup can never
-     * disagree about which object a name refers to. */
-    for (size_t k = 0; k < nlen; k++) {
-        if (name[k] == '\\' || name[k] == '/')
-            return NULL;
-    }
 
     /* WellKnown / Permanent / Persistent states outlive a normal creator, so a
      * user-mode caller must hold SeCreatePermanentPrivilege (matches WNF: only
@@ -197,7 +214,7 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
      * reference on success; on a name collision, open the existing state
      * (WNF create-or-open) so one name maps to one state. */
     if (ObInsertObject(st, st->name, dir) < 0) {
-        char wpath[KNF_NAME_MAX + 32];
+        char wpath[KNF_PATH_MAX];
         void *winner = NULL;
 
         ObMakeTemporaryObject(st);  /* clear PERMANENT so this loser can free */
@@ -220,10 +237,11 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
 
 KNF_STATE *knf_lookup_state(const char *category, const char *name)
 {
-    char  path[KNF_NAME_MAX + 32];
+    char  path[KNF_PATH_MAX];
     void *body = NULL;
 
-    if (!category || !name)
+    if (!category || !name ||
+        !knf_valid_component(category) || !knf_valid_component(name))
         return NULL;
 
     snprintf(path, sizeof(path), "\\Notifications\\%s\\%s", category, name);
@@ -236,6 +254,7 @@ int knf_delete_state(const char *category, const char *name)
 {
     void      *dir  = NULL;
     KNF_STATE *st   = NULL;
+    int        removed;
 
     if (!category || !name)
         return -1;
@@ -255,7 +274,16 @@ int knf_delete_state(const char *category, const char *name)
      * directory's reference). Our lookup reference keeps the body alive until
      * the final deref below, so the free happens exactly once here. */
     ObMakeTemporaryObject(st);
-    ObpRemoveFromDirectory(dir, st);
+    removed = ObpRemoveFromDirectory(dir, st);
+
+    /* removed == -1 means a concurrent knf_delete_state unlinked the state
+     * (and already dropped the directory's reference) between our lookup and
+     * this call; the state is gone either way and our deref below releases the
+     * final reference, so this is an idempotent success -- NOT a leak (the dir
+     * reference is only ever dropped once, by whichever caller wins the race).
+     * We never reach here with the state under a different directory because
+     * knf_lookup_state resolved it under this same category path. */
+    (void)removed;
 
     ObDereferenceObject(st);    /* releases our lookup ref -> frees the state */
     ObDereferenceObject(dir);

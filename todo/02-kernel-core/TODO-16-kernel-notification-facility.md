@@ -75,6 +75,11 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Codex design + test-coverage adoptions (pointer payload, gate Persistent, name-boundary fix, flag/deny tests) in the commit message; restricted-token fixture filed to §4, persistent registry backing to §7.
 > - Canonical doc: this TODO; publish/subscribe/security/retention are the later sections.
 > - Scope boundary: §1 owns the object type + namespace + lifetime/scope/type-id metadata; §2/§3 own publish/subscribe + teardown, §4 owns DACL/token enforcement, §7 owns coalescing/retention + persistent registry backing.
+> **Verified:** 2026-07-05 | commit `REVIEWHASH` | 8/8 items | build OK | smoke PASS (KVM 3.29s) + test-knf 10/10
+> **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 185)
+> **Deferred:** [L] create-or-open can open an existing privileged state via a Temporary request -> XREF: 02-kernel-core/TODO-16 §4 (item: "Gate create-or-open opens by DACL" at line 122)
+> **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 197)
+> **Quality reviewed:** 2026-07-05 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M+1L fixed, 3L deferred-XREF | scope: kernel-code-quality
 
 ---
 
@@ -177,7 +182,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 - [ ] Expose `SystemNotificationInformation` through `NtQuerySystemInformation`.
 - [ ] Report state count, subscriber count, publishes/sec, dropped/coalesced count, security denials.
-- [ ] Add shell/browser consumer in tools domain later; kernel provides data only.
+- [ ] Report KNF init health: a `knf_init` failure (absent root namespace, category `knf_mkdir` failure) is silent to boot-health today. Surface it via a readiness/degraded flag so a partial `\Notifications` tree is visible.
 - [ ] Commit: `"kernel/knf: SystemNotificationInformation diagnostics counters via NtQuerySystemInformation"`
 
 **Test checkpoint:** `test_knf` calls `NtQuerySystemInformation(SystemNotificationInformation)` and asserts the returned struct reports the live state count, subscriber count, and non-zero publishes + coalesced + security-denial counters after the earlier section tests ran. Serial: `"[KNF] diag: states=%u subs=%u denials=%u"`. Test on: QEMU WHPX + TCG.
@@ -189,6 +194,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Kernel tests: create/publish/query, coalescing, missed sequence detection, ACL denied publish, wait wakeup.
 - [ ] Boot test: publish `System/ShellReady` and verify a service-manager subscriber wakes once.
 - [ ] Stress: 1000 states, 100 subscribers, no leaks after unsubscribe.
+- [ ] Concurrent create/delete SMP stress (kthreads): many threads racing create + delete of one name; assert no leak/double-free and that the `ObpRemoveFromDirectory` idempotent `-1` path runs (§1 covers only deterministic double-delete).
 - [ ] Subscription lifetime tests: teardown on `NtClose`, teardown on process/thread exit (no retained node), a close-vs-publish race (no wake of a freed node), and a publish-after-owner-exit (no wake of a gone task).
 - [ ] Commit: `"kernel/knf: test_knf suite (create/publish/query/coalesce/ACL/wait) + ShellReady boot test"`
 

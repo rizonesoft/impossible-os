@@ -95,6 +95,11 @@ static void test_knf_create_and_lookup(void)
                    "knf_delete_state removes the created state");
     TEST_ASSERT_NULL((void *)knf_lookup_state("Kernel", "UtestState"),
                      "state gone after delete");
+
+    /* Idempotent / stale-reference contract: deleting an already-gone state
+     * reports not-found (-1) rather than double-freeing or succeeding twice. */
+    TEST_ASSERT_EQ(knf_delete_state("Kernel", "UtestState"), -1,
+                   "second delete of a gone state returns -1 (not found)");
 }
 
 /* ---- Create-or-open (one name == one state) ----------------------------- */
@@ -147,6 +152,17 @@ static void test_knf_create_bad_args(void)
                         KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
                         (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE),
                      "unknown category rejected");
+
+    /* Category is a single component too: empty or separator-bearing category
+     * is rejected before it can alias a directory (e.g. "Security\\"). */
+    TEST_ASSERT_NULL((void *)knf_create_state("", "X",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE),
+                     "empty category rejected");
+    TEST_ASSERT_NULL((void *)knf_create_state("Security\\", "X",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE),
+                     "category with backslash rejected (no aliasing)");
 
     /* Path separators in a leaf name are rejected (a name is one component). */
     TEST_ASSERT_NULL((void *)knf_create_state("Kernel", "foo\\bar",
