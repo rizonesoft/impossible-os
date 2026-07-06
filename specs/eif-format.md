@@ -7,10 +7,13 @@
 ## Normative Rules
 
 1. **Endianness:** All multi-byte integers are little-endian.
-2. **Ordering:** `segment_offset < import_offset < signature_offset < metadata_offset` (when non-zero). All ranges must be non-overlapping. The loader MUST reject files where any two ranges overlap or where any offset points outside the file.
-3. **Signing scope:** `signature_offset` MUST be placed AFTER all loader-consumed content (header, segment table, import table, and all segment data). Metadata MUST be placed BEFORE `signature_offset` if it is security-relevant. The signature covers `[0, signature_offset)`.
+2. **Canonical order:** sections appear in the fixed file order header -> segment table -> import table -> segment data -> metadata -> signature, and every non-zero offset MUST satisfy `segment_offset < import_offset < metadata_offset < signature_offset`. Metadata therefore ALWAYS precedes the signature. All derived ranges (see rule 6) MUST be non-overlapping and lie fully inside the file; the loader MUST reject any file that violates the order, overlaps a range, or points an offset outside the file.
+3. **Signing scope:** `signature_offset` MUST be placed AFTER all loader-consumed content (header, segment table, import table, all segment data, AND metadata). The signature covers `[0, signature_offset)`, so ALL loader-consumed content -- including every metadata key/value -- is signed; there is no loader-consumed byte outside the authenticated range. A signed file MUST NOT carry any loader-consumed data at or after `signature_offset`.
 4. **API versioning:** Any SSDT service number reassignment or ABI-breaking change MUST increment the OS API version. The loader rejects binaries whose `api_version` exceeds the running OS API version. Binaries are forward-compatible only within the same major version.
 5. **Optional import stubs:** Skipped optional imports MUST have their dispatch table entry set to a deterministic stub that returns `STATUS_NOT_IMPLEMENTED`. User code MUST check return values for optional imports.
+6. **Range derivation (overflow-safe):** for each table the loader MUST compute `end = offset + (uint64_t)count * sizeof(entry)` in 64-bit and reject the file if the multiply or add would overflow or if `end > file_size`. Never validate with 32-bit arithmetic (`segment_count`/`import_count` are 32-bit and `count * stride` can wrap). `segment_count` and `import_count` are each capped at a fixed loader maximum (mirrored in `include/kernel/eif.h`); a count above the cap is rejected before any table is walked.
+7. **Segment ordering:** `eif_segment_t[]` entries MUST be sorted by ascending `vaddr`, with monotonic non-overlapping `[vaddr, vaddr + mem_size)` and `[file_offset, file_offset + file_size)` ranges (and `file_size <= mem_size`). This lets the loader validate non-overlap in a single O(n) walk (compare each entry to the previous end); out-of-order or overlapping entries are rejected during that walk.
+8. **Metadata bounds:** when `metadata_offset` is non-zero its range is `[metadata_offset, signature_offset)` for a signed file, or `[metadata_offset, file_size)` for an unsigned file. Key/value record parsing MUST stay inside that bounded range and stop at the first `key_len == 0` terminator OR the range end, whichever comes first; a record whose declared length would read past the range end is rejected. The loader never scans past `signature_offset` (or EOF) while reading metadata.
 
 ## Design Goals
 
@@ -53,7 +56,7 @@
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
-| `0x00` | 4 | `magic` | `"EIF!"` (`0x45494621`) |
+| `0x00` | 4 | `magic` | file bytes `45 49 46 21` (`"EIF!"`) read as little-endian `uint32_t` = `0x21464945` (`EIF_MAGIC` in `include/kernel/eif.h`) |
 | `0x04` | 2 | `version` | Format version (1 = this spec) |
 | `0x06` | 2 | `arch` | Target architecture: `1` = x86_64, `2` = AArch64 |
 | `0x08` | 4 | `flags` | Bitfield (see below) |
@@ -191,7 +194,7 @@ Terminated by `key_len == 0`. Common keys:
 The kernel header struct (for `include/kernel/eif.h`):
 
 ```c
-#define EIF_MAGIC  0x45494621  /* "EIF!" little-endian */
+#define EIF_MAGIC  0x21464945  /* file bytes 45 49 46 21 ("EIF!") as LE u32 */
 
 #define EIF_ARCH_X86_64   1
 #define EIF_ARCH_AARCH64  2

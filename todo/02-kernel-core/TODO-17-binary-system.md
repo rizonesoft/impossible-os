@@ -181,7 +181,7 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
 
 - [x] Write `specs/eif-format.md` -- complete spec with design goals, comparison table, file layout, byte-offset tables
-- [x] Define `eif_header_t` (64 bytes): magic `"EIF!"` (0x45494621), version, arch (x86_64/AArch64), flags (GUI/CONSOLE/DRIVER/SIGNED/COMPRESSED/DEBUG), api_version, entry_point, load_base, segment/import counts and offsets, signature/metadata offsets. Static assert on size.
+- [x] Define `eif_header_t` (64 bytes): `EIF_MAGIC` `0x21464945` (bytes `45 49 46 21` LE), version, arch, flags, api_version, entry_point, load_base, segment/import counts+offsets, signature/metadata offsets; static assert
 - [x] Define `eif_segment_t` (32 bytes): vaddr, file_offset, file_size, mem_size, flags (READ/WRITE/EXEC), reserved. Static assert on size.
 - [x] Define `eif_import_t` (8 bytes): syscall_id (SSDT service number), flags (OPTIONAL bit). Static assert on size. Import resolution is integer-only -- no string lookup.
 - [x] Signature format spec: Ed25519 or RSA-2048-SHA256, covers `[0, signature_offset)`, verification flow documented
@@ -191,6 +191,15 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 - [x] Commit: `"docs: EIF format specification"`
 
 **Test checkpoint:** `specs/eif-format.md` exists and contains `eif_header_t`, `eif_segment_t`, `eif_import_t` definitions with byte offsets. Header totals 64 bytes. No runtime test -- spec document only.
+
+> **Notes:**
+> - EIF format spec (`specs/eif-format.md`) + static-asserted `eif.h` structs (64/32/8 bytes); integer-only syscall-ID imports, no load-time string tables.
+> - The spec is the ABI source of truth consumed by the §5 kernel loader (`eif.c`) and the §13 `elf2eif` producer.
+> - Format-spec section: no runtime code of its own; validation is spec-vs-`eif.h`/`eif.c` consistency.
+
+> **Verified:** 2026-07-06 | `specs/eif-format.md` matches `eif.h` static-assert sizes (64/32/8) + `eif.c` field offsets; magic `0x21464945` now consistent across spec/header/loader/TODO | docs-only (no runtime test)
+> **Accepted:** [H] Tightened normative rules 6-8 (count caps, ascending-vaddr non-overlapping segments, bounded metadata) are design-level; the §5 loader `eif_validate` has 64-bit table bounds + `file_size<=mem_size` but not yet the count-cap / segment-overlap / metadata-bound checks -> XREF: 02-kernel-core/TODO-17 §5 (item: "Enforce §4 rules 6-8 in `eif_validate`" at line 207)
+> **Quality reviewed:** 2026-07-06 | Codex 3x (adversarial, consistency, perf) | 4H+1M fixed in spec (magic, metadata/signature ordering contradiction, overflow-safe range rule, segment-ordering rule, metadata-bounds rule), 1H accepted-XREF (loader enforcement -> §5) | re-adversarial skipped: spec/docs-only fixes, no C/H | scope: N/A (format-spec doc)
 
 ## 5. EIF Kernel Loader
 
@@ -204,6 +213,7 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
   - [x] Return `load_base + entry_point`
 - [x] Performance measurement: uptime_ns() delta logged in microseconds
 - [x] Registered as "EIF" format in `exec_init()` with magic `{'E','I','F','!'}`
+- [ ] Enforce §4 rules 6-8 in `eif_validate`: cap `segment_count`/`import_count`, require ascending-`vaddr` non-overlapping segments (O(n), mirror ELF §2), bound metadata to `[metadata_offset, signature_offset)`; add tests
 - [x] Commit: `"kernel: eif -- EIF loader"`
 
 **Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
