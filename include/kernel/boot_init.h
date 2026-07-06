@@ -64,7 +64,8 @@ typedef enum {
     SUBSYS_PCID     = 26,   /* CR4.PCIDE activation window (TODO-09-boot S5) */
     SUBSYS_EX       = 27,   /* Executive support runtime (Ex* primitives) */
     SUBSYS_NLS      = 28,   /* NLS table loader + invariant fallback (TODO-13 S4) */
-    SUBSYS_COUNT    = 29,  /* sentinel -- keep last */
+    SUBSYS_KNF      = 29,   /* Kernel Notification Facility namespace + type */
+    SUBSYS_COUNT    = 30,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
 /* g_boot_info.degraded_mask is a uint32 and BOOT_TRY / kernel_subsystem_

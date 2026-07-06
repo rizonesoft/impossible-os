@@ -31,6 +31,8 @@
 #include "kernel/feature.h"    /* feature count for the config query */
 #include "kernel/nt/sysconfig_info.h" /* SYSTEM_KERNEL_CONFIG_INFORMATION ABI */
 #include "kernel/nt/nls_syscall_info.h" /* SYSTEM_NLS_INFORMATION ABI */
+#include "kernel/nt/knf_syscall_info.h" /* SYSTEM_NOTIFICATION_INFORMATION ABI */
+#include "kernel/knf/knf.h"             /* KNF diagnostics counters */
 #include "kernel/nt/nls.h"             /* nls_get_version */
 #include "kernel/nt/nls_cp.h"          /* nls_cp_get_acp / nls_cp_get_oemcp */
 #include "kernel/nt/nls_locale.h"      /* nls_locale_get_system / _user */
@@ -878,6 +880,59 @@ NTSTATUS nt_query_kernel_config_information(void *buffer, uint32_t buf_size,
     return STATUS_SUCCESS;
 }
 
+/* SYSTEM_NOTIFICATION_INFORMATION marshaller (Impossible OS extension 0x1002): a
+ * read-only Kernel Notification Facility diagnostics snapshot -- live state /
+ * subscriber counts + cumulative publish / coalesced / security-denial + trace
+ * drop/skip counters + KNF init health. All source values are best-effort
+ * relaxed-atomic tallies or the subsystem-readiness oracle, so no lock is held.
+ * Non-static so the KNF diagnostics unit test exercises the marshalling directly. */
+NTSTATUS nt_query_notification_information(void *buffer, uint32_t buf_size,
+                                          uint32_t *return_length)
+{
+    SYSTEM_NOTIFICATION_INFORMATION info;
+    const uint32_t need = (uint32_t)sizeof(info);
+
+    if (return_length) {
+        NTSTATUS pst = ProbeForWriteIfUser(return_length,
+                                           (uint32_t)sizeof(uint32_t), 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        if (copy_to_user(return_length, &need, (uint32_t)sizeof(uint32_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (!buffer || buf_size < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+
+    memset(&info, 0, sizeof(info));
+    info.Version = SYSTEM_NOTIFICATION_INFORMATION_VERSION;
+    info.Size    = (uint16_t)sizeof(info);
+    /* Three distinct health states. apply_result records BOTH DEGRADED and FATAL
+     * in degraded_mask, so the degraded_mask bit alone cannot tell them apart --
+     * READY (BOOT_OK/DEGRADED both set ready) is the discriminator. Not ready =>
+     * fatal init (UNAVAILABLE); ready + degraded bit => partial (DEGRADED). */
+    if (kernel_subsystem_ready(SUBSYS_KNF)) {
+        info.Flags |= SYSTEM_NOTIFICATION_FLAG_READY;
+        if (g_boot_info.degraded_mask & (1u << SUBSYS_KNF))
+            info.Flags |= SYSTEM_NOTIFICATION_FLAG_DEGRADED;
+    } else {
+        info.Flags |= SYSTEM_NOTIFICATION_FLAG_UNAVAILABLE;
+    }
+    info.LiveStateCount  = knf_diag_live_state_count();
+    info.SubscriberCount = knf_diag_subscriber_count();
+    info.PublishCount    = knf_diag_publish_count();
+    info.CoalescedCount  = knf_diag_coalesced_count();
+    info.SecurityDenials = knf_diag_security_denial_count();
+    info.DropsAtDispatch = knf_trace_drops_at_dispatch_count();
+    info.TraceGuardSkips = knf_trace_skips_guard_count();
+
+    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_to_user(buffer, &info, need) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 /* SYSTEM_NLS_INFORMATION marshaller (Impossible OS extension 0x1001): a
  * read-only snapshot of the active code-page / locale / UI-language policy and
  * the NLS/collation version. All source values are published (boot-cached ACP/
@@ -1280,6 +1335,8 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         return nt_query_kernel_config_information(buffer, buf_size, return_length);
     case SystemNlsInformation:
         return nt_query_nls_information(buffer, buf_size, return_length);
+    case SystemNotificationInformation:
+        return nt_query_notification_information(buffer, buf_size, return_length);
     default:
         /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
          * SystemInformationClass values; Windows ntoskrnl returns the

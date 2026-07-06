@@ -56,6 +56,7 @@ static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "PCID",       /* 26 */
     "EX",         /* 27 */
     "NLS",        /* 28 */
+    "KNF",        /* 29 */
 };
 
 _Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUNT,

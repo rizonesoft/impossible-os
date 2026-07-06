@@ -167,6 +167,11 @@ typedef struct knf_state {
     uint32_t        subscriber_count;    /* len(subscribers); bounds lock-hold walk */
     uint32_t        trace_flags;         /* KNF_TRACE_* bridge opt-ins (set/read under lock) */
     uint32_t        mode_flags;          /* KNF_MODE_* delivery/retention policy (set/read under lock) */
+    uint8_t         diag_counted;        /* 1 once counted into the live-state diag tally
+                                          * (only after a successful insert): gates the
+                                          * on_delete decrement so a create-or-open loser,
+                                          * which is destroyed without ever being counted,
+                                          * does not underflow the counter. Zero-init. */
 
     spinlock_t      lock;                /* guards payload + subscribers + publish */
 } KNF_STATE;
@@ -294,6 +299,18 @@ uint64_t knf_trace_drops_at_dispatch_count(void);
  * every intentional trace-suppression path is observable, not silently lost.
  */
 uint64_t knf_trace_skips_guard_count(void);
+
+/*
+ * Diagnostics counters surfaced through NtQuerySystemInformation
+ * (SystemNotificationInformation). live_state/subscriber are live-object counts
+ * (inc/dec); publish/coalesced/security-denial are cumulative tallies. All are
+ * best-effort relaxed atomics (diagnostics, not control decisions).
+ */
+uint64_t knf_diag_live_state_count(void);
+uint64_t knf_diag_subscriber_count(void);
+uint64_t knf_diag_publish_count(void);
+uint64_t knf_diag_coalesced_count(void);
+uint64_t knf_diag_security_denial_count(void);
 
 /*
  * knf_publish -- publish a new payload + advance the change stamp.

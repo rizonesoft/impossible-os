@@ -50,7 +50,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
 | ⭐   |   7   | Coalescing and payload retention      | §2         |  [/]   |
 | 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [/]   |
-| ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [ ]   |
+| ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [x]   |
 | 💎   |  10   | Unit/boot tests                       | §1..§9     |  [ ]   |
 
 ## 1. Notification State Object Type
@@ -231,12 +231,20 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## 9. Diagnostics Browser and Counters
 
-- [ ] Expose `SystemNotificationInformation` through `NtQuerySystemInformation`.
-- [ ] Report state count, subscriber count, publishes/sec, dropped/coalesced count, security denials.
-- [ ] Report KNF init health: a `knf_init` failure (absent root namespace, category `knf_mkdir` failure) is silent to boot-health today. Surface it via a readiness/degraded flag so a partial `\Notifications` tree is visible.
-- [ ] Commit: `"kernel/knf: SystemNotificationInformation diagnostics counters via NtQuerySystemInformation"`
+- [x] Expose `SystemNotificationInformation` (class 0x1002) via `NtQuerySystemInformation`: packed `SYSTEM_NOTIFICATION_INFORMATION` ABI in `knf_syscall_info.h` + `nt_query_notification_information` marshaller.
+- [x] Report live state/subscriber counts, cumulative publish/coalesced + trace drop/skip counts, and security denials via relaxed atomics. Broader `SeAccessCheck` denials deferred; create-privilege denial ships now.
+- [x] Report KNF init health: `knf_init` applies `kernel_subsystem_apply_result(SUBSYS_KNF, ...)` (FATAL/DEGRADED/OK), surfaced as the READY/DEGRADED/UNAVAILABLE health flags; fixed the false-OK POST16 paths.
+- [x] Commit: `"kernel/knf: SystemNotificationInformation diagnostics counters via NtQuerySystemInformation"`
 
-**Test checkpoint:** `test_knf` calls `NtQuerySystemInformation(SystemNotificationInformation)` and asserts the returned struct reports the live state count, subscriber count, and non-zero publishes + coalesced + security-denial counters after the earlier section tests ran. Serial: `"[KNF] diag: states=%u subs=%u denials=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `test_knf_diag_query` calls `nt_query_notification_information` (the `SystemNotificationInformation` marshaller), asserts Version/Size + `SYSTEM_NOTIFICATION_FLAG_READY`, then does known operations (create, subscribe, 3-publish burst, denied user-mode permanent create) and asserts the live-state/subscriber/publish/coalesced/security-denial counters rose by the expected deltas; a too-small buffer returns `STATUS_INFO_LENGTH_MISMATCH` + full length. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | 24 suites, 0 failures
+> **Notes:**
+> - Shipped `SystemNotificationInformation` (class 0x1002): new `knf_syscall_info.h` (96-byte Version/Size/Reserved ABI), `nt_query_notification_information` marshaller + dispatch, and 5 diagnostics atomics in knf.c.
+> - Counters: live state/subscriber (inc/dec), cumulative publish/coalesced/create-denial, plus the §6 trace drop/skip; readiness via a new `SUBSYS_KNF` slot set in `knf_init` (FATAL/DEGRADED/OK), fixing two false-OK POST16 paths.
+> - Deferred (stamp): broader `SeAccessCheck`-policy denials add to `SecurityDenials` when that engine lands. Design review adoptions in the commit message.
+> - Canonical doc: `include/kernel/nt/knf_syscall_info.h` is the ABI; the security-policy denials belong to the security/namespace-policy section.
+> **Deferred:** [L] broader SeAccessCheck-policy publish/subscribe denials not yet counted in SecurityDenials (only the create-permanent-privilege denial is) -> XREF: 02-kernel-core/TODO-16 §4 (item: "Audit denied publish attempts" at line 138)
 
 ---
 

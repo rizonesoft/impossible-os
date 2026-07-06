@@ -55,6 +55,17 @@ static const char *const KNF_CATEGORIES[] = {
 
 /* --- Type callbacks ------------------------------------------------------ */
 
+/* Diagnostics counters (best-effort relaxed atomics, same convention as the
+ * trace drop counters below). Surfaced through NtQuerySystemInformation
+ * (SystemNotificationInformation). live_states/subscribers track live objects
+ * (inc/dec); publishes/coalesced/denials are cumulative tallies. Defined here so
+ * the create/delete paths that increment them are in scope. */
+static atomic64_t knf_diag_live_states;
+static atomic64_t knf_diag_subscribers;
+static atomic64_t knf_diag_publishes;
+static atomic64_t knf_diag_coalesced;
+static atomic64_t knf_diag_denials;
+
 static void knf_state_on_delete(void *body)
 {
     KNF_STATE *st = (KNF_STATE *)body;
@@ -68,6 +79,11 @@ static void knf_state_on_delete(void *body)
         kfree(st->payload);
         st->payload = NULL;
     }
+    /* Body is actually being destroyed (refcount 0). Only decrement if this state
+     * was counted (successfully inserted): a create-or-open loser is destroyed
+     * here without ever being counted, and must not underflow the tally. */
+    if (st->diag_counted)
+        __atomic_fetch_sub(&knf_diag_live_states.val, 1, __ATOMIC_RELAXED);
 }
 
 void ob_knf_type_init(void)
@@ -166,6 +182,7 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
      * KernelMode bypasses (SeSinglePrivilegeCheck returns 1 for SE_KERNEL_MODE). */
     if (lifetime != KNF_LIFETIME_TEMPORARY && access_mode != KNF_KERNEL_MODE) {
         if (!SeSinglePrivilegeCheck(&SeCreatePermanentPrivilege, access_mode)) {
+            __atomic_fetch_add(&knf_diag_denials.val, 1, __ATOMIC_RELAXED);
             klog(LOG_WARN, "knf",
                  "create '%s\\%s' denied: SeCreatePermanentPrivilege required",
                  category, name);
@@ -237,6 +254,11 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
     }
 
     ObDereferenceObject(dir);
+    /* A genuinely new state was inserted (collision path above returns the
+     * existing winner without reaching here). Mark it counted, then count it
+     * live; knf_state_on_delete decrements iff diag_counted at body destruction. */
+    st->diag_counted = 1;
+    __atomic_fetch_add(&knf_diag_live_states.val, 1, __ATOMIC_RELAXED);
     klog(LOG_INFO, "knf", "state \\Notifications\\%s\\%s (lifetime=%d)",
          category, name, (int)lifetime);
     return st;   /* caller owns the alloc reference */
@@ -379,6 +401,15 @@ NTSTATUS knf_set_mode(KNF_STATE *st, uint32_t flags)
  * guard). The KNF_ETW_RECORD ABI lives in <kernel/knf/knf.h> so readers share it. */
 static atomic64_t knf_trace_drops_at_dispatch;
 static atomic64_t knf_trace_skips_guard;
+
+/* Diagnostics counter accessors (the statics are defined near the top of the
+ * file since the create/delete paths above increment them). Surfaced through
+ * NtQuerySystemInformation (SystemNotificationInformation). */
+uint64_t knf_diag_live_state_count(void)     { return (uint64_t)atomic64_read(&knf_diag_live_states); }
+uint64_t knf_diag_subscriber_count(void)     { return (uint64_t)atomic64_read(&knf_diag_subscribers); }
+uint64_t knf_diag_publish_count(void)        { return (uint64_t)atomic64_read(&knf_diag_publishes); }
+uint64_t knf_diag_coalesced_count(void)      { return (uint64_t)atomic64_read(&knf_diag_coalesced); }
+uint64_t knf_diag_security_denial_count(void){ return (uint64_t)atomic64_read(&knf_diag_denials); }
 
 uint64_t knf_trace_drops_at_dispatch_count(void)
 {
@@ -580,6 +611,7 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
              * subscriber will never see this intermediate value (level-triggered
              * coalescing to the latest). Count it, saturating at UINT64_MAX. */
             sub->missed++;
+            __atomic_fetch_add(&knf_diag_coalesced.val, 1, __ATOMIC_RELAXED);
         }
     }
 
@@ -610,6 +642,8 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
         else
             __atomic_fetch_add(&knf_trace_drops_at_dispatch.val, 1, __ATOMIC_RELAXED);
     }
+
+    __atomic_fetch_add(&knf_diag_publishes.val, 1, __ATOMIC_RELAXED);
 
     if (out_prev)
         *out_prev = prev;
@@ -660,6 +694,7 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
     st->subscriber_count++;
     spin_unlock_irqrestore(&st->lock, flags);
 
+    __atomic_fetch_add(&knf_diag_subscribers.val, 1, __ATOMIC_RELAXED);
     *out_sub = sub;
     return STATUS_SUCCESS;
 }
@@ -686,6 +721,7 @@ NTSTATUS knf_unsubscribe(struct knf_subscriber **psub)
         if (*pp == sub) {
             *pp = sub->next;
             st->subscriber_count--;
+            __atomic_fetch_sub(&knf_diag_subscribers.val, 1, __ATOMIC_RELAXED);
             found = 1;
             break;
         }
@@ -801,16 +837,22 @@ void knf_init(void)
 
     ob_knf_type_init();
 
-    if (!ObpRootDirectory) {
-        klog(LOG_ERROR, "knf", "root namespace not initialised");
-        POST16(POST16_KNF_OK);
+    /* No NotificationState type or no root namespace => state creation is
+     * impossible. Report FATAL to the readiness oracle instead of a false OK, so
+     * SystemNotificationInformation surfaces the failure. */
+    /* Fatal paths do NOT emit POST16_KNF_OK: the readiness oracle is set FATAL and
+     * the caller reports the KNF boot step by readiness, so serial/POST must not
+     * claim OK. The entry POST16(POST16_KNF) stays the last KNF marker on failure. */
+    if (!ObpNotificationStateType || !ObpRootDirectory) {
+        klog(LOG_ERROR, "knf", "type/root namespace unavailable -- KNF unavailable");
+        kernel_subsystem_apply_result(SUBSYS_KNF, BOOT_FATAL);
         return;
     }
 
     notifications = knf_mkdir(ObpRootDirectory, "Notifications");
     if (!notifications) {
-        klog(LOG_ERROR, "knf", "failed to create \\Notifications");
-        POST16(POST16_KNF_OK);
+        klog(LOG_ERROR, "knf", "failed to create \\Notifications -- KNF unavailable");
+        kernel_subsystem_apply_result(SUBSYS_KNF, BOOT_FATAL);
         return;
     }
 
@@ -820,8 +862,13 @@ void knf_init(void)
     }
 
     klog(LOG_INFO, "knf",
-         "Namespace: \\Notifications + %u categories (Kernel/Power/Security/Session)",
-         created);
+         "Namespace: \\Notifications + %u/%u categories (Kernel/Power/Security/Session)",
+         created, (uint32_t)KNF_CATEGORY_COUNT);
+
+    /* A partial category tree is DEGRADED (publishers to a missing category
+     * cannot resolve it), not fatal -- the facility works for the created ones. */
+    kernel_subsystem_apply_result(SUBSYS_KNF,
+        created == KNF_CATEGORY_COUNT ? BOOT_OK : BOOT_DEGRADED);
 
     POST16(POST16_KNF_OK);
 }

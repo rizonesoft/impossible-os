@@ -872,7 +872,11 @@ void boot_phase2(void)
      * registry); still single-threaded here (pre-scheduler), so the tree
      * build races nothing. --- */
     knf_init();
-    boot_progress(2, "KNF", POST16_KNF_OK);
+    /* Report the KNF step by its readiness result, not an unconditional OK: a
+     * fatal init (no type/root namespace) leaves SUBSYS_KNF not-ready, so the
+     * boot step shows POST16_KNF (entry) rather than a false POST16_KNF_OK. */
+    boot_progress(2, "KNF",
+                  kernel_subsystem_ready(SUBSYS_KNF) ? POST16_KNF_OK : POST16_KNF);
 
     /* --- NLS table loader: requires VFS + C: mount (nls_init sets readiness) --- */
     POST16(POST16_NLS);

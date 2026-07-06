@@ -20,9 +20,13 @@
 #include "kernel/ob/ob_ns.h"
 #include "kernel/security/privileges.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/nt/knf_syscall_info.h"
+#include "kernel/boot_init.h"   /* SUBSYS_KNF + kernel_subsystem_ready/_set_ready */
 
 extern int   strcmp(const char *a, const char *b);
 extern void *memset(void *s, int c, size_t n);
+extern NTSTATUS nt_query_notification_information(void *buffer, uint32_t buf_size,
+                                                 uint32_t *return_length);
 
 /* ---- Type registration -------------------------------------------------- */
 
@@ -953,6 +957,81 @@ static void test_knf_coalesce_retention(void)
     knf_delete_state("Kernel", "PubCoal");
 }
 
+/* Diagnostics browser: NtQuerySystemInformation(SystemNotificationInformation)
+ * reports live/cumulative KNF counters + init readiness. Asserts deltas after
+ * known operations (create, subscribe, publish burst, denied user-mode permanent
+ * create) so the test does not depend on other suites having run first. */
+static void test_knf_diag_query(void)
+{
+    SYSTEM_NOTIFICATION_INFORMATION a, b;
+    uint32_t                        rl = 0;
+    NTSTATUS                        s;
+    KNF_STATE                      *st;
+    struct knf_subscriber          *sub = (struct knf_subscriber *)0;
+    uint64_t                        prev = 0, cur = 0;
+    int                             i;
+    char                            payload[4] = { 0 };
+
+    /* Baseline snapshot: ABI header fields + readiness flag. */
+    s = nt_query_notification_information(&a, sizeof(a), &rl);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "diag query OK");
+    TEST_ASSERT_EQ((uint64_t)rl,
+                   (uint64_t)sizeof(SYSTEM_NOTIFICATION_INFORMATION),
+                   "diag return length == struct size");
+    TEST_ASSERT_EQ((uint64_t)a.Version,
+                   (uint64_t)SYSTEM_NOTIFICATION_INFORMATION_VERSION, "diag version");
+    TEST_ASSERT_EQ((uint64_t)a.Size, 96ull, "diag Size field == 96");
+    TEST_ASSERT((a.Flags & SYSTEM_NOTIFICATION_FLAG_READY) != 0,
+                "KNF reports ready (namespace + type initialized)");
+
+    /* Known operations: +1 live state, +1 subscriber, +3 publishes (+2 coalesced
+     * over the unread pending), +1 security denial (user-mode permanent create). */
+    st = knf_create_state("Kernel", "PubDiag", KNF_LIFETIME_TEMPORARY,
+                          KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE);
+    TEST_ASSERT_NOT_NULL(st, "create PubDiag");
+    if (!st) return;
+    knf_subscribe(st, &sub);
+    for (i = 0; i < 3; i++)
+        knf_publish(st, (const KNF_TYPE_ID *)0, payload, 4, (const uint64_t *)0,
+                    &prev, &cur);
+    (void)knf_create_state("Kernel", "PubDiagPerm", KNF_LIFETIME_PERMANENT,
+                           KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_USER_MODE);
+
+    s = nt_query_notification_information(&b, sizeof(b), &rl);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "diag re-query OK");
+    TEST_ASSERT(b.LiveStateCount  >= a.LiveStateCount  + 1, "live state count rose");
+    TEST_ASSERT(b.SubscriberCount >= a.SubscriberCount + 1, "subscriber count rose");
+    TEST_ASSERT(b.PublishCount    >= a.PublishCount    + 3, "publish count rose by >=3");
+    TEST_ASSERT(b.CoalescedCount  >= a.CoalescedCount  + 2, "coalesced count rose by >=2");
+    TEST_ASSERT(b.SecurityDenials >= a.SecurityDenials + 1, "security denial counted");
+
+    /* Length-only / too-small buffer: full size reported, INFO_LENGTH_MISMATCH. */
+    rl = 0;
+    s = nt_query_notification_information(&b, 8, &rl);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_INFO_LENGTH_MISMATCH,
+                   "too-small diag buffer rejected");
+    TEST_ASSERT_EQ((uint64_t)rl, 96ull, "too-small diag query reports full length");
+
+    /* Readiness mapping: force KNF not-ready and confirm the marshaller reports
+     * UNAVAILABLE (fatal) distinctly from READY, then restore the oracle slot so
+     * no other suite observes a spurious KNF-down state. */
+    {
+        bool saved = kernel_subsystem_ready(SUBSYS_KNF);
+        kernel_subsystem_set_ready(SUBSYS_KNF, false);
+        s = nt_query_notification_information(&b, sizeof(b), &rl);
+        TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "diag query (not ready)");
+        TEST_ASSERT((b.Flags & SYSTEM_NOTIFICATION_FLAG_UNAVAILABLE) != 0,
+                    "not-ready KNF reports UNAVAILABLE");
+        TEST_ASSERT((b.Flags & SYSTEM_NOTIFICATION_FLAG_READY) == 0,
+                    "not-ready KNF does not report READY");
+        kernel_subsystem_set_ready(SUBSYS_KNF, saved);
+    }
+
+    knf_unsubscribe(&sub);
+    ObDereferenceObject(st);
+    knf_delete_state("Kernel", "PubDiag");
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_knf(void)
@@ -1003,6 +1082,8 @@ void test_register_knf(void)
                             test_knf_trace_category_identity, TEST_CAT_KNF);
     test_suite_register_cat("knf: coalescing missed counter + retention query",
                             test_knf_coalesce_retention, TEST_CAT_KNF);
+    test_suite_register_cat("knf: SystemNotificationInformation diagnostics query",
+                            test_knf_diag_query, TEST_CAT_KNF);
 }
 
 #endif /* KERNEL_TESTS */
