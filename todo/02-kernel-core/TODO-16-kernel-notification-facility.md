@@ -49,7 +49,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 | ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
 | 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
 | ⭐   |   7   | Coalescing and payload retention      | §2         |  [/]   |
-| 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [ ]   |
+| 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [/]   |
 | ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [ ]   |
 | 💎   |  10   | Unit/boot tests                       | §1..§9     |  [ ]   |
 
@@ -224,6 +224,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Specify create/open/query status semantics + max state size: `NtCreateWnfStateName` dup/exists handling, `NtQueryWnfStateData` returns the change stamp (+`STATUS_NO_MORE_ENTRIES` when unchanged), and the size-cap status code.
 
 **Test checkpoint:** `test_knf` drives each `Nt*WnfStateData` handler through the SSDT: `NtCreateWnfStateName` returns a 64-bit state name, `NtUpdateWnfStateData` advances the sequence, `NtQueryWnfStateData` returns the payload + change stamp, an unchanged query returns `STATUS_NO_MORE_ENTRIES`, and `NtSubscribeWnfStateChange` wakes on the next update. Serial: `"[KNF] WNF syscalls: 6 SSDT slots live"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] §8 blocked on the `WNF_STATE_NAME` compat-level decision -- ABI-defining, cannot change post-ship, so operator-reserved (byte-compatible Windows encoding vs syscall-arg-shape only); every handler encodes this ABI. awaiting-answer (todo/answers.md Q1). SSDT numbers 0x01E0-0x01E6 are reserved in service_numbers.h; handlers await the decision. -> XREF: 02-kernel-core/TODO-16 §8 (item: "DECIDE + document the" at line 222)
 
 ---
 
