@@ -161,11 +161,11 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 - [x] Parse `PT_GNU_STACK` (type `0x6474E551`): if `p_flags` lacks `PF_X`, set `result.nx_stack = 1`; if `PF_X` present, log warning "Executable stack requested (legacy binary)"
 - [x] Implement `vmm_protect(virt, new_flags)` + `vmm_protect_range(addr, size, flags)` in vmm.c/vmm.h -- PTE flag update preserving physical address + `invlpg` flush; operates on kernel PML4
 - [x] Parse `PT_GNU_RELRO` (type `0x6474E552`): record `relro_start`/`relro_size` in `elf_load_result`
-  - [ ] Enforce RELRO via `vmm_protect_range(relro_start, relro_size, VMM_KERNEL_RO)` -- blocked: must be called after §14 relocations complete
+  - [/] Enforce RELRO via `vmm_protect_range(relro_start, relro_size, VMM_KERNEL_RO)` -- blocked: must be called after §14 relocations complete
 - [x] Parse `PT_GNU_PROPERTY` (type `0x6474E553`): full ELF note parsing with byte reads (no type-pun UB); extracts `GNU_PROPERTY_X86_FEATURE_1_AND` IBT/SHSTK flags into `result.cet_ibt`/`result.cet_shstk`
   - [x] Bound the note walk: skip payloads over `ELF_GNU_PROPERTY_MAX` (4 KiB), so a crafted 16 MiB payload times up to 64 property headers cannot amplify exec CPU
-  - [ ] CET enforcement -- deferred to TODO-23 §9,§10
-- [ ] Thread `elf_load_result` security fields through the exec dispatcher + `task_exec()` so RELRO/NX/CET is not a silent no-op -- `elf_exec_wrapper` drops them (NX log softened to "requested"; stack PTE NX still unset)
+  - [/] CET enforcement -- deferred to `TODO-10-kernel-security-hardening` §9 (shadow stack), §10 (IBT)
+- [/] Thread `elf_load_result` security fields through the exec dispatcher + `task_exec()` so RELRO/NX/CET is not a silent no-op -- `elf_exec_wrapper` drops them (NX log softened to "requested"; stack PTE NX still unset)
 - [x] If `PT_GNU_STACK` is absent, default to NX stack (`result.nx_stack = 1`, log "No PT_GNU_STACK -- defaulting to NX stack")
 - [x] Extended `elf_load_result` with `nx_stack`, `has_relro`, `cet_ibt`, `cet_shstk`, `relro_start`, `relro_size` fields
 - [x] Added `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_PROPERTY`, `PT_INTERP`, `ET_DYN`, CET property constants to elf.h
@@ -173,6 +173,9 @@ Modern ELF binaries carry security metadata in dedicated program headers. `PT_GN
 - [x] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"` (commit title as shipped; NX/RELRO/CET are parsed metadata -- PTE/hw enforcement still pending)
 
 **Test checkpoint:** Serial log shows `"elf: NX stack requested (enforcement pending)"` or `"elf: No PT_GNU_STACK -- defaulting to NX stack"`. RELRO range logged when present. CET flags parsed and logged. (Log says "requested" not "enforced" until the security fields are threaded through `task_exec` and stack PTE NX is set.)
+
+> **Deferred:** PARSING shipped + REVIEWED (`PT_GNU_STACK`/`PT_GNU_RELRO`/`PT_GNU_PROPERTY` note parse, `vmm_protect`/`vmm_protect_range`, `elf_load_result` security fields, plus the hardened `PT_GNU_PROPERTY` note walk -- 4 KiB payload cap + uint64 advance, shipped in `ebc2bf55`). ENFORCEMENT deferred: RELRO write-protect needs `§14` relocations first; CET IBT/SHSTK enforcement is TODO-23; and NX/RELRO/CET are silent no-ops until the security fields are threaded through the exec dispatcher (same `vmm_map_pages`/per-process-PTE prerequisite as §2). -> XREF: RELRO enforce (item: "Enforce RELRO via `vmm_protect_range`" at line 171); CET -> `TODO-10-kernel-security-hardening` §9 (shadow stack), §10 (IBT); field threading (item: "Thread `elf_load_result` security fields" at line 174).
+> **Reviewed:** 2026-07-06 | commit `ebc2bf55` | `PT_GNU_PROPERTY` hardening covered by the same Codex 5-round loop as §2 (all approve) | build OK | scope: kernel-code-quality
 
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
