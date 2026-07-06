@@ -131,22 +131,25 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 > **Partially resolved:** The loader validates segment ranges and accepts ET_DYN (PIE). VMM-backed per-process page mapping (`vmm_map_pages`) deferred -- current path uses identity mapping + post-load PML4 setup in `task_exec()`. Per-segment R/W/X permissions logged but enforcement via PTE bits deferred until vmm_map_pages exists.
 
 - [x] ELF loader enhanced: accepts `ET_DYN` (PIE) in addition to `ET_EXEC` -- `elf_validate()` updated
-- [ ] Refactor `elf_load()` → `elf_exec(path, proc)` registered with the dispatcher -- blocked: needs `vmm_map_pages()` and process_t; current flow via `exec_load()` wrapper works
-- [ ] Add `vmm_map_pages()` helper in `vmm.c`/`vmm.h` for multi-page per-process user mappings -- architectural prereq for full §2
+- [/] Refactor `elf_load()` → `elf_exec(path, proc)` registered with the dispatcher -- blocked: needs `vmm_map_pages()` and process_t; current flow via `exec_load()` wrapper works
+- [/] Add `vmm_map_pages()` helper in `vmm.c`/`vmm.h` for multi-page per-process user mappings -- architectural prereq for full §2
 - [x] Read entire ELF file into kernel buffer via VFS; validate ELF64 header -- done in existing `elf_load()`, buffer read by `exec_load_path()` (§1)
 - [x] For each `PT_LOAD` segment: copy data, zero BSS, track load range -- done; permissions logged per-segment (R/W/X flags)
-  - [ ] VMM-backed allocation via `vmm_map_pages(proc->pml4, vaddr, ...)` -- blocked: needs vmm_map_pages
-  - [ ] Set page permissions from `p_flags` via PTE bits -- blocked: needs vmm_map_pages to set per-page flags
+  - [/] VMM-backed allocation via `vmm_map_pages(proc->pml4, vaddr, ...)` -- blocked: needs vmm_map_pages
+  - [/] Set page permissions from `p_flags` via PTE bits -- blocked: needs vmm_map_pages to set per-page flags
 - [x] Accept `ET_DYN` (PIE) type in elf_validate -- ASLR random base deferred to §15
-- [ ] Set up auxiliary vector for dynamic linker if `PT_INTERP` present -- deferred to §14
+- [/] Set up auxiliary vector for dynamic linker if `PT_INTERP` present -- deferred to §14
 - [x] Reject segments outside user address range (`USER_ELF_BASE..USER_ELF_END`) with error log
 - [x] Free kernel buffer after all segments loaded -- done in `exec_load_path()` (§1 adversarial fix)
 - [x] Per-segment permission logging: R/W/X flags printed for each PT_LOAD segment
 - [x] Malformed-ELF hardening: two-pass loader (validate all phdrs then copy) so a rejected image never mutates user frames; wrap-safe bounds, `p_filesz<=p_memsz`, `e_phnum<=64`, no PT_LOAD overlap, `e_entry` in exec segment; 9 tests
 - [x] Replace byte-loop `elf_memcpy`/`elf_memzero` with kernel scalar `memcpy`/`memset` (perf: cold path but dominant per-byte work as images grow; kept scalar, no SIMD/FPU)
-- [ ] Commit: `"kernel: elf -- enhanced ELF loader with VMM mapping and PIE"`
+- [/] Commit: `"kernel: elf -- enhanced ELF loader with VMM mapping and PIE"` -- deferred with the VMM-backed core; the hardening subset shipped as `ebc2bf55`
 
 **Test checkpoint:** Serial log shows `"elf: Loaded N PT_LOAD segments at 0x800000-0xNNNNNN, entry=0xNNNNNN"` with per-segment R/W/X flags. Segments outside user range rejected. ET_DYN accepted. BSS region zeroed.
+
+> **Deferred:** VMM-backed per-process page mapping (`vmm_map_pages` + process_t, per-PTE R/W/X perms, `elf_exec` refactor, PT_INTERP auxv) blocked on an architectural prerequisite -- current path uses identity mapping + post-load PML4 setup in `task_exec()`. Implementable subset SHIPPED + REVIEWED: `ET_DYN`/PIE, per-segment load + R/W/X logging, user-range rejection, and full malformed/hostile-ELF hardening (two-pass atomic loader, wrap-safe bounds, `e_phnum<=64`, no PT_LOAD overlap, `e_entry` in exec segment, `PT_GNU_PROPERTY` payload cap + uint64 note-advance) with 9 rejection tests. -> XREF: `vmm_map_pages` architectural prereq tracked as the two `[/]` items above (item: "Add `vmm_map_pages()` helper" at line 135).
+> **Reviewed:** 2026-07-06 | commit `ebc2bf55` | Codex 5 rounds (adversarial, consistency, perf, re-adversarial) -- 5 distinct real defects fixed (atomicity, phdr O(n^2) DoS, GNU-property CPU amplifier, GNU-property inner-loop hang, NX overclaim); round 5 all approve | build OK | exec 625 kernel + 16 user PASS | scope: kernel-code-quality
 
 ## 3. ELF Security Segments (GNU_STACK, RELRO, GNU_PROPERTY)
 
