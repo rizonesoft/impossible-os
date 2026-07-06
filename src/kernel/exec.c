@@ -12,16 +12,25 @@
 #include "kernel/pe.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/ob/peb.h"
 #include "kernel/boot_init.h"
 #include "kernel/sched/task.h"
 
+/* Upper bound on a path-loaded executable image staged into kernel memory. */
+#define EXEC_MAX_IMAGE_SIZE  (16u * 1024u * 1024u)
+
 /* ---- Format registry ---------------------------------------------------- */
 
 static exec_format_t s_formats[EXEC_MAX_FORMATS];
 static uint32_t      s_format_count;
+/* Registration is init-only (single-threaded Phase 3). Sealed at the end of
+ * exec_init() so any post-boot caller is rejected in code, not just by comment
+ * -- the release-store/acquire-load pair protects readers, NOT concurrent
+ * writers, so a runtime registration would be an unlocked SMP race. */
+static int           s_registry_sealed;
 
 /* ---- Global module registry ----------------------------------------
  * Fixed-size array protected by a spinlock. Sorted by base_address for
@@ -86,6 +95,11 @@ boot_result_t exec_init(void)
     if (exec_register_format(&pe_fmt) != 0 && rc != BOOT_FATAL)
         rc = BOOT_DEGRADED;
 
+    /* Seal the registry: all built-in formats are now registered and the
+     * scheduler has not started, so no reader can be mid-flight. Any later
+     * exec_register_format() call is rejected (see the SMP note above). */
+    s_registry_sealed = 1;
+
     klog(LOG_INFO, "exec", "Exec subsystem initialized (%u format(s))",
          (uint64_t)s_format_count);
     return rc;
@@ -101,6 +115,10 @@ boot_result_t exec_init(void)
 
 int exec_register_format(const exec_format_t *fmt)
 {
+    if (s_registry_sealed) {
+        klog(LOG_ERROR, "exec", "Format registration after boot seal rejected");
+        return -1;
+    }
     if (!fmt || s_format_count >= EXEC_MAX_FORMATS)
         return -1;
     if (fmt->magic_len == 0 || fmt->magic_len > EXEC_MAGIC_MAX)
@@ -158,16 +176,21 @@ uint64_t exec_load_fmt(const uint8_t *data, uint64_t size, int *err,
 
     if (out_fmt_name) *out_fmt_name = (const char *)0;
 
-    if (!data || size < 4) {
+    /* Reject only empty input. match_format() applies each format's own
+     * magic_len (1-4), so a hard 4-byte floor here would make shorter-magic
+     * formats (PE registers magic_len=2) unreachable through the dispatcher. */
+    if (!data || size == 0) {
         if (err) *err = ENOEXEC;
         return 0;
     }
 
     fmt = match_format(data, size);
     if (!fmt) {
-        /* Build magic for log without unaligned type-pun */
-        uint32_t m = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
-                     ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+        /* Build magic for log from AVAILABLE bytes only (no type-pun, no
+         * over-read of a sub-4-byte buffer). */
+        uint32_t m = 0, k;
+        for (k = 0; k < 4 && k < size; k++)
+            m |= (uint32_t)data[k] << (k * 8);
         klog(LOG_DEBUG, "exec", "Unknown binary format (magic: 0x%x)",
              (uint64_t)m);
         if (err) *err = ENOEXEC;
@@ -196,12 +219,29 @@ uint64_t exec_load_fmt(const uint8_t *data, uint64_t size, int *err,
 
 /* ---- Load from VFS path ------------------------------------------------- */
 
+/* Free a staging buffer allocated by exec_load_path(). Buffers > 4 KiB come
+ * from PMM contiguous frames (heap-tier discipline: kmalloc is for small
+ * objects only); everything else from the kernel heap. */
+static void exec_free_stage(uint8_t *buf, uint64_t sz, int from_pmm)
+{
+    if (from_pmm) {
+        uint64_t frames = (sz + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uint64_t fi;
+        for (fi = 0; fi < frames; fi++)
+            pmm_free_frame((uintptr_t)buf + fi * PMM_FRAME_SIZE);
+    } else {
+        kfree(buf);
+    }
+}
+
 uint64_t exec_load_path(const char *path, int *err)
 {
     struct vfs_node *file;
     uint8_t *buf;
     uint64_t entry;
     uint64_t sz;
+    int from_pmm = 0;
+    int rd;
 
     if (!path) {
         if (err) *err = ENOENT;
@@ -218,28 +258,48 @@ uint64_t exec_load_path(const char *path, int *err)
     /* Snapshot size once to prevent TOCTOU between alloc and read */
     sz = file->size;
 
-    if (sz == 0 || sz > 16 * 1024 * 1024) {
+    if (sz == 0 || sz > EXEC_MAX_IMAGE_SIZE) {
         klog(LOG_ERROR, "exec", "Invalid file size: %u", sz);
         vfs_close(file);
         if (err) *err = ENOEXEC;
         return 0;
     }
 
-    buf = (uint8_t *)kmalloc((uint32_t)sz);
+    /* Heap-tier discipline: stage multi-KiB/MiB executables from PMM-backed
+     * contiguous frames so a large exec cannot fragment or exhaust the small
+     * kernel heap (mirrors image_save.c). kmalloc only for <= 4 KiB. */
+    if (sz > PMM_FRAME_SIZE) {
+        uint64_t frames = (sz + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uintptr_t phys = pmm_alloc_contiguous(frames);
+        buf = (uint8_t *)phys;
+        from_pmm = 1;
+    } else {
+        buf = (uint8_t *)kmalloc((uint32_t)sz);
+    }
     if (!buf) {
         vfs_close(file);
         if (err) *err = ENOMEM;
         return 0;
     }
 
-    vfs_read(file, 0, (uint32_t)sz, buf);
+    /* Fail closed on a short read: sz (<= 16 MiB) fits in int. If the file
+     * shrank, the read errored, or the FS returned short, the loaders would
+     * otherwise parse an unpopulated tail as executable data (or disclose
+     * stale frame contents). Require the full image before dispatch. */
+    rd = vfs_read(file, 0, (uint32_t)sz, buf);
     vfs_close(file);
+    if (rd != (int)sz) {
+        klog(LOG_ERROR, "exec", "Short read on %s (wanted %u bytes)", path, sz);
+        exec_free_stage(buf, sz, from_pmm);
+        if (err) *err = ENOEXEC;
+        return 0;
+    }
 
     entry = exec_load(buf, sz, err);
 
-    /* ELF loader copies segments via elf_memcpy to identity-mapped user
-     * range. The staging buffer is no longer needed regardless of outcome. */
-    kfree(buf);
+    /* Loaders copy segments into the user range; the staging buffer is no
+     * longer needed regardless of outcome. */
+    exec_free_stage(buf, sz, from_pmm);
 
     return entry;
 }

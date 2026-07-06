@@ -35,6 +35,15 @@ static void test_exec_null_data(void)
 
 static void test_exec_errno(void)
 {
+    /* Behavioral errno path: a buffer shorter than the 4-byte minimum magic
+     * must be rejected with ENOEXEC before any format match runs (exec.c
+     * size < 4 guard) -- distinct from the null-data and full-length
+     * bad-magic paths above. */
+    int err = 99;
+    uint8_t tiny[3] = { 0x7F, 'E', 'L' };  /* valid ELF prefix but sub-magic-length */
+    uint64_t entry = exec_load(tiny, sizeof(tiny), &err);
+    TEST_ASSERT_EQ(entry, 0, "exec_load rejects sub-magic-length buffer");
+    TEST_ASSERT_EQ(err, ENOEXEC, "exec_load sets ENOEXEC for short buffer");
 }
 
 /* ---- Module registration tests ---- */
@@ -325,7 +334,7 @@ void test_register_exec(void)
     /* Exec dispatcher tests */
     test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_EXEC);
-    test_suite_register_cat("Exec: errno constants", test_exec_errno, TEST_CAT_EXEC);
+    test_suite_register_cat("Exec: short buffer ENOEXEC", test_exec_errno, TEST_CAT_EXEC);
 
     /* Module registration tests */
     test_suite_register_cat("Exec: module struct size", test_module_struct_size, TEST_CAT_EXEC);
