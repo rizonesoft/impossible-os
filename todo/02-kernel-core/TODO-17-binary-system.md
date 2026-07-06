@@ -80,13 +80,13 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [ ]   |
 | 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [ ]   |
 | ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
-| 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [ ]   |
-| 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [ ]   |
+| 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
+| 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
 | ⭐   |  16   | Script/shebang interpreter support             | §1              |  [ ]   |
-| ⭐   |  17   | EIF code signing                               | §5              |  [ ]   |
-| 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [ ]   |
+| ⭐   |  17   | EIF code signing                               | §5              |  [/]   |
+| 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [/]   |
 | 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [ ]   |
-| 💎   |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [ ]   |
+| 💎   |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [/]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.
 > ⭐ = exclusive -- triple-format support, EIF native format, syscall-ID imports, shebang dispatch, and mandatory code signing are Impossible OS only.
@@ -339,28 +339,32 @@ Shared library support for the Linux compatibility layer and future ELF apps.
 > [!NOTE]
 > A dedicated ELF shared library TODO has not yet been filed. This section implements only the minimum kernel-side pieces needed for the Linux compatibility layer. File a new TODO under `02-kernel-core` if dynamic linking scope expands beyond the items listed here. Advanced semantics (IFUNC/IRELATIVE, `DT_INIT_ARRAY`/`DT_FINI_ARRAY`, symbol versioning, library search order, `DT_FLAGS`/`DT_FLAGS_1`) are owned by §20; ELF TLS ABI (TCB/DTV/FS-base) by §18.
 
-- [ ] Parse `PT_DYNAMIC` segment for `DT_NEEDED`, `DT_STRTAB`, `DT_SYMTAB`, `DT_HASH`/`DT_GNU_HASH`
-- [ ] Load `.so` files from `C:\Impossible\System\lib\` via VFS
-- [ ] Symbol resolution: `DT_GNU_HASH` lookup → `DT_SYMTAB` match
-- [ ] Apply relocations: `R_X86_64_JUMP_SLOT` (PLT), `R_X86_64_GLOB_DAT` (GOT), `R_X86_64_RELATIVE`
-- [ ] Lazy PLT binding: stubs resolve on first call
-- [ ] After relocations complete: apply `PT_GNU_RELRO` protection (§3) to make GOT read-only
-- [ ] Register each loaded `.so` via `exec_register_module()` (§6)
-- [ ] Commit: `"kernel: elf -- dynamic linker and shared library loading"`
+- [/] Parse `PT_DYNAMIC` segment for `DT_NEEDED`, `DT_STRTAB`, `DT_SYMTAB`, `DT_HASH`/`DT_GNU_HASH`
+- [/] Load `.so` files from `C:\Impossible\System\lib\` via VFS
+- [/] Symbol resolution: `DT_GNU_HASH` lookup → `DT_SYMTAB` match
+- [/] Apply relocations: `R_X86_64_JUMP_SLOT` (PLT), `R_X86_64_GLOB_DAT` (GOT), `R_X86_64_RELATIVE`
+- [/] Lazy PLT binding: stubs resolve on first call
+- [/] After relocations complete: apply `PT_GNU_RELRO` protection (§3) to make GOT read-only
+- [/] Register each loaded `.so` via `exec_register_module()` (§6)
+- [/] Commit: `"kernel: elf -- dynamic linker and shared library loading"`
 
 **Test checkpoint:** Serial log shows `"elf: loaded shared library '<name>.so' at 0x<addr>"` for each `DT_NEEDED`. PLT stub call resolves on first invocation (lazy binding). `PT_GNU_RELRO` applied after relocations -- GOT write attempt faults. `POST16(0xD816)` on entry, `POST16(0xD817)` after all `.so` loaded. Test on: QEMU WHPX + TCG; bare metal.
 
+> **Deferred:** BLOCKED -- the ELF dynamic linker is a major subsystem that needs process-private address spaces (per-process PML4 / `vmm_map_pages`, the same architectural prerequisite deferred in §2) before `.so` files can be mapped and relocated per-process, plus `PT_GNU_RELRO` write-protect depends on it. No code today; the static-exec path (§1/§2) covers current needs. -> XREF: per-process mapping prereq tracked in §2 (item: "Add `vmm_map_pages()` helper" at line 135); advanced semantics (IFUNC/init-arrays/versioning) owned by §20.
+
 ## 15. ASLR -- Address Space Layout Randomization
 
-- [ ] Random base for PIE ELF (`ET_DYN`): choose base within user range; add to all `PT_LOAD` vaddrs
-- [ ] Random base for EIF PIC images (`load_base=0`): choose a randomized base within user range; keep non-PIC EIF at its preferred base until relocations are specified (-> XREF `TODO-20-eif-full-implementation.md §8`)
-- [ ] Random base for PE32+: pick base ≠ `ImageBase`; apply base relocation (§10) with new delta
-- [ ] Randomize user stack base
-- [ ] Randomize heap base
-- [ ] PRNG: use `RDRAND` instruction if `CPU_FEATURE_RDRAND` available; fallback to TSC-seeded LCG
-- [ ] Commit: `"kernel: exec -- ASLR for ELF, EIF, and PE32+"`
+- [/] Random base for PIE ELF (`ET_DYN`): choose base within user range; add to all `PT_LOAD` vaddrs
+- [/] Random base for EIF PIC images (`load_base=0`): choose a randomized base within user range; keep non-PIC EIF at its preferred base until relocations are specified (-> XREF `TODO-20-eif-full-implementation.md §8`)
+- [/] Random base for PE32+: pick base ≠ `ImageBase`; apply base relocation (§10) with new delta
+- [/] Randomize user stack base
+- [/] Randomize heap base
+- [/] PRNG: use `RDRAND` instruction if `CPU_FEATURE_RDRAND` available; fallback to TSC-seeded LCG
+- [/] Commit: `"kernel: exec -- ASLR for ELF, EIF, and PE32+"`
 
 **Test checkpoint:** Load same PIE ELF twice in two processes -- serial log shows different base addresses. PE loaded at address ≠ `ImageBase`. Stack base differs between processes. `POST16(0xD818)` on entry, `POST16(0xD819)` after base selected. Test on: QEMU WHPX + TCG; VirtualBox; bare metal. Verify `RDRAND` works on bare metal.
+
+> **Deferred:** BLOCKED -- per-process randomized bases are meaningful only once images map into process-private address spaces (per-process PML4 / `vmm_map_pages`, deferred in §2/§8); PE base randomization also needs §10 base relocation. With the shared identity-mapped user range today, randomizing a base has no isolation value and would break the single shared mapping. -> XREF: per-process mapping prereq in §2 (item: "Add `vmm_map_pages()` helper" at line 135); PE relocation dependency (§10).
 
 ## 16. Script/Shebang Interpreter Support
 
@@ -385,30 +389,34 @@ EIF binaries with the `SIGNED` flag must pass signature verification before any 
 > [!IMPORTANT]
 > → XREF: `TODO-03-kernel-libraries.md §3` -- Monocypher provides `crypto_eddsa_check()` (Ed25519) and `crypto_blake2b()` (SHA-256 substitute); §3 must be integrated before this section can be implemented.
 
-- [ ] Read signature from `signature_offset` in EIF header
-- [ ] Compute SHA-256 over header + all segment data in file order
-- [ ] Verify signature against OS-embedded trusted public key
-- [ ] Policy: `SIGNED` flag → reject on invalid/missing signature; unsigned binaries run with reduced capabilities (no raw disk I/O, no driver-level access)
-- [ ] Create `tools/eifsign.c` -- host-side signing tool
-- [ ] Commit: `"kernel: eif -- EIF code signing"`
+- [/] Read signature from `signature_offset` in EIF header
+- [/] Compute SHA-256 over header + all segment data in file order
+- [/] Verify signature against OS-embedded trusted public key
+- [/] Policy: `SIGNED` flag → reject on invalid/missing signature; unsigned binaries run with reduced capabilities (no raw disk I/O, no driver-level access)
+- [/] Create `tools/eifsign.c` -- host-side signing tool
+- [/] Commit: `"kernel: eif -- EIF code signing"`
 
 **Test checkpoint:** EIF with valid signature loads successfully -- serial log shows `"eif: signature verified"`. EIF with `SIGNED` flag but missing/invalid signature rejected -- serial log shows `"eif: signature verification FAILED"`. Unsigned EIF (no `SIGNED` flag) loads but with reduced capabilities logged. `POST16(0xD81C)` on entry, `POST16(0xD81D)` after signature check. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** BLOCKED on `TODO-03-kernel-libraries.md` §3 -- EIF signature verification needs Monocypher `crypto_eddsa_check()` (Ed25519) + `crypto_blake2b()` (SHA-256 substitute), which §3 must integrate into the kernel first. The EIF loader (§5) already rejects a `SIGNED`-flag binary when no verifier is present (fail-closed), so the current state is safe. -> XREF: `TODO-03-kernel-libraries.md` §3 (Monocypher integration prerequisite).
 
 ## 18. ELF `PT_TLS` Template Loading
 
 Linux ELF binaries using `__thread` rely on `PT_TLS` template mapping and per-thread TLS block initialization. Without this, thread-local variables in ELF user-mode binaries are incorrect or crash on access.
 
-- [ ] In `include/kernel/elf.h`: add `PT_TLS` support constants and `elf_tls_template_t` metadata in `elf_load_result` (template start/filesz/memsz/align)
-- [ ] In `src/kernel/elf.c` (`elf_exec`/`elf_load` path): parse `PT_TLS`, capture template metadata, and map initial TLS image for the main thread
-- [ ] In thread creation path (`src/kernel/sched/task.c`): allocate a fresh TLS block for each new thread from the captured `PT_TLS` template; copy initialized bytes then zero-fill tail
-- [ ] Wire TLS setup into exec/thread startup sequence before user entry so ELF code sees valid TLS at first instruction
-- [ ] Build the x86-64 TLS ABI runtime: allocate per-thread TCB with self-pointer at offset 0, set FS base to it (via `arch_prctl`/MSR), and lay the static TLS block at negative offsets per the variant-II model
-- [ ] Allocate a DTV (dynamic thread vector) keyed by module TLS ID; assign the exec module ID 1 so dynamic shared objects (§14/§20) can add their own TLS blocks
-- [ ] Apply ELF TLS relocations `R_X86_64_DTPMOD64`/`R_X86_64_DTPOFF64`/`R_X86_64_TPOFF64` for local-exec/initial-exec/general-dynamic access models
-- [ ] Add unit tests in `src/kernel/test/test_exec.c`: static `__thread` variable init value, per-thread isolation, and zero-filled TLS tail behavior
-- [ ] Commit: `"kernel: elf -- PT_TLS template loading and per-thread TLS setup"`
+- [/] In `include/kernel/elf.h`: add `PT_TLS` support constants and `elf_tls_template_t` metadata in `elf_load_result` (template start/filesz/memsz/align)
+- [/] In `src/kernel/elf.c` (`elf_exec`/`elf_load` path): parse `PT_TLS`, capture template metadata, and map initial TLS image for the main thread
+- [/] In thread creation path (`src/kernel/sched/task.c`): allocate a fresh TLS block for each new thread from the captured `PT_TLS` template; copy initialized bytes then zero-fill tail
+- [/] Wire TLS setup into exec/thread startup sequence before user entry so ELF code sees valid TLS at first instruction
+- [/] Build the x86-64 TLS ABI runtime: allocate per-thread TCB with self-pointer at offset 0, set FS base to it (via `arch_prctl`/MSR), and lay the static TLS block at negative offsets per the variant-II model
+- [/] Allocate a DTV (dynamic thread vector) keyed by module TLS ID; assign the exec module ID 1 so dynamic shared objects (§14/§20) can add their own TLS blocks
+- [/] Apply ELF TLS relocations `R_X86_64_DTPMOD64`/`R_X86_64_DTPOFF64`/`R_X86_64_TPOFF64` for local-exec/initial-exec/general-dynamic access models
+- [/] Add unit tests in `src/kernel/test/test_exec.c`: static `__thread` variable init value, per-thread isolation, and zero-filled TLS tail behavior
+- [/] Commit: `"kernel: elf -- PT_TLS template loading and per-thread TLS setup"`
 
 **Test checkpoint:** ELF binary with `__thread int g_tls = 7;` reads `7` in the main thread and independent values in two spawned threads. Serial log shows `"elf: PT_TLS template filesz=<N> memsz=<M>"`. `POST16(0xD81E)` on entry, `POST16(0xD81F)` after first TLS block init. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** BLOCKED -- ELF TLS needs the variant-II per-thread TLS ABI runtime (per-thread TCB + FS-base MSR + DTV) wired through the exec/thread-creation path, which in turn depends on the §2 `elf_exec` refactor and process-private address spaces (`vmm_map_pages`). No code today; static binaries without `__thread` are unaffected. -> XREF: per-process/`elf_exec` prereq in §2 (item: "Add `vmm_map_pages()` helper" at line 135); DTV consumers §14/§20 (deferred).
 
 ## 19. PE API-Set + Delay-Load/Bound Import Support
 
@@ -433,13 +441,15 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 > [!NOTE]
 > §14 owns the exec-time ELF dynamic linker; there is no separate ELF-shared-library TODO. dlopen/dlsym runtime-load API and per-process module unload are process-model concerns -> XREF: `TODO-21-process-model-extensions.md §14` (process-exit destructor + module deregistration).
 
-- [ ] GNU IFUNC resolution: after RELATIVE/GLOB_DAT relocations, walk `R_X86_64_IRELATIVE` entries, call each resolver, write the result into the slot (IRELATIVE strictly last -- resolvers read already-relocated data)
-- [ ] Constructor/destructor: call `DT_PREINIT_ARRAY` (main exe only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order after relocations; register `DT_FINI`/`DT_FINI_ARRAY` for teardown (-> XREF `TODO-21 §14`)
-- [ ] ELF symbol versioning: parse `DT_VERSYM`/`DT_VERNEED`/`DT_VERDEF` and bind each undefined symbol to the requested version so glibc-versioned symbols resolve to the correct ABI rather than the first match
-- [ ] Library search order: honour `DT_RUNPATH`/`DT_RPATH`, an `LD_LIBRARY_PATH`-equivalent, then the default system lib dir; filter environment paths in secure mode so untrusted paths cannot inject libraries
-- [ ] `DT_FLAGS`/`DT_FLAGS_1` policy: honour `DF_BIND_NOW`/`DF_1_NOW` (eager binding, disable lazy PLT), `DF_1_NODELETE` (pin module across unload), and `DF_1_PIE`
-- [ ] Add unit tests in `src/kernel/test/test_exec.c`: an IRELATIVE slot points at the resolver's returned address; an init-array constructor runs before entry; a versioned symbol binds to the requested version; BIND_NOW disables lazy binding
-- [ ] Commit: `"kernel: elf -- IFUNC, init/fini arrays, symbol versioning, search order, DT_FLAGS"`
+- [/] GNU IFUNC resolution: after RELATIVE/GLOB_DAT relocations, walk `R_X86_64_IRELATIVE` entries, call each resolver, write the result into the slot (IRELATIVE strictly last -- resolvers read already-relocated data)
+- [/] Constructor/destructor: call `DT_PREINIT_ARRAY` (main exe only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order after relocations; register `DT_FINI`/`DT_FINI_ARRAY` for teardown (-> XREF `TODO-21 §14`)
+- [/] ELF symbol versioning: parse `DT_VERSYM`/`DT_VERNEED`/`DT_VERDEF` and bind each undefined symbol to the requested version so glibc-versioned symbols resolve to the correct ABI rather than the first match
+- [/] Library search order: honour `DT_RUNPATH`/`DT_RPATH`, an `LD_LIBRARY_PATH`-equivalent, then the default system lib dir; filter environment paths in secure mode so untrusted paths cannot inject libraries
+- [/] `DT_FLAGS`/`DT_FLAGS_1` policy: honour `DF_BIND_NOW`/`DF_1_NOW` (eager binding, disable lazy PLT), `DF_1_NODELETE` (pin module across unload), and `DF_1_PIE`
+- [/] Add unit tests in `src/kernel/test/test_exec.c`: an IRELATIVE slot points at the resolver's returned address; an init-array constructor runs before entry; a versioned symbol binds to the requested version; BIND_NOW disables lazy binding
+- [/] Commit: `"kernel: elf -- IFUNC, init/fini arrays, symbol versioning, search order, DT_FLAGS"`
+
+> **Deferred:** BLOCKED on §14 -- these are advanced semantics layered on the core ELF dynamic linker (PT_DYNAMIC, DT_NEEDED, hash lookup, PLT/GOT relocations, RELRO), which is itself deferred pending process-private address spaces. No code today. -> XREF: core dynamic linker (§14, deferred); dlopen/process-exit teardown -> `TODO-21-process-model-extensions.md` §14.
 
 **Test checkpoint:** Serial log shows `"elf: called <N> init-array constructors"` and `"elf: resolved <N> IFUNC relocations"`. A binary with a versioned undefined symbol binds to the correct `DT_VERNEED` entry. `DF_BIND_NOW` binary resolves all PLT slots at load (no lazy stub). Test on: QEMU WHPX + TCG; bare metal.
 
