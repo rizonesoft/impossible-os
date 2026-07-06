@@ -106,11 +106,23 @@ Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`
 - [x] Implement `exec_load(data, size, *err)` -- matches magic bytes against registered formats, dispatches to loader, returns entry point; unknown magic -> ENOEXEC; also `exec_load_path(path, *err)` reads via VFS with ENOENT support
 - [x] `exec_register_format(exec_format_t *)` -- register formats at boot (max 8)
 - [x] Register ELF format in `exec_init()` called from `boot_desktop.c` Phase 3; PE32+/EIF registration points ready
-- [x] Replace the direct `elf_load()` call in `task_exec()` (`task.c` line 1141) with `exec_load(data, size, &err)` -- task_exec now uses multi-format dispatcher; user stack/PML4/context setup unchanged
-- [x] 3 unit tests: bad magic (ENOEXEC), null data (ENOEXEC), errno constant values (4 checks)
+- [x] Replace the direct `elf_load()` call in `task_exec()` (`task.c`) with `exec_load_fmt(data, size, &err, &fmt_name)` -- the format-name-returning superset that `exec_load()` wraps; user stack/PML4/context setup unchanged
+- [x] 3 unit tests: bad magic (ENOEXEC), null data (ENOEXEC), sub-magic-length buffer (ENOEXEC)
 - [x] Commit: `"kernel: exec -- multi-format exec dispatcher"`
 
-**Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"`. Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; errno constants verified (ENOEXEC=8, ENOENT=2, ENOMEM=12, EINVAL=22). Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.
+**Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"`. Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; sub-magic-length (3-byte) buffer returns 0 + ENOEXEC. Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 86 suites, 0 failures
+>
+> **Notes:**
+> - Multi-format magic dispatcher: `exec_load`/`exec_load_fmt` route by magic to the ELF/EIF/PE loaders, registered at Phase 3 `exec_init()`; `task_exec()` drives it.
+> - Path loads (`exec_load_path`) stage via PMM contiguous frames for images > 4 KiB with a fail-closed short-read guard; kmalloc kept for the small tail; format registry sealed after boot.
+> - Downstream: `exec_load_fmt` publishes the matched format name to the task struct; the module registry (§6) and per-format loaders (§2/§5/§7) build on this dispatcher.
+> - Review hardening (commit `347c5b2d`): PMM staging + short-read fail-closed, post-boot registry seal, removed the `size < 4` floor that masked PE's 2-byte magic, replaced an empty errno test stub with a real behavioral test.
+> - Scope: `exec_load_path` integration is exercised end-to-end at boot (task_exec loads the shell/desktop) and by usermode `test_process.exe` (D00 T04 §8); kernel unit tests cover magic routing + the ENOEXEC paths.
+>
+> **Verified:** 2026-07-06 | commit `347c5b2d` | 9/9 items | build OK | exec tests 616/616 PASS
+> **Quality reviewed:** 2026-07-06 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed | scope: kernel-code-quality
 
 ## 2. Enhanced ELF Loader
 Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and PIE support.
