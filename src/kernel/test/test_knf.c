@@ -25,6 +25,7 @@
 
 extern int   strcmp(const char *a, const char *b);
 extern void *memset(void *s, int c, size_t n);
+extern int   snprintf(char *buf, size_t size, const char *fmt, ...);
 extern NTSTATUS nt_query_notification_information(void *buffer, uint32_t buf_size,
                                                  uint32_t *return_length);
 
@@ -1032,6 +1033,79 @@ static void test_knf_diag_query(void)
     knf_delete_state("Kernel", "PubDiag");
 }
 
+/* Stress leak-check: 1000 states + 100 subscribers, torn fully down, asserting
+ * the KNF diagnostics live-state + subscriber counters return to baseline (no
+ * leak). A single OB directory caps at OB_DIR_MAX_ENTRIES (128), so the load is
+ * spread across the 4 category directories (PER_CAT each). States beyond the
+ * first NSUBS drop their create reference immediately (kept alive by the
+ * namespace reference, deleted by name); the first NSUBS keep the pointer to
+ * subscribe and to drop the create ref at teardown. The exact-count assertions
+ * make a silent directory-cap hit a failure, not reduced-coverage pass. Also
+ * exercises the idempotent delete path (a second delete is a no-op). */
+static void test_knf_stress_no_leak(void)
+{
+    static const char *const cats[] = { "Kernel", "Power", "Session", "Security" };
+    enum { NCATS = 4, PER_CAT = 100, NSTATES = NCATS * PER_CAT, NSUBS = 100 };
+    KNF_STATE             *keep[NSUBS] = { 0 };   /* first NSUBS states, kept for teardown */
+    struct knf_subscriber *sub[NSUBS]  = { 0 };
+    uint64_t               base_states, base_subs;
+    char                   name[24];
+    int                    c, i, idx, created = 0, subbed = 0;
+
+    base_states = knf_diag_live_state_count();
+    base_subs   = knf_diag_subscriber_count();
+
+    for (c = 0; c < NCATS; c++) {
+        for (i = 0; i < PER_CAT; i++) {
+            KNF_STATE *st;
+            idx = c * PER_CAT + i;
+            snprintf(name, sizeof(name), "Stress%d", i);
+            st = knf_create_state(cats[c], name, KNF_LIFETIME_TEMPORARY,
+                                  KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE);
+            if (!st)
+                continue;
+            created++;
+            if (idx < NSUBS) {
+                keep[idx] = st;
+                if (knf_subscribe(st, &sub[idx]) == STATUS_SUCCESS)
+                    subbed++;
+            } else {
+                ObDereferenceObject(st);   /* keep only namespace ref; delete by name later */
+            }
+        }
+    }
+    /* Exact cardinality: a silent OB-directory-cap hit (create returning NULL)
+     * must FAIL the test rather than pass with reduced coverage. */
+    TEST_ASSERT_EQ((uint64_t)created, (uint64_t)NSTATES, "stress created all NSTATES");
+    TEST_ASSERT_EQ((uint64_t)subbed,  (uint64_t)NSUBS,   "stress subscribed all NSUBS");
+    TEST_ASSERT_EQ(knf_diag_live_state_count(), base_states + (uint64_t)NSTATES,
+                   "stress: live-state counter rose by NSTATES");
+    TEST_ASSERT_EQ(knf_diag_subscriber_count(), base_subs + (uint64_t)NSUBS,
+                   "stress: subscriber counter rose by NSUBS");
+
+    /* Teardown everything; the counters must return to baseline (no leak). */
+    for (c = 0; c < NCATS; c++) {
+        for (i = 0; i < PER_CAT; i++) {
+            idx = c * PER_CAT + i;
+            snprintf(name, sizeof(name), "Stress%d", i);
+            if (idx < NSUBS) {
+                if (sub[idx])
+                    knf_unsubscribe(&sub[idx]);
+                if (keep[idx])
+                    ObDereferenceObject(keep[idx]);
+            }
+            knf_delete_state(cats[c], name);
+        }
+    }
+    /* Idempotent delete: a second delete of an already-removed name is a no-op. */
+    knf_delete_state("Kernel", "Stress0");
+
+    TEST_ASSERT_EQ(knf_diag_live_state_count(), base_states,
+                   "stress: no leaked states after full teardown");
+    TEST_ASSERT_EQ(knf_diag_subscriber_count(), base_subs,
+                   "stress: no leaked subscribers after full teardown");
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void test_register_knf(void)
@@ -1084,6 +1158,8 @@ void test_register_knf(void)
                             test_knf_coalesce_retention, TEST_CAT_KNF);
     test_suite_register_cat("knf: SystemNotificationInformation diagnostics query",
                             test_knf_diag_query, TEST_CAT_KNF);
+    test_suite_register_cat("knf: stress 400 states / 100 subscribers, no leak",
+                            test_knf_stress_no_leak, TEST_CAT_KNF);
 }
 
 #endif /* KERNEL_TESTS */
