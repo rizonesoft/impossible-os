@@ -8,6 +8,8 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 
 # TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)
 
+> **Validated:** 2026-07-06 | validate-todo-file clean (structure / IO table / XREF drift fixed §7,§8->§9,§10 / §8 [x]->[/] open items / graph 8/8)
+
 > **Goal:** Build the multi-format executable loader that every user-mode program depends on. Three formats must work: ELF (existing basic loader upgraded), PE32+ (Windows-compatible, imports wired to Win32 API), and EIF (Impossible OS native -- 64-byte header, syscall-ID import table, <10 µs load time). A single `exec_load()` dispatcher auto-detects format by magic bytes and routes to the correct loader. ASLR and EIF code signing close out the security story.
 
 > [!IMPORTANT]
@@ -25,7 +27,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 - → XREF: `TODO-05-object-manager.md §5` -- process object registered in Ob namespace at `exec_load()` time
 - → XREF: `TODO-23-exception-dispatch-seh.md §6` -- PE32+ `.pdata` section must be registered for loaded modules before `RtlLookupFunctionEntry` can find unwind data; §8 of this TODO registers `.pdata` with the unwind table registry
 - → XREF: `TODO-27-crash-dump-generation.md §3` -- `LOADED_MODULE` registry consumes module base/size/name from `exec_load()`; §6 of this TODO populates the module list
-- → XREF: `TODO-10-kernel-security-hardening.md §7,§8` -- PE Load Config Directory (§11) exposes CFG bitmap and CET flags; kernel CET shadow stack (§7) and CET IBT (§8) enforcement lives in TODO-23
+- → XREF: `TODO-10-kernel-security-hardening.md §9,§10` -- PE Load Config Directory (§11) exposes CFG bitmap and CET flags; kernel CET shadow stack (§9) and CET IBT (§10) enforcement lives in TODO-23
 - → XREF: `10-platform-services/TODO-07-win32-pe-loader.md` -- scope overlap: TODO-23/07 covers Win32 subsystem-level PE execution (SYSCALL/SYSRET setup, Win32 ABI, user CRT); this TODO covers the kernel-level binary format infrastructure (loaders, format dispatcher, ASLR). PE header structs and loader core are authoritative HERE; Win32 subsystem wiring is authoritative THERE.
 - → XREF: `12-user-platform-sdk/INDEX.md` -- EIF spec doc lives there; `elf2eif` tool and SDK integration wire back to §13
 - → XREF: `TODO-21-process-model-extensions.md §3` -- `exec_load()` (§1) must set `task->program_break` to end of BSS so brk/sbrk (TODO-21 §3) can extend from the correct address
@@ -70,7 +72,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | ⭐   |   5   | EIF kernel loader                              | §1, §4          |  [x]   |
 | 💎   |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-11 §4  |  [/]   |
 | 💎   |   7   | PE32+ header parser                            | §1              |  [x]   |
-| 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [x]   |
+| 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
 | 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [x]   |
 | 💎   |  10   | PE32+ base relocation                          | §8              |  [ ]   |
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [ ]   |
@@ -267,7 +269,7 @@ PE binaries using `__declspec(thread)` or C11 `_Thread_local` store TLS template
 Modern PE binaries carry an `IMAGE_LOAD_CONFIG_DIRECTORY64` (DataDirectory entry 10) containing security metadata: Control Flow Guard (CFG) function table, CET shadow stack compatibility flags, and security cookie location. The kernel must parse this to enable hardware-assisted control flow integrity.
 
 > [!NOTE]
-> → XREF: `TODO-10-kernel-security-hardening.md §7,§8` -- CET shadow stack (§7) and CET IBT (§8) enforcement is authoritative in TODO-23. This section parses the PE metadata and stores it in the process/module record; TODO-23 acts on it. CFG bitmap enforcement also requires a dedicated CFG section in TODO-23.
+> → XREF: `TODO-10-kernel-security-hardening.md §9,§10` -- CET shadow stack (§9) and CET IBT (§10) enforcement is authoritative in TODO-23. This section parses the PE metadata and stores it in the process/module record; TODO-23 acts on it. CFG bitmap enforcement also requires a dedicated CFG section in TODO-23.
 
 - [ ] Parse `IMAGE_LOAD_CONFIG_DIRECTORY64` from DataDirectory[10]: extract `GuardCFFunctionTable`, `GuardCFFunctionCount`, `GuardFlags`
 - [ ] If `IMAGE_GUARD_CF_INSTRUMENTED` and `IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT`: allocate a per-process CFG bitmap; populate valid call targets from the GFIDS table; store in process metadata
