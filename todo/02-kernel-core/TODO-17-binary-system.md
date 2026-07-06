@@ -9,6 +9,8 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 # TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)
 
 > **Validated:** 2026-07-06 | validate-todo-file clean (structure / IO table / XREF drift fixed §7,§8->§9,§10 / §8 [x]->[/] open items / graph 8/8)
+>
+> **Gap-audited:** 2026-07-06 | Win11/PE + Linux/ELF loader parity (parity-research-analyst todo-plan + Codex gap-audit red-team). Filed: §20 new (IFUNC/IRELATIVE, DT_INIT/FINI_ARRAY, DT_VERSYM/VERNEED versioning, RUNPATH/RPATH search order, DT_FLAGS_1); §6 ELF .eh_frame unwind; §18 ELF TLS ABI (TCB/DTV/FS-base); §19 PE export-forwarder chains. Reciprocal: TODO-21 §14 module-deregister + fini-array on exit. Rejected Codex ownership-split claim (TODO-03 §5/§6 are crypto/JSON, TODO-10 §11 is heap-hardening -- none own ELF dynamic linking). Deferred: SEC_IMAGE COW -> TODO-05 Section objects (blocked on per-process PML4 §8); PE Authenticode -> TODO-05 driver signing; page-in code-sign = refinement.
 
 > **Goal:** Build the multi-format executable loader that every user-mode program depends on. Three formats must work: ELF (existing basic loader upgraded), PE32+ (Windows-compatible, imports wired to Win32 API), and EIF (Impossible OS native -- 64-byte header, syscall-ID import table, <10 µs load time). A single `exec_load()` dispatcher auto-detects format by magic bytes and routes to the correct loader. ASLR and EIF code signing close out the security story.
 
@@ -84,6 +86,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | ⭐   |  17   | EIF code signing                               | §5              |  [ ]   |
 | 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [ ]   |
 | 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [ ]   |
+| 💎   |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [ ]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.
 > ⭐ = exclusive -- triple-format support, EIF native format, syscall-ID imports, shebang dispatch, and mandatory code signing are Impossible OS only.
@@ -192,6 +195,7 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] For PE32+ modules: insert `LDR_DATA_TABLE_ENTRY` into `PEB->Ldr` lists (→ XREF TODO-11 §4) -- allocates entry + UTF-16 strings, inserts into all 3 circular lists (InLoadOrder, InMemoryOrder, InInitializationOrder)
 - [/] For ELF modules: insert into a process-local `link_map` chain for `dl_iterate_phdr()` compat -- registered in global crash registry; per-process link_map deferred to dynamic linker (§14) when process-private address spaces exist
 - [ ] Extend module identity beyond `name`: reserve image-ID storage for EIF `build_id` metadata, PE CodeView GUID / Debug Directory identity, and ELF `.note.gnu.build-id` when available (-> XREF `TODO-20-eif-full-implementation.md §5`, `TODO-27-crash-dump-generation.md §3`)
+- [ ] Register ELF `.eh_frame_hdr` unwind data (symmetric to PE `.pdata`): add fields to `loaded_module_t`, parse `PT_GNU_EH_FRAME` (`0x6474E550`) so the unwinder gets DWARF CFI -> XREF: `TODO-23-exception-dispatch-seh.md §6`
 - [x] `exec_find_module_by_pc(uint64_t rip)` -- binary search module list by address range; returns module for stack traces and `.pdata` lookup -- O(log n) binary search, ISR-safe (irqsave spinlock)
 - [x] Commit: `"kernel: exec -- module list registration for Ldr, crash dump, and debugger"`
 
@@ -307,7 +311,7 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom comp
 Shared library support for the Linux compatibility layer and future ELF apps.
 
 > [!NOTE]
-> A dedicated ELF shared library TODO has not yet been filed. This section implements only the minimum kernel-side pieces needed for the Linux compatibility layer. File a new TODO under `02-kernel-core` if dynamic linking scope expands beyond the items listed here.
+> A dedicated ELF shared library TODO has not yet been filed. This section implements only the minimum kernel-side pieces needed for the Linux compatibility layer. File a new TODO under `02-kernel-core` if dynamic linking scope expands beyond the items listed here. Advanced semantics (IFUNC/IRELATIVE, `DT_INIT_ARRAY`/`DT_FINI_ARRAY`, symbol versioning, library search order, `DT_FLAGS`/`DT_FLAGS_1`) are owned by §20; ELF TLS ABI (TCB/DTV/FS-base) by §18.
 
 - [ ] Parse `PT_DYNAMIC` segment for `DT_NEEDED`, `DT_STRTAB`, `DT_SYMTAB`, `DT_HASH`/`DT_GNU_HASH`
 - [ ] Load `.so` files from `C:\Impossible\System\lib\` via VFS
@@ -372,6 +376,9 @@ Linux ELF binaries using `__thread` rely on `PT_TLS` template mapping and per-th
 - [ ] In `src/kernel/elf.c` (`elf_exec`/`elf_load` path): parse `PT_TLS`, capture template metadata, and map initial TLS image for the main thread
 - [ ] In thread creation path (`src/kernel/sched/task.c`): allocate a fresh TLS block for each new thread from the captured `PT_TLS` template; copy initialized bytes then zero-fill tail
 - [ ] Wire TLS setup into exec/thread startup sequence before user entry so ELF code sees valid TLS at first instruction
+- [ ] Build the x86-64 TLS ABI runtime: allocate per-thread TCB with self-pointer at offset 0, set FS base to it (via `arch_prctl`/MSR), and lay the static TLS block at negative offsets per the variant-II model
+- [ ] Allocate a DTV (dynamic thread vector) keyed by module TLS ID; assign the exec module ID 1 so dynamic shared objects (§14/§20) can add their own TLS blocks
+- [ ] Apply ELF TLS relocations `R_X86_64_DTPMOD64`/`R_X86_64_DTPOFF64`/`R_X86_64_TPOFF64` for local-exec/initial-exec/general-dynamic access models
 - [ ] Add unit tests in `src/kernel/test/test_exec.c`: static `__thread` variable init value, per-thread isolation, and zero-filled TLS tail behavior
 - [ ] Commit: `"kernel: elf -- PT_TLS template loading and per-thread TLS setup"`
 
@@ -385,10 +392,30 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 - [ ] In PE import resolver path: detect API-set contract DLL names and map them to concrete host DLLs before export lookup (`api-ms-win-*`, `ext-ms-*`)
 - [ ] Parse Delay-Load Import Directory (DataDirectory 13): resolve thunks on first call path and support delay-unload/delay-bound metadata
 - [ ] Parse Bound Import metadata (DataDirectory 11): validate timestamps; on mismatch/failure, fall back to normal import resolution instead of crashing
+- [ ] Resolve PE export forwarder chains: an export RVA inside the export directory is a `DLL.Function`/`DLL.#Ordinal` forwarder; recursively resolve to the real target (bounded depth, reject cycles) -- needed for `kernel32`->`ntdll` layering
 - [ ] Add unit tests in `src/kernel/test/test_exec.c`: API-set contract name resolution, delay-load first-call patching, and bound-import mismatch fallback path
 - [ ] Commit: `"kernel: pe -- API-set contract resolution and delay-load/bound imports"`
 
 **Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. `POST16(0xD820)` on entry, `POST16(0xD821)` after delay-IAT patching. Test on: QEMU WHPX + TCG; bare metal.
+
+---
+
+## 20. ELF Dynamic Linker -- Advanced (IFUNC, Init/Fini, Versioning, Search Order)
+
+§14 lands the core dynamic linker (PT_DYNAMIC, DT_NEEDED, hash lookup, JUMP_SLOT/GLOB_DAT/RELATIVE relocations, lazy PLT, RELRO). Real glibc-linked shared objects also depend on the semantics below; without them the loader skips C++ constructors, jumps to unresolved IFUNC slots, binds the wrong symbol ABI version, or searches the wrong library path. This section is split out of §14 to keep each section within the checklist-size cap.
+
+> [!NOTE]
+> §14 owns the exec-time ELF dynamic linker; there is no separate ELF-shared-library TODO. dlopen/dlsym runtime-load API and per-process module unload are process-model concerns -> XREF: `TODO-21-process-model-extensions.md §14` (process-exit destructor + module deregistration).
+
+- [ ] GNU IFUNC resolution: after RELATIVE/GLOB_DAT relocations, walk `R_X86_64_IRELATIVE` entries, call each resolver, write the result into the slot (IRELATIVE strictly last -- resolvers read already-relocated data)
+- [ ] Constructor/destructor: call `DT_PREINIT_ARRAY` (main exe only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order after relocations; register `DT_FINI`/`DT_FINI_ARRAY` for teardown (-> XREF `TODO-21 §14`)
+- [ ] ELF symbol versioning: parse `DT_VERSYM`/`DT_VERNEED`/`DT_VERDEF` and bind each undefined symbol to the requested version so glibc-versioned symbols resolve to the correct ABI rather than the first match
+- [ ] Library search order: honour `DT_RUNPATH`/`DT_RPATH`, an `LD_LIBRARY_PATH`-equivalent, then the default system lib dir; filter environment paths in secure mode so untrusted paths cannot inject libraries
+- [ ] `DT_FLAGS`/`DT_FLAGS_1` policy: honour `DF_BIND_NOW`/`DF_1_NOW` (eager binding, disable lazy PLT), `DF_1_NODELETE` (pin module across unload), and `DF_1_PIE`
+- [ ] Add unit tests in `src/kernel/test/test_exec.c`: an IRELATIVE slot points at the resolver's returned address; an init-array constructor runs before entry; a versioned symbol binds to the requested version; BIND_NOW disables lazy binding
+- [ ] Commit: `"kernel: elf -- IFUNC, init/fini arrays, symbol versioning, search order, DT_FLAGS"`
+
+**Test checkpoint:** Serial log shows `"elf: called <N> init-array constructors"` and `"elf: resolved <N> IFUNC relocations"`. A binary with a versioned undefined symbol binds to the correct `DT_VERNEED` entry. `DF_BIND_NOW` binary resolves all PLT slots at load (no lazy stub). Test on: QEMU WHPX + TCG; bare metal.
 
 ---
 
@@ -410,6 +437,11 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 | 💎   | Native TLS templates        | ✅ PE TLS                 | ✅ PT_TLS           | ⬜ §11 + §18                     |
 | 💎   | PE Load Config / CFG        | ✅ CFG mandatory          | ❌ N/A              | ⬜ §12                           |
 | 💎   | Contract import mapping     | ✅ API-set                | ⚠️ SONAME aliases  | ⬜ §19                           |
+| 💎   | ELF symbol versioning       | ❌ N/A (PE)               | ✅ DT_VERNEED       | ⬜ §20                           |
+| 💎   | GNU IFUNC dispatch          | ❌ N/A                    | ✅ IRELATIVE        | ⬜ §20                           |
+| 💎   | Init/fini arrays            | ⚠️ CRT thunk             | ✅ init_array       | ⬜ §20                           |
+| 💎   | ELF .eh_frame unwind        | ❌ N/A (PE .pdata)        | ✅ PT_GNU_EH_FRAME  | ⬜ §6                            |
+| 💎   | PE export forwarders        | ✅ DLL.Func chains        | ❌ N/A              | ⬜ §19                           |
 | ⭐   | Triple format support       | ❌ PE32+ only             | ❌ ELF only         | ⬜ §1–§10 all three              |
 | ⭐   | < 10 us load time           | ❌ ~50 us                 | ❌ ~30 us           | 🔄 §5 uptime_ns measured         |
 | ⭐   | Syscall-ID imports          | ❌ String-based           | ❌ String-based     | ✅ §5 dispatch table at 0x8F0000 |

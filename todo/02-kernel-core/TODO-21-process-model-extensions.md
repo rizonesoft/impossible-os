@@ -328,6 +328,7 @@ Central cleanup point for all per-process resources when a process terminates. W
   - Trigger delete-on-close for files marked by this process (-> XREF: 05-storage-filesystems/TODO-04 §9)
   - Release any oplock held by this process (-> XREF: 05-storage-filesystems/TODO-04 §14)
   - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: 02-kernel-core/TODO-26 §5)
+  - Invoke ELF `DT_FINI_ARRAY` / PE `DLL_PROCESS_DETACH` destructors, then deregister every module from the `loaded_module_t` registry before unmap (-> XREF: 02-kernel-core/TODO-17 §20 fini-array, §6 module registry)
   - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
   - Remove from job object if assigned (-> XREF: §13)
 - [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
