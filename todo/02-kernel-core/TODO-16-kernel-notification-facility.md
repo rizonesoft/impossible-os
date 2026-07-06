@@ -257,7 +257,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [x] Stress: `test_knf_stress_no_leak` creates 400 states across the 4 category dirs (100 each, under the 128-entry OB dir cap) + 100 subscribers, tears down asserting exact counts + diag counters return to baseline (no leak).
 - [/] Concurrent create/delete SMP stress: kthreads racing create+delete of one name, assert no leak/double-free + the `ObpRemoveFromDirectory` idempotent -1 path. Deferred: needs a kthread stress harness.
 - [/] Subscription lifetime tests: teardown on `NtClose`, teardown on process/thread exit (no retained node), a close-vs-publish race, and a publish-after-owner-exit. Deferred: needs waitable Ob-handle subscriptions (Deferred stamp).
-- [x] Commit: `"kernel/knf: test_knf suite (create/publish/query/coalesce/ACL/wait) + ShellReady boot test"`
+- [x] Commit: `"kernel/knf: test_knf stress leak-check (400 states / 100 subscribers, no leak)"` (ACL/wait/ShellReady deferred -- see Deferred stamps)
 
 **Test checkpoint:** `test_knf` (TEST_CAT_KNF, 25 suites) runs green: create/publish/query, coalescing, missed-sequence, retention, mode/trace flags, diagnostics, and the 400-state/100-subscriber `test_knf_stress_no_leak` (counters return to baseline) all pass. ACL-denied publish, wait-wakeup, the boot `System/ShellReady` test, subscription-lifetime, and the kthread SMP race are deferred -- see Deferred stamps. Test on: QEMU WHPX + TCG.
 
@@ -267,9 +267,11 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - The functional core (create/publish/query, coalescing, missed-sequence, retention, mode/trace, diagnostics) is the 24 suites already shipped across §1-§9; this section adds the stress leak-check as the 25th.
 > - Deferred (stamps): ACL-denied publish (needs SeAccessCheck), wait-wakeup + boot `System/ShellReady` + subscription-lifetime (need waitable Ob-handle subscriptions), and the kthread SMP create/delete race (needs a kthread stress harness).
 > - Canonical doc: this TODO; the leak check keys off the KNF diagnostics counters (`knf_diag_live_state_count`/`knf_diag_subscriber_count`).
+> **Verified:** 2026-07-06 | commit `e50224aa` | 1/5 items | build OK | tests 195/195 PASS
 > **Deferred:** [M] ACL-denied-publish test not implemented (needs the access-decision engine) -> XREF: 02-kernel-core/TODO-16 §4 (item: "Apply SRM access masks: query, subscribe, publish, create, delete" at line 135)
 > **Deferred:** [M] wait-wakeup + boot `System/ShellReady` + subscription-lifetime tests need waitable Ob-handle subscriptions -> XREF: 02-kernel-core/TODO-16 §3 (item: "Subscription handles become waitable objects" at line 115)
 > **Deferred:** [L] concurrent create/delete kthread SMP stress not implemented (needs a kthread stress harness) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 258)
+> **Quality reviewed:** 2026-07-06 | Codex 4x (design, adversarial, consistency, perf) | 2M+1L fixed | scope: kernel-code-quality
 
 ---
 

@@ -1033,7 +1033,7 @@ static void test_knf_diag_query(void)
     knf_delete_state("Kernel", "PubDiag");
 }
 
-/* Stress leak-check: 1000 states + 100 subscribers, torn fully down, asserting
+/* Stress leak-check: 400 states + 100 subscribers, torn fully down, asserting
  * the KNF diagnostics live-state + subscriber counters return to baseline (no
  * leak). A single OB directory caps at OB_DIR_MAX_ENTRIES (128), so the load is
  * spread across the 4 category directories (PER_CAT each). States beyond the
