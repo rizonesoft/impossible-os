@@ -567,7 +567,8 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     /* Arm every subscriber that has not yet seen this advance. Coalescing (a
      * subscriber that already has a pending notification keeps its earlier
      * pending_prev) is the natural level-triggered behavior; the missed-update
-     * count + edge-triggered option are the coalescing/retention layer. */
+     * count below is implemented here. Edge-triggered "deliver every update"
+     * delivery is a deferred item of this layer (needs a per-subscriber ring). */
     for (sub = st->subscribers; sub; sub = sub->next) {
         if (sub->last_seen >= next_seq)
             continue;
@@ -764,7 +765,9 @@ NTSTATUS knf_query_last_kernel(KNF_STATE *st, void *buf, uint32_t cap,
     /* Snapshot the retained payload + current stamp under the lock. A publish
      * frees the OLD payload buffer only after unlock, and grows payload_cap only
      * under the lock, so the copy here (under the lock) always sees a consistent
-     * (payload, payload_len) pair. */
+     * (payload, payload_len) pair. Callable at ANY IRQL: unlike knf_publish this
+     * allocates nothing, so the only work under the IRQ-off lock is a bounded
+     * (<= KNF_MAX_PAYLOAD) memcpy plus field reads. */
     spin_lock_irqsave(&st->lock, &flags);
     /* Derive len from the buffer pointer so the payload_len>0 => payload!=NULL
      * invariant holds even under fault injection: a NULL payload reports len 0. */

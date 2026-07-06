@@ -205,10 +205,12 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Level-triggered coalescing is the default publish/poll behavior; `missed` is bumped under the per-state lock when a publish lands over an unread pending; the retention query snapshots payload+stamp under the same lock.
 > - Deferred (see stamps): edge-triggered delivery, secret redaction enforcement, persistent registry backing, active/spare double-buffering. Design review adoptions in the commit message.
 > - Canonical doc: this TODO; §8 owns the user-mode WNF query surface where `KNF_MODE_SECRET` redaction enforces, §9 owns diagnostics counters.
+> **Verified:** 2026-07-06 | commit `31236a97` | 3/7 items | build OK | tests 172/172 PASS
 > **Deferred:** [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Edge-triggered delivery" at line 194)
 > **Deferred:** [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Secret-payload redaction before user-mode query" at line 195)
 > **Deferred:** [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented -> XREF: 02-kernel-core/TODO-16 §7 (item: "Persistent-lifetime registry backing" at line 197)
 > **Deferred:** [L] publish lock-hold not yet shrunk; needs active/spare double-buffer -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold via active/spare double-buffer" at line 198)
+> **Quality reviewed:** 2026-07-06 | Codex 3x (adversarial, consistency, perf) | 2L fixed | scope: kernel-code-quality
 
 ---
 

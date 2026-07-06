@@ -41,8 +41,9 @@
  * best-effort, never at ISR/DPC priority) and is guarded against re-entry.   */
 #define KNF_TRACE_ETW     0x1u   /* emit an ETW_EVT_KNF_PUBLISH record on publish */
 #define KNF_TRACE_KLOG    0x2u   /* emit one klog line on publish */
-#define KNF_PERSIST_LAST  0x4u   /* retain last payload for query-after-miss;
-                                  * reserved -- retention owned by the coalescing section */
+#define KNF_PERSIST_LAST  0x4u   /* reserved/no-op: retention is now unconditional
+                                  * (every publish retains; knf_query_last_kernel
+                                  * always returns the last payload regardless) */
 #define KNF_TRACE_ALL     (KNF_TRACE_ETW | KNF_TRACE_KLOG | KNF_PERSIST_LAST)
 
 /* --- Delivery / retention policy flags (KNF_MODE_*) --------------------- *
