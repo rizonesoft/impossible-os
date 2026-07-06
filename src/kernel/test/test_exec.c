@@ -12,7 +12,10 @@
 #include "kernel/exec.h"
 #include "kernel/eif.h"
 #include "kernel/pe.h"
+#include "kernel/elf.h"
 #include "kernel/errno.h"
+#include "kernel/mm/user_range.h"
+#include "kernel/test/klog_suppress.h"
 
 /* ---- Exec dispatcher tests ---- */
 
@@ -44,6 +47,150 @@ static void test_exec_errno(void)
     uint64_t entry = exec_load(tiny, sizeof(tiny), &err);
     TEST_ASSERT_EQ(entry, 0, "exec_load rejects sub-magic-length buffer");
     TEST_ASSERT_EQ(err, ENOEXEC, "exec_load sets ENOEXEC for short buffer");
+}
+
+/* ---- ELF loader malformed-input rejection tests ----
+ * Each test corrupts one field of an otherwise-valid ELF64 image so that
+ * elf_load() rejects it in the pass-1 validation walk, BEFORE the pass-2
+ * segment copy. Rejected images never touch user memory (that is the whole
+ * point of the two-pass split), so these are safe to run in the kernel test
+ * harness. They lock in the ELF bounds hardening: attacker-controlled uint64
+ * wrap in the phdr table / segment file bounds / user-range check, p_filesz >
+ * p_memsz, overlapping PT_LOAD ranges, and e_entry not inside an executable
+ * segment. The fixture is a genuinely valid single-PF_X-segment ELF whose
+ * e_entry lands in that segment, so each test isolates exactly one defect. */
+
+static uint8_t s_elf_buf[256];
+
+static void elf_test_build_valid(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    uint32_t i;
+    for (i = 0; i < sizeof(s_elf_buf); i++) s_elf_buf[i] = 0;
+    h->e_ident[0] = 0x7F; h->e_ident[1] = 'E'; h->e_ident[2] = 'L'; h->e_ident[3] = 'F';
+    h->e_ident[4] = ELFCLASS64; h->e_ident[5] = ELFDATA2LSB;
+    h->e_type = ET_EXEC; h->e_machine = EM_X86_64;
+    h->e_entry = USER_ELF_BASE;  /* inside the single PF_X segment below */
+    h->e_phoff = sizeof(struct elf64_header);
+    h->e_phentsize = sizeof(struct elf64_phdr);
+    h->e_phnum = 1;
+    p->p_type = PT_LOAD;
+    p->p_flags = PF_R | PF_X;
+    p->p_offset = 0; p->p_filesz = 0; p->p_memsz = 16;
+    p->p_vaddr = USER_ELF_BASE;
+}
+
+static void test_elf_reject_bad_phentsize(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf_load_result r;
+    elf_test_build_valid();
+    h->e_phentsize = 8;  /* != sizeof(elf64_phdr) */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects bad e_phentsize");
+}
+
+static void test_elf_reject_phoff_overflow(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf_load_result r;
+    elf_test_build_valid();
+    h->e_phoff = 0xFFFFFFFFFFFFFF00ULL;  /* would wrap in phoff+table */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects wrapping e_phoff");
+}
+
+static void test_elf_reject_offset_overflow(void)
+{
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    struct elf_load_result r;
+    elf_test_build_valid();
+    p->p_offset = 0xFFFFFFFFFFFFFF00ULL;  /* p_offset + p_filesz would wrap */
+    p->p_filesz = 0x200;
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects wrapping p_offset");
+}
+
+static void test_elf_reject_filesz_gt_memsz(void)
+{
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    struct elf_load_result r;
+    elf_test_build_valid();
+    TEST_KLOG_SUPPRESS("elf");  /* reject path logs LOG_ERROR -- silence [FAIL]-lookalike */
+    p->p_offset = 0; p->p_filesz = 128; p->p_memsz = 64;  /* dest overflow attempt */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects p_filesz > p_memsz");
+}
+
+static void test_elf_reject_vaddr_overflow(void)
+{
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    struct elf_load_result r;
+    elf_test_build_valid();
+    TEST_KLOG_SUPPRESS("elf");  /* reject path logs LOG_ERROR -- silence [FAIL]-lookalike */
+    p->p_vaddr = 0xFFFFFFFFFFFFFF00ULL;  /* high vaddr + small memsz wraps below END */
+    p->p_memsz = 16; p->p_filesz = 0;
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects wrapping p_vaddr");
+}
+
+/* e_entry in an inter-segment gap: the single valid segment stays, but e_entry
+ * points past it. Pass 1 rejects (no PF_X segment covers e_entry) before any
+ * copy, so the stale-residue-exec path is blocked non-destructively. */
+static void test_elf_reject_entry_outside_segment(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf_load_result r;
+    elf_test_build_valid();
+    h->e_entry = USER_ELF_BASE + 0x1000;  /* in user range, outside the 16-byte segment */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects e_entry outside all segments");
+}
+
+/* e_entry inside a non-executable segment: clearing PF_X must reject even
+ * though e_entry is inside the segment's address range. */
+static void test_elf_reject_entry_non_exec(void)
+{
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    struct elf_load_result r;
+    elf_test_build_valid();
+    p->p_flags = PF_R;  /* no PF_X; e_entry still at USER_ELF_BASE */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects e_entry in a non-exec segment");
+}
+
+/* Excessive program-header count: e_phnum above ELF_MAX_PHNUM must be rejected
+ * in elf_validate BEFORE the O(n^2) overlap walk, closing the crafted-ELF
+ * exec-path DoS (tens of thousands of zero-sized PT_LOADs forcing ~2 billion
+ * comparisons). Rejection happens on header validation, so no memory is touched. */
+static void test_elf_reject_excessive_phnum(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf_load_result r;
+    elf_test_build_valid();
+    h->e_phnum = ELF_MAX_PHNUM + 1;  /* over the cap; table need not even fit */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects e_phnum over ELF_MAX_PHNUM");
+}
+
+/* Two overlapping PT_LOAD segments: the spec forbids overlap, and allowing it
+ * would let a dummy PF_X segment satisfy the entry check while a later non-exec
+ * segment overwrites the bytes. Pass 1 rejects the overlap before any copy. */
+static void test_elf_reject_overlapping_segments(void)
+{
+    struct elf64_header *h = (struct elf64_header *)s_elf_buf;
+    struct elf64_phdr *p = (struct elf64_phdr *)(s_elf_buf + sizeof(struct elf64_header));
+    struct elf_load_result r;
+    elf_test_build_valid();
+    TEST_KLOG_SUPPRESS("elf");  /* overlap reject logs LOG_ERROR -- silence [FAIL]-lookalike */
+    h->e_phnum = 2;
+    p[1].p_type = PT_LOAD;
+    p[1].p_flags = PF_R | PF_W;
+    p[1].p_offset = 0; p[1].p_filesz = 0; p[1].p_memsz = 16;
+    p[1].p_vaddr = USER_ELF_BASE + 8;  /* overlaps [BASE, BASE+16) */
+    r = elf_load(s_elf_buf, sizeof(s_elf_buf));
+    TEST_ASSERT_EQ(r.success, 0, "elf_load rejects overlapping PT_LOAD segments");
 }
 
 /* ---- Module registration tests ---- */
@@ -335,6 +482,17 @@ void test_register_exec(void)
     test_suite_register_cat("Exec: bad magic", test_exec_bad_magic, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: null data", test_exec_null_data, TEST_CAT_EXEC);
     test_suite_register_cat("Exec: short buffer ENOEXEC", test_exec_errno, TEST_CAT_EXEC);
+
+    /* ELF loader malformed-input rejection */
+    test_suite_register_cat("ELF: reject bad phentsize", test_elf_reject_bad_phentsize, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject phoff overflow", test_elf_reject_phoff_overflow, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject offset overflow", test_elf_reject_offset_overflow, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject filesz>memsz", test_elf_reject_filesz_gt_memsz, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject vaddr overflow", test_elf_reject_vaddr_overflow, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject entry outside segment", test_elf_reject_entry_outside_segment, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject entry non-exec", test_elf_reject_entry_non_exec, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject excessive phnum", test_elf_reject_excessive_phnum, TEST_CAT_EXEC);
+    test_suite_register_cat("ELF: reject overlapping segments", test_elf_reject_overlapping_segments, TEST_CAT_EXEC);
 
     /* Module registration tests */
     test_suite_register_cat("Exec: module struct size", test_module_struct_size, TEST_CAT_EXEC);

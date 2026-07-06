@@ -11,21 +11,11 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/user_range.h"
 
-/* Simple memcpy for loading segments */
-static void elf_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)
-{
-    uint64_t i;
-    for (i = 0; i < n; i++)
-        dst[i] = src[i];
-}
-
-/* Zero memory (for BSS portion of segments) */
-static void elf_memzero(uint8_t *dst, uint64_t n)
-{
-    uint64_t i;
-    for (i = 0; i < n; i++)
-        dst[i] = 0;
-}
+/* Segment copy/zero use the kernel scalar memcpy/memset (libc string.c).
+ * This path runs at CPL=0 during load with no FPU-save context, so it must
+ * stay scalar -- never route through the SIMD memops dispatchers. */
+extern void *memcpy(void *dst, const void *src, uint64_t n);
+extern void *memset(void *dst, int c, uint64_t n);
 
 /* Compute AT_PHDR/AT_PHENT/AT_PHNUM auxv metadata for an ELF image.
  *
@@ -141,8 +131,30 @@ static int elf_validate(const struct elf64_header *hdr, uint64_t size)
         return 0;
     }
 
-    /* Program headers must fit in the file */
-    if (hdr->e_phoff + (uint64_t)hdr->e_phnum * hdr->e_phentsize > size) {
+    /* Each program-header entry must be exactly an elf64_phdr: the phdr
+     * walkers dereference full struct objects, so a smaller e_phentsize
+     * would let a crafted header point struct reads past the file buffer. */
+    if (hdr->e_phentsize != sizeof(struct elf64_phdr)) {
+        klog(LOG_DEBUG, "elf", "Bad e_phentsize %u", (uint64_t)hdr->e_phentsize);
+        return 0;
+    }
+
+    /* Cap the program-header count before any phdr walk. e_phnum is a uint16
+     * (max 65535), and elf_load does an O(n^2) PT_LOAD overlap check, so an
+     * uncapped count lets a crafted ELF (tens of thousands of zero-sized
+     * PT_LOADs, well under the 16 MiB exec image cap) force ~2 billion
+     * iterations -- a kernel-time DoS during exec. 64 matches the bootloader
+     * precedent (bootx64.c) and is far above any real binary. */
+    if (hdr->e_phnum > ELF_MAX_PHNUM) {
+        klog(LOG_DEBUG, "elf", "Too many program headers: %u", (uint64_t)hdr->e_phnum);
+        return 0;
+    }
+
+    /* Program header table must fit in the file. Subtraction form: e_phoff
+     * and e_phnum are attacker-controlled, so `e_phoff + phnum*phentsize`
+     * could wrap uint64 and pass a naive `> size` compare. */
+    if (hdr->e_phoff > size ||
+        hdr->e_phnum > (size - hdr->e_phoff) / sizeof(struct elf64_phdr)) {
         klog(LOG_DEBUG, "elf", "Program headers exceed file size");
         return 0;
     }
@@ -166,6 +178,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     uint32_t seg_count = 0;
     uint64_t load_base = (uint64_t)-1;
     uint64_t load_end = 0;
+    int entry_ok = 0;
 
     if (size < sizeof(struct elf64_header)) {
         klog(LOG_DEBUG, "elf", "File too small");
@@ -177,7 +190,12 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     if (!elf_validate(hdr, size))
         return result;
 
-    /* Iterate program headers and load PT_LOAD segments */
+    /* --- Pass 1: validate every PT_LOAD WITHOUT mutating memory. ---
+     * All fatal checks (file/user-range bounds, filesz<=memsz, no overlapping
+     * segments, and e_entry inside an executable segment) run BEFORE any
+     * memcpy/memset/pmm_mark_region_used in pass 2, so a rejected malformed
+     * ELF leaves the shared user ELF frames and PMM state untouched -- a
+     * failed exec is atomic rather than destructive. */
     for (i = 0; i < hdr->e_phnum; i++) {
         phdr = (const struct elf64_phdr *)(data + hdr->e_phoff +
                                             (uint64_t)i * hdr->e_phentsize);
@@ -185,16 +203,30 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
         if (phdr->p_type != PT_LOAD)
             continue;
 
-        /* Validate segment fits in file */
-        if (phdr->p_offset + phdr->p_filesz > size) {
+        /* Segment fits in file (subtraction form: p_offset and p_filesz are
+         * attacker-controlled uint64, so `p_offset + p_filesz` could wrap and
+         * pass a naive `> size` compare, then the pass-2 memcpy would read
+         * data + p_offset out of bounds). */
+        if (phdr->p_offset > size || phdr->p_filesz > size - phdr->p_offset) {
             klog(LOG_DEBUG, "elf", "Segment %u exceeds file size", (uint64_t)i);
             return result;
         }
 
-        /* Validate segment stays within user address range (overflow-safe) */
+        /* The pass-2 copy moves p_filesz bytes to p_vaddr, but the user-range
+         * check only bounds p_memsz. Enforce the ELF invariant p_filesz <=
+         * p_memsz so a crafted segment cannot write past the validated range. */
+        if (phdr->p_filesz > phdr->p_memsz) {
+            klog(LOG_ERROR, "elf", "Segment %u filesz > memsz", (uint64_t)i);
+            return result;
+        }
+
+        /* Segment stays within user address range. Subtraction form with an
+         * explicit p_vaddr upper bound: a high p_vaddr (near UINT64_MAX) plus
+         * a small p_memsz would otherwise wrap below USER_ELF_END. This bound
+         * also guarantees p_vaddr + p_memsz cannot wrap below. */
         if (phdr->p_vaddr < USER_ELF_BASE ||
-            phdr->p_memsz > USER_ELF_SIZE ||
-            phdr->p_vaddr + phdr->p_memsz > USER_ELF_END) {
+            phdr->p_vaddr > USER_ELF_END ||
+            phdr->p_memsz > USER_ELF_END - phdr->p_vaddr) {
             klog(LOG_ERROR, "elf",
                  "Segment %u outside user range: 0x%x-0x%x (allowed 0x%x-0x%x)",
                  (uint64_t)i, phdr->p_vaddr,
@@ -203,29 +235,85 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
             return result;
         }
 
-        /* Copy file data to the target virtual address.
-         * Since we use identity mapping, vaddr == paddr. */
-        if (phdr->p_filesz > 0) {
-            elf_memcpy((uint8_t *)phdr->p_vaddr,
-                       data + phdr->p_offset,
-                       phdr->p_filesz);
+        /* Reject overlapping PT_LOAD ranges. The ELF spec requires loadable
+         * segments to occupy disjoint memory; without this a crafted file
+         * could lay a tiny PF_X segment over e_entry and then a later non-PF_X
+         * segment at the same vaddr whose bytes win the copy, defeating the
+         * executable-entry check below. All sums are user-range-bounded above,
+         * so no wrap. O(n^2) over e_phnum on a cold exec path. */
+        {
+            uint16_t j;
+            for (j = 0; j < i; j++) {
+                const struct elf64_phdr *pj =
+                    (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                                (uint64_t)j * hdr->e_phentsize);
+                if (pj->p_type != PT_LOAD)
+                    continue;
+                if (phdr->p_vaddr < pj->p_vaddr + pj->p_memsz &&
+                    pj->p_vaddr < phdr->p_vaddr + phdr->p_memsz) {
+                    klog(LOG_ERROR, "elf", "Segment %u overlaps segment %u",
+                         (uint64_t)i, (uint64_t)j);
+                    return result;
+                }
+            }
         }
 
-        /* Zero BSS (memsz > filesz) */
-        if (phdr->p_memsz > phdr->p_filesz) {
-            elf_memzero((uint8_t *)(phdr->p_vaddr + phdr->p_filesz),
-                        phdr->p_memsz - phdr->p_filesz);
-        }
+        /* e_entry must land inside an executable loadable segment (checked
+         * across all segments; overlap is already rejected above). */
+        if ((phdr->p_flags & PF_X) &&
+            hdr->e_entry >= phdr->p_vaddr &&
+            hdr->e_entry < phdr->p_vaddr + phdr->p_memsz)
+            entry_ok = 1;
 
-        /* Track loaded region */
         if (phdr->p_vaddr < load_base)
             load_base = phdr->p_vaddr;
         if (phdr->p_vaddr + phdr->p_memsz > load_end)
             load_end = phdr->p_vaddr + phdr->p_memsz;
+        seg_count++;
+    }
+
+    if (load_end == 0) {
+        klog(LOG_DEBUG, "elf", "No PT_LOAD segments found");
+        return result;
+    }
+
+    /* The entry point must land inside an executable PT_LOAD segment, not
+     * merely the aggregate [load_base, load_end) envelope. A crafted binary
+     * with in-range segments but e_entry in an inter-segment gap or a non-exec
+     * segment would otherwise run stale residue from a previous exec (the user
+     * ELF range shares physical frames across processes). Verified in pass 1
+     * before any mutation, so rejection here is non-destructive. */
+    if (!entry_ok) {
+        klog(LOG_DEBUG, "elf",
+             "Entry 0x%x not in an executable segment", hdr->e_entry);
+        return result;
+    }
+
+    /* --- Pass 2: mutate. All fatal validation passed in pass 1. --- */
+    seg_count = 0;
+    for (i = 0; i < hdr->e_phnum; i++) {
+        phdr = (const struct elf64_phdr *)(data + hdr->e_phoff +
+                                            (uint64_t)i * hdr->e_phentsize);
+
+        if (phdr->p_type != PT_LOAD)
+            continue;
+
+        /* Copy file data to the target virtual address.
+         * Since we use identity mapping, vaddr == paddr. */
+        if (phdr->p_filesz > 0) {
+            memcpy((void *)phdr->p_vaddr,
+                   data + phdr->p_offset,
+                   phdr->p_filesz);
+        }
+
+        /* Zero BSS (memsz > filesz) */
+        if (phdr->p_memsz > phdr->p_filesz) {
+            memset((void *)(phdr->p_vaddr + phdr->p_filesz), 0,
+                   phdr->p_memsz - phdr->p_filesz);
+        }
 
         /* Reserve these physical pages in the PMM so no later allocation
-         * (wallpaper, framebuffer, fonts) can overwrite the loaded code.
-         * Since we use identity mapping, vaddr == paddr. */
+         * (wallpaper, framebuffer, fonts) can overwrite the loaded code. */
         pmm_mark_region_used((uintptr_t)phdr->p_vaddr, phdr->p_memsz);
 
         seg_count++;
@@ -234,11 +322,6 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
              (phdr->p_flags & PF_R) ? "R" : "-",
              (phdr->p_flags & PF_W) ? "W" : "-",
              (phdr->p_flags & PF_X) ? "X" : "-");
-    }
-
-    if (load_end == 0) {
-        klog(LOG_DEBUG, "elf", "No PT_LOAD segments found");
-        return result;
     }
 
     result.entry = hdr->e_entry;
@@ -279,7 +362,11 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
                     klog(LOG_WARN, "elf", "Executable stack requested (legacy binary)");
                 } else {
                     result.nx_stack = 1;
-                    klog(LOG_DEBUG, "elf", "NX stack enforced");
+                    /* "requested", not "enforced": elf_exec_wrapper currently
+                     * drops result.nx_stack, so no stack PTE NX bit is set yet
+                     * (threading of the security fields is a separate open
+                     * item). Do not claim enforcement we do not perform. */
+                    klog(LOG_DEBUG, "elf", "NX stack requested (enforcement pending)");
                 }
                 break;
 
@@ -295,8 +382,14 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
             case PT_GNU_PROPERTY:
                 /* Parse GNU property notes for CET flags.
                  * Use byte reads to avoid unaligned type-pun UB.
-                 * Overflow-safe bounds: subtraction-based checks. */
+                 * Overflow-safe bounds: subtraction-based checks.
+                 * The note walk below is driven by p_filesz, so cap it: an
+                 * uncapped payload (up to the 16 MiB exec image), times up to
+                 * 64 PT_GNU_PROPERTY headers, is an exec-path CPU amplifier.
+                 * Real notes are tens of bytes; ELF_GNU_PROPERTY_MAX (4 KiB)
+                 * bounds each walk to a few hundred iterations. */
                 if (phdr->p_filesz >= 16 &&
+                    phdr->p_filesz <= ELF_GNU_PROPERTY_MAX &&
                     phdr->p_offset <= size &&
                     phdr->p_filesz <= size - phdr->p_offset) {
                     const uint8_t *note = data + phdr->p_offset;
@@ -346,7 +439,18 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
                                         klog(LOG_DEBUG, "elf", "CET flags: IBT=%u SHSTK=%u",
                                              (uint64_t)result.cet_ibt, (uint64_t)result.cet_shstk);
                                 }
-                                doff += 8 + ((psize + 7) & ~(uint32_t)7);
+                                /* Advance in uint64: computing 8 + align(psize)
+                                 * in uint32 wraps to 0 for psize near UINT32_MAX
+                                 * (e.g. 0xFFFFFFF1), which would spin this loop
+                                 * forever in kernel exec. adv is always >= 8, so
+                                 * progress is guaranteed; break if the property
+                                 * claims more than the descriptor has left. */
+                                {
+                                    uint64_t adv = 8 + (((uint64_t)psize + 7) & ~(uint64_t)7);
+                                    if (adv > descsz - doff)
+                                        break;
+                                    doff += adv;
+                                }
                             }
                         }
                         off += desc_off + ((descsz + 7) & ~(uint32_t)7);

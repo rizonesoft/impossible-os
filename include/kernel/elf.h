@@ -38,6 +38,18 @@
 #define PF_W            0x2         /* write */
 #define PF_R            0x4         /* read */
 
+/* Max program headers accepted by elf_load. e_phnum is a uint16 (max 65535)
+ * and the loader does an O(n^2) PT_LOAD overlap scan, so an uncapped count is
+ * a crafted-ELF exec-path DoS. 64 matches the bootloader (bootx64.c) and is
+ * far above any real binary. */
+#define ELF_MAX_PHNUM   64
+
+/* Max PT_GNU_PROPERTY payload elf_load will parse. The note walk is driven by
+ * the attacker-controlled p_filesz, so an uncapped payload (up to the 16 MiB
+ * exec image) is an exec-path CPU amplifier. Real GNU property notes are tens
+ * of bytes; one page is far above any legitimate note. */
+#define ELF_GNU_PROPERTY_MAX  4096
+
 /* GNU property note types (inside PT_GNU_PROPERTY) */
 #define GNU_PROPERTY_X86_FEATURE_1_AND  0xC0000002
 #define GNU_PROPERTY_X86_FEATURE_1_IBT  (1u << 0)

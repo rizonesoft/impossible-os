@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-06T03:31:53+02:00",
-  "total_suites": 1828,
-  "total_assertions": 6788,
+  "timestamp": "2026-07-06T04:55:06+02:00",
+  "total_suites": 1837,
+  "total_assertions": 6799,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -35,7 +35,7 @@
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
     {"file": "test_entropy.c", "suites": 15, "assertions": 172},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
-    {"file": "test_exec.c", "suites": 24, "assertions": 44},
+    {"file": "test_exec.c", "suites": 33, "assertions": 55},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},
     {"file": "test_firmware_platform.c", "suites": 15, "assertions": 35},

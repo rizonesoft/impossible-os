@@ -142,6 +142,8 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 - [x] Reject segments outside user address range (`USER_ELF_BASE..USER_ELF_END`) with error log
 - [x] Free kernel buffer after all segments loaded -- done in `exec_load_path()` (§1 adversarial fix)
 - [x] Per-segment permission logging: R/W/X flags printed for each PT_LOAD segment
+- [x] Malformed-ELF hardening: two-pass loader (validate all phdrs then copy) so a rejected image never mutates user frames; wrap-safe bounds, `p_filesz<=p_memsz`, `e_phnum<=64`, no PT_LOAD overlap, `e_entry` in exec segment; 9 tests
+- [x] Replace byte-loop `elf_memcpy`/`elf_memzero` with kernel scalar `memcpy`/`memset` (perf: cold path but dominant per-byte work as images grow; kept scalar, no SIMD/FPU)
 - [ ] Commit: `"kernel: elf -- enhanced ELF loader with VMM mapping and PIE"`
 
 **Test checkpoint:** Serial log shows `"elf: Loaded N PT_LOAD segments at 0x800000-0xNNNNNN, entry=0xNNNNNN"` with per-segment R/W/X flags. Segments outside user range rejected. ET_DYN accepted. BSS region zeroed.
@@ -151,21 +153,23 @@ Upgrade `elf_load()` to use VMM-backed user pages with correct permissions and P
 > [!NOTE]
 > **Resolved:** `vmm_protect()` and `vmm_protect_range()` implemented in vmm.c/vmm.h. Operates on kernel PML4 (identity-mapped user range). Per-process PML4 support deferred to vmm_map_pages prerequisite.
 
-Modern ELF binaries carry security metadata in dedicated program headers. `PT_GNU_STACK` controls whether the stack is executable (NX enforcement). `PT_GNU_RELRO` marks the GOT and relocation data as read-only after relocation completes, blocking GOT-overwrite attacks. `PT_GNU_PROPERTY` carries CET IBT/SHSTK feature flags that the kernel must check before enabling hardware enforcement. All three are standard on Linux; without them, ELF binaries run with weaker security than they were compiled for.
+Modern ELF binaries carry security metadata in dedicated program headers. `PT_GNU_STACK` records whether the stack should be non-executable; the loader parses it into `result.nx_stack`, but PTE-level NX enforcement is still pending (the security fields are dropped by `elf_exec_wrapper` -- see the threading item). `PT_GNU_RELRO` marks the GOT and relocation data as read-only after relocation completes, blocking GOT-overwrite attacks. `PT_GNU_PROPERTY` carries CET IBT/SHSTK feature flags that the kernel must check before enabling hardware enforcement. All three are standard on Linux; without them, ELF binaries run with weaker security than they were compiled for.
 
 - [x] Parse `PT_GNU_STACK` (type `0x6474E551`): if `p_flags` lacks `PF_X`, set `result.nx_stack = 1`; if `PF_X` present, log warning "Executable stack requested (legacy binary)"
 - [x] Implement `vmm_protect(virt, new_flags)` + `vmm_protect_range(addr, size, flags)` in vmm.c/vmm.h -- PTE flag update preserving physical address + `invlpg` flush; operates on kernel PML4
 - [x] Parse `PT_GNU_RELRO` (type `0x6474E552`): record `relro_start`/`relro_size` in `elf_load_result`
   - [ ] Enforce RELRO via `vmm_protect_range(relro_start, relro_size, VMM_KERNEL_RO)` -- blocked: must be called after §14 relocations complete
 - [x] Parse `PT_GNU_PROPERTY` (type `0x6474E553`): full ELF note parsing with byte reads (no type-pun UB); extracts `GNU_PROPERTY_X86_FEATURE_1_AND` IBT/SHSTK flags into `result.cet_ibt`/`result.cet_shstk`
+  - [x] Bound the note walk: skip payloads over `ELF_GNU_PROPERTY_MAX` (4 KiB), so a crafted 16 MiB payload times up to 64 property headers cannot amplify exec CPU
   - [ ] CET enforcement -- deferred to TODO-23 §9,§10
+- [ ] Thread `elf_load_result` security fields through the exec dispatcher + `task_exec()` so RELRO/NX/CET is not a silent no-op -- `elf_exec_wrapper` drops them (NX log softened to "requested"; stack PTE NX still unset)
 - [x] If `PT_GNU_STACK` is absent, default to NX stack (`result.nx_stack = 1`, log "No PT_GNU_STACK -- defaulting to NX stack")
 - [x] Extended `elf_load_result` with `nx_stack`, `has_relro`, `cet_ibt`, `cet_shstk`, `relro_start`, `relro_size` fields
 - [x] Added `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_PROPERTY`, `PT_INTERP`, `ET_DYN`, CET property constants to elf.h
 - [x] Adversarial review: F01 High (unaligned note reads) fixed with byte shifts; F02 Medium (kernel PML4 only) accepted; F03 Low (fragile initializer) fixed with explicit zero + default
-- [x] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"`
+- [x] Commit: `"kernel: elf -- PT_GNU_STACK NX enforcement, PT_GNU_RELRO, PT_GNU_PROPERTY CET flags"` (commit title as shipped; NX/RELRO/CET are parsed metadata -- PTE/hw enforcement still pending)
 
-**Test checkpoint:** Serial log shows `"elf: NX stack enforced"` or `"elf: No PT_GNU_STACK -- defaulting to NX stack"`. RELRO range logged when present. CET flags parsed and logged.
+**Test checkpoint:** Serial log shows `"elf: NX stack requested (enforcement pending)"` or `"elf: No PT_GNU_STACK -- defaulting to NX stack"`. RELRO range logged when present. CET flags parsed and logged. (Log says "requested" not "enforced" until the security fields are threaded through `task_exec` and stack PTE NX is set.)
 
 ## 4. EIF Format Specification
 Design the Executable Impossible Format -- minimal parsing, native OS metadata, syscall-ID imports.
@@ -510,7 +514,7 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] `exec_load("hello.elf", ...)` executes and reaches user-mode entry point without a GPF
 - [ ] ELF segments land at VMM-allocated user pages with correct R/W/X; no identity-map address
-- [ ] ELF with `PT_GNU_STACK` (no PF_X): serial log shows `"elf: NX stack enforced"`; writing to stack works, executing from stack faults
+- [ ] ELF with `PT_GNU_STACK` (no PF_X): serial log shows `"elf: NX stack requested (enforcement pending)"`; execute-from-stack fault requires the security fields threaded + stack PTE NX (blocked, same open item as §3)
 - [ ] ELF with `PT_GNU_RELRO`: GOT pages marked read-only after relocation; write attempt faults
 - [ ] `exec_load("hello.eif", ...)` loads and enters; serial log shows < 10 µs load time
 - [ ] `exec_load("hello.exe", ...)` (PE32+) loads sections; IAT entries point to kernel Win32 stubs
