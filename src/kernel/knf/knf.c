@@ -117,6 +117,11 @@ static void *knf_mkdir(void *parent, const char *name)
     }
     if (ObInsertObject(dir, name, parent) < 0) {
         klog(LOG_ERROR, "knf", "mkdir: insert failed for '%s'", name);
+        /* ob_ns_create_directory marks the object permanent; a permanent object
+         * restores its reference instead of freeing at refcount 0, so clear
+         * PERMANENT before the deref or the failed dir leaks (same cleanup as
+         * the knf_create_state create-or-open loser path). */
+        ObMakeTemporaryObject(dir);
         ObDereferenceObject(dir);
         return NULL;
     }
@@ -503,6 +508,7 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
     char                   trace_name[KNF_NAME_MAX];
     char                   trace_category[KNF_NAME_MAX];
     int                    trace_below_dispatch;
+    uint64_t               coalesced_now = 0;   /* counted under lock, published after */
 
     if (!st || len > KNF_MAX_PAYLOAD || (len > 0 && !data))
         return STATUS_INVALID_PARAMETER;
@@ -611,7 +617,7 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
              * subscriber will never see this intermediate value (level-triggered
              * coalescing to the latest). Count it, saturating at UINT64_MAX. */
             sub->missed++;
-            __atomic_fetch_add(&knf_diag_coalesced.val, 1, __ATOMIC_RELAXED);
+            coalesced_now++;   /* aggregated into the global counter after unlock */
         }
     }
 
@@ -643,7 +649,12 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
             __atomic_fetch_add(&knf_trace_drops_at_dispatch.val, 1, __ATOMIC_RELAXED);
     }
 
+    /* Diagnostics counters, aggregated OFF the state lock: one atomic add each
+     * (coalesced accumulated per-subscriber under the lock, applied once here)
+     * so the IRQ-disabled critical section holds no per-subscriber atomic RMW. */
     __atomic_fetch_add(&knf_diag_publishes.val, 1, __ATOMIC_RELAXED);
+    if (coalesced_now)
+        __atomic_fetch_add(&knf_diag_coalesced.val, (int64_t)coalesced_now, __ATOMIC_RELAXED);
 
     if (out_prev)
         *out_prev = prev;
@@ -865,10 +876,18 @@ void knf_init(void)
          "Namespace: \\Notifications + %u/%u categories (Kernel/Power/Security/Session)",
          created, (uint32_t)KNF_CATEGORY_COUNT);
 
-    /* A partial category tree is DEGRADED (publishers to a missing category
-     * cannot resolve it), not fatal -- the facility works for the created ones. */
-    kernel_subsystem_apply_result(SUBSYS_KNF,
-        created == KNF_CATEGORY_COUNT ? BOOT_OK : BOOT_DEGRADED);
+    /* Zero categories provisioned => knf_create_state cannot resolve ANY category,
+     * so the facility is completely unusable: FATAL, not degraded. A partial tree
+     * (some created) is DEGRADED -- it works for the created categories. */
+    {
+        boot_result_t r = (created == KNF_CATEGORY_COUNT) ? BOOT_OK
+                        : (created == 0)                  ? BOOT_FATAL
+                        :                                   BOOT_DEGRADED;
+        kernel_subsystem_apply_result(SUBSYS_KNF, r);
 
-    POST16(POST16_KNF_OK);
+        /* Emit the OK marker only for usable (ready) states; a fatal init leaves
+         * the entry POST16_KNF as the last marker (caller reports by readiness). */
+        if (r != BOOT_FATAL)
+            POST16(POST16_KNF_OK);
+    }
 }

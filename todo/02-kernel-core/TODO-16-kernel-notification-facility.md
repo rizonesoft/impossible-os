@@ -244,7 +244,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Counters: live state/subscriber (inc/dec), cumulative publish/coalesced/create-denial, plus the §6 trace drop/skip; readiness via a new `SUBSYS_KNF` slot set in `knf_init` (FATAL/DEGRADED/OK), fixing two false-OK POST16 paths.
 > - Deferred (stamp): broader `SeAccessCheck`-policy denials add to `SecurityDenials` when that engine lands. Design review adoptions in the commit message.
 > - Canonical doc: `include/kernel/nt/knf_syscall_info.h` is the ABI; the security-policy denials belong to the security/namespace-policy section.
+> **Verified:** 2026-07-06 | commit `682f6c2c` | 3/3 items | build OK | tests 189/189 PASS
 > **Deferred:** [L] broader SeAccessCheck-policy publish/subscribe denials not yet counted in SecurityDenials (only the create-permanent-privilege denial is) -> XREF: 02-kernel-core/TODO-16 §4 (item: "Audit denied publish attempts" at line 138)
+> **Quality reviewed:** 2026-07-06 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+2M+1L fixed | scope: kernel-code-quality
 
 ---
 

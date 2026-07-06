@@ -54,8 +54,21 @@ _Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, Flags) == 4,
     "SYSTEM_NOTIFICATION_INFORMATION.Flags ABI offset pinned at 4");
 _Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, LiveStateCount) == 8,
     "SYSTEM_NOTIFICATION_INFORMATION.LiveStateCount ABI offset pinned at 8");
+_Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, SubscriberCount) == 16,
+    "SYSTEM_NOTIFICATION_INFORMATION.SubscriberCount ABI offset pinned at 16");
 _Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, PublishCount) == 24,
     "SYSTEM_NOTIFICATION_INFORMATION.PublishCount ABI offset pinned at 24");
+/* Pin the interior counters too, not just boundaries: same standard as the
+ * sibling KNF_ETW_RECORD -- a same-width reorder among these uint64 fields would
+ * keep sizeof at 96 yet silently relabel the values a reader decodes. */
+_Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, CoalescedCount) == 32,
+    "SYSTEM_NOTIFICATION_INFORMATION.CoalescedCount ABI offset pinned at 32");
+_Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, SecurityDenials) == 40,
+    "SYSTEM_NOTIFICATION_INFORMATION.SecurityDenials ABI offset pinned at 40");
+_Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, DropsAtDispatch) == 48,
+    "SYSTEM_NOTIFICATION_INFORMATION.DropsAtDispatch ABI offset pinned at 48");
+_Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, TraceGuardSkips) == 56,
+    "SYSTEM_NOTIFICATION_INFORMATION.TraceGuardSkips ABI offset pinned at 56");
 _Static_assert(__builtin_offsetof(SYSTEM_NOTIFICATION_INFORMATION, Reserved) == 64,
     "SYSTEM_NOTIFICATION_INFORMATION.Reserved ABI offset pinned at 64");
 
