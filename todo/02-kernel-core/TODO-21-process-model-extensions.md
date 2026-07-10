@@ -93,10 +93,9 @@ title: "TODO-21 -- Process Model Extensions"
 - [/] Win32 A/W wrappers `SetCurrentDirectory`/`GetCurrentDirectory` are user-mode surface owned elsewhere (→ XREF: `TODO-05-win32-file-io-api.md §6` W-forms; `TODO-08-win32-api-surface.md §4` A-forms) -- kernel syscalls shipped here
 - [ ] Commit: `"kernel: task -- working directory field and Nt API wiring"`
 
-> **Accepted:** [H] full OBJECT_ATTRIBUTES + UNICODE_STRING copy_from_user probe and UTF-16-vs-ASCII decode unification for NtCreateFile are pre-existing cross-file ABI work -> XREF: `TODO-12-native-api-ssdt.md §6` (item: "[Critical] NtCreateFile: snapshot OBJECT_ATTRIBUTES ... via copy_from_user" at line 362) + `TODO-14 §5` (kernel-wide UTF-16 decode). This section bounded the overread only.
-> **Accepted:** [M] user PEB `CurrentDirectoryDosPath` is not written on `NtSetCurrentDirectory` (task->cwd is the single kernel-authoritative source; all kernel resolution uses it) -> XREF: `TODO-05-win32-file-io-api.md §6` (item: "SetCurrentDirectoryW must also sync PEB CurrentDirectoryDosPath")
+**Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns it. Setting a non-existent or non-directory path returns error, CWD unchanged. Relative `"System\\Logs"` resolves to `"C:\\System\\Logs"` from `"C:\\"`; `".."` pops one component but never escapes `X:\`. `task_fork()` child inherits parent CWD. Unit tests: 18 `ProcExt:` suites (TEST_CAT_SCHED) cover the resolver + cwd storage + boundary rejects. Test on: QEMU WHPX + TCG.
 
-**Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns it. Setting a non-existent or non-directory path returns error, CWD unchanged. Relative `"System\\Logs"` resolves to `"C:\\System\\Logs"` from `"C:\\"`; `".."` pops one component but never escapes `X:\`. `task_fork()` child inherits parent CWD. Unit tests: 15 `ProcExt:` suites (TEST_CAT_SCHED) cover the resolver + cwd storage. Test on: QEMU WHPX + TCG.
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 18 ProcExt suites, 0 failures
 
 > **Notes:**
 > - Shipped `cwd[512]`+`cwd_lock` on `struct task`, `vfs_resolve_path` canonicalizer, `task_get_cwd`/`task_set_cwd`/`task_resolve_path`, and `NtSetCurrentDirectory`/`NtQueryCurrentDirectory` (SSDT 0x03D9/0x03DA).
@@ -104,6 +103,10 @@ title: "TODO-21 -- Process Model Extensions"
 > - `task->cwd` is the single authoritative cwd; the user PEB `CurrentDirectory` is a creation-time mirror (F2, writeback owned by TODO-05 §6). Design + adversarial adoptions in the commit message.
 > - Canonical doc: `include/kernel/fs/vfs.h` (`vfs_resolve_path`) + `include/kernel/sched/task.h` (cwd fields).
 > - Scope boundary: §1 owns kernel cwd + Nt syscalls; Win32 A/W wrappers → TODO-05 §6 / TODO-08 §4; full OA probe + UTF-16 decode → TODO-12 §6 / TODO-14 §5.
+> **Verified:** 2026-07-11 | commit `a05f4688` | 10/11 items | build OK | tests 18/18 PASS
+> **Accepted:** [H] full OBJECT_ATTRIBUTES + UNICODE_STRING copy_from_user probe + UTF-16-vs-ASCII decode unification for NtCreateFile are pre-existing cross-file ABI work -> XREF: `TODO-12-native-api-ssdt.md §6` (item: "[Critical] NtCreateFile: snapshot OBJECT_ATTRIBUTES ... via copy_from_user" at line 362) + `TODO-14 §5` (kernel-wide UTF-16 decode)
+> **Accepted:** [M] user PEB `CurrentDirectoryDosPath` not written on `NtSetCurrentDirectory` (task->cwd is the single kernel-authoritative source; all kernel resolution uses it) -> XREF: `TODO-05-win32-file-io-api.md §6` (item: "SetCurrentDirectoryW must also sync PEB CurrentDirectoryDosPath")
+> **Quality reviewed:** 2026-07-11 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ## 2. Standard Handle Pre-Wiring at Process Creation
 

@@ -650,7 +650,7 @@
  *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
  *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
  *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
- *   Diagnostics: 0x03D9  Process Model Ext (CWD): 0x03DB
+ *   Diagnostics: 0x03DB  (0x03D9/0x03DA taken by Process Model Ext -- CWD)
  * ==================================================================== */
 #define SSDT_MAIN_COUNT                       473
 #define SSDT_LAST_MAIN_INDEX                  0x03DA  /* SSDT_NtQueryCurrentDirectory */

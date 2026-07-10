@@ -67,12 +67,16 @@ static NTSTATUS oa_extract_path(OBJECT_ATTRIBUTES *oa, char *out, uint32_t out_s
         return STATUS_INVALID_PARAMETER;
 
     src = (const char *)oa->ObjectName->Buffer;
-    /* Length is the authoritative declared byte count: cap by min(Length,
-     * out_size-1) UNCONDITIONALLY. A zero Length means an empty name (never
-     * scan Buffer past it), which then falls through to OBJECT_NAME_NOT_FOUND. */
+    /* Length is the authoritative declared byte count. Validate it against
+     * MaximumLength, then REJECT (never truncate) a name that will not fit --
+     * a silent truncation would alias an overlong name to a shorter existing
+     * object. A zero Length is an empty name (Buffer never scanned) -> caller
+     * maps that to OBJECT_NAME_NOT_FOUND. */
     max = (uint32_t)oa->ObjectName->Length;
+    if (max > (uint32_t)oa->ObjectName->MaximumLength)
+        return STATUS_OBJECT_NAME_INVALID;
     if (max > out_size - 1)
-        max = out_size - 1;
+        return STATUS_NAME_TOO_LONG;
     for (i = 0; i < max && src[i]; i++)
         out[i] = src[i];
     out[i] = '\0';

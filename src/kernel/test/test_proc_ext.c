@@ -178,6 +178,33 @@ static void test_task_cwd_get_null_task(void)
     TEST_ASSERT_EQ((int)out[0], 0, "NULL task yields an empty string");
 }
 
+/* Boundary: a component == VFS_MAX_NAME-1 (255) is the longest walk_path can
+ * look up; a 256-byte component would be silently truncated (alias), so
+ * vfs_resolve_path must reject it (review adversarial A2). */
+static void test_resolve_component_255_ok(void)
+{
+    char comp[256];
+    char out[VFS_MAX_PATH];
+    uint32_t i;
+    for (i = 0; i < 255; i++) comp[i] = 'a';
+    comp[255] = '\0';
+    /* 255-char component (== VFS_MAX_NAME-1) is the max walk_path accepts. */
+    TEST_ASSERT_EQ(vfs_resolve_path("C:\\", comp, out, sizeof(out)), 0,
+                   "255-byte component resolves");
+}
+
+static void test_resolve_component_256_rejected(void)
+{
+    char comp[257];
+    char out[VFS_MAX_PATH];
+    uint32_t i;
+    for (i = 0; i < 256; i++) comp[i] = 'a';
+    comp[256] = '\0';
+    /* 256-char component would be silently truncated by walk_path -> reject. */
+    TEST_ASSERT_EQ(vfs_resolve_path("C:\\", comp, out, sizeof(out)), -1,
+                   "256-byte component rejected (no truncation alias)");
+}
+
 /* Regression: a zero-Length ObjectName must be treated as an empty name --
  * oa_extract_path must NOT scan Buffer past the declared length (adversarial
  * round 2). Non-NUL garbage in Buffer + Length 0 -> OBJECT_NAME_NOT_FOUND. */
@@ -247,6 +274,10 @@ void test_register_proc_ext(void)
                             test_task_cwd_overflow_leaves_unchanged, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: cwd get NULL task",
                             test_task_cwd_get_null_task, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: resolve 255-byte component ok",
+                            test_resolve_component_255_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: resolve 256-byte component rejected",
+                            test_resolve_component_256_rejected, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: NtCreateFile zero-Length name",
                             test_ntcreatefile_zero_length_name, TEST_CAT_SCHED);
 }

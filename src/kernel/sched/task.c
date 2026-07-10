@@ -1293,6 +1293,13 @@ int task_resolve_path(const char *in, char *out, uint32_t out_size)
 {
     char cwd[TASK_CWD_MAX];
 
+    /* Absolute drive-qualified inputs ("X:...") ignore the cwd -- resolve them
+     * WITHOUT taking cwd_lock so concurrent absolute-path opens (a hot syscall
+     * path) do not serialize on the process-wide lock. The passed cwd is unused
+     * by vfs_resolve_path for absolute input. */
+    if (in && in[0] && in[1] == ':')
+        return vfs_resolve_path("C:\\", in, out, out_size);
+
     task_get_cwd(task_current(), cwd, sizeof(cwd));
     if (!cwd[0]) {               /* defensive: a task with no cwd resolves from root */
         cwd[0] = 'C'; cwd[1] = ':'; cwd[2] = '\\'; cwd[3] = '\0';

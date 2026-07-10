@@ -178,6 +178,8 @@ int vfs_resolve_path(const char *cwd, const char *in, char *out, uint32_t out_si
             p++;
         len = (uint32_t)(p - start);
 
+        if (len >= VFS_MAX_NAME)                 /* walk_path would truncate -> alias; reject */
+            return -1;
         if (len == 1 && start[0] == '.')
             continue;                           /* "." -> no-op */
         if (len == 2 && start[0] == '.' && start[1] == '.') {
