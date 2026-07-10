@@ -230,6 +230,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [ ] `include/kernel/rtl/unwind.h` -- `RUNTIME_FUNCTION`, `UNWIND_INFO`, `UNWIND_CODE`, `SCOPE_TABLE`
 - [ ] `src/kernel/rtl/unwind.c` -- `RtlLookupFunctionEntry`, `RtlVirtualUnwind`
 - [ ] Support all UWOP opcodes used by Clang/MSVC for x86-64
+- [ ] `RtlAddFunctionTable`/`RtlDeleteFunctionTable`/growable-table APIs for dynamic/JIT code with no backing image (Windows-parity 💎); the growable table storage is owned by the image registry. -> XREF: TODO-18 §5 (unwind metadata registry).
 - [ ] Unit test: unwind a 3-frame kernel test stack and verify the recovered RIP chain
 
 **Test checkpoint:** `RtlLookupFunctionEntry` for a known kernel function returns a valid `RUNTIME_FUNCTION` with correct `BeginAddress`/`EndAddress`. `RtlVirtualUnwind` on a 3-frame test call chain recovers the correct RIP for each parent frame. Unknown address returns NULL. Serial log: `"rtl: unwind init, <N> .pdata entries registered"`. Test on: QEMU WHPX + TCG.

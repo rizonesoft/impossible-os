@@ -392,6 +392,7 @@ title: "TODO-29 -- Kernel Debugger (KD Protocol)"
   ```
 - [ ] `KernBase` = `KERNEL_IMAGE_BASE + g_kaslr_slide` (-> XREF `TODO-10-kernel-security-hardening.md §13`)
 - [ ] `PsLoadedModuleList` = `(uint64_t)(uintptr_t)&g_module_list[0]`
+- [ ] Unloaded-module (`lm`-style) query: expose the recently-unloaded tombstone ring so WinDbg can resolve a PC into a recently-unloaded image. -> XREF: TODO-18 §8 (tombstone ring owner).
 
 - [ ] `KDDEBUGGER_DATA64` structure at a known VA; WinDbg uses offsets from this to locate internal kernel data:
   - `KernBase`, `BreakpointWithStatus`, `SavedContext`

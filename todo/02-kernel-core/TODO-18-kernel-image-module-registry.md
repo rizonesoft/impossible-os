@@ -10,10 +10,12 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 > **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 
+> **Gap-audited:** 2026-07-10 | gap-audit + codex-gap-audit; 8 findings filed (module-loader ownership fix, atomic-publish transaction, address-space/lifetime-safe lookup, qualified symbol + duplicate-reject, unwind ownership split + dynamic/JIT unwind 💎, notify path-snapshot + ordering, unloaded-module tombstone ring 💎, unload quiescence state machine); reciprocals filed in T23 §6 / T29 §11; /proc-maps + retroactive-CI-revocation rejected to XREF (T10 / T19)
+
 > **Goal:** Create the canonical loaded-image registry for the whole OS: kernel image, boot modules, drivers, kernel modules, user images, DLLs, EIF modules, PE sections, symbol tables, unwind metadata, code-integrity decisions, and provenance. Crash dumps, KD, stack walking, hot-patching, code integrity, ETW, and process introspection must all read the same source of truth.
 
 > [!IMPORTANT]
-> **Current state:** Crash dump TODO has module-enumeration helpers; binary loader TODO has LDR module list work; EIF has module registration; user-platform SDK owns ELF relocatable `.kmod` loader. These are separate plans. There is no central image registry object, no global address-to-image lookup, no canonical symbol/unwind provider, no provenance record, and no loader-independent image notification.
+> **Current state:** Crash dump TODO has module-enumeration helpers; binary loader TODO has LDR module list work; EIF has module registration. The canonical `.kmod` kernel-module loader is `D04 T05` (Kernel Module System, per CLAUDE.md); `D12 T03` (ELF Relocations & Kernel Module System) owns the ELF relocation engine that loader consumes -- these two must not each define a private loaded-module registry (both currently sketch incompatible `loaded_module_t`/`loaded_kmod_t` tables). These are separate plans. There is no central image registry object, no global address-to-image lookup, no canonical symbol/unwind provider, no provenance record, and no loader-independent image notification.
 
 ## Inputs
 
@@ -25,7 +27,8 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - → XREF: [`TODO-23-exception-dispatch-seh.md`](./TODO-23-exception-dispatch-seh.md) -- unwind and stack walking
 - → XREF: [`TODO-27-crash-dump-generation.md`](./TODO-27-crash-dump-generation.md) -- dump module streams
 - → XREF: [`TODO-19-code-integrity-trust-policy.md`](./TODO-19-code-integrity-trust-policy.md) -- CI decisions stored here
-- → XREF: [`12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md`](../12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md) -- `.kmod` loader provider
+- → XREF: [`04-drivers-hardware/TODO-05-kernel-module-system.md`](../04-drivers-hardware/TODO-05-kernel-module-system.md) -- canonical `.kmod` loader owner (must call `kimage_register`/`_unregister` + lookup/unload-lifetime APIs)
+- → XREF: [`12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md`](../12-user-platform-sdk/TODO-03-elf-reloc-kernel-modules.md) -- ELF relocation engine consumed by the D04 T05 loader (not a second registry)
 
 ## Outcome
 
@@ -41,11 +44,11 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 | ⭐   | Order | Deliverable                             | Depends On        | Status |
 | --- | :---: | --------------------------------------- | ----------------- | :----: |
 | 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [ ]   |
-| 💎   |   2   | Global and per-process image registries | T05, T17          |  [ ]   |
+| 💎   |   2   | Global and per-process image registries | T17, D04 T05      |  [ ]   |
 | 💎   |   3   | Address range index                     | Ex generic table  |  [ ]   |
 | 💎   |   4   | Symbol provider abstraction             | symtab            |  [ ]   |
 | 💎   |   5   | Unwind metadata registry                | T23               |  [ ]   |
-| 💎   |   6   | Loader integration                      | T17, T20, SDK T05 |  [ ]   |
+| 💎   |   6   | Loader integration                      | T17, T20, D04 T05 |  [ ]   |
 | ⭐   |   7   | Image notifications and callbacks       | T06, T16          |  [ ]   |
 | 💎   |   8   | KD/crash dump integration               | T27, T29          |  [ ]   |
 | ⭐   |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [ ]   |
@@ -67,7 +70,9 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Global registry owns kernel, boot, driver, and kmod images.
 - [ ] Per-process registry owns main image and DLL/shared libraries.
 - [ ] Expose lock-safe iteration API with rundown protection.
-- [ ] Reconcile PEB Ldr list updates with kernel registry updates.
+- [ ] PEB `Ldr` three-list shape (InLoadOrder / InMemoryOrder / InInitializationOrder) is owned by T17; consume its list APIs here, do not define a fourth list. -> XREF: TODO-17 §3 (LDR module list).
+- [ ] Atomic publish transaction: stage every allocation (KIMAGE + three PEB lists + index nodes), commit membership in one step, reverse-roll-back on failure -- fixes the partial-publish divergence in `exec_register_module`.
+- [ ] Fire load notifications only after commit; unload removes in symmetric reverse order. Test injected failure at every publish stage; assert membership + list order, not just counts.
 - [ ] Commit: `"kernel: kimage -- global and per-process registries"`
 
 **Test checkpoint:** Registering N images and iterating returns exactly N under a spinlock/rundown; concurrent register/unregister on two CPUs leaves the count consistent. Serial log shows `"kimage: registered '<name>' (global|pid=<N>)"`. Test on: QEMU WHPX + TCG; bare metal.
@@ -76,10 +81,11 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## 3. Address Range Index
 
-- [ ] Use Executive generic table or interval tree keyed by `[base, end)`.
-- [ ] Support `image_lookup_by_address(addr)`.
+- [ ] Two separate indexes: one kernel-VA index, one per-address-space (per-process) index. The same user VA can belong to different images in different processes.
+- [ ] `image_lookup_by_address()` requires an address-space key `(asid/process, addr)` for user ranges; kernel ranges use the kernel index. No process-agnostic user lookup.
+- [ ] Lifetime-safe lookup: return an acquired reference or a copied snapshot, never a bare entry pointer -- concurrent unload must not invalidate a result mid symbol/unwind walk. Support RCU-style lookup from any context including panic/NMI.
 - [ ] Handle overlapping ranges as fatal loader bugs unless explicitly marked alias mapping.
-- [ ] Cache last lookup per CPU for stack walking hot path.
+- [ ] Cache last lookup per CPU keyed by address-space generation (invalidate on context switch / space teardown) for the stack-walk hot path.
 - [ ] Commit: `"kernel: kimage -- address range index and lookup"`
 
 **Test checkpoint:** `image_lookup_by_address(base)` and `(end-1)` return the entry; `(end)` and `(base-1)` return NULL; an overlapping insert is rejected/faults. Per-CPU cache hit on repeated lookup. Test on: QEMU WHPX + TCG; bare metal.
@@ -89,7 +95,8 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 ## 4. Symbol Provider Abstraction
 
 - [ ] Providers: kernel symtab file, PE export/PDB-lite info, ELF symtab/dynsym, EIF metadata, synthetic stubs.
-- [ ] API: `ksym_lookup_addr`, `ksym_lookup_name`, `ksym_iterate_module`.
+- [ ] API: `ksym_lookup_addr`, `ksym_lookup_name(image/namespace, name)`, `ksym_iterate_module`. Name lookup MUST take an image/namespace qualifier -- unqualified lookup can bind the wrong ring-0 function by incidental load order.
+- [ ] Global-export uniqueness: reject a duplicate exported name at provider/module registration (Linux kallsyms/namespaces lesson); define weak/local/forwarded precedence and a deterministic ambiguity error.
 - [ ] Return symbol name, displacement, source file/line when available.
 - [ ] Mark stripped images clearly for crash output.
 - [ ] Commit: `"kernel: kimage -- symbol provider abstraction"`
@@ -100,10 +107,12 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## 5. Unwind Metadata Registry
 
-- [ ] Register PE `.pdata`, ELF `.eh_frame`/frame info when available, and EIF unwind metadata.
+- [ ] Ownership split: T18 owns unwind-metadata lifetime + a normalized sorted/indexed representation; T23 owns the unwind execution/lookup engine; T17 owns parsing image sections. -> XREF: TODO-23 §6 (table-based unwind).
+- [ ] Register PE `.pdata`, EIF native unwind, and ELF `.eh_frame`. Translate `.eh_frame` to the normalized table at load time -- do not walk DWARF live. Lookup is bounded/indexed (ORC-style range-narrowing), NOT claimed O(1).
 - [ ] Provide range lookup for the exception-dispatch unwind engine (T23).
 - [ ] Validate unwind ranges are inside executable image sections.
 - [ ] Include unwind table hash in image provenance.
+- [ ] [/] Dynamic/JIT unwind (`RtlAddFunctionTable`) for generated code with no backing image -- Windows-parity 💎. T18 stores the growable table; add/delete/grow APIs are a deferred TODO-23 §6 item. -> XREF: TODO-23 §6.
 - [ ] Commit: `"kernel: kimage -- unwind metadata registry"`
 
 **Test checkpoint:** An unwind range lookup for an address inside a registered image returns the `.pdata`/`.eh_frame` entry; a range outside executable sections is rejected at registration. Test on: QEMU WHPX + TCG; bare metal.
@@ -127,7 +136,10 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Publish `ImageLoad` and `ImageUnload` through Executive callback object.
 - [ ] Publish notification state through the crash-dump/diagnostics path (T27) for service/user consumers.
 - [ ] Include CI decision and trust level.
-- [ ] Ensure callbacks run after registry insertion but before user entrypoint for user images.
+- [ ] Payload carries a copied SNAPSHOT of `KIMAGE_ENTRY.full_path` + stable identity fields, never a live-recomputed path -- avoids the Windows `FullImageName` stale-buffer class of bug.
+- [ ] Define the Impossible OS ordered sequence explicitly (process-create notify, then image-load notify, then user entrypoint) as our own contract -- Windows does not guarantee cross-callback ordering portably.
+- [ ] Ensure callbacks run after registry insertion but before user entrypoint for user images; specify callback IRQL, reentrancy, and unregister-drain rules.
+- [ ] Process-create/exit notifications are PRODUCED by the process-lifecycle owner; add the reciprocal producer item there. -> XREF: TODO-21 (process/thread create-exit notify producer).
 - [ ] Commit: `"kernel: kimage -- image load/unload notifications"`
 
 **Test checkpoint:** A registered callback fires on image load with the correct base/name/CI-decision, after insertion (lookup succeeds inside the callback) and before the user entrypoint. Unload fires the ImageUnload callback. Test on: QEMU WHPX + TCG; bare metal.
@@ -139,7 +151,10 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] KD module list reads global/per-process registry.
 - [ ] Crash dumps emit module stream from `KIMAGE_ENTRY`.
 - [ ] Panic screen "what failed" uses address-to-image lookup.
-- [ ] `dmpanalyze.exe` consumes same serialized format.
+- [ ] Bounded recently-unloaded tombstone ring (parity 💎, Win `MmUnloadedDrivers`): identity + canonical path + ranges + build-id/hash + PID + unload time; panic-safe overwrite ring; consulted on a live-registry miss.
+- [ ] `dmpanalyze.exe` consumes same serialized format, including the unloaded ring.
+- [ ] Serialize the tombstone ring as an unloaded-modules stream via the existing MDMP stream framework (TODO-27 §4, already shipped) -- T18 owns the ring; the dump writer emits it as extra module entries. -> XREF: TODO-27 §4.
+- [ ] Reciprocal: KD exposes an unloaded-module (`lm`-style) query. -> XREF: TODO-29 §11 (module list; add unloaded query).
 - [ ] Commit: `"kernel: kimage -- KD and crash dump integration"`
 
 **Test checkpoint:** The crash-dump module stream lists every registered image once; the panic screen resolves a faulting RIP to `<image>+<offset>` via `image_lookup_by_address`. Test on: QEMU WHPX + TCG; bare metal.
@@ -150,8 +165,10 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 - [ ] Store load source: bootloader, VFS path, memory buffer, generated/stub.
 - [ ] Store CI hash, signer, policy mode, decision, and audit ID.
-- [ ] Reserve hotpatch metadata fields: patchable functions, original bytes hash, active patch ID.
-- [ ] Refuse unload while active stack frames reference image unless forced crash-only teardown.
+- [ ] LIVE -> GOING unload state machine (refcount alone cannot prove no CPU runs image code): block new entry, pin via exported refs + callouts, drain callbacks/work/IRQs, wait an SMP grace period, remove indexes, THEN unmap.
+- [ ] Test unload while another CPU is blocked inside module code and while callouts remain queued -- both must be refused until quiescent.
+- [ ] Reserve hotpatch metadata fields only (patchable functions, original-bytes hash, active patch ID); a real hotpatch ENGINE is a separate concrete owner, not implied by these reserved fields.
+- [ ] Retroactive CI re-check/revocation of an already-loaded image is a policy decision, not a registry baseline. -> XREF: TODO-19 (CI revocation policy).
 - [ ] Commit: `"kernel: kimage -- provenance, CI, and hotpatch metadata"`
 
 **Test checkpoint:** A registered image records its load source + CI decision + signer; unregister is refused (returns busy) while the refcount indicates active frames, and succeeds after rundown. Test on: QEMU WHPX + TCG; bare metal.
@@ -177,10 +194,12 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 | 💎   | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap     | 🔄 §1-§2 KIMAGE_ENTRY registries     |
 | 💎   | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address         | 🔄 §3 interval index + per-CPU cache |
 | 💎   | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms                 | 🔄 §4 provider abstraction           |
-| 💎   | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ⚠️ .eh_frame per-object    | 🔄 §5 unified .pdata/.eh_frame/EIF   |
+| 💎   | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ✅ ORC (kernel)             | 🔄 §5 normalized table; T23 executes |
+| 💎   | Dynamic/JIT unwind         | ✅ RtlAddFunctionTable         | ⚠️ no kernel JIT unwind    | 🔄 §5 growable table; T23 add/delete |
 | ⭐   | Format-agnostic image list | ⚠️ PE only                    | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
 | 💎   | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine | ⚠️ module notifier chain   | 🔄 §7 Executive callbacks            |
 | 💎   | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE         | 🔄 §8 KIMAGE_ENTRY module stream     |
+| 💎   | Recently-unloaded history  | ✅ MmUnloadedDrivers           | ❌ none                     | 🔄 §8 bounded tombstone ring         |
 | ⭐   | Image provenance + CI      | ⚠️ CI.dll separate            | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
 | ⭐   | Hotpatch metadata slot     | ✅ hotpatch pointers           | ⚠️ livepatch separate      | ⬜ §9 reserved fields                |
 
