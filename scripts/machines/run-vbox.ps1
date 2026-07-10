@@ -22,6 +22,10 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
 $BUILD      = Join-Path $PROJECT "build"
 
+# WSL-side absolute path of the repo, derived from this script's location so
+# WSL commands never depend on a hardcoded home-relative repo path.
+$WSL_PROJECT = (& wsl.exe -e wslpath -a "$PROJECT").Trim()
+
 $DISK_RAW   = Join-Path $BUILD "system-disk.img"
 $DISK_VDI   = Join-Path $BUILD "system-disk.vdi"
 $OVMF_CODE  = Join-Path $BUILD "OVMF_CODE_4M.fd"
@@ -49,8 +53,8 @@ if (-not (Get-Command $VBOX -ErrorAction SilentlyContinue)) {
 # Auto-copy OVMF firmware from WSL if missing
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd '$WSL_PROJECT/build/'"
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd '$WSL_PROJECT/build/'"
 }
 
 # ---- Convert raw disk to VDI ----
@@ -60,11 +64,11 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 # ---- Debug boot flag: inject into raw image BEFORE VDI conversion ----
 if ($DebugBoot) {
     $LOG_OFFSET = 68157440  # Must match Makefile LOG_OFFSET
-    & wsl.exe -e bash -c "echo -n debug | mcopy -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG 2>/dev/null; echo -n debug | mcopy -o -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG"
+    & wsl.exe -e bash -c "echo -n debug | mcopy -i '$WSL_PROJECT/build/system-disk.img'@@${LOG_OFFSET} - ::DEBUG 2>/dev/null; echo -n debug | mcopy -o -i '$WSL_PROJECT/build/system-disk.img'@@${LOG_OFFSET} - ::DEBUG"
     Write-Host "  [OK] DEBUG flag injected into Logs partition" -ForegroundColor Green
 } else {
     # Remove DEBUG flag if it exists (normal boot)
-    & wsl.exe -e bash -c "mdel -i ~/impossible-os/build/system-disk.img@@68157440 ::DEBUG 2>/dev/null" 2>$null
+    & wsl.exe -e bash -c "mdel -i '$WSL_PROJECT/build/system-disk.img'@@68157440 ::DEBUG 2>/dev/null" 2>$null
 }
 
 Write-Host "Converting disk image to VDI..." -ForegroundColor Cyan

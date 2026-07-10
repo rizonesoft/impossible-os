@@ -43,15 +43,21 @@
 :: scripts/debug/.
 
 set BUILD=%~dp0..\..\..\build
+for %%I in ("%BUILD%") do set "BUILD=%%~fI"
 set SB_CODE=%BUILD%\OVMF_CODE_4M.secboot.fd
 set SB_VARS_SRC=%BUILD%\OVMF_VARS_4M.ms.fd
 set SB_VARS=%TEMP%\OVMF_VARS_secureboot.fd
 set DISK=%BUILD%\system-disk.img
 
+:: WSL-side absolute path of build/ (derived from this script's location, so
+:: it works wherever the repo lives). Computed outside the if-block because
+:: cmd expands %VARS% in parenthesized blocks at parse time.
+for /f "usebackq delims=" %%I in (`wsl.exe -e wslpath -a "%BUILD%"`) do set "WSL_BUILD=%%I"
+
 :: Copy Secure Boot OVMF firmware from WSL if not present
 if not exist "%SB_CODE%" (
-    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd ~/impossible-os/build/"
-    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd ~/impossible-os/build/"
+    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.secboot.fd '%WSL_BUILD%/'"
+    wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd '%WSL_BUILD%/'"
 )
 if not exist "%SB_CODE%" (
     echo [ERROR] Secure Boot OVMF not found. Install in WSL: sudo apt install ovmf

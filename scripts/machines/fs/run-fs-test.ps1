@@ -37,6 +37,10 @@ $VM_DIR     = Split-Path -Parent $SCRIPT_DIR
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $VM_DIR)
 $BuildDir   = Join-Path $PROJECT "build"
 
+# WSL-side absolute path of the repo, derived from this script's location so
+# WSL commands never depend on a hardcoded home-relative repo path.
+$WSL_PROJECT = (& wsl.exe -e wslpath -a "$PROJECT").Trim()
+
 $SYSTEM_DISK = Join-Path $BuildDir "system-disk.img"
 $TEST_DISK   = Join-Path $BuildDir "test-disks\$Disk.img"
 $OVMF_CODE   = Join-Path $BuildDir "OVMF_CODE_4M.fd"
@@ -47,7 +51,7 @@ $SERIAL_LOG  = Join-Path $BuildDir "test-disks\$Disk-serial.log"
 # --- Build (optional) ---
 if ($Build) {
     Write-Host "Building Impossible OS in WSL2..." -ForegroundColor Yellow
-    & wsl.exe bash ~/impossible-os/scripts/build.sh
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/build.sh"
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed!" -ForegroundColor Red
         pause; exit 1
@@ -66,9 +70,9 @@ if (-not (Test-Path $SYSTEM_DISK)) {
 if (-not (Test-Path $TEST_DISK) -or $GenDisk) {
     Write-Host "Generating $Disk test disk in WSL2..." -ForegroundColor Yellow
     if ($Disk -eq 'ntfs') {
-        & wsl.exe bash ~/impossible-os/scripts/make-ntfs-test.sh build/test-disks
+        & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/make-ntfs-test.sh build/test-disks"
     } else {
-        & wsl.exe bash ~/impossible-os/tools/make-test-disks.sh build/test-disks build
+        & wsl.exe bash -c "cd '$WSL_PROJECT' && bash tools/make-test-disks.sh build/test-disks build"
     }
     if (-not (Test-Path $TEST_DISK)) {
         Write-Host "Test disk generation failed: $TEST_DISK" -ForegroundColor Red
@@ -80,8 +84,8 @@ if (-not (Test-Path $TEST_DISK) -or $GenDisk) {
 # --- OVMF firmware ---
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd '$WSL_PROJECT/build/'"
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd '$WSL_PROJECT/build/'"
     if (-not (Test-Path $OVMF_CODE)) {
         Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1

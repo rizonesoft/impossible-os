@@ -34,6 +34,10 @@ $VM_DIR     = Split-Path -Parent $SCRIPT_DIR
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $VM_DIR)
 $BuildDir   = Join-Path $PROJECT "build"
 
+# WSL-side absolute path of the repo, derived from this script's location so
+# WSL commands never depend on a hardcoded home-relative repo path.
+$WSL_PROJECT = (& wsl.exe -e wslpath -a "$PROJECT").Trim()
+
 $SYSTEM_DISK = Join-Path $BuildDir "system-disk.img"
 $NVME_DISK   = Join-Path $BuildDir "test-nvme.img"
 $OVMF_CODE   = Join-Path $BuildDir "OVMF_CODE_4M.fd"
@@ -43,7 +47,7 @@ $VARS_DEST   = Join-Path $env:TEMP "OVMF_VARS_4M_nvme.fd"
 # --- Build (optional) ---
 if ($Build) {
     Write-Host "Building Impossible OS in WSL2..." -ForegroundColor Yellow
-    & wsl.exe bash ~/impossible-os/scripts/build.sh
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/build.sh"
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed!" -ForegroundColor Red
         pause; exit 1
@@ -61,7 +65,7 @@ if (-not (Test-Path $SYSTEM_DISK)) {
 # --- Generate NVMe test disk (if missing) ---
 if (-not (Test-Path $NVME_DISK)) {
     Write-Host "Creating 128 MiB NVMe test disk in WSL2..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cd ~/impossible-os && make test-nvme-img'
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && make test-nvme-img"
     if (-not (Test-Path $NVME_DISK)) {
         Write-Host "NVMe test disk creation failed: $NVME_DISK" -ForegroundColor Red
         pause; exit 1
@@ -72,8 +76,8 @@ if (-not (Test-Path $NVME_DISK)) {
 # --- OVMF firmware ---
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd '$WSL_PROJECT/build/'"
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd '$WSL_PROJECT/build/'"
     if (-not (Test-Path $OVMF_CODE)) {
         Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1

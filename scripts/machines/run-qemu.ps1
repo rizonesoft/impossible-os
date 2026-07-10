@@ -61,6 +61,10 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
 $BUILD      = Join-Path $PROJECT "build"
 
+# WSL-side absolute path of the repo, derived from this script's location so
+# WSL commands never depend on a hardcoded home-relative repo path.
+$WSL_PROJECT = (& wsl.exe -e wslpath -a "$PROJECT").Trim()
+
 $DISK      = Join-Path $BUILD "system-disk.img"
 $OVMF_CODE = Join-Path $BUILD "OVMF_CODE_4M.fd"
 $OVMF_VARS = Join-Path $BUILD "OVMF_VARS_4M.fd"
@@ -76,8 +80,8 @@ if (-not (Test-Path $DISK)) {
 # Auto-copy OVMF firmware from WSL system path if not in build/
 if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
     Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/'
-    & wsl.exe bash -c 'cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/'
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd '$WSL_PROJECT/build/'"
+    & wsl.exe bash -c "cp /usr/share/OVMF/OVMF_VARS_4M.fd '$WSL_PROJECT/build/'"
     if (-not (Test-Path $OVMF_CODE)) {
         Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1
@@ -222,11 +226,11 @@ if ($PatchArgs.Count -gt 0) {
         if ($i % 2 -eq 0) { "$_=" } else { "$_ " }; $i++
     }) -join ''
     Write-Host "  Mode:   $($ModeLabel.Trim())" -ForegroundColor Cyan
-    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh $PatchStr"
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh $PatchStr"
 } else {
     # No test flags -- reset boot.conf to defaults in case a previous
     # test run was interrupted before its finally{} block could restore it.
-    & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset" 2>$null
+    & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh reset" 2>$null
 }
 
 # Append extra arguments if provided (e.g., "-machine pc,i8042=on", or
@@ -245,6 +249,6 @@ try {
 } finally {
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
-        & wsl.exe bash -c "cd ~/impossible-os && bash scripts/patch-boot-conf.sh reset"
+        & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh reset"
     }
 }
