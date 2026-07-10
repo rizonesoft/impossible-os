@@ -43,7 +43,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   |   1   | Code Integrity policy object          | T02          |  [/]   |
 | 💎   |   2   | Image validation API and callback     | T17          |  [/]   |
 | 💎   |   3   | Hashing and signature provider bridge | T03          |  [x]   |
-| 💎   |   4   | Embedded signature validation         | §2, §3       |  [ ]   |
+| 💎   |   4   | Embedded signature validation         | §2, §3       |  [/]   |
 | 💎   |   5   | Catalog database                      | Registry/VFS |  [ ]   |
 | 💎   |   6   | Revocation and deny lists             | §5           |  [ ]   |
 | ⭐   |   7   | Measured-boot and Secure Boot binding | TPM          |  [ ]   |
@@ -135,15 +135,19 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 4. Embedded Signature Validation
 
-- [ ] EIF: validate signed metadata/trailer before segment mapping.
-- [ ] PE: parse WIN_CERTIFICATE and Authenticode digest exclusions.
-- [ ] ELF: support Impossible OS note-section signature for native ELF tools.
-- [ ] Reject malformed or ambiguous signed ranges.
+- [/] EIF: validate signed trailer before segment mapping. BLOCKED: the spec'd signature block (algo/sig_size/sig) carries no signer pubkey/key-id, and anchors store only key_id -- no pubkey to Ed25519-verify. -> XREF: D02 T20.
+- [ ] EIF sig-block ABI decision (prereq): amend `specs/eif-format.md` to carry the signer pubkey[32] (+ key-id) + bump `EIF_VERSION`, so CI can Ed25519-verify and match the pubkey hash to a trust anchor. -> XREF: D02 T20.
+- [/] PE: parse `WIN_CERTIFICATE` + Authenticode digest exclusions. BLOCKED: real Authenticode is PKCS#7/ASN.1; §3 `ci_crypto` only does raw Ed25519. Needs an Impossible-OS simplified `wCertificateType` decision.
+- [/] ELF: Impossible-OS note-section signature. BLOCKED: no `PT_NOTE` walker + no vendor note namespace; needs a note-format decision (n_name namespace, n_type, 4-vs-8-byte align per the GNU-property precedent).
+- [ ] Anchor-lookup helper (prereq): add `ci_anchor_find(key_id, tier)` over `ci_policy_get()->anchors` to §1; needs the compiled Ed25519 policy-root anchor. -> XREF: T19 §1 (line 62).
+- [/] Reject malformed/ambiguous signed ranges -- `eif_validate()` already bounds-checks `signature_offset` + canonical ordering in `src/kernel/eif.c`; PE/ELF range checks land with those formats.
 - [ ] Per-page hash validation on demand-paging (parity 💎: Win page-hashes + Linux fs-verity): a pre-map whole-file hash is bypassed if a page faults in later. Validate each executable page as paged in. -> XREF: TODO-17 (paging/loader).
 - [ ] IMA/EVM-style appraisal of image security metadata (not just file bytes): if images carry integrity-protected attributes, appraise them too, not only the content digest.
 - [ ] Commit: `"kernel: ci -- embedded signature validation"`
 
 **Test checkpoint:** a signed EIF trailer validates before segment mapping; a malformed/overlapping signed range is rejected with an error (not silently accepted); PE Authenticode digest excludes the checksum + certificate-table fields per spec. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] Embedded-signature validation is architecturally blocked: all three formats need a signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring. No code shippable without those. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139); 02-kernel-core/TODO-19 §4 (item: "Anchor-lookup helper (prereq)" at line 142); 02-kernel-core/TODO-19 §1 (item: "Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key" at line 62)
 
 ---
 
