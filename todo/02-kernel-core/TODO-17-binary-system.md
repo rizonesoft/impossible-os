@@ -77,7 +77,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
 | 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
 | 💎   |  10   | PE32+ base relocation                          | §8              |  [/]   |
-| 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [ ]   |
+| 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
 | 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [ ]   |
 | ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
 | 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
@@ -343,14 +343,17 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 
 PE binaries using `__declspec(thread)` or C11 `_Thread_local` store TLS templates and callbacks in the TLS directory (DataDirectory entry 9). The loader must allocate per-thread TLS data from the template, assign a TLS index, and invoke TLS callbacks (`DLL_PROCESS_ATTACH`) before the entry point runs. Without this, any Win32 binary using thread-local storage will crash on first TLS access.
 
-- [ ] Parse `IMAGE_TLS_DIRECTORY64` from DataDirectory[9]: `StartAddressOfRawData`, `EndAddressOfRawData`, `AddressOfIndex`, `AddressOfCallBacks`, `SizeOfZeroFill`, `Characteristics`
-- [ ] Allocate per-thread TLS block: copy raw data range `[Start..End)` to a fresh allocation; append `SizeOfZeroFill` zero bytes; store pointer in TEB `TlsSlots[assigned_index]`
-- [ ] Write assigned TLS index to `AddressOfIndex` in the mapped image
-- [ ] Invoke TLS callbacks (if `AddressOfCallBacks` is non-NULL): walk null-terminated function pointer array; call each with `(hModule, DLL_PROCESS_ATTACH, NULL)` -- callbacks run in ring 3 before `main()`
-- [ ] On thread creation: allocate fresh TLS block from template; call callbacks with `DLL_THREAD_ATTACH`
+- [/] Parse `IMAGE_TLS_DIRECTORY64` from DataDirectory[9] (Start/End RawData, AddressOfIndex, AddressOfCallBacks, SizeOfZeroFill) -- BLOCKED: reads the sparsely-mapped image (needs §8 mapped-aware reads)
+- [/] Allocate per-thread TLS block from the template + `SizeOfZeroFill`; store in TEB `TlsSlots[index]` -- BLOCKED: needs TEB `TlsSlots` (TODO-11 §3)
+- [/] Write assigned TLS index to `AddressOfIndex` in the mapped image -- BLOCKED: mapped-aware fixup write (§8)
+- [/] Invoke TLS callbacks in ring 3 before `main()` (`DLL_PROCESS_ATTACH`) -- BLOCKED: PE binaries do not execute in user mode yet (§9 callable-IAT gap)
+- [/] On thread creation: fresh TLS block + `DLL_THREAD_ATTACH` callbacks -- BLOCKED: needs the above + scheduler thread-create hook
 - [ ] Commit: `"kernel: pe -- TLS directory processing and callbacks"`
 
-**Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. `POST16(0xD812)` on entry, `POST16(0xD813)` after callbacks invoked. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** [H] §11 PE TLS not implemented -- TLS callbacks must run in ring 3 before main() but PE binaries do not execute yet (imports are non-callable) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
+> **Deferred:** [M] TLS directory read/write + per-thread block need the loader mapped-aware reads (§8) and TEB TlsSlots -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
 
 ## 12. PE32+ Load Config and CFG Bitmap
 
