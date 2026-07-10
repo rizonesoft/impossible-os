@@ -85,7 +85,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | ⭐   |  16   | Script/shebang interpreter support             | §1              |  [ ]   |
 | ⭐   |  17   | EIF code signing                               | §5              |  [/]   |
 | 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [/]   |
-| 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [ ]   |
+| 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [/]   |
 | 💎   |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [/]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.
@@ -484,15 +484,18 @@ Linux ELF binaries using `__thread` rely on `PT_TLS` template mapping and per-th
 
 Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract DLLs and may use delay-load import tables. The loader must resolve these correctly for broad Win11 binary compatibility.
 
-- [ ] In `include/kernel/pe.h` + `src/kernel/pe.c`: add API-set namespace structs/parsing helpers and delay-load directory structs (`IMAGE_DELAYLOAD_DESCRIPTOR`, delay IAT/BIAT metadata)
-- [ ] In PE import resolver path: detect API-set contract DLL names and map them to concrete host DLLs before export lookup (`api-ms-win-*`, `ext-ms-*`)
-- [ ] Parse Delay-Load Import Directory (DataDirectory 13): resolve thunks on first call path and support delay-unload/delay-bound metadata
-- [ ] Parse Bound Import metadata (DataDirectory 11): validate timestamps; on mismatch/failure, fall back to normal import resolution instead of crashing
-- [ ] Resolve PE export forwarder chains: an export RVA inside the export directory is a `DLL.Function`/`DLL.#Ordinal` forwarder; recursively resolve to the real target (bounded depth, reject cycles) -- needed for `kernel32`->`ntdll` layering
-- [ ] Add unit tests in `src/kernel/test/test_exec.c`: API-set contract name resolution, delay-load first-call patching, and bound-import mismatch fallback path
+- [/] API-set namespace + delay-load directory structs (`IMAGE_DELAYLOAD_DESCRIPTOR`, delay IAT/BIAT) in pe.h/pe.c -- BLOCKED: extends the §9 resolver (imports not yet callable, reads need §8 mapped-aware infra)
+- [/] Detect API-set contract DLL names (`api-ms-win-*`, `ext-ms-*`) and map to concrete DLLs before export lookup -- BLOCKED on §9 resolver completion
+- [/] Parse Delay-Load Import Directory (DataDirectory 13): first-call thunk resolution -- BLOCKED: needs PE execution (§9 callable-IAT gap)
+- [/] Parse Bound Import metadata (DataDirectory 11): timestamp validate + fall back to normal resolution -- BLOCKED: mapped-aware reads (§8)
+- [/] Resolve PE export forwarder chains (`DLL.Function` recursion, bounded depth, reject cycles) -- BLOCKED: reads the sparsely-mapped image (§8)
+- [/] Unit tests (API-set resolution, delay-load first-call, bound-import fallback) -- BLOCKED with the §8 pe_load Gate-8 test issue
 - [ ] Commit: `"kernel: pe -- API-set contract resolution and delay-load/bound imports"`
 
-**Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. `POST16(0xD820)` on entry, `POST16(0xD821)` after delay-IAT patching. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** [H] §19 API-set/delay-load/bound/forwarder not implemented -- it extends the §9 PE import resolver whose imports are non-callable and whose reads need §8 mapped-aware infra; delay-load first-call resolution requires PE binaries to execute -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
+> **Deferred:** [M] all directory parses (API-set/delay/bound/export) need the loader mapped-aware reads -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
 
 ---
 
