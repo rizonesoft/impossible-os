@@ -127,6 +127,9 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 > - Downstream: unblocks embedded-signature validation (§4) which consumes `ci_crypto_verify` + `ci_crypto_digest`; the §1 policy-artifact Ed25519 auth item can also use it.
 > - Canonical doc: the `include/kernel/ci/ci_crypto.h` header contract.
 > - Scope: §3 owns the digest + verify bridge only. §4 owns EIF/PE/ELF signature parsing (which ranges to hash/verify); RSA/X.509 stays reserved until the CNG provider lands.
+>
+> **Verified:** 2026-07-10 | commit `45b1fc46` | 4/4 items | build OK | tests 1197/1197 PASS (14 CI suites)
+> **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) + kernel-quality-auditor | 1H+1M+3L fixed | scope: kernel-code-quality
 
 ---
 

@@ -12,6 +12,7 @@
 #include "kernel/ci/ci_image.h"
 #include "kernel/ci/ci_crypto.h"
 #include "kernel/crypto/sha256.h"
+#include "kernel/crypto/hash.h"
 #include "libs/monocypher/monocypher.h"
 #include "libs/monocypher/monocypher-ed25519.h"
 #include "libc/string.h"   /* memset, memcmp */
@@ -344,6 +345,17 @@ static void test_ci_crypto_digest(void)
         "NULL data with len>0 fails closed (no BLAKE2b NULL deref)");
     TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_SHA256, (const void *)0, 0, out, sizeof(out)), 32,
         "NULL data with len 0 is a valid empty input");
+
+    /* SHA-384 is a distinct alg constant + length (48) -- exercise it too. */
+    uint8_t sha384_ref[48];
+    crypto_hash(CRYPTO_HASH_SHA384, msg, sizeof(msg), sha384_ref, sizeof(sha384_ref));
+    n = ci_crypto_digest(CI_DIGEST_SHA384, msg, sizeof(msg), out, sizeof(out));
+    TEST_ASSERT_EQ(n, 48, "SHA-384 digest length is 48");
+    TEST_ASSERT_EQ(memcmp(out, sha384_ref, 48), 0, "SHA-384 bridge matches crypto_hash()");
+
+    /* NULL output denies (cannot write a digest). */
+    TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_SHA256, msg, sizeof(msg), (uint8_t *)0, 32), -1,
+        "NULL out buffer -> -1");
 }
 
 /* Ed25519 signature verification is the security-critical path: valid only when
@@ -385,6 +397,18 @@ static void test_ci_crypto_verify(void)
         "wrong signature length denies");
     TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 64, pub, 31), false,
         "wrong public-key length denies");
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 64, (const uint8_t *)0, 32), false,
+        "NULL public key denies");
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, (const uint8_t *)0, sizeof(msg), sig, 64, pub, 32), false,
+        "NULL message with a nonzero length denies");
+
+    /* An empty message (NULL msg, len 0) is a VALID input, NOT a deny: a
+     * signature over the empty message verifies. This pins the single NULL case
+     * that the contract intentionally allows. */
+    uint8_t sig_empty[64];
+    crypto_ed25519_sign(sig_empty, secret, (const uint8_t *)0, 0);
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, (const uint8_t *)0, 0, sig_empty, 64, pub, 32), true,
+        "empty message (NULL, len 0) with a valid signature verifies");
 }
 
 void test_register_ci(void)

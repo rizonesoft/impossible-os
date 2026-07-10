@@ -9,6 +9,12 @@
  * Security posture: every unsupported algorithm, malformed length, or bad
  * pointer denies (digest -> -1, verify -> false). Ed25519 is the native signing
  * algorithm; RSA/X.509 is reserved until the CNG provider matures.
+ *
+ * Length contract: the byte-length parameters are uint32 (max 4 GiB). A caller
+ * holding a 64-bit image/section size MUST hard-fail (deny) when the size
+ * exceeds UINT32_MAX rather than narrow it -- hashing/verifying over a truncated
+ * length view of a longer buffer is a length-truncation signature-bypass. The
+ * embedded-signature validator that supplies these lengths owns that check.
  */
 #ifndef KERNEL_CI_CI_CRYPTO_H
 #define KERNEL_CI_CI_CRYPTO_H
