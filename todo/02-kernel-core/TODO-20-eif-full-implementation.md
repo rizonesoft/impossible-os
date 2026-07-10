@@ -8,10 +8,12 @@ title: "TODO-20 -- EIF Full Implementation"
 
 # TODO-20 -- EIF Full Implementation
 
+> **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed the metadata-vs-signature ordering claim + 11 stale XREF section numbers
+
 > [!IMPORTANT]
 > **Decision pinned (2026-04-24):** EIF is the **native binary format** for Impossible OS user-mode and module code. EIF is **NOT** a replacement for the **kernel image format** -- the kernel itself stays **ELF indefinitely** (see `CLAUDE.md` → Toolchain → Kernel Binary Format). The kernel binary format is strictly internal to the UEFI bootloader handoff; nothing on the Win32 ABI surface or the EIF loader surface depends on it. Do not propose re-targeting the kernel to EIF or PE32+ under "unified format" reasoning -- the two layers are independently optimal. Distribution converters (`eif2pe`, `eif2elf`) exist for cross-OS user-app portability and are tracked in TODO-17 §13 as follow-ups.
 
-> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §2) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps: segment permission enforcement, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, and optional import stubs. When done, EIF is the fastest, most secure native binary format on any OS.
+> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps: segment permission enforcement, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, and optional import stubs. When done, EIF is the fastest, most secure native binary format on any OS.
 
 > [!IMPORTANT]
 > **Current state:** `eif_load()` in `src/kernel/eif.c` loads segments via identity mapping, validates imports against SSDT range, writes a per-process dispatch table at 0x8F0000, and measures load time. Missing: segment R/W/X enforcement, ASLR, API version check, metadata parsing, LZ4 decompression, module registration, overlap validation. Optional imports mark `available=0` but there is no deterministic user-callable stub yet (§7).
@@ -30,15 +32,15 @@ title: "TODO-20 -- EIF Full Implementation"
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page()`, `vmm_protect_range()`
 - [`src/kernel/mm/pmm.c`](../../src/kernel/mm/pmm.c) -- `pmm_alloc_frame()`
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- current EIF-specific module registration in `task_exec()` to remove in section 3
-- -> XREF: `TODO-17-binary-system.md §2` -- basic EIF loader (FOUNDATION, complete)
+- -> XREF: `TODO-17-binary-system.md §5` -- EIF kernel loader (FOUNDATION, complete)
 - -> XREF: `TODO-17-binary-system.md §13` -- `elf2eif` converter and producer-side emission for metadata, `api_version`, PIC `load_base=0`, compressed segments, and the chosen optional-import call ABI (COMPLEMENT, not started)
 - -> XREF: `TODO-17-binary-system.md §17` -- EIF code signing (COMPLEMENT, not started)
 - -> XREF: `TODO-17-binary-system.md §15` -- ASLR for all formats (COMPLEMENT, not started)
-- -> XREF: `TODO-17-binary-system.md §7` -- module list registration (FOUNDATION, complete)
-- -> XREF: `TODO-03-kernel-libraries.md` §5 -- LZ4 block decompressor (FOUNDATION for §4; until [x] here, §4 stays blocked)
-- -> XREF: `TODO-03-kernel-libraries.md §3` -- kernel CSPRNG for `load_base=0` ASLR in §10 (FOUNDATION, not started)
-- -> XREF: `TODO-12-native-api-ssdt.md` §5 -- SSDT service table (FOUNDATION, partial)
-- -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md §9` -- per-process PML4 base already implemented; §10 consumes it as a foundation
+- -> XREF: `TODO-17-binary-system.md §6` -- module list registration (FOUNDATION, partial)
+- -> XREF: `TODO-03-kernel-libraries.md §3` -- LZ4 block decompressor (FOUNDATION for §4; until [x] here, §4 stays blocked)
+- -> XREF: `TODO-03-kernel-libraries.md §5` -- kernel CSPRNG for `load_base=0` ASLR in §8 (FOUNDATION, not started)
+- -> XREF: `TODO-12-native-api-ssdt.md §4` -- SSDT service table (FOUNDATION, partial)
+- -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md §8` -- per-process PML4 base already implemented; §9 consumes it as a foundation
 - -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` -- unique per-process user frames are still required before §9 can be complete
 
 ## Outcome
@@ -66,7 +68,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
-| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T12 §8, D03 T01 §3 |  [ ]   |
+| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -75,9 +77,9 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## 1. Range Overlap Validation (Normative Rule 2)
 
-The spec mandates `segment_offset < import_offset < signature_offset < metadata_offset` and that all ranges must be non-overlapping. The current loader checks individual bounds but not inter-range ordering or overlap.
+The spec mandates `segment_offset < import_offset < metadata_offset < signature_offset` (metadata ALWAYS precedes the signature so the signature covers it, per `specs/eif-format.md` Normative Rules 2-3) and that all ranges must be non-overlapping. The current loader checks individual bounds but not inter-range ordering or overlap.
 
-- [ ] In `eif_validate()`: after individual bounds checks, verify ordering: `segment_table_end <= import_offset` (when imports exist), `import_table_end <= signature_offset` (when signed), `signature_end <= metadata_offset` (when metadata exists)
+- [ ] In `eif_validate()`: after individual bounds checks, verify ordering: `segment_table_end <= import_offset` (when imports exist), `import_table_end <= metadata_offset` (when metadata exists), `metadata_end <= signature_offset` (when signed)
 - [ ] Verify no segment data range overlaps another segment's data range
 - [ ] Verify segment data ranges don't overlap the segment table, import table, signature, or metadata
 - [ ] Reject files violating any overlap constraint with `ENOEXEC` and descriptive log message
@@ -107,7 +109,7 @@ The current loader copies segment data but does not set page permissions. All pa
 
 ## 3. Module Registration for EIF
 
-Every loaded binary must be registered in the crash registry and module list (TODO-17 §7). The current EIF loader does not call `exec_register_module()`.
+Every loaded binary must be registered in the crash registry and module list (TODO-17 §6). The current EIF loader does not call `exec_register_module()`.
 
 - [ ] After successful segment load, build a `loaded_module_t` with: `base_address = load_base` (or first segment vaddr), `size_of_image` = span from lowest to highest segment, `entry_point = load_base + entry_point`, `format = EXEC_FMT_EIF`, `name` from metadata `"name"` key (if parsed) or task name
 - [ ] Call `exec_register_module(NULL, &mod)` from `eif_load()`
@@ -139,7 +141,7 @@ The spec defines a key-value metadata section (name, version, author, icon, min_
 - [ ] Implement `eif_parse_metadata(data, size, metadata_offset)`: walk key-value pairs (`key_len + key + val_len + val`, terminated by `key_len==0`), populate `eif_metadata_t`
 - [ ] Bounds-check every key_len and val_len against remaining file size
 - [ ] Log parsed metadata: `"eif: name='%s' version='%s' author='%s'"`
-- [ ] Support optional `build_id` metadata key for crash/debug correlation; log it immediately and pass it into module registration once `TODO-17-binary-system.md §7` grows image-identity storage
+- [ ] Support optional `build_id` metadata key for crash/debug correlation; log it immediately and pass it into module registration once `TODO-17-binary-system.md §6` grows image-identity storage
 - [ ] Store metadata in `loaded_module_t.name` field for crash registry visibility
 - [ ] Commit: `"kernel: eif -- metadata section parser"`
 
@@ -168,7 +170,7 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 
 - [ ] ABI prerequisite: reconcile `specs/eif-format.md` rule 5, `include/kernel/eif.h` `eif_dispatch_entry_t`, and `TODO-17-binary-system.md` §13 before implementation; the current contract is data-only (`{syscall_id, available}`), not callable stub slots
 - [ ] If the ABI stays data-only: have `elf2eif` emit deterministic user thunks for optional imports that translate `available=0` into `STATUS_NOT_IMPLEMENTED` (-> XREF: `TODO-17-binary-system.md §13`)
-- [ ] If the ABI changes to callable stub slots: update the EIF spec and `eif_dispatch_entry_t` layout first (-> XREF: `TODO-17-binary-system.md §1`)
+- [ ] If the ABI changes to callable stub slots: update the EIF spec and `eif_dispatch_entry_t` layout first (-> XREF: `TODO-17-binary-system.md §4` -- EIF format spec, the ABI source of truth)
 - [ ] In the dispatch table write pass: for optional imports where `available=0`, set the dispatch entry to point to a kernel-provided stub function that returns `STATUS_NOT_IMPLEMENTED` (0xC0000002)
 - [ ] The stub address should be a well-known kernel page mapped read-only into user space
 - [ ] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash
@@ -198,7 +200,7 @@ When `load_base=0`, the EIF binary is position-independent and should be loaded 
 
 Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When per-process page tables exist, each process should have its own dispatch table backed by unique physical pages.
 
-- [ ] Foundation check: consume `01-boot-platform/TODO-10-bare-metal-hardening.md §9` per-process PML4 base instead of the shared kernel PML4
+- [ ] Foundation check: consume `01-boot-platform/TODO-10-bare-metal-hardening.md §8` per-process PML4 base instead of the shared kernel PML4
 - [ ] Blocker: wait for `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` per-process physical isolation so the dispatch table pages are backed by unique frames per process
 - [ ] Allocate physical frames for the dispatch table pages via `pmm_alloc_frame()`
 - [ ] Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4 (not kernel PML4)
