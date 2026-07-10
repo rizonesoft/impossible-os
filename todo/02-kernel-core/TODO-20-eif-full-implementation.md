@@ -98,6 +98,11 @@ The spec mandates `segment_offset < import_offset < metadata_offset < signature_
 > - Tests: `test_eif_reject_out_of_order_sections` + `test_eif_reject_segment_data_over_table` (test_exec.c, TEST_CAT_EXEC).
 > - Canonical doc: `specs/eif-format.md` Normative Rules 2, 6, 7.
 > - Scope: §1 owns file-range ordering/overlap; the finer segment-data-vs-metadata overlap tie-in rides with signing (§11 + TODO-17 §17); VA-range/dispatch-table guards are in `eif_load` (§9 owns per-process isolation).
+>
+> **Verified:** 2026-07-10 | commit `e360c6c3` | 4/4 items | build OK | tests 712/712 (exec; 4 EIF range suites)
+> **Accepted:** [L] `api_version` not enforced in the EIF loader -> owned by API-version gating. -> XREF: 02-kernel-core/TODO-20 §4 (item: "In `eif_validate()`: if `hdr->api_version` > `EIF_CURRENT_API_VERSION`, reject" at line 103)
+> **Accepted:** [L] concurrent-exec race on the shared dispatch table + identity-mapped user range (documented in `eif.c`) -> owned by per-process isolation. -> XREF: 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4" at line 222)
+> **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) + kernel-quality-auditor | 1M+1L fixed, 2L accepted-XREF | scope: kernel-code-quality
 
 ---
 

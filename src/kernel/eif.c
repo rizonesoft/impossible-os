@@ -92,6 +92,11 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
             klog(LOG_DEBUG, "eif", "Segment table out of bounds");
             return 0;
         }
+    } else if (hdr->segment_offset != 0) {
+        /* Rule 2: an absent table (count 0) MUST carry offset 0 -- otherwise a
+         * non-zero, out-of-order offset would skip the canonical-order cursor. */
+        klog(LOG_DEBUG, "eif", "Segment table absent but offset nonzero");
+        return 0;
     }
 
     /* Import table bounds + count cap (spec rule 6). The 64-bit end is wrap-safe
@@ -110,6 +115,10 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
             klog(LOG_DEBUG, "eif", "Import table out of bounds");
             return 0;
         }
+    } else if (hdr->import_offset != 0) {
+        /* Rule 2: an absent import table (count 0) MUST carry offset 0. */
+        klog(LOG_DEBUG, "eif", "Import table absent but offset nonzero");
+        return 0;
     }
 
     /* Signature offset (spec rule 3 canonical order): a signed file must carry
@@ -280,6 +289,14 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
             const eif_segment_t *seg = (const eif_segment_t *)
                 (data + hdr->segment_offset + (uint64_t)i * sizeof(eif_segment_t));
             uint64_t vaddr = hdr->load_base + seg->vaddr;
+
+            /* Spec: the segment `reserved` field MUST be 0. Reject non-zero on
+             * untrusted disk-sourced data so the constraint can't be quietly
+             * repurposed by a crafted binary. */
+            if (seg->reserved != 0) {
+                klog(LOG_DEBUG, "eif", "Segment %u: reserved field nonzero", (uint64_t)i);
+                return 0;
+            }
 
             /* file_size must not exceed mem_size (BSS = mem_size - file_size) */
             if (seg->file_size > seg->mem_size) {

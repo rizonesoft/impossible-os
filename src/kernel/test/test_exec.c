@@ -742,6 +742,47 @@ static void test_eif_reject_segment_data_over_table(void)
                    "eif_load rejects segment data overlapping a table");
 }
 
+/* Rule 2: an ABSENT table (count 0) must carry offset 0. A zero-count import
+ * table with a non-zero offset would skip the canonical-order cursor -- reject. */
+static void test_eif_reject_absent_table_nonzero_offset(void)
+{
+    uint8_t buf[96];  /* header + one 32-byte segment */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;
+    h->import_count = 0;                       /* absent import table ... */
+    h->import_offset = sizeof(eif_header_t);   /* ... but non-zero offset -> reject */
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE;
+    seg->file_size = 0; seg->mem_size = 0x1000; seg->flags = EIF_SEG_EXEC;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects a zero-count table with a non-zero offset");
+}
+
+/* The segment `reserved` field must be 0 -- a crafted binary that sets it is
+ * rejected (spec compliance on untrusted disk-sourced data). */
+static void test_eif_reject_segment_reserved_nonzero(void)
+{
+    uint8_t buf[96];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE;
+    seg->file_size = 0; seg->mem_size = 0x1000; seg->flags = EIF_SEG_EXEC;
+    seg->reserved = 1;                          /* must be 0 -> reject */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects a segment with a non-zero reserved field");
+}
+
 /* ---- Registration ---- */
 
 void test_register_exec(void)
@@ -803,6 +844,8 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: reject unreg import", test_eif_reject_unregistered_import, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject out-of-order", test_eif_reject_out_of_order_sections, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject seg data over table", test_eif_reject_segment_data_over_table, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: absent-table offset", test_eif_reject_absent_table_nonzero_offset, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: segment reserved!=0", test_eif_reject_segment_reserved_nonzero, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject compressed", test_eif_reject_compressed, TEST_CAT_EXEC);
 }
 
