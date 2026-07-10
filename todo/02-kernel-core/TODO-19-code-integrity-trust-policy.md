@@ -53,18 +53,19 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 1. Code Integrity Policy Object
 
-- [ ] Define `ci_policy_t`: mode, secure boot state, test-signing flag, allowed roots, denied roots, revoked hashes, audit flags.
-- [ ] Load defaults from compiled policy; merge boot/registry policy via TODO-02.
-- [ ] Lock policy after Phase 2 on Secure Boot systems.
-- [ ] Deny attempts to downgrade enforcement after lock.
-- [ ] Add a MEASUREMENT-only mode (record image hash + feed the TPM PCR aggregate, no allow/deny verdict) distinct from audit (log-but-allow). -> XREF: D01 T13 (PCR aggregate).
+- [ ] Define `ci_policy_t`: an ORDERED `enforcement` scalar + SEPARATE `test_signing`/`measurement` flags (permissive, NOT ratchet ordinals), SB state, trust-anchor tiers, revoked-hash list, audit flags.
+- [ ] MEASUREMENT flag: record image hash + feed the TPM PCR aggregate, no allow/deny verdict (distinct from audit=log-but-allow). -> XREF: D01 T13 (PCR aggregate).
 - [ ] Trust anchors are role-separated tiers, not a flat list: compiled-in root / boot-added / firmware-platform / revoked, each with distinct lock + downgrade semantics.
-- [ ] The `ci_policy_t` artifact itself is signed + versioned: authenticate its provenance (authorized update signers) + anti-rollback on version before applying -- a mutable boot/registry merge + in-memory lock does NOT authenticate the policy.
-- [ ] After lock, mark the `ci_policy_t` page READ-ONLY via PTE (RO-after-init, NOT a guard page which unmaps and would fault the CI engine's own reads). -> XREF: T10 §17 (`.rodata` RO-after-init).
+- [ ] Load compiled defaults; merge boot/registry via `kernel_config_get()` gated through `safe_mode_component_allowed(SAFE_COMP_CI_RELAX)`; reuse the `policy_lock.c` CODE_INTEGRITY ratchet for the mode scalar.
+- [ ] Atomic commit: build + authenticate ONE candidate snapshot, then publish + seal ALL scalars + collections together at `POLICY_PHASE_POST_REGISTRY` (Phase 3, NOT literal Phase 2), before Phase-3 consumers. Add `SUBSYS_CI`.
+- [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
+- [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
+- [ ] Post-seal downgrade denied by the ratchet: KernelMode write-after-seal -> `KeBugCheckEx`, UserMode -> `STATUS_ACCESS_DENIED` + tamper audit (interim LOGICAL immutability).
+- [/] Physical RO-after-lock page is BLOCKED: Phase-3 `vmm_set_ro` is local-TLB-only; needs SMP TLB shootdown + flattened page-aligned storage with the lock OUTSIDE the sealed range. -> XREF: D03 T07 §2 (SMP TLB shootdown).
 - [ ] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
 - [ ] Commit: `"kernel: ci -- code integrity policy object"`
 
-**Test checkpoint:** `ci_policy_t` loads compiled defaults; after the Phase-2 lock on a Secure Boot system, an enforcement-downgrade attempt returns an error and the mode is unchanged. Serial: `"ci: policy locked (mode=enforce, secureboot=1)"`. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** `ci_policy_t` loads compiled defaults; the policy artifact fails to apply if its Ed25519 signature or version floor is wrong; after seal at POST_REGISTRY on a Secure Boot system, an enforcement-downgrade attempt is denied (ratchet) and the scalar is unchanged; a permissive `test_signing`/`measurement` flag flip is NOT treated as an enforcement upgrade. Serial: `"ci: policy sealed (enforce, sb=1, ver=N)"`. Test on: QEMU WHPX + TCG; bare metal.
 
 ---
 
