@@ -9,6 +9,9 @@
  */
 #include "kernel/test/test.h"
 #include "kernel/ci/ci.h"
+#include "kernel/ci/ci_image.h"
+#include "kernel/crypto/sha256.h"
+#include "libc/string.h"   /* memset */
 
 /* Active Secure Boot pins the locked SECUREBOOT level AND forces every
  * permissive flag off, even when safe mode would otherwise allow a relax. */
@@ -145,6 +148,165 @@ static void test_ci_published_null_and_scan(void)
     TEST_ASSERT_EQ(ci_policy_sealed(), false, "reset restores fail-closed pre-publish state");
 }
 
+/* A tiny fixed image buffer for the admission-engine tests. */
+static const uint8_t k_ci_test_image[16] = {
+    0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00,
+    0xde, 0xad, 0xbe, 0xef, 0x11, 0x22, 0x33, 0x44,
+};
+
+static void ci_fill_image(ci_image_info_t *img)
+{
+    memset(img, 0, sizeof(*img));
+    img->path   = "C:\\Impossible\\test.exe";
+    img->type   = CI_IMAGE_USER;
+    img->loader = CI_LOADER_ELF;
+    img->data   = k_ci_test_image;
+    img->size   = sizeof(k_ci_test_image);
+}
+
+/* Under ENFORCE an unsigned image is UNVERIFIED and denied; under AUDIT the same
+ * image is audit-allowed. This is the core fail-closed-vs-observe split. */
+static void test_ci_image_enforce_vs_audit(void)
+{
+    ci_policy_t enf;
+    ci_policy_build_defaults(&enf, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    ci_policy_publish_for_test(&enf);
+    ci_image_info_t img_e; ci_decision_t dec_e;
+    ci_fill_image(&img_e);
+    ci_verdict_t v_enf = ci_validate_image(&img_e, &dec_e);
+    ci_policy_reset_for_test();
+
+    ci_policy_t aud;
+    ci_policy_build_defaults(&aud, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/1, /*relax=*/true);
+    ci_policy_publish_for_test(&aud);
+    ci_image_info_t img_a; ci_decision_t dec_a;
+    ci_fill_image(&img_a);
+    ci_verdict_t v_aud = ci_validate_image(&img_a, &dec_a);
+    ci_policy_reset_for_test();
+
+    TEST_ASSERT_EQ(v_enf, CI_VERDICT_DENY, "ENFORCE denies an unverified image");
+    TEST_ASSERT_EQ(dec_e.reason, CI_REASON_UNVERIFIED, "ENFORCE deny reason is UNVERIFIED");
+    TEST_ASSERT_EQ(v_aud, CI_VERDICT_AUDIT_ALLOW, "AUDIT audit-allows an unverified image");
+    TEST_ASSERT_EQ(dec_a.reason, CI_REASON_UNVERIFIED, "AUDIT allow reason is UNVERIFIED");
+}
+
+/* Revocation overrides the (would-be) verdict, and the validator recomputes the
+ * digest over the actual bytes -- a caller-supplied hash is never trusted. */
+static void test_ci_image_revoked_and_digest(void)
+{
+    uint8_t expect[CI_HASH_LEN];
+    sha256(k_ci_test_image, sizeof(k_ci_test_image), expect);
+
+    ci_policy_t p;
+    ci_policy_build_defaults(&p, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    p.revoked_count = 1;
+    for (int b = 0; b < CI_HASH_LEN; b++) p.revoked[0][b] = expect[b];
+    ci_policy_publish_for_test(&p);
+
+    ci_image_info_t img; ci_decision_t dec;
+    ci_fill_image(&img);
+    memset(img.hash, 0xFF, sizeof(img.hash));   /* garbage caller hash, must be ignored */
+    ci_verdict_t v = ci_validate_image(&img, &dec);
+
+    int digest_ok = 1;
+    for (int b = 0; b < CI_HASH_LEN; b++) if (img.hash[b] != expect[b]) digest_ok = 0;
+    ci_policy_reset_for_test();
+
+    TEST_ASSERT_EQ(v, CI_VERDICT_DENY, "a revoked digest is denied under ENFORCE");
+    TEST_ASSERT_EQ(dec.reason, CI_REASON_REVOKED, "deny reason is REVOKED (overrides unverified)");
+    TEST_ASSERT_EQ(digest_ok, 1, "validator recomputes the digest, ignoring the caller hash");
+}
+
+/* Bad requests and an unsealed policy fail closed; an explicitly DISABLED policy
+ * allows without checks. */
+static void test_ci_image_failclosed_and_disabled(void)
+{
+    ci_decision_t dec;
+
+    /* NULL image and empty buffer deny (pre-seal, enforcement reads ENFORCE). */
+    TEST_ASSERT_EQ(ci_validate_image((ci_image_info_t *)0, &dec), CI_VERDICT_DENY,
+        "NULL image denies");
+    ci_image_info_t empty; ci_fill_image(&empty); empty.size = 0;
+    TEST_ASSERT_EQ(ci_validate_image(&empty, &dec), CI_VERDICT_DENY, "empty image denies");
+    TEST_ASSERT_EQ(dec.reason, CI_REASON_BAD_REQUEST, "empty image reason is BAD_REQUEST");
+
+    /* Valid image but no sealed policy -> NOT_READY deny. */
+    ci_policy_reset_for_test();
+    ci_image_info_t img; ci_fill_image(&img);
+    TEST_ASSERT_EQ(ci_validate_image(&img, &dec), CI_VERDICT_DENY, "unsealed policy denies");
+    TEST_ASSERT_EQ(dec.reason, CI_REASON_NOT_READY, "unsealed reason is NOT_READY");
+
+    /* A sealed policy that disabled CI allows. */
+    ci_policy_t off;
+    ci_policy_build_defaults(&off, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    off.enforcement = (uint32_t)CI_ENFORCE_DISABLED;
+    ci_policy_publish_for_test(&off);
+    ci_image_info_t img2; ci_decision_t dec2; ci_fill_image(&img2);
+    ci_verdict_t v = ci_validate_image(&img2, &dec2);
+    ci_policy_reset_for_test();
+    TEST_ASSERT_EQ(v, CI_VERDICT_ALLOW, "DISABLED CI allows without checks");
+    TEST_ASSERT_EQ(dec2.reason, CI_REASON_DISABLED, "allow reason is DISABLED");
+
+    /* Revocation overrides even a DISABLED policy: a revoked digest is denied
+     * with CI otherwise off (the kill-switch is not bypassed by DISABLED). */
+    uint8_t digest[CI_HASH_LEN];
+    sha256(k_ci_test_image, sizeof(k_ci_test_image), digest);
+    ci_policy_t offrev;
+    ci_policy_build_defaults(&offrev, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    offrev.enforcement  = (uint32_t)CI_ENFORCE_DISABLED;
+    offrev.revoked_count = 1;
+    for (int b = 0; b < CI_HASH_LEN; b++) offrev.revoked[0][b] = digest[b];
+    ci_policy_publish_for_test(&offrev);
+    ci_image_info_t img3; ci_decision_t dec3; ci_fill_image(&img3);
+    ci_verdict_t vr = ci_validate_image(&img3, &dec3);
+    ci_policy_reset_for_test();
+    TEST_ASSERT_EQ(vr, CI_VERDICT_DENY, "revoked image denied even under DISABLED CI");
+    TEST_ASSERT_EQ(dec3.reason, CI_REASON_REVOKED, "DISABLED-revoked reason is REVOKED");
+
+    /* NULL out fails closed (cannot communicate a decision -> deny). */
+    TEST_ASSERT_EQ(ci_validate_image(&img3, (ci_decision_t *)0), CI_VERDICT_DENY,
+        "NULL decision out denies");
+}
+
+/* Dynamic-code admission: W+X is refused outright; a non-W+X runtime request is
+ * UNVERIFIED (denied under ENFORCE, audit-allowed under AUDIT). */
+static void test_ci_dynamic_code(void)
+{
+    ci_policy_t enf;
+    ci_policy_build_defaults(&enf, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    ci_policy_publish_for_test(&enf);
+    ci_decision_t wx, rx;
+    ci_verdict_t v_wx = ci_validate_dynamic_code(0, /*writable_and_exec=*/true, &wx);
+    ci_verdict_t v_rx = ci_validate_dynamic_code(0, /*writable_and_exec=*/false, &rx);
+    ci_policy_reset_for_test();
+
+    ci_policy_t aud;
+    ci_policy_build_defaults(&aud, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/1, /*relax=*/true);
+    ci_policy_publish_for_test(&aud);
+    ci_decision_t ra;
+    ci_verdict_t v_ra = ci_validate_dynamic_code(0, /*writable_and_exec=*/false, &ra);
+    ci_policy_reset_for_test();
+
+    /* W+X is refused UNCONDITIONALLY -- even a DISABLED policy must not admit a
+     * writable+executable mapping (W^X invariant, not a CI-mode toggle). */
+    ci_policy_t off;
+    ci_policy_build_defaults(&off, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    off.enforcement = (uint32_t)CI_ENFORCE_DISABLED;
+    ci_policy_publish_for_test(&off);
+    ci_decision_t owx, orx;
+    ci_verdict_t v_owx = ci_validate_dynamic_code(0, /*writable_and_exec=*/true, &owx);
+    ci_verdict_t v_orx = ci_validate_dynamic_code(0, /*writable_and_exec=*/false, &orx);
+    ci_policy_reset_for_test();
+
+    TEST_ASSERT_EQ(v_wx, CI_VERDICT_DENY, "W+X dynamic code refused under ENFORCE");
+    TEST_ASSERT_EQ(wx.reason, CI_REASON_WX, "W+X deny reason is WX");
+    TEST_ASSERT_EQ(v_rx, CI_VERDICT_DENY, "non-W+X dynamic code denied under ENFORCE (unverified)");
+    TEST_ASSERT_EQ(v_ra, CI_VERDICT_AUDIT_ALLOW, "non-W+X dynamic code audit-allowed under AUDIT");
+    TEST_ASSERT_EQ(v_owx, CI_VERDICT_DENY, "W+X refused even under DISABLED CI (W^X invariant)");
+    TEST_ASSERT_EQ(owx.reason, CI_REASON_WX, "DISABLED W+X deny reason is WX");
+    TEST_ASSERT_EQ(v_orx, CI_VERDICT_ALLOW, "non-W+X runtime code allowed under DISABLED CI");
+}
+
 void test_register_ci(void)
 {
     test_suite_register_cat("CI: Secure Boot pins + forces flags off",
@@ -163,4 +325,12 @@ void test_register_ci(void)
         test_ci_preinit_failclosed, TEST_CAT_SECURITY);
     test_suite_register_cat("CI: published NULL denies + revocation scan",
         test_ci_published_null_and_scan, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: image ENFORCE denies / AUDIT audit-allows",
+        test_ci_image_enforce_vs_audit, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: image revoked overrides + digest recomputed",
+        test_ci_image_revoked_and_digest, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: image bad-request / not-ready / disabled",
+        test_ci_image_failclosed_and_disabled, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: dynamic code W+X refused + mode mapping",
+        test_ci_dynamic_code, TEST_CAT_SECURITY);
 }

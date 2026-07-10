@@ -41,7 +41,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | ⭐   | Order | Deliverable                           | Depends On   | Status |
 | --- | :---: | ------------------------------------- | ------------ | :----: |
 | 💎   |   1   | Code Integrity policy object          | T02          |  [/]   |
-| 💎   |   2   | Image validation API and callback     | T17          |  [ ]   |
+| 💎   |   2   | Image validation API and callback     | T17          |  [/]   |
 | 💎   |   3   | Hashing and signature provider bridge | T03          |  [ ]   |
 | 💎   |   4   | Embedded signature validation         | §2, §3       |  [ ]   |
 | 💎   |   5   | Catalog database                      | Registry/VFS |  [ ]   |
@@ -84,14 +84,25 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 2. Image Validation API and Callback
 
-- [ ] Add `ci_validate_image(ci_image_info_t *image, ci_decision_t *decision)`.
-- [ ] Image info includes path, format, type, signer, hash, requested trust level, loader, process token, and measured-boot context.
-- [ ] Register Executive callback `\Callback\CiImageLoad` through TODO-17.
-- [ ] All loaders must call CI before mapping executable pages.
-- [ ] Dynamic-code / JIT / W->X admission: image-load hooks miss code generated at runtime with no backing image. Gate a `ci_validate_dynamic_code()` path (or a policy that forbids RWX->RX transitions unless the producer is trusted).
-- [ ] Commit: `"kernel: ci -- image validation API and callback"`
+- [x] Define `ci_image_info_t`/`ci_decision_t`/`ci_verdict_t`/`ci_deny_reason_t`/`ci_image_type_t`/`ci_loader_id_t` in `include/kernel/ci/ci_image.h`; the validator recomputes the digest and never trusts a caller-supplied hash.
+- [x] `ci_validate_image()` decision engine (`src/kernel/ci/ci_image.c`): revoked -> DENY; unverified -> DENY under ENFORCE/SECUREBOOT, AUDIT_ALLOW under AUDIT; DISABLED -> ALLOW; bad-request/unsealed fail closed.
+- [x] `\Callback\CiImageLoad` notification object (`ci_image_init` via `ExCreateCallback`); `ci_validate_image` fires `ExNotifyCallback` with the decision when the object exists.
+- [x] `ci_validate_dynamic_code()` engine for JIT / W->X: W+X refused outright; a non-W+X runtime request is UNVERIFIED and mapped to a verdict by enforcement mode.
+- [/] Image-info `signer` + measured-boot context reserved (zeroed): signer needs embedded-signature parsing; the PCR record needs the TPM measured-boot binding. -> XREF: T19 §4; D01 T13.
+- [/] Wire `ci_image_init` + `ci_init` policy seal + `SUBSYS_CI` into boot: BLOCKED on unifying the enforcement authority (policy_lock `policy.ci.mode` vs `ci_policy`). -> XREF: T19 §1 ratchet-domain merge.
+- [/] Loaders call CI before mapping: needs transactional NX-until-admission remap (`task_exec` remaps before `exec_load_fmt`) + a real ALLOW path from signatures; per-domain wiring in §8/§9. -> XREF: T19 §4, §8, §9.
+- [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
+- [x] Commit: `"kernel: ci -- image validation API and callback"`
 
-**Test checkpoint:** `ci_validate_image()` on a known-good image returns ALLOW and on a tampered image returns DENY; the `\Callback\CiImageLoad` callback fires before executable pages are mapped. Serial: `"ci: validate '<name>' -> <decision>"`. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** the decision engine denies an unverified image under ENFORCE (reason UNVERIFIED) and audit-allows it under AUDIT; a revoked digest is denied (reason REVOKED, overriding unverified) and the validator recomputes the digest, ignoring a caller-supplied hash; NULL/empty/unsealed inputs fail closed; DISABLED allows; dynamic W+X is refused and non-W+X runtime code is UNVERIFIED-by-mode. 5 new `TEST_CAT_SECURITY` suites. Live loader firing + boot wiring are deferred (see `[/]` items). Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 13 CI suites, 0 failures
+>
+> **Notes:**
+> - Shipped `include/kernel/ci/ci_image.h` + `src/kernel/ci/ci_image.c`: the CI image-admission decision engine (`ci_validate_image`, `ci_validate_dynamic_code`, `ci_image_init`) + 5 `TEST_CAT_SECURITY` suites.
+> - Fail-closed engine: always recomputes the digest; revocation overrides all; UNVERIFIED -> DENY under ENFORCE, AUDIT_ALLOW under AUDIT; NULL/empty/unsealed deny; W+X refused. Design-review adoptions in the commit message.
+> - Deferred (concrete owners): live loader enforcement + `ci_init`/`SUBSYS_CI` boot wiring BLOCKED on the §1 ratchet-merge + §4 signatures + transactional remap; dynamic-code gating filed as a `[ ]` item naming the `nt_memory.c` sites.
+> - Canonical doc: the `include/kernel/ci/ci_image.h` header contract.
+> - Scope: §2 owns the decision engine + callback object only. §3 the crypto bridge; §4 embedded signatures (the real ALLOW path); §6 revocation population; T10 general lockdown.
 
 ---
 
