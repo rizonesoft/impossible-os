@@ -62,19 +62,23 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
 - [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
 - [x] Structural immutability shipped: no public mutator (only `ci_init` writes) + fail-closed pre-publish accessors. Wiring the seal into the `policy_lock.c` ratchet (registry downgrade -> `KeBugCheckEx`) is pending with the boot wiring.
+- [ ] Ratchet-domain merge: policy_lock caps ci.mode at 2 + collapses SB to a bool (vs CI UNKNOWN->ENFORCE / ACTIVE->SECUREBOOT). Wiring the ratchet needs a shared tri-state SB resolver + full ci_enforcement_t mode domain.
 - [/] Physical RO-after-lock page is BLOCKED: Phase-3 `vmm_set_ro` is local-TLB-only; needs SMP TLB shootdown + flattened page-aligned storage with the lock OUTSIDE the sealed range. -> XREF: D03 T07 §2 (SMP TLB shootdown).
 - [ ] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
 - [x] Commit: `"kernel: ci -- code integrity policy object (foundational)"`
 
-**Test checkpoint:** the pure builder yields SECUREBOOT+flags-off under active SB, ENFORCE+flags-off under unreadable SB, and honors relax only when safe-mode-allowed AND SB known-off; the enforcement scalar is ordered and a permissive flag flip does not move it; pre-publish accessors fail closed (ENFORCE, every hash revoked, not sealed). 7 `TEST_CAT_SECURITY` suites. Artifact Ed25519 auth + version-floor + POST_REGISTRY seal-log land with the follow-up items. Test on: QEMU WHPX + TCG; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 7 CI suites, 0 failures
+**Test checkpoint:** the pure builder yields SECUREBOOT+flags-off under active SB, ENFORCE+flags-off under unreadable SB, and honors relax only when safe-mode-allowed AND SB known-off; the enforcement scalar is ordered and a permissive flag flip does not move it; pre-publish accessors fail closed (ENFORCE, every hash revoked, not sealed); a published fixture confirms a NULL digest still denies and the revocation scan matches. 8 `TEST_CAT_SECURITY` suites. Artifact Ed25519 auth + version-floor + POST_REGISTRY seal-log land with the follow-up items. Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 8 CI suites, 0 failures
 >
 > **Notes:**
-> - Shipped `include/kernel/ci/ci.h` + `src/kernel/ci/ci_policy.c` (`ci_policy_t`, pure builder, `ci_init`, fail-closed accessors) + `src/kernel/test/test_ci.c` (7 `TEST_CAT_SECURITY` suites).
-> - Fail-closed: relaxations honored only under safe-mode-allow AND known-off Secure Boot; active/unknown SB force ENFORCE + flags off; pre-publish accessors deny (ENFORCE / revoked / not-sealed). Adoptions in the commit message.
+> - Shipped `include/kernel/ci/ci.h` + `src/kernel/ci/ci_policy.c` (`ci_policy_t`, pure builder, `ci_init`, fail-closed accessors, test-only publish/reset seam) + `src/kernel/test/test_ci.c` (8 `TEST_CAT_SECURITY` suites).
+> - Fail-closed: relax only under safe-mode-allow AND known-off SB; active/unknown SB force ENFORCE + flags off; sealed record keeps the SB tri-state (UNKNOWN != OFF); pre-publish accessors + a NULL/uncomputed digest deny (ENFORCE / revoked / not-sealed).
 > - `ci_init` not yet wired into boot (accessors fail closed until called); POST_REGISTRY wiring + `SUBSYS_CI` + policy_lock ratchet + Ed25519 artifact auth + version floor remain `[ ]`; physical RO-after-lock `[/]` blocked on D03 T07 §2.
 > - Canonical doc: the `include/kernel/ci/ci.h` header contract.
 > - Scope: §1 owns the policy object only. §2 owns `ci_validate_image`; §3 the crypto bridge; §6 revocation-list population; T10 general lockdown.
+>
+> **Verified:** 2026-07-10 | commit b5270770 | 7 [x] / 13 items (5 [ ] follow-up, 1 [/] blocked D03 T07 §2) | build OK | 1150 tests / 130 Security suites, 0 failed
+> **Quality reviewed:** 2026-07-10 | Codex 8x (design, adversarial x2, re-adversarial, consistency x2, perf x2) + kernel-quality-auditor | fail-closed H + SB-tri-state/perf/header-contract/weak-test M fixed; NULL-deny red-green verified | scope: kernel-code-quality
 
 ---
 

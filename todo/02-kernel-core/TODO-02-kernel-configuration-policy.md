@@ -265,7 +265,7 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 > - Owns the read/query surface only; write path + per-key provenance owned by the deferred set path. Codex review adoptions in the section ship + review commits.
 
 > **Verified:** 2026-06-20 | commit `2f22daeb` | 3/5 items | build OK | tests 3058/3058 PASS
-> **Accepted:** [H] `copy_to_user` is not fault-recoverable -- an in-range-but-unmapped user pointer faults the kernel (systemic to every Probe + `copy_to_user` syscall, not new in this class) -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 377)
+> **Accepted:** [H] `copy_to_user` is not fault-recoverable -- an in-range-but-unmapped user pointer faults the kernel (systemic to every Probe + `copy_to_user` syscall, not new in this class) -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378)
 > **Deferred:** [H] Set/write path + `SeSystemProfilePrivilege` enforcement (items above, `[/]`) need a SMP-safe privilege check -> XREF: 02-kernel-core/TODO-15 §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 471)
 > **Quality reviewed:** 2026-06-20 | Codex 7x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 1C+1H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 

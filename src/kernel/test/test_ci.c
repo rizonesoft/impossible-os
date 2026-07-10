@@ -20,7 +20,7 @@ static void test_ci_secureboot_pins_and_forces_off(void)
         "active Secure Boot pins SECUREBOOT enforcement");
     TEST_ASSERT_EQ(p.test_signing, 0u,
         "test-signing forced off under active Secure Boot (no relax)");
-    TEST_ASSERT_EQ(p.secure_boot, 1u, "secure_boot flag recorded");
+    TEST_ASSERT_EQ(p.sb_state, (uint32_t)CI_SB_ACTIVE, "active SB recorded in sb_state");
     TEST_ASSERT_EQ(p.sealed, 0u, "builder does not seal -- ci_init seals");
 }
 
@@ -33,7 +33,15 @@ static void test_ci_sb_unknown_failclosed(void)
     TEST_ASSERT_EQ(p.test_signing, 0u, "unknown SB refuses test-signing");
     TEST_ASSERT_EQ(p.enforcement, (uint32_t)CI_ENFORCE_ENFORCE,
         "unknown SB refuses nointegritychecks -> stays ENFORCE");
-    TEST_ASSERT_EQ(p.secure_boot, 0u, "unknown SB not recorded as active");
+    TEST_ASSERT_EQ(p.sb_state, (uint32_t)CI_SB_UNKNOWN,
+        "unknown SB persists as UNKNOWN, distinct from KNOWN_OFF (degraded trust != off)");
+
+    /* The sealed snapshot must let a consumer tell degraded-unknown from
+     * authoritatively-off: the two states persist to different sb_state values. */
+    ci_policy_t off;
+    ci_policy_build_defaults(&off, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    TEST_ASSERT_EQ(off.sb_state, (uint32_t)CI_SB_KNOWN_OFF, "known-off persists as KNOWN_OFF");
+    TEST_ASSERT_NEQ(off.sb_state, p.sb_state, "KNOWN_OFF and UNKNOWN are stored distinctly");
 }
 
 /* Relaxations are honored ONLY when safe mode allows AND SB is known-off. */
@@ -87,7 +95,7 @@ static void test_ci_collections_empty(void)
 
 /* Before ci_init publishes (s_ready == 0), every accessor fails CLOSED:
  * enforcement is ENFORCE (never DISABLED), sealed is false, flags are off, and
- * an unknown hash is not reported revoked. (ci_init is not wired into a test.) */
+ * every hash (incl. NULL) is reported revoked. (ci_init is not wired into a test.) */
 static void test_ci_preinit_failclosed(void)
 {
     TEST_ASSERT_EQ(ci_policy_sealed(), false, "not sealed before ci_init");
@@ -98,6 +106,43 @@ static void test_ci_preinit_failclosed(void)
     uint8_t zero[CI_HASH_LEN] = {0};
     TEST_ASSERT_EQ(ci_hash_revoked(zero), true,
         "pre-init treats every hash as revoked (fail closed, deny until sealed)");
+    TEST_ASSERT_EQ(ci_hash_revoked((const uint8_t *)0), true,
+        "a NULL digest always denies (no measurement -> fail closed), pre- or post-seal");
+}
+
+/* Red-green protection for the post-publication NULL-digest deny. Publishing a
+ * fixture (s_ready=1) via the test seam reaches the code path the pre-init test
+ * cannot: with the policy sealed, a NULL digest must STILL deny (the pre-fix
+ * fail-open code returned false here). Also exercises the published revocation
+ * scan: a listed hash denies, an unlisted hash allows. Results are captured
+ * BEFORE reset so a failing assert cannot leak s_ready=1 into later suites. */
+static void test_ci_published_null_and_scan(void)
+{
+    ci_policy_t fx;
+    ci_policy_build_defaults(&fx, CI_SB_KNOWN_OFF, /*ts=*/0, /*noci=*/0, /*relax=*/false);
+    fx.revoked_count = 1;
+    for (int b = 0; b < CI_HASH_LEN; b++) {
+        fx.revoked[0][b] = (uint8_t)(b + 1);
+    }
+    ci_policy_publish_for_test(&fx);
+
+    uint8_t listed[CI_HASH_LEN];
+    for (int b = 0; b < CI_HASH_LEN; b++) {
+        listed[b] = (uint8_t)(b + 1);
+    }
+    uint8_t unlisted[CI_HASH_LEN] = {0};
+
+    bool null_denied     = ci_hash_revoked((const uint8_t *)0);
+    bool listed_revoked  = ci_hash_revoked(listed);
+    bool unlisted_allowed = ci_hash_revoked(unlisted);
+    bool sealed_now      = ci_policy_sealed();
+    ci_policy_reset_for_test();
+
+    TEST_ASSERT_EQ(sealed_now, true, "fixture published -> sealed");
+    TEST_ASSERT_EQ(null_denied, true, "published: NULL digest still denies (fail closed)");
+    TEST_ASSERT_EQ(listed_revoked, true, "published: a revoked hash is reported revoked");
+    TEST_ASSERT_EQ(unlisted_allowed, false, "published: a non-revoked hash is not revoked");
+    TEST_ASSERT_EQ(ci_policy_sealed(), false, "reset restores fail-closed pre-publish state");
 }
 
 void test_register_ci(void)
@@ -116,4 +161,6 @@ void test_register_ci(void)
         test_ci_collections_empty, TEST_CAT_SECURITY);
     test_suite_register_cat("CI: pre-init accessors fail closed",
         test_ci_preinit_failclosed, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: published NULL denies + revocation scan",
+        test_ci_published_null_and_scan, TEST_CAT_SECURITY);
 }

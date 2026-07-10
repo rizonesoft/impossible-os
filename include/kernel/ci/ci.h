@@ -84,7 +84,8 @@ typedef struct ci_policy {
     uint32_t revoked_count; /* valid entries in revoked[] */
     uint8_t  test_signing;  /* permissive flag (gated by SAFE_COMP_CI_RELAX) */
     uint8_t  measurement;   /* permissive flag: record hash -> PCR, no verdict */
-    uint8_t  secure_boot;   /* boot_info.secure_boot_enabled snapshot */
+    uint8_t  sb_state;      /* ci_sb_state_t: KNOWN_OFF/ACTIVE/UNKNOWN (UNKNOWN must
+                             * stay distinct from KNOWN_OFF -- degraded trust != off) */
     uint8_t  sealed;        /* 1 once published + sealed at POST_REGISTRY */
     ci_trust_anchor_t anchors[CI_MAX_ANCHORS];
     uint8_t  revoked[CI_MAX_REVOKED][CI_HASH_LEN];
@@ -114,7 +115,19 @@ bool ci_is_test_signing(void);
 bool ci_is_measurement(void);
 bool ci_policy_sealed(void);
 
-/* True if `hash` (SHA-256) is on the revoked list -- overrides any allow. */
+/* Revocation predicate -- overrides any allow. FAIL-CLOSED, so it returns true
+ * (deny) in three cases: `hash` is NULL/uncomputed (no measurement to trust),
+ * the policy is not yet published (ci_init has not sealed), OR a published
+ * non-NULL `hash` matches a revoked-list entry. A published, non-NULL, unlisted
+ * hash returns false (not revoked). Callers must NOT skip this for a NULL hash. */
 bool ci_hash_revoked(const uint8_t hash[CI_HASH_LEN]);
+
+/* Test-only publication seam (ci_policy.c): install a caller-built fixture and
+ * flip the ready flag WITHOUT reading live boot state (ci_init is forbidden in
+ * tests). Pair every publish with the reset so later tests still observe the
+ * fail-closed pre-publish state. Not for production callers -- ci_init is the
+ * sole real publisher. */
+void ci_policy_publish_for_test(const ci_policy_t *fixture);
+void ci_policy_reset_for_test(void);
 
 #endif /* KERNEL_CI_CI_H */

@@ -20,7 +20,7 @@
 #include "kernel/config.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
-#include "libc/string.h"   /* memset */
+#include "libc/string.h"   /* memset, memcmp */
 
 /* The single policy. Built by ci_init (one boot-path writer), then published. */
 static ci_policy_t s_policy;
@@ -50,7 +50,7 @@ void ci_policy_build_defaults(ci_policy_t *out, ci_sb_state_t sb,
     uint8_t eff_testsign = relax_ok ? (cfg_testsigning ? 1 : 0) : 0;
     uint8_t eff_noci     = relax_ok ? (cfg_noci ? 1 : 0) : 0;
 
-    out->secure_boot  = (sb == CI_SB_ACTIVE) ? 1 : 0;
+    out->sb_state     = (uint8_t)sb;    /* tri-state: UNKNOWN stays distinct from KNOWN_OFF */
     out->test_signing = eff_testsign;   /* forced 0 under ACTIVE/UNKNOWN */
     out->measurement  = 0;              /* default is a verdict mode */
 
@@ -100,7 +100,7 @@ void ci_init(void)
     __atomic_store_n(&s_ready, 1u, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "ci", "policy sealed (enforce=%u, sb=%u, ver=%u)",
-         (uint64_t)s_policy.enforcement, (uint64_t)s_policy.secure_boot,
+         (uint64_t)s_policy.enforcement, (uint64_t)s_policy.sb_state,
          (uint64_t)s_policy.version);
 }
 
@@ -125,6 +125,12 @@ bool ci_policy_sealed(void)   { return ci_ready(); }
 
 bool ci_hash_revoked(const uint8_t hash[CI_HASH_LEN])
 {
+    /* Fail CLOSED on a missing digest: a NULL hash means the caller could not
+     * produce a measurement (parse/hash failure upstream), which must DENY, not
+     * allow. Checked first so it holds pre- and post-publication. */
+    if (!hash) {
+        return true;
+    }
     /* Fail CLOSED before publication: an unpublished policy cannot vouch for
      * any hash, so treat everything as revoked (deny) until ci_init seals.
      * (Returning false here would fail open -- admission could run revoked
@@ -132,21 +138,34 @@ bool ci_hash_revoked(const uint8_t hash[CI_HASH_LEN])
     if (!ci_ready()) {
         return true;
     }
-    if (!hash) {
-        return false;
-    }
     uint32_t n = s_policy.revoked_count;
     if (n > CI_MAX_REVOKED) {
         n = CI_MAX_REVOKED;
     }
     for (uint32_t i = 0; i < n; i++) {
-        int diff = 0;
-        for (int b = 0; b < CI_HASH_LEN; b++) {
-            diff |= s_policy.revoked[i][b] ^ hash[b];  /* full-length compare, no early out */
-        }
-        if (diff == 0) {
+        /* Revocation hashes are public, not secret -- a byte-at-a-time compare
+         * with early-out is correct here (no timing-oracle to protect). */
+        if (memcmp(s_policy.revoked[i], hash, CI_HASH_LEN) == 0) {
             return true;
         }
     }
     return false;
+}
+
+/* Test-only publication seam. Installs a caller-built fixture and release-stores
+ * the ready flag using the SAME ordering as ci_init, so unit tests can exercise
+ * the published (post-seal) accessor paths without calling ci_init (which reads
+ * live boot state and is forbidden in tests). No live boot infrastructure is
+ * touched -- pure global writes + one atomic store. */
+void ci_policy_publish_for_test(const ci_policy_t *fixture)
+{
+    s_policy = *fixture;
+    __atomic_store_n(&s_ready, 1u, __ATOMIC_RELEASE);
+}
+
+/* Restore the fail-closed pre-publish state so later suites are unaffected. */
+void ci_policy_reset_for_test(void)
+{
+    __atomic_store_n(&s_ready, 0u, __ATOMIC_RELEASE);
+    memset(&s_policy, 0, sizeof(s_policy));
 }
