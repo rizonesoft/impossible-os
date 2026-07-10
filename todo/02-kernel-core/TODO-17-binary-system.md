@@ -78,7 +78,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
 | 💎   |  10   | PE32+ base relocation                          | §8              |  [/]   |
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
-| 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [ ]   |
+| 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
 | ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
 | 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
 | 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
@@ -362,12 +362,15 @@ Modern PE binaries carry an `IMAGE_LOAD_CONFIG_DIRECTORY64` (DataDirectory entry
 > [!NOTE]
 > → XREF: `TODO-10-kernel-security-hardening.md §9,§10` -- CET shadow stack (§9) and CET IBT (§10) enforcement is authoritative in TODO-23. This section parses the PE metadata and stores it in the process/module record; TODO-23 acts on it. CFG bitmap enforcement also requires a dedicated CFG section in TODO-23.
 
-- [ ] Parse `IMAGE_LOAD_CONFIG_DIRECTORY64` from DataDirectory[10]: extract `GuardCFFunctionTable`, `GuardCFFunctionCount`, `GuardFlags`
-- [ ] If `IMAGE_GUARD_CF_INSTRUMENTED` and `IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT`: allocate a per-process CFG bitmap; populate valid call targets from the GFIDS table; store in process metadata
-- [ ] Extract `SecurityCookie` address and initialise with `RDRAND` value (overwrite the linker default)
-- [ ] Parse CET fields: `GuardAddressTakenIatEntryTable`, `GuardEHContinuationTable` -- store for TODO-23 CET activation
-- [ ] If Load Config is absent or has zero size: treat as legacy binary (no CFG, no CET) -- log warning
+- [/] Parse `IMAGE_LOAD_CONFIG_DIRECTORY64` from DataDirectory[10] (GuardCFFunctionTable/Count, GuardFlags) -- BLOCKED: reads the sparsely-mapped image (needs §8 mapped-aware reads)
+- [/] CFG bitmap: allocate per-process, populate call targets from the GFIDS table, store in process metadata -- BLOCKED: CFG enforcement + PE execution not present (TODO-23)
+- [/] Extract `SecurityCookie` address + initialise with `RDRAND` (overwrite linker default) -- BLOCKED: mapped-aware image write (§8) and dead until PE runs
+- [/] Parse CET fields (`GuardAddressTakenIatEntryTable`, `GuardEHContinuationTable`) for TODO-23 CET activation -- BLOCKED: same reads
+- [/] Legacy fallback (Load Config absent/zero-size -> no CFG/CET, warn) -- BLOCKED with the parse above
 - [ ] Commit: `"kernel: pe -- Load Config directory, CFG bitmap, CET metadata"`
+
+> **Deferred:** [H] §12 Load Config/CFG/CET metadata not implemented -- parses/writes the sparsely-mapped image (needs §8 mapped-aware reads) and its output (CFG bitmap, CET flags, cookie) is dead until PE binaries execute and TODO-23 enforces CFG/CET -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
+> **Deferred:** [M] CFG/CET enforcement + security-cookie use require runnable PE + the CET engine -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
 
 **Test checkpoint:** Serial log shows `"pe: CFG bitmap: <N> valid targets"` for CFG-instrumented PE. Shows `"pe: security cookie initialized"`. Legacy PE without Load Config shows `"pe: no Load Config -- legacy binary"`. `POST16(0xD814)` on entry, `POST16(0xD815)` after CFG bitmap populated. Test on: QEMU WHPX + TCG; bare metal.
 
