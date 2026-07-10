@@ -64,7 +64,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | --- | :---: | ------------------------------------------- | -------------------------- | :----: |
 | ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
 | 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
-| ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [ ]   |
+| ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
 | ⭐   |   4   | API version gating                          | §1                         |  [ ]   |
 | ⭐   |   5   | Metadata section parser                     | §1                         |  [ ]   |
 | ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
@@ -129,14 +129,16 @@ The loader copies segment data but does not set page permissions. Segments shoul
 
 ## 3. Module Registration for EIF
 
-Every loaded binary must be registered in the crash registry and module list (TODO-17 §6). The current EIF loader does not call `exec_register_module()`.
+Every loaded binary must be registered in the crash registry and module list. EIF modules ARE registered today via the generic `task_exec` path; §3's refinement (loader-owned, accurate range, metadata name) is partly blocked on §5.
 
-- [ ] After successful segment load, build a `loaded_module_t` with: `base_address = load_base` (or first segment vaddr), `size_of_image` = span from lowest to highest segment, `entry_point = load_base + entry_point`, `format = EXEC_FMT_EIF`, `name` from metadata `"name"` key (if parsed) or task name
-- [ ] Call `exec_register_module(NULL, &mod)` from `eif_load()`
-- [ ] Remove the EIF-specific module registration in `task_exec()` (it currently registers all formats with the ELF range -- EIF should register itself with its actual load range)
+- [/] Build `loaded_module_t`: DONE generically in `task_exec` with `format=EXEC_FMT_EIF` + task name -- but with the whole USER_ELF range, not the accurate load range, and not the metadata `"name"`.
+- [ ] Register from `eif_load()` with the ACTUAL load range (lowest..highest segment vaddr), replacing the generic `task_exec` path -- a refactor (`eif_load` returns only the entry, so needs an ABI change or a header re-parse).
+- [ ] Name from the metadata `"name"` key -- BLOCKED on the metadata parser. -> XREF: §5.
 - [ ] Commit: `"kernel: eif -- module registration via exec_register_module"`
 
-**Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with correct base and `EXEC_FMT_EIF`. Serial log shows `"exec: registered module '<name>' at 0x<base>"`. `POST16(0xDE24)` on entry, `POST16(0xDE25)` after registration. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with `EXEC_FMT_EIF` (already true via the generic path); once the loader-owned refactor lands, `base_address` is the actual load base + `size_of_image` the segment span. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+>
+> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + metadata name) is a refactor partly blocked on §5. The crash-registry need is ALREADY met by the generic `task_exec` registration (format=EXEC_FMT_EIF); the open work is (a) register from `eif_load` with the true load range instead of the whole USER_ELF span, and (b) the metadata `"name"`. -> XREF: 02-kernel-core/TODO-20 §5 (item: "Metadata Section Parser" -- provides the `"name"` key); the accurate-range refactor is owned by this §3.
 
 ---
 
