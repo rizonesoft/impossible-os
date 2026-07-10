@@ -10,6 +10,8 @@ title: "TODO-20 -- EIF Full Implementation"
 
 > **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed the metadata-vs-signature ordering claim + 11 stale XREF section numbers
 
+> **Gap-audited:** 2026-07-10 | gap-audit + codex-gap-audit; 4H filed -- W^X page-sharing (§2), ASLR entropy/private-frames/PIC-soundness (§8), CET compat flag (§10 new), EIF signature-block ABI (§11 new, resolves the D02 T19 §4 signing-ownership cycle)
+
 > [!IMPORTANT]
 > **Decision pinned (2026-04-24):** EIF is the **native binary format** for Impossible OS user-mode and module code. EIF is **NOT** a replacement for the **kernel image format** -- the kernel itself stays **ELF indefinitely** (see `CLAUDE.md` → Toolchain → Kernel Binary Format). The kernel binary format is strictly internal to the UEFI bootloader handoff; nothing on the Win32 ABI surface or the EIF loader surface depends on it. Do not propose re-targeting the kernel to EIF or PE32+ under "unified format" reasoning -- the two layers are independently optimal. Distribution converters (`eif2pe`, `eif2elf`) exist for cross-OS user-app portability and are tracked in TODO-17 §13 as follow-ups.
 
@@ -69,6 +71,8 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
 | ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [ ]   |
+| 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [ ]   |
+| 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -101,9 +105,10 @@ The current loader copies segment data but does not set page permissions. All pa
 - [ ] For `EIF_SEG_READ | EIF_SEG_WRITE` (data/BSS): `vmm_protect_range(vaddr, mem_size, VMM_USER_RW | VMM_FLAG_NX)`
 - [ ] For `EIF_SEG_READ | EIF_SEG_EXEC` (text): `vmm_protect_range(vaddr, mem_size, VMM_USER_RO)` (executable, not writable)
 - [ ] Reject segments with `EIF_SEG_WRITE | EIF_SEG_EXEC` (W+X) -- security policy: no writable+executable pages
+- [ ] W^X at PAGE granularity: differently-flagged segments must not share a 4K page (last protection wins). Require page-aligned boundaries OR a per-page permission union that rejects any effectively-W+X page.
 - [ ] Commit: `"kernel: eif -- segment permission enforcement via PTE flags"`
 
-**Test checkpoint:** EIF `.text` segment is executable but not writable. EIF `.data` segment is writable but not executable. Attempt to execute from `.data` causes #PF. Attempt to write to `.text` causes #PF. Serial log shows `"eif: segment 0: R-X"`, `"eif: segment 1: RW-"`. `POST16(0xDE22)` on entry, `POST16(0xDE23)` after permissions set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** EIF `.text` segment is executable but not writable. EIF `.data` segment is writable but not executable. Attempt to execute from `.data` causes #PF. Attempt to write to `.text` causes #PF. A crafted EIF whose W-only and X-only segments share one page is REJECTED (not silently mis-protected). Serial log shows `"eif: segment 0: R-X"`, `"eif: segment 1: RW-"`. `POST16(0xDE22)` on entry, `POST16(0xDE23)` after permissions set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -184,15 +189,18 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 
 When `load_base=0`, the EIF binary is position-independent and should be loaded at a randomized address for security. This integrates with the broader ASLR work in TODO-17 §15.
 
-- [ ] Depends on: kernel CSPRNG in `TODO-03-kernel-libraries.md` §3 (until [x] there, this section stays blocked)
-- [ ] If `load_base == 0`: generate a random base address using the kernel CSPRNG (-> XREF: `TODO-03-kernel-libraries.md` §3 Monocypher/RDRAND)
+- [ ] Depends on: kernel CSPRNG in `TODO-03-kernel-libraries.md` §5 (until [x] there, this section stays blocked)
+- [ ] If `load_base == 0`: generate a random base address using the kernel CSPRNG (-> XREF: `TODO-03-kernel-libraries.md` §5 Monocypher/RDRAND)
 - [ ] Random base must be page-aligned, within the user address range, and not overlapping existing mappings
 - [ ] Update all segment vaddr calculations to use the randomized base
 - [ ] Keep the dispatch table VA fixed at `EIF_DISPATCH_TABLE_ADDR`; only the image base moves here, while §9 changes the physical backing and protection model later
+- [ ] Real entropy requires process-PRIVATE image frames: randomizing over the shared identity map gives ~0 entropy. Block meaningful ASLR on §9 per-process frames. -> XREF: §9, D03 T01 §3.
+- [ ] Require a measured entropy floor (base varies over >= N address bits across many loads), not just "different each time".
+- [ ] Soundness assumes `elf2eif` emits true -fpic with no absolute data/fn pointers; absolute-pointer binaries need the v1.1 relocation table -- test PIC binaries with internal vtables across many bases.
 - [ ] Log the randomized base: `"eif: ASLR base=0x%x"`
 - [ ] Commit: `"kernel: eif -- ASLR for position-independent binaries"`
 
-**Test checkpoint:** Two consecutive loads of the same PIC EIF binary (`load_base=0`) produce different base addresses. Serial log shows different `"eif: ASLR base=0x%x"` values. Non-PIC EIF (`load_base!=0`) loads at its preferred address. `POST16(0xDE2E)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Over many loads of the same PIC EIF binary (`load_base=0`), the base varies over a measured entropy floor (not just "different twice"); a PIC binary carrying internal vtables/function-pointers executes correctly across many randomized bases. Non-PIC EIF (`load_base!=0`) loads at its preferred address. Serial: `"eif: ASLR base=0x%x"`. `POST16(0xDE2E)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -212,21 +220,49 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 
 ---
 
+## 10. CET Compatibility Flag (Format Reservation)
+
+Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.property` IBT/SHSTK) declare CET support per-binary. The EIF header has no such flag; reserving a bit now is cheap (`eif_header_t.flags` bits 6-31 are free), a later add needs an `EIF_VERSION` bump. Enforcement waits for ring-3 CET, which has no owner today (TODO-10 programs supervisor S_CET for ring 0, not per-process U_CET/PL3_SSP).
+
+- [ ] Reserve `EIF_FLAG_CET_COMPAT` (bit 6) in `include/kernel/eif.h` + document in `specs/eif-format.md` as reserved/unenforced until ring-3 CET
+- [ ] `eif_validate()` rejects unknown/reserved header flag bits so a future flag is not silently ignored by an old loader
+- [ ] Propagate the flag into process/module metadata so a future ring-3 CET enforcer can read per-binary CET intent
+- [ ] File the ring-3 CET ENFORCEMENT owner gap (per-process U_CET / PL3_SSP programming) -- no owner today. -> XREF: D01 T10 §9 (ring-0 CET only).
+- [ ] Commit: `"kernel: eif -- reserve CET compatibility header flag"`
+
+**Test checkpoint:** an EIF with `EIF_FLAG_CET_COMPAT` set loads (flag parsed + recorded in metadata); an EIF with an unknown reserved flag bit is rejected with `ENOEXEC`. Enforcement is out of scope (ring-3 CET unowned). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 11. EIF Signature-Block ABI (Signer Key Delivery)
+
+The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_offset)`) carries no signer pubkey or key-id, and CI trust anchors store only a pubkey hash -- so a verifier has no pubkey to run Ed25519 against. TODO-19 §4 deferred this ABI decision here (TODO-20 owns the EIF format); the verify implementation is TODO-17 §17. This section owns the FORMAT amendment that unblocks both -- resolving the current signing-ownership cycle.
+
+- [ ] Amend `specs/eif-format.md` signature block to carry signer `pubkey[32]` (+ key-id) alongside `algo`/`sig_size`/`signature`; map `algo` to `ci_sig_alg_t` (Ed25519; reject RSA = unsupported).
+- [ ] Bump `EIF_VERSION` for the signature-block layout change; gate old vs new by version.
+- [ ] Verifier contract: `ci_crypto_verify(ED25519, [0,sig_off), sig, pubkey)` AND the pubkey hash must match a trusted CI anchor tier. -> XREF: D02 T19 §3, D02 T19 §4.
+- [ ] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"`
+
+**Test checkpoint:** the amended signature block round-trips through `elf2eif` + the loader; a signed EIF with a pubkey whose hash matches a trusted anchor verifies, and one with an untrusted pubkey is rejected. (Verify impl lands in TODO-17 §17.) Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
-| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS |
-| --- | ----------------------- | ------------------------ | ------------------------ | --------------- |
-| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2            |
-| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15    |
-| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9      |
-| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ T17 §17       |
-| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5        |
-| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5        |
-| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ⬜ §4            |
-| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ⬜ §5            |
-| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ⬜ §6            |
-| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1            |
-| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7            |
+| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                 |
+| --- | ----------------------- | ------------------------ | ------------------------ | ------------------------------- |
+| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2                            |
+| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                    |
+| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                      |
+| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17             |
+| 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 reserved, ring-3 unowned |
+| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                        |
+| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
+| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ⬜ §4                            |
+| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ⬜ §5                            |
+| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ⬜ §6                            |
+| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                            |
+| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                            |
 
 > **Parity gaps:** rows with 💎 and ⬜ are covered by §1-§9 or `TODO-17-binary-system.md` §17. **After §5-§3:** overlap + permissions + module list. **After §1-§2:** API gate + metadata. **After §7-§9:** LZ4 + stubs + ASLR + per-process dispatch + RELRO-style surfaces (see new OS row).
 

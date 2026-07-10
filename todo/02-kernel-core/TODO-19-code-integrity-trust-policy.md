@@ -136,7 +136,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 ## 4. Embedded Signature Validation
 
 - [/] EIF: validate signed trailer before segment mapping. BLOCKED: the spec'd signature block (algo/sig_size/sig) carries no signer pubkey/key-id, and anchors store only key_id -- no pubkey to Ed25519-verify. -> XREF: D02 T20.
-- [ ] EIF sig-block ABI decision (prereq): amend `specs/eif-format.md` to carry the signer pubkey[32] (+ key-id) + bump `EIF_VERSION`, so CI can Ed25519-verify and match the pubkey hash to a trust anchor. -> XREF: D02 T20.
+- [ ] EIF sig-block ABI decision (prereq): amend `specs/eif-format.md` to carry the signer pubkey[32] (+ key-id) + bump `EIF_VERSION`, so CI can Ed25519-verify and match the pubkey hash to a trust anchor. OWNED by D02 T20 §11. -> XREF: D02 T20 §11.
 - [/] PE: parse `WIN_CERTIFICATE` + Authenticode digest exclusions. BLOCKED: real Authenticode is PKCS#7/ASN.1; §3 `ci_crypto` only does raw Ed25519. Needs an Impossible-OS simplified `wCertificateType` decision.
 - [/] ELF: Impossible-OS note-section signature. BLOCKED: no `PT_NOTE` walker + no vendor note namespace; needs a note-format decision (n_name namespace, n_type, 4-vs-8-byte align per the GNU-property precedent).
 - [ ] Anchor-lookup helper (prereq): add `ci_anchor_find(key_id, tier)` over `ci_policy_get()->anchors` to §1; needs the compiled Ed25519 policy-root anchor. -> XREF: T19 §1 (line 62).
