@@ -629,6 +629,20 @@ static void test_eif_reject_unsigned_with_signature(void)
                    "eif_load rejects unsigned file with non-zero signature_offset");
 }
 
+/* Fail-closed: a COMPRESSED EIF must be rejected -- the loader copies segment
+ * bytes verbatim into the executable range and has no decompressor, so loading
+ * one would execute the raw LZ4 stream as code. */
+static void test_eif_reject_compressed(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->flags = EIF_FLAG_COMPRESSED;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects COMPRESSED EIF (no decompressor yet)");
+}
+
 /* Entry point must land inside a loaded EXECUTABLE segment, not merely the user
  * window (shared identity-mapped range may hold stale residue). A read-only
  * segment covering the entry VA is rejected. */
@@ -789,6 +803,7 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: reject unreg import", test_eif_reject_unregistered_import, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject out-of-order", test_eif_reject_out_of_order_sections, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject seg data over table", test_eif_reject_segment_data_over_table, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject compressed", test_eif_reject_compressed, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

@@ -224,6 +224,15 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
+    /* Reject COMPRESSED binaries until EIF segment decompression is implemented.
+     * The segment copy below moves file bytes verbatim into the executable user
+     * range; loading a compressed image would run the LZ4 stream as code. Fail
+     * closed rather than execute garbage. */
+    if (hdr->flags & EIF_FLAG_COMPRESSED) {
+        klog(LOG_WARN, "eif", "Compressed EIF rejected: decompression not yet implemented");
+        return 0;
+    }
+
     if (hdr->segment_count == 0) {
         klog(LOG_DEBUG, "eif", "No segments loaded");
         return 0;

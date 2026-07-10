@@ -79,7 +79,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |  10   | PE32+ base relocation                          | §8              |  [/]   |
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
 | 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
-| ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
+| ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [/]   |
 | 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
 | 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
 | ⭐   |  16   | Script/shebang interpreter support             | §1              |  [ ]   |
@@ -381,20 +381,18 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom comp
 > [!NOTE]
 > This section owns producer-side emission for `TODO-20-eif-full-implementation.md` §5-§8: metadata, `api_version`, PIC `load_base=0`, compressed segment encoding, and the final optional-import call ABI.
 
-- [ ] Create `tools/elf2eif.c` (compiled with host `gcc`)
-- [ ] Add `tools/syscall_map.h` (or generated header) mapping Win32 symbol names to SSDT service numbers sourced from `include/kernel/nt/service_numbers.h`
-- [ ] Read input ELF64; validate headers; extract `PT_LOAD` segments → EIF `eif_segment_t` entries; derive PIC vs fixed-base output (`load_base=0` for PIC EIF) and preserve caller-selected `api_version`
-- [ ] Generate import table:
-  - Scan ELF `.dynsym` or custom `.eif_imports` section for Win32 API symbols
-  - Map function names → SSDT service numbers via `syscall_map.h`
-  - Emit the chosen optional-import call ABI expected by `TODO-20` §7 (data-only dispatch entries plus deterministic user thunks unless the EIF spec is widened first)
-- [ ] Write EIF output: header + segments + import table + metadata section; populate `metadata_offset`, optional `build_id`, and compressed `file_size` / `EIF_FLAG_COMPRESSED` fields when enabled
-- [ ] Add CLI knobs for advanced EIF features: `--api-version`, `--pic`, `--lz4`, and metadata key/value input consumed by the header + metadata writer
-- [ ] Optional: embed digital signature via `tools/eifsign`
-- [ ] Add `make elf2eif` target; integrate auto-conversion into user-mode build rules
+- [/] Create `tools/elf2eif.c` (host `gcc`): ELF64 -> EIF segment/header conversion -- BLOCKED: a data-only-import converter emits EIFs whose imports are NOT callable (same gap as PE §9), so no runnable binary until the EIF import call ABI exists
+- [/] Generate `syscall_map.h` DETERMINISTICALLY from `service_numbers.h` at build (extend `scripts/gen-user-abi.py`) + a drift `--check` gate, reject IDs >= 1024 -- a hand-maintained map silently emits wrong-SSDT binaries
+- [/] Extract `PT_LOAD` -> `eif_segment_t` with explicit `image_origin` subtraction; `--pic` only for relocation-clean ET_DYN -- BLOCKED: PIC/base normalization undefined until the EIF runtime base is chosen
+- [/] Generate import table -> the required-import CALL ABI (thunks or EIF runtime import lib) -- BLOCKED: not deferrable but depends on the EIF import call ABI
+- [/] Write canonical-layout EIF (overflow-safe ELF bounds, caps, filesz<=memsz, executable-entry) with metadata/`api_version` (unblocked), via temp-file + atomic rename
+- [/] CLI `--api-version`/`--pic`/metadata (lz4 `EIF_FLAG_COMPRESSED` + `eifsign` signature deferred)
 - [ ] Commit: `"tools: elf2eif converter"`
 
-**Test checkpoint:** `make elf2eif` builds successfully. `tools/elf2eif hello.elf hello.eif` produces output with `EIF!` magic at offset 0. CLI options can emit metadata, `api_version`, PIC `load_base=0`, and compressed segments with headers matching the spec. Kernel loads the resulting EIF and reaches entry point. No runtime POST codes -- host-side tool.
+**Test checkpoint:** `make elf2eif` builds successfully. `tools/elf2eif hello.elf hello.eif` produces output with `EIF!` magic at offset 0. Kernel loads the resulting EIF and reaches entry point. No runtime POST codes -- host-side tool.
+
+> **Deferred:** [H] §13 elf2eif not implemented -- the required-import CALL binding (making NtXxx callsites actually SYSCALL) and PIC base normalization depend on the unsettled EIF import call ABI / runtime base; a segment-only converter would emit non-runnable EIFs (same gap as PE §9) -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
+> **Deferred:** [M] lz4 (`EIF_FLAG_COMPRESSED`) + `eifsign` signature emission deferred; the §5 loader now fail-closed-rejects compressed EIFs so no unsupported file executes -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
 
 ## 14. ELF Dynamic Linker
 
