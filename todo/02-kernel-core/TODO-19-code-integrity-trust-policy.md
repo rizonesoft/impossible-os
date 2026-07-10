@@ -40,7 +40,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 | ⭐   | Order | Deliverable                           | Depends On   | Status |
 | --- | :---: | ------------------------------------- | ------------ | :----: |
-| 💎   |   1   | Code Integrity policy object          | T02          |  [ ]   |
+| 💎   |   1   | Code Integrity policy object          | T02          |  [/]   |
 | 💎   |   2   | Image validation API and callback     | T17          |  [ ]   |
 | 💎   |   3   | Hashing and signature provider bridge | T03          |  [ ]   |
 | 💎   |   4   | Embedded signature validation         | §2, §3       |  [ ]   |
@@ -53,19 +53,28 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 1. Code Integrity Policy Object
 
-- [ ] Define `ci_policy_t`: an ORDERED `enforcement` scalar + SEPARATE `test_signing`/`measurement` flags (permissive, NOT ratchet ordinals), SB state, trust-anchor tiers, revoked-hash list, audit flags.
-- [ ] MEASUREMENT flag: record image hash + feed the TPM PCR aggregate, no allow/deny verdict (distinct from audit=log-but-allow). -> XREF: D01 T13 (PCR aggregate).
-- [ ] Trust anchors are role-separated tiers, not a flat list: compiled-in root / boot-added / firmware-platform / revoked, each with distinct lock + downgrade semantics.
-- [ ] Load compiled defaults; merge boot/registry via `kernel_config_get()` gated through `safe_mode_component_allowed(SAFE_COMP_CI_RELAX)`; reuse the `policy_lock.c` CODE_INTEGRITY ratchet for the mode scalar.
-- [ ] Atomic commit: build + authenticate ONE candidate snapshot, then publish + seal ALL scalars + collections together at `POLICY_PHASE_POST_REGISTRY` (Phase 3, NOT literal Phase 2), before Phase-3 consumers. Add `SUBSYS_CI`.
+- [x] Define `ci_policy_t` (`include/kernel/ci/ci.h`): ORDERED `ci_enforcement_t` + SEPARATE `test_signing`/`measurement` flags + `ci_sb_state_t` tri-state + role-separated trust-anchor tiers + flat revoked-hash list + audit flags.
+- [x] MEASUREMENT flag present (`ci_is_measurement`); records hash, feeds the TPM PCR aggregate, no verdict (distinct from audit). PCR feed -> XREF: D01 T13.
+- [x] Trust anchors are role-separated tiers (`ci_trust_tier_t`: compiled-in / boot-added / firmware-platform / revoked), not a flat list.
+- [x] Load compiled defaults + config merge (`kernel_config_get()`), gated FAIL-CLOSED: relax honored only when `kernel_safe_mode_allows(SAFE_COMP_CI_RELAX)` AND SB known-off; active/unreadable SB force ENFORCE + flags off.
+- [x] Atomic publish: `ci_init` builds the record then release-stores a ready flag; accessors acquire-load it and fail closed (ENFORCE / revoked / not-sealed) before publish -- no torn read, no fail-open window.
+- [ ] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` (boot_desktop.c Phase 3) + add `SUBSYS_CI`; the module is unwired today so accessors fail closed until called.
 - [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
 - [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
-- [ ] Post-seal downgrade denied by the ratchet: KernelMode write-after-seal -> `KeBugCheckEx`, UserMode -> `STATUS_ACCESS_DENIED` + tamper audit (interim LOGICAL immutability).
+- [x] Structural immutability shipped: no public mutator (only `ci_init` writes) + fail-closed pre-publish accessors. Wiring the seal into the `policy_lock.c` ratchet (registry downgrade -> `KeBugCheckEx`) is pending with the boot wiring.
 - [/] Physical RO-after-lock page is BLOCKED: Phase-3 `vmm_set_ro` is local-TLB-only; needs SMP TLB shootdown + flattened page-aligned storage with the lock OUTSIDE the sealed range. -> XREF: D03 T07 §2 (SMP TLB shootdown).
 - [ ] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
-- [ ] Commit: `"kernel: ci -- code integrity policy object"`
+- [x] Commit: `"kernel: ci -- code integrity policy object (foundational)"`
 
-**Test checkpoint:** `ci_policy_t` loads compiled defaults; the policy artifact fails to apply if its Ed25519 signature or version floor is wrong; after seal at POST_REGISTRY on a Secure Boot system, an enforcement-downgrade attempt is denied (ratchet) and the scalar is unchanged; a permissive `test_signing`/`measurement` flag flip is NOT treated as an enforcement upgrade. Serial: `"ci: policy sealed (enforce, sb=1, ver=N)"`. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** the pure builder yields SECUREBOOT+flags-off under active SB, ENFORCE+flags-off under unreadable SB, and honors relax only when safe-mode-allowed AND SB known-off; the enforcement scalar is ordered and a permissive flag flip does not move it; pre-publish accessors fail closed (ENFORCE, every hash revoked, not sealed). 7 `TEST_CAT_SECURITY` suites. Artifact Ed25519 auth + version-floor + POST_REGISTRY seal-log land with the follow-up items. Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 7 CI suites, 0 failures
+>
+> **Notes:**
+> - Shipped `include/kernel/ci/ci.h` + `src/kernel/ci/ci_policy.c` (`ci_policy_t`, pure builder, `ci_init`, fail-closed accessors) + `src/kernel/test/test_ci.c` (7 `TEST_CAT_SECURITY` suites).
+> - Fail-closed: relaxations honored only under safe-mode-allow AND known-off Secure Boot; active/unknown SB force ENFORCE + flags off; pre-publish accessors deny (ENFORCE / revoked / not-sealed). Adoptions in the commit message.
+> - `ci_init` not yet wired into boot (accessors fail closed until called); POST_REGISTRY wiring + `SUBSYS_CI` + policy_lock ratchet + Ed25519 artifact auth + version floor remain `[ ]`; physical RO-after-lock `[/]` blocked on D03 T07 §2.
+> - Canonical doc: the `include/kernel/ci/ci.h` header contract.
+> - Scope: §1 owns the policy object only. §2 owns `ci_validate_image`; §3 the crypto bridge; §6 revocation-list population; T10 general lockdown.
 
 ---
 

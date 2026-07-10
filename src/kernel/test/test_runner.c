@@ -429,6 +429,7 @@ extern void test_register_boot_device(void);
 extern void test_register_x86(void);
 extern void test_register_ob(void);
 extern void test_register_security(void);
+extern void test_register_ci(void);
 extern void test_register_peb_teb(void);
 extern void test_register_nt_types(void);
 extern void test_register_nt_sync(void);
@@ -551,6 +552,7 @@ void test_runner_init(void)
 
     /* Security */
     test_register_security();
+    test_register_ci();
 
     /* Crash dump */
     test_register_crashdump();
