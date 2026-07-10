@@ -215,6 +215,10 @@ The spec reserves `EIF_FLAG_COMPRESSED` for LZ4-compressed segment data. This en
 > - Design review (2 HIGH adopted): fallible-decompress-in-mutation broke atomicity -> preflight; the `file_size<=mem_size` BSS rule rejected valid compressed segments -> flag-conditional ABI.
 > - Canonical doc: `specs/eif-format.md` normative rule 9 (compressed segments).
 > - Scope: per-file LZ4 segment compression. Streaming/partial decode not needed (image fits the user range); signed+compressed ordering is a signature concern owned by §11.
+>
+> **Verified:** 2026-07-10 | commit `d0e2d587` | 5/5 items | build OK | tests 735+16 PASS
+> **Accepted:** [M] no producer emits `EIF_FLAG_COMPRESSED` yet (loader-shipped-before-producer) -> XREF: 02-kernel-core/TODO-17 §13 (item: "CLI `--api-version`/`--pic`/metadata (lz4 `EIF_FLAG_COMPRESSED` ... deferred)" at line 390)
+> **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 2H+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

@@ -630,9 +630,6 @@ static void test_eif_reject_unsigned_with_signature(void)
                    "eif_load rejects unsigned file with non-zero signature_offset");
 }
 
-/* Fail-closed: a COMPRESSED EIF must be rejected -- the loader copies segment
- * bytes verbatim into the executable range and has no decompressor, so loading
- * one would execute the raw LZ4 stream as code. */
 /* ---- Compressed-segment decompression -- pure preflight primitive ----
  * eif_decompress_segment is the decode+verify unit eif_load runs against a
  * scratch buffer before mutation; it writes only into the caller's dst, so these

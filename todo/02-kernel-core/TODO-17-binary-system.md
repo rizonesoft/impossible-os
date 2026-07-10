@@ -393,7 +393,7 @@ Standard developer workflow: `clang-19 → ld.lld → elf2eif` -- no custom comp
 **Test checkpoint:** `make elf2eif` builds successfully. `tools/elf2eif hello.elf hello.eif` produces output with `EIF!` magic at offset 0. Kernel loads the resulting EIF and reaches entry point. No runtime POST codes -- host-side tool.
 
 > **Deferred:** [H] §13 elf2eif not implemented -- the required-import CALL binding (making NtXxx callsites actually SYSCALL) and PIC base normalization depend on the unsettled EIF import call ABI / runtime base; a segment-only converter would emit non-runnable EIFs (same gap as PE §9) -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
-> **Deferred:** [M] lz4 (`EIF_FLAG_COMPRESSED`) + `eifsign` signature emission deferred; the §5 loader now fail-closed-rejects compressed EIFs so no unsupported file executes -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md
+> **Deferred:** [M] lz4 (`EIF_FLAG_COMPRESSED`) + `eifsign` signature emission deferred. The kernel loader now SUPPORTS compressed segments (`TODO-20` §6 shipped `eif_decompress_segment` + preflight), so this is the missing PRODUCER half -- until it lands, `scripts/build-eif.py`/`elf2eif` emit only uncompressed EIFs -> XREF: 02-kernel-core/TODO-20-eif-full-implementation.md §6
 
 ## 14. ELF Dynamic Linker
 
