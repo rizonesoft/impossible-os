@@ -75,7 +75,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-11 §4  |  [/]   |
 | 💎   |   7   | PE32+ header parser                            | §1              |  [x]   |
 | 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
-| 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [x]   |
+| 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
 | 💎   |  10   | PE32+ base relocation                          | §8              |  [ ]   |
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [ ]   |
 | 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [ ]   |
@@ -305,9 +305,25 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 - [x] Unknown DLL names: imports stubbed with NULL thunk (faults on call); unknown functions within known DLLs also stubbed. No crash on unrecognized DLL.
 - [x] Export table lookup: sorted `pe_export_entry_t` array + binary search (`pe_lookup_export`). Case-insensitive DLL name matching (`pe_stricmp`).
 - [x] Import structures in pe.h: `pe_import_descriptor_t` (20 bytes), `pe_import_by_name_t`, `PE_ORDINAL_FLAG64`, `pe_export_entry_t`, `pe_dll_exports_t`
+- [ ] Make resolved imports CALLABLE: the IAT holds the raw SSDT number so a PE call [IAT] faults; write user-mode kernel32/ntdll SYSCALL trampolines + a callable STATUS_NOT_IMPLEMENTED stub; add an end-to-end PE-calls-import test
+- [ ] Validate import RVAs against actually-mapped regions, not just SizeOfImage: a crafted RVA in a section gap passes the numeric check then faults in kernel mode; per-span mapped check, or map the full image reservation in §8
+- [ ] Add resolver-walk unit tests (name resolution, ordinal stubbing, bounds/NUL-term rejection, near-UINT32_MAX RVA, cross-page/unaligned FirstThunk) once a pure-helper surface exists or §8 pe_load Gate-8 issue is resolved
 - [x] Commit: `"kernel: pe -- PE32+ import table resolver"`
 
-**Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. `POST16(0xD80E)` on entry, `POST16(0xD80F)` after IAT patched. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Serial log shows `"pe: resolved <N> imports from <DLL>"` for each DLL. `kernel32.dll!ExitProcess` resolves to a valid SSDT thunk. Unknown DLL produces warning log, not crash. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Notes:**
+> - PE32+ import resolver (pe.c): walks the Import Directory, resolves each imported name against sorted kernel32/ntdll export tables by binary search, writes the SSDT value into the IAT; unknown DLLs/functions/ordinals stubbed.
+> - Untrusted-PE hardening: wrap-safe subtraction-form RVA bounds, page-aware IAT writes (no cross-frame straddle), unmapped IAT writes counted as failures (-1), count caps (64 DLLs/4096 thunks), no per-thunk serial logging (DoS).
+> - Export tables are `static const` (.rodata), sort-invariant verified at boot (`pe_exports_sorted_check`); struct offsets pinned by pe.h static asserts.
+> - Canonical doc: PE/COFF import spec; consumed by the exec dispatcher / future PE runtime.
+> - Scope boundary: making the IAT actually CALLABLE (user-mode syscall trampolines) and validating RVAs against mapped pages are the open items below; SizeOfImage full-mapping is §8.
+
+> **Verified:** 2026-07-10 | commit `a1b6f8d5` | 5/8 items | build OK | exec 647 kernel + 16 user PASS | resolver bounds hardened
+> **Deferred:** [Critical] IAT holds raw SSDT service numbers, not callable addresses -- PE imports fault on call until user-mode syscall trampolines exist -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
+> **Deferred:** [H] import RVAs validated against SizeOfImage, not actual mapped pages -- a section-gap RVA faults the kernel -> XREF: 02-kernel-core/TODO-17 §9 (item: "Validate import RVAs against actually-mapped regions" at line 308)
+> **Deferred:** [M] resolver-walk logic untested (static fns + §8 pe_load Gate-8 block) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Add resolver-walk unit tests" at line 309)
+> **Quality reviewed:** 2026-07-10 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 3H+1M+2L fixed, 1Crit+1H+1M deferred | scope: kernel-code-quality
 
 ## 10. PE32+ Base Relocation
 

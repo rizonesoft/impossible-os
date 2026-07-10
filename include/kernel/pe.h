@@ -203,6 +203,15 @@ typedef struct pe_import_descriptor {
 
 _Static_assert(sizeof(pe_import_descriptor_t) == 20,
     "pe_import_descriptor_t must be 20 bytes");
+/* The resolver reads these fields by pointer-to-member on an untrusted image;
+ * pin the load-bearing PE/COFF ABI offsets so a field reorder (which keeps
+ * sizeof==20) cannot silently break every RVA read. */
+_Static_assert(__builtin_offsetof(pe_import_descriptor_t, OriginalFirstThunk) == 0x00,
+    "pe_import_descriptor_t.OriginalFirstThunk at 0x00");
+_Static_assert(__builtin_offsetof(pe_import_descriptor_t, Name) == 0x0C,
+    "pe_import_descriptor_t.Name at 0x0C");
+_Static_assert(__builtin_offsetof(pe_import_descriptor_t, FirstThunk) == 0x10,
+    "pe_import_descriptor_t.FirstThunk at 0x10");
 
 /* IMAGE_IMPORT_BY_NAME -- hint + function name string */
 typedef struct pe_import_by_name {
@@ -212,6 +221,8 @@ typedef struct pe_import_by_name {
 
 /* IMAGE_THUNK_DATA64 -- one entry in INT or IAT */
 #define PE_ORDINAL_FLAG64   (1ULL << 63)
+#define PE_THUNK64_SIZE     8   /* bytes per IMAGE_THUNK_DATA64 (INT/IAT entry) */
+#define PE_IMPORT_HINT_SIZE 2   /* bytes of IMAGE_IMPORT_BY_NAME.Hint before Name */
 
 /* Kernel-side export table entry: maps function name -> SSDT index */
 typedef struct pe_export_entry {

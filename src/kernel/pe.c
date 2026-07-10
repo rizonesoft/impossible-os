@@ -432,6 +432,41 @@ static uint32_t pe_strnlen(const char *s, uint32_t max)
 
 /* ---- Import resolver ----------------------------------------------- */
 
+/* Write an 8-byte LE value into an IAT entry at user VA `va`. The PE/COFF spec
+ * does NOT require the ILT/IAT to be 8-aligned, so an entry may straddle a 4 KiB
+ * page boundary; user pages are per-page frames whose virtual neighbours are NOT
+ * physical neighbours, so a naive 8-byte write off the first byte's physical
+ * address could corrupt an unrelated frame. Translate page-aware: the common
+ * (page-contained) case is one translation; a straddling entry pre-translates
+ * every byte's frame and aborts before any write if a covered page is unmapped,
+ * so a failed entry is never left partially written. Returns 1 on success, 0 if
+ * any covered page is unmapped. */
+static int pe_write_iat_entry(uint64_t va, uint64_t value)
+{
+    int b;
+
+    if ((va & (VMM_PAGE_SIZE - 1)) <= (VMM_PAGE_SIZE - PE_THUNK64_SIZE)) {
+        uint8_t *p = (uint8_t *)vmm_get_physical((uintptr_t)va);
+        if (p == (uint8_t *)0)
+            return 0;
+        for (b = 0; b < PE_THUNK64_SIZE; b++)
+            p[b] = (uint8_t)(value >> (b * 8));
+        return 1;
+    }
+
+    {
+        uintptr_t phys[PE_THUNK64_SIZE];
+        for (b = 0; b < PE_THUNK64_SIZE; b++) {
+            phys[b] = vmm_get_physical((uintptr_t)(va + b));
+            if (phys[b] == 0)
+                return 0;
+        }
+        for (b = 0; b < PE_THUNK64_SIZE; b++)
+            *(uint8_t *)phys[b] = (uint8_t)(value >> (b * 8));
+    }
+    return 1;
+}
+
 /* Resolve imports for one DLL. Returns number of resolved imports, or -1 on error. */
 static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
                                   const uint8_t *mapped_image,
@@ -441,8 +476,11 @@ static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
     uint32_t oft_rva  = read_u32((const uint8_t *)&desc->OriginalFirstThunk);
     uint32_t ft_rva   = read_u32((const uint8_t *)&desc->FirstThunk);
 
-    /* DLL name must be within image with room for at least 1 char + NUL */
-    if (name_rva + 2 > size_of_image) {
+    /* DLL name must be within image with room for at least 1 char + NUL.
+     * Subtraction form: name_rva is an attacker-controlled uint32, so a naive
+     * `name_rva + 2 > size_of_image` wraps at UINT32_MAX and passes, then the
+     * read below overreads ~4 GiB past image_base -- a kernel fault (no SEH). */
+    if (name_rva >= size_of_image || size_of_image - name_rva < 2) {
         klog(LOG_DEBUG, "pe", "Import DLL name RVA 0x%x outside image",
              (uint64_t)name_rva);
         return -1;
@@ -470,13 +508,15 @@ static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
 
     uint32_t resolved = 0;
     uint32_t stubbed = 0;
+    uint32_t write_failed = 0;   /* thunks whose IAT page was unmapped */
     uint32_t idx;
 
     for (idx = 0; idx < PE_MAX_THUNKS_PER_DLL; idx++) {
-        uint64_t int_offset = int_rva + (uint64_t)idx * 8;
-        uint64_t iat_offset = ft_rva + (uint64_t)idx * 8;
+        uint64_t int_offset = int_rva + (uint64_t)idx * PE_THUNK64_SIZE;
+        uint64_t iat_offset = ft_rva + (uint64_t)idx * PE_THUNK64_SIZE;
 
-        if (int_offset + 8 > size_of_image || iat_offset + 8 > size_of_image)
+        if (int_offset + PE_THUNK64_SIZE > size_of_image ||
+            iat_offset + PE_THUNK64_SIZE > size_of_image)
             break;
 
         /* Read INT entry (8 bytes, little-endian) */
@@ -490,76 +530,70 @@ static int pe_resolve_dll_imports(uint64_t image_base, uint32_t size_of_image,
 
         uint32_t ssdt_idx = (uint32_t)-1;
 
+        /* Per-thunk diagnostics are NOT logged here: a crafted PE can present
+         * up to PE_MAX_THUNKS_PER_DLL (4096) thunks across many DLLs, and a
+         * per-thunk klog (spinlock + synchronous serial) would let it stall the
+         * exec path for minutes. Outcomes are folded into the per-DLL summary. */
         if (thunk_val & PE_ORDINAL_FLAG64) {
             /* Import by ordinal -- not supported yet, stub it */
-            klog(LOG_DEBUG, "pe", "  ordinal import 0x%x -- stubbed",
-                 thunk_val & 0xFFFF);
             stubbed++;
         } else {
-            /* Import by name: thunk_val is RVA to IMAGE_IMPORT_BY_NAME */
+            /* Import by name: thunk_val is RVA to IMAGE_IMPORT_BY_NAME.
+             * Subtraction form (wrap-safe): hint_rva is attacker-controlled. */
             uint32_t hint_rva = (uint32_t)thunk_val;
-            if (hint_rva + 3 >= size_of_image) {
-                klog(LOG_DEBUG, "pe", "  hint RVA 0x%x outside image",
-                     (uint64_t)hint_rva);
+            if (hint_rva >= size_of_image || size_of_image - hint_rva < 3) {
                 stubbed++;
             } else {
-                /* Verify function name is NUL-terminated within image */
+                /* Verify function name is NUL-terminated within image. The
+                 * PE_IMPORT_HINT_SIZE (2) is the IMAGE_IMPORT_BY_NAME Hint that
+                 * precedes the name; guaranteed <= size_of_image - hint_rva by
+                 * the >= 3 check above, so the subtraction cannot underflow. */
                 const char *func_name =
-                    (const char *)(mapped_image + hint_rva + 2);
-                uint32_t func_max = size_of_image - hint_rva - 2;
+                    (const char *)(mapped_image + hint_rva + PE_IMPORT_HINT_SIZE);
+                uint32_t func_max = size_of_image - hint_rva - PE_IMPORT_HINT_SIZE;
                 if (func_max > PE_MAX_NAME_LEN) func_max = PE_MAX_NAME_LEN;
 
                 if (pe_strnlen(func_name, func_max) >= func_max) {
-                    klog(LOG_DEBUG, "pe",
-                         "  func name at hint RVA 0x%x not NUL-terminated",
-                         (uint64_t)hint_rva);
                     stubbed++;
                 } else {
-                    if (dll) {
+                    if (dll)
                         ssdt_idx = pe_lookup_export(dll, func_name);
-                        if (ssdt_idx != (uint32_t)-1)
-                            resolved++;
-                    }
 
-                    if (ssdt_idx == (uint32_t)-1) {
-                        klog(LOG_DEBUG, "pe",
-                             "  %s!%s -- unresolved, stubbed",
-                             dll_name, func_name);
+                    if (ssdt_idx != (uint32_t)-1)
+                        resolved++;
+                    else
                         stubbed++;
-                    }
                 }
             }
         }
 
-        /* Write SSDT thunk address into IAT.
-         * IAT pages were mapped in, so image_base + iat_offset is valid
-         * for any offset within size_of_image (already bounds-checked above).
-         * Write via the physical frame address (identity-mapped). */
-        uintptr_t iat_phys = vmm_get_physical(
-            (uintptr_t)(image_base + iat_offset));
-        if (iat_phys == 0) {
-            klog(LOG_DEBUG, "pe", "  IAT VA 0x%x not mapped -- skip",
-                 image_base + iat_offset);
-            continue;
-        }
-
+        /* Write the SSDT thunk value into the IAT via a page-aware write (the
+         * entry may be unaligned / straddle a page). An unmapped IAT page means
+         * the import could not actually be installed -- count it as a write
+         * failure rather than a silent success (a well-formed image maps every
+         * section page; a gap here is a malformed-PE signal). */
         uint64_t thunk_addr = (ssdt_idx != (uint32_t)-1)
             ? (uint64_t)ssdt_idx
             : PE_STUB_THUNK_ADDR;
 
-        uint8_t *iat_ptr = (uint8_t *)iat_phys;
-        iat_ptr[0] = (uint8_t)(thunk_addr);
-        iat_ptr[1] = (uint8_t)(thunk_addr >> 8);
-        iat_ptr[2] = (uint8_t)(thunk_addr >> 16);
-        iat_ptr[3] = (uint8_t)(thunk_addr >> 24);
-        iat_ptr[4] = (uint8_t)(thunk_addr >> 32);
-        iat_ptr[5] = (uint8_t)(thunk_addr >> 40);
-        iat_ptr[6] = (uint8_t)(thunk_addr >> 48);
-        iat_ptr[7] = (uint8_t)(thunk_addr >> 56);
+        if (!pe_write_iat_entry(image_base + iat_offset, thunk_addr))
+            write_failed++;
     }
 
-    klog(LOG_INFO, "pe", "pe: resolved %u imports from %s (%u stubbed)",
-         (uint64_t)resolved, dll_name, (uint64_t)stubbed);
+    /* One aggregate record per DLL (never per-thunk -- see the DoS note above).
+     * write_failed surfaces the unmapped-IAT gap instead of hiding it. */
+    if (write_failed)
+        klog(LOG_WARN, "pe",
+             "pe: resolved %u imports from %s (%u stubbed, %u IAT writes failed)",
+             (uint64_t)resolved, dll_name, (uint64_t)stubbed,
+             (uint64_t)write_failed);
+    else
+        klog(LOG_INFO, "pe", "pe: resolved %u imports from %s (%u stubbed)",
+             (uint64_t)resolved, dll_name, (uint64_t)stubbed);
+
+    /* Any IAT write failure is a structural resolution failure for this DLL. */
+    if (write_failed)
+        return -1;
 
     return (int)resolved;
 }
@@ -587,8 +621,6 @@ static int pe_resolve_imports(uint64_t image_base, uint32_t size_of_image,
         klog(LOG_DEBUG, "pe", "Import directory outside image bounds");
         return -1;
     }
-
-    POST16(0xD80E);
 
     /* The mapped image is at image_base (identity-mapped after mapping) */
     const uint8_t *mapped_image = (const uint8_t *)image_base;
@@ -625,8 +657,6 @@ static int pe_resolve_imports(uint64_t image_base, uint32_t size_of_image,
 
         dll_count++;
     }
-
-    POST16(0xD80F);
 
     klog(LOG_INFO, "pe", "pe: import resolution complete -- %u DLLs, %u total resolved",
          (uint64_t)dll_count, (uint64_t)total_resolved);
