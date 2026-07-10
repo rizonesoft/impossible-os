@@ -68,9 +68,9 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   4   | API version gating                          | §1                         |  [x]   |
 | ⭐   |   5   | Metadata section parser                     | §1                         |  [x]   |
 | ⭐   |   6   | LZ4 compressed segments                     | T03 §3                     |  [x]   |
-| ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
-| ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
-| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [ ]   |
+| ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [/]   |
+| ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [/]   |
+| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
 | 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [ ]   |
 | 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [ ]   |
 
@@ -234,7 +234,8 @@ Spec normative rule 5: skipped optional imports MUST have their dispatch table e
 - [ ] User code calling an unavailable optional import gets a clean `STATUS_NOT_IMPLEMENTED` return instead of a crash
 - [ ] Commit: `"kernel: eif -- optional import stub generation"`
 
-**Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. `POST16(0xDE2C)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** An EIF importing an unregistered optional SSDT entry gets `STATUS_NOT_IMPLEMENTED` (0xC0000002) return value, not a crash. Serial log shows `"eif: optional import 0x%x stubbed"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Deferred:** [M] Optional-import STUB slots (spec rule 5) blocked: the EIF dispatch table is data-only (`{syscall_id, available}`; user code checks availability before SYSCALL), and a callable stub needs the unsettled EIF import-CALL ABI plus a per-process read-only user stub page -> XREF: 02-kernel-core/TODO-17 §13 (item: "Generate import table -> the required-import CALL ABI" at line 388); per-process user mapping -> this TODO §9.
 
 ---
 
@@ -253,7 +254,8 @@ When `load_base=0`, the EIF binary is position-independent and should be loaded 
 - [ ] Log the randomized base: `"eif: ASLR base=0x%x"`
 - [ ] Commit: `"kernel: eif -- ASLR for position-independent binaries"`
 
-**Test checkpoint:** Over many loads of the same PIC EIF binary (`load_base=0`), the base varies over a measured entropy floor (not just "different twice"); a PIC binary carrying internal vtables/function-pointers executes correctly across many randomized bases. Non-PIC EIF (`load_base!=0`) loads at its preferred address. Serial: `"eif: ASLR base=0x%x"`. `POST16(0xDE2E)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Over many loads of the same PIC EIF binary (`load_base=0`), the base varies over a measured entropy floor (not just "different twice"); a PIC binary carrying internal vtables/function-pointers executes correctly across many randomized bases. Non-PIC EIF (`load_base!=0`) loads at its preferred address. Serial: `"eif: ASLR base=0x%x"`. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Deferred:** [M] EIF ASLR blocked: randomizing `load_base` over the shared identity-mapped user range gives ~0 real entropy -- meaningful ASLR needs process-PRIVATE image frames (§9) plus the kernel CSPRNG. Base-randomization mechanics also require `elf2eif` true-PIC emission -> XREF: this TODO §9 (per-process frames); `03-memory-concurrency/TODO-01 §3` (per-process physical isolation); `TODO-03-kernel-libraries.md §5` (CSPRNG).
 
 ---
 
@@ -270,6 +272,7 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 - [ ] Commit: `"kernel: eif -- per-process dispatch table isolation"`
 
 **Test checkpoint:** With per-process page tables enabled, two EIF processes with different import tables each observe isolated physical backing for the dispatch slot at `0x8F0000` (no cross-process bleed through the shared kernel map). A user-mode write attempt to the dispatch table pages faults. Serial log shows a clear per-process map message (exact substring documented in the implementation PR). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Deferred:** [M] Per-process dispatch-table isolation blocked on per-process page tables: the table at `0x8F0000` is identity-mapped in the shared kernel PML4 today, so unique per-process physical backing + User+RO protection need a per-process PML4 -> XREF: `01-boot-platform/TODO-10 §8` (per-process PML4 base); `03-memory-concurrency/TODO-01 §3` (per-process physical isolation).
 
 ---
 
