@@ -11,6 +11,7 @@
 #include "kernel/test/test.h"
 #include "kernel/exec.h"
 #include "kernel/eif.h"
+#include "kernel/nt/ssdt.h"
 #include "kernel/pe.h"
 #include "kernel/elf.h"
 #include "kernel/errno.h"
@@ -472,6 +473,150 @@ static void test_eif_struct_sizes(void)
 static void test_eif_constants(void)
 {
     TEST_ASSERT_EQ(EIF_FLAG_SIGNED, 8, "EIF_FLAG_SIGNED == 8");
+    TEST_ASSERT_EQ(EIF_MAX_IMPORTS, EIF_DISPATCH_TABLE_MAX,
+                   "EIF_MAX_IMPORTS == EIF_DISPATCH_TABLE_MAX");
+}
+
+/* Lay down a minimal valid EIF header (magic/version/arch, everything else
+ * zeroed) into buf. Each rule-6/7/8 rejection test below corrupts exactly one
+ * field; every one rejects during eif_validate or pass 1 of the segment walk,
+ * so none reach the pass-2 copy -- no user frame or PMM state is mutated. */
+static void eif_test_build_header(uint8_t *buf, uint64_t size)
+{
+    eif_header_t *h = (eif_header_t *)buf;
+    uint64_t k;
+    for (k = 0; k < size; k++)
+        buf[k] = 0;
+    h->magic = EIF_MAGIC;
+    h->version = EIF_VERSION;
+    h->arch = EIF_ARCH_X86_64;
+    h->load_base = 0;
+}
+
+/* Rule 6: segment_count above the loader cap is rejected before the table is
+ * walked. */
+static void test_eif_reject_too_many_segments(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = EIF_MAX_SEGMENTS + 1;
+    h->segment_offset = sizeof(eif_header_t);
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects segment_count over EIF_MAX_SEGMENTS");
+}
+
+/* Rule 6: import_count above the loader cap is rejected before the table is
+ * walked (and before it could overrun the dispatch table it writes). */
+static void test_eif_reject_too_many_imports(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 0;
+    h->import_count = EIF_MAX_IMPORTS + 1;
+    h->import_offset = sizeof(eif_header_t);
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects import_count over EIF_MAX_IMPORTS");
+}
+
+/* Rule 8: a metadata_offset pointing past the end of an unsigned file is
+ * rejected (its range [metadata_offset, file_size) would be empty/OOB). */
+static void test_eif_reject_metadata_out_of_bounds(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->metadata_offset = sizeof(buf) + 0x1000;  /* past EOF, unsigned file */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects metadata_offset past end of file");
+}
+
+/* Rule 7: segments must be sorted by ascending, non-overlapping vaddr. Two
+ * BSS-only segments (file_size 0) at the same vaddr are individually valid but
+ * overlap; rejected in pass 1 before any copy. */
+static void test_eif_reject_unsorted_segments(void)
+{
+    uint8_t buf[128];  /* 64-byte header + two 32-byte segment entries */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 2;
+    h->segment_offset = sizeof(eif_header_t);
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg[0].vaddr = USER_ELF_BASE; seg[0].file_offset = 0;
+    seg[0].file_size = 0; seg[0].mem_size = 0x1000; seg[0].flags = EIF_SEG_READ;
+    seg[1].vaddr = USER_ELF_BASE; seg[1].file_offset = 0;
+    seg[1].file_size = 0; seg[1].mem_size = 0x1000; seg[1].flags = EIF_SEG_READ;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects non-ascending/overlapping segments");
+}
+
+/* Atomicity (validation precedes mutation): a file with a VALID segment but an
+ * out-of-range entry point is rejected in the validation phase, before any
+ * segment is copied -- so a failed exec cannot overwrite the prior image. */
+static void test_eif_reject_bad_entry_valid_segments(void)
+{
+    uint8_t buf[96];  /* 64-byte header + one 32-byte segment */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_END + 0x1000;  /* out of user range */
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE; seg->file_offset = 0;
+    seg->file_size = 0; seg->mem_size = 0x1000; seg->flags = EIF_SEG_READ;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects out-of-range entry point with valid segments");
+}
+
+/* Atomicity: a file with a VALID segment but an out-of-range REQUIRED import is
+ * rejected in the validation phase (imports are validated before the copy). */
+static void test_eif_reject_bad_import_valid_segments(void)
+{
+    uint8_t buf[104];  /* header + one segment + one import */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_import_t *imp;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->import_count = 1;
+    h->import_offset = sizeof(eif_header_t) + sizeof(eif_segment_t);
+    h->entry_point = USER_ELF_BASE;  /* entry_va valid; isolates the import fail */
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE; seg->file_offset = 0;
+    seg->file_size = 0; seg->mem_size = 0x1000; seg->flags = EIF_SEG_READ;
+    imp = (eif_import_t *)(buf + sizeof(eif_header_t) + sizeof(eif_segment_t));
+    /* SSDT_MAIN_MAX (0x400) is the FIRST id past the main table -- ssdt_dispatch
+     * cannot reach it, so a required import here must be rejected before mutation
+     * (the index-mask 0x0FFF bound would have wrongly accepted it). */
+    imp->syscall_id = SSDT_MAIN_MAX;
+    imp->flags = 0;                          /* required (not OPTIONAL) */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects out-of-range required import with valid segments");
+}
+
+/* Rule 3 canonical order: an unsigned file (SIGNED flag clear) must have
+ * signature_offset == 0. A non-zero signature_offset on an unsigned file is
+ * rejected so it cannot truncate its own metadata range. */
+static void test_eif_reject_unsigned_with_signature(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    /* EIF_FLAG_SIGNED intentionally NOT set */
+    h->signature_offset = 32;  /* non-zero, in-file */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects unsigned file with non-zero signature_offset");
 }
 
 /* ---- Registration ---- */
@@ -524,6 +669,13 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: too small", test_eif_too_small, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: struct sizes", test_eif_struct_sizes, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: constants", test_eif_constants, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject too many segments", test_eif_reject_too_many_segments, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject too many imports", test_eif_reject_too_many_imports, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject metadata OOB", test_eif_reject_metadata_out_of_bounds, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject unsorted segments", test_eif_reject_unsorted_segments, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject bad entry", test_eif_reject_bad_entry_valid_segments, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject bad import", test_eif_reject_bad_import_valid_segments, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject unsigned+sig", test_eif_reject_unsigned_with_signature, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

@@ -31,6 +31,16 @@
 #define EIF_ARCH_X86_64   1
 #define EIF_ARCH_AARCH64  2
 
+/* Count caps (spec rule 6): segment_count/import_count are 32-bit and bounded
+ * only by table-fits-file, so an uncapped count lets a crafted EIF drive the
+ * loader's per-entry walk for billions of iterations -- an exec-path DoS. Both
+ * are rejected before any table is walked. EIF_MAX_SEGMENTS 64 matches
+ * ELF_MAX_PHNUM and the module-registry cap; EIF_MAX_IMPORTS mirrors the
+ * dispatch table size (asserted equal to EIF_DISPATCH_TABLE_MAX below). Both
+ * are far above any real binary. */
+#define EIF_MAX_SEGMENTS  64
+#define EIF_MAX_IMPORTS   1024
+
 /* ---- Header flags ------------------------------------------------------- */
 
 #define EIF_FLAG_GUI        (1u << 0)
@@ -109,6 +119,12 @@ typedef struct eif_dispatch_entry {
 
 _Static_assert(sizeof(eif_dispatch_entry_t) == 8,
     "eif_dispatch_entry_t must be 8 bytes");
+
+/* The import-count cap and the dispatch table capacity are the same limit:
+ * every accepted import writes one dispatch entry, so a count the validator
+ * admits must fit the table the loader writes. Pin them together. */
+_Static_assert(EIF_MAX_IMPORTS == EIF_DISPATCH_TABLE_MAX,
+    "EIF_MAX_IMPORTS must equal EIF_DISPATCH_TABLE_MAX");
 
 /* ---- Loader API --------------------------------------------------------- */
 
