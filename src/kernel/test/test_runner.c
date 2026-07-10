@@ -448,6 +448,7 @@ extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
 extern void test_register_exec(void);
+extern void test_register_kimage(void);
 extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
@@ -541,6 +542,7 @@ void test_runner_init(void)
 
     /* Exec / Binary System */
     test_register_exec();
+    test_register_kimage();
     test_register_usermode_launcher();
     test_register_fastpath_hardening();
 

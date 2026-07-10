@@ -43,7 +43,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 | ⭐   | Order | Deliverable                             | Depends On        | Status |
 | --- | :---: | --------------------------------------- | ----------------- | :----: |
-| 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [ ]   |
+| 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [x]   |
 | 💎   |   2   | Global and per-process image registries | T17, D04 T05      |  [ ]   |
 | 💎   |   3   | Address range index                     | Ex generic table  |  [ ]   |
 | 💎   |   4   | Symbol provider abstraction             | symtab            |  [ ]   |
@@ -56,12 +56,22 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## 1. `KIMAGE_ENTRY` Data Model
 
-- [ ] Define `KIMAGE_ENTRY`: base, size, type, format, flags, name, full path, section count, timestamp, checksum/hash, signer, CI decision, owner PID, load order, refcount.
-- [ ] Include optional pointers for symbols, unwind ranges, exports, imports, relocation info, and debug info.
-- [ ] Image types: kernel, HAL/platform, boot module, driver, kmod, process main image, DLL/shared library, EIF module, synthetic/stub.
-- [ ] Commit: `"kernel: kimage -- KIMAGE_ENTRY data model"`
+- [x] Define `kimage_entry_t` (832 B, offsets pinned) in `include/kernel/kimage.h`: canonical `kimage_format_t` (UNKNOWN=0, not EXEC_FMT_*) + embedded `EX_RUNDOWN_REF life` gate (avoids a check-then-increment unload race).
+- [x] Provenance/identity fields: SHA-256 `hash[32]`, durable `identity[32]` (ELF build-id / PE CodeView / EIF build_id, survives into tombstones), `signer[64]`, `full_path[VFS_MAX_PATH]` + explicit length, `name[64]`.
+- [x] Optional metadata handles (symbols, unwind_ranges, exports, imports, relocations, debug_info) as 0-until-populated hook points for §4/§5/§6; documented process-local, not durable across unload.
+- [x] `kimage_type_t` role enum, independent from format: kernel, HAL/platform, boot module, driver, kmod, process, DLL, EIF module, synthetic/stub.
+- [x] Record invariants documented in kimage.h (copy-safety of `life`/handles; bounded NUL-terminated strings); enforced by the §2 validator, tombstone copy-safety owned by §8.
+- [x] Commit: `"kernel: kimage -- KIMAGE_ENTRY data model"`
 
-**Test checkpoint:** `sizeof(KIMAGE_ENTRY)` matches the `_Static_assert`; a populated entry round-trips every field. Unit test asserts type/format enums are distinct and the flags bitmask is non-overlapping. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** `sizeof(kimage_entry_t)` is 832 (compile-time `_Static_assert` + runtime assert); a valid populated entry round-trips every field with NUL-terminated in-capacity strings; the flags bitmask is single-bit non-overlapping; a zero-init entry classifies as UNKNOWN (not ELF); the embedded rundown gate acquires then refuses after rundown. Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 4 KImage suites, 0 failures
+>
+> **Notes:**
+> - Shipped `include/kernel/kimage.h` (`kimage_entry_t` 832 B, 4 enums, `KIMAGE_FLAG_*` bitmask, pinned offset/size asserts) + `src/kernel/test/test_kimage.c` (4 suites: flags, zero-init-UNKNOWN, lifetime gate, field round-trip).
+> - Header-only data model; tests registered in `test_runner.c`, run under `SUITE=exec`. Design + adversarial adoptions (rundown gate, canonical format, durable identity, VFS_MAX_PATH) are in the commit message.
+> - Metadata handles / `life` gate / `identity` are 0-until-populated hook points for later sections; nothing populates the registry yet.
+> - Canonical doc: the `include/kernel/kimage.h` record-invariants contract block.
+> - Scope: §1 owns the data model only. §2 owns registries + the common validator; §4 symbols, §5 unwind, §8 tombstone copy-safety.
 
 ---
 
@@ -73,6 +83,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] PEB `Ldr` three-list shape (InLoadOrder / InMemoryOrder / InInitializationOrder) is owned by T17; consume its list APIs here, do not define a fourth list. -> XREF: TODO-17 §3 (LDR module list).
 - [ ] Atomic publish transaction: stage every allocation (KIMAGE + three PEB lists + index nodes), commit membership in one step, reverse-roll-back on failure -- fixes the partial-publish divergence in `exec_register_module`.
 - [ ] Fire load notifications only after commit; unload removes in symmetric reverse order. Test injected failure at every publish stage; assert membership + list order, not just counts.
+- [ ] Common `kimage_entry_t` validator every producer calls before publish, enforcing the kimage.h record invariants (bounded `identity_len`, NUL-terminated in-capacity path/name/signer). Add the length/termination rejection tests here.
 - [ ] Commit: `"kernel: kimage -- global and per-process registries"`
 
 **Test checkpoint:** Registering N images and iterating returns exactly N under a spinlock/rundown; concurrent register/unregister on two CPUs leaves the count consistent. Serial log shows `"kimage: registered '<name>' (global|pid=<N>)"`. Test on: QEMU WHPX + TCG; bare metal.
@@ -152,6 +163,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Crash dumps emit module stream from `KIMAGE_ENTRY`.
 - [ ] Panic screen "what failed" uses address-to-image lookup.
 - [ ] Bounded recently-unloaded tombstone ring (parity 💎, Win `MmUnloadedDrivers`): identity + canonical path + ranges + build-id/hash + PID + unload time; panic-safe overwrite ring; consulted on a live-registry miss.
+- [ ] Tombstone/snapshot is copy-SAFE: field-copy the durable fields and re-init a fresh gate; never raw-memcpy a live `kimage_entry_t` (its `life` is a live atomic; handles are process-local). Per the kimage.h copy-safety invariant.
 - [ ] `dmpanalyze.exe` consumes same serialized format, including the unloaded ring.
 - [ ] Serialize the tombstone ring as an unloaded-modules stream via the existing MDMP stream framework (TODO-27 §4, already shipped) -- T18 owns the ring; the dump writer emits it as extra module entries. -> XREF: TODO-27 §4.
 - [ ] Reciprocal: KD exposes an unloaded-module (`lm`-style) query. -> XREF: TODO-29 §11 (module list; add unloaded query).
