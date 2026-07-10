@@ -86,7 +86,10 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
              (uint64_t)hdr->api_version, (uint64_t)EIF_CURRENT_API_VERSION);
         return 0;
     }
-    klog(LOG_DEBUG, "eif", "accepted api_version %u", (uint64_t)hdr->api_version);
+    /* No accept-path log here: eif_validate() runs inside eif_load's timed
+     * region (start_ns..end_ns), and klog's spinlock + synchronous serial I/O
+     * would inflate the <10 us load budget the region measures. The aggregate
+     * success record after the timer stops already reports a successful load. */
 
     /* Segment table bounds + count cap. The cap bounds the O(n^2) segment
      * overlap walk in eif_load; the 64-bit end computation is wrap-safe. */

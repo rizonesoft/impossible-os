@@ -147,7 +147,7 @@ The `api_version` field is the minimum OS API version a binary requires. `eif_va
 
 - [x] `EIF_CURRENT_API_VERSION 1` in `include/kernel/eif.h`.
 - [x] `eif_validate()` rejects `hdr->api_version > EIF_CURRENT_API_VERSION` with a descriptive `klog` ("binary requires API version %u, OS provides %u"); v0 (unset) and <= current stay compatible.
-- [x] Accepted `api_version` logged at DEBUG ("accepted api_version %u").
+- [x] Accept path is silent inside `eif_load`'s timed region (a klog there would inflate the `<10 us` load budget); the aggregate `eif_load` success record reports the load.
 - [x] Commit: `"kernel: eif -- API version gating"`
 
 **Test checkpoint:** an EIF with `api_version = EIF_CURRENT_API_VERSION + 1` is rejected; `api_version` 0 or 1 passes the gate. Covered by `test_eif_reject_api_version_too_new` (test_exec.c, TEST_CAT_EXEC). EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -159,6 +159,10 @@ The `api_version` field is the minimum OS API version a binary requires. `eif_va
 > - Closes the TODO-20 §1 review Accepted-XREF (api_version was unenforced -> now owned + done here).
 > - Canonical doc: `specs/eif-format.md` Normative Rule 4.
 > - Scope: §4 gates the header `api_version` only; per-import capability/version negotiation is not an EIF concern.
+> - Review: Codex 3x all clean; 1 LOW fixed (removed accept-path klog inside the timed load region); re-adversarial N/A (log-only fix, no logic change).
+>
+> **Verified:** 2026-07-10 | commit `63640f25` | 4/4 items | build OK | tests 713+16 PASS
+> **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) | 0H+0M+1L fixed | scope: kernel-code-quality
 
 ---
 
@@ -282,7 +286,7 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 | 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 reserved, ring-3 unowned |
 | ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                        |
 | ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
-| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ⬜ §4                            |
+| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                            |
 | ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ⬜ §5                            |
 | ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ⬜ §6                            |
 | ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                            |
