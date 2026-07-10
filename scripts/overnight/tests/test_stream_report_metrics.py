@@ -19,7 +19,7 @@ def _run(events, metrics_path, extra_env=None):
     return proc.stdout
 
 
-def _assistant(usage=None, tools=None, model=None):
+def _assistant(usage=None, tools=None, model=None, parent=None):
     content = []
     if tools:
         for name, inp in tools:
@@ -29,7 +29,10 @@ def _assistant(usage=None, tools=None, model=None):
         msg["usage"] = usage
     if model is not None:
         msg["model"] = model
-    return {"type": "assistant", "message": msg}
+    event = {"type": "assistant", "message": msg}
+    if parent is not None:
+        event["parent_tool_use_id"] = parent
+    return event
 
 
 def _usage(i=0, o=0, cr=0, cc=0):
@@ -96,6 +99,27 @@ def test_model_change_mid_run_logged():
         assert "model changed: claude-opus-4-1-20250805 -> claude-sonnet-5-20260101" in out
 
 
+def test_sidechain_model_ignored():
+    # Subagent sidechain events (parent_tool_use_id set) run the analyst
+    # fleet's model; they must not read as a main-loop fallback flip.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=1), model="claude-opus-4-1-20250805"),
+            _assistant(_usage(o=1), model="claude-sonnet-5-20260101",
+                       parent="toolu_01subagent"),
+            _assistant(_usage(o=1), model="claude-opus-4-1-20250805"),
+            {"type": "result", "result": "done", "usage": _usage(o=1)},
+        ]
+        out = _run(events, mp, {"OVERNIGHT_MODEL": "opus"})
+        assert "model confirmed: claude-opus-4-1-20250805" in out
+        assert "model changed" not in out
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        assert recs[-1]["model"] == "claude-opus-4-1-20250805"
+        # sidechain usage still counts toward the shared token pool
+        assert sum(r["output_tokens"] for r in recs) == 3
+
+
 def test_model_inherit_skips_validation():
     with tempfile.TemporaryDirectory() as d:
         mp = pathlib.Path(d) / "m.jsonl"
@@ -118,6 +142,7 @@ if __name__ == "__main__":
     test_model_confirmed_matches_expected_no_warning()
     test_model_mismatch_warns()
     test_model_change_mid_run_logged()
+    test_sidechain_model_ignored()
     test_model_inherit_skips_validation()
     test_no_env_writes_nothing()
     print("PASS: stream-report metrics")

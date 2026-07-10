@@ -216,11 +216,14 @@ class SectionMetrics:
         self.lsp_calls = 0
 
     def note_model(self, model) -> None:
-        """Log the ACTUAL model id from each assistant turn's API response --
-        not just the --model flag the launcher was invoked with. Closes a
-        real gap: overnight-launch.sh echoes its own CLI args at startup, but
-        nothing confirmed which model actually produced the work, or caught a
-        mid-run fallback-to-sonnet (or a wrong-default regression) silently.
+        """Log the ACTUAL model id from each MAIN-LOOP assistant turn's API
+        response -- not just the --model flag the launcher was invoked with.
+        Closes a real gap: overnight-launch.sh echoes its own CLI args at
+        startup, but nothing confirmed which model actually produced the work,
+        or caught a mid-run fallback-to-sonnet (or a wrong-default regression)
+        silently. Caller must NOT feed sidechain (subagent) events here: the
+        analyst fleet legitimately runs Sonnet, and its messages interleave
+        with the main loop in the same stream.
         """
         if not isinstance(model, str) or not model:
             return
@@ -278,7 +281,11 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
     kind = event.get("type")
     if kind == "assistant":
         message = event.get("message") or {}
-        metrics.note_model(message.get("model"))
+        # parent_tool_use_id marks a subagent sidechain event; those carry the
+        # SUBAGENT's model (Sonnet analyst fleet), so only main-loop events
+        # (parent_tool_use_id absent/null) witness a genuine fallback flip.
+        if not event.get("parent_tool_use_id"):
+            metrics.note_model(message.get("model"))
         metrics.add_usage(message.get("usage"))
         for block in message.get("content") or []:
             if block.get("type") == "text" and block.get("text"):
