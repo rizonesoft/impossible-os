@@ -172,17 +172,17 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## OS Comparison
 
-| ⭐   | Feature                    | 🪟 Win11                        | 🐧 Linux                     | 🚀 Impossible OS                  |
-| --- | -------------------------- | ------------------------------ | --------------------------- | -------------------------------- |
-| 💎   | Loaded-image registry      | ✅ PsLoadedModuleList           | ✅ /proc/modules + vmap      | 🔄 §1-§2 KIMAGE_ENTRY registries  |
-| 💎   | Address-to-image lookup    | ✅ KLDR range tables            | ✅ __module_address          | 🔄 §3 interval index + per-CPU cache |
-| 💎   | Symbol resolution          | ✅ DbgHelp/PDB                   | ✅ kallsyms                  | 🔄 §4 provider abstraction        |
-| 💎   | Unwind metadata registry   | ✅ RtlLookupFunctionEntry        | ⚠️ .eh_frame per-object      | 🔄 §5 unified .pdata/.eh_frame/EIF |
-| ⭐   | Format-agnostic image list | ⚠️ PE only                      | ⚠️ ELF only                  | 🔄 §1-§6 PE + ELF + EIF + kmod     |
-| 💎   | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine   | ⚠️ module notifier chain     | 🔄 §7 Executive callbacks         |
-| 💎   | Crash-dump module stream   | ✅ MINIDUMP module list          | ✅ ELF core NT_FILE          | 🔄 §8 KIMAGE_ENTRY module stream   |
-| ⭐   | Image provenance + CI      | ⚠️ CI.dll separate               | ⚠️ IMA/module sig separate   | 🔄 §9 unified provenance record   |
-| ⭐   | Hotpatch metadata slot     | ✅ hotpatch pointers             | ⚠️ livepatch separate        | ⬜ §9 reserved fields             |
+| ⭐   | Feature                    | 🪟 Win11                       | 🐧 Linux                    | 🚀 Impossible OS                     |
+| --- | -------------------------- | ----------------------------- | -------------------------- | ----------------------------------- |
+| 💎   | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap     | 🔄 §1-§2 KIMAGE_ENTRY registries     |
+| 💎   | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address         | 🔄 §3 interval index + per-CPU cache |
+| 💎   | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms                 | 🔄 §4 provider abstraction           |
+| 💎   | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ⚠️ .eh_frame per-object    | 🔄 §5 unified .pdata/.eh_frame/EIF   |
+| ⭐   | Format-agnostic image list | ⚠️ PE only                    | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
+| 💎   | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine | ⚠️ module notifier chain   | 🔄 §7 Executive callbacks            |
+| 💎   | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE         | 🔄 §8 KIMAGE_ENTRY module stream     |
+| ⭐   | Image provenance + CI      | ⚠️ CI.dll separate            | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
+| ⭐   | Hotpatch metadata slot     | ✅ hotpatch pointers           | ⚠️ livepatch separate      | ⬜ §9 reserved fields                |
 
 > **After §1-§6:** a single loader-independent image registry (PE/ELF/EIF/kmod) with fast address/symbol/unwind lookup that every subsystem shares.
 > **After §7-§9:** load notifications, crash-dump/KD module streams, and unified provenance/CI/hotpatch metadata -- one source of truth Windows and Linux split across several subsystems.
