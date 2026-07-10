@@ -62,7 +62,7 @@ title: "TODO-20 -- EIF Full Implementation"
 
 | ⭐   | Order | Deliverable                                 | Depends On                 | Status |
 | --- | :---: | ------------------------------------------- | -------------------------- | :----: |
-| ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [ ]   |
+| ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
 | 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [ ]   |
 | ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [ ]   |
 | ⭐   |   4   | API version gating                          | §1                         |  [ ]   |
@@ -81,15 +81,23 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## 1. Range Overlap Validation (Normative Rule 2)
 
-The spec mandates `segment_offset < import_offset < metadata_offset < signature_offset` (metadata ALWAYS precedes the signature so the signature covers it, per `specs/eif-format.md` Normative Rules 2-3) and that all ranges must be non-overlapping. The current loader checks individual bounds but not inter-range ordering or overlap.
+The spec mandates `segment_offset < import_offset < metadata_offset < signature_offset` (metadata ALWAYS precedes the signature so the signature covers it, per `specs/eif-format.md` Normative Rules 2-3) and that all ranges must be non-overlapping. Shipped: `eif_validate()` enforces the canonical order + non-overlap, and `eif_load` enforces per-segment data non-overlap.
 
-- [ ] In `eif_validate()`: after individual bounds checks, verify ordering: `segment_table_end <= import_offset` (when imports exist), `import_table_end <= metadata_offset` (when metadata exists), `metadata_end <= signature_offset` (when signed)
-- [ ] Verify no segment data range overlaps another segment's data range
-- [ ] Verify segment data ranges don't overlap the segment table, import table, signature, or metadata
-- [ ] Reject files violating any overlap constraint with `ENOEXEC` and descriptive log message
-- [ ] Commit: `"kernel: eif -- normative range overlap validation"`
+- [x] `eif_validate()` enforces canonical ordering via an ascending cursor: segment table -> import table -> metadata -> signature, each starting at/after the previous end, skipping absent (0) regions (`src/kernel/eif.c`).
+- [x] Per-segment file-data non-overlap: an O(n) monotonic walk in `eif_load` rejects a segment whose `[file_offset, file_size)` precedes the previous end (spec rule 7).
+- [x] Segment data confined to the canonical region `[tables_end, data_limit)` (after both tables, before metadata/signature) -- data cannot overlap the tables/metadata/signature.
+- [x] Rejection returns 0 -> `exec_load_fmt` maps to `ENOEXEC`; each reject emits a descriptive `klog(..., "eif", ...)` (e.g. "Segment table out of canonical order").
+- [x] Commit: `"kernel: eif -- normative range overlap validation"` (already shipped)
 
-**Test checkpoint:** An EIF with overlapping segment data ranges is rejected with `"eif: range overlap"` in serial log. An EIF with import_offset < segment_table_end is rejected. Valid EIF with correct ordering still loads. `POST16(0xDE20)` on entry, `POST16(0xDE21)` after validation. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** An EIF whose segment file ranges overlap is rejected (`"Segment %u file range overlaps previous segment"`); an EIF with `import_offset` before the segment-table end is rejected (`"Import table out of canonical order"`); a valid ordered EIF still loads. Covered by `test_eif_reject_out_of_order_sections` + `test_eif_reject_segment_data_over_table` in `test_exec.c` (TEST_CAT_EXEC). EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF range-overlap suites, 0 failures
+>
+> **Notes:**
+> - Shipped (prior EIF hardening, this reconciliation only flips the checkboxes): `eif_validate()` canonical-order cursor (`src/kernel/eif.c`) + `eif_load` per-segment vaddr/file non-overlap walk + segment-data-in-canonical-region check.
+> - All range math is u64-widened + overflow-safe (check-before-subtract); absent (0) regions are skipped; rejects via `return 0` -> `ENOEXEC` with `klog(..., "eif", ...)`.
+> - Tests: `test_eif_reject_out_of_order_sections` + `test_eif_reject_segment_data_over_table` (test_exec.c, TEST_CAT_EXEC).
+> - Canonical doc: `specs/eif-format.md` Normative Rules 2, 6, 7.
+> - Scope: §1 owns file-range ordering/overlap; the finer segment-data-vs-metadata overlap tie-in rides with signing (§11 + TODO-17 §17); VA-range/dispatch-table guards are in `eif_load` (§9 owns per-process isolation).
 
 ---
 
