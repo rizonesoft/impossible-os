@@ -217,20 +217,20 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   | Kernel CI engine           | ✅ ci.dll (CI/WDAC)               | ✅ IMA/EVM appraisal            | 🔄 §1-§2 ci_validate_image + policy    |
 | 💎   | Enforce/audit mode split   | ✅ WDAC audit vs enforce          | ✅ IMA log vs enforce           | 🔄 §1 explicit mode enum               |
 | 💎   | Embedded signatures        | ✅ Authenticode                   | ✅ PE/module appended sig       | 🔄 §4 EIF trailer + PE Authenticode    |
-| 💎   | Catalog signatures         | ✅ .cat catalog store             | ⚠️ IMA sig files                | 🔄 §5 catalog DB (hash->signer)        |
-| 💎   | Revocation                 | ✅ CRL / dbx / revoked hashes     | ⚠️ manual keyring revoke        | 🔄 §6 revoked-hash + signer deny       |
-| 💎   | Measured/Secure Boot bind  | ✅ HVCI + PCR policy binding      | ✅ IMA + TPM PCR                 | 🔄 §7 policy digest -> PCR + SB refuse  |
+| 💎   | Catalog signatures         | ✅ .cat catalog store             | ⚠️ IMA sig files               | 🔄 §5 catalog DB (hash->signer)        |
+| 💎   | Revocation                 | ✅ CRL / dbx / revoked hashes     | ⚠️ manual keyring revoke       | 🔄 §6 revoked-hash + signer deny       |
+| 💎   | Measured/Secure Boot bind  | ✅ HVCI + PCR policy binding      | ✅ IMA + TPM PCR                | 🔄 §7 policy digest -> PCR + SB refuse |
 | 💎   | Driver signing enforce     | ✅ WHQL / boot-start classes      | ✅ CONFIG_MODULE_SIG            | 🔄 §8 signer-class + boot hash table   |
-| ⭐   | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig               | 🔄 §3 Ed25519 as native algorithm      |
-| ⭐   | CI decision in image reg   | ⚠️ separate CI state             | ❌ none unified                 | 🔄 §9 -> TODO-18 §9 provenance field    |
-| ⭐   | CI query syscall           | ✅ SystemCodeIntegrityInformation | ⚠️ /sys/kernel/security/ima     | 🔄 §10 NtQuery/NtSet + ci_dump_policy   |
-| 💎   | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle             | 🔄 §4 validate each paged-in page       |
-| 💎   | Layered trust anchors      | ⚠️ cert-store roots               | ✅ 4-tier keyring               | 🔄 §1 role-separated anchor tiers       |
-| 💎   | Signed/versioned policy    | ✅ signed WDAC policy + rollback  | ⚠️ keyring, no policy artifact  | 🔄 §1 authenticate policy provenance    |
-| 💎   | Measurement-only mode      | ⚠️ audit only                     | ✅ IMA measure vs appraise      | 🔄 §1 measure mode -> PCR aggregate     |
-| ⭐   | Dynamic/JIT code admission | ✅ dynamic code policy (.NET)     | ⚠️ W^X, no CI hook              | 🔄 §2 ci_validate_dynamic_code          |
-| ⭐   | Policy self-protection     | ✅ HVCI VTL-isolated CI           | ⚠️ lockdown, same ring          | 🔄 §1 RO-after-lock policy page          |
-| ⭐   | Tamper-evident CI audit    | ⚠️ ETW (mutable)                  | ⚠️ audit log (mutable)          | 🔄 §10 -> T04 §10 HMAC-chain            |
+| ⭐   | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig              | 🔄 §3 Ed25519 as native algorithm      |
+| ⭐   | CI decision in image reg   | ⚠️ separate CI state             | ❌ none unified                 | 🔄 §9 -> TODO-18 §9 provenance field   |
+| ⭐   | CI query syscall           | ✅ SystemCodeIntegrityInformation | ⚠️ /sys/kernel/security/ima    | 🔄 §10 NtQuery/NtSet + ci_dump_policy  |
+| 💎   | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle             | 🔄 §4 validate each paged-in page      |
+| 💎   | Layered trust anchors      | ⚠️ cert-store roots              | ✅ 4-tier keyring               | 🔄 §1 role-separated anchor tiers      |
+| 💎   | Signed/versioned policy    | ✅ signed WDAC policy + rollback  | ⚠️ keyring, no policy artifact | 🔄 §1 authenticate policy provenance   |
+| 💎   | Measurement-only mode      | ⚠️ audit only                    | ✅ IMA measure vs appraise      | 🔄 §1 measure mode -> PCR aggregate    |
+| ⭐   | Dynamic/JIT code admission | ✅ dynamic code policy (.NET)     | ⚠️ W^X, no CI hook             | 🔄 §2 ci_validate_dynamic_code         |
+| ⭐   | Policy self-protection     | ✅ HVCI VTL-isolated CI           | ⚠️ lockdown, same ring         | 🔄 §1 RO-after-lock policy page        |
+| ⭐   | Tamper-evident CI audit    | ⚠️ ETW (mutable)                 | ⚠️ audit log (mutable)         | 🔄 §10 -> T04 §10 HMAC-chain           |
 
 > **After §1-§6:** a kernel CI decision point every loader calls, with policy modes, embedded + catalog signatures, and revocation that overrides allow.
 > **After §7-§10:** Secure-Boot/TPM binding, driver vs user enforcement split, CI decisions surfaced in the image registry + crash dumps, and native policy-query syscalls.
