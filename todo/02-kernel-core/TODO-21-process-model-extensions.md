@@ -54,7 +54,7 @@ title: "TODO-21 -- Process Model Extensions"
 | ⭐   | Order | Deliverable                                               | Depends On     | Status |
 | --- | :---: | --------------------------------------------------------- | -------------- | :----: |
 | 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS            |  [x]   |
-| 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3         |  [ ]   |
+| 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3         |  [/]   |
 | 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5    |  [ ]   |
 | 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists) |  [ ]   |
 | 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | §4             |  [ ]   |
@@ -122,7 +122,9 @@ When a process is created, `STD_INPUT_HANDLE` (0), `STD_OUTPUT_HANDLE` (1), and 
 - [ ] When `NtCreateProcess` gains a caller-supplied UTF-16 environment block, set `CREATE_UNICODE_ENVIRONMENT` in creation flags per Microsoft Learn ("Changing Environment Variables"); coordinate with D02 T22 §10 and D02 T12 §7 (distinct from firmware `NtQuerySystemEnvironmentValue*` at SSDT indices 0x00D2 through 0x00D6).
 - [ ] Commit: `"kernel: task -- STD handle pre-wiring at process creation"`
 
-**Test checkpoint:** After `task_create()`, `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles in the process handle table. `WriteFile(STD_OUTPUT_HANDLE, ...)` produces console output. `DuplicateHandle` into child works for I/O redirection. `POST16(0xD020)` on entry, `POST16(0xD021)` after handles wired. Range `0xD02x` confirmed free. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** After `task_create()`, `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` are valid handles in the process handle table. `WriteFile(STD_OUTPUT_HANDLE, ...)` produces console output. `DuplicateHandle` into child works for I/O redirection. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [M] STD-handle pre-wiring is blocked on the console I/O endpoint model: the project uses PIPE-based console I/O (`pipe_create`/`pipe_read`/`pipe_write`), not the "keyboard VFS node / framebuffer console VFS node" this section assumes -- those device nodes do not exist. The terminal wires shell stdin/stdout pipes at spawn; a default console endpoint for arbitrary `task_create` processes is not defined yet. Pre-wire STD slots to those endpoints once the process-creation console model is settled -> XREF: `09-desktop-shell/TODO-08-terminal.md §1` (item: "pipe shell stdout → terminal_put_char; WM keyboard → shell stdin")
 
 ## 3. User-Mode Program Break (brk/sbrk -- Linux Compat)
 
