@@ -130,18 +130,23 @@ When a process is created, `STD_INPUT_HANDLE` (0), `STD_OUTPUT_HANDLE` (1), and 
 
 Win32 programs use `NtAllocateVirtualMemory` (TODO-12 §9) for heap. Linux-compat programs call `brk(2)` / `sbrk(2)` which the kernel must handle by growing user-space pages.
 
-> [!WARNING]
-> `exec_load()` does not exist yet (→ TODO-17 §5, `[ ]`). Until it lands, initialize `program_break` to a fixed user-space address (e.g., end of the loaded ELF BSS in the existing `task_exec()` path) so brk/sbrk can be tested independently.
+> [!NOTE]
+> **Design (codex design review, 6 findings adopted).** The 1 MiB user ELF window (0x800000-0x900000) is FULLY occupied (image + stack at 0x8FC000 + EIF dispatch table at 0x8F0000 + guard at 0x900000) -- a brk heap has NO room there. It gets a DEDICATED region instead, and `program_break` starts at that fixed base (not the ELF BSS end -- which would require threading `elf_load` `load_end` through the shared `exec_loader_fn` signature across ELF/EIF/PE). `elf_load` already computes `load_end` (elf.c) but the format-agnostic wrapper discards it.
 
-- [ ] Add `uint64_t program_break` to `struct task`; set to end of BSS segment in `exec_load()` / `task_exec()` (→ XREF TODO-17 §5)
-- [ ] `sys_brk(addr)`: if `addr == 0`, return current break; if `addr > program_break`, allocate VMM pages to cover the new range; update `program_break`; reject addresses below BSS end
-- [ ] `sys_sbrk(increment)`: return old break; advance by `increment` bytes via `sys_brk`
-- [ ] Reject `increment < 0` if it would shrink below BSS end (simplification; full shrink support is optional)
-- [ ] Add `SYS_BRK` to the Linux-compat syscall table (keep separate from SSDT -- POSIX compat only)
-- [ ] Verify: user-mode `malloc` backed by a musl-style `sbrk` wrapper can allocate and free without crashing
+- [ ] Add a dedicated brk region `USER_BRK_BASE`/`USER_BRK_LIMIT` (outside the ELF window AND the `SECTION_VIEW` region) in `include/kernel/mm/user_range.h`; the heap grows here
+- [ ] `struct task`: add `uintptr_t program_break` (0=uninit) + `uintptr_t program_break_start` (floor) + a per-task VM lock; init break = start = `USER_BRK_BASE` at `task_exec` (fixed base, no loader-signature / BSS-end dependency)
+- [ ] `sys_brk(addr)` grow: map PRIVATE frames via `vmm_map_user_page` tagged `VMM_FLAG_PAGE_OWNED` so `vmm_destroy_user_pml4` frees them at exit (design H1); reject `addr` below `program_break_start` or above `USER_BRK_LIMIT`
+- [ ] Failure-atomic growth (design M1): on any `pmm_alloc_frame`/map failure mid-grow, unmap every page THIS call added + free the pending frame, keep the old break, return Linux failure semantics
+- [ ] Shrink-with-unmap (design M2): `addr < program_break` unmaps + frees page-rounded pages down to the new break (credible malloc top-chunk trim); never below `program_break_start`
+- [ ] Serialize validate/map/rollback/publish as ONE transaction under a SLEEPABLE per-task VM mutex (Executive guarded mutex), NOT a spinlock -- a max-range grow maps too many pages to hold a spinlock (design H4)
+- [ ] `task_exec` CR3-reuse path: unmap + free the prior image's brk range before resetting the break fields, so a replaced image never inherits stale heap (design H2)
+- [ ] `task_fork`: eager-copy every committed brk page into the child PML4 + copy `program_break`/`program_break_start` (COW is not available; reset-in-child would violate fork semantics -- design H3)
+- [ ] `sys_sbrk(increment)`: return old break, then `sys_brk(break+increment)`; `increment==0` returns the current break
+- [ ] `SYS_BRK=48` in `include/kernel/sched/syscall.h` + `case SYS_BRK` in `syscall_handler` (`syscall.c`); regen `abi_numbers.h` via `gen-user-abi.py`; hand-add `sys_brk`/`sys_sbrk` wrappers in `user/include/syscall.h`
+- [ ] Rewire `user/lib/stdlib.c` `malloc`/`free` from the static 64 KiB BSS bump arena to an `sys_sbrk`-backed growable arena (the current arena has no sbrk consumer)
 - [ ] Commit: `"kernel: task -- program break (brk/sbrk) for Linux compat heap"`
 
-**Test checkpoint:** `sys_brk(0)` returns current break (non-zero). `sys_sbrk(4096)` returns old break; new address is 4096 bytes higher; memory at new address is writable. `sys_sbrk` below BSS end rejected. Serial log shows `"task: brk extended to 0x<addr>"`. `POST16(0xD030)` on entry, `POST16(0xD031)` after VMM pages allocated. Range `0xD03x` confirmed free. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `sys_brk(0)` returns the current break (== `USER_BRK_BASE` after exec). `sys_sbrk(4096)` returns the old break; the new page is writable. A grow then shrink returns the break and the freed pages fault on access. `sys_brk` below `program_break_start` or above `USER_BRK_LIMIT` is rejected. Frame-leak test: exec a process that grows the heap, exit it, assert the PMM free-count returns to baseline (design H1). Fork test: child sees the parent's heap contents (design H3). Test on: QEMU WHPX + TCG; bare metal.
 
 ## 4. Process Priority Class
 
