@@ -198,6 +198,18 @@ int vfs_truncate(const char *path, uint64_t new_size);
 /* Get the root node of a mounted drive */
 struct vfs_node *vfs_get_drive_root(char drive_letter);
 
+/* Resolve a possibly-relative path against a working directory into a
+ * canonical absolute path "X:\\a\\b".
+ *   - Absolute input ("X:\\...")   : normalized in place (drive from input).
+ *   - Root-relative ("\\foo")      : drive letter taken from cwd, path reset to root.
+ *   - Relative ("foo\\bar", "..")  : joined onto cwd.
+ * Normalizes separators (/ -> \\), collapses "." and empty components, applies
+ * ".." by popping one component but never above the drive root, and rejects
+ * anything that would overflow `out_size`. `cwd` MUST be a valid absolute path.
+ * Returns 0 on success, -1 on invalid input / overflow. Pure and re-entrant
+ * (no task state) -- the caller snapshots task->cwd under its lock first. */
+int vfs_resolve_path(const char *cwd, const char *in, char *out, uint32_t out_size);
+
 /* Reconstruct the full path from a vfs_node by walking parent pointers.
  * Output format: "X:\\dir\\file" (drive letter derived from mount table).
  * Returns bytes written (excluding NUL), or 0 on failure. */

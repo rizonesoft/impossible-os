@@ -43,6 +43,12 @@
 #include "kernel/csprng.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"  /* boot_halt: fatal SRM baseline failure */
+#include "kernel/fs/vfs.h"     /* VFS_MAX_PATH: cwd cap must match the VFS boundary */
+
+/* Pin the cwd cap to the VFS path cap so a cwd can always round-trip through
+ * vfs_resolve_path / vfs_open without truncation (5-layer defense, layer 1). */
+_Static_assert(TASK_CWD_MAX == VFS_MAX_PATH,
+    "task cwd buffer must match VFS_MAX_PATH");
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
 #define YIELD_INT_VECTOR VECTOR_YIELD
@@ -365,6 +371,11 @@ boot_result_t task_init(void)
         tasks[i].handle_table.entries  = NULL;
         tasks[i].handle_table.capacity = 0;
         tasks[i].handle_table.count    = 0;
+        tasks[i].cwd[0] = '\0';
+        {
+            spinlock_t init = SPINLOCK_INIT;
+            tasks[i].cwd_lock = init;
+        }
         tasks[i].num_threads = 0;
         for (j = 0; j < THREAD_MAX; j++) {
             tasks[i].threads[j].id = 0;
@@ -390,6 +401,7 @@ boot_result_t task_init(void)
     tasks[0].state = TASK_RUNNING;
     tasks[0].stack_base = (uint8_t *)0;  /* boot stack, don't free */
     tasks[0].name = "main";
+    task_set_cwd(&tasks[0], "C:\\");     /* system process starts at the boot drive root */
     num_tasks = 1;
     current_task = 0;
 
@@ -529,6 +541,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
     tasks[pid].user_stack_base = (uint8_t *)0;  /* kernel task */
     tasks[pid].name = name;
+    task_set_cwd(&tasks[pid], "C:\\");   /* kernel threads default to the boot drive root */
     tasks[pid].parent_pid = current_task;
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
@@ -668,6 +681,12 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
     tasks[pid].user_stack_base = ustack;
     tasks[pid].name = name;
+    /* User process: inherit the creator's cwd (Windows CreateProcess semantics). */
+    {
+        char parent_cwd[TASK_CWD_MAX];
+        task_get_cwd(&tasks[current_task], parent_cwd, sizeof(parent_cwd));
+        task_set_cwd(&tasks[pid], parent_cwd[0] ? parent_cwd : "C:\\");
+    }
     tasks[pid].parent_pid = current_task;
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
@@ -1228,6 +1247,59 @@ struct task *task_current(void)
     return &tasks[current_task];
 }
 
+void task_get_cwd(struct task *t, char *out, uint32_t out_size)
+{
+    uint64_t flags;
+    uint32_t i;
+
+    if (!out || out_size == 0)
+        return;
+    out[0] = '\0';
+    if (!t)
+        return;
+
+    spin_lock_irqsave(&t->cwd_lock, &flags);
+    for (i = 0; i + 1 < out_size && t->cwd[i]; i++)
+        out[i] = t->cwd[i];
+    out[i] = '\0';
+    spin_unlock_irqrestore(&t->cwd_lock, flags);
+}
+
+int task_set_cwd(struct task *t, const char *abs)
+{
+    uint64_t flags;
+    uint32_t len = 0;
+    int ret = 0;
+
+    if (!t || !abs)
+        return -1;
+    while (abs[len])
+        len++;
+    if (len >= TASK_CWD_MAX)     /* would truncate -- reject, leave cwd unchanged */
+        return -1;
+
+    spin_lock_irqsave(&t->cwd_lock, &flags);
+    {
+        uint32_t i;
+        for (i = 0; i < len; i++)
+            t->cwd[i] = abs[i];
+        t->cwd[len] = '\0';
+    }
+    spin_unlock_irqrestore(&t->cwd_lock, flags);
+    return ret;
+}
+
+int task_resolve_path(const char *in, char *out, uint32_t out_size)
+{
+    char cwd[TASK_CWD_MAX];
+
+    task_get_cwd(task_current(), cwd, sizeof(cwd));
+    if (!cwd[0]) {               /* defensive: a task with no cwd resolves from root */
+        cwd[0] = 'C'; cwd[1] = ':'; cwd[2] = '\\'; cwd[3] = '\0';
+    }
+    return vfs_resolve_path(cwd, in, out, out_size);
+}
+
 uint32_t task_count(void)
 {
     return num_tasks;
@@ -1391,6 +1463,12 @@ int task_fork(struct interrupt_frame *frame)
     }
     tasks[child_pid].user_stack_base = ustack;
     tasks[child_pid].name = tasks[parent_pid_val].name;
+    /* Child inherits the parent's cwd (snapshot the parent under its lock). */
+    {
+        char parent_cwd[TASK_CWD_MAX];
+        task_get_cwd(&tasks[parent_pid_val], parent_cwd, sizeof(parent_cwd));
+        task_set_cwd(&tasks[child_pid], parent_cwd[0] ? parent_cwd : "C:\\");
+    }
     tasks[child_pid].parent_pid = parent_pid_val;
     tasks[child_pid].exit_status = 0;
     tasks[child_pid].wait_pid = -1;
@@ -1526,8 +1604,18 @@ static void peb_build_ustr(UNICODE_STRING *us, uint16_t **buf_pos,
 static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
                                 const char *name)
 {
-    (void)pid;  /* reserved for future per-process page table */
+    char cwd_snap[TASK_CWD_MAX];
     uintptr_t peb_phys, rtlpp_phys, env_phys;
+
+    /* Snapshot the task's cwd so the PEB CurrentDirectory matches task->cwd
+     * (kept coherent under cwd_lock; the two must never diverge). */
+    if (pid < TASK_MAX)
+        task_get_cwd(&tasks[pid], cwd_snap, sizeof(cwd_snap));
+    else
+        cwd_snap[0] = '\0';
+    if (!cwd_snap[0]) {
+        cwd_snap[0] = 'C'; cwd_snap[1] = ':'; cwd_snap[2] = '\\'; cwd_snap[3] = '\0';
+    }
     PEB *peb;
     RTL_USER_PROCESS_PARAMETERS *pp;
     uint16_t *env;
@@ -1591,8 +1679,8 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
         if (name && name[0])
             peb_build_ustr(&pp->CommandLine, &buf, name);
 
-        /* CurrentDirectory */
-        peb_build_ustr(&pp->CurrentDirectoryDosPath, &buf, "C:\\");
+        /* CurrentDirectory -- synced from task->cwd, not hardcoded */
+        peb_build_ustr(&pp->CurrentDirectoryDosPath, &buf, cwd_snap);
     }
 
     /* Standard handles: INVALID for now (wires real console handles) */

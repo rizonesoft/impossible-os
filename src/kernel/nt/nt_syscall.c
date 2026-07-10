@@ -52,18 +52,39 @@ extern void *memset(void *s, int c, uint64_t n);
 #include "kernel/drivers/serial.h"
 #include "desktop/terminal.h"
 
-/* ---- Helper: extract path from OBJECT_ATTRIBUTES ----------------------- */
-static const char *oa_extract_path(OBJECT_ATTRIBUTES *oa)
+/* ---- Helper: extract path from OBJECT_ATTRIBUTES into a bounded buffer ----
+ * The ObjectName Buffer carries an ASCII path in this codebase's ASCII-in-char
+ * convention (see the note in nt_file.c and test_alpc.c). The copy is bounded
+ * by BOTH the declared Length and the output buffer so a non-NUL-terminated or
+ * oversized Buffer cannot overread. The full UTF-16-vs-ASCII decode-convention
+ * unification across the NT file-path surface is tracked in TODO-12. */
+static NTSTATUS oa_extract_path(OBJECT_ATTRIBUTES *oa, char *out, uint32_t out_size)
 {
-    if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
-        return (const char *)0;
-    /* Strip \??\ prefix if present (NT device namespace → drive letter) */
-    {
-        const char *p = (const char *)oa->ObjectName->Buffer;
-        if (p[0] == '\\' && p[1] == '?' && p[2] == '?' && p[3] == '\\')
-            return p + 4;
-        return p;
+    const char *src;
+    uint32_t max, i;
+
+    if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer || !out || out_size == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    src = (const char *)oa->ObjectName->Buffer;
+    /* Length is the authoritative declared byte count: cap by min(Length,
+     * out_size-1) UNCONDITIONALLY. A zero Length means an empty name (never
+     * scan Buffer past it), which then falls through to OBJECT_NAME_NOT_FOUND. */
+    max = (uint32_t)oa->ObjectName->Length;
+    if (max > out_size - 1)
+        max = out_size - 1;
+    for (i = 0; i < max && src[i]; i++)
+        out[i] = src[i];
+    out[i] = '\0';
+
+    /* Strip \??\ prefix (NT device namespace -> drive letter) in place. */
+    if (out[0] == '\\' && out[1] == '?' && out[2] == '?' && out[3] == '\\') {
+        uint32_t j = 0;
+        for (i = 4; out[i]; i++)
+            out[j++] = out[i];
+        out[j] = '\0';
     }
+    return STATUS_SUCCESS;
 }
 
 /* ---- Helper: map CreateDisposition to VFS flags ------------------------ */
@@ -121,9 +142,12 @@ static NTSTATUS NtCreateFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     uint32_t share_access = (uint32_t)(a6 & 0xFFFF);
     uint32_t options = (uint32_t)(a6 >> 16);
     const char *path;
+    char raw_path[VFS_MAX_PATH];
+    char resolved_path[VFS_MAX_PATH];
     uint32_t vfs_flags;
     int existed;
     HANDLE h;
+    NTSTATUS ep;
 
     (void)share_access;  /* future: pass to vfs_open share mode bits */
 
@@ -132,9 +156,17 @@ static NTSTATUS NtCreateFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!oa || !oa->ObjectName)
         return STATUS_INVALID_PARAMETER;
 
-    path = oa_extract_path(oa);
-    if (!path)
+    ep = oa_extract_path(oa, raw_path, sizeof(raw_path));
+    if (ep != STATUS_SUCCESS)
+        return ep;
+    if (!raw_path[0])
         return STATUS_OBJECT_NAME_NOT_FOUND;
+
+    /* Resolve relative paths against the caller's cwd (absolute paths pass
+     * through unchanged, still normalized). vfs_open stays absolute-only. */
+    if (task_resolve_path(raw_path, resolved_path, sizeof(resolved_path)) != 0)
+        return STATUS_OBJECT_PATH_INVALID;
+    path = resolved_path;
 
     /* Check if file exists before open (for IOSB Information) */
     {

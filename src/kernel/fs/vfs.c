@@ -106,6 +106,103 @@ void vfs_path_fold(const char *in, char *out, uint32_t max)
     out[i] = '\0';
 }
 
+/* --- Public: resolve a relative/absolute path against a working directory ---
+ * Produces a canonical absolute path with "." / ".." collapsed and no escape
+ * above the drive root. See the contract in vfs.h. Pure: no task/global state,
+ * so it is safe to call on any CPU without locking (the caller owns cwd). */
+int vfs_resolve_path(const char *cwd, const char *in, char *out, uint32_t out_size)
+{
+    char work[VFS_MAX_PATH * 2];
+    uint32_t wi = 0;
+    uint32_t oi;
+    const char *p;
+    char drive;
+    int cc;
+
+    if (!cwd || !in || !out || out_size < 4)   /* room for "X:\\" + NUL */
+        return -1;
+
+    /* --- Phase 1: assemble `work` = the path tail relative to the drive root,
+     * and pick the drive letter. Three input shapes: absolute "X:\\...",
+     * root-relative "\\foo", and relative "foo\\bar" / ".." --- */
+    if (in[0] && in[1] == ':') {
+        cc = (unsigned char)in[0];
+        if (!((cc >= 'A' && cc <= 'Z') || (cc >= 'a' && cc <= 'z')))
+            return -1;
+        drive = (char)((cc >= 'a') ? cc - 32 : cc);
+        p = &in[2];                             /* tokenizer eats any leading sep */
+    } else {
+        /* cwd must be a valid absolute path for both relative shapes. */
+        cc = (unsigned char)cwd[0];
+        if (cwd[0] == '\0' || cwd[1] != ':')
+            return -1;
+        drive = (char)((cc >= 'a') ? cc - 32 : cc);
+        if (in[0] == '\\' || in[0] == '/') {
+            p = in;                             /* root-relative: reset to root */
+        } else {
+            /* relative: seed work with the cwd tail (after "X:"), then join in */
+            const char *q = &cwd[2];
+            while (*q) {
+                if (wi >= sizeof(work) - 1) return -1;
+                work[wi++] = *q++;
+            }
+            if (wi >= sizeof(work) - 1) return -1;
+            work[wi++] = '\\';
+            p = in;
+        }
+    }
+    while (*p) {
+        if (wi >= sizeof(work) - 1) return -1;
+        work[wi++] = *p++;
+    }
+    work[wi] = '\0';
+
+    /* --- Phase 2: normalize component-by-component into `out`, which starts as
+     * "X:" (no trailing separator) and grows one "\\component" at a time --- */
+    out[0] = drive;
+    out[1] = ':';
+    oi = 2;
+    out[oi] = '\0';
+
+    p = work;
+    while (*p) {
+        const char *start;
+        uint32_t len, k;
+
+        while (*p == '\\' || *p == '/')         /* skip separators / empties */
+            p++;
+        if (!*p)
+            break;
+        start = p;
+        while (*p && *p != '\\' && *p != '/')
+            p++;
+        len = (uint32_t)(p - start);
+
+        if (len == 1 && start[0] == '.')
+            continue;                           /* "." -> no-op */
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            while (oi > 2 && out[oi - 1] != '\\')   /* pop last component */
+                oi--;
+            if (oi > 2)
+                oi--;                           /* drop the separator too */
+            out[oi] = '\0';
+            continue;                           /* never pops above "X:" */
+        }
+        if (oi + 1 + len >= out_size)           /* sep + component + NUL */
+            return -1;
+        out[oi++] = '\\';
+        for (k = 0; k < len; k++)
+            out[oi++] = start[k];
+        out[oi] = '\0';
+    }
+
+    if (oi == 2) {                              /* bare drive -> "X:\\" */
+        out[oi++] = '\\';
+        out[oi] = '\0';
+    }
+    return 0;
+}
+
 /* --- Internal: walk a path from a root node --- */
 /* Splits path by backslash and walks each component via finddir */
 static struct vfs_node *walk_path(struct vfs_node *root, const char *path)

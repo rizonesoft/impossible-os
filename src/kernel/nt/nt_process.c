@@ -17,9 +17,11 @@
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 #include "kernel/nt/syscall_filter.h"
-#include "kernel/nt/zw.h"           /* ProbeForReadIfUser */
-#include "kernel/cpu_security.h"    /* copy_from_user */
+#include "kernel/nt/zw.h"           /* ProbeForReadIfUser / ProbeForWrite / ssdt_previous_mode */
+#include "kernel/cpu_security.h"    /* copy_from_user / copy_to_user */
 #include "kernel/mm/heap.h"         /* kfree (inherited-filter cleanup) */
+#include "kernel/nt/nt_unicode.h"   /* nt_decode_unicode_string / nt_unicode_to_ascii */
+#include "kernel/fs/vfs.h"          /* vfs_open / vfs_close / VFS_DIRECTORY (cwd validation) */
 
 /* ---- Helper: look up task by HANDLE (currently PID) --------------------- */
 static struct task *task_from_handle(HANDLE h)
@@ -762,6 +764,104 @@ static NTSTATUS NtCreateUserProcess_stub(uint64_t a1, uint64_t a2, uint64_t a3,
     return STATUS_NOT_IMPLEMENTED;
 }
 
+/* ---- NtSetCurrentDirectory (0x03D9) -------------------------------------
+ * a1 = UNICODE_STRING *Path. Resolves against the caller's cwd, requires the
+ * target to exist and be a directory, then commits it. task->cwd is the single
+ * source of truth; the user PEB CurrentDirectory is a creation-time mirror that
+ * ntdll keeps in sync in user mode (kernel does not write the user PEB here --
+ * that avoids maintaining a second kernel-authoritative copy, per the design
+ * review). Leaves cwd unchanged on any failure. */
+static NTSTATUS NtSetCurrentDirectory_handler(uint64_t a1, uint64_t a2,
+                                              uint64_t a3, uint64_t a4,
+                                              uint64_t a5, uint64_t a6)
+{
+    const UNICODE_STRING *path = (const UNICODE_STRING *)a1;
+    uint32_t prev_mode = ssdt_previous_mode();
+    uint16_t wbuf[TASK_CWD_MAX];
+    char in[TASK_CWD_MAX];
+    char resolved[TASK_CWD_MAX];
+    uint32_t wchars = 0;
+    struct task *t = task_current();
+    struct vfs_node *node;
+    NTSTATUS st;
+
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!path)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Decode the (untrusted) UNICODE_STRING and narrow to an ANSI path. */
+    st = nt_decode_unicode_string(path, wbuf, TASK_CWD_MAX, &wchars, prev_mode);
+    if (st != STATUS_SUCCESS)
+        return st;
+    st = nt_unicode_to_ascii(wbuf, wchars, in, sizeof(in), (uint32_t *)0);
+    if (st != STATUS_SUCCESS)
+        return st;
+
+    /* Canonicalize against the current cwd (handles ".", "..", relative). */
+    if (task_resolve_path(in, resolved, sizeof(resolved)) != 0)
+        return STATUS_NAME_TOO_LONG;
+
+    /* Must exist AND be a directory. Release the probe ref on every path. */
+    node = vfs_open(resolved, VFS_O_READ);
+    if (!node)
+        return STATUS_OBJECT_PATH_NOT_FOUND;
+    if (node->type != VFS_DIRECTORY) {
+        vfs_close(node);
+        return STATUS_NOT_A_DIRECTORY;
+    }
+    vfs_close(node);
+
+    if (task_set_cwd(t, resolved) != 0)
+        return STATUS_NAME_TOO_LONG;
+
+    klog(LOG_DEBUG, "task", "cwd set to %s (pid %u)", resolved, (uint64_t)t->pid);
+    return STATUS_SUCCESS;
+}
+
+/* ---- NtQueryCurrentDirectory (0x03DA) -----------------------------------
+ * a1 = WCHAR *Buffer (out), a2 = ULONG BufferLength (bytes). Writes the cwd as
+ * a NUL-terminated UTF-16 string. STATUS_BUFFER_TOO_SMALL if it does not fit. */
+static NTSTATUS NtQueryCurrentDirectory_handler(uint64_t a1, uint64_t a2,
+                                                uint64_t a3, uint64_t a4,
+                                                uint64_t a5, uint64_t a6)
+{
+    uint16_t *ubuf = (uint16_t *)a1;
+    uint32_t buf_bytes = (uint32_t)a2;
+    uint32_t prev_mode = ssdt_previous_mode();
+    char cwd[TASK_CWD_MAX];
+    uint16_t wbuf[TASK_CWD_MAX];
+    uint32_t clen = 0, need_bytes;
+
+    (void)a3; (void)a4; (void)a5; (void)a6;
+
+    if (!ubuf || buf_bytes < sizeof(uint16_t))
+        return STATUS_INVALID_PARAMETER;
+
+    task_get_cwd(task_current(), cwd, sizeof(cwd));
+    while (cwd[clen] && clen < TASK_CWD_MAX - 1) {
+        wbuf[clen] = (uint16_t)(uint8_t)cwd[clen];
+        clen++;
+    }
+    wbuf[clen] = 0;
+    need_bytes = (clen + 1) * (uint32_t)sizeof(uint16_t);
+    if (buf_bytes < need_bytes)
+        return STATUS_BUFFER_TOO_SMALL;
+
+    if (prev_mode == SSDT_USER_MODE) {
+        NTSTATUS pw = ProbeForWrite(ubuf, need_bytes, 2);
+        if (pw != STATUS_SUCCESS)
+            return pw;
+        if (copy_to_user(ubuf, wbuf, need_bytes) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    } else {
+        uint32_t i;
+        for (i = 0; i < clen + 1; i++)
+            ubuf[i] = wbuf[i];
+    }
+    return STATUS_SUCCESS;
+}
+
 /* ---- Registration ------------------------------------------------------- */
 
 void nt_process_register_ssdt(void)
@@ -799,6 +899,10 @@ void nt_process_register_ssdt(void)
 
     /* Combined process + thread creation */
     ssdt_register(SSDT_NtCreateUserProcess, (SSDT_HANDLER)NtCreateUserProcess_stub);
+
+    /* Working directory (TODO-21 process model extensions) */
+    ssdt_register(SSDT_NtSetCurrentDirectory,   (SSDT_HANDLER)NtSetCurrentDirectory_handler);
+    ssdt_register(SSDT_NtQueryCurrentDirectory, (SSDT_HANDLER)NtQueryCurrentDirectory_handler);
 
     /* Execution control */
     ssdt_register(SSDT_NtDelayExecution,    (SSDT_HANDLER)NtDelayExecution_handler);

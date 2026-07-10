@@ -619,10 +619,16 @@
 #define SSDT_NtGetRandom                      0x03D8
 
 /* ====================================================================
+ * 0x03D9-0x03DA: Process Model Extensions -- Working Directory (TODO-21 s1)
+ * ==================================================================== */
+#define SSDT_NtSetCurrentDirectory            0x03D9
+#define SSDT_NtQueryCurrentDirectory          0x03DA
+
+/* ====================================================================
  * Total count and bounds
  *
- * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 471).
- * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03D8).
+ * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 473).
+ * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03DA).
  *
  * WARNING: When adding a new service number:
  *   1. Add the #define SSDT_NtXxx line in the correct functional range
@@ -644,10 +650,10 @@
  *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
  *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
  *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
- *   Diagnostics: 0x03D9
+ *   Diagnostics: 0x03D9  Process Model Ext (CWD): 0x03DB
  * ==================================================================== */
-#define SSDT_MAIN_COUNT                       471
-#define SSDT_LAST_MAIN_INDEX                  0x03D8  /* SSDT_NtGetRandom */
+#define SSDT_MAIN_COUNT                       473
+#define SSDT_LAST_MAIN_INDEX                  0x03DA  /* SSDT_NtQueryCurrentDirectory */
 
 /* Compile-time verification:
  * - Count must fit within the table capacity

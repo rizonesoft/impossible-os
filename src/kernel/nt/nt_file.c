@@ -411,6 +411,7 @@ static NTSTATUS NtDeleteFile_handler(
     /* a1 = OBJECT_ATTRIBUTES* (we extract the path) */
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a1;
     char path[260];
+    char resolved[VFS_MAX_PATH];
     int ret;
     NTSTATUS ns;
 
@@ -430,7 +431,11 @@ static NTSTATUS NtDeleteFile_handler(
             return ns;
     }
 
-    ret = vfs_unlink(path);
+    /* Resolve relative paths against the caller's cwd before the VFS call. */
+    if (task_resolve_path(path, resolved, sizeof(resolved)) != 0)
+        return STATUS_OBJECT_PATH_INVALID;
+
+    ret = vfs_unlink(resolved);
     return (ret == 0) ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
 }
 
@@ -672,6 +677,7 @@ static NTSTATUS NtQueryAttributesFile_handler(
     OBJECT_ATTRIBUTES *oa = (OBJECT_ATTRIBUTES *)a1;
     FILE_BASIC_INFORMATION *bi = (FILE_BASIC_INFORMATION *)a2;
     char path[260];
+    char resolved[VFS_MAX_PATH];
     struct vfs_stat st;
     int ret;
     NTSTATUS ns;
@@ -692,7 +698,11 @@ static NTSTATUS NtQueryAttributesFile_handler(
             return ns;
     }
 
-    ret = vfs_stat(path, &st);
+    /* Resolve relative paths against the caller's cwd before the VFS call. */
+    if (task_resolve_path(path, resolved, sizeof(resolved)) != 0)
+        return STATUS_OBJECT_PATH_INVALID;
+
+    ret = vfs_stat(resolved, &st);
     if (ret != 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 

@@ -53,7 +53,7 @@ title: "TODO-21 -- Process Model Extensions"
 
 | ⭐   | Order | Deliverable                                               | Depends On     | Status |
 | --- | :---: | --------------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS            |  [ ]   |
+| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS            |  [x]   |
 | 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3         |  [ ]   |
 | 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5    |  [ ]   |
 | 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists) |  [ ]   |
@@ -80,26 +80,30 @@ title: "TODO-21 -- Process Model Extensions"
 
 `struct task` has no `cwd` field. All VFS paths are currently treated as absolute. Relative path resolution must be added before any shell navigation or portable app path handling works.
 
-- [ ] Add `char cwd[MAX_PATH]` to `struct task`; initialize to `"C:\\"` at `task_init()` and `task_create()`
-- [ ] Inherit CWD from parent at `task_fork()` -- copy the string
-- [ ] In `task_exec()` / `exec_load()`: preserve CWD from the calling process (do not reset on exec)
-- [ ] Add VFS relative-path resolver: if the path does not begin with a drive letter (`X:\`), prepend `task->cwd` before passing to VFS lookup
-- [ ] `NtSetCurrentDirectory(UNICODE_STRING *path)`: validate path exists via VFS, update `task->cwd`
-- [ ] `NtQueryCurrentDirectory(buffer, length)`: copy `task->cwd` to user buffer
-- [ ] Register both in SSDT (→ XREF TODO-12 §5)
-- [ ] Win32 wrappers: `SetCurrentDirectory` → `NtSetCurrentDirectory`; `GetCurrentDirectory` → `NtQueryCurrentDirectory`
+- [x] Add `char cwd[TASK_CWD_MAX]` (512, `_Static_assert`-pinned to `VFS_MAX_PATH`) + `spinlock_t cwd_lock` to `struct task`; init `"C:\\"` at `task_init`/`task_create`/`task_create_user`
+- [x] Inherit CWD from parent at `task_fork()` (and `task_create_user`) -- snapshot parent under its lock, commit to child
+- [x] `task_exec()` preserves CWD (mutates in place, never touches cwd); PEB `CurrentDirectory` re-synced from `task->cwd` in `peb_alloc_for_task`
+- [x] `vfs_resolve_path(cwd, in, out, size)` canonicalizer: join relative onto cwd, `/`->`\`, collapse `.`/empty, apply `..` without escaping the drive root, reject overflow (no truncation)
+- [x] `task_get_cwd`/`task_set_cwd`/`task_resolve_path` -- lock-guarded snapshot/commit so a concurrent set is never observed half-written
+- [x] `NtSetCurrentDirectory(UNICODE_STRING *)` (SSDT 0x03D9): decode+narrow, resolve, require `VFS_DIRECTORY`, release the probe ref, leave cwd unchanged on failure
+- [x] `NtQueryCurrentDirectory(WCHAR *buf, ULONG bytes)` (SSDT 0x03DA): widen `task->cwd` to UTF-16, `STATUS_BUFFER_TOO_SMALL` if it does not fit, probe+copy_to_user
+- [x] Relative-path resolution wired into ALL fs pathname consumers -- NtCreateFile (`nt_syscall.c`), NtDeleteFile + NtQueryAttributesFile (`nt_file.c`); `vfs_open` stays absolute-only (design review F3)
+- [x] `oa_extract_path` hardened to bound its read by `ObjectName->Length` + output size (kills the unbounded-read; adversarial F1)
+- [x] Register both syscalls in SSDT (→ XREF: `TODO-12-native-api-ssdt.md §5`)
+- [/] Win32 A/W wrappers `SetCurrentDirectory`/`GetCurrentDirectory` are user-mode surface owned elsewhere (→ XREF: `TODO-05-win32-file-io-api.md §6` W-forms; `TODO-08-win32-api-surface.md §4` A-forms) -- kernel syscalls shipped here
 - [ ] Commit: `"kernel: task -- working directory field and Nt API wiring"`
 
-> [!NOTE]
-> **Current-tree prerequisites and ownership:**
-> - [ ] `struct task` still has no `cwd`; this requires edits in `include/kernel/sched/task.h` plus `task_init()`/`task_create()`/`task_fork()`/`task_exec()` paths in `src/kernel/sched/task.c`.
-> - [ ] VFS currently expects drive-letter absolute paths (`X:\\...`) at parse/open boundaries in `src/kernel/fs/vfs.c`; relative path support needs resolver logic in this section before path consumers can pass relative strings.
-> - [ ] `NtSetCurrentDirectory` / `NtQueryCurrentDirectory` are not wired in SSDT registration yet; add service numbers and table registration as part of this section and `TODO-12-native-api-ssdt.md §5`.
-> - [ ] `MAX_PATH` is not a kernel-wide constant today; use or define a constant aligned with `VFS_MAX_PATH` to avoid path-size drift.
-> - [ ] PEB process-parameter `CurrentDirectory` is currently hardcoded to `C:\\`; keep `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` synchronized with `task->cwd` (→ XREF `TODO-11-peb-teb-user-abi.md §5`).
-> - [ ] Win32 wrappers are separate user-mode/API-surface work: `GetCurrentDirectoryW`/`SetCurrentDirectoryW` in `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md §6`, and A-suffixed API exports in `todo/10-platform-services/TODO-08-win32-api-surface.md §4`.
+> **Accepted:** [H] full OBJECT_ATTRIBUTES + UNICODE_STRING copy_from_user probe and UTF-16-vs-ASCII decode unification for NtCreateFile are pre-existing cross-file ABI work -> XREF: `TODO-12-native-api-ssdt.md §6` (item: "[Critical] NtCreateFile: snapshot OBJECT_ATTRIBUTES ... via copy_from_user" at line 362) + `TODO-14 §5` (kernel-wide UTF-16 decode). This section bounded the overread only.
+> **Accepted:** [M] user PEB `CurrentDirectoryDosPath` is not written on `NtSetCurrentDirectory` (task->cwd is the single kernel-authoritative source; all kernel resolution uses it) -> XREF: `TODO-05-win32-file-io-api.md §6` (item: "SetCurrentDirectoryW must also sync PEB CurrentDirectoryDosPath")
 
-**Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`. `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged). Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`. `task_fork()` child inherits parent CWD. `POST16(0xD010)` on entry, `POST16(0xD011)` after VFS resolver wired. Range `0xD01x` confirmed free. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns it. Setting a non-existent or non-directory path returns error, CWD unchanged. Relative `"System\\Logs"` resolves to `"C:\\System\\Logs"` from `"C:\\"`; `".."` pops one component but never escapes `X:\`. `task_fork()` child inherits parent CWD. Unit tests: 15 `ProcExt:` suites (TEST_CAT_SCHED) cover the resolver + cwd storage. Test on: QEMU WHPX + TCG.
+
+> **Notes:**
+> - Shipped `cwd[512]`+`cwd_lock` on `struct task`, `vfs_resolve_path` canonicalizer, `task_get_cwd`/`task_set_cwd`/`task_resolve_path`, and `NtSetCurrentDirectory`/`NtQueryCurrentDirectory` (SSDT 0x03D9/0x03DA).
+> - All cwd access is lock-guarded (snapshot/commit); relative resolution wired into NtCreateFile + NtDeleteFile + NtQueryAttributesFile; `vfs_open` stays absolute-only.
+> - `task->cwd` is the single authoritative cwd; the user PEB `CurrentDirectory` is a creation-time mirror (F2, writeback owned by TODO-05 §6). Design + adversarial adoptions in the commit message.
+> - Canonical doc: `include/kernel/fs/vfs.h` (`vfs_resolve_path`) + `include/kernel/sched/task.h` (cwd fields).
+> - Scope boundary: §1 owns kernel cwd + Nt syscalls; Win32 A/W wrappers → TODO-05 §6 / TODO-08 §4; full OA probe + UTF-16 decode → TODO-12 §6 / TODO-14 §5.
 
 ## 2. Standard Handle Pre-Wiring at Process Creation
 
@@ -404,7 +408,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 
 | ⭐   | Feature                       | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS            |
 | --- | ----------------------------- | ----------------------------- | ------------------------- | -------------------------- |
-| 💎   | Per-process CWD               | ✅ SetCurrentDirectory         | ✅ chdir / getcwd          | ⬜ §1                       |
+| 💎   | Per-process CWD               | ✅ SetCurrentDirectory         | ✅ chdir / getcwd          | ✅ §1 cwd + Nt syscalls     |
 | 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit       | ✅ fd 0/1/2 via fork       | ⬜ §2                       |
 | 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory     | ✅ brk / sbrk              | ⬜ §3                       |
 | 💎   | Process priority class        | ✅ SetPriorityClass            | ✅ nice / setpriority      | ⬜ §4                       |

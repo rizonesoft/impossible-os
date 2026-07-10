@@ -372,6 +372,7 @@ extern void test_register_swap(void);
 extern void test_register_mmap(void);
 extern void test_register_vfs(void);
 extern void test_register_sched(void);
+extern void test_register_proc_ext(void);
 extern void test_register_kworker(void);
 extern void test_register_registry(void);
 extern void test_register_boot_init(void);
@@ -478,6 +479,7 @@ void test_runner_init(void)
 
     /* Sched */
     test_register_sched();
+    test_register_proc_ext();
     test_register_kworker();
 
     /* ABI */

@@ -40,6 +40,9 @@
 /* Limits */
 #define TASK_MAX         32          /* max concurrent tasks */
 #define THREAD_MAX       16          /* max threads per task */
+/* Per-process current-directory cap. Pinned equal to VFS_MAX_PATH by a
+ * _Static_assert in task.c so cwd strings never truncate at the VFS boundary. */
+#define TASK_CWD_MAX     512
 #define THREAD_STACK_SIZE 8192       /* 8 KiB per thread stack */
 #define TASK_STACK_SIZE  8192        /* 8 KiB per kernel task stack */
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
@@ -163,6 +166,13 @@ struct task {
     uint32_t    parent_pid;     /* PID of parent (0 for init) */
     int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
     int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
+    /* --- Current working directory (process-wide, shared by all threads) ---
+     * Canonical absolute path "X:\\...". Read/written only via task_get_cwd /
+     * task_set_cwd, which snapshot/commit under cwd_lock so a concurrent
+     * SetCurrentDirectory on one thread can never be observed half-written by
+     * another (the whole struct is shared across threads[]). */
+    char        cwd[TASK_CWD_MAX];
+    spinlock_t  cwd_lock;
     /* exec_pending state machine (bulletproofing):
      *   task_exec():  exec_pending = 1, exec_pending_tick = uptime()
      *   schedule():   exec_pending = 0 on switch-in (frame consumed)
@@ -262,6 +272,20 @@ void yield(void);
 
 /* Get the currently running task. */
 struct task *task_current(void);
+
+/* Snapshot the task's current working directory into `out` (NUL-terminated,
+ * bounded by out_size) under cwd_lock. `t` NULL or out_size 0 yields "". */
+void task_get_cwd(struct task *t, char *out, uint32_t out_size);
+
+/* Commit `abs` (a canonical absolute path) as the task's cwd under cwd_lock.
+ * Returns 0 on success, -1 if `abs` does not fit TASK_CWD_MAX. */
+int task_set_cwd(struct task *t, const char *abs);
+
+/* Resolve `in` (relative or absolute) against the CURRENT task's cwd into a
+ * canonical absolute path `out`. The single entry point every NT pathname
+ * syscall uses so relative paths resolve consistently. Returns 0 on success,
+ * -1 on invalid input / overflow (vfs_resolve_path contract). */
+int task_resolve_path(const char *in, char *out, uint32_t out_size);
 
 /* Get total number of tasks (including dead ones). */
 uint32_t task_count(void);
