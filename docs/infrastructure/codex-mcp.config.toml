@@ -32,7 +32,7 @@
 [mcp_servers.todo-graph]
 command = "python3"
 args = ["scripts/todo-graph/mcp_server.py"]
-cwd = "/home/derickpayne/impossible-os"
+cwd = "/home/derickpayne/projects/impossible-os"
 # Codex CLI default timeouts are non-obvious; explicit values keep
 # both clients aligned. 10 s startup is generous (the todo-graph
 # server reads + parses the entire todo/ tree at boot, ~50 ms today).
@@ -52,7 +52,7 @@ args = [
     "--warm-start=c,py",
     "--warm-start-mode=background",
 ]
-cwd = "/home/derickpayne/impossible-os"
+cwd = "/home/derickpayne/projects/impossible-os"
 # 10 s startup matches the bridge's --warm-start-mode=background
 # path: srv.run() answers initialize within milliseconds; warm-start
 # runs in a daemon thread and does not block the launcher handshake.
