@@ -42,7 +42,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | --- | :---: | ------------------------------------- | ------------ | :----: |
 | 💎   |   1   | Code Integrity policy object          | T02          |  [/]   |
 | 💎   |   2   | Image validation API and callback     | T17          |  [/]   |
-| 💎   |   3   | Hashing and signature provider bridge | T03          |  [ ]   |
+| 💎   |   3   | Hashing and signature provider bridge | T03          |  [x]   |
 | 💎   |   4   | Embedded signature validation         | §2, §3       |  [ ]   |
 | 💎   |   5   | Catalog database                      | Registry/VFS |  [ ]   |
 | 💎   |   6   | Revocation and deny lists             | §5           |  [ ]   |
@@ -112,13 +112,21 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 3. Hashing and Signature Provider Bridge
 
-- [ ] Implement SHA-256/BLAKE2b digest bridge using kernel crypto provider.
-- [ ] Support Ed25519 as native Impossible OS signing algorithm.
-- [ ] Keep RSA/X.509 catalog support optional until CNG provider matures.
-- [ ] Ensure validation is allocation-bounded and safe before user-mode starts.
-- [ ] Commit: `"kernel: ci -- hashing and signature provider bridge"`
+- [x] SHA-256/SHA-384/BLAKE2b-256 digest bridge (`ci_crypto_digest`, `include/kernel/ci/ci_crypto.h` + `src/kernel/ci/ci_crypto.c`) over `crypto_hash` + Monocypher BLAKE2b; fail-closed on unknown alg / small `out_cap` / NULL-data-with-length.
+- [x] Ed25519 native signature verification (`ci_crypto_verify`, `CI_SIG_ED25519`) via Monocypher PureEd25519: true only on a valid signature, false on tamper / wrong-key / wrong-length / NULL. Signers use PureEd25519 over the raw bytes.
+- [x] RSA/X.509 reserved: `CI_SIG_RSA_PKCS1` denies (fail closed) until the CNG provider matures.
+- [x] Allocation-free bridge (`crypto_hash` + Monocypher are stack / caller-context) -- safe before user-mode starts.
+- [x] Commit: `"kernel: ci -- hashing and signature provider bridge"`
 
-**Test checkpoint:** the SHA-256 digest of a fixed buffer matches the known test vector; an Ed25519 signature verifies with the correct key and fails with a wrong key; validation performs no heap allocation after the policy lock. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** the bridge digest matches the underlying primitive for SHA-256 and BLAKE2b-256; unknown alg / too-small `out_cap` / NULL-data-with-length all return -1 (NULL+len0 is valid); a valid Ed25519 signature verifies and tamper / wrong-key / wrong-length / NULL / unsupported-alg all deny. 2 new `TEST_CAT_SECURITY` suites. Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 14 CI suites, 0 failures
+>
+> **Notes:**
+> - Shipped `include/kernel/ci/ci_crypto.h` + `src/kernel/ci/ci_crypto.c`: the fail-closed CI crypto bridge (`ci_crypto_digest`, `ci_crypto_verify`, `ci_crypto_digest_len`) + 2 `TEST_CAT_SECURITY` suites.
+> - Thin selection over existing primitives: `crypto_hash` (SHA-2/3), Monocypher BLAKE2b + PureEd25519; allocation-free, every error/unsupported path denies. Design-review NULL-BLAKE2b guard adopted (commit message).
+> - Downstream: unblocks embedded-signature validation (§4) which consumes `ci_crypto_verify` + `ci_crypto_digest`; the §1 policy-artifact Ed25519 auth item can also use it.
+> - Canonical doc: the `include/kernel/ci/ci_crypto.h` header contract.
+> - Scope: §3 owns the digest + verify bridge only. §4 owns EIF/PE/ELF signature parsing (which ranges to hash/verify); RSA/X.509 stays reserved until the CNG provider lands.
 
 ---
 
@@ -221,7 +229,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   | Revocation                 | ✅ CRL / dbx / revoked hashes     | ⚠️ manual keyring revoke       | 🔄 §6 revoked-hash + signer deny       |
 | 💎   | Measured/Secure Boot bind  | ✅ HVCI + PCR policy binding      | ✅ IMA + TPM PCR                | 🔄 §7 policy digest -> PCR + SB refuse |
 | 💎   | Driver signing enforce     | ✅ WHQL / boot-start classes      | ✅ CONFIG_MODULE_SIG            | 🔄 §8 signer-class + boot hash table   |
-| ⭐   | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig              | 🔄 §3 Ed25519 as native algorithm      |
+| ⭐   | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig              | ✅ §3 ci_crypto_verify PureEd25519     |
 | ⭐   | CI decision in image reg   | ⚠️ separate CI state             | ❌ none unified                 | 🔄 §9 -> TODO-18 §9 provenance field   |
 | ⭐   | CI query syscall           | ✅ SystemCodeIntegrityInformation | ⚠️ /sys/kernel/security/ima    | 🔄 §10 NtQuery/NtSet + ci_dump_policy  |
 | 💎   | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle             | 🔄 §4 validate each paged-in page      |

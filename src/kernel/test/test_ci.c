@@ -10,8 +10,11 @@
 #include "kernel/test/test.h"
 #include "kernel/ci/ci.h"
 #include "kernel/ci/ci_image.h"
+#include "kernel/ci/ci_crypto.h"
 #include "kernel/crypto/sha256.h"
-#include "libc/string.h"   /* memset */
+#include "libs/monocypher/monocypher.h"
+#include "libs/monocypher/monocypher-ed25519.h"
+#include "libc/string.h"   /* memset, memcmp */
 
 /* Active Secure Boot pins the locked SECUREBOOT level AND forces every
  * permissive flag off, even when safe mode would otherwise allow a relax. */
@@ -314,6 +317,76 @@ static void test_ci_dynamic_code(void)
     TEST_ASSERT_EQ(v_orx, CI_VERDICT_ALLOW, "non-W+X runtime code allowed under DISABLED CI");
 }
 
+/* The CI crypto bridge: digest dispatch matches the underlying primitives,
+ * fails closed on bad args, and NULL-data-with-length is refused (no fault). */
+static void test_ci_crypto_digest(void)
+{
+    static const uint8_t msg[8] = { 'c', 'i', '-', 't', 'e', 's', 't', '!' };
+    uint8_t out[48];
+
+    uint8_t sha_ref[32];
+    sha256(msg, sizeof(msg), sha_ref);
+    int n = ci_crypto_digest(CI_DIGEST_SHA256, msg, sizeof(msg), out, sizeof(out));
+    TEST_ASSERT_EQ(n, 32, "SHA-256 digest length is 32");
+    TEST_ASSERT_EQ(memcmp(out, sha_ref, 32), 0, "SHA-256 bridge matches sha256()");
+
+    uint8_t blake_ref[32];
+    crypto_blake2b(blake_ref, 32, msg, sizeof(msg));
+    n = ci_crypto_digest(CI_DIGEST_BLAKE2B_256, msg, sizeof(msg), out, sizeof(out));
+    TEST_ASSERT_EQ(n, 32, "BLAKE2b-256 digest length is 32");
+    TEST_ASSERT_EQ(memcmp(out, blake_ref, 32), 0, "BLAKE2b bridge matches crypto_blake2b()");
+
+    TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_MAX, msg, sizeof(msg), out, sizeof(out)), -1,
+        "unknown digest alg -> -1");
+    TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_SHA256, msg, sizeof(msg), out, 16), -1,
+        "out_cap too small -> -1");
+    TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_BLAKE2B_256, (const void *)0, 8, out, sizeof(out)), -1,
+        "NULL data with len>0 fails closed (no BLAKE2b NULL deref)");
+    TEST_ASSERT_EQ(ci_crypto_digest(CI_DIGEST_SHA256, (const void *)0, 0, out, sizeof(out)), 32,
+        "NULL data with len 0 is a valid empty input");
+}
+
+/* Ed25519 signature verification is the security-critical path: valid only when
+ * the signature actually verifies; every tamper/wrong-key/unsupported/NULL case
+ * denies (fail closed). */
+static void test_ci_crypto_verify(void)
+{
+    /* Mutable seed: crypto_ed25519_key_pair() wipes it in place (a const seed in
+     * .rodata would #PF on the wipe). */
+    uint8_t seed[32] = {
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+    };
+    static const uint8_t msg[11] = { 'i', 'm', 'a', 'g', 'e', '-', 'b', 'y', 't', 'e', 's' };
+    uint8_t secret[64], pub[32], sig[64];
+    crypto_ed25519_key_pair(secret, pub, seed);
+    crypto_ed25519_sign(sig, secret, msg, sizeof(msg));
+
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 64, pub, 32), true,
+        "a valid Ed25519 signature verifies");
+
+    uint8_t bad_sig[64];
+    memcpy(bad_sig, sig, 64);
+    bad_sig[0] ^= 0x01;
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), bad_sig, 64, pub, 32), false,
+        "a tampered signature is rejected");
+
+    uint8_t wrong_pub[32];
+    memcpy(wrong_pub, pub, 32);
+    wrong_pub[0] ^= 0x01;
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 64, wrong_pub, 32), false,
+        "verification under the wrong key fails");
+
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_RSA_PKCS1, msg, sizeof(msg), sig, 64, pub, 32), false,
+        "unsupported RSA algorithm denies (reserved)");
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), (const uint8_t *)0, 64, pub, 32), false,
+        "NULL signature denies");
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 63, pub, 32), false,
+        "wrong signature length denies");
+    TEST_ASSERT_EQ(ci_crypto_verify(CI_SIG_ED25519, msg, sizeof(msg), sig, 64, pub, 31), false,
+        "wrong public-key length denies");
+}
+
 void test_register_ci(void)
 {
     test_suite_register_cat("CI: Secure Boot pins + forces flags off",
@@ -340,4 +413,8 @@ void test_register_ci(void)
         test_ci_image_failclosed_and_disabled, TEST_CAT_SECURITY);
     test_suite_register_cat("CI: dynamic code W+X refused + mode mapping",
         test_ci_dynamic_code, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: crypto digest bridge (SHA/BLAKE2b + fail-closed)",
+        test_ci_crypto_digest, TEST_CAT_SECURITY);
+    test_suite_register_cat("CI: crypto Ed25519 verify (valid + tamper/wrong-key/unsupported)",
+        test_ci_crypto_verify, TEST_CAT_SECURITY);
 }
