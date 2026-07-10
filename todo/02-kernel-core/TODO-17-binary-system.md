@@ -76,7 +76,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | 💎   |   7   | PE32+ header parser                            | §1              |  [x]   |
 | 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
 | 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
-| 💎   |  10   | PE32+ base relocation                          | §8              |  [ ]   |
+| 💎   |  10   | PE32+ base relocation                          | §8              |  [/]   |
 | 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [ ]   |
 | 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [ ]   |
 | ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [ ]   |
@@ -285,6 +285,8 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
 - [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
 - [ ] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
+- [ ] Ownership-journal rollback in pe_load: track every mapped VA and unmap exactly those in reverse (replace the dense-prefix-from-ImageBase assumption); reject map-over-present-PTE
+- [ ] Mapped-aware loader reads: parsers (imports §9, relocs §10) must never dereference an unmapped section-gap RVA -- add per-span mapped-check helpers or map the full image reservation
 - [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 - [/] `NtQuerySection(SectionImageInformation)`: persist PE optional-header fields (ImageBase, entry, stack sizes) on the `SECTION_OBJECT` so class 1 returns real values -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted
 - [/] Map PE images into a per-process PML4 instead of the shared `kernel_pml4` -- blocked on per-process cr3 build-out; `get_or_create_table()` leaves User-bit upper-table promotions on rollback (TODO-04 §15)
@@ -327,14 +329,15 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 
 ## 10. PE32+ Base Relocation
 
-- [ ] Parse `.reloc` section (DataDirectory entry 5):
-  - Walk base relocation blocks (page RVA + array of `type | offset` entries)
-  - `IMAGE_REL_BASED_DIR64` (10): add `delta = actual_base - ImageBase` to 64-bit value at offset
-  - `IMAGE_REL_BASED_ABSOLUTE` (0): skip (padding)
-- [ ] Apply delta to all type-10 entries after section loading
+- [/] Parse `.reloc` (DataDirectory 5): walk IMAGE_BASE_RELOCATION blocks, DIR64 (10) adds delta, ABSOLUTE (0) is padding -- BLOCKED: safe parse needs the mapped-aware reads + global block/entry caps below
+- [/] Apply delta to all type-10 entries after section loading -- BLOCKED: needs ownership-journal rollback (a reloc-failure rollback today would free unrelated sparse mappings) and mapped-aware fixup writes
+- [ ] Global relocation caps (reject, not truncate): max blocks, max total entries, `BlockSize >= 8` and `<= directory_remaining`, forward-progress checks -- a per-block cap alone leaves ~134M-entry walks unbounded
 - [ ] Commit: `"kernel: pe -- PE32+ base relocation"`
 
-**Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. `POST16(0xD810)` on entry, `POST16(0xD811)` after relocations applied. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** [H] §10 base relocation not implemented -- a naive parser page-faults on section-gap reloc RVAs and its failure path exercises the ownership-unsafe pe_load rollback (design review 2 HIGH); functionally dormant until ASLR (§15) supplies a non-preferred base (delta is 0 today) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Ownership-journal rollback in pe_load" at line 288)
+> **Deferred:** [H] safe reloc reads/writes need the loader mapped-aware read + full-image-reservation infrastructure -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
 
 ## 11. PE32+ TLS Directory Processing
 
