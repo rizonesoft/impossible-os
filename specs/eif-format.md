@@ -15,6 +15,7 @@
 7. **Segment ordering:** `eif_segment_t[]` entries MUST be sorted by ascending `vaddr`, with monotonic non-overlapping `[vaddr, vaddr + mem_size)` and `[file_offset, file_offset + file_size)` ranges. This lets the loader validate non-overlap in a single O(n) walk (compare each entry to the previous end); out-of-order or overlapping entries are rejected during that walk. The `file_size <= mem_size` relation holds for UNCOMPRESSED segments only; see rule 9 for `EIF_FLAG_COMPRESSED`.
 8. **Metadata bounds:** when `metadata_offset` is non-zero its range is `[metadata_offset, signature_offset)` for a signed file, or `[metadata_offset, file_size)` for an unsigned file. Key/value record parsing MUST stay inside that bounded range and stop at the first `key_len == 0` terminator OR the range end, whichever comes first; a record whose declared length would read past the range end is rejected. The loader never scans past `signature_offset` (or EOF) while reading metadata.
 9. **Compressed segments (`EIF_FLAG_COMPRESSED`, a per-file header flag):** when set, every segment's file bytes `[file_offset, file_offset + file_size)` are an LZ4 block and `mem_size` is the EXACT decompressed extent (there is no implicit BSS for a compressed segment; `file_size` MAY exceed `mem_size` for small or incompressible data). A `file_size == 0` segment is a pure-BSS region zero-filled without invoking LZ4. A non-empty compressed payload with `mem_size == 0` is rejected. The loader MUST decompress every compressed segment into a scratch buffer and confirm each produces exactly `mem_size` bytes BEFORE writing any user memory, so a corrupt or size-lying stream fails the load atomically (no segment is partially materialized). Decompression is bounds-checked (`LZ4_decompress_safe`): it never reads or writes outside the source and destination buffers even on hostile input.
+10. **Header flags -- fail-closed unknown-bit rejection + CET capability bits:** the loader MUST reject a file that sets any `flags` bit it does not understand (a bit outside `EIF_FLAG_KNOWN_MASK`), so a flag added by a newer producer is never silently ignored by an older loader; adding a flag is therefore a coordinated producer+loader change. Two CET (Control-flow Enforcement) capability bits are reserved and, until a ring-3 CET enforcer exists, parsed-and-accepted but UNENFORCED: `EIF_FLAG_CET_IBT` (bit 6) declares the image is IBT-compatible (every indirect-branch target carries `ENDBR64`); `EIF_FLAG_CET_SHSTK` (bit 7) declares it is shadow-stack-compatible (no unbalanced returns / stack pivots). The two are INDEPENDENT (mirroring the Linux `.note.gnu.property` `IBT`/`SHSTK` split) -- a binary may set either, both, or neither. Reserving these bits does not bump `EIF_VERSION` (they were previously-unused bits; old binaries set none of them).
 
 ## Design Goals
 
@@ -83,7 +84,9 @@
 | 3 | `EIF_FLAG_SIGNED` | Binary has a digital signature at signature_offset |
 | 4 | `EIF_FLAG_COMPRESSED` | Segment data is LZ4-compressed (see normative rule 9) |
 | 5 | `EIF_FLAG_DEBUG` | Debug symbols present in metadata |
-| 6-31 | Reserved | Must be zero |
+| 6 | `EIF_FLAG_CET_IBT` | Image is CET IBT-compatible (reserved, unenforced -- rule 10) |
+| 7 | `EIF_FLAG_CET_SHSTK` | Image is CET shadow-stack-compatible (reserved, unenforced -- rule 10) |
+| 8-31 | Reserved | Must be zero (loader rejects any set bit -- rule 10) |
 
 ---
 
@@ -206,6 +209,8 @@ The kernel header struct (for `include/kernel/eif.h`):
 #define EIF_FLAG_SIGNED     (1u << 3)
 #define EIF_FLAG_COMPRESSED (1u << 4)
 #define EIF_FLAG_DEBUG      (1u << 5)
+#define EIF_FLAG_CET_IBT    (1u << 6)  /* reserved, unenforced (rule 10) */
+#define EIF_FLAG_CET_SHSTK  (1u << 7)  /* reserved, unenforced (rule 10) */
 
 #define EIF_SEG_READ   (1u << 0)
 #define EIF_SEG_WRITE  (1u << 1)

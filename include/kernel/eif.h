@@ -58,6 +58,26 @@
 #define EIF_FLAG_COMPRESSED (1u << 4)
 #define EIF_FLAG_DEBUG      (1u << 5)
 
+/* CET (Control-flow Enforcement) compatibility, reserved + UNENFORCED until a
+ * ring-3 CET enforcer exists. Two INDEPENDENT bits, mirroring Linux
+ * .note.gnu.property (GNU_PROPERTY_X86_FEATURE_1_IBT / _SHSTK): a binary may be
+ * built compatible with one CET sub-feature and not the other (e.g.
+ * -fcf-protection=branch is IBT-only). CET_IBT = every indirect-branch target
+ * carries ENDBR64 (forward-edge); CET_SHSTK = shadow-stack-clean, no unbalanced
+ * returns/stack pivots (backward-edge). Spec: specs/eif-format.md compressed/CET
+ * rules. Enforcement is owned by the kernel-security-hardening CET IBT work. */
+#define EIF_FLAG_CET_IBT    (1u << 6)
+#define EIF_FLAG_CET_SHSTK  (1u << 7)
+
+/* Every flag bit the loader understands. eif_validate() fail-closed-rejects any
+ * binary that sets a bit outside this mask so a NEWER producer's flag is never
+ * silently ignored by an OLDER loader -- adding a flag is a coordinated
+ * producer+loader change, by design. Shared with producers (elf2eif) as the
+ * single source of truth; do NOT silently mask -- reject. */
+#define EIF_FLAG_KNOWN_MASK (EIF_FLAG_GUI | EIF_FLAG_CONSOLE | EIF_FLAG_DRIVER | \
+                             EIF_FLAG_SIGNED | EIF_FLAG_COMPRESSED | \
+                             EIF_FLAG_DEBUG | EIF_FLAG_CET_IBT | EIF_FLAG_CET_SHSTK)
+
 /* ---- Segment flags ------------------------------------------------------ */
 
 #define EIF_SEG_READ   (1u << 0)
@@ -164,6 +184,11 @@ _Static_assert(EIF_MAX_IMPORTS == EIF_DISPATCH_TABLE_MAX,
 /* Load an EIF binary from a raw buffer.
  * Returns entry point address on success, 0 on failure. */
 uint64_t eif_load(const uint8_t *data, uint64_t size);
+
+/* True when `flags` sets only bits in EIF_FLAG_KNOWN_MASK. eif_validate()
+ * fail-closed-rejects a header whose flags are not all known. Public so
+ * producers can validate against the same mask the loader enforces. */
+int eif_flags_known(uint32_t flags);
 
 /* Parse the optional key-value metadata section into *out (fully zeroed first).
  * Pure: reads only the caller buffer, allocates nothing, emits no log (safe to

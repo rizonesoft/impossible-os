@@ -71,7 +71,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [/]   |
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [/]   |
 | ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
-| 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [ ]   |
+| 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [/]   |
 | 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [ ]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
@@ -278,15 +278,23 @@ Currently the EIF dispatch table at 0x8F0000 is identity-mapped and shared. When
 
 ## 10. CET Compatibility Flag (Format Reservation)
 
-Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.property` IBT/SHSTK) declare CET support per-binary. The EIF header has no such flag; reserving a bit now is cheap (`eif_header_t.flags` bits 6-31 are free), a later add needs an `EIF_VERSION` bump. Enforcement waits for ring-3 CET, which has no owner today (TODO-10 programs supervisor S_CET for ring 0, not per-process U_CET/PL3_SSP).
+Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.property` IBT/SHSTK) declare CET support per-binary. EIF reserves two independent bits (IBT + SHSTK, matching the Linux split). Reserving previously-unused flag bits is cheap and needs no `EIF_VERSION` bump. Enforcement waits for ring-3 CET; the consumer is now owned by `TODO-10-kernel-security-hardening.md §10` (per-process `U_CET`/`PL3_SSP`), which programs supervisor `S_CET` for ring 0 today.
 
-- [ ] Reserve `EIF_FLAG_CET_COMPAT` (bit 6) in `include/kernel/eif.h` + document in `specs/eif-format.md` as reserved/unenforced until ring-3 CET
-- [ ] `eif_validate()` rejects unknown/reserved header flag bits so a future flag is not silently ignored by an old loader
-- [ ] Propagate the flag into process/module metadata so a future ring-3 CET enforcer can read per-binary CET intent
-- [ ] File the ring-3 CET ENFORCEMENT owner gap (per-process U_CET / PL3_SSP programming) -- no owner today. -> XREF: D01 T10 §9 (ring-0 CET only).
-- [ ] Commit: `"kernel: eif -- reserve CET compatibility header flag"`
+- [x] Reserve two independent CET bits `EIF_FLAG_CET_IBT` (bit 6) + `EIF_FLAG_CET_SHSTK` (bit 7) in `eif.h`; documented in `specs/eif-format.md` rule 10 as reserved + unenforced until ring-3 CET.
+- [x] `EIF_FLAG_KNOWN_MASK` (bits 0-7) + `eif_flags_known()`; `eif_validate()` fail-closed-rejects any header flag outside the mask (`ENOEXEC`). No `EIF_VERSION` bump (previously-unused bits).
+- [/] Propagate CET intent into per-process metadata -- DEFERRED: no ring-3 CET consumer exists (speculative storage) -> XREF: `TODO-10-kernel-security-hardening.md §10` (item: "Ring-3/per-process CET: consume per-binary CET flags").
+- [x] Filed the ring-3 CET ENFORCEMENT owner gap concretely -> XREF: `TODO-10-kernel-security-hardening.md §10` (consumes `EIF_FLAG_CET_IBT`/`_SHSTK` to program per-process `U_CET`/`PL3_SSP`).
+- [x] Commit: `"kernel: eif -- reserve CET compatibility header flag"`
 
-**Test checkpoint:** an EIF with `EIF_FLAG_CET_COMPAT` set loads (flag parsed + recorded in metadata); an EIF with an unknown reserved flag bit is rejected with `ENOEXEC`. Enforcement is out of scope (ring-3 CET unowned). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `eif_flags_known()` accepts the CET bits (and combinations) and rejects any bit outside `EIF_FLAG_KNOWN_MASK`; an otherwise-valid EIF carrying an unknown flag bit is rejected by `eif_load` before the segment copy (`ENOEXEC`). Enforcement is out of scope (ring-3 CET unowned). 3 `TEST_CAT_EXEC` tests. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF flag-validation suite, 0 failures
+>
+> **Notes:**
+> - Shipped: `EIF_FLAG_CET_IBT`/`_SHSTK` (bits 6/7) + `EIF_FLAG_KNOWN_MASK` + `eif_flags_known()` (`eif.h`/`eif.c`); `eif_validate` fail-closed-rejects unknown flag bits; `specs/eif-format.md` rule 10; 3 `TEST_CAT_EXEC` tests.
+> - Format reservation only -- the CET bits are parsed/accepted but UNENFORCED; enforcement (per-process `U_CET`/`PL3_SSP`) is owned by `TODO-10-kernel-security-hardening.md §10`.
+> - Design review (1 HIGH adopted): a single generic CET_COMPAT bit conflates IBT (forward-edge) and SHSTK (backward-edge) -> two independent bits matching the Linux `.note.gnu.property` split.
+> - Canonical doc: `specs/eif-format.md` normative rule 10.
+> - Scope: reserves + validates the flags. Propagation + ring-3 enforcement -> `TODO-10-kernel-security-hardening.md §10`.
 
 ---
 
@@ -311,7 +319,7 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 | 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                    |
 | 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                      |
 | 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17             |
-| 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 reserved, ring-3 unowned |
+| 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 IBT+SHSTK reserved+validated; enforce D02T10 §10 |
 | ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                        |
 | ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
 | ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                            |

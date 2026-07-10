@@ -996,6 +996,49 @@ static void test_eif_metadata_build_id(void)
     TEST_ASSERT_EQ(meta.build_id[3], 0xEF, "build_id byte 3 copied");
 }
 
+/* ---- Header flag validation (CET reservation + fail-closed unknown bits) ---- */
+
+/* The reserved CET capability bits and existing flags are known/accepted. */
+static void test_eif_flags_cet_known(void)
+{
+    TEST_ASSERT_EQ(eif_flags_known(EIF_FLAG_CET_IBT), 1, "CET_IBT flag is known");
+    TEST_ASSERT_EQ(eif_flags_known(EIF_FLAG_CET_SHSTK), 1, "CET_SHSTK flag is known");
+    TEST_ASSERT_EQ(eif_flags_known(EIF_FLAG_CET_IBT | EIF_FLAG_CET_SHSTK |
+                                   EIF_FLAG_CONSOLE), 1, "combined known flags accepted");
+    TEST_ASSERT_EQ(eif_flags_known(0), 1, "no flags is known");
+}
+
+/* Any bit outside EIF_FLAG_KNOWN_MASK is unknown, including a known+unknown mix. */
+static void test_eif_flags_unknown_rejected(void)
+{
+    TEST_ASSERT_EQ(eif_flags_known(1u << 8), 0, "flag bit 8 is unknown");
+    TEST_ASSERT_EQ(eif_flags_known(1u << 31), 0, "flag bit 31 is unknown");
+    TEST_ASSERT_EQ(eif_flags_known(EIF_FLAG_CET_SHSTK | (1u << 8)), 0,
+                   "known+unknown flag mix is rejected");
+}
+
+/* Non-vacuous: an otherwise-valid binary carrying an unknown flag bit is
+ * rejected by eif_load before the segment copy (removing the flag gate would
+ * let it fall through to the 0x800000 mutation). */
+static void test_eif_reject_unknown_flag(void)
+{
+    uint8_t buf[104];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->flags = 1u << 8;   /* unknown flag bit -> reject */
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE;
+    seg->file_offset = sizeof(eif_header_t) + sizeof(eif_segment_t);
+    seg->file_size = 8; seg->mem_size = 0x1000; seg->flags = EIF_SEG_READ | EIF_SEG_EXEC;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects an otherwise-valid binary with an unknown flag bit");
+}
+
 /* ---- Registration ---- */
 
 void test_register_exec(void)
@@ -1066,6 +1109,11 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: decompress size mismatch", test_eif_decompress_reject_size_mismatch, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: decompress pure BSS", test_eif_decompress_pure_bss, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: decompress small cap", test_eif_decompress_reject_small_cap, TEST_CAT_EXEC);
+
+    /* EIF header flag validation (CET reservation + fail-closed unknown bits) */
+    test_suite_register_cat("EIF: CET flags known", test_eif_flags_cet_known, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: unknown flags rejected", test_eif_flags_unknown_rejected, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject unknown flag load", test_eif_reject_unknown_flag, TEST_CAT_EXEC);
 
     /* EIF metadata key-value parser */
     test_suite_register_cat("EIF: metadata parsed", test_eif_metadata_parsed, TEST_CAT_EXEC);

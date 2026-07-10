@@ -354,6 +354,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] `cpu_enable_cet_ibt()`: add to `cpu_enable_cet_ss()` call sequence: `wrmsr(MSR_IA32_S_CET, rdmsr(MSR_IA32_S_CET) | S_CET_ENDBR_EN)`
 - [ ] Legacy code mode: if a code region is loaded that does not have `ENDBR64` instructions (e.g., a legacy driver), temporarily disable IBT via `MSR_IA32_S_CET.NO_TRACK_EN` for that execution context; re-enable after (requires driver annotation `MODULE_FLAG_NO_IBT`)
 - [ ] `ENDBR_EN` should be enabled after all kernel code is loaded and verified; setting it before loading a module without ENDBR64 would immediately fault
+- [ ] Ring-3/per-process CET: consume per-binary CET flags (EIF `EIF_FLAG_CET_IBT`/`EIF_FLAG_CET_SHSTK`, PE CET_COMPAT, ELF `.note.gnu.property`) to program per-process `U_CET`/`PL3_SSP` once user CET lands -> XREF: `TODO-20 §10`
 
 - [ ] Commit: `"kernel/security: CET IBT: ENDBR64 in kernel build, S_CET.ENDBR_EN activation"`
 

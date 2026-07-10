@@ -61,6 +61,14 @@ static int eif_import_available(uint32_t syscall_id)
 
 /* ---- Validation --------------------------------------------------------- */
 
+/* True when `flags` sets only bits the loader understands (EIF_FLAG_KNOWN_MASK).
+ * The single decision point for the fail-closed unknown-flag rule so producers
+ * and the loader share one predicate; eif_validate rejects when this is false. */
+int eif_flags_known(uint32_t flags)
+{
+    return (flags & ~EIF_FLAG_KNOWN_MASK) == 0;
+}
+
 static int eif_validate(const eif_header_t *hdr, uint64_t size)
 {
     /* Magic check (byte-safe: struct is packed, magic at offset 0) */
@@ -91,6 +99,15 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
      * region (start_ns..end_ns), and klog's spinlock + synchronous serial I/O
      * would inflate the <10 us load budget the region measures. The aggregate
      * success record after the timer stops already reports a successful load. */
+
+    /* Reject any flag bit the loader does not understand (fail-closed). This
+     * keeps a newer producer's flag from being silently ignored by this loader:
+     * adding a flag is a coordinated producer+loader change. */
+    if (!eif_flags_known(hdr->flags)) {
+        klog(LOG_DEBUG, "eif", "Unknown header flag bits 0x%x",
+             (uint64_t)(hdr->flags & ~EIF_FLAG_KNOWN_MASK));
+        return 0;
+    }
 
     /* Segment table bounds + count cap. The cap bounds the O(n^2) segment
      * overlap walk in eif_load; the 64-bit end computation is wrap-safe. */
