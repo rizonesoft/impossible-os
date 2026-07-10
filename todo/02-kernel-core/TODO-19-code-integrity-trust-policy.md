@@ -43,7 +43,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   |   5   | Catalog database                      | Registry/VFS |  [ ]   |
 | 💎   |   6   | Revocation and deny lists             | §5           |  [ ]   |
 | ⭐   |   7   | Measured-boot and Secure Boot binding | TPM          |  [ ]   |
-| 💎   |   8   | Driver/module enforcement             | T18, D04     |  [ ]   |
+| 💎   |   8   | Driver/module enforcement             | T18, D04 T04 |  [ ]   |
 | 💎   |   9   | User-mode image enforcement           | T17, T20     |  [ ]   |
 | ⭐   |  10   | CI audit, telemetry, and syscalls     | T12, T16     |  [ ]   |
 
