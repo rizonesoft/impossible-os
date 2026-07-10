@@ -619,6 +619,105 @@ static void test_eif_reject_unsigned_with_signature(void)
                    "eif_load rejects unsigned file with non-zero signature_offset");
 }
 
+/* Entry point must land inside a loaded EXECUTABLE segment, not merely the user
+ * window (shared identity-mapped range may hold stale residue). A read-only
+ * segment covering the entry VA is rejected. */
+static void test_eif_reject_entry_not_in_exec_segment(void)
+{
+    uint8_t buf[96];  /* header + one segment */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;  /* lands in the segment below */
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE; seg->file_offset = 0;
+    seg->file_size = 0; seg->mem_size = 0x1000;
+    seg->flags = EIF_SEG_READ;  /* NOT executable */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects entry point not inside an executable segment");
+}
+
+/* A required import to an in-range SSDT slot that is still the not-implemented
+ * stub is rejected (availability means registered, not merely in range). */
+static void test_eif_reject_unregistered_import(void)
+{
+    uint8_t buf[104];  /* header + segment + import */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_import_t *imp;
+    const SSDT_TABLE *tbl = ssdt_get_table(SSDT_TABLE_MAIN);
+    uint32_t unreg = SSDT_MAIN_MAX;  /* sentinel: none found */
+    uint32_t k;
+
+    /* Find an in-range main-SSDT slot that is still the stub. */
+    if (tbl && tbl->handlers) {
+        for (k = SSDT_MAIN_MAX; k-- > 0; ) {
+            if (tbl->handlers[k] == ssdt_stub_not_implemented) { unreg = k; break; }
+        }
+    }
+    if (unreg == SSDT_MAIN_MAX) {
+        TEST_SKIP("no unregistered main-SSDT slot available");
+        return;
+    }
+
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->import_count = 1;
+    h->import_offset = sizeof(eif_header_t) + sizeof(eif_segment_t);
+    h->entry_point = USER_ELF_BASE;
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE; seg->file_offset = 0;
+    seg->file_size = 0; seg->mem_size = 0x1000; seg->flags = EIF_SEG_EXEC;
+    imp = (eif_import_t *)(buf + sizeof(eif_header_t) + sizeof(eif_segment_t));
+    imp->syscall_id = unreg;  /* in range but unregistered */
+    imp->flags = 0;           /* required */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects required import to an unregistered in-range slot");
+}
+
+/* Canonical section order (spec rule 2): placing the import table before the
+ * segment table is rejected even though each table is individually in-bounds. */
+static void test_eif_reject_out_of_order_sections(void)
+{
+    uint8_t buf[104];  /* header + import table + segment table */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->import_count = 1;
+    h->segment_count = 1;
+    h->import_offset = sizeof(eif_header_t);                          /* 64 */
+    h->segment_offset = sizeof(eif_header_t) + sizeof(eif_import_t);  /* 72 */
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects sections in non-canonical order");
+}
+
+/* Canonical order (spec rule 2): segment DATA must sit after all tables. A
+ * segment whose file range points back into the segment table is rejected even
+ * though the range is in-bounds against EOF. */
+static void test_eif_reject_segment_data_over_table(void)
+{
+    uint8_t buf[96];  /* header + one 32-byte segment (tables_end = 96) */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE;
+    seg->file_offset = sizeof(eif_header_t);  /* 64 -- inside the segment table */
+    seg->file_size = 8;                       /* non-empty file data */
+    seg->mem_size = 0x1000; seg->flags = EIF_SEG_EXEC;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects segment data overlapping a table");
+}
+
 /* ---- Registration ---- */
 
 void test_register_exec(void)
@@ -676,6 +775,10 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: reject bad entry", test_eif_reject_bad_entry_valid_segments, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject bad import", test_eif_reject_bad_import_valid_segments, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject unsigned+sig", test_eif_reject_unsigned_with_signature, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject entry non-exec", test_eif_reject_entry_not_in_exec_segment, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject unreg import", test_eif_reject_unregistered_import, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject out-of-order", test_eif_reject_out_of_order_sections, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: reject seg data over table", test_eif_reject_segment_data_over_table, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

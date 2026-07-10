@@ -212,17 +212,24 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
   - [x] Return `load_base + entry_point`
 - [x] Performance measurement: uptime_ns() delta logged in microseconds
 - [x] Registered as "EIF" format in `exec_init()` with magic `{'E','I','F','!'}`
-- [x] Enforce §4 rules 6-8 in `eif_validate`/`eif_load`: `EIF_MAX_SEGMENTS`/`EIF_MAX_IMPORTS` caps, O(n) ascending non-overlap segment walk, signedness-gated metadata bounds, validate-then-mutate atomic reject; 7 reject tests
+- [x] Enforce §4 rules 2/6-8: count caps, O(n) non-overlap walk, canonical section+segment-data ordering, metadata bounds, entry-in-exec-segment, registered-import availability, validate-then-mutate; 11 reject tests
+- [ ] Enforce §4 rule 4 (`api_version` gating): reject an EIF whose `api_version` exceeds the running OS API version, once an OS-wide API-version authority/constant is defined (none exists yet)
+- [ ] Reject non-zero reserved header/segment fields and reserved flag bits (spec "must be zero") for strict forward-compat detection
 - [x] Commit: `"kernel: eif -- EIF loader"`
 
 **Test checkpoint:** Serial log shows `"eif: loaded in <N> µs"` where `<N>` < 10. Invalid magic rejected with error. `SIGNED` flag without signature returns error. `POST16(0xD807)` on entry, `POST16(0xD808)` after segments mapped. Test on: QEMU WHPX + TCG; bare metal.
 
 > **Notes:**
 > - EIF kernel loader (`eif.c`): reads the 64-byte header, validates the segment/import tables of the untrusted file, copies segments to the identity-mapped user range, writes the per-process syscall dispatch table at `0x8F0000`.
-> - Rules 6-8 hardening: `EIF_MAX_SEGMENTS`/`EIF_MAX_IMPORTS` count caps (rule 6), one O(n) ascending non-overlapping walk over segment vaddr + file ranges (rule 7), signedness-gated metadata bounds + unsigned signature_offset==0 (rules 2/3/8).
+> - Untrusted-input hardening: count caps (rule 6), O(n) ascending non-overlap walk (rule 7), canonical section + segment-data ordering + signedness-gated metadata bounds (rules 2/3/8), entry-in-executable-segment, and registered (non-stub) import availability.
 > - Atomicity: all segment, import, and entry-point validation precedes the first copy/zero/PMM/dispatch write, so a rejected malformed EIF never mutates the shared user frames (mirrors the ELF §2 two-pass loader).
 > - Canonical doc: `specs/eif-format.md` rules 6-8; struct ABI pinned by `eif.h` static asserts (64/32/8) and `EIF_MAX_IMPORTS == EIF_DISPATCH_TABLE_MAX`.
 > - Scope boundary: signature verification is §17; per-process physical isolation of the user range shares the future VMM prerequisite tracked in §2.
+
+> **Verified:** 2026-07-10 | commit `bbdf6baf` | 11/13 items | build OK | exec 637 kernel + 16 user PASS | 11 EIF reject tests
+> **Deferred:** [L] §4 rule-4 `api_version` gating not enforced (no OS-wide API-version authority/constant exists yet) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Enforce §4 rule 4" at line 216)
+> **Deferred:** [L] non-zero reserved header/segment fields + reserved flag bits not rejected (spec "must be zero"; v1.1 may repurpose under a version bump) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Reject non-zero reserved header/segment fields" at line 217)
+> **Quality reviewed:** 2026-07-10 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 1H+6M+2L fixed, 2L deferred | scope: kernel-code-quality
 
 ## 6. Module List Registration (LDR_DATA_TABLE_ENTRY)
 
