@@ -8,6 +8,8 @@ title: "TODO-21 -- Process Model Extensions"
 
 # TODO-21 -- Process Model Extensions
 
+> **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring); normalized Depends On column to `§`-prefix + same-domain `T` shorthand
+
 > **Goal:** Extend the kernel process model with the per-process state fields and syscalls that don't belong to the scheduler, VMM, or Object Manager individually: current working directory, standard handle pre-wiring, user-mode program break (Linux compat heap), process priority classes mapped to Win32 `SetPriorityClass`, scheduling policy per-task (`SCHED_FIFO`/`SCHED_IDLE`), and a process capability/privilege bitmask. All of these hang off `struct task` and are needed before any non-trivial user-mode program can run correctly.
 
 > [!IMPORTANT]
@@ -19,8 +21,8 @@ title: "TODO-21 -- Process Model Extensions"
 - [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) -- `task_create`, `task_fork`, `task_exec`, `task_exit`, scheduler loop
 - [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) -- `vfs_open`, relative path lookup entry point
 - [`src/kernel/mm/vmm.c`](../../src/kernel/mm/vmm.c) -- `vmm_map_page` (singular) for program-break page allocation; call in a loop for multi-page `brk` extensions
-- → XREF: `TODO-05-object-manager.md §2` -- `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
-- → XREF: `TODO-11-peb-teb-user-abi.md §9` -- `RTL_USER_PROCESS_PARAMETERS.Environment` covers the environment block; `CurrentDirectory` field lives in `RTL_USER_PROCESS_PARAMETERS`
+- → XREF: `TODO-05-object-manager.md §3` -- `HANDLE_TABLE` and `ObpAllocateHandle` / `ObpFreeHandle` provide the handle table; §9 (`NtClose` / `NtDuplicateObject`) is the handle release path
+- → XREF: `TODO-11-peb-teb-user-abi.md §2` -- `RTL_USER_PROCESS_PARAMETERS` struct (incl. `CurrentDirectory` + `Environment`); populated at `task_exec` in §5
 - → XREF: `TODO-22-environment-variables.md` (section 1) -- kernel environ and argv pointers on `struct task`; `env_copy()` when `NtCreateProcess` clones parent to child (see `TODO-12-native-api-ssdt.md` section 7)
 - → XREF: `TODO-12-native-api-ssdt.md §9` -- `NtAllocateVirtualMemory` is the Win32-native heap path; `brk`/`sbrk` here is the Linux-compat path only
 - → XREF: `TODO-12-native-api-ssdt.md §5` -- SSDT indices 0x0160–0x0167 reserved for Job Object syscalls
@@ -29,7 +31,7 @@ title: "TODO-21 -- Process Model Extensions"
 - → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §4,§6` -- `SCHED_FIFO`/`SCHED_RR` classes (§4) and CPU affinity (§6) are implemented in the scheduler; §5 and §10 here define the process-level policy fields and `NtSetInformationProcess` API; actual scheduler loop changes are authoritative THERE
 - → XREF: `TODO-10-kernel-security-hardening.md §1` -- NX/DEP is consumed by §13 per-process mitigation policy flags
 - → XREF: `TODO-12-native-api-ssdt.md §10` -- `NtQueryInformationProcess` wires the syscall; §7 here adds the accounting fields that populate `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters` responses
-- → XREF: `TODO-15-security-reference-monitor.md §2` -- token duplication at process spawn; TODO-15 §2 hooks into `task_exec()` to attach a copy of the parent's ACCESS_TOKEN to the child task
+- → XREF: `TODO-15-security-reference-monitor.md §7` -- token duplication at process spawn; §7 (Process/Thread Token Assignment) attaches a copy of the parent's ACCESS_TOKEN to the child at `task_exec`
 
 ## Outcome
 
@@ -38,7 +40,7 @@ title: "TODO-21 -- Process Model Extensions"
 - Every new process has `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, and `STD_ERROR_HANDLE` wired into its handle table at creation (using the TODO-05 handle table infrastructure).
 - `brk` / `sbrk` syscalls allocate user pages via VMM for Linux-compat user-mode `malloc`.
 - `SetPriorityClass` maps process priority class (`IDLE`, `NORMAL`, `HIGH`, `REALTIME`) to the existing thread priority range; `NtSetInformationProcess(ProcessPriorityClass)` is the native entry point.
-- Per-task `SCHED_POLICY_FIFO` and `SCHED_POLICY_IDLE` policies set the process-level scheduling hint; scheduler loop changes live in `03-memory-concurrency/TODO-05`.
+- Per-task `SCHED_POLICY_FIFO` and `SCHED_POLICY_IDLE` policies set the process-level scheduling hint; scheduler loop changes live in `03-memory-concurrency/TODO-06-scheduler-enhancement.md`.
 - A `capabilities` bitmask on `struct task` gates privileged kernel operations; user processes receive a restricted default set; capabilities are inherited and can only be dropped, never gained.
 - Process accounting fields populate `NtQueryInformationProcess` responses for `ProcessTimes`, `ProcessIoCounters`, and `ProcessVmCounters`.
 - Per-process resource limits (`rlimit_t` soft/hard pairs) enforce `RLIMIT_AS`, `RLIMIT_NOFILE`, `RLIMIT_CPU`, `RLIMIT_STACK`, `RLIMIT_NPROC`, and `RLIMIT_FSIZE`.
@@ -46,22 +48,22 @@ title: "TODO-21 -- Process Model Extensions"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                               | Depends On          | Status |
-| --- | :---: | --------------------------------------------------------- | ------------------- | :----: |
-| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS                 |  [ ]   |
-| 💎   |   2   | Standard handle pre-wiring at process creation            | TODO-05 §2          |  [ ]   |
-| 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, TODO-17 §5     |  [ ]   |
-| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists)      |  [ ]   |
-| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | 4                   |  [ ]   |
-| 💎   |   6   | Process capabilities and privilege bitmask                | --                  |  [ ]   |
-| ⭐   |   7   | Capability inheritance and drop-only policy               | 6                   |  [ ]   |
-| 💎   |   8   | Process accounting fields (times, I/O, VM counters)       | 1                   |  [ ]   |
-| 💎   |   9   | Per-process resource limits (rlimits)                     | 3, 6                |  [ ]   |
-| 💎   |  10   | CPU affinity per process                                  | 4, TODO-05-sched §6 |  [ ]   |
-| 💎   |  11   | Per-process mitigation policy                             | 6, TODO-10 §1       |  [ ]   |
-| ⭐   |  12   | Pledge/unveil-style process restriction                   | 6, 7                |  [ ]   |
-| 💎   |  13   | Job Object syscalls wired to SSDT                         | 6, TODO-12 §5       |  [ ]   |
-| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9              |  [ ]   |
+| ⭐   | Order | Deliverable                                               | Depends On     | Status |
+| --- | :---: | --------------------------------------------------------- | -------------- | :----: |
+| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS            |  [ ]   |
+| 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3         |  [ ]   |
+| 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5    |  [ ]   |
+| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists) |  [ ]   |
+| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | §4             |  [ ]   |
+| 💎   |   6   | Process capabilities and privilege bitmask                | --             |  [ ]   |
+| ⭐   |   7   | Capability inheritance and drop-only policy               | §6             |  [ ]   |
+| 💎   |   8   | Process accounting fields (times, I/O, VM counters)       | §1             |  [ ]   |
+| 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [ ]   |
+| 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [ ]   |
+| 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [ ]   |
+| ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [ ]   |
+| 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [ ]   |
+| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -88,7 +90,7 @@ title: "TODO-21 -- Process Model Extensions"
 > - [ ] VFS currently expects drive-letter absolute paths (`X:\\...`) at parse/open boundaries in `src/kernel/fs/vfs.c`; relative path support needs resolver logic in this section before path consumers can pass relative strings.
 > - [ ] `NtSetCurrentDirectory` / `NtQueryCurrentDirectory` are not wired in SSDT registration yet; add service numbers and table registration as part of this section and `TODO-12-native-api-ssdt.md §5`.
 > - [ ] `MAX_PATH` is not a kernel-wide constant today; use or define a constant aligned with `VFS_MAX_PATH` to avoid path-size drift.
-> - [ ] PEB process-parameter `CurrentDirectory` is currently hardcoded to `C:\\`; keep `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` synchronized with `task->cwd` (→ XREF `TODO-11-peb-teb-user-abi.md §9`).
+> - [ ] PEB process-parameter `CurrentDirectory` is currently hardcoded to `C:\\`; keep `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` synchronized with `task->cwd` (→ XREF `TODO-11-peb-teb-user-abi.md §5`).
 > - [ ] Win32 wrappers are separate user-mode/API-surface work: `GetCurrentDirectoryW`/`SetCurrentDirectoryW` in `todo/05-storage-filesystems/TODO-05-win32-file-io-api.md §6`, and A-suffixed API exports in `todo/10-platform-services/TODO-08-win32-api-surface.md §4`.
 
 **Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns `"C:\\Impossible"`. `NtSetCurrentDirectory` on non-existent path returns error (CWD unchanged). Relative path `"System\\Logs"` resolves to `"C:\\System\\Logs"` when CWD is `"C:\\"`. `task_fork()` child inherits parent CWD. `POST16(0xD010)` on entry, `POST16(0xD011)` after VFS resolver wired. Range `0xD01x` confirmed free. Test on: QEMU WHPX + TCG.
@@ -149,7 +151,7 @@ Thread priority already exists. This section adds the Win32 `PROCESS_PRIORITY_CL
 ## 5. Per-Task Scheduling Policy
 
 > [!NOTE]
-> → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §4` -- scope overlap: the scheduler TODO implements `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` classes with RT run queues, priority levels, and the actual `schedule()` loop changes. This section defines only the process-level `sched_policy` field on `struct task` and the `NtSetInformationProcess` API surface. Scheduler loop changes are authoritative in TODO-05-sched.
+> → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §4` -- scope overlap: the scheduler TODO implements `SCHED_FIFO`/`SCHED_RR`/`SCHED_DEADLINE` classes with RT run queues, priority levels, and the actual `schedule()` loop changes. This section defines only the process-level `sched_policy` field on `struct task` and the `NtSetInformationProcess` API surface. Scheduler loop changes are authoritative in `03-memory-concurrency/TODO-06-scheduler-enhancement.md`.
 
 Add a per-task `sched_policy` field for tasks that need non-time-sliced execution.
 
@@ -246,9 +248,9 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 > → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §6` -- thread-level CPU affinity (`affinity_mask` in `task_t`, `NtSetInformationThread(ThreadAffinityMask)`) is implemented there. This section adds the process-level API: `SetProcessAffinityMask` / `NtSetInformationProcess(ProcessAffinityMask)` which sets the affinity for all threads in the process.
 
 > [!WARNING]
-> Thread-level `affinity_mask` field on `struct thread` does not exist yet (→ TODO-05-sched §6, `[ ]`). If TODO-05-sched §6 has not landed, add `uint64_t affinity_mask` to `struct thread` here with a default of `~0ULL` (all CPUs). The scheduler does not need to consume the mask until TODO-05-sched §6 adds the per-CPU run queue logic.
+> Thread-level `affinity_mask` field on `struct thread` does not exist yet (→ 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6, `[ ]`). If 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 has not landed, add `uint64_t affinity_mask` to `struct thread` here with a default of `~0ULL` (all CPUs). The scheduler does not need to consume the mask until 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 adds the per-CPU run queue logic.
 
-- [ ] Add `uint64_t affinity_mask` to `struct thread` if not already present from TODO-05-sched §6 (default `~0ULL`)
+- [ ] Add `uint64_t affinity_mask` to `struct thread` if not already present from 03-memory-concurrency/TODO-06-scheduler-enhancement.md §6 (default `~0ULL`)
 - [ ] `NtSetInformationProcess(ProcessHandle, ProcessAffinityMask, &mask, sizeof(mask))`: iterate all threads in the process; set each thread's `affinity_mask` to the intersection of the new process mask and the thread's current mask; store process-level mask in `struct task`
 - [ ] `NtQueryInformationProcess(ProcessHandle, ProcessAffinityMask, ...)`: return the process-level mask
 - [ ] Win32 wrappers: `SetProcessAffinityMask(hProcess, dwMask)` → `NtSetInformationProcess`; `GetProcessAffinityMask(hProcess, &procMask, &sysMask)` → returns process mask and system mask (all CPUs)
@@ -324,7 +326,7 @@ Central cleanup point for all per-process resources when a process terminates. W
   - Release timer resolution requests held by this PID (-> XREF: TODO-17 §6 `KeSetTimerResolution`)
   - Close all open handles in the process handle table (-> XREF: TODO-05 §2 OB handle table)
   - Release all byte-range locks held by this process (-> XREF: 05-storage-filesystems/TODO-04 §10 `vfs_lock_file`)
-  - Release all share-mode handle entries for open files (-> XREF: 05-storage-filesystems/TODO-04 §7 `vfs_open_handle_t`)
+  - Release all share-mode handle entries for open files (-> XREF: 05-storage-filesystems/TODO-04 §8 `vfs_open_handle_t`)
   - Trigger delete-on-close for files marked by this process (-> XREF: 05-storage-filesystems/TODO-04 §9)
   - Release any oplock held by this process (-> XREF: 05-storage-filesystems/TODO-04 §14)
   - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: 02-kernel-core/TODO-26 §5)

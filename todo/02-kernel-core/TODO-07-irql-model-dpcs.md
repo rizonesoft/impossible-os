@@ -556,7 +556,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Canonical doc: `include/kernel/sched/dpc.h` (`KDEFERRED_ROUTINE` AFFINITY note).
 > - Scope boundary: §17 owns only the documented contract; Option A (per-CPU affinity workers) is deferred (blocked on `task_set_affinity`); the AP-watchdog gap is owned by §14.
 > **Verified:** 2026-06-26 | commit `103403de` | 3/5 items | build OK | docs-only (dpc.h header comments)
-> **Deferred:** [M] threaded DPCs have no CPU affinity -- per-CPU affinity workers (NT parity) not built -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 60)
+> **Deferred:** [M] threaded DPCs have no CPU affinity -- per-CPU affinity workers (NT parity) not built -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 62)
 > **Deferred:** [M] AP DPC watchdog coverage -- `dpc_watchdog_tick` services only the BSP while AP-targeted DPCs drain via `KeLowerIrql` (stale `s_wd[ap]` budget) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "AP DPC watchdog coverage" at line 450)
 > **Quality reviewed:** 2026-06-26 | Codex 2x (design, adversarial) | 3M fixed (contract scope, AP-watchdog rationale, §8 stale text), 2M deferred | scope: kernel-code-quality (docs-only)
 
