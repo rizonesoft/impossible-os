@@ -44,15 +44,15 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 | ⭐   | Order | Deliverable                             | Depends On        | Status |
 | --- | :---: | --------------------------------------- | ----------------- | :----: |
 | 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [x]   |
-| 💎   |   2   | Global and per-process image registries | T17, D04 T05      |  [ ]   |
-| 💎   |   3   | Address range index                     | Ex generic table  |  [ ]   |
-| 💎   |   4   | Symbol provider abstraction             | symtab            |  [ ]   |
-| 💎   |   5   | Unwind metadata registry                | T23               |  [ ]   |
-| 💎   |   6   | Loader integration                      | T17, T20, D04 T05 |  [ ]   |
-| ⭐   |   7   | Image notifications and callbacks       | T06, T16          |  [ ]   |
-| 💎   |   8   | KD/crash dump integration               | T27, T29          |  [ ]   |
-| ⭐   |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [ ]   |
-| 💎   |  10   | Tests and consistency verifier          | §1..§9            |  [ ]   |
+| 💎   |   2   | Global and per-process image registries | T17, D04 T05      |  [/]   |
+| 💎   |   3   | Address range index                     | Ex generic table  |  [/]   |
+| 💎   |   4   | Symbol provider abstraction             | symtab            |  [/]   |
+| 💎   |   5   | Unwind metadata registry                | T23               |  [/]   |
+| 💎   |   6   | Loader integration                      | T17, T20, D04 T05 |  [/]   |
+| ⭐   |   7   | Image notifications and callbacks       | T06, T16          |  [/]   |
+| 💎   |   8   | KD/crash dump integration               | T27, T29          |  [/]   |
+| ⭐   |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [/]   |
+| 💎   |  10   | Tests and consistency verifier          | §1..§9            |  [/]   |
 
 ## 1. `KIMAGE_ENTRY` Data Model
 
@@ -80,6 +80,10 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## 2. Global and Per-Process Image Registries
 
+> [!IMPORTANT]
+> **Blocked on an operator-reserved architectural decision** (kimage-supersedes-exec migration strategy). The existing `exec_register_module` / `loaded_module_t` registry (`s_modules[64]` + `s_module_lock`, `src/kernel/exec.c:35-618`) is already the de-facto registry, consumed by the shipped crash-dump path (TODO-27 §3) and the FATAL kernel Phase-1 self-registration (`boot_interrupts.c:253`). §2's atomic-publish transaction explicitly fixes `exec_register_module`, so §2 IS that migration; a second parallel kimage store would create the exact registry fork this TODO exists to eliminate. Four questions must be answered first: (A) kimage as the backing store that `exec_register_module` delegates to, vs (B) kimage superset with consumers rewired; is a T17 LDR-list API extracted from `exec.c:340` first; per-process registry as a new `struct task` field vs PEB->Ldr only; does `kimage_init()` absorb the fatal Phase-1 self-registration; add `SUBSYS_KIMAGE`?
+
+- [ ] DECIDE the migration strategy (A backing-store-delegate vs B superset-rewire) and answer the 4 open questions in the callout above, before any registry storage code. -> XREF: TODO-27 §3 (existing crash-dump consumer of `exec_register_module`).
 - [ ] Global registry owns kernel, boot, driver, and kmod images.
 - [ ] Per-process registry owns main image and DLL/shared libraries.
 - [ ] Expose lock-safe iteration API with rundown protection.
@@ -90,6 +94,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- global and per-process registries"`
 
 **Test checkpoint:** Registering N images and iterating returns exactly N under a spinlock/rundown; concurrent register/unregister on two CPUs leaves the count consistent. Serial log shows `"kimage: registered '<name>' (global|pid=<N>)"`. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] §2 registries ARE the kimage-supersedes-exec migration; the strategy (backing-store-delegate vs superset-rewire) + 4 open questions touch the FATAL Phase-1 kernel self-registration and the shipped TODO-27 §3 crash-dump consumer (reason: operator-reserved, expensive-to-reverse boot/ABI refactor) -> XREF: TODO-27 §3 (crash-dump consumer of `exec_register_module`; DECIDE item at §2 line 85)
 
 ---
 
@@ -103,6 +108,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- address range index and lookup"`
 
 **Test checkpoint:** `image_lookup_by_address(base)` and `(end-1)` return the entry; `(end)` and `(base-1)` return NULL; an overlapping insert is rejected/faults. Per-CPU cache hit on repeated lookup. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] indexes the kimage registry (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -116,6 +122,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- symbol provider abstraction"`
 
 **Test checkpoint:** `ksym_lookup_addr(known_sym+4)` returns the symbol name with displacement 4; a stripped image reports `<no symbols>`; `ksym_lookup_name` round-trips. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] symbol providers hang off kimage registry entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -130,6 +137,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- unwind metadata registry"`
 
 **Test checkpoint:** An unwind range lookup for an address inside a registered image returns the `.pdata`/`.eh_frame` entry; a range outside executable sections is rejected at registration. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] unwind metadata is registered against kimage entries (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -143,6 +151,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- loader integration"`
 
 **Test checkpoint:** Loading an EIF/PE image registers exactly one `KIMAGE_ENTRY`; a failed load leaves zero entries (atomic); the migrated crash-module enumeration returns the same set. Serial log shows `"kimage: registered '<name>'"` on load. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] loaders call `kimage_register` (§2); the loader-migration IS the §2 decision (which loaders delegate/rewire) (reason: same operator decision as §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -158,6 +167,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- image load/unload notifications"`
 
 **Test checkpoint:** A registered callback fires on image load with the correct base/name/CI-decision, after insertion (lookup succeeds inside the callback) and before the user entrypoint. Unload fires the ImageUnload callback. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] notifications fire after registry commit (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -174,6 +184,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- KD and crash dump integration"`
 
 **Test checkpoint:** The crash-dump module stream lists every registered image once; the panic screen resolves a faulting RIP to `<image>+<offset>` via `image_lookup_by_address`. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] KD/crash-dump reads the kimage registry (§2) + its address index (§3); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -188,6 +199,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- provenance, CI, and hotpatch metadata"`
 
 **Test checkpoint:** A registered image records its load source + CI decision + signer; unregister is refused (returns busy) while the refcount indicates active frames, and succeeds after rundown. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] provenance/unload-quiescence extend the kimage entry lifecycle (§2); blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
@@ -200,6 +212,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Commit: `"kernel: kimage -- tests and consistency verifier"`
 
 **Test checkpoint:** All `test_kimage` assertions pass (register/unregister, overlap reject, addr/symbol/unwind lookup, per-process iteration); the boot verifier confirms kernel + symtab + drivers appear exactly once and the PEB-Ldr-vs-registry count matches per process. Test on: QEMU WHPX + TCG; bare metal.
+> **Deferred:** 2026-07-10 | [architectural] the consistency verifier tests §2-§9 which are all blocked until the §2 migration strategy is decided (reason: downstream of §2) -> XREF: §2 (DECIDE item, line 85).
 
 ---
 
