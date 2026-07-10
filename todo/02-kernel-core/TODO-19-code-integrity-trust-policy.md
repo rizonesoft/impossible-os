@@ -44,12 +44,12 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   |   2   | Image validation API and callback     | T17          |  [/]   |
 | 💎   |   3   | Hashing and signature provider bridge | T03          |  [x]   |
 | 💎   |   4   | Embedded signature validation         | §2, §3       |  [/]   |
-| 💎   |   5   | Catalog database                      | Registry/VFS |  [ ]   |
-| 💎   |   6   | Revocation and deny lists             | §5           |  [ ]   |
-| ⭐   |   7   | Measured-boot and Secure Boot binding | TPM          |  [ ]   |
-| 💎   |   8   | Driver/module enforcement             | T18, D04 T04 |  [ ]   |
-| 💎   |   9   | User-mode image enforcement           | T17, T20     |  [ ]   |
-| ⭐   |  10   | CI audit, telemetry, and syscalls     | T12, T16     |  [ ]   |
+| 💎   |   5   | Catalog database                      | Registry/VFS |  [/]   |
+| 💎   |   6   | Revocation and deny lists             | §5           |  [/]   |
+| ⭐   |   7   | Measured-boot and Secure Boot binding | TPM          |  [/]   |
+| 💎   |   8   | Driver/module enforcement             | T18, D04 T04 |  [/]   |
+| 💎   |   9   | User-mode image enforcement           | T17, T20     |  [/]   |
+| ⭐   |  10   | CI audit, telemetry, and syscalls     | T12, T16     |  [/]   |
 
 ## 1. Code Integrity Policy Object
 
@@ -105,7 +105,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 > - Scope: §2 owns the decision engine + callback object only. §3 the crypto bridge; §4 embedded signatures (the real ALLOW path); §6 revocation population; T10 general lockdown.
 >
 > **Verified:** 2026-07-10 | commit `884f8c6c` | 4/8 items | build OK | tests 1176/1176 PASS (12 CI suites)
-> **Accepted:** [L] `ci_validate_dynamic_code` fires no `\Callback\CiImageLoad` (dynamic code has no `ci_image_info_t`); synthetic-info callback lands with the call-site wiring -> XREF: 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 108)
+> **Accepted:** [L] `ci_validate_dynamic_code` fires no `\Callback\CiImageLoad` (dynamic code has no `ci_image_info_t`); synthetic-info callback lands with the call-site wiring -> XREF: 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 94)
 > **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) + kernel-quality-auditor | 2H+3M+3L fixed, 1L accepted-XREF | test gap: ci_image_init/callback publication (needs live OB, no-live-boot policy) | scope: kernel-code-quality
 
 ---
@@ -153,75 +153,88 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 5. Catalog Database
 
-- [ ] Load catalog files from `C:\Impossible\System\Catalogs\`.
-- [ ] Catalog maps image hash to signer, policy OID/equivalent, timestamp, and allowed image type.
-- [ ] Catalog cache is indexed by hash and protected by ERESOURCE.
-- [ ] Add recovery path if catalogs are missing in Safe Mode.
+- [/] Load catalog files from `C:\Impossible\System\Catalogs\`. BLOCKED: a catalog file format must be decided (Windows `.cat` is PKCS#7/ASN.1 and §3 `ci_crypto` has no ASN.1 parser).
+- [ ] Catalog file-format decision (prereq): define an Impossible-OS native catalog format (versioned header + hash->signer entries, Ed25519-signed) since ASN.1 `.cat` is out of scope. -> XREF: T19 §3, §4.
+- [/] Catalog maps image hash to signer, policy tag, timestamp, allowed image type. BLOCKED on the format decision + §4 signer identity.
+- [ ] Catalog cache indexed by hash + ERESOURCE-protected (implementable once the format lands; the cache structure is format-independent).
+- [ ] Recovery path if catalogs missing in Safe Mode.
 - [ ] Commit: `"kernel: ci -- catalog database"`
 
 **Test checkpoint:** a catalog file maps a known image hash to its signer; a hash lookup hits the ERESOURCE-protected cache; Safe Mode with missing catalogs takes the recovery path without hanging. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] Catalog database is blocked on a catalog file-format decision (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) and on §4 signer identity. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: 02-kernel-core/TODO-19 §5 (item: "Catalog file-format decision (prereq)" at line 157); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139)
 
 ---
 
 ## 6. Revocation and Deny Lists
 
-- [ ] Registry-backed revoked hash list and signer deny list.
-- [ ] Optional catalog-delivered revocation bundles.
-- [ ] Revocation always overrides allow, including test-signing unless boot explicitly enters lab mode.
-- [ ] Publish notification on revocation database update.
+- [x] Revocation always overrides allow -- `ci_hash_revoked` (§1) denies any revoked digest and `ci_validate_image` (§2) checks revocation before every allow path incl. DISABLED. No lab-mode exemption (fail-closed).
+- [/] Registry-backed revoked hash list + signer deny list. BLOCKED: the §1 revoked list is sealed-immutable; registry population needs `ci_init` pre-seal (unwired) or a mutable refresh store. -> XREF: T19 §1, §10.
+- [ ] Optional catalog-delivered revocation bundles. BLOCKED on the §5 catalog format. -> XREF: T19 §5.
+- [ ] Publish notification on revocation database update (needs the mutable store + an update event). -> XREF: T19 §10.
 - [ ] Revocation-bundle freshness: bundles carry a monotonic version; reject a bundle older than the applied floor (anti-rollback) and flag stale revocation data past a policy age. -> XREF: D01 T13 (monotonic anti-rollback anchor).
 - [ ] Commit: `"kernel: ci -- revocation and deny lists"`
 
 **Test checkpoint:** a revoked hash is denied even with an otherwise-valid signature; a revoked signer is denied; a revocation-DB update fires the update notification. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] Revocation enforcement is DONE (§1 `ci_hash_revoked` + §2 revocation-first), but registry-backed population + update-notification are blocked on `ci_init` boot-wiring and a mutable/refresh revocation store (the §1 list is sealed-immutable). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 61); 02-kernel-core/TODO-19 §10 (item: "Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh" at line 232)
 
 ---
 
 ## 7. Measured-Boot and Secure Boot Binding
 
-- [ ] Bind CI policy to Secure Boot state reported by boot platform.
-- [ ] Record policy digest in TPM PCR event log when TPM is present.
-- [ ] Refuse unsigned kernel drivers when Secure Boot is enabled.
-- [ ] Audit mismatch between bootloader trust state and kernel policy state.
+- [x] Bind CI policy to Secure Boot state -- §1 `ci_sb_state` resolves the tri-state and pins SECUREBOOT enforcement under active SB; UNKNOWN fails closed.
+- [/] Record policy digest in TPM PCR event log when a TPM is present. BLOCKED on the TPM measured-boot binding. -> XREF: D01 T13.
+- [/] Refuse unsigned kernel drivers when Secure Boot is enabled. BLOCKED on §4 signature validation + §8 driver enforcement. -> XREF: T19 §4, §8.
+- [ ] Audit mismatch between bootloader trust state and kernel policy state (§1 exposes `degraded_trust_flags`; needs a boot-vs-kernel compare + audit event).
 - [ ] Slot-boot-verification query (was the active slot signature-verified this boot?) so A/B mark-good + the anti-rollback floor refuse to bless an unverified slot. -> XREF: [`D01 T21 §5`](../01-boot-platform/TODO-21-ab-boot-rollback.md) + `§8`.
 - [ ] Commit: `"kernel: ci -- measured-boot and secure boot binding"`
 
 **Test checkpoint:** with Secure Boot enabled, an unsigned kernel driver is refused; the policy digest is recorded in the TPM PCR event log when a TPM is present; a bootloader-vs-kernel trust-state mismatch is audited. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] Secure-Boot binding is DONE (§1 `ci_sb_state` pins SECUREBOOT enforcement); the TPM PCR digest record is blocked on the measured-boot binding, refuse-unsigned-drivers on §4 + §8, and the slot-verification query on the A/B boot work. -> XREF: 04-drivers-hardware/TODO-04 (TPM measured-boot); 02-kernel-core/TODO-19 §8 (item: "Validate `.kmod` and driver images before relocation/load" at line 197); 01-boot-platform/TODO-21 §5 (slot verification)
 
 ---
 
 ## 8. Driver/Module Enforcement
 
-- [ ] Validate built-in drivers at boot by image hash table.
-- [ ] Validate `.kmod` and driver images before relocation/load.
-- [ ] Enforce signer class: kernel, boot-start driver, normal driver, test driver.
-- [ ] Block unsigned executable memory allocation for driver code.
+- [/] Validate built-in drivers at boot by image hash table. BLOCKED on §4 signature validation + a compiled boot driver-hash table. -> XREF: T19 §4.
+- [/] Validate `.kmod`/driver images before relocation/load. BLOCKED on §4 + the kernel module loader. -> XREF: T19 §4, D04 T05.
+- [ ] Enforce signer class (kernel / boot-start / normal / test driver). BLOCKED on §4 signer identity. -> XREF: T19 §4.
+- [/] Block unsigned executable memory allocation for driver code. BLOCKED on wiring `ci_validate_dynamic_code` into the nt_memory PAGE_EXECUTE sites (§2 [ ]). -> XREF: T19 §2.
 - [ ] Commit: `"kernel: ci -- driver/module enforcement"`
 
 **Test checkpoint:** a built-in driver validates against its boot hash table; an unsigned `.kmod` is blocked before relocation/load; signer-class gating rejects a normal-signed image that requests boot-start. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] Driver/module enforcement is blocked on §4 embedded-signature validation, the §2 loader/dynamic-code wiring, and the kernel module loader. No enforcement is possible until a real ALLOW path + loader call sites exist. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139); 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 94); 04-drivers-hardware/TODO-05 (kernel module loader)
 
 ---
 
 ## 9. User-Mode Image Enforcement
 
-- [ ] Apply configurable policy by path, signer, zone, and token integrity level.
-- [ ] Allow audit-only mode for unsigned user applications while blocking unsigned elevated/system processes.
-- [ ] Add `STATUS_INVALID_IMAGE_HASH` and `STATUS_IMAGE_CERT_REVOKED` returns.
+- [/] Apply configurable policy by path, signer, zone, token integrity level. BLOCKED on §2 loader wiring + §4 signer identity. -> XREF: T19 §2, §4.
+- [/] Audit-only for unsigned user apps while blocking unsigned elevated/system. BLOCKED on the §2 loader enforcement wiring. -> XREF: T19 §2.
+- [ ] Add `STATUS_INVALID_IMAGE_HASH` + `STATUS_IMAGE_CERT_REVOKED` (consumed by the blocked enforcement path; land with it). -> XREF: T19 §2.
 - [ ] Include CI decision in loaded-image registry. -> XREF: TODO-18 §9 (provenance CI decision field).
 - [ ] Commit: `"kernel: ci -- user-mode image enforcement"`
 
 **Test checkpoint:** an unsigned user app runs in audit mode but an unsigned elevated/system process is blocked with `STATUS_INVALID_IMAGE_HASH`; a revoked cert yields `STATUS_IMAGE_CERT_REVOKED`; the CI decision appears in the loaded-image registry. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] User-mode image enforcement is blocked on the §2 loader enforcement wiring (no loader calls `ci_validate_image`) + §4 embedded-signature validation for the real ALLOW path. -> XREF: 02-kernel-core/TODO-19 §2 (item: "Loaders call CI before mapping" at line 93); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139)
 
 ---
 
 ## 10. CI Audit, Telemetry, and Syscalls
 
-- [ ] Publish CI allow/deny/audit events through klog/ETW, emitted INTO the tamper-evident HMAC-chained log so a post-compromise trail edit is detectable. -> XREF: TODO-04 §10 ("Log integrity verification (HMAC)").
-- [ ] Add `NtQuerySystemInformation(SystemCodeIntegrityInformation)`.
-- [ ] Add `ci_dump_policy()` for KD/crash dump.
-- [ ] Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh (revocation update); reject downgrades after lock.
+- [x] `ci_validate_image` already emits a klog audit line per decision (allow/deny reason + mode). The tamper-evident HMAC-chained log emission is deferred. -> XREF: TODO-04 §10 ("Log integrity verification (HMAC)").
+- [/] Add `NtQuerySystemInformation(SystemCodeIntegrityInformation)`. BLOCKED on the SSDT/syscall surface. -> XREF: T12, T16.
+- [/] `ci_dump_policy()` for KD/crash dump -- implementable now (dumps the §1 sealed policy via klog); the crash-dump surfacing needs the KD path. -> XREF: T19 §1.
+- [/] Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh (revocation update); reject downgrades after lock. BLOCKED on the mutable/refresh policy store + SSDT. -> XREF: T12.
 - [ ] Commit: `"kernel: ci -- audit, telemetry, and syscalls"`
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemCodeIntegrityInformation)` returns the current mode + flags; a deny decision is published via klog/ETW; `ci_dump_policy()` output appears in a crash dump; a post-lock policy downgrade via `NtSetSystemInformation` is rejected. Test on: QEMU WHPX + TCG; bare metal.
+>
+> **Deferred:** [H] CI audit/syscalls are blocked on the SSDT/syscall surface (NtQuery/NtSet) + the tamper-evident HMAC log; per-decision klog audit already ships in §2. `ci_dump_policy()` is the one near-term-implementable item (dumps the §1 policy). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 61); 04-drivers-hardware/TODO-04 §10 (HMAC log integrity)
 
 ---
 
