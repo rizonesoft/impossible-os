@@ -72,7 +72,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [/]   |
 | ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
 | 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [/]   |
-| 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [ ]   |
+| 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [/]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -312,6 +312,7 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 - [ ] Commit: `"kernel: eif -- signature-block ABI (signer key delivery)"`
 
 **Test checkpoint:** the amended signature block round-trips through `elf2eif` + the loader; a signed EIF with a pubkey whose hash matches a trusted anchor verifies, and one with an untrusted pubkey is rejected. (Verify impl lands in TODO-17 §17.) Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Deferred:** [M] Operator-reserved: this is a security-sensitive EIF signature-block ABI + `EIF_VERSION` bump with NO end-to-end validation path today -- the producer (`eifsign`/`elf2eif` signing) and the verify impl are both deferred, and CI trust anchors do not exist yet, so ratifying the on-disk signature format unilaterally in an unattended run is inappropriate. Needs operator sign-off -> XREF: `TODO-17-binary-system.md §17` (verify impl + `eifsign` producer); `TODO-19-code-integrity-trust-policy.md §4` (trusted CI anchor tiers, item: "Embedded signature validation").
 
 ---
 
