@@ -205,16 +205,23 @@ static void test_ci_image_revoked_and_digest(void)
 
     ci_image_info_t img; ci_decision_t dec;
     ci_fill_image(&img);
-    memset(img.hash, 0xFF, sizeof(img.hash));   /* garbage caller hash, must be ignored */
+    memset(img.hash, 0xFF, sizeof(img.hash));     /* garbage caller hash, must be ignored */
+    memset(img.signer, 0xAA, sizeof(img.signer)); /* garbage OUT fields, must be cleared */
+    img.measured = 1;
     ci_verdict_t v = ci_validate_image(&img, &dec);
 
-    int digest_ok = 1;
-    for (int b = 0; b < CI_HASH_LEN; b++) if (img.hash[b] != expect[b]) digest_ok = 0;
+    int digest_ok = 1, signer_cleared = 1;
+    for (int b = 0; b < CI_HASH_LEN; b++) {
+        if (img.hash[b] != expect[b]) digest_ok = 0;
+        if (img.signer[b] != 0) signer_cleared = 0;
+    }
     ci_policy_reset_for_test();
 
     TEST_ASSERT_EQ(v, CI_VERDICT_DENY, "a revoked digest is denied under ENFORCE");
     TEST_ASSERT_EQ(dec.reason, CI_REASON_REVOKED, "deny reason is REVOKED (overrides unverified)");
     TEST_ASSERT_EQ(digest_ok, 1, "validator recomputes the digest, ignoring the caller hash");
+    TEST_ASSERT_EQ(signer_cleared, 1, "validator clears a caller-prefilled signer (zeroed-output)");
+    TEST_ASSERT_EQ(img.measured, 0u, "measured stays 0 -- no attestation claimed until PCR binding");
 }
 
 /* Bad requests and an unsealed policy fail closed; an explicitly DISABLED policy

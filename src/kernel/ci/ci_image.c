@@ -82,8 +82,10 @@ static ci_verdict_t ci_finish(ci_image_info_t *img, ci_decision_t *dec)
 {
     ci_verdict_t  result   = dec->verdict;
     ci_decision_t snapshot = *dec;
-    ci_image_notify(img, &snapshot);
+    /* Audit from the authoritative record BEFORE firing the callback: a consumer
+     * could otherwise rewrite img->path mid-notify and forge the deny log line. */
     ci_image_audit(img, dec);
+    ci_image_notify(img, &snapshot);
     return result;
 }
 
@@ -99,6 +101,11 @@ ci_verdict_t ci_validate_image(ci_image_info_t *img, ci_decision_t *out)
     if (!img) {
         return CI_VERDICT_DENY;   /* no image -- nothing to notify/audit */
     }
+
+    /* Clear the OUT fields up front: a caller-prefilled signer/measured must
+     * never survive into the decision (zeroed-output contract). */
+    memset(img->signer, 0, sizeof(img->signer));
+    img->measured = 0;
 
     uint32_t enforcement = (uint32_t)ci_get_enforcement();
     out->enforcement = enforcement;
@@ -137,11 +144,11 @@ ci_verdict_t ci_validate_image(ci_image_info_t *img, ci_decision_t *out)
         return ci_finish(img, out);
     }
 
-    /* 6. Measurement mode records the digest for the TPM PCR aggregate. The
-     *    actual PCR extend is owned by the measured-boot binding; here we mark. */
-    if (ci_is_measurement()) {
-        img->measured = 1;
-    }
+    /* 6. Measurement mode records the digest into the TPM PCR aggregate. The
+     *    actual PCR extend is owned by the measured-boot binding and is not built
+     *    yet, so `measured` stays 0 -- we never claim an attestation we did not
+     *    perform. When that binding lands it sets measured=1 on a successful
+     *    extend (fail-safe: an unmeasured image is never reported as measured). */
 
     /* 7. No signature/catalog proof exists yet -> UNVERIFIED, mapped by mode. */
     ci_map_unverified(enforcement, out);
@@ -156,6 +163,10 @@ ci_verdict_t ci_validate_dynamic_code(uint64_t token, bool writable_and_exec,
     }
     (void)token;   /* reserved for the deferred token/provenance trust model */
 
+    /* Intentional asymmetry vs ci_validate_image: dynamic code has no
+     * ci_image_info_t, so it does NOT fire \Callback\CiImageLoad (the callback's
+     * (image, decision) contract needs an image). A synthetic-info notification
+     * lands when the dynamic-code call sites are wired. */
     out->verdict     = CI_VERDICT_DENY;
     out->reason      = CI_REASON_WX;
     out->enforcement = (uint32_t)ci_get_enforcement();

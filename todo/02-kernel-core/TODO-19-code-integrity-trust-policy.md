@@ -94,15 +94,19 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
 - [x] Commit: `"kernel: ci -- image validation API and callback"`
 
-**Test checkpoint:** the decision engine denies an unverified image under ENFORCE (reason UNVERIFIED) and audit-allows it under AUDIT; a revoked digest is denied (reason REVOKED, overriding unverified) and the validator recomputes the digest, ignoring a caller-supplied hash; NULL/empty/unsealed inputs fail closed; DISABLED allows; dynamic W+X is refused and non-W+X runtime code is UNVERIFIED-by-mode. 5 new `TEST_CAT_SECURITY` suites. Live loader firing + boot wiring are deferred (see `[/]` items). Test on: QEMU WHPX + TCG; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 13 CI suites, 0 failures
+**Test checkpoint:** the decision engine denies an unverified image under ENFORCE (reason UNVERIFIED) and audit-allows it under AUDIT; a revoked digest is denied (reason REVOKED, overriding unverified) and the validator recomputes the digest, ignoring a caller-supplied hash; NULL/empty/unsealed inputs fail closed; DISABLED allows; dynamic W+X is refused and non-W+X runtime code is UNVERIFIED-by-mode; caller-prefilled signer/measured OUT fields are cleared. 4 new `TEST_CAT_SECURITY` suites. Live loader firing + boot wiring are deferred (see `[/]` items). Test on: QEMU WHPX + TCG; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 12 CI suites, 0 failures
 >
 > **Notes:**
-> - Shipped `include/kernel/ci/ci_image.h` + `src/kernel/ci/ci_image.c`: the CI image-admission decision engine (`ci_validate_image`, `ci_validate_dynamic_code`, `ci_image_init`) + 5 `TEST_CAT_SECURITY` suites.
+> - Shipped `include/kernel/ci/ci_image.h` + `src/kernel/ci/ci_image.c`: the CI image-admission decision engine (`ci_validate_image`, `ci_validate_dynamic_code`, `ci_image_init`) + 4 `TEST_CAT_SECURITY` suites.
 > - Fail-closed engine: always recomputes the digest; revocation overrides all; UNVERIFIED -> DENY under ENFORCE, AUDIT_ALLOW under AUDIT; NULL/empty/unsealed deny; W+X refused. Design-review adoptions in the commit message.
 > - Deferred (concrete owners): live loader enforcement + `ci_init`/`SUBSYS_CI` boot wiring BLOCKED on the §1 ratchet-merge + §4 signatures + transactional remap; dynamic-code gating filed as a `[ ]` item naming the `nt_memory.c` sites.
 > - Canonical doc: the `include/kernel/ci/ci_image.h` header contract.
 > - Scope: §2 owns the decision engine + callback object only. §3 the crypto bridge; §4 embedded signatures (the real ALLOW path); §6 revocation population; T10 general lockdown.
+>
+> **Verified:** 2026-07-10 | commit `884f8c6c` | 4/8 items | build OK | tests 1176/1176 PASS (12 CI suites)
+> **Accepted:** [L] `ci_validate_dynamic_code` fires no `\Callback\CiImageLoad` (dynamic code has no `ci_image_info_t`); synthetic-info callback lands with the call-site wiring -> XREF: 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 108)
+> **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) + kernel-quality-auditor | 2H+3M+3L fixed, 1L accepted-XREF | test gap: ci_image_init/callback publication (needs live OB, no-live-boot policy) | scope: kernel-code-quality
 
 ---
 
@@ -257,4 +261,3 @@ Create `src/kernel/test/test_ci.c`, register via `test_register_ci()` in `test_r
 - [ ] `bash scripts/test-smoke.sh` shows `SMOKE TEST PASSED` (CI is on the loader admission path).
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | N suites, 0 failures
-
