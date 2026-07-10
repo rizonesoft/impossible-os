@@ -141,6 +141,38 @@ static void test_kimage_field_roundtrip(void)
     TEST_ASSERT_EQ(e.signer[KIMAGE_SIGNER_MAX - 1], '\0', "signer stays bounded/terminated");
 }
 
+/* The EXEC_FMT_* -> kimage_format_t bridge must map every known value and
+ * reject unknowns -- a raw field copy would silently corrupt (the id spaces
+ * diverge: EXEC ELF/PE/EIF = 0/1/2, KIMAGE ELF/PE/EIF = 1/2/3). */
+static void test_kimage_format_conversion(void)
+{
+    TEST_ASSERT_EQ(kimage_format_from_exec_fmt(EXEC_FMT_ELF), (uint32_t)KIMAGE_FMT_ELF,
+        "EXEC_FMT_ELF -> KIMAGE_FMT_ELF");
+    TEST_ASSERT_EQ(kimage_format_from_exec_fmt(EXEC_FMT_PE), (uint32_t)KIMAGE_FMT_PE,
+        "EXEC_FMT_PE -> KIMAGE_FMT_PE");
+    TEST_ASSERT_EQ(kimage_format_from_exec_fmt(EXEC_FMT_EIF), (uint32_t)KIMAGE_FMT_EIF,
+        "EXEC_FMT_EIF -> KIMAGE_FMT_EIF");
+    TEST_ASSERT_EQ(kimage_format_from_exec_fmt(999u), (uint32_t)KIMAGE_FMT_UNKNOWN,
+        "unrecognized EXEC_FMT -> UNKNOWN (no silent corruption)");
+    /* The raw-copy hazard the converter prevents: EXEC_FMT_ELF(0) copied
+     * directly would read as KIMAGE_FMT_UNKNOWN, not KIMAGE_FMT_ELF. */
+    TEST_ASSERT_NEQ((uint32_t)EXEC_FMT_ELF, (uint32_t)KIMAGE_FMT_ELF,
+        "id spaces diverge -- direct copy is unsafe, converter is required");
+}
+
+/* Records must be cache-line aligned so an array never straddles lines.
+ * The addresses are routed through a `volatile` pointer so -O2 cannot
+ * constant-fold `&arr[i] & 63` into a `0 == 0` tautology: the mask must be a
+ * real runtime check of the linked array's actual placement. */
+static void test_kimage_array_alignment(void)
+{
+    static kimage_entry_t arr[3];
+    kimage_entry_t *volatile p = arr;   /* opaque load; forces arr to be emitted */
+    TEST_ASSERT_EQ(((uintptr_t)&p[0]) & 63u, 0u, "arr[0] is cache-line aligned");
+    TEST_ASSERT_EQ(((uintptr_t)&p[1]) & 63u, 0u, "arr[1] is cache-line aligned");
+    TEST_ASSERT_EQ(((uintptr_t)&p[2]) & 63u, 0u, "arr[2] is cache-line aligned");
+}
+
 void test_register_kimage(void)
 {
     test_suite_register_cat("KImage: flags non-overlap",
@@ -151,4 +183,8 @@ void test_register_kimage(void)
         test_kimage_lifetime_gate, TEST_CAT_EXEC);
     test_suite_register_cat("KImage: field round-trip",
         test_kimage_field_roundtrip, TEST_CAT_EXEC);
+    test_suite_register_cat("KImage: EXEC_FMT conversion",
+        test_kimage_format_conversion, TEST_CAT_EXEC);
+    test_suite_register_cat("KImage: array cache-line alignment",
+        test_kimage_array_alignment, TEST_CAT_EXEC);
 }

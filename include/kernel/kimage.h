@@ -32,6 +32,7 @@
 
 #include "kernel/types.h"
 #include "kernel/ex.h"       /* EX_RUNDOWN_REF -- lifetime gate */
+#include "kernel/exec.h"     /* EXEC_FMT_* -- source id-space for the converter */
 #include "kernel/fs/vfs.h"   /* VFS_MAX_PATH -- canonical path capacity */
 
 /* Fixed-capacity string / digest sizes (including NUL for the char arrays). */
@@ -76,6 +77,27 @@ typedef enum kimage_format {
     KIMAGE_FMT_EIF     = 3,
     KIMAGE_FMT_MAX
 } kimage_format_t;
+
+/* Bridge the EXEC_FMT_* id space (0/1/2) to the canonical kimage_format_t
+ * (1/2/3). The two intentionally diverge, so a raw `dst->format = src->format`
+ * would silently map ELF->UNKNOWN, PE->ELF, EIF->PE; a loader migrating a
+ * loaded_module_t into a KIMAGE record MUST route through this converter, which
+ * rejects any unrecognized value to KIMAGE_FMT_UNKNOWN.
+ *
+ * NOTE: this is a mechanical id-space bridge only. It maps the EXEC_FMT
+ * *presentation* value, not necessarily the image's true format -- e.g. the
+ * kernel is registered EXEC_FMT_PE for WinDbg while being ELF on disk. Section 6
+ * loader integration is responsible for setting the TRUE format for such images
+ * (type=KERNEL, format=ELF) rather than blindly converting the presentation id. */
+static inline kimage_format_t kimage_format_from_exec_fmt(uint32_t exec_fmt)
+{
+    switch (exec_fmt) {
+    case EXEC_FMT_ELF: return KIMAGE_FMT_ELF;
+    case EXEC_FMT_PE:  return KIMAGE_FMT_PE;
+    case EXEC_FMT_EIF: return KIMAGE_FMT_EIF;
+    default:           return KIMAGE_FMT_UNKNOWN;
+    }
+}
 
 /* ---- Durable build/debug identity kind --------------------------------
  * A content hash is not a debug identity. This is the stable id a debugger /
@@ -159,7 +181,12 @@ typedef struct kimage_entry {
     char     signer[KIMAGE_SIGNER_MAX];      /* signer subject ("" if unsigned) */
     char     full_path[KIMAGE_PATH_MAX];     /* canonical Windows-style path */
     char     name[KIMAGE_NAME_MAX];          /* base name */
-} kimage_entry_t;
+} __attribute__((aligned(64))) kimage_entry_t;
+/* 64-byte aligned so an array of records keeps every element on a cache-line
+ * boundary: the hot lookup prefix (base/size/life at offsets 0-40) then never
+ * straddles two lines during an address-range or stack-walk scan. 832 is
+ * exactly 13 cache lines, so the alignment adds no tail padding. Registry
+ * storage (section 2) and any dynamic allocation must preserve this. */
 
 /* ---- Record invariants (enforced by the section-2 registration validator) --
  * A producer must not publish a kimage_entry_t that violates these, and a
@@ -179,6 +206,10 @@ typedef struct kimage_entry {
  * and KD module-stream serializers (section 8) depend on this layout. */
 _Static_assert(sizeof(kimage_entry_t) == 832,
     "kimage_entry_t size -- update KD/crash-dump serializers if changed");
+_Static_assert(_Alignof(kimage_entry_t) == 64,
+    "kimage_entry_t must be cache-line aligned so array elements never straddle lines");
+_Static_assert(sizeof(kimage_entry_t) % 64 == 0,
+    "record stride must be a whole number of cache lines to preserve array alignment");
 _Static_assert(__builtin_offsetof(kimage_entry_t, base) == 0,
     "base must be first (KD reads it at offset 0)");
 _Static_assert(__builtin_offsetof(kimage_entry_t, life) == 32,

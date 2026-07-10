@@ -61,17 +61,20 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [x] Optional metadata handles (symbols, unwind_ranges, exports, imports, relocations, debug_info) as 0-until-populated hook points for §4/§5/§6; documented process-local, not durable across unload.
 - [x] `kimage_type_t` role enum, independent from format: kernel, HAL/platform, boot module, driver, kmod, process, DLL, EIF module, synthetic/stub.
 - [x] Record invariants documented in kimage.h (copy-safety of `life`/handles; bounded NUL-terminated strings); enforced by the §2 validator, tombstone copy-safety owned by §8.
+- [x] Review adoptions: `aligned(64)` + alignof assert (records never straddle cache lines) and a `kimage_format_from_exec_fmt()` bridge (EXEC_FMT_* 0/1/2 -> KIMAGE 1/2/3, rejects unknown) so a raw field copy cannot silently corrupt format.
 - [x] Commit: `"kernel: kimage -- KIMAGE_ENTRY data model"`
 
 **Test checkpoint:** `sizeof(kimage_entry_t)` is 832 (compile-time `_Static_assert` + runtime assert); a valid populated entry round-trips every field with NUL-terminated in-capacity strings; the flags bitmask is single-bit non-overlapping; a zero-init entry classifies as UNKNOWN (not ELF); the embedded rundown gate acquires then refuses after rundown. Test on: QEMU WHPX + TCG; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 4 KImage suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 6 KImage suites, 0 failures
 >
 > **Notes:**
-> - Shipped `include/kernel/kimage.h` (`kimage_entry_t` 832 B, 4 enums, `KIMAGE_FLAG_*` bitmask, pinned offset/size asserts) + `src/kernel/test/test_kimage.c` (4 suites: flags, zero-init-UNKNOWN, lifetime gate, field round-trip).
+> - Shipped `include/kernel/kimage.h` (`kimage_entry_t` 832 B cache-line-aligned, 4 enums, `KIMAGE_FLAG_*` bitmask, `kimage_format_from_exec_fmt` bridge, pinned asserts) + `src/kernel/test/test_kimage.c` (6 suites: flags, zero-init, lifetime gate, round-trip, format-conversion, alignment).
 > - Header-only data model; tests registered in `test_runner.c`, run under `SUITE=exec`. Design + adversarial adoptions (rundown gate, canonical format, durable identity, VFS_MAX_PATH) are in the commit message.
 > - Metadata handles / `life` gate / `identity` are 0-until-populated hook points for later sections; nothing populates the registry yet.
 > - Canonical doc: the `include/kernel/kimage.h` record-invariants contract block.
 > - Scope: §1 owns the data model only. §2 owns registries + the common validator; §4 symbols, §5 unwind, §8 tombstone copy-safety.
+> **Verified:** 2026-07-10 | commit `99de36bc` | 6/6 items | build OK | tests 6 suites
+> **Quality reviewed:** 2026-07-10 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M fixed | scope: kernel-code-quality
 
 ---
 
@@ -132,7 +135,8 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## 6. Loader Integration
 
-- [ ] `exec_load`, PE loader, ELF loader, EIF loader, and kmod loader call `kimage_register`.
+- [ ] `exec_load`, PE loader, ELF loader, EIF loader, and kmod loader call `kimage_register`, mapping format via `kimage_format_from_exec_fmt()`.
+- [ ] Set the TRUE format when EXEC_FMT is a WinDbg presentation lie: the ELF kernel registers EXEC_FMT_PE, so its KIMAGE record must be type=KERNEL, format=ELF (not the converted PE).
 - [ ] Unload paths call `kimage_unregister` after rundown.
 - [ ] Existing crash module enumeration migrates to this registry.
 - [ ] Load failures must not leave partial image entries.
