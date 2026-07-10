@@ -14,6 +14,7 @@
 #include "kernel/mm/user_range.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/timer.h"
+#include "libs/lz4.h"
 
 /* Segment copy/zero use the kernel scalar memcpy/memset (libc string.c), the
  * same as the ELF loader (section 2) -- byte-at-a-time local loops were a
@@ -333,6 +334,30 @@ int eif_parse_metadata(const uint8_t *data, uint64_t size,
     return 1;
 }
 
+/* ---- Compressed-segment decompression ----------------------------------- */
+
+/* Decompress one compressed segment's stream (src_size compressed bytes) into
+ * dst (capacity dst_cap) and confirm it produces EXACTLY `expect` bytes. Pure:
+ * bounded by LZ4_decompress_safe (never reads/writes outside the buffers even on
+ * hostile input), writes only into dst, touches no user memory or global state.
+ * Returns 1 on success, 0 on a corrupt stream or a decompressed size that is not
+ * exactly `expect`. src_size == 0 means "no compressed payload" and succeeds iff
+ * expect == 0. This is the preflight primitive: eif_load runs it against a
+ * scratch buffer for every compressed segment BEFORE the mutation phase, so a
+ * corrupt or size-lying stream rejects the load with no vaddr write, preserving
+ * the "mutation cannot be aborted partway" invariant. */
+int eif_decompress_segment(const uint8_t *src, uint32_t src_size,
+                           uint8_t *dst, uint32_t dst_cap, uint32_t expect)
+{
+    int produced;
+    if (src_size == 0)
+        return expect == 0;
+    if (dst_cap < expect)
+        return 0;
+    produced = lz4_decompress(src, src_size, dst, dst_cap);
+    return produced >= 0 && (uint32_t)produced == expect;
+}
+
 /* ---- Loader ------------------------------------------------------------- */
 
 uint64_t eif_load(const uint8_t *data, uint64_t size)
@@ -343,6 +368,8 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
     uint32_t available_count = 0;  /* registered imports, reported after timing */
     uint64_t start_ns, end_ns, load_us;
     eif_metadata_t meta;           /* parsed pre-mutation; logged after timing */
+    int compressed;                /* EIF_FLAG_COMPRESSED: all segments LZ4 */
+    uint64_t max_decomp = 0;       /* largest mem_size among compressed segments */
 
     start_ns = uptime_ns();
 
@@ -362,14 +389,12 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
-    /* Reject COMPRESSED binaries until EIF segment decompression is implemented.
-     * The segment copy below moves file bytes verbatim into the executable user
-     * range; loading a compressed image would run the LZ4 stream as code. Fail
-     * closed rather than execute garbage. */
-    if (hdr->flags & EIF_FLAG_COMPRESSED) {
-        klog(LOG_WARN, "eif", "Compressed EIF rejected: decompression not yet implemented");
-        return 0;
-    }
+    /* EIF_FLAG_COMPRESSED (spec: per-file flag). When set, every segment's file
+     * bytes are an LZ4 stream: file_size is the compressed length, mem_size the
+     * exact decompressed extent (no implicit BSS). Decompression is deferred to
+     * the preflight below (validation phase) so a corrupt stream rejects the load
+     * before any user-memory write. */
+    compressed = (hdr->flags & EIF_FLAG_COMPRESSED) ? 1 : 0;
 
     if (hdr->segment_count == 0) {
         klog(LOG_DEBUG, "eif", "No segments loaded");
@@ -427,8 +452,23 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
                 return 0;
             }
 
-            /* file_size must not exceed mem_size (BSS = mem_size - file_size) */
-            if (seg->file_size > seg->mem_size) {
+            /* Segment size rule is flag-conditional:
+             *  - Uncompressed: file_size <= mem_size (BSS = mem_size - file_size).
+             *  - Compressed: file_size is the COMPRESSED length, mem_size the
+             *    exact decompressed extent, so file_size may exceed mem_size for
+             *    small/incompressible data. A non-empty compressed payload must
+             *    produce output (reject mem_size == 0). A file_size==0 compressed
+             *    segment is a pure-BSS region (zero-filled, no LZ4). Track the
+             *    largest decompressed segment to size the preflight scratch. */
+            if (compressed) {
+                if (seg->file_size > 0 && seg->mem_size == 0) {
+                    klog(LOG_ERROR, "eif",
+                         "Segment %u: compressed payload but mem_size 0", (uint64_t)i);
+                    return 0;
+                }
+                if (seg->file_size > 0 && seg->mem_size > max_decomp)
+                    max_decomp = seg->mem_size;
+            } else if (seg->file_size > seg->mem_size) {
                 klog(LOG_ERROR, "eif", "Segment %u: file_size > mem_size", (uint64_t)i);
                 return 0;
             }
@@ -576,10 +616,50 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
+    /* ---- Compressed-segment preflight (still validation phase) ----
+     * LZ4 decompression can fail on a corrupt or size-lying stream, so it cannot
+     * run in the mutation phase without breaking that phase's "cannot be aborted
+     * partway" invariant. Decompress every compressed segment into a scratch
+     * buffer HERE and verify each produces exactly mem_size. Only if ALL preflights
+     * pass does the mutation phase decompress into the user range -- the input is
+     * immutable and LZ4 is deterministic, so that second decode cannot fail. One
+     * scratch buffer sized to the largest decompressed segment is reused across
+     * segments and freed on every path (scratch, user range, and the EIF file
+     * buffer are three distinct non-overlapping regions). */
+    if (compressed && max_decomp > 0) {
+        uint64_t pages = (max_decomp + 4095) / 4096;
+        uint32_t cap = (uint32_t)(pages * 4096);
+        uint8_t *scratch = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(pages);
+        int bad = 0;
+        uint64_t p;
+        if (!scratch) {
+            klog(LOG_ERROR, "eif", "Compressed EIF: no memory for decompress scratch");
+            return 0;
+        }
+        for (i = 0; i < hdr->segment_count && !bad; i++) {
+            const eif_segment_t *seg = (const eif_segment_t *)
+                (data + hdr->segment_offset + (uint64_t)i * sizeof(eif_segment_t));
+            if (seg->file_size == 0)
+                continue;   /* pure-BSS: zero-filled in mutation, nothing to decode */
+            if (!eif_decompress_segment(data + seg->file_offset, seg->file_size,
+                                        scratch, cap, seg->mem_size)) {
+                klog(LOG_ERROR, "eif",
+                     "Segment %u: corrupt or size-mismatched compressed stream",
+                     (uint64_t)i);
+                bad = 1;
+            }
+        }
+        for (p = 0; p < pages; p++)
+            pmm_free_frame((uintptr_t)scratch + p * 4096);
+        if (bad)
+            return 0;
+    }
+
     /* ============================================================
      * MUTATION PHASE -- every segment, import, and the entry point
-     * passed above, so the copies and PMM/dispatch-table writes below
-     * cannot be aborted partway by a validation failure.
+     * passed above (compressed streams preflighted), so the copies and
+     * PMM/dispatch-table writes below cannot be aborted partway by a
+     * validation failure.
      * ============================================================ */
 
     /* ---- Copy segments (identity-mapped: vaddr == paddr) ----
@@ -593,14 +673,31 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
             (data + hdr->segment_offset + (uint64_t)i * sizeof(eif_segment_t));
         uint64_t vaddr = hdr->load_base + seg->vaddr;
 
-        /* Copy file data */
-        if (seg->file_size > 0)
-            memcpy((void *)vaddr, data + seg->file_offset, seg->file_size);
-
-        /* Zero BSS (mem_size > file_size) */
-        if (seg->mem_size > seg->file_size)
-            memset((void *)(vaddr + seg->file_size), 0,
-                   seg->mem_size - seg->file_size);
+        if (compressed) {
+            if (seg->file_size > 0) {
+                /* Decompress straight into the user range. The preflight proved
+                 * this exact immutable stream decodes to mem_size, so this
+                 * deterministic decode cannot fail; the guard is defence in depth. */
+                if (!eif_decompress_segment(data + seg->file_offset, seg->file_size,
+                                            (uint8_t *)vaddr, seg->mem_size,
+                                            seg->mem_size)) {
+                    klog(LOG_ERROR, "eif",
+                         "Segment %u: decompress failed after preflight (unreachable)",
+                         (uint64_t)i);
+                    return 0;
+                }
+            } else {
+                /* Pure-BSS compressed segment: zero-fill, no LZ4. */
+                memset((void *)vaddr, 0, seg->mem_size);
+            }
+        } else {
+            /* Uncompressed: copy file bytes, then zero BSS (mem_size > file_size). */
+            if (seg->file_size > 0)
+                memcpy((void *)vaddr, data + seg->file_offset, seg->file_size);
+            if (seg->mem_size > seg->file_size)
+                memset((void *)(vaddr + seg->file_size), 0,
+                       seg->mem_size - seg->file_size);
+        }
 
         /* Reserve physical pages */
         pmm_mark_region_used((uintptr_t)vaddr, seg->mem_size);

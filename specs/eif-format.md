@@ -12,8 +12,9 @@
 4. **API versioning:** Any SSDT service number reassignment or ABI-breaking change MUST increment the OS API version. The loader rejects binaries whose `api_version` exceeds the running OS API version. Binaries are forward-compatible only within the same major version.
 5. **Optional import stubs:** Skipped optional imports MUST have their dispatch table entry set to a deterministic stub that returns `STATUS_NOT_IMPLEMENTED`. User code MUST check return values for optional imports.
 6. **Range derivation (overflow-safe):** for each table the loader MUST compute `end = offset + (uint64_t)count * sizeof(entry)` in 64-bit and reject the file if the multiply or add would overflow or if `end > file_size`. Never validate with 32-bit arithmetic (`segment_count`/`import_count` are 32-bit and `count * stride` can wrap). `segment_count` and `import_count` are each capped at a fixed loader maximum (mirrored in `include/kernel/eif.h`); a count above the cap is rejected before any table is walked.
-7. **Segment ordering:** `eif_segment_t[]` entries MUST be sorted by ascending `vaddr`, with monotonic non-overlapping `[vaddr, vaddr + mem_size)` and `[file_offset, file_offset + file_size)` ranges (and `file_size <= mem_size`). This lets the loader validate non-overlap in a single O(n) walk (compare each entry to the previous end); out-of-order or overlapping entries are rejected during that walk.
+7. **Segment ordering:** `eif_segment_t[]` entries MUST be sorted by ascending `vaddr`, with monotonic non-overlapping `[vaddr, vaddr + mem_size)` and `[file_offset, file_offset + file_size)` ranges. This lets the loader validate non-overlap in a single O(n) walk (compare each entry to the previous end); out-of-order or overlapping entries are rejected during that walk. The `file_size <= mem_size` relation holds for UNCOMPRESSED segments only; see rule 9 for `EIF_FLAG_COMPRESSED`.
 8. **Metadata bounds:** when `metadata_offset` is non-zero its range is `[metadata_offset, signature_offset)` for a signed file, or `[metadata_offset, file_size)` for an unsigned file. Key/value record parsing MUST stay inside that bounded range and stop at the first `key_len == 0` terminator OR the range end, whichever comes first; a record whose declared length would read past the range end is rejected. The loader never scans past `signature_offset` (or EOF) while reading metadata.
+9. **Compressed segments (`EIF_FLAG_COMPRESSED`, a per-file header flag):** when set, every segment's file bytes `[file_offset, file_offset + file_size)` are an LZ4 block and `mem_size` is the EXACT decompressed extent (there is no implicit BSS for a compressed segment; `file_size` MAY exceed `mem_size` for small or incompressible data). A `file_size == 0` segment is a pure-BSS region zero-filled without invoking LZ4. A non-empty compressed payload with `mem_size == 0` is rejected. The loader MUST decompress every compressed segment into a scratch buffer and confirm each produces exactly `mem_size` bytes BEFORE writing any user memory, so a corrupt or size-lying stream fails the load atomically (no segment is partially materialized). Decompression is bounds-checked (`LZ4_decompress_safe`): it never reads or writes outside the source and destination buffers even on hostile input.
 
 ## Design Goals
 
@@ -80,7 +81,7 @@
 | 1 | `EIF_FLAG_CONSOLE` | Console application (uses terminal I/O) |
 | 2 | `EIF_FLAG_DRIVER` | Kernel-mode driver (future) |
 | 3 | `EIF_FLAG_SIGNED` | Binary has a digital signature at signature_offset |
-| 4 | `EIF_FLAG_COMPRESSED` | Segment data is LZ4-compressed (future) |
+| 4 | `EIF_FLAG_COMPRESSED` | Segment data is LZ4-compressed (see normative rule 9) |
 | 5 | `EIF_FLAG_DEBUG` | Debug symbols present in metadata |
 | 6-31 | Reserved | Must be zero |
 
@@ -93,7 +94,7 @@
 | `0x00` | 8 | `vaddr` | Virtual address (relative to load_base) |
 | `0x08` | 4 | `file_offset` | Offset of segment data in file |
 | `0x0C` | 4 | `file_size` | Size of segment data in file (bytes) |
-| `0x10` | 4 | `mem_size` | Size in memory (>= file_size; difference is BSS) |
+| `0x10` | 4 | `mem_size` | Size in memory (uncompressed: >= file_size, difference is BSS; compressed: exact decompressed extent, see rule 9) |
 | `0x14` | 4 | `flags` | Permission flags (see below) |
 | `0x18` | 8 | `reserved` | Must be zero |
 

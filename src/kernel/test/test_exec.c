@@ -17,6 +17,7 @@
 #include "kernel/errno.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/test/klog_suppress.h"
+#include "libs/lz4.h"
 
 /* ---- Exec dispatcher tests ---- */
 
@@ -632,15 +633,75 @@ static void test_eif_reject_unsigned_with_signature(void)
 /* Fail-closed: a COMPRESSED EIF must be rejected -- the loader copies segment
  * bytes verbatim into the executable range and has no decompressor, so loading
  * one would execute the raw LZ4 stream as code. */
-static void test_eif_reject_compressed(void)
+/* ---- Compressed-segment decompression -- pure preflight primitive ----
+ * eif_decompress_segment is the decode+verify unit eif_load runs against a
+ * scratch buffer before mutation; it writes only into the caller's dst, so these
+ * exercise the full compressed contract without any user-memory (0x800000) write. */
+
+/* A valid LZ4 stream round-trips to the exact declared size and bytes. */
+static void test_eif_decompress_roundtrip(void)
 {
-    uint8_t buf[64];
-    eif_header_t *h = (eif_header_t *)buf;
-    eif_test_build_header(buf, sizeof(buf));
-    TEST_KLOG_SUPPRESS("eif");
-    h->flags = EIF_FLAG_COMPRESSED;
-    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
-                   "eif_load rejects COMPRESSED EIF (no decompressor yet)");
+    static const uint8_t plain[64] =
+        "The quick brown fox jumps over the lazy dog -- LZ4 round trip.";
+    uint8_t comp[128];
+    uint8_t out[64];
+    int csize, k, ok = 1;
+    csize = lz4_compress(plain, sizeof(plain), comp, sizeof(comp));
+    TEST_ASSERT(csize > 0, "lz4_compress produced a stream");
+    TEST_ASSERT_EQ(eif_decompress_segment(comp, (uint32_t)csize, out,
+                                          sizeof(out), sizeof(plain)), 1,
+                   "eif_decompress_segment accepts a valid stream at exact size");
+    for (k = 0; k < (int)sizeof(plain); k++)
+        if (out[k] != plain[k]) ok = 0;
+    TEST_ASSERT(ok, "decompressed bytes match the original");
+}
+
+/* A corrupt stream is rejected (LZ4_decompress_safe returns negative). */
+static void test_eif_decompress_reject_corrupt(void)
+{
+    static const uint8_t garbage[16] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    uint8_t out[64];
+    TEST_ASSERT_EQ(eif_decompress_segment(garbage, sizeof(garbage),
+                                          out, sizeof(out), 64), 0,
+                   "eif_decompress_segment rejects a corrupt stream");
+}
+
+/* A valid stream whose real output size != the declared mem_size is rejected. */
+static void test_eif_decompress_reject_size_mismatch(void)
+{
+    static const uint8_t plain[32] = "hello compressed world 12345678";
+    uint8_t comp[128];
+    uint8_t out[64];
+    int csize = lz4_compress(plain, sizeof(plain), comp, sizeof(comp));
+    TEST_ASSERT(csize > 0, "compress ok");
+    TEST_ASSERT_EQ(eif_decompress_segment(comp, (uint32_t)csize, out,
+                                          sizeof(out), sizeof(plain) + 1), 0,
+                   "eif_decompress_segment rejects a size that lies about the stream");
+}
+
+/* src_size==0 is a pure-BSS segment: ok iff expect==0. */
+static void test_eif_decompress_pure_bss(void)
+{
+    uint8_t out[8];
+    TEST_ASSERT_EQ(eif_decompress_segment((const uint8_t *)0, 0, out, sizeof(out), 0), 1,
+                   "src_size==0 && expect==0 succeeds (pure BSS)");
+    TEST_ASSERT_EQ(eif_decompress_segment((const uint8_t *)0, 0, out, sizeof(out), 4), 0,
+                   "src_size==0 && expect>0 fails");
+}
+
+/* dst_cap < expect is rejected before any decode, with no overflow. */
+static void test_eif_decompress_reject_small_cap(void)
+{
+    static const uint8_t plain[40] = "capacity guard payload 0123456789abcdef!";
+    uint8_t comp[128];
+    uint8_t out[16];   /* deliberately smaller than the decompressed size */
+    int csize = lz4_compress(plain, sizeof(plain), comp, sizeof(comp));
+    TEST_ASSERT(csize > 0, "compress ok");
+    TEST_ASSERT_EQ(eif_decompress_segment(comp, (uint32_t)csize, out,
+                                          sizeof(out), sizeof(plain)), 0,
+                   "dst_cap < expect is rejected without overflow");
 }
 
 /* Entry point must land inside a loaded EXECUTABLE segment, not merely the user
@@ -1002,7 +1063,12 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: absent-table offset", test_eif_reject_absent_table_nonzero_offset, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: segment reserved!=0", test_eif_reject_segment_reserved_nonzero, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: api_version too new", test_eif_reject_api_version_too_new, TEST_CAT_EXEC);
-    test_suite_register_cat("EIF: reject compressed", test_eif_reject_compressed, TEST_CAT_EXEC);
+    /* EIF LZ4 compressed-segment decompression (preflight primitive) */
+    test_suite_register_cat("EIF: decompress round-trip", test_eif_decompress_roundtrip, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: decompress corrupt", test_eif_decompress_reject_corrupt, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: decompress size mismatch", test_eif_decompress_reject_size_mismatch, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: decompress pure BSS", test_eif_decompress_pure_bss, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: decompress small cap", test_eif_decompress_reject_small_cap, TEST_CAT_EXEC);
 
     /* EIF metadata key-value parser */
     test_suite_register_cat("EIF: metadata parsed", test_eif_metadata_parsed, TEST_CAT_EXEC);

@@ -175,3 +175,11 @@ uint64_t eif_load(const uint8_t *data, uint64_t size);
  * reject the binary before mutation. `hdr` must already have passed eif_validate. */
 int eif_parse_metadata(const uint8_t *data, uint64_t size,
                        const eif_header_t *hdr, eif_metadata_t *out);
+
+/* Decompress one compressed segment stream into dst and confirm it produces
+ * exactly `expect` bytes. Pure (LZ4_decompress_safe bounds all access). Returns
+ * 1 on success, 0 on corrupt input or a size != expect. src_size == 0 succeeds
+ * iff expect == 0. eif_load's preflight uses this so a corrupt compressed
+ * segment rejects the load before any user-memory mutation. */
+int eif_decompress_segment(const uint8_t *src, uint32_t src_size,
+                           uint8_t *dst, uint32_t dst_cap, uint32_t expect);

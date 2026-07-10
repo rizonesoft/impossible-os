@@ -39,7 +39,7 @@ title: "TODO-20 -- EIF Full Implementation"
 - -> XREF: `TODO-17-binary-system.md §17` -- EIF code signing (COMPLEMENT, not started)
 - -> XREF: `TODO-17-binary-system.md §15` -- ASLR for all formats (COMPLEMENT, not started)
 - -> XREF: `TODO-17-binary-system.md §6` -- module list registration (FOUNDATION, partial)
-- -> XREF: `TODO-03-kernel-libraries.md §3` -- LZ4 block decompressor (FOUNDATION for §4; until [x] here, §4 stays blocked)
+- -> XREF: `TODO-03-kernel-libraries.md §3` -- LZ4 block decompressor (FOUNDATION for §6 compressed segments; consumed via `lz4_decompress`, §6 now [x])
 - -> XREF: `TODO-03-kernel-libraries.md §5` -- kernel CSPRNG for `load_base=0` ASLR in §8 (FOUNDATION, not started)
 - -> XREF: `TODO-12-native-api-ssdt.md §4` -- SSDT service table (FOUNDATION, partial)
 - -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md §8` -- per-process PML4 base already implemented; §9 consumes it as a foundation
@@ -67,7 +67,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
 | ⭐   |   4   | API version gating                          | §1                         |  [x]   |
 | ⭐   |   5   | Metadata section parser                     | §1                         |  [x]   |
-| ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
+| ⭐   |   6   | LZ4 compressed segments                     | T03 §3                     |  [x]   |
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
 | ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [ ]   |
@@ -200,14 +200,21 @@ The spec defines a key-value metadata section (name, version, author, icon, min_
 
 The spec reserves `EIF_FLAG_COMPRESSED` for LZ4-compressed segment data. This enables smaller binaries on disk with transparent decompression at load time.
 
-- [ ] Depends on: LZ4 decompressor in kernel (-> XREF: `TODO-03-kernel-libraries.md` §5)
-- [ ] If `EIF_FLAG_COMPRESSED` is set: for each segment, `file_size` is the compressed size; `mem_size` is the uncompressed size
-- [ ] Allocate a temporary kernel buffer only when needed: use `kmalloc(file_size)` for buffers <= 4 KiB, otherwise `pmm_alloc_contiguous()` (or a streaming decode path) before decompressing into the target vaddr
-- [ ] Validate decompressed size matches `mem_size`; reject on mismatch
-- [ ] If LZ4 library not available: reject compressed EIF with `"eif: LZ4 decompression not available"`
-- [ ] Commit: `"kernel: eif -- LZ4 compressed segment loading"`
+- [x] Uses the in-kernel `lz4_decompress` (`src/kernel/lz4.c`, `LZ4_decompress_safe`); the old unconditional compressed-reject in `eif_load` is removed.
+- [x] `EIF_FLAG_COMPRESSED` per-file flag: `file_size`=compressed length, `mem_size`=exact decompressed extent (no BSS). Permits `file_size > mem_size`; `file_size==0`=pure-BSS; compressed + `mem_size==0` rejected.
+- [x] `eif_decompress_segment()` + one `pmm_alloc_contiguous` scratch PREFLIGHTS every compressed stream in validation (verify == `mem_size`), so a corrupt stream rejects before any user write; scratch freed on all paths.
+- [x] Mutation phase re-decodes each compressed segment directly into the user range (deterministic, guaranteed after preflight); `specs/eif-format.md` normative rule 9 documents the ABI.
+- [x] Commit: `"kernel: eif -- LZ4 compressed segment loading"`
 
-**Test checkpoint:** An EIF with `COMPRESSED` flag and LZ4-compressed `.text` segment loads and executes correctly. Decompressed size matches `mem_size`. Serial log shows `"eif: decompressed segment 0: %u -> %u bytes"`. Corrupt compressed data is rejected. `POST16(0xDE2A)` on entry, `POST16(0xDE2B)` after decompress. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `eif_decompress_segment` round-trips a valid LZ4 stream to exact size+bytes; a corrupt stream, a size-mismatched stream, and `dst_cap < expect` are each rejected; `src_size==0` is pure-BSS (ok iff `expect==0`). 5 `TEST_CAT_EXEC` tests (pure -- no `eif_load` mutation). A full compressed image loading+executing is serial-log validated on WHPX (needs the `0x800000` write the unit harness avoids). EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF decompression suite, 0 failures
+>
+> **Notes:**
+> - Shipped: `eif_decompress_segment()` + compressed-segment preflight/decode in `eif_load` (`eif.c`), flag-conditional segment ABI, LZ4 via `lz4_decompress`; 5 new `TEST_CAT_EXEC` tests.
+> - Preflight (one reusable `pmm_alloc_contiguous` scratch) decompresses+verifies every compressed segment in validation, keeping the mutation phase infallible; mutation re-decodes deterministically into the user range.
+> - Design review (2 HIGH adopted): fallible-decompress-in-mutation broke atomicity -> preflight; the `file_size<=mem_size` BSS rule rejected valid compressed segments -> flag-conditional ABI.
+> - Canonical doc: `specs/eif-format.md` normative rule 9 (compressed segments).
+> - Scope: per-file LZ4 segment compression. Streaming/partial decode not needed (image fits the user range); signed+compressed ordering is a signature concern owned by §11.
 
 ---
 
@@ -302,7 +309,7 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 | ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
 | ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                            |
 | ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                            |
-| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ⬜ §6                            |
+| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                            |
 | ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                            |
 | ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                            |
 
