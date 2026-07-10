@@ -295,6 +295,10 @@ Both Win11 (`IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT`) and Linux (`.note.gnu.prop
 > - Design review (1 HIGH adopted): a single generic CET_COMPAT bit conflates IBT (forward-edge) and SHSTK (backward-edge) -> two independent bits matching the Linux `.note.gnu.property` split.
 > - Canonical doc: `specs/eif-format.md` normative rule 10.
 > - Scope: reserves + validates the flags. Propagation + ring-3 enforcement -> `TODO-10-kernel-security-hardening.md §10`.
+>
+> **Verified:** 2026-07-10 | commit `95864f42` | 3/4 items | build OK | tests 743+16 PASS
+> **Accepted:** [L] no produce/enforce-time verifier confirms the ENDBR64 / shadow-stack-clean guarantee before a CET bit is trusted (unverified trust chain) -> XREF: 02-kernel-core/TODO-10 §10 (item: "Ring-3/per-process CET: consume per-binary CET flags")
+> **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 1H+2M fixed, 1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -313,20 +317,20 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 
 ## OS Comparison
 
-| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                 |
-| --- | ----------------------- | ------------------------ | ------------------------ | ------------------------------- |
-| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2                            |
-| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                    |
-| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                      |
-| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17             |
+| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                                         |
+| --- | ----------------------- | ------------------------ | ------------------------ | ------------------------------------------------------- |
+| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2                                                    |
+| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                                            |
+| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                                              |
+| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17                                     |
 | 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 IBT+SHSTK reserved+validated; enforce D02T10 §10 |
-| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                        |
-| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
-| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                            |
-| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                            |
-| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                            |
-| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                            |
-| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                            |
+| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                                                |
+| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                                                |
+| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                                                    |
+| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                                                    |
+| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                                                    |
+| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                                                    |
+| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                                                    |
 
 > **Parity gaps:** rows with 💎 and ⬜ are covered by §1-§9 or `TODO-17-binary-system.md` §17. **After §5-§3:** overlap + permissions + module list. **After §1-§2:** API gate + metadata. **After §7-§9:** LZ4 + stubs + ASLR + per-process dispatch + RELRO-style surfaces (see new OS row).
 

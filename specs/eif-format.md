@@ -212,6 +212,12 @@ The kernel header struct (for `include/kernel/eif.h`):
 #define EIF_FLAG_CET_IBT    (1u << 6)  /* reserved, unenforced (rule 10) */
 #define EIF_FLAG_CET_SHSTK  (1u << 7)  /* reserved, unenforced (rule 10) */
 
+/* Every flag bit the loader understands; the loader rejects any header setting
+ * a bit outside this mask (rule 10). Producers MUST validate against it. */
+#define EIF_FLAG_KNOWN_MASK (EIF_FLAG_GUI | EIF_FLAG_CONSOLE | EIF_FLAG_DRIVER | \
+                             EIF_FLAG_SIGNED | EIF_FLAG_COMPRESSED | \
+                             EIF_FLAG_DEBUG | EIF_FLAG_CET_IBT | EIF_FLAG_CET_SHSTK)
+
 #define EIF_SEG_READ   (1u << 0)
 #define EIF_SEG_WRITE  (1u << 1)
 #define EIF_SEG_EXEC   (1u << 2)
