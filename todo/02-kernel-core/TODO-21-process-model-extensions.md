@@ -10,6 +10,8 @@ title: "TODO-21 -- Process Model Extensions"
 
 > **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring); normalized Depends On column to `§`-prefix + same-domain `T` shorthand
 
+> **Gap-audited:** 2026-07-10 | gap-audit-todo + mandatory codex-gap-audit (needs-attention, 4 findings, all confirmed via receiving-code-review). Filed 3 new sections: §15 parenting/reaping/wait4-waitid, §16 Protected Process Light (PS_PROTECTION), §17 process groups/sessions. Branch-A: §8 fault-split + ctx-switch + RUSAGE_CHILDREN counters, §9 RLIMIT_CORE/RLIMIT_MEMLOCK, §11 Win11-subset note + CET/signature XREFs. uid/gid kept out (owned TODO-10/TODO-15)
+
 > **Goal:** Extend the kernel process model with the per-process state fields and syscalls that don't belong to the scheduler, VMM, or Object Manager individually: current working directory, standard handle pre-wiring, user-mode program break (Linux compat heap), process priority classes mapped to Win32 `SetPriorityClass`, scheduling policy per-task (`SCHED_FIFO`/`SCHED_IDLE`), and a process capability/privilege bitmask. All of these hang off `struct task` and are needed before any non-trivial user-mode program can run correctly.
 
 > [!IMPORTANT]
@@ -32,6 +34,7 @@ title: "TODO-21 -- Process Model Extensions"
 - → XREF: `TODO-10-kernel-security-hardening.md §1` -- NX/DEP is consumed by §13 per-process mitigation policy flags
 - → XREF: `TODO-12-native-api-ssdt.md §10` -- `NtQueryInformationProcess` wires the syscall; §7 here adds the accounting fields that populate `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters` responses
 - → XREF: `TODO-15-security-reference-monitor.md §7` -- token duplication at process spawn; §7 (Process/Thread Token Assignment) attaches a copy of the parent's ACCESS_TOKEN to the child at `task_exec`
+- → XREF: `TODO-10-kernel-security-hardening.md` -- uid/gid are NOT owned here: `getuid`/`geteuid` live there (replace the hardcoded 1000 with a token-derived id) and `setuid`/`setgid` are token transitions owned by `TODO-15-security-reference-monitor.md` SRM + Linux adapters in TODO-10. No uid field/section belongs in this TODO
 
 ## Outcome
 
@@ -64,6 +67,9 @@ title: "TODO-21 -- Process Model Extensions"
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [ ]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [ ]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
+| 💎   |  15   | Parenting, reaping, and wait4/waitid semantics            | §14            |  [ ]   |
+| 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
+| 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -212,12 +218,15 @@ Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`
   - `uint64_t kernel_time_ns` -- accumulated in scheduler tick handler when running in ring 0
   - `uint64_t io_read_count`, `io_read_bytes` -- incremented in VFS read path
   - `uint64_t io_write_count`, `io_write_bytes` -- incremented in VFS write path
-  - `uint64_t page_fault_count` -- incremented in `#PF` handler
+  - `uint64_t minor_faults`, `major_faults` -- split at the `#PF` handler by whether a backing frame was already resident (`ru_minflt`/`ru_majflt`)
+  - `uint64_t vol_ctxsw`, `invol_ctxsw` -- voluntary (yield/block) vs involuntary (preempt) context switches, incremented in the scheduler (`ru_nvcsw`/`ru_nivcsw`)
   - `uint64_t peak_working_set` -- updated on page allocation; tracks high-water mark
 - [ ] In the scheduler tick ISR: determine ring from saved CS on interrupt frame; add tick duration to `user_time_ns` or `kernel_time_ns`
+- [ ] In the scheduler switch path: increment `vol_ctxsw` when the outgoing thread yielded/blocked, `invol_ctxsw` when it was preempted
 - [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on the current task
-- [ ] In `#PF` handler: increment `task_current()->page_fault_count`
-- [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` from task accounting fields
+- [ ] In `#PF` handler: increment `page_fault_count`, and classify into `minor_faults` vs `major_faults` by whether the frame was already backed
+- [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` (incl. `ru_minflt`/`ru_majflt`/`ru_nvcsw`/`ru_nivcsw`) from task accounting fields
+- [ ] `getrusage(RUSAGE_CHILDREN)`: return usage accumulated from reaped children (fed by §15 reap path)
 - [ ] Commit: `"kernel: task -- process accounting fields for times, I/O, and VM counters"`
 
 **Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke -- revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
@@ -230,7 +239,9 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 > → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §12` -- dynamic thread storage and thread admission are implemented in the scheduler domain. This section owns the quota/accounting surface; §12 consumes those limits so thread creation fails on real resource pressure instead of a fixed `THREAD_MAX` array ceiling.
 
 - [ ] Define `rlimit_t` in `include/kernel/task_limits.h`: `{ uint64_t rlim_cur; uint64_t rlim_max; }` with `RLIM_INFINITY = UINT64_MAX`
-- [ ] Define limit indices: `RLIMIT_AS` (address space), `RLIMIT_NOFILE` (open files -- coordinates with TODO-05 §14), `RLIMIT_CPU` (CPU seconds), `RLIMIT_STACK` (stack size), `RLIMIT_NPROC` (child processes), `RLIMIT_FSIZE` (file write size), `RLIMIT_COUNT`
+- [ ] Define limit indices `RLIMIT_AS`, `RLIMIT_NOFILE` (coordinates with TODO-05 §14), `RLIMIT_CPU`, `RLIMIT_STACK`, `RLIMIT_NPROC`, `RLIMIT_FSIZE`, `RLIMIT_CORE`, `RLIMIT_MEMLOCK`, `RLIMIT_COUNT`
+- [ ] Wire `RLIMIT_CORE` as the size gate consumed by crash-dump generation (-> XREF: `TODO-27-crash-dump-generation.md`; a value of 0 suppresses the dump, matching the `PR_SET_DUMPABLE`/§15 policy flag)
+- [ ] Wire `RLIMIT_MEMLOCK` as the ceiling checked by the memory-pinning path (-> XREF: `TODO-12-native-api-ssdt.md §9` VirtualLock / the VMM pin owner); reject a lock that would exceed the cap
 - [ ] Add `rlimit_t rlimits[RLIMIT_COUNT]` to `struct task`; populate with sane defaults at `task_create()` (e.g., `RLIMIT_NOFILE.rlim_cur = 256`, `RLIMIT_AS.rlim_cur = RLIM_INFINITY`)
 - [ ] Inherit rlimits from parent at `task_fork()`
 - [ ] `sys_getrlimit(resource, &rlimit)` / `sys_setrlimit(resource, &rlimit)`: unprivileged process can lower `rlim_max` (irreversible) or set `rlim_cur` within `[0, rlim_max]`; raising `rlim_max` requires `CAP_SYS_ADMIN`
@@ -264,7 +275,7 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 Win11 provides `SetProcessMitigationPolicy` to control per-process security features: DEP enforcement mode, mandatory ASLR, CFG strictness, child process creation restrictions, image load restrictions. Linux uses `prctl` with `PR_SET_NO_NEW_PRIVS`, `PR_SET_SECCOMP`, etc. Impossible OS needs a unified per-process mitigation flags field that coordinates with the security features implemented in other TODOs.
 
 > [!NOTE]
-> → XREF: `TODO-10-kernel-security-hardening.md §1` (NX/DEP), `TODO-17-binary-system.md §15` (ASLR), `TODO-17 §12` (CFG), `TODO-12-native-api-ssdt.md §25` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs.
+> → XREF: `TODO-10-kernel-security-hardening.md §1` (NX/DEP), `TODO-17-binary-system.md §15` (ASLR), `TODO-17 §12` (CFG), `TODO-12-native-api-ssdt.md §25` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs. This is a deliberate SUBSET of Win11's ~21 `PROCESS_MITIGATION_*` policies -- the high-value ones with an enforcement owner in-tree; CET (IBT/SHSTK) enforcement → `TODO-10-kernel-security-hardening.md §10`, dynamic-code and image-signature policy → `TODO-19-code-integrity-trust-policy.md`.
 
 - [ ] Add `uint64_t mitigation_flags` to `struct task` with bit definitions:
   - `MIT_DEP_ENABLE (1 << 0)` -- permanent DEP/NX for the process
@@ -340,25 +351,77 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 ---
 
+## 15. Process Parenting, Reaping, and Wait Semantics
+
+Exit cleanup (§14) frees resources but does not define WHEN exit status is observable, WHO reaps an orphan, or how competing waits serialize. `task_waitpid` today accepts one exact child PID, blocks unconditionally, and immediately reaps (`task.c`), so it cannot support `waitpid(-1)`, `WNOHANG`/`WUNTRACED`/`WCONTINUED`, `waitid`, `wait4` child usage, or subreaper adoption. This is the child-lifecycle contract §14 depends on.
+
+- [ ] Add a `RUNNING -> ZOMBIE -> REAPED` lifecycle to `struct task`: on exit, transition to ZOMBIE retaining `exit_status` + accumulated child `rusage`; free the task struct only at REAPED (a successful wait).
+- [ ] Extend `task_waitpid` to `sys_wait4(pid, status, options, rusage)`: `pid` selectors (any-child, process-group, exact), `WNOHANG`/`WUNTRACED`/`WCONTINUED` options, atomic single-reaper (one waiter per zombie).
+- [ ] `sys_waitid(idtype, id, siginfo, options)` with `WEXITED`/`WSTOPPED`/`WCONTINUED`/`WNOWAIT`; accumulate reaped-child usage into the parent for `RUSAGE_CHILDREN` (-> XREF: §8).
+- [ ] Orphan reparenting: on parent exit, reparent live/zombie children to the nearest `PR_SET_CHILD_SUBREAPER` ancestor, else to init (pid 1).
+- [ ] `prctl(PR_SET_PDEATHSIG)` signals a child on parent death; `prctl(PR_SET_CHILD_SUBREAPER)` marks a subreaper. Linux-compat adapters -> XREF: `TODO-10-kernel-security-hardening.md`.
+- [ ] NT non-reaping: a process HANDLE stays signalable after exit (all `NtWaitForSingleObject` waiters wake), independent of the POSIX single-reaper -> XREF: `TODO-12-native-api-ssdt.md` (wait-vs-reap).
+- [ ] `dumpable`/core-dump policy flag per process (`PR_SET_DUMPABLE`): gates whether a crashing process produces a dump (-> XREF: `TODO-27-crash-dump-generation.md`; `RLIMIT_CORE` gate in §9).
+- [ ] Overflow-safe status/rusage retention; a reaped zombie's storage is reclaimed exactly once (no double-free, no premature status loss).
+- [ ] Commit: `"kernel: task -- parenting, reaping, and wait4/waitid semantics"`
+
+**Test checkpoint:** `sys_wait4(-1, ...)` reaps any child; `WNOHANG` returns 0 when no child exited; a double-reap of the same zombie returns ECHILD to the second waiter; an orphan's parent-pid becomes 1 (or the subreaper) after its parent exits; `PR_SET_PDEATHSIG` delivers on parent death. `klog(LOG_DEBUG, "task", "reaped pid %u status %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+---
+
+## 16. Protected Process Light (PS_PROTECTION)
+
+Windows exposes per-process protection levels (`PROCESS_PROTECTION_LEVEL_INFORMATION`, `PsIsProtectedProcessLight`) so a lower-protection process cannot terminate, VM-write, duplicate-handle, or debug a higher one -- the anti-tamper backbone for LSASS/AV/DRM. TODO-15 records the field + signer enforcement as ownerless and requests TODO-21 ownership; TODO-05 §13 supplies only the `ObRegisterCallbacks` handle-filter mechanism.
+
+- [ ] Add a `ps_protection` field to `struct task`: level (None, ProtectedLight-Authenticode, Antimalware, Lsa, WinTcbLight, WinTcb) + signer class.
+- [ ] Assignment + inheritance: a process's protection is set at create from its image signer class (sourced from code-integrity verification -> XREF: `TODO-19-code-integrity-trust-policy.md`); a child cannot exceed its creator's protection.
+- [ ] Protection-dominance access matrix: an EXPLICIT tested (accessor, target) -> allowed-mask table, NOT numeric-enum-ordering; lower protection is stripped of TERMINATE/VM_WRITE/DUP_HANDLE/SET_INFORMATION/debug against higher.
+- [ ] Consume the matrix in the `ObRegisterCallbacks` open-handle filter (-> XREF: `TODO-05-object-manager.md §13` -- shipped handle-filter mechanism).
+- [ ] `NtQueryInformationProcess(ProcessProtectionInformation)` returns the level (-> XREF: `TODO-12-native-api-ssdt.md §10`).
+- [ ] Commit: `"kernel: task -- protected process light (PS_PROTECTION) + dominance matrix"`
+
+**Test checkpoint:** a None-protection process opening a WinTcb process for TERMINATE/VM_WRITE/DUP_HANDLE is denied (STATUS_ACCESS_DENIED); a higher-level process opening a lower one succeeds; the dominance matrix test exercises every (level, level) pair. `klog(LOG_WARN, "ob", "PPL: denied 0x%x from level %u to level %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+---
+
+## 17. Process Groups and Sessions
+
+No section owns session ID, process-group ID, session leadership, the foreground terminal group, or group signal delivery -- so a shell cannot background jobs, `kill -pgid` a pipeline, or fan Ctrl+C out to a process tree. TODO-10 currently sends SIGINT to a single foreground task; `GenerateConsoleCtrlEvent` cannot target a group. This section owns the per-process fields + invariants; the Linux syscall adapters live in TODO-10 and the terminal consumes the foreground-group API.
+
+- [ ] Add `pgid` + `sid` fields to `struct task`; a new process inherits its parent's pgid/sid.
+- [ ] `sys_setpgid(pid, pgid)` with POSIX invariants (same session, not a session leader, target in the caller's session); `sys_setsid()` creates a new session + process group led by the caller (fails for a group leader).
+- [ ] `getpgid`/`getsid`/`getpgrp` queries.
+- [ ] Foreground-console-group state on the controlling terminal; `tcsetpgrp`/`tcgetpgrp` equivalent to set/query the foreground group.
+- [ ] Group signal fan-out: a signal to `-pgid` (or the foreground group on Ctrl+C) is delivered to every process in the group; orphaned-process-group handling per POSIX.
+- [ ] `GenerateConsoleCtrlEvent(CTRL_C_EVENT/CTRL_BREAK_EVENT, pgid)` targets the console group; the terminal TODO consumes this API. Linux `setpgid`/`setsid` adapters -> `TODO-10-kernel-security-hardening.md`.
+- [ ] Commit: `"kernel: task -- process groups and sessions (setpgid/setsid + group signals)"`
+
+**Test checkpoint:** `setsid()` makes the caller a session+group leader (getsid==getpid); `setpgid` moves a child into a new group; a signal to `-pgid` reaches all members; Ctrl+C on the foreground group interrupts a pipeline, not just the leader. `klog(LOG_DEBUG, "task", "pgid %u signal %u -> %u procs")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+---
+
 ## OS Comparison
 
-| ⭐   | Feature                       | 🪟 Win11                      | 🐧 Linux                   | 🚀 Impossible OS            |
-| --- | ----------------------------- | ---------------------------- | ------------------------- | -------------------------- |
-| 💎   | Per-process CWD               | ✅ SetCurrentDirectory        | ✅ chdir / getcwd          | ⬜ §1                       |
-| 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit      | ✅ fd 0/1/2 via fork       | ⬜ §2                       |
-| 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory    | ✅ brk / sbrk              | ⬜ §3                       |
-| 💎   | Process priority class        | ✅ SetPriorityClass           | ✅ nice / setpriority      | ⬜ §4                       |
-| 💎   | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS    | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                       |
-| 💎   | Capability / privilege model  | ✅ Access tokens              | ✅ POSIX capabilities      | ⬜ §6                       |
-| 💎   | Process accounting            | ✅ ProcessTimes + IoCounters  | ✅ getrusage / times       | ⬜ §8                       |
-| 💎   | Per-process resource limits   | ✅ Job Object quotas          | ✅ getrlimit / setrlimit   | ⬜ §9                       |
-| 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask     | ✅ sched_setaffinity       | ⬜ §10                      |
-| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy | ⚠️ prctl + seccomp        | ⬜ §11                      |
-| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject          | ✅ cgroups v2              | ⬜ §13                      |
-| 💎   | Process exit cleanup          | ✅ PspExitProcess             | ✅ do_exit + __put_task    | ⬜ §14                      |
-| 💎   | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10) |
-| ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation           | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease |
-| ⭐   | Pledge/unveil restriction     | ❌ None                       | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired  |
+| ⭐   | Feature                       | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS            |
+| --- | ----------------------------- | ----------------------------- | ------------------------- | -------------------------- |
+| 💎   | Per-process CWD               | ✅ SetCurrentDirectory         | ✅ chdir / getcwd          | ⬜ §1                       |
+| 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit       | ✅ fd 0/1/2 via fork       | ⬜ §2                       |
+| 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory     | ✅ brk / sbrk              | ⬜ §3                       |
+| 💎   | Process priority class        | ✅ SetPriorityClass            | ✅ nice / setpriority      | ⬜ §4                       |
+| 💎   | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS     | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                       |
+| 💎   | Capability / privilege model  | ✅ Access tokens               | ✅ POSIX capabilities      | ⬜ §6                       |
+| 💎   | Process accounting            | ✅ ProcessTimes + IoCounters   | ✅ getrusage / times       | ⬜ §8                       |
+| 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | ⬜ §9                       |
+| 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                      |
+| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | ⬜ §11                      |
+| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                      |
+| 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                      |
+| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                      |
+| 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                      |
+| 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                      |
+| 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10) |
+| ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease |
+| ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired  |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.
@@ -399,6 +462,14 @@ Central cleanup point for all per-process resources when a process terminates. W
   - `NtPledge("stdio rpath")` then `NtCreateFile(WRITE)` terminates with `STATUS_PLEDGE_VIOLATION` (§12)
   - `NtUnveil("/C:\\Tmp", "rw")` then `NtUnveil(NULL, NULL)` locks; access to `/C:\\Users` fails (§12)
   - `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns child (§13)
+  - `sys_wait4(-1, ...)` reaps any child; a second reap of the same zombie returns `ECHILD` (§15)
+  - `WNOHANG` on a still-running child returns 0 without blocking (§15)
+  - After a parent exits, its orphaned child's parent-pid becomes 1 (or the nearest subreaper) (§15)
+  - `getrusage(RUSAGE_CHILDREN)` returns non-zero usage after a child with CPU work is reaped (§15)
+  - A None-protection process opening a WinTcb process for TERMINATE is denied `STATUS_ACCESS_DENIED` (§16)
+  - The PPL dominance matrix: a higher-level process opening a lower one for VM_WRITE succeeds (§16)
+  - `setsid()` makes the caller a session+group leader (`getsid() == getpid()`) (§17)
+  - `setpgid` moves a child into a new group; a signal to `-pgid` reaches every member (§17)
 - [ ] Register in `test_runner_init()`: `test_register_proc_ext()`
 - [ ] Commit: `"test: add process model extensions test suite"`
 
@@ -423,4 +494,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 - [ ] After `NtPledge("stdio rpath")`, write syscall terminates process with `STATUS_PLEDGE_VIOLATION`
 - [ ] After `NtUnveil("/C:\\System", "rx")` and lock, access to `C:\Users` returns `STATUS_ACCESS_DENIED`
 - [ ] `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns a child; `NtTerminateJobObject` kills all
+- [ ] `sys_wait4(-1)` reaps any child; `WNOHANG` returns 0 for a running child; an orphan reparents to init/subreaper (§15)
+- [ ] A lower-protection process cannot TERMINATE/VM_WRITE/DUP_HANDLE a Protected Process Light target (§16)
+- [ ] `setsid`/`setpgid` establish session/group IDs; a signal to `-pgid` reaches the whole group (§17)
 - [ ] Commit: `"kernel: task -- process model extensions complete"`

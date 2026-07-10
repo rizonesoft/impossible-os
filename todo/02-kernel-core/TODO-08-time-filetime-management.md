@@ -287,7 +287,7 @@ Windows allows processes to request higher timer interrupt frequency (down to 0.
 > - Canonical: `src/kernel/time/timer_resolution.c`.
 > - Scope boundary: §8 owns arbitration + its two SSDT handlers; process-exit reaping is TODO-21 §14; fault-safe usercopy is TODO-23 §13.
 > **Verified:** 2026-06-27 | ship `c5b618ec` + review fixes | 8/8 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.49s)
-> **Accepted:** [H] per-process nested begin/end refcount + process-exit reaping of leaked timer-resolution requests (interim model is one coalesced slot per pid) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Release timer resolution requests held by this PID" at line 326)
+> **Accepted:** [H] per-process nested begin/end refcount + process-exit reaping of leaked timer-resolution requests (interim model is one coalesced slot per pid) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Release timer resolution requests held by this PID" at line 337)
 > **Accepted:** [H] `copy_to_user` is not fault-safe (a probed-but-unmapped user page #PFs in the kernel) -- systemic across all SSDT handlers, not §8-specific -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §13 (item: "`include/kernel/probe.h` -- `try_copy_to_user`" at line 376)
 > **Test gap:** arbitration needs live task + timer context; not unit-testable without mocking. Covered by runtime serial validation.
 > **Quality reviewed:** 2026-06-27 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) + kernel-quality-auditor | 1C+5H+3M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
