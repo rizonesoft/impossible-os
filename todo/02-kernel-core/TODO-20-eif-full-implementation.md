@@ -63,7 +63,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   | Order | Deliverable                                 | Depends On                 | Status |
 | --- | :---: | ------------------------------------------- | -------------------------- | :----: |
 | ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
-| 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [ ]   |
+| 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
 | ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [ ]   |
 | ⭐   |   4   | API version gating                          | §1                         |  [ ]   |
 | ⭐   |   5   | Metadata section parser                     | §1                         |  [ ]   |
@@ -108,20 +108,22 @@ The spec mandates `segment_offset < import_offset < metadata_offset < signature_
 
 ## 2. Segment Permission Enforcement (R/W/X via PTE)
 
-The current loader copies segment data but does not set page permissions. All pages remain kernel RW. Segments should have proper NX (no-execute) on data and RO (read-only) on rodata.
+The loader copies segment data but does not set page permissions. Segments should have NX on data and RO on rodata/text. The PTE-enforcement core is architecturally BLOCKED (see the callout + Deferred stamp); the W+X-reject + page-align VALIDATION half is self-contained and implementable now.
 
 > [!WARNING]
-> **Regression risk:** Changing page permissions after segment copy may break if segments span 2 MiB page boundaries that aren't split yet. `vmm_protect_range` handles splitting, but verify on bare metal. If broken, revert permission changes and keep segments RW until per-process VMM is complete.
+> **Architectural blocker (found in the §2 exploration, corrects the old note):** `vmm_protect_range` does NOT split 2 MiB huge pages (returns -1); use `vmm_set_ro`/`vmm_set_nx` (RMW + auto-split). BUT those + `vmm_split_huge_page` are all hardcoded to `kernel_pml4` (T17 §5 "per-process PML4 support deferred"), and `vmm_create_user_pml4` rebuilds the user PT as Present|Writable (no NX). So perms set from `eif_load` are INVISIBLE to the per-process PML4 in CR3. The ELF loader has the identical dead-enforcement gap (`elf.c` `nx_stack`/`relro` are unused). Needs a new per-process-PML4 protect API first.
 
-- [ ] After segment copy, compute page-aligned range for each segment
-- [ ] For `EIF_SEG_READ` only (rodata): `vmm_protect_range(vaddr, mem_size, VMM_USER_RO | VMM_FLAG_NX)`
-- [ ] For `EIF_SEG_READ | EIF_SEG_WRITE` (data/BSS): `vmm_protect_range(vaddr, mem_size, VMM_USER_RW | VMM_FLAG_NX)`
-- [ ] For `EIF_SEG_READ | EIF_SEG_EXEC` (text): `vmm_protect_range(vaddr, mem_size, VMM_USER_RO)` (executable, not writable)
-- [ ] Reject segments with `EIF_SEG_WRITE | EIF_SEG_EXEC` (W+X) -- security policy: no writable+executable pages
-- [ ] W^X at PAGE granularity: differently-flagged segments must not share a 4K page (last protection wins). Require page-aligned boundaries OR a per-page permission union that rejects any effectively-W+X page.
+- [/] Per-segment PTE permission enforcement (NX/RO/exec-not-writable). BLOCKED: `vmm_set_ro`/`vmm_set_nx` are kernel_pml4-only (T17 §5), so perms set here are invisible to the per-process PML4 the task runs under.
+- [ ] Prereq: add a per-process-PML4 protect API to vmm.c (`vmm_set_ro_pml4(pml4_phys,virt,size)` / `vmm_set_nx_pml4` + pml4-aware huge-page split); shared with the ELF loader. -> XREF: T17 §5.
+- [ ] Prereq: thread per-segment R/W/X metadata from `eif_load` to `task_exec` (an `eif_exec_wrapper`; `eif_load` returns only the entry) + apply perms on the per-process cr3 after User bits. -> XREF: §9.
+- [ ] Prereq: SMP TLB shootdown for the RMW protect path (`vmm_pte_rmw` is single-CPU-only; `task_exec` runs post-SMP). -> XREF: D03 T07 §2.
+- [ ] Reject W+X segments (`EIF_SEG_WRITE | EIF_SEG_EXEC`) in `eif_validate` -- self-contained policy check, no PTE writes.
+- [ ] Require page-aligned `seg->vaddr` in `eif_validate` so no two differently-flagged segments share a 4K page (the W^X page-granularity precondition; gap-audit). Self-contained.
 - [ ] Commit: `"kernel: eif -- segment permission enforcement via PTE flags"`
 
-**Test checkpoint:** EIF `.text` segment is executable but not writable. EIF `.data` segment is writable but not executable. Attempt to execute from `.data` causes #PF. Attempt to write to `.text` causes #PF. A crafted EIF whose W-only and X-only segments share one page is REJECTED (not silently mis-protected). Serial log shows `"eif: segment 0: R-X"`, `"eif: segment 1: RW-"`. `POST16(0xDE22)` on entry, `POST16(0xDE23)` after permissions set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** (self-contained half, implementable now) a W+X segment (`EIF_SEG_WRITE|EIF_SEG_EXEC`) is rejected; a non-page-aligned `seg->vaddr` is rejected. (PTE-enforcement half, deferred) `.text` executable-not-writable + `.data` writable-not-executable once the per-process-PML4 protect API lands. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+>
+> **Deferred:** [H] Segment PTE permission enforcement is architecturally blocked: `vmm_set_ro`/`vmm_set_nx` are kernel_pml4-only (T17 §5 "per-process PML4 support deferred"), so perms set from the loader are invisible to the per-process PML4 in CR3. Needs a new per-process-PML4 protect API + segment-metadata threading + SMP shootdown -- shared with the ELF loader, coupled to §9. The W+X-reject + page-align validation half is self-contained + still open. -> XREF: 02-kernel-core/TODO-17 §5 (item: "Implement `vmm_protect(virt, new_flags)` + `vmm_protect_range(addr, size, flags)`" -- extend with a per-process-PML4 variant); 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4" at line 222)
 
 ---
 
