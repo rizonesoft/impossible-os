@@ -15,10 +15,10 @@ title: "TODO-20 -- EIF Full Implementation"
 > [!IMPORTANT]
 > **Decision pinned (2026-04-24):** EIF is the **native binary format** for Impossible OS user-mode and module code. EIF is **NOT** a replacement for the **kernel image format** -- the kernel itself stays **ELF indefinitely** (see `CLAUDE.md` → Toolchain → Kernel Binary Format). The kernel binary format is strictly internal to the UEFI bootloader handoff; nothing on the Win32 ABI surface or the EIF loader surface depends on it. Do not propose re-targeting the kernel to EIF or PE32+ under "unified format" reasoning -- the two layers are independently optimal. Distribution converters (`eif2pe`, `eif2elf`) exist for cross-OS user-app portability and are tracked in TODO-17 §13 as follow-ups.
 
-> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps: segment permission enforcement, ASLR, API version gating, metadata parsing, LZ4 decompression, range overlap validation, module registration, and optional import stubs. When done, EIF is the fastest, most secure native binary format on any OS.
+> **Goal:** Complete the Executable Impossible Format (EIF) from its current basic loader to a production-quality native binary format. The basic loader (TODO-17 §5) validates headers, copies segments, and builds import dispatch tables. This TODO fills the gaps. Shipped + reviewed: range overlap validation, API version gating, metadata parsing, LZ4 decompression, CET flag reservation. Deferred with concrete owners: segment permission enforcement, ASLR, loader-owned module registration, optional import stubs, per-process isolation, signature-block ABI. When done, EIF is the fastest, most secure native binary format on any OS.
 
 > [!IMPORTANT]
-> **Current state:** `eif_load()` in `src/kernel/eif.c` loads segments via identity mapping, validates imports against SSDT range, writes a per-process dispatch table at 0x8F0000, and measures load time. Missing: segment R/W/X enforcement, ASLR, API version check, metadata parsing, LZ4 decompression, module registration, overlap validation. Optional imports mark `available=0` but there is no deterministic user-callable stub yet (§7).
+> **Current state:** `eif_load()` in `src/kernel/eif.c` validates the canonical section order + range overlap (§1), gates `api_version` (§4), parses the metadata section (§5), transparently LZ4-decompresses compressed segments (§6), and reserves the CET flag bits with fail-closed unknown-flag rejection (§10). The dispatch table at 0x8F0000 is still identity-mapped and SHARED across processes. Still missing (deferred, owner-tracked): segment R/W/X enforcement (§2), loader-owned module registration (§3), optional user-callable import stubs (§7), ASLR (§8), per-process dispatch isolation (§9), signature-block ABI (§11).
 > EIF spec lives at `specs/eif-format.md`. Code signing is tracked separately in TODO-17 §17. The `elf2eif` converter is tracked in TODO-17 §13.
 
 > [!NOTE]
@@ -50,7 +50,7 @@ title: "TODO-20 -- EIF Full Implementation"
 - EIF segments mapped with correct R/W/X permissions via PTE flags (NX on data, RO on rodata).
 - EIF binaries with `load_base=0` get ASLR-randomized load addresses.
 - `api_version` field checked against running OS API version; rejects too-new binaries.
-- Metadata section parsed; `"name"`, `"version"`, `"min_os"`, and optional `"build_id"` exposed to process info / crash logs.
+- Metadata section parsed (§5): `"name"` reaches `loaded_module_t` for the crash registry on first load; `"version"`/`"author"`/`"min_os"`/`"build_id"` are logged at load time (module-record STORAGE of build_id deferred -> `TODO-17-binary-system.md §6`).
 - LZ4-compressed segments (`EIF_FLAG_COMPRESSED`) transparently decompressed at load time.
 - File range overlap validation per spec normative rule 2.
 - Every loaded EIF registered via `exec_register_module()` for crash dumps and debugger.
@@ -128,7 +128,7 @@ The loader copies segment data but does not set page permissions. Segments shoul
 
 ## 3. Module Registration for EIF
 
-Every loaded binary must be registered in the crash registry and module list. EIF modules ARE registered today via the generic `task_exec` path; §3's refinement (loader-owned, accurate range, metadata name) is partly blocked on §5.
+Every loaded binary must be registered in the crash registry and module list. EIF modules ARE registered today via the generic `task_exec` path; the metadata-name refinement shipped in §5 (`task.c` prefers the parsed name on first load). The remaining refinement -- loader-owned registration with the accurate load range + replace-on-re-exec -- is this §3's own open refactor.
 
 - [/] Build `loaded_module_t`: DONE generically in `task_exec` with `format=EXEC_FMT_EIF` + task name -- but with the whole USER_ELF range, not the accurate load range, and not the metadata `"name"`.
 - [ ] Register from `eif_load()` with the ACTUAL load range (lowest..highest segment vaddr), replacing the generic `task_exec` path -- a refactor (`eif_load` returns only the entry, so needs an ABI change or header re-parse).
@@ -138,7 +138,7 @@ Every loaded binary must be registered in the crash registry and module list. EI
 
 **Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with `EXEC_FMT_EIF` (already true via the generic path); once the loader-owned refactor lands, `base_address` is the actual load base + `size_of_image` the segment span. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 >
-> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + replace-on-re-exec) is a refactor owned by this §3. The crash-registry need is ALREADY met: the generic `task_exec` registration sets format=EXEC_FMT_EIF and (via §5) the metadata `"name"` on first load. Open work: register from `eif_load` with the true load range instead of the whole USER_ELF span, and same-base replace so a re-exec updates the stale name/range (all formats).
+> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + replace-on-re-exec) is a refactor owned by this §3. The crash-registry need is ALREADY met: the generic `task_exec` registration sets format=EXEC_FMT_EIF and (via §5) the metadata `"name"` on first load. Open work: register from `eif_load` with the true load range instead of the whole USER_ELF span, and same-base replace so a re-exec updates the stale name/range (all formats). -> XREF: 02-kernel-core/TODO-20 §3 (items: "Register from `eif_load()` with the ACTUAL load range" + "Replace-on-re-exec").
 
 ---
 
@@ -330,10 +330,10 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 | ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                                                    |
 | ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                                                    |
 | ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                                                    |
-| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                                                    |
+| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ✅ §1                                                    |
 | ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                                                    |
 
-> **Parity gaps:** rows with 💎 and ⬜ are covered by §1-§9 or `TODO-17-binary-system.md` §17. **After §5-§3:** overlap + permissions + module list. **After §1-§2:** API gate + metadata. **After §7-§9:** LZ4 + stubs + ASLR + per-process dispatch + RELRO-style surfaces (see new OS row).
+> **Parity gaps:** 💎/⬜ rows are owned by §1-§11 or `TODO-17-binary-system.md` §17. **Shipped+reviewed:** overlap (§1), API gate (§4), metadata (§5), LZ4 (§6), CET flags (§10). **Deferred with concrete owners:** W^X permissions (§2), loader-owned module registration (§3), optional-import stubs (§7), ASLR (§8), per-process dispatch (§9), signature-block ABI (§11).
 
 ## Unit Tests
 
