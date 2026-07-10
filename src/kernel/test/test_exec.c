@@ -783,6 +783,33 @@ static void test_eif_reject_segment_reserved_nonzero(void)
                    "eif_load rejects a segment with a non-zero reserved field");
 }
 
+/* API-version gate (spec rule 4): an EIF requiring a NEWER OS API version than
+ * the loader provides is rejected. The fixture is otherwise VALID (a page-aligned
+ * executable segment), so ONLY the too-new api_version causes rejection -- remove
+ * the gate and this fixture would proceed to load. Rejection fires at the early
+ * api_version check, before any segment copy, so no real user memory is touched.
+ * (The accept path api_version<=current is not unit-tested: a successful load
+ * memcpys into the identity-mapped 0x800000 user range, which this harness
+ * avoids -- all EIF tests are rejection-only.) */
+static void test_eif_reject_api_version_too_new(void)
+{
+    uint8_t buf[104];  /* header(64) + one 32-byte segment + 8 bytes file data */
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_segment_t *seg;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->api_version = EIF_CURRENT_API_VERSION + 1;   /* needs a newer OS -> reject */
+    h->segment_count = 1;
+    h->segment_offset = sizeof(eif_header_t);
+    h->entry_point = USER_ELF_BASE;
+    seg = (eif_segment_t *)(buf + sizeof(eif_header_t));
+    seg->vaddr = USER_ELF_BASE;
+    seg->file_offset = sizeof(eif_header_t) + sizeof(eif_segment_t);  /* 96 */
+    seg->file_size = 8; seg->mem_size = 0x1000; seg->flags = EIF_SEG_READ | EIF_SEG_EXEC;
+    TEST_ASSERT_EQ(eif_load(buf, sizeof(buf)), 0,
+                   "eif_load rejects an otherwise-valid binary requiring a newer API version");
+}
+
 /* ---- Registration ---- */
 
 void test_register_exec(void)
@@ -846,6 +873,7 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: reject seg data over table", test_eif_reject_segment_data_over_table, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: absent-table offset", test_eif_reject_absent_table_nonzero_offset, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: segment reserved!=0", test_eif_reject_segment_reserved_nonzero, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: api_version too new", test_eif_reject_api_version_too_new, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject compressed", test_eif_reject_compressed, TEST_CAT_EXEC);
 }
 

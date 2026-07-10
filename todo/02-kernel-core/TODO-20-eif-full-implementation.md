@@ -65,7 +65,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
 | 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
 | ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
-| ⭐   |   4   | API version gating                          | §1                         |  [ ]   |
+| ⭐   |   4   | API version gating                          | §1                         |  [x]   |
 | ⭐   |   5   | Metadata section parser                     | §1                         |  [ ]   |
 | ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
@@ -100,7 +100,6 @@ The spec mandates `segment_offset < import_offset < metadata_offset < signature_
 > - Scope: §1 owns file-range ordering/overlap; the finer segment-data-vs-metadata overlap tie-in rides with signing (§11 + TODO-17 §17); VA-range/dispatch-table guards are in `eif_load` (§9 owns per-process isolation).
 >
 > **Verified:** 2026-07-10 | commit `e360c6c3` | 4/4 items | build OK | tests 712/712 (exec; 4 EIF range suites)
-> **Accepted:** [L] `api_version` not enforced in the EIF loader -> owned by API-version gating. -> XREF: 02-kernel-core/TODO-20 §4 (item: "In `eif_validate()`: if `hdr->api_version` > `EIF_CURRENT_API_VERSION`, reject" at line 103)
 > **Accepted:** [L] concurrent-exec race on the shared dispatch table + identity-mapped user range (documented in `eif.c`) -> owned by per-process isolation. -> XREF: 02-kernel-core/TODO-20 §9 (item: "Map at EIF_DISPATCH_TABLE_ADDR in the per-process PML4" at line 222)
 > **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) + kernel-quality-auditor | 1M+1L fixed, 2L accepted-XREF | scope: kernel-code-quality
 
@@ -144,14 +143,22 @@ Every loaded binary must be registered in the crash registry and module list. EI
 
 ## 4. API Version Gating
 
-The `api_version` field in the EIF header specifies the minimum OS API version required. Currently parsed but never checked.
+The `api_version` field is the minimum OS API version a binary requires. `eif_validate()` now rejects binaries requiring a newer API than the loader provides.
 
-- [ ] Define `EIF_CURRENT_API_VERSION` in `eif.h` (start at 1)
-- [ ] In `eif_validate()`: if `hdr->api_version > EIF_CURRENT_API_VERSION`, reject with `"eif: binary requires API version %u, OS provides %u"`
-- [ ] Log accepted API version at DEBUG level
-- [ ] Commit: `"kernel: eif -- API version gating"`
+- [x] `EIF_CURRENT_API_VERSION 1` in `include/kernel/eif.h`.
+- [x] `eif_validate()` rejects `hdr->api_version > EIF_CURRENT_API_VERSION` with a descriptive `klog` ("binary requires API version %u, OS provides %u"); v0 (unset) and <= current stay compatible.
+- [x] Accepted `api_version` logged at DEBUG ("accepted api_version %u").
+- [x] Commit: `"kernel: eif -- API version gating"`
 
-**Test checkpoint:** EIF with `api_version=1` loads successfully. EIF with `api_version=99` is rejected with `"eif: binary requires API version 99, OS provides 1"` in serial log. `POST16(0xDE26)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** an EIF with `api_version = EIF_CURRENT_API_VERSION + 1` is rejected; `api_version` 0 or 1 passes the gate. Covered by `test_eif_reject_api_version_too_new` (test_exec.c, TEST_CAT_EXEC). EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF api-version suite, 0 failures
+>
+> **Notes:**
+> - Shipped: `EIF_CURRENT_API_VERSION` (`include/kernel/eif.h`) + an api-version gate in `eif_validate()` (`src/kernel/eif.c`) rejecting too-new binaries; 1 new `TEST_CAT_EXEC` test.
+> - Runs at EIF load-validation time (post-boot, klog); v0 and <= current accepted, `> current` rejected fail-closed. Design-review approved the plain `>` gate (no v0 special-case).
+> - Closes the TODO-20 §1 review Accepted-XREF (api_version was unenforced -> now owned + done here).
+> - Canonical doc: `specs/eif-format.md` Normative Rule 4.
+> - Scope: §4 gates the header `api_version` only; per-import capability/version negotiation is not an EIF concern.
 
 ---
 

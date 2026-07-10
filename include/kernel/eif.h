@@ -27,6 +27,7 @@
  * test binary. */
 #define EIF_MAGIC         0x21464945  /* "EIF!" as file-order LE u32 */
 #define EIF_VERSION       1           /* current format version */
+#define EIF_CURRENT_API_VERSION 1     /* OS API version the loader provides; reject binaries requiring newer */
 
 #define EIF_ARCH_X86_64   1
 #define EIF_ARCH_AARCH64  2

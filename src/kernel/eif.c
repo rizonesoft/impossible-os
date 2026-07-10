@@ -78,6 +78,16 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
         return 0;
     }
 
+    /* API-version gate (spec rule 4): api_version is the MINIMUM OS API version
+     * the binary requires. Reject a binary that needs a NEWER API than the OS
+     * provides; version 0 (unset) and any value <= current stay compatible. */
+    if (hdr->api_version > EIF_CURRENT_API_VERSION) {
+        klog(LOG_DEBUG, "eif", "binary requires API version %u, OS provides %u",
+             (uint64_t)hdr->api_version, (uint64_t)EIF_CURRENT_API_VERSION);
+        return 0;
+    }
+    klog(LOG_DEBUG, "eif", "accepted api_version %u", (uint64_t)hdr->api_version);
+
     /* Segment table bounds + count cap. The cap bounds the O(n^2) segment
      * overlap walk in eif_load; the 64-bit end computation is wrap-safe. */
     if (hdr->segment_count > 0) {
