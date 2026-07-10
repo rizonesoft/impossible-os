@@ -48,6 +48,7 @@ _Static_assert(__builtin_offsetof(pe_dos_header_t, e_lfanew) == 0x3C,
 /* ---- PE Signature ------------------------------------------------------- */
 
 #define PE_SIGNATURE    0x00004550  /* 'PE\0\0' */
+#define PE_SIGNATURE_SIZE  4        /* bytes of the 'PE\0\0' signature before COFF */
 
 /* ---- COFF Header (IMAGE_FILE_HEADER) ------------------------------------ */
 
@@ -66,6 +67,10 @@ typedef struct pe_coff_header {
 
 _Static_assert(sizeof(pe_coff_header_t) == 20,
     "pe_coff_header_t must be 20 bytes (IMAGE_FILE_HEADER)");
+_Static_assert(__builtin_offsetof(pe_coff_header_t, NumberOfSections) == 0x02,
+    "pe_coff_header_t.NumberOfSections at 0x02");
+_Static_assert(__builtin_offsetof(pe_coff_header_t, SizeOfOptionalHeader) == 0x10,
+    "pe_coff_header_t.SizeOfOptionalHeader at 0x10");
 
 /* ---- Optional Header Magic ---------------------------------------------- */
 
@@ -174,8 +179,14 @@ typedef struct pe_section_header {
 
 _Static_assert(sizeof(pe_section_header_t) == 40,
     "pe_section_header_t must be 40 bytes (IMAGE_SECTION_HEADER)");
+_Static_assert(__builtin_offsetof(pe_section_header_t, VirtualSize) == 0x08,
+    "pe_section_header_t.VirtualSize at offset 0x08");
 _Static_assert(__builtin_offsetof(pe_section_header_t, VirtualAddress) == 0x0C,
     "pe_section_header_t.VirtualAddress at offset 0x0C");
+_Static_assert(__builtin_offsetof(pe_section_header_t, SizeOfRawData) == 0x10,
+    "pe_section_header_t.SizeOfRawData at offset 0x10");
+_Static_assert(__builtin_offsetof(pe_section_header_t, PointerToRawData) == 0x14,
+    "pe_section_header_t.PointerToRawData at offset 0x14");
 _Static_assert(__builtin_offsetof(pe_section_header_t, Characteristics) == 0x24,
     "pe_section_header_t.Characteristics at offset 0x24");
 

@@ -30,6 +30,16 @@ static uint32_t read_u32(const uint8_t *p)
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/* Read a uint64_t from an unaligned buffer position (LE byte order). The
+ * zero-copy header pointers can land at an odd address (the file controls
+ * e_lfanew and SizeOfOptionalHeader), so every multibyte field -- including the
+ * only 64-bit one, ImageBase -- must be byte-assembled rather than dereferenced
+ * as a naturally-aligned member (aligned-load UB on strict-alignment targets). */
+static uint64_t read_u64(const uint8_t *p)
+{
+    return (uint64_t)read_u32(p) | ((uint64_t)read_u32(p + 4) << 32);
+}
+
 /* ---- Validation --------------------------------------------------------- */
 
 pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
@@ -63,7 +73,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
     }
 
     /* PE signature (4 bytes) + COFF header (20 bytes) must fit */
-    uint64_t pe_hdr_end = (uint64_t)lfanew + 4 + sizeof(pe_coff_header_t);
+    uint64_t pe_hdr_end = (uint64_t)lfanew + PE_SIGNATURE_SIZE + sizeof(pe_coff_header_t);
     if (pe_hdr_end > size) {
         klog(LOG_DEBUG, "pe", "Truncated at PE signature (need %u, have %u)",
              pe_hdr_end, size);
@@ -79,7 +89,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
 
     /* ---- COFF Header ---- */
     const pe_coff_header_t *coff =
-        (const pe_coff_header_t *)(data + lfanew + 4);
+        (const pe_coff_header_t *)(data + lfanew + PE_SIGNATURE_SIZE);
     uint16_t machine = read_u16((const uint8_t *)&coff->Machine);
     if (machine != PE_MACHINE_AMD64) {
         if (machine == PE_MACHINE_I386) {
@@ -105,7 +115,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
     }
 
     /* ---- Optional Header ---- */
-    uint64_t opt_offset = (uint64_t)lfanew + 4 + sizeof(pe_coff_header_t);
+    uint64_t opt_offset = (uint64_t)lfanew + PE_SIGNATURE_SIZE + sizeof(pe_coff_header_t);
     if (opt_offset + opt_hdr_size > size) {
         klog(LOG_DEBUG, "pe", "Truncated at optional header");
         return r;
@@ -153,7 +163,7 @@ pe_validate_result_t pe_validate(const uint8_t *data, uint64_t size)
          "Valid PE32+ -- %u sections, entry RVA 0x%x, ImageBase 0x%x",
          (uint64_t)num_sections,
          (uint64_t)read_u32((const uint8_t *)&opt->AddressOfEntryPoint),
-         opt->ImageBase);
+         read_u64((const uint8_t *)&opt->ImageBase));
 
     return r;
 }
@@ -688,7 +698,7 @@ uint64_t pe_load(const uint8_t *data, uint64_t size)
         return 0;
     }
 
-    uint64_t image_base = v.opt->ImageBase;
+    uint64_t image_base = read_u64((const uint8_t *)&v.opt->ImageBase);
     uint32_t size_of_image = read_u32(
         (const uint8_t *)&v.opt->SizeOfImage);
     uint32_t size_of_headers = read_u32(

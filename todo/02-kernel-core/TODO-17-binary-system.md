@@ -257,9 +257,24 @@ Every loaded executable and shared library must be registered in the per-process
   - Reject 32-bit PE (Magic == `0x10B`) with `ENOEXEC`; reject i386 Machine with `ENOEXEC`
 - [x] `pe_load()` registered in exec dispatcher -- validates and returns 0 until section loader (§8) is implemented
 - [x] 7 unit tests in `test_exec.c`: struct sizes, constants, valid PE32+, 32-bit rejection, truncated, bad magic, NULL
+- [ ] Support reduced-directory PE32+ (SizeOfOptionalHeader < 240): floor at the 112-byte fixed portion, validate NumberOfRvaAndSizes, bound each DataDirectory access (current >= 240 rejects spec-valid < 16-dir images)
+- [ ] Add odd-e_lfanew / odd-alignment PE test fixtures: parameterize build_minimal_pe32plus by e_lfanew to exercise the unaligned zero-copy read_u64 ImageBase path
 - [x] Commit: `"kernel: pe -- PE32+ header parser"`
 
 **Test checkpoint:** `pe_validate()` returns success for a valid PE32+ header (Machine `0x8664`, Magic `0x20B`). Returns error for 32-bit PE (`0x10B`). Returns error for truncated file. `POST16(0xD80B)` on entry. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Notes:**
+> - PE32+ header parser (`pe.c` `pe_validate`): validates the DOS/PE/COFF/optional headers of an untrusted image and returns zero-copy pointers into the buffer; registered as the `PE32+` format (MZ magic) in the exec dispatcher.
+> - Bounds safety: every offset+size is computed in 64-bit before each dereference (e_lfanew, PE signature, optional header, section table); NumberOfSections*40 is wrap-safe; 32-bit PE (0x10B) and i386 machine are rejected with ENOEXEC.
+> - Unaligned-safe: all multibyte fields (including the 64-bit ImageBase) are read via read_u16/read_u32/read_u64 byte assembly, since the zero-copy pointers can land at odd addresses.
+> - Canonical doc: PE/COFF spec; struct offsets pinned by pe.h static asserts (DOS 64B, COFF 20B + field offsets, optional 240B, section 40B + field offsets).
+> - Scope boundary: pe_load section loading is §8; import resolution §9; base relocation §10.
+
+> **Verified:** 2026-07-10 | commit `617a12bf` | 5/7 items | build OK | exec 647 kernel + 16 user PASS | 10 PE parser tests
+> **Deferred:** [M] `SizeOfOptionalHeader >= 240` rejects spec-valid reduced-directory PE32+ (fail-closed; no real Windows image affected) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Support reduced-directory PE32+" at line 260)
+> **Deferred:** [L] odd-alignment / odd-e_lfanew test fixture pending a parameterized builder (the read_u64 fix is byte-safe by construction) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Add odd-e_lfanew" at line 261)
+> **Accepted:** [M] the 3 pe_load section-loader tests transitively call live boot/PMM/VMM infra via pe_load (Gate 8) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Make the 3 pe_load section-loader tests side-effect-free" at line 273)
+> **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) | 2M+2L fixed, 1M+1L deferred, 1M accepted-XREF | scope: kernel-code-quality
 
 ## 8. PE32+ Section Loader + `.pdata` Registration
 
@@ -269,6 +284,7 @@ Every loaded executable and shared library must be registered in the per-process
 - [x] Register loaded module via `exec_register_module()` (§6) with base, size, entry, and `.pdata` info -- PE loader calls this directly (task_exec detects via module list, no duplicate registration)
 - [x] task_exec made format-agnostic: uses `exec_find_module_by_pc(entry)` to determine user page range instead of hardcoding ELF range. Works for PE, ELF, and EIF.
 - [x] 3 unit tests: pe_load returns correct entry VA, module registered with correct base/format, rejects low ImageBase
+- [ ] Make the 3 pe_load section-loader tests side-effect-free: they transitively call POST16 + pmm_alloc_frame/vmm_map_page/exec_register_module via pe_load (Gate 8 live-boot violation the textual scanner misses)
 - [x] Commit: `"kernel: pe -- PE32+ section loader with .pdata registration"`
 - [/] `NtQuerySection(SectionImageInformation)`: persist PE optional-header fields (ImageBase, entry, stack sizes) on the `SECTION_OBJECT` so class 1 returns real values -> XREF: `TODO-12-native-api-ssdt.md` §18 Accepted
 - [/] Map PE images into a per-process PML4 instead of the shared `kernel_pml4` -- blocked on per-process cr3 build-out; `get_or_create_table()` leaves User-bit upper-table promotions on rollback (TODO-04 §15)

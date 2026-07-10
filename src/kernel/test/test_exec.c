@@ -344,6 +344,13 @@ static void test_pe_struct_sizes(void)
 
 static void test_pe_constants(void)
 {
+    TEST_ASSERT_EQ(PE_DOS_MAGIC, 0x5A4D, "PE_DOS_MAGIC == 'MZ'");
+    TEST_ASSERT_EQ(PE_SIGNATURE, 0x00004550, "PE_SIGNATURE == 'PE\\0\\0'");
+    TEST_ASSERT_EQ(PE_SIGNATURE_SIZE, 4, "PE_SIGNATURE_SIZE == 4");
+    TEST_ASSERT_EQ(PE_MACHINE_AMD64, 0x8664, "PE_MACHINE_AMD64 == 0x8664");
+    TEST_ASSERT_EQ(PE_MACHINE_I386, 0x014C, "PE_MACHINE_I386 == 0x014C");
+    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32, 0x10B, "PE_OPT_MAGIC_PE32 == 0x10B");
+    TEST_ASSERT_EQ(PE_OPT_MAGIC_PE32PLUS, 0x20B, "PE_OPT_MAGIC_PE32PLUS == 0x20B");
 }
 
 static void test_pe_validate_valid(void)
@@ -379,6 +386,7 @@ static void test_pe_validate_truncated(void)
 
     pe_validate_result_t r = pe_validate(buf, sizeof(buf));
     TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects truncated PE");
+    TEST_ASSERT_EQ(r.err, ENOEXEC, "pe_validate sets ENOEXEC for truncated PE");
 }
 
 static void test_pe_validate_bad_magic(void)
@@ -390,12 +398,14 @@ static void test_pe_validate_bad_magic(void)
 
     pe_validate_result_t r = pe_validate(buf, sizeof(buf));
     TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects non-MZ magic");
+    TEST_ASSERT_EQ(r.err, ENOEXEC, "pe_validate sets ENOEXEC for bad magic");
 }
 
 static void test_pe_validate_null(void)
 {
     pe_validate_result_t r = pe_validate((const uint8_t *)0, 0);
     TEST_ASSERT_EQ(r.ok, 0, "pe_validate rejects NULL data");
+    TEST_ASSERT_EQ(r.err, ENOEXEC, "pe_validate sets ENOEXEC for NULL data");
 }
 
 /* ---- PE32+ section loader tests ---- */
