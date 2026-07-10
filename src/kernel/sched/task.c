@@ -22,6 +22,7 @@
 #include "kernel/cpu_security.h"  /* cr0_write_safe (CR0 pin preservation) */
 #include "kernel/klog.h"
 #include "kernel/exec.h"
+#include "kernel/eif.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob_process.h"
@@ -1834,10 +1835,24 @@ int task_exec(const uint8_t *data, uint64_t size)
                      data[2] == 'F' && data[3] == '!')
                 mod.format = EXEC_FMT_EIF;
 
-            /* Name from task name */
+            /* Name: prefer the EIF metadata "name" when the image carries one,
+             * else the task name. eif_parse_metadata re-reads the already-
+             * validated buffer (pure, no mutation); the image loaded, so the
+             * re-parse cannot fail. This gives crash-registry / debugger module
+             * lists the binary's declared name on the FIRST load. NOTE: a
+             * subsequent re-exec is NOT renamed because exec_find_module_by_pc
+             * matches the stale USER_ELF-range entry and skips re-registration
+             * (all formats) -- tracked as a separate replace-on-re-exec item. */
             {
                 const char *n = tasks[pid].name ? tasks[pid].name : "a.out";
                 uint32_t ni = 0;
+                if (mod.format == EXEC_FMT_EIF &&
+                    size >= sizeof(eif_header_t)) {
+                    eif_metadata_t emeta;
+                    if (eif_parse_metadata(data, size,
+                            (const eif_header_t *)data, &emeta) && emeta.name[0])
+                        n = emeta.name;
+                }
                 while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
                     mod.name[ni] = n[ni];
                     ni++;

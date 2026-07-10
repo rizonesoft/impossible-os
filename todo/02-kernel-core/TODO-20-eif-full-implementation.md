@@ -66,7 +66,7 @@ title: "TODO-20 -- EIF Full Implementation"
 | 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
 | ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
 | ⭐   |   4   | API version gating                          | §1                         |  [x]   |
-| ⭐   |   5   | Metadata section parser                     | §1                         |  [ ]   |
+| ⭐   |   5   | Metadata section parser                     | §1                         |  [x]   |
 | ⭐   |   6   | LZ4 compressed segments                     | §2, T03 §3                 |  [ ]   |
 | ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [ ]   |
 | ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [ ]   |
@@ -131,13 +131,14 @@ The loader copies segment data but does not set page permissions. Segments shoul
 Every loaded binary must be registered in the crash registry and module list. EIF modules ARE registered today via the generic `task_exec` path; §3's refinement (loader-owned, accurate range, metadata name) is partly blocked on §5.
 
 - [/] Build `loaded_module_t`: DONE generically in `task_exec` with `format=EXEC_FMT_EIF` + task name -- but with the whole USER_ELF range, not the accurate load range, and not the metadata `"name"`.
-- [ ] Register from `eif_load()` with the ACTUAL load range (lowest..highest segment vaddr), replacing the generic `task_exec` path -- a refactor (`eif_load` returns only the entry, so needs an ABI change or a header re-parse).
-- [ ] Name from the metadata `"name"` key -- BLOCKED on the metadata parser. -> XREF: §5.
+- [ ] Register from `eif_load()` with the ACTUAL load range (lowest..highest segment vaddr), replacing the generic `task_exec` path -- a refactor (`eif_load` returns only the entry, so needs an ABI change or header re-parse).
+- [ ] Replace-on-re-exec: `task_exec` skips re-registration when a module already covers the entry point, so a re-exec keeps the stale name/range (all formats). Add same-base replace keyed by image ownership.
+- [x] Name from the metadata `"name"` key -- shipped in §5 (`task.c` prefers `eif_parse_metadata` name on first load). -> XREF: §5.
 - [ ] Commit: `"kernel: eif -- module registration via exec_register_module"`
 
 **Test checkpoint:** After loading an EIF, `exec_find_module_by_pc(entry_va)` returns the EIF module with `EXEC_FMT_EIF` (already true via the generic path); once the loader-owned refactor lands, `base_address` is the actual load base + `size_of_image` the segment span. EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 >
-> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + metadata name) is a refactor partly blocked on §5. The crash-registry need is ALREADY met by the generic `task_exec` registration (format=EXEC_FMT_EIF); the open work is (a) register from `eif_load` with the true load range instead of the whole USER_ELF span, and (b) the metadata `"name"`. -> XREF: 02-kernel-core/TODO-20 §5 (item: "Metadata Section Parser" -- provides the `"name"` key); the accurate-range refactor is owned by this §3.
+> **Deferred:** [M] Loader-owned EIF module registration (accurate load range + replace-on-re-exec) is a refactor owned by this §3. The crash-registry need is ALREADY met: the generic `task_exec` registration sets format=EXEC_FMT_EIF and (via §5) the metadata `"name"` on first load. Open work: register from `eif_load` with the true load range instead of the whole USER_ELF span, and same-base replace so a re-exec updates the stale name/range (all formats).
 
 ---
 
@@ -170,15 +171,24 @@ The `api_version` field is the minimum OS API version a binary requires. `eif_va
 
 The spec defines a key-value metadata section (name, version, author, icon, min_os). Currently the `metadata_offset` field is parsed but the section is never read.
 
-- [ ] Define `eif_metadata_t` struct in `eif.h`: `{ char name[64]; char version[32]; char author[64]; char min_os[16]; }` -- parsed from the key-value pairs
-- [ ] Implement `eif_parse_metadata(data, size, metadata_offset)`: walk key-value pairs (`key_len + key + val_len + val`, terminated by `key_len==0`), populate `eif_metadata_t`
-- [ ] Bounds-check every key_len and val_len against remaining file size
-- [ ] Log parsed metadata: `"eif: name='%s' version='%s' author='%s'"`
-- [ ] Support optional `build_id` metadata key for crash/debug correlation; log it immediately and pass it into module registration once `TODO-17-binary-system.md §6` grows image-identity storage
-- [ ] Store metadata in `loaded_module_t.name` field for crash registry visibility
-- [ ] Commit: `"kernel: eif -- metadata section parser"`
+- [x] `eif_metadata_t` in `eif.h`: `name[64]`/`version[32]`/`author[64]`/`min_os[16]` + `build_id[32]`/`build_id_len` (raw-byte id). In-memory decode target, not an on-disk struct.
+- [x] `eif_parse_metadata(data, size, hdr, out)` in `eif.c`: pure (no klog), walks `key_len+key+val_len+val` records, maps known keys, skips unknown (forward-compat), terminates on `key_len==0` or range end.
+- [x] Remaining-length bounds check before every length read (`remaining>=4`, then `declared<=remaining`) -- no cursor-addition overflow; 1-3 trailing bytes are malformed.
+- [x] `EIF_MAX_METADATA_RECORDS` (64) cap: reject a record flood before mutation (parser-DoS guard; mirrors the segment/import count caps).
+- [x] Parse in `eif_load` validation phase: a malformed record rejects before the segment copy touches user memory; `name/version/author/min_os` logged after `end_ns` (klog-timing discipline).
+- [x] `build_id` key logged (hex prefix) after `end_ns`; module-identity STORAGE deferred -> XREF: `TODO-17-binary-system.md §6` (item: "Extend module identity beyond `name`" at line 243).
+- [x] `loaded_module_t.name` uses the EIF metadata name on first load (`task.c`), falling back to the task name -- satisfies the §3 "name from metadata" item.
+- [x] Commit: `"kernel: eif -- metadata section parser"`
 
-**Test checkpoint:** EIF with metadata section shows `"eif: name='hello' version='1.0'"` in serial log. EIF with truncated metadata (key_len points past EOF) is rejected. EIF without metadata (`metadata_offset=0`) loads normally. `POST16(0xDE28)` on entry, `POST16(0xDE29)` after parse. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `eif_parse_metadata` populates name/version/author from a well-formed section; a value length past the range end is rejected; `metadata_offset=0` yields an empty struct and success; >`EIF_MAX_METADATA_RECORDS` records is rejected; a `build_id` record captures the raw bytes + length. 5 `TEST_CAT_EXEC` tests (parser is pure -- no `eif_load` mutation, no user-memory writes). EIF is post-boot (no POST16). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | EIF metadata suite, 0 failures
+>
+> **Notes:**
+> - Shipped: `eif_parse_metadata()` + `eif_metadata_t` (`eif.c`/`eif.h`), a bounded key-value decoder for the EIF metadata section (name/version/author/min_os/build_id); 5 new `TEST_CAT_EXEC` tests.
+> - Runs in `eif_load`'s validation phase (rejects malformed metadata before the mutation phase); success log deferred past `end_ns`; `task.c` uses the metadata name for `loaded_module_t.name` on first load.
+> - Hardening from design review: `EIF_MAX_METADATA_RECORDS` cap (record-flood DoS), remaining-length checks (no cursor overflow), build_id given an explicit output path.
+> - Canonical doc: `specs/eif-format.md` "Metadata Section".
+> - Scope: parser + logs + first-load naming. build_id module-identity STORAGE -> `TODO-17-binary-system.md §6`; loader-owned registration + replace-on-re-exec renaming -> this TODO §3.
 
 ---
 
@@ -287,7 +297,7 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 | ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                        |
 | ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                        |
 | ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                            |
-| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ⬜ §5                            |
+| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                            |
 | ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ⬜ §6                            |
 | ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ⬜ §1                            |
 | ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                            |

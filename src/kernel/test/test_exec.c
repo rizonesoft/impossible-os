@@ -810,6 +810,134 @@ static void test_eif_reject_api_version_too_new(void)
                    "eif_load rejects an otherwise-valid binary requiring a newer API version");
 }
 
+/* ---- EIF metadata parser -- pure, no mutation, safe to call directly ---- */
+
+static int meta_streq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    while (a[i] && b[i]) {
+        if (a[i] != b[i])
+            return 0;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static void meta_put_u32(uint8_t *buf, uint32_t pos, uint32_t v)
+{
+    buf[pos]     = (uint8_t)v;
+    buf[pos + 1] = (uint8_t)(v >> 8);
+    buf[pos + 2] = (uint8_t)(v >> 16);
+    buf[pos + 3] = (uint8_t)(v >> 24);
+}
+
+/* Append one [key_len][key][val_len][val] record; return the new position. */
+static uint32_t meta_put_kv(uint8_t *buf, uint32_t pos,
+                            const char *key, const char *val)
+{
+    uint32_t kl = 0, vl = 0, i;
+    while (key[kl]) kl++;
+    while (val[vl]) vl++;
+    meta_put_u32(buf, pos, kl); pos += 4;
+    for (i = 0; i < kl; i++) buf[pos++] = (uint8_t)key[i];
+    meta_put_u32(buf, pos, vl); pos += 4;
+    for (i = 0; i < vl; i++) buf[pos++] = (uint8_t)val[i];
+    return pos;
+}
+
+/* Well-formed name/version/author records populate the decode struct. */
+static void test_eif_metadata_parsed(void)
+{
+    uint8_t buf[256];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_metadata_t meta;
+    uint32_t pos;
+    eif_test_build_header(buf, sizeof(buf));
+    h->metadata_offset = sizeof(eif_header_t);
+    pos = sizeof(eif_header_t);
+    pos = meta_put_kv(buf, pos, "name", "hello");
+    pos = meta_put_kv(buf, pos, "version", "1.0");
+    pos = meta_put_kv(buf, pos, "author", "acme");
+    meta_put_u32(buf, pos, 0);   /* key_len==0 terminator */
+    TEST_ASSERT_EQ(eif_parse_metadata(buf, sizeof(buf), h, &meta), 1,
+                   "eif_parse_metadata accepts well-formed metadata");
+    TEST_ASSERT(meta_streq(meta.name, "hello"), "metadata name parsed");
+    TEST_ASSERT(meta_streq(meta.version, "1.0"), "metadata version parsed");
+    TEST_ASSERT(meta_streq(meta.author, "acme"), "metadata author parsed");
+}
+
+/* A value length that runs past the metadata range end is rejected. */
+static void test_eif_metadata_reject_truncated(void)
+{
+    uint8_t buf[128];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_metadata_t meta;
+    uint32_t pos = sizeof(eif_header_t), i;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->metadata_offset = sizeof(eif_header_t);
+    meta_put_u32(buf, pos, 4); pos += 4;                 /* key_len = 4 */
+    for (i = 0; i < 4; i++) buf[pos++] = (uint8_t)"name"[i];
+    meta_put_u32(buf, pos, 100); pos += 4;               /* val_len past end */
+    TEST_ASSERT_EQ(eif_parse_metadata(buf, pos + 8, h, &meta), 0,
+                   "eif_parse_metadata rejects value length past range end");
+}
+
+/* metadata_offset==0 is a valid no-metadata binary; out is all-zero. */
+static void test_eif_metadata_absent_ok(void)
+{
+    uint8_t buf[64];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_metadata_t meta;
+    eif_test_build_header(buf, sizeof(buf));
+    h->metadata_offset = 0;
+    TEST_ASSERT_EQ(eif_parse_metadata(buf, sizeof(buf), h, &meta), 1,
+                   "eif_parse_metadata accepts metadata_offset==0");
+    TEST_ASSERT_EQ(meta.name[0], 0, "absent metadata yields empty name");
+    TEST_ASSERT_EQ(meta.build_id_len, 0, "absent metadata yields no build_id");
+}
+
+/* More than EIF_MAX_METADATA_RECORDS records is rejected before mutation. */
+static void test_eif_metadata_reject_over_cap(void)
+{
+    uint8_t buf[1024];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_metadata_t meta;
+    uint32_t pos = sizeof(eif_header_t), i;
+    eif_test_build_header(buf, sizeof(buf));
+    TEST_KLOG_SUPPRESS("eif");
+    h->metadata_offset = sizeof(eif_header_t);
+    for (i = 0; i < EIF_MAX_METADATA_RECORDS + 1; i++) {
+        meta_put_u32(buf, pos, 1); pos += 4;   /* key_len = 1 (unknown key) */
+        buf[pos++] = 'x';
+        meta_put_u32(buf, pos, 0); pos += 4;   /* val_len = 0 */
+    }
+    TEST_ASSERT_EQ(eif_parse_metadata(buf, pos + 8, h, &meta), 0,
+                   "eif_parse_metadata rejects over-cap record count");
+}
+
+/* build_id is a raw byte blob: length captured, bytes copied verbatim. */
+static void test_eif_metadata_build_id(void)
+{
+    uint8_t buf[128];
+    eif_header_t *h = (eif_header_t *)buf;
+    eif_metadata_t meta;
+    uint32_t pos = sizeof(eif_header_t), i;
+    static const uint8_t bid[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    eif_test_build_header(buf, sizeof(buf));
+    h->metadata_offset = sizeof(eif_header_t);
+    meta_put_u32(buf, pos, 8); pos += 4;
+    for (i = 0; i < 8; i++) buf[pos++] = (uint8_t)"build_id"[i];
+    meta_put_u32(buf, pos, 4); pos += 4;
+    for (i = 0; i < 4; i++) buf[pos++] = bid[i];
+    meta_put_u32(buf, pos, 0);   /* terminator */
+    TEST_ASSERT_EQ(eif_parse_metadata(buf, sizeof(buf), h, &meta), 1,
+                   "eif_parse_metadata accepts a build_id record");
+    TEST_ASSERT_EQ(meta.build_id_len, 4, "build_id length captured");
+    TEST_ASSERT_EQ(meta.build_id[0], 0xDE, "build_id byte 0 copied");
+    TEST_ASSERT_EQ(meta.build_id[3], 0xEF, "build_id byte 3 copied");
+}
+
 /* ---- Registration ---- */
 
 void test_register_exec(void)
@@ -875,6 +1003,13 @@ void test_register_exec(void)
     test_suite_register_cat("EIF: segment reserved!=0", test_eif_reject_segment_reserved_nonzero, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: api_version too new", test_eif_reject_api_version_too_new, TEST_CAT_EXEC);
     test_suite_register_cat("EIF: reject compressed", test_eif_reject_compressed, TEST_CAT_EXEC);
+
+    /* EIF metadata key-value parser */
+    test_suite_register_cat("EIF: metadata parsed", test_eif_metadata_parsed, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: metadata truncated", test_eif_metadata_reject_truncated, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: metadata absent OK", test_eif_metadata_absent_ok, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: metadata over cap", test_eif_metadata_reject_over_cap, TEST_CAT_EXEC);
+    test_suite_register_cat("EIF: metadata build_id", test_eif_metadata_build_id, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

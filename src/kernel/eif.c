@@ -218,6 +218,121 @@ static int eif_validate(const eif_header_t *hdr, uint64_t size)
     return 1;
 }
 
+/* ---- Metadata parser ---------------------------------------------------- */
+
+/* Copy a length-prefixed (NOT NUL-terminated) wire value into a fixed-size,
+ * always-NUL-terminated field, truncating if the value does not fit. The fields
+ * are display/identity hints, so truncation is acceptable (not a security
+ * surface); cap is a compile-time sizeof(), always >= 16, so cap - 1 is safe. */
+static void meta_copy_str(char *dst, uint32_t cap,
+                          const uint8_t *val, uint32_t val_len)
+{
+    uint32_t n = (val_len < cap - 1) ? val_len : cap - 1;
+    if (n)
+        memcpy(dst, val, n);
+    dst[n] = 0;
+}
+
+/* True when a length-prefixed wire key equals the NUL-terminated literal. */
+static int meta_key_is(const uint8_t *key, uint32_t key_len, const char *lit)
+{
+    uint32_t i;
+    for (i = 0; i < key_len; i++) {
+        if (lit[i] == 0 || key[i] != (uint8_t)lit[i])
+            return 0;
+    }
+    return lit[key_len] == 0;
+}
+
+int eif_parse_metadata(const uint8_t *data, uint64_t size,
+                       const eif_header_t *hdr, eif_metadata_t *out)
+{
+    uint64_t cursor, meta_end, remaining;
+    uint32_t records = 0;
+
+    memset(out, 0, sizeof(*out));
+
+    if (hdr->metadata_offset == 0)
+        return 1;   /* no metadata section: valid, all-zero out */
+
+    /* Range end mirrors eif_validate's metadata bounds (spec rule 8): the signed
+     * boundary for a signed file, else EOF. metadata_offset was already validated
+     * into [sizeof(header), meta_end), so the cursor starts strictly in range. */
+    meta_end = (hdr->flags & EIF_FLAG_SIGNED) ? hdr->signature_offset : size;
+    cursor = hdr->metadata_offset;
+
+    while (cursor < meta_end) {
+        uint32_t key_len, val_len;
+        const uint8_t *key, *val;
+
+        /* key_len: remaining-length check before every length read avoids any
+         * cursor + width addition that could wrap; 1-3 trailing bytes here are
+         * a malformed record, not a silent stop. */
+        remaining = meta_end - cursor;
+        if (remaining < 4) {
+            klog(LOG_DEBUG, "eif", "Metadata: truncated key length prefix");
+            return 0;
+        }
+        key_len = eif_read32(data + cursor);
+        cursor += 4;
+        remaining -= 4;
+
+        if (key_len == 0)
+            return 1;   /* terminator record: parse complete */
+
+        if (++records > EIF_MAX_METADATA_RECORDS) {
+            klog(LOG_DEBUG, "eif", "Metadata: too many records (max %u)",
+                 (uint64_t)EIF_MAX_METADATA_RECORDS);
+            return 0;
+        }
+
+        if (key_len > remaining) {
+            klog(LOG_DEBUG, "eif", "Metadata: key runs past range end");
+            return 0;
+        }
+        key = data + cursor;
+        cursor += key_len;
+        remaining -= key_len;
+
+        if (remaining < 4) {
+            klog(LOG_DEBUG, "eif", "Metadata: truncated value length prefix");
+            return 0;
+        }
+        val_len = eif_read32(data + cursor);
+        cursor += 4;
+        remaining -= 4;
+
+        if (val_len > remaining) {
+            klog(LOG_DEBUG, "eif", "Metadata: value runs past range end");
+            return 0;
+        }
+        val = data + cursor;
+        cursor += val_len;
+
+        /* Map known keys into the decode struct; unknown keys are skipped so a
+         * newer producer's extra keys do not break an older loader (forward-compat). */
+        if (meta_key_is(key, key_len, "name"))
+            meta_copy_str(out->name, sizeof(out->name), val, val_len);
+        else if (meta_key_is(key, key_len, "version"))
+            meta_copy_str(out->version, sizeof(out->version), val, val_len);
+        else if (meta_key_is(key, key_len, "author"))
+            meta_copy_str(out->author, sizeof(out->author), val, val_len);
+        else if (meta_key_is(key, key_len, "min_os"))
+            meta_copy_str(out->min_os, sizeof(out->min_os), val, val_len);
+        else if (meta_key_is(key, key_len, "build_id")) {
+            uint32_t n = (val_len < sizeof(out->build_id))
+                       ? val_len : (uint32_t)sizeof(out->build_id);
+            if (n)
+                memcpy(out->build_id, val, n);
+            out->build_id_len = n;
+        }
+    }
+
+    /* Reached the range end with no key_len == 0 terminator. Spec rule 8 allows
+     * termination by the range end OR the terminator, whichever comes first. */
+    return 1;
+}
+
 /* ---- Loader ------------------------------------------------------------- */
 
 uint64_t eif_load(const uint8_t *data, uint64_t size)
@@ -227,6 +342,7 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
     uint32_t seg_loaded = 0;
     uint32_t available_count = 0;  /* registered imports, reported after timing */
     uint64_t start_ns, end_ns, load_us;
+    eif_metadata_t meta;           /* parsed pre-mutation; logged after timing */
 
     start_ns = uptime_ns();
 
@@ -448,6 +564,18 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
         }
     }
 
+    /* ---- Parse metadata (still validation phase: reject before mutation) ----
+     * A malformed metadata record (length past range, over the record cap) must
+     * reject the load BEFORE the segment copies below touch user memory. The
+     * parser is pure and emits no success log; the parsed name/version/author is
+     * logged after end_ns with the aggregate record (klog-timing discipline). A
+     * reject klog inside the parser is free here -- this path returns before
+     * end_ns is captured, so no timing is ever reported for it. */
+    if (!eif_parse_metadata(data, size, hdr, &meta)) {
+        klog(LOG_DEBUG, "eif", "Malformed metadata section; rejecting binary");
+        return 0;
+    }
+
     /* ============================================================
      * MUTATION PHASE -- every segment, import, and the entry point
      * passed above, so the copies and PMM/dispatch-table writes below
@@ -529,6 +657,23 @@ uint64_t eif_load(const uint8_t *data, uint64_t size)
              "Loaded %u segments, %u/%u imports available in %u us, entry=0x%x",
              (uint64_t)seg_loaded, (uint64_t)available_count,
              (uint64_t)hdr->import_count, load_us, entry_va);
+
+        /* Metadata diagnostics, deferred past end_ns like every other success
+         * log. Only emitted when the binary carries a metadata section. */
+        if (hdr->metadata_offset != 0) {
+            klog(LOG_DEBUG, "eif",
+                 "metadata: name='%s' version='%s' author='%s' min_os='%s'",
+                 meta.name, meta.version, meta.author, meta.min_os);
+            if (meta.build_id_len) {
+                uint64_t bid = 0;
+                uint32_t k, kn = meta.build_id_len < 8 ? meta.build_id_len : 8;
+                for (k = 0; k < kn; k++)
+                    bid |= (uint64_t)meta.build_id[k] << (k * 8);
+                klog(LOG_DEBUG, "eif",
+                     "metadata: build_id %u bytes, prefix=0x%x",
+                     (uint64_t)meta.build_id_len, bid);
+            }
+        }
         return entry_va;
     }
 }

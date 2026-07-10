@@ -42,6 +42,13 @@
 #define EIF_MAX_SEGMENTS  64
 #define EIF_MAX_IMPORTS   1024
 
+/* Metadata record cap (spec rule 8): the metadata range bound prevents overreads
+ * but not an attacker-controlled record count -- a crafted file can pack the range
+ * with minimal >=9-byte records and drive the exec-path key/value walk (twice: once
+ * in eif_load, once in the task.c module-name re-parse). Mirrors the segment/import
+ * count caps: reject a file with more than this many records before any mutation. */
+#define EIF_MAX_METADATA_RECORDS 64
+
 /* ---- Header flags ------------------------------------------------------- */
 
 #define EIF_FLAG_GUI        (1u << 0)
@@ -102,6 +109,24 @@ typedef struct eif_import {
 _Static_assert(sizeof(eif_import_t) == 8,
     "eif_import_t must be exactly 8 bytes");
 
+/* ---- Parsed metadata ---------------------------------------------------- */
+
+/* Decoded form of the optional key-value metadata section. Populated by
+ * eif_parse_metadata() from the wire records (spec: specs/eif-format.md
+ * "Metadata Section"). String fields are always NUL-terminated; values longer
+ * than the field are truncated (the fields are display/identity hints, not a
+ * security surface). build_id is a raw byte blob (NOT a string): build_id_len
+ * gives its length, 0 when absent. This is an in-memory decode target only --
+ * NOT an on-disk struct, so no size/offset _Static_assert applies. */
+typedef struct eif_metadata {
+    char     name[64];        /* "name" key: application display name */
+    char     version[32];     /* "version" key */
+    char     author[64];      /* "author" key */
+    char     min_os[16];      /* "min_os" key, e.g. "26.4" */
+    uint8_t  build_id[32];    /* "build_id" key: raw bytes (crash/debug id) */
+    uint32_t build_id_len;    /* bytes used in build_id (0 = no build_id) */
+} eif_metadata_t;
+
 /* ---- Per-process dispatch table ----------------------------------------- */
 
 /* Fixed user-space address for the EIF import dispatch table.
@@ -132,3 +157,14 @@ _Static_assert(EIF_MAX_IMPORTS == EIF_DISPATCH_TABLE_MAX,
 /* Load an EIF binary from a raw buffer.
  * Returns entry point address on success, 0 on failure. */
 uint64_t eif_load(const uint8_t *data, uint64_t size);
+
+/* Parse the optional key-value metadata section into *out (fully zeroed first).
+ * Pure: reads only the caller buffer, allocates nothing, emits no log (safe to
+ * call inside eif_load's timed region and again from the exec module-registration
+ * path). Returns 1 on success (including metadata_offset == 0, which yields an
+ * all-zero *out), 0 if any record is malformed (declared length runs past the
+ * metadata range, trailing bytes too short for a length prefix, or the record
+ * count exceeds EIF_MAX_METADATA_RECORDS). A 0 return means the caller must
+ * reject the binary before mutation. `hdr` must already have passed eif_validate. */
+int eif_parse_metadata(const uint8_t *data, uint64_t size,
+                       const eif_header_t *hdr, eif_metadata_t *out);
