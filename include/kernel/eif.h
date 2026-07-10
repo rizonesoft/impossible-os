@@ -117,12 +117,19 @@ _Static_assert(sizeof(eif_import_t) == 8,
  * than the field are truncated (the fields are display/identity hints, not a
  * security surface). build_id is a raw byte blob (NOT a string): build_id_len
  * gives its length, 0 when absent. This is an in-memory decode target only --
- * NOT an on-disk struct, so no size/offset _Static_assert applies. */
+ * NOT an on-disk struct, so no size/offset _Static_assert applies.
+ *
+ * All fields here are ADVISORY (display / identity / diagnostics). None gate the
+ * load: the sole enforced version check is the numeric header api_version in
+ * eif_validate(). In particular min_os is informational, matching how Windows
+ * (subsystem/OS-version fields) and Linux treat file-level version strings --
+ * not a hard load gate. A real min_os policy, if ever wanted, would be a
+ * separate enforcement step, not a change to this decoder. */
 typedef struct eif_metadata {
     char     name[64];        /* "name" key: application display name */
     char     version[32];     /* "version" key */
     char     author[64];      /* "author" key */
-    char     min_os[16];      /* "min_os" key, e.g. "26.4" */
+    char     min_os[16];      /* "min_os" key, e.g. "26.4" (advisory, not gated) */
     uint8_t  build_id[32];    /* "build_id" key: raw bytes (crash/debug id) */
     uint32_t build_id_len;    /* bytes used in build_id (0 = no build_id) */
 } eif_metadata_t;

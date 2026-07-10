@@ -189,6 +189,10 @@ The spec defines a key-value metadata section (name, version, author, icon, min_
 > - Hardening from design review: `EIF_MAX_METADATA_RECORDS` cap (record-flood DoS), remaining-length checks (no cursor overflow), build_id given an explicit output path.
 > - Canonical doc: `specs/eif-format.md` "Metadata Section".
 > - Scope: parser + logs + first-load naming. build_id module-identity STORAGE -> `TODO-17-binary-system.md §6`; loader-owned registration + replace-on-re-exec renaming -> this TODO §3.
+>
+> **Verified:** 2026-07-10 | commit `ff583f8f` | 7/7 items | build OK | tests 726+16 PASS
+> **Accepted:** [H] build_id/version/author/min_os decoded but never reach `loaded_module_t` (crash/debug id unreachable post-load) -> XREF: 02-kernel-core/TODO-17 §6 (item: "Extend module identity beyond `name`" at line 243)
+> **Quality reviewed:** 2026-07-10 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
