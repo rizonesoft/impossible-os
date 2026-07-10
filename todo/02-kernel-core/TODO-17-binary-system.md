@@ -82,7 +82,7 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 | ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [/]   |
 | 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
 | 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
-| ⭐   |  16   | Script/shebang interpreter support             | §1              |  [ ]   |
+| ⭐   |  16   | Script/shebang interpreter support             | §1              |  [/]   |
 | ⭐   |  17   | EIF code signing                               | §5              |  [/]   |
 | 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [/]   |
 | 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [/]   |
@@ -108,6 +108,7 @@ Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`
 - [x] Register ELF format in `exec_init()` called from `boot_desktop.c` Phase 3; PE32+/EIF registration points ready
 - [x] Replace the direct `elf_load()` call in `task_exec()` (`task.c`) with `exec_load_fmt(data, size, &err, &fmt_name)` -- the format-name-returning superset that `exec_load()` wraps; user stack/PML4/context setup unchanged
 - [x] 3 unit tests: bad magic (ENOEXEC), null data (ENOEXEC), sub-magic-length buffer (ENOEXEC)
+- [ ] Exec argument passing: extend `task_exec`/`exec_load` to take a caller argv and populate the user stack + PEB `ProcessParameters.CommandLine` (today argc=1/argv[0]=name is fixed) -- prerequisite for §16 shebang
 - [x] Commit: `"kernel: exec -- multi-format exec dispatcher"`
 
 **Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"`. Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; sub-magic-length (3-byte) buffer returns 0 + ENOEXEC. Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.
@@ -435,14 +436,15 @@ Auto-detect `#!` (shebang) lines in text files and dispatch to the named interpr
 > [!TIP]
 > Neither Windows nor Linux handles this at the kernel binary-loader level with format-agnostic dispatch. Windows relies on `cmd.exe` file associations; Linux has `binfmt_script` but it's a separate module from `binfmt_elf`. Impossible OS unifies all formats -- ELF, PE32+, EIF, and scripts -- in a single `exec_load()` dispatcher.
 
-- [ ] Register `#!` (bytes `0x23 0x21`) as a format in the exec dispatcher (§1)
-- [ ] Parse shebang line: extract interpreter path and optional argument (max 256 bytes, stop at `\n`)
-- [ ] Validate interpreter path exists via VFS; reject circular shebangs (interpreter itself has `#!`)
-- [ ] Re-invoke `exec_load()` with interpreter as the binary and original script path as argv[1]
-- [ ] Handle edge cases: missing interpreter → `ENOENT`; empty shebang → `ENOEXEC`; shebang longer than 256 bytes → truncate with warning
+- [/] Register `#!` (`0x23 0x21`) as a format in the exec dispatcher (§1) + parse the shebang line (interpreter path + optional arg, max 256 bytes, stop at `\n`)
+- [/] Validate interpreter via VFS; reject circular shebangs (interpreter itself has `#!`)
+- [/] Re-invoke `exec_load()` with the interpreter and the original script path as argv[1] -- BLOCKED: exec/task has no caller argv passing (§1 item above), so the interpreter cannot receive the script path
+- [/] Edge cases: missing interpreter -> `ENOENT`; empty shebang -> `ENOEXEC`; over-256-byte shebang -> truncate + warn
 - [ ] Commit: `"kernel: exec -- shebang (#!) interpreter support"`
 
-**Test checkpoint:** Script with `#!/C:\Impossible\System\shell.exe` dispatches to shell -- serial log shows `"exec: shebang -> /C:\Impossible\System\shell.exe"`. Circular shebang rejected with error. Missing interpreter → error. `POST16(0xD81A)` on entry, `POST16(0xD81B)` after interpreter resolved. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Script with `#!/C:\Impossible\System\shell.exe` dispatches to shell -- serial log shows `"exec: shebang -> /C:\Impossible\System\shell.exe"`. Circular shebang rejected with error. Missing interpreter → error. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Deferred:** [M] §16 shebang not implemented -- the core is re-invoking exec with the interpreter and the SCRIPT as an argument, but exec/task_exec has no caller argv passing (it hard-sets argc=1/argv[0]=name); without it the interpreter cannot learn which script to run -> XREF: 02-kernel-core/TODO-17 §1 (item: "Exec argument passing" at line 111)
 
 ## 17. EIF Code Signing
 
