@@ -10,6 +10,8 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 > **Validated:** 2026-07-10 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 
+> **Gap-audited:** 2026-07-10 | gap-audit + codex-gap-audit; 10 findings filed -- 💎 measurement-only mode, per-page-hash on demand-paging, role-separated trust anchors, signed+versioned policy provenance; ⭐ dynamic/JIT code admission, revocation-bundle freshness, RO-after-lock policy page (guard-page rejected: unmaps -> reframed RO-after-init), tamper-evident CI audit-log; reciprocal XREFs to T04 §10 (HMAC-chain), T10 §17 (RO-after-init), D01 T13 (PCR), T17 (paging), T18 §9 (CI-decision sink). Scope-out: ELAM / DRTM / IPE / fs-verity-non-exec / PPL / general-lockdown (T10)
+
 > **Goal:** Implement the kernel Code Integrity plane that decides whether executable code may run in ring 0 or ring 3. This covers kernel image verification, driver/module admission, EIF/PE/ELF executable trust, catalog files, revocation, measured-boot binding, audit mode, test-signing mode, and native policy query APIs. Code signing primitives exist elsewhere; this TODO owns the kernel decision point and enforcement policy.
 
 > [!IMPORTANT]
@@ -55,6 +57,11 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Load defaults from compiled policy; merge boot/registry policy via TODO-02.
 - [ ] Lock policy after Phase 2 on Secure Boot systems.
 - [ ] Deny attempts to downgrade enforcement after lock.
+- [ ] Add a MEASUREMENT-only mode (record image hash + feed the TPM PCR aggregate, no allow/deny verdict) distinct from audit (log-but-allow). -> XREF: D01 T13 (PCR aggregate).
+- [ ] Trust anchors are role-separated tiers, not a flat list: compiled-in root / boot-added / firmware-platform / revoked, each with distinct lock + downgrade semantics.
+- [ ] The `ci_policy_t` artifact itself is signed + versioned: authenticate its provenance (authorized update signers) + anti-rollback on version before applying -- a mutable boot/registry merge + in-memory lock does NOT authenticate the policy.
+- [ ] After lock, mark the `ci_policy_t` page READ-ONLY via PTE (RO-after-init, NOT a guard page which unmaps and would fault the CI engine's own reads). -> XREF: T10 §17 (`.rodata` RO-after-init).
+- [ ] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
 - [ ] Commit: `"kernel: ci -- code integrity policy object"`
 
 **Test checkpoint:** `ci_policy_t` loads compiled defaults; after the Phase-2 lock on a Secure Boot system, an enforcement-downgrade attempt returns an error and the mode is unchanged. Serial: `"ci: policy locked (mode=enforce, secureboot=1)"`. Test on: QEMU WHPX + TCG; bare metal.
@@ -67,6 +74,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Image info includes path, format, type, signer, hash, requested trust level, loader, process token, and measured-boot context.
 - [ ] Register Executive callback `\Callback\CiImageLoad` through TODO-17.
 - [ ] All loaders must call CI before mapping executable pages.
+- [ ] Dynamic-code / JIT / W->X admission: image-load hooks miss code generated at runtime with no backing image. Gate a `ci_validate_dynamic_code()` path (or a policy that forbids RWX->RX transitions unless the producer is trusted).
 - [ ] Commit: `"kernel: ci -- image validation API and callback"`
 
 **Test checkpoint:** `ci_validate_image()` on a known-good image returns ALLOW and on a tampered image returns DENY; the `\Callback\CiImageLoad` callback fires before executable pages are mapped. Serial: `"ci: validate '<name>' -> <decision>"`. Test on: QEMU WHPX + TCG; bare metal.
@@ -91,6 +99,8 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] PE: parse WIN_CERTIFICATE and Authenticode digest exclusions.
 - [ ] ELF: support Impossible OS note-section signature for native ELF tools.
 - [ ] Reject malformed or ambiguous signed ranges.
+- [ ] Per-page hash validation on demand-paging (parity 💎: Win page-hashes + Linux fs-verity): a pre-map whole-file hash is bypassed if a page faults in later. Validate each executable page as paged in. -> XREF: TODO-17 (paging/loader).
+- [ ] IMA/EVM-style appraisal of image security metadata (not just file bytes): if images carry integrity-protected attributes, appraise them too, not only the content digest.
 - [ ] Commit: `"kernel: ci -- embedded signature validation"`
 
 **Test checkpoint:** a signed EIF trailer validates before segment mapping; a malformed/overlapping signed range is rejected with an error (not silently accepted); PE Authenticode digest excludes the checksum + certificate-table fields per spec. Test on: QEMU WHPX + TCG; bare metal.
@@ -115,6 +125,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Optional catalog-delivered revocation bundles.
 - [ ] Revocation always overrides allow, including test-signing unless boot explicitly enters lab mode.
 - [ ] Publish notification on revocation database update.
+- [ ] Revocation-bundle freshness: bundles carry a monotonic version; reject a bundle older than the applied floor (anti-rollback) and flag stale revocation data past a policy age. -> XREF: D01 T13 (monotonic anti-rollback anchor).
 - [ ] Commit: `"kernel: ci -- revocation and deny lists"`
 
 **Test checkpoint:** a revoked hash is denied even with an otherwise-valid signature; a revoked signer is denied; a revocation-DB update fires the update notification. Test on: QEMU WHPX + TCG; bare metal.
@@ -160,7 +171,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## 10. CI Audit, Telemetry, and Syscalls
 
-- [ ] Publish CI allow/deny/audit events through TODO-27 and klog/ETW.
+- [ ] Publish CI allow/deny/audit events through klog/ETW, emitted INTO the tamper-evident HMAC-chained log so a post-compromise trail edit is detectable. -> XREF: TODO-04 §10 ("Log integrity verification (HMAC)").
 - [ ] Add `NtQuerySystemInformation(SystemCodeIntegrityInformation)`.
 - [ ] Add `ci_dump_policy()` for KD/crash dump.
 - [ ] Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh (revocation update); reject downgrades after lock.
@@ -184,6 +195,13 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | ⭐   | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig               | 🔄 §3 Ed25519 as native algorithm      |
 | ⭐   | CI decision in image reg   | ⚠️ separate CI state             | ❌ none unified                 | 🔄 §9 -> TODO-18 §9 provenance field    |
 | ⭐   | CI query syscall           | ✅ SystemCodeIntegrityInformation | ⚠️ /sys/kernel/security/ima     | 🔄 §10 NtQuery/NtSet + ci_dump_policy   |
+| 💎   | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle             | 🔄 §4 validate each paged-in page       |
+| 💎   | Layered trust anchors      | ⚠️ cert-store roots               | ✅ 4-tier keyring               | 🔄 §1 role-separated anchor tiers       |
+| 💎   | Signed/versioned policy    | ✅ signed WDAC policy + rollback  | ⚠️ keyring, no policy artifact  | 🔄 §1 authenticate policy provenance    |
+| 💎   | Measurement-only mode      | ⚠️ audit only                     | ✅ IMA measure vs appraise      | 🔄 §1 measure mode -> PCR aggregate     |
+| ⭐   | Dynamic/JIT code admission | ✅ dynamic code policy (.NET)     | ⚠️ W^X, no CI hook              | 🔄 §2 ci_validate_dynamic_code          |
+| ⭐   | Policy self-protection     | ✅ HVCI VTL-isolated CI           | ⚠️ lockdown, same ring          | 🔄 §1 RO-after-lock policy page          |
+| ⭐   | Tamper-evident CI audit    | ⚠️ ETW (mutable)                  | ⚠️ audit log (mutable)          | 🔄 §10 -> T04 §10 HMAC-chain            |
 
 > **After §1-§6:** a kernel CI decision point every loader calls, with policy modes, embedded + catalog signatures, and revocation that overrides allow.
 > **After §7-§10:** Secure-Boot/TPM binding, driver vs user enforcement split, CI decisions surfaced in the image registry + crash dumps, and native policy-query syscalls.

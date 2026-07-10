@@ -358,6 +358,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [ ] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` verifies the chain -- BLOCKED: `dmpanalyze.exe` (TODO-27 §9) not implemented
 - [/] Gate behind `boot.conf` `log_integrity=1` (typed `boot_arg_desc_t` row in `config.c`; default enabled, disablable for perf debug)
 - [/] Add Phase-2 key-mint POST codes only (`POST16(0xDE20)` entry, `POST16(0xDE21)` key minted; range `0xDE2x` free); runtime seal/verify are post-Phase-3 (no POST16)
+- [ ] Consumer: Code Integrity allow/deny/audit decisions emit INTO this HMAC chain for tamper-evident CI forensics. -> XREF: D02 T19 §10 (CI audit events).
 - [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
