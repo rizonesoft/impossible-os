@@ -146,11 +146,35 @@ def test_git_unavailable_fails_open():
         assert _streak(root) == 0
 
 
+def test_two_fast_deaths_trip_crash_loop_breaker():
+    # A crash loop (bad deploy dies instantly, watchdog relaunches into the same
+    # wall) must trip the breaker HARD after just 2 fast deaths -- earlier than
+    # the count-based --threshold of 3 -- and jump to the backoff cap.
+    with tempfile.TemporaryDirectory() as d:
+        root = _mkrepo(d)
+        h = _head(root)
+        out = _run(root, "--exit", "1", "--start-head", h, "--end-head", h,
+                   "--run-secs", "5")
+        assert out["outcome"] == "unproductive" and out["fast"] == 1, out
+        assert out["breaker"] is False, out            # one fast death: not yet
+        out = _run(root, "--exit", "1", "--start-head", h, "--end-head", h,
+                   "--run-secs", "5")
+        assert out["fast"] == 2 and out.get("crash_loop") is True, out
+        assert out["breaker"] is True, out             # tripped at count=2 < 3
+        assert out["backoff_until"] == NOW + 3600, out  # BACKOFF_CAP_SECS
+        # A subsequent SLOW unproductive death resets the fast counter (it is a
+        # different failure mode -- work attempted, no crash loop).
+        out = _run(root, "--exit", "1", "--start-head", h, "--end-head", h,
+                   "--run-secs", "300")
+        assert out["fast"] == 0, out
+
+
 if __name__ == "__main__":
     test_head_moved_is_productive_and_resets_streak()
     test_long_clean_exit_is_productive()
     test_fast_dead_run_increments_streak_no_breaker_below_threshold()
     test_breaker_trips_at_threshold_and_escalates()
+    test_two_fast_deaths_trip_crash_loop_breaker()
     test_snoozed_run_leaves_streak_untouched()
     test_rollover_checkpoint_leaves_streak_untouched()
     test_rollover_checkpoint_classified()

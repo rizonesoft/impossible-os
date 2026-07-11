@@ -80,6 +80,12 @@ def main() -> int:
     ap.add_argument("--snoozed", action="store_true")
     ap.add_argument("--min-secs", type=int, default=900)
     ap.add_argument("--threshold", type=int, default=3)
+    ap.add_argument("--fast-death-secs", type=int, default=120,
+                    help="an unproductive run dying faster than this is a 'fast "
+                         "death' (crash-loop symptom)")
+    ap.add_argument("--fast-death-threshold", type=int, default=2,
+                    help="this many consecutive fast deaths trips the crash-loop "
+                         "breaker immediately (harder + faster than --threshold)")
     ap.add_argument("--now", type=int, default=None, help="epoch override (tests)")
     args = ap.parse_args()
 
@@ -130,23 +136,42 @@ def main() -> int:
         print(json.dumps(decision))
         return 0
 
-    count = 0
+    prev = {}
     try:
-        count = int(json.loads(streak_file.read_text()).get("count", 0))
+        prev = json.loads(streak_file.read_text())
     except Exception:
-        count = 0
-    count += 1
+        prev = {}
+    count = int(prev.get("count", 0)) + 1
+    # Fast death = an unproductive run that died almost immediately. That is the
+    # crash-loop signature: a bad deploy / broken control plane that dies before
+    # doing any work, then the watchdog relaunches into the SAME wall every 10
+    # min (the 2026-07-04 "9 relaunches, 32M tokens, zero ships" incident). The
+    # slow-unproductive breaker (>= --threshold consecutive) is too patient for
+    # this -- a crash loop should back off HARD and LOUD after just a couple.
+    if args.run_secs < args.fast_death_secs:
+        fast = int(prev.get("fast", 0)) + 1
+    else:
+        fast = 0
     decision["streak"] = count
+    decision["fast"] = fast
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         streak_file.write_text(json.dumps(
-            {"count": count, "last": now,
+            {"count": count, "fast": fast, "last": now,
              "reason": f"exit={args.exit_code} run_secs={args.run_secs} head_moved=false"}))
     except OSError:
         pass
 
-    if count >= args.threshold:
-        delay = min(BACKOFF_STEP_SECS * (count - args.threshold + 1), BACKOFF_CAP_SECS)
+    crash_loop = fast >= args.fast_death_threshold
+    if crash_loop or count >= args.threshold:
+        if crash_loop:
+            # Fundamentally broken; do NOT thrash. Jump straight to the backoff
+            # cap and flag it distinctly so the launcher's notify tells the
+            # operator this is a crash loop, not a slow-progress night.
+            delay = BACKOFF_CAP_SECS
+            decision["crash_loop"] = True
+        else:
+            delay = min(BACKOFF_STEP_SECS * (count - args.threshold + 1), BACKOFF_CAP_SECS)
         until = now + delay
         decision["breaker"] = True
         decision["backoff_until"] = until

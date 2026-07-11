@@ -541,9 +541,9 @@ def handle_stop():
     sys.stderr.write(
         f"[SEQ-STOP] do not stop (pass={state.get('pass_no')} "
         f"file={state.get('file')} phase={state.get('phase')}). Defer-and-"
-        "advance, or declare a structural wait (`wait` verb) / verified "
-        "`rollover`. Re-invoke Skill(overnight-sequencer) and continue. "
-        "Details: docs/infrastructure/hook-codes.md#seq-stop")
+        "advance, poll any in-flight review IN-SESSION (blocking sleep loop), "
+        "or END on a verified `rollover`. Re-invoke Skill(overnight-sequencer) "
+        "and continue. Details: docs/infrastructure/hook-codes.md#seq-stop")
     return 2
 
 

@@ -1,0 +1,31 @@
+# Overnight-runner control-plane manifest -- SINGLE SOURCE OF TRUTH.
+#
+# Every path prefix below names code whose breakage breaks the UNATTENDED
+# overnight run (arm / launch / phase-machine / watchdog / circuit-breaker /
+# review dispatch). A commit or push touching any of them must pass the runner
+# test suite (scripts/overnight/tests/run-all.sh); an unattended arm after such
+# a change requires a green attended canary first.
+#
+# Consumed by (keep them all reading THIS file, never a private copy):
+#   - .githooks/pre-commit           (commit gate: run the suite)
+#   - .githooks/pre-push             (push gate: suite + runner-doctor)
+#   - .claude/skills/overnight-sequencer/arm-sequencer.sh  (canary gate)
+#   - scripts/lint.sh Check (architectural lint: no bespoke lifecycle code)
+#   - scripts/overnight/control-plane-match.sh  (the shared matcher)
+#
+# Format: one path or path-prefix per line; blank lines and #-comments ignored.
+# A candidate file MATCHES if it equals a line or begins with a line that ends
+# in "/". Keep entries repo-relative with forward slashes.
+
+# Arm / disarm / launch / watchdog
+.claude/skills/overnight-sequencer/
+scripts/overnight/
+
+# Phase machine, oracle, status brief, edit preflight (guard hooks the run relies on)
+.claude/hooks/run_phase_guard.py
+.claude/hooks/sequencer_triage.py
+.claude/hooks/runner_status.py
+.claude/hooks/edit_preflight.py
+
+# Commit-time gate the runner's own section commits must pass
+.claude/hooks/section_commit_gate.py

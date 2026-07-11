@@ -1152,6 +1152,118 @@ else
 fi
 
 # ============================================================================
+# Check 18: no bespoke session-lifecycle code in the runner control plane
+# ============================================================================
+# The "structural-wait" apparatus -- a session that exited and relied on a
+# bespoke detached watcher to relaunch it -- broke the overnight runner
+# repeatedly (cgroup escape, pid-1 watchers, deadlocked flock) before it was
+# ripped out 2026-07-11. The ONLY sanctioned relaunch is the *:0/10 systemd
+# watchdog timer; reviews are polled IN-SESSION. This check flags any detach
+# primitive (setsid / nohup / disown / systemd-run) added to a control-plane
+# file (per scripts/overnight/control-plane-manifest.txt) unless it carries a
+# `LIFECYCLE-WAIVER:` comment on its line or one of the two lines above -- so
+# re-introducing the fragile pattern is a conscious, reviewed act.
+# Skip via SKIP_LINT_LIFECYCLE=1 (visible WARN so bypasses stay auditable).
+if [ "${SKIP_LINT_LIFECYCLE:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 18 (runner-lifecycle) skipped via SKIP_LINT_LIFECYCLE=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT18_OUT="$(python3 - "$REPO_ROOT" <<'PYEOF'
+import os, re, subprocess, sys
+root = sys.argv[1]
+manifest = os.path.join(root, "scripts/overnight/control-plane-manifest.txt")
+prefixes = []
+try:
+    for ln in open(manifest, encoding="utf-8"):
+        ln = ln.split("#", 1)[0].strip()
+        if ln:
+            prefixes.append(ln)
+except OSError:
+    prefixes = []
+
+def in_cp(rel):
+    return any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in prefixes)
+
+# Shell files: the bare detach COMMANDS are real invocations. A trailing colon
+# means a label string (DETACH="setsid:$!"), not a command -- exclude it.
+sh_prim = re.compile(r"(?<![\w.-])(setsid|nohup|disown|systemd-run)(?![\w.:-])")
+# Python/node: match REAL detach signals, not bare words -- so a string token in
+# an allowlist (e.g. section_commit_gate's _WRAPPER_TOKENS {"setsid","nohup"})
+# is not a false positive, while os.setsid / start_new_session=True /
+# preexec_fn / os.fork / a systemd-run argv ARE flagged.
+py_prim = re.compile(
+    r"os\.setsid|start_new_session\s*=\s*True|preexec_fn|os\.fork\b|"
+    r"(?<![\w.-])systemd-run(?![\w.:-])")
+
+def waived_above(lines, i):
+    """A LIFECYCLE-WAIVER on the invocation line or anywhere in the contiguous
+    comment/blank block immediately above it."""
+    if "LIFECYCLE-WAIVER:" in lines[i]:
+        return True
+    j = i - 1
+    while j >= 0:
+        s = lines[j].lstrip()
+        if s == "" or s.startswith("#") or s.startswith("//"):
+            if "LIFECYCLE-WAIVER:" in lines[j]:
+                return True
+            j -= 1
+            continue
+        break
+    return False
+
+try:
+    tracked = subprocess.run(["git", "-C", root, "ls-files"],
+                             capture_output=True, text=True).stdout.splitlines()
+except Exception:
+    tracked = []
+errs = []
+for rel in tracked:
+    if not in_cp(rel):
+        continue
+    # The tests dir NAMES these primitives to forbid them; the manifest/matcher
+    # list them as data. None are invocations.
+    if "/tests/" in rel or rel.endswith(("control-plane-manifest.txt",
+                                         "control-plane-match.sh")):
+        continue
+    is_py = rel.endswith((".py", ".mjs", ".js"))
+    is_sh = rel.endswith(".sh")
+    if not (is_py or is_sh):
+        continue
+    prim = py_prim if is_py else sh_prim
+    try:
+        lines = open(os.path.join(root, rel), encoding="utf-8",
+                     errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for i, ln in enumerate(lines):
+        s = ln.lstrip()
+        if s.startswith("#") or s.startswith("//"):
+            continue  # comment -- discussion, not an invocation
+        m = prim.search(ln)
+        if not m or waived_above(lines, i):
+            continue
+        errs.append(f"{rel}:{i+1}: control-plane '{m.group(0)}' without a "
+                    f"LIFECYCLE-WAIVER -- the *:0/10 watchdog is the only "
+                    f"sanctioned relaunch; add a waiver comment if this "
+                    f"detaches a REVIEW/job (not the session)")
+for e in errs:
+    print(f"ERROR {e}")
+PYEOF
+)"
+    if [ -n "$LINT18_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                ERROR\ *)
+                    echo -e "${RED}error${NC}: ${line#ERROR }"
+                    ERRORS=$((ERRORS + 1))
+                    ;;
+            esac
+        done <<< "$LINT18_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

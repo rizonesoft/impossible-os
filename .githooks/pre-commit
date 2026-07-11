@@ -39,6 +39,32 @@ if ! bash "$REPO_ROOT/scripts/lint.sh"; then
     exit 1
 fi
 
+# Overnight-runner control-plane gate (2026-07-11): the runner broke
+# repeatedly because a control-plane change (guard / launcher / arm /
+# circuit-breaker) could commit and push with green hooks -- its tests
+# were wired into nothing. If this commit touches the control-plane
+# manifest, run the runner test suite BEFORE the commit lands. Fast
+# (~2s, 12 tests) and only fires when those files are staged, so it
+# gates the operator AND the runner's own section commits.
+CP_MATCH="$REPO_ROOT/scripts/overnight/control-plane-match.sh"
+if [ -f "$CP_MATCH" ]; then
+    CP_HITS="$(git diff --cached --name-only | bash "$CP_MATCH" || true)"
+    if [ -n "$CP_HITS" ]; then
+        echo ""
+        echo "Pre-commit: control-plane change detected -- running runner test suite:"
+        printf '%s\n' "$CP_HITS" | sed 's/^/  touched: /'
+        if ! bash "$REPO_ROOT/scripts/overnight/tests/run-all.sh"; then
+            echo ""
+            echo -e "\033[31mRunner test suite failed -- control-plane commit blocked\033[0m"
+            echo "  A change to the overnight-runner control plane broke its tests."
+            echo "  Fix the regression (or the test) before committing."
+            echo "  Opt-out (last resort): SKIP_RUNNER_SUITE=1 git commit ..."
+            [ "${SKIP_RUNNER_SUITE:-}" = "1" ] || exit 1
+            echo -e "\033[33m  SKIP_RUNNER_SUITE=1 set -- suite failure overridden\033[0m"
+        fi
+    fi
+fi
+
 # TODO-08 §4: section-commit gate -- enforced at the final-index point
 # of git's own pre-commit. The harness PreToolUse hook is the
 # convenience layer; this is the load-bearing one for chained shapes

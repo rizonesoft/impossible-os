@@ -93,12 +93,16 @@ systemctl --user reset-failed 2>/dev/null || true
 # produced a bypassPermissions run with run_phase_guard's headless
 # discriminator unset -- self-teardown, Stop, and phase guards all inert.
 # arm-sequencer.sh's unit drop-in sets the same var; redundant is harmless.
+# LIFECYCLE-WAIVER: this IS the sanctioned relaunch mechanism -- a systemd timer
+# that fires the launcher. The watchdog timer below is the ONLY relaunch path
+# the runner has; it is not bespoke session-lifecycle code.
 systemd-run --user --on-calendar="$AT" --unit="$UNIT" \
   --setenv=OVERNIGHT_SEQUENCER_RUN=1 \
   "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"
 echo "armed ${UNIT}: starts at ${AT} (mode: ${MODE})"
 
 if [ "$ARM_WATCHDOG" = "1" ]; then
+  # LIFECYCLE-WAIVER: the *:0/10 watchdog timer -- the sole sanctioned relaunch.
   systemd-run --user --on-calendar="$WATCHDOG_CAL" --unit="${UNIT}-watchdog" \
     --setenv=OVERNIGHT_SEQUENCER_RUN=1 \
     "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"

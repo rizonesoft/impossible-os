@@ -24,6 +24,11 @@ DOCTRINE="todo/TODO-Claude-Overnight-Runner.md"
 UNIT="overnight-$(basename "$REPO_ROOT")"        # overnight-impossible-os
 DROPIN_BASE="$HOME/.config/systemd/user"
 MARKER=".claude/state/sequencer-armed"
+# Canary stamp: the git HEAD that last passed a GREEN ATTENDED canary run
+# (operator watched >=1 section ship + >=1 rollover). An unattended arm is
+# refused when the control plane changed since this stamp -- see the canary
+# gate below and `--record-canary`.
+CANARY_STAMP=".claude/state/sequencer-canary-ok"
 
 LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
 [ -x "$LOCAL_ARM" ] || { echo "FATAL: vendored scheduler missing/not executable: $LOCAL_ARM" >&2; exit 127; }
@@ -171,6 +176,22 @@ if [ "${1:-}" = "--disarm" ]; then
   exit 0
 fi
 
+# --record-canary: stamp the current HEAD as canary-passed. Run this from an
+# INTERACTIVE session AFTER watching a clean attended run (>=1 section ship +
+# >=1 rollover -> relaunch). It records HEAD so subsequent unattended arms with
+# no further control-plane change proceed without re-prompting; any later
+# control-plane edit re-arms the gate. Optional note as the next argument.
+if [ "${1:-}" = "--record-canary" ]; then
+  mkdir -p .claude/state
+  head_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  ts="$(date -Is 2>/dev/null || echo unknown)"
+  note="${2:-operator-attended canary}"
+  printf '%s %s %s\n' "$head_sha" "$ts" "$note" > "$CANARY_STAMP"
+  echo "recorded canary stamp: ${head_sha:0:12} @ $ts ($note)"
+  echo "  unattended arms now proceed until the control plane changes again."
+  exit 0
+fi
+
 # ChromeMCP policy for THIS repo: impossible-os is kernel/OS work for the vast
 # majority of runs, which never touch a browser -- so default ChromeMCP OFF via
 # the OVERNIGHT_NO_CHROMEMCP env drop-in, which the vendored launcher reads to
@@ -185,11 +206,21 @@ ARM_EFFORT=""              # empty = inherit the CLI's saved default (High on th
                            # reasoning effort; metrics records carry the value so
                            # medium-vs-high legs are comparable. Default stays
                            # inherit-High until quality holds on medium.
+ARM_FORCE=0                # --force: arm despite an unproven control-plane change
+ARM_SKIP_PREFLIGHT=0       # --skip-preflight: skip the pre-arm health gate
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-browser|--gh-pages)
       WITH_BROWSER=1
+      shift
+      ;;
+    --force)
+      ARM_FORCE=1
+      shift
+      ;;
+    --skip-preflight)
+      ARM_SKIP_PREFLIGHT=1
       shift
       ;;
     --model)
@@ -221,6 +252,59 @@ if [ -n "$ARM_PRIMARY" ] && [ "$ARM_PRIMARY" = "$ARM_FALLBACK" ]; then
   echo "WARN: --model and --fallback-model are BOTH '$ARM_PRIMARY' -- the fallback" >&2
   echo "      provides no availability diversity (a primary overload hits the" >&2
   echo "      fallback identically). Consider --fallback-model sonnet." >&2
+fi
+
+# ---- Pre-arm health gate (guardrail Layer 3) --------------------------------
+# Refuse to arm into a broken control plane: runner-doctor + a launcher DRYRUN
+# + the runner test suite must all pass. A red host or a broken launcher used
+# to surface only AFTER the watchdog fired an unattended session at night --
+# catch it here, attended.
+if [ "$ARM_SKIP_PREFLIGHT" != "1" ]; then
+  if ! bash "$REPO_ROOT/scripts/overnight/pre-arm-check.sh" "$REPO_ROOT" "$DOCTRINE"; then
+    echo "REFUSED to arm: pre-arm health check failed (fix the above, or re-run with --skip-preflight to override)." >&2
+    exit 1
+  fi
+else
+  echo "WARN: --skip-preflight -- pre-arm health gate bypassed." >&2
+fi
+
+# ---- Canary gate (guardrail Layer 4) ----------------------------------------
+# An UNATTENDED arm on an UNPROVEN control-plane change is what broke the runner
+# repeatedly. Require a green ATTENDED canary (recorded via --record-canary)
+# whenever the control plane changed since the last stamp.
+canary_unproven=""
+# The unattended run executes the live WORKING TREE, so uncommitted control-plane
+# changes can never have been proven by any stamp -- flag them first.
+cp_dirty="$( { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | sort -u | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" || true)"
+if [ -n "$cp_dirty" ]; then
+  canary_unproven="uncommitted control-plane changes in the working tree (commit + canary them first):
+$(printf '%s\n' "$cp_dirty" | sed 's/^/    /')"
+elif [ ! -f "$CANARY_STAMP" ]; then
+  canary_unproven="no canary has ever been recorded"
+else
+  stamp_sha="$(awk 'NR==1{print $1}' "$CANARY_STAMP" 2>/dev/null)"
+  if [ -z "$stamp_sha" ] || ! git rev-parse --quiet --verify "$stamp_sha^{commit}" >/dev/null 2>&1; then
+    canary_unproven="canary stamp references an unknown commit (${stamp_sha:-empty})"
+  else
+    cp_changed="$(git diff --name-only "$stamp_sha" HEAD 2>/dev/null | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" || true)"
+    [ -n "$cp_changed" ] && canary_unproven="control plane changed since the last canary (${stamp_sha:0:12}):
+$(printf '%s\n' "$cp_changed" | sed 's/^/    /')"
+  fi
+fi
+if [ -n "$canary_unproven" ]; then
+  if [ "$ARM_FORCE" = "1" ]; then
+    echo "WARN: arming an UNPROVEN control plane (--force accepted the risk): $canary_unproven" >&2
+  else
+    {
+      echo "REFUSED to arm unattended: $canary_unproven"
+      echo "  The control plane drives the whole unattended run. Prove it first:"
+      echo "    1. Run an ATTENDED session; watch >=1 section ship + a rollover->relaunch."
+      echo "    2. bash .claude/skills/overnight-sequencer/arm-sequencer.sh --record-canary"
+      echo "    3. Re-arm."
+      echo "  Or override now, accepting the risk: re-run with --force."
+    } >&2
+    exit 1
+  fi
 fi
 
 # Arm. Marker first, so the very first tool call of the headless run is already

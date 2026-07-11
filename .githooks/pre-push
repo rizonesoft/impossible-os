@@ -1,23 +1,78 @@
 #!/usr/bin/env bash
 # =============================================================================
-# .githooks/pre-push -- opt-in pre-push gate delegator.
+# .githooks/pre-push -- always-on control-plane gate + opt-in build/test gate.
 #
-# Runs scripts/hooks/pre-push (full build + test.sh) only when the sentinel
-# .git/.impossible-os-prepush exists. No-ops silently otherwise. Toggle with:
-#   bash scripts/install-hooks.sh --enable-pre-push
-#   bash scripts/install-hooks.sh --disable-pre-push
+# Two layers:
+#  1. ALWAYS-ON (2026-07-11): if the pushed commits touch the overnight-runner
+#     control plane (scripts/overnight/control-plane-manifest.txt), run the
+#     runner test suite as a HARD gate and runner-doctor as advisory host-health.
+#     This is the net for a control-plane change committed with --no-verify (the
+#     pre-commit suite gate bypassed) -- it must not reach origin unproven.
+#  2. OPT-IN: the heavy full build + test.sh gate, delegated to
+#     scripts/hooks/pre-push, only when the sentinel .git/.impossible-os-prepush
+#     exists. Toggle with:
+#       bash scripts/install-hooks.sh --enable-pre-push
+#       bash scripts/install-hooks.sh --disable-pre-push
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Worktree-safe: rev-parse --git-path resolves .git whether it's a directory
 # (main checkout) or a file (linked worktree).
 SENTINEL="$(git -C "$REPO_ROOT" rev-parse --git-path .impossible-os-prepush 2>/dev/null || echo "$REPO_ROOT/.git/.impossible-os-prepush")"
 
-# Opt-out: no sentinel means pre-push is disabled.
-[ -f "$SENTINEL" ] || exit 0
+# pre-push receives the ref updates on stdin. Capture verbatim so we can both
+# inspect the pushed range AND re-feed it to the delegated opt-in gate below.
+STDIN_DATA="$(cat)"
 
-# Stdin carries the ref update info that `git push` passes to pre-push
-# hooks. Forward it verbatim so the delegated script can read it if it wants.
-exec "$REPO_ROOT/scripts/hooks/pre-push" "$@"
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+# Files changed across every non-delete ref update in this push.
+pushed_files() {
+  local lref loid rref roid base
+  while read -r lref loid rref roid; do
+    [ -n "${loid:-}" ] || continue
+    case "$loid" in *[!0]*) : ;; *) continue ;; esac   # local oid all-zero => deletion, skip
+    case "${roid:-}" in
+      *[!0]*) base="$roid" ;;                            # real remote oid
+      *) base="$(git -C "$REPO_ROOT" merge-base "$loid" origin/main 2>/dev/null || echo "$EMPTY_TREE")" ;;
+    esac
+    git -C "$REPO_ROOT" rev-parse --quiet --verify "$base^{commit}" >/dev/null 2>&1 || base="$EMPTY_TREE"
+    git -C "$REPO_ROOT" diff --name-only "$base" "$loid" 2>/dev/null || true
+  done <<< "$STDIN_DATA"
+}
+
+CP_MATCH="$REPO_ROOT/scripts/overnight/control-plane-match.sh"
+if [ -f "$CP_MATCH" ]; then
+  CP_HITS="$(pushed_files | sort -u | bash "$CP_MATCH" || true)"
+  if [ -n "$CP_HITS" ]; then
+    echo ""
+    echo "Pre-push: control-plane change in this push -- gating on the runner suite:"
+    printf '%s\n' "$CP_HITS" | sort -u | sed 's/^/  touched: /'
+    if ! bash "$REPO_ROOT/scripts/overnight/tests/run-all.sh"; then
+      echo ""
+      echo -e "\033[31mRunner test suite failed -- push blocked\033[0m"
+      echo "  A control-plane change did not pass the overnight-runner tests."
+      echo "  Opt-out (last resort): SKIP_RUNNER_SUITE=1 git push ..."
+      [ "${SKIP_RUNNER_SUITE:-}" = "1" ] || exit 1
+      echo -e "\033[33m  SKIP_RUNNER_SUITE=1 set -- suite failure overridden\033[0m"
+    fi
+    # runner-doctor is ADVISORY here: it reports LOCAL host health (toolchain,
+    # codex auth, run state), which is not a property of the change being
+    # pushed, so it must not block the push -- it only surfaces warnings.
+    DOCTOR="$REPO_ROOT/scripts/overnight/runner-doctor.py"
+    if [ -f "$DOCTOR" ]; then
+      if DOUT="$(cd "$REPO_ROOT" && python3 "$DOCTOR" . 2>&1)"; then
+        echo "  runner-doctor: OK"
+      else
+        echo -e "\033[33m  runner-doctor reports host-health issues (advisory, not blocking):\033[0m"
+        printf '%s\n' "$DOUT" | tail -8 | sed 's/^/    /'
+      fi
+    fi
+  fi
+fi
+
+# ---- Opt-in heavy build/test gate --------------------------------------------
+[ -f "$SENTINEL" ] || exit 0
+exec "$REPO_ROOT/scripts/hooks/pre-push" "$@" <<< "$STDIN_DATA"
