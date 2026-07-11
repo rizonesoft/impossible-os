@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Content-addressed evidence receipts for the overnight pipeline.
+
+Replaces wall-clock evidence expiry (the section-commit gate's 30-min TTLs)
+with content binding: a build or review receipt stays valid for as long as
+the content it attests to -- build inputs, configuration, and toolchain --
+is byte-identical, and dies the moment any of it changes. That is strictly
+stronger than a TTL (a 29-min-old receipt over changed content was never
+valid; a 3-hour-old receipt over unchanged content always was) and stops
+slow external reviews from forcing expensive build/test/review reruns.
+
+Two fingerprints:
+
+  build_input_key(project)   sha256 over the git state of the BUILD INPUT
+                             paths only (src/ include/ user/ resources/
+                             tools/ Makefile* scripts/build.sh linker
+                             scripts): HEAD tree entries + worktree diff +
+                             untracked file content hashes. TODO/doc edits
+                             after a build do NOT invalidate it; any source
+                             edit does.
+  toolchain_key()            sha256 over the version banners of clang-19,
+                             nasm, ld.lld-19.
+
+CLI (called by scripts/build.sh and the section-commit gate):
+
+  receipts.py record-build PROJECT_DIR   write build/build-receipt.json
+                                         (call ONLY after === BUILD OK ===)
+  receipts.py check-build PROJECT_DIR    exit 0 iff the receipt matches the
+                                         CURRENT tree + toolchain
+
+Stdlib only; importable as a module by hooks (sys.path insert).
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# Paths whose content feeds the kernel build. scripts/ is deliberately NOT
+# included wholesale -- runner/tooling scripts change without affecting the
+# compiled image; build.sh itself and the Makefiles are the build-config
+# surface that must invalidate.
+BUILD_INPUT_PATHS = [
+    "src", "include", "user", "resources", "tools",
+    "Makefile", "scripts/build.sh", "boot.conf",
+]
+
+TOOLCHAIN_CMDS = [
+    ["clang-19", "--version"],
+    ["nasm", "-v"],
+    ["ld.lld-19", "--version"],
+]
+
+
+def _git(project: Path, *args: str, timeout: int = 60) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(project), *args],
+                           capture_output=True, timeout=timeout)
+        return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def build_input_key(project: Path) -> str | None:
+    """Content fingerprint of everything the build reads. None on git failure
+    (callers fail toward 'no receipt', never toward a false pass)."""
+    head_tree = _git(project, "ls-tree", "-r", "HEAD", "--", *BUILD_INPUT_PATHS)
+    diff = _git(project, "diff", "HEAD", "--", *BUILD_INPUT_PATHS)
+    untracked = _git(project, "ls-files", "-o", "--exclude-standard", "--",
+                     *BUILD_INPUT_PATHS)
+    if head_tree is None or diff is None or untracked is None:
+        return None
+    h = hashlib.sha256()
+    h.update(head_tree.encode())
+    h.update(diff.encode())
+    # Untracked build inputs: bind their CONTENT, not just their names, via
+    # git hash-object (a new .c file edited after the build must invalidate).
+    names = [n for n in untracked.splitlines() if n.strip()]
+    h.update("\n".join(names).encode())
+    if names:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(project), "hash-object", "--stdin-paths"],
+                input="\n".join(names).encode(), capture_output=True, timeout=120)
+            if r.returncode != 0:
+                return None
+            h.update(r.stdout)
+        except Exception:
+            return None
+    return h.hexdigest()
+
+
+def toolchain_key() -> str:
+    """Fingerprint of the toolchain version banners. A missing tool hashes as
+    its absence -- receipt comparisons still work, they just bind to 'absent'."""
+    h = hashlib.sha256()
+    for cmd in TOOLCHAIN_CMDS:
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+            first = (r.stdout or r.stderr).decode("utf-8", "replace").splitlines()
+            h.update((cmd[0] + ":" + (first[0] if first else "")).encode())
+        except Exception:
+            h.update((cmd[0] + ":absent").encode())
+    return h.hexdigest()
+
+
+def receipt_path(project: Path) -> Path:
+    return project / "build" / "build-receipt.json"
+
+
+def record_build(project: Path) -> int:
+    key = build_input_key(project)
+    if key is None:
+        print("receipts: git unavailable, build receipt not recorded",
+              file=sys.stderr)
+        return 1
+    rp = receipt_path(project)
+    rp.parent.mkdir(parents=True, exist_ok=True)
+    rp.write_text(json.dumps({
+        "build_input_key": key,
+        "toolchain_key": toolchain_key(),
+        "epoch": int(time.time()),
+    }))
+    print(f"build receipt recorded ({key[:12]})")
+    return 0
+
+
+def check_build(project: Path) -> tuple[bool, str]:
+    """(valid, reason). Valid iff a receipt exists and both fingerprints
+    match the CURRENT tree/toolchain -- age is irrelevant by design."""
+    rp = receipt_path(project)
+    try:
+        rec = json.loads(rp.read_text())
+    except (OSError, ValueError):
+        return False, "no build receipt (build/build-receipt.json missing or unreadable)"
+    key = build_input_key(project)
+    if key is None:
+        return False, "git unavailable for fingerprinting"
+    if rec.get("build_input_key") != key:
+        return False, "build inputs changed since the receipted build"
+    if rec.get("toolchain_key") != toolchain_key():
+        return False, "toolchain changed since the receipted build"
+    return True, f"receipt matches current build inputs ({key[:12]})"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or argv[0] not in ("record-build", "check-build"):
+        print("usage: receipts.py record-build|check-build PROJECT_DIR",
+              file=sys.stderr)
+        return 2
+    project = Path(argv[1])
+    if argv[0] == "record-build":
+        return record_build(project)
+    ok, reason = check_build(project)
+    print(("VALID: " if ok else "MISS: ") + reason)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -124,10 +124,21 @@ def _looks_like_git_commit_screen(cmd: str) -> bool:
 # Constants
 # ----------------------------------------------------------------------
 
-EVIDENCE_TTL_SECONDS = 30 * 60  # 30 minutes for build + review
-FOUR_DISPATCH_TTL_SECONDS = 30 * 60  # 30 minutes per the §5 spec
-RE_ADV_TRIGGER_TTL_SECONDS = 30 * 60  # 30 minutes per TODO-08 §17 spec
+# LEGACY-FALLBACK ONLY (content-addressed receipts, 2026-07-11): evidence
+# validity is content-bound -- a build receipt matches the current build-input
+# fingerprint, a review binds staged blob SHAs, a dispatch binds its HEAD with
+# no source drift since. These wall-clock TTLs apply ONLY when the content
+# binding is absent (pre-receipt build.log, legacy dispatch entries without a
+# `<kind>_head`). A slow review over unchanged content never expires.
+EVIDENCE_TTL_SECONDS = 30 * 60  # legacy fallback for build evidence (no receipt)
+FOUR_DISPATCH_TTL_SECONDS = 30 * 60  # legacy fallback (dispatch entry lacks head)
+RE_ADV_TRIGGER_TTL_SECONDS = 30 * 60  # legacy fallback (re-adv entry lacks head)
 SKIP_REASON_MIN_LEN = 12
+
+# Paths whose post-dispatch drift invalidates a recorded Codex dispatch: code
+# the review looked at. TODO/doc edits (the review's own fix-loop and stamp
+# edits) do NOT invalidate. Mirrors receipts.BUILD_INPUT_PATHS minus config.
+_DISPATCH_CONTENT_PATHS = ("src/", "include/", "user/", "tools/")
 
 # Dispatch kinds tracked in last-review-stamps.json (§5). Dead-code
 # was retired in review-todo-section/SKILL.md on 2026-04-25; the
@@ -955,6 +966,21 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
 # ----------------------------------------------------------------------
 
 
+def _build_receipt_check(root: Path) -> tuple[bool, str]:
+    """Content-addressed build receipt check via scripts/overnight/receipts.py.
+    (valid, reason); any import/exec failure reads as 'no receipt' so the
+    caller falls back to the legacy TTL path (never a false pass)."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "overnight_receipts", str(root / "scripts/overnight/receipts.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.check_build(root)
+    except Exception as exc:  # noqa: BLE001
+        return (False, f"receipt module unavailable ({exc})")
+
+
 def _build_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
     """Codex C2 + design review: build/build.log shows BUILD OK AND
     its mtime is NEWER than every staged source file. Catches
@@ -984,21 +1010,34 @@ def _build_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
         return (False, f"build/build.log read failed: {exc}")
     if "=== BUILD OK ===" not in last:
         return (False, f"build/build.log last line is {last!r} (expected '=== BUILD OK ===')")
-    # 30-min wall-clock guardrail (mtime within window of now).
-    age_s = time.time() - log_mtime
-    if age_s > EVIDENCE_TTL_SECONDS:
-        return (False, f"build/build.log mtime {age_s/60:.0f} min old "
-                       f"(>{EVIDENCE_TTL_SECONDS/60:.0f} min TTL)")
     # Index/worktree desync check (Codex H2 round-2). `git diff
     # --name-only` (no --cached) reports paths whose worktree differs
     # from the index. If the build compiled the worktree but the index
     # has different content, the build is not evidence for the commit.
+    # Applies to BOTH evidence paths: a receipt fingerprints the
+    # WORKTREE; the commit ships the INDEX.
     desync = _index_worktree_desync(root, staged_src)
     if desync:
         return (False, f"staged content differs from worktree for "
                        f"{desync[:5]}; build compiled worktree, not index. "
                        f"Re-run build after staging or unstage divergent paths."
                        + (f" (+{len(desync)-5} more)" if len(desync) > 5 else ""))
+    # Content-addressed receipt (2026-07-11): build.sh records
+    # build/build-receipt.json binding the green build to the exact
+    # build-input + toolchain fingerprints. A matching receipt is valid
+    # REGARDLESS OF AGE -- a slow external review must not force a
+    # rebuild over unchanged content. Fingerprint mismatch or a missing
+    # receipt falls through to the legacy mtime+TTL path below.
+    receipt_ok, receipt_why = _build_receipt_check(root)
+    if receipt_ok:
+        return (True, "")
+    # Legacy fallback: 30-min wall-clock guardrail (mtime within window).
+    age_s = time.time() - log_mtime
+    if age_s > EVIDENCE_TTL_SECONDS:
+        return (False, f"build/build.log mtime {age_s/60:.0f} min old "
+                       f"(>{EVIDENCE_TTL_SECONDS/60:.0f} min legacy TTL) and "
+                       f"no valid content receipt ({receipt_why}). "
+                       f"Re-run bash scripts/build.sh.")
     # Every staged source file must have mtime <= log mtime.
     stale_after_build: list[str] = []
     for rel in staged_src:
@@ -1043,10 +1082,11 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
     rts = state.get("received_timestamp_ns")
     if not isinstance(rts, int):
         return (False, "received_timestamp_ns missing or not an int")
-    age_s = (time.time_ns() - rts) / 1e9
-    if age_s > EVIDENCE_TTL_SECONDS:
-        return (False, f"Codex review received {age_s/60:.0f} min ago "
-                       f"(>{EVIDENCE_TTL_SECONDS/60:.0f} min TTL); re-run review")
+    # NO wall-clock expiry (content-addressed receipts, 2026-07-11): the
+    # blob-SHA binding below is the review's validity -- it holds exactly
+    # while the staged content equals what the review covered, however long
+    # ago that was, and breaks on the first post-review edit. A TTL on top
+    # only forced re-reviews of unchanged content after slow review rounds.
     trigger_files = state.get("trigger_files") or []
     if not isinstance(trigger_files, list):
         return (False, "trigger_files is not a list")
@@ -1221,15 +1261,55 @@ def _git_is_ancestor(root: Path, sha: str, descendant_sha: str) -> bool:
     return result.returncode == 0
 
 
+def _dispatch_content_fresh(root: Path, disp_head: str,
+                            current_head: str) -> tuple[bool, str]:
+    """Content-bound dispatch validity (replaces the wall-clock TTL when a
+    dispatch head is recorded). A dispatch stays valid for as long as no
+    SOURCE content changed since it ran:
+
+      - disp_head == HEAD              -> fresh (nothing committed since)
+      - disp_head ancestor of HEAD AND
+        disp_head..HEAD touches no
+        _DISPATCH_CONTENT_PATHS path   -> fresh (only TODO/doc/stamp commits
+                                          landed, which the review's own fix
+                                          loop produces)
+      - otherwise                      -> stale/cross-branch, with the reason
+
+    Age is irrelevant by design: a 3-hour-old dispatch over unchanged source
+    is valid; a 5-minute-old one over changed source is not.
+    """
+    if not disp_head or not current_head:
+        return (False, "no dispatch head recorded")
+    if disp_head == current_head:
+        return (True, "")
+    if not _git_is_ancestor(root, disp_head, current_head):
+        return (False, f"dispatch head {disp_head[:10]} not ancestor of "
+                       f"HEAD {current_head[:10]} (cross-branch)")
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--name-only", disp_head, current_head],
+            cwd=str(root), text=True, timeout=10,
+            stderr=subprocess.DEVNULL)
+    except Exception:
+        return (False, f"could not diff {disp_head[:10]}..HEAD")
+    drifted = [p for p in out.splitlines()
+               if p.startswith(_DISPATCH_CONTENT_PATHS)]
+    if drifted:
+        return (False, f"source changed since dispatch: {drifted[:3]}"
+                       + (f" (+{len(drifted)-3} more)" if len(drifted) > 3 else ""))
+    return (True, "")
+
+
 def _four_dispatch_evidence(
     root: Path, stamped_todos: list[str]
 ) -> tuple[bool, str]:
     """For each TODO whose staged diff adds a stamp, require all three
     dispatch entries (adversarial / consistency / perf) in
-    last-review-stamps.json AND each entry's ts_ns within
-    FOUR_DISPATCH_TTL_SECONDS of now AND -- when the dispatch entry
-    carries a `<kind>_head` field (Codex M2 post-impl) -- that head
-    SHA is an ancestor of (or equal to) the current HEAD.
+    last-review-stamps.json, each CONTENT-VALID: when the entry carries
+    a `<kind>_head` field, the dispatch is valid while that head equals
+    HEAD or is an ancestor with no source-path drift since
+    (_dispatch_content_fresh; age-independent). Legacy entries without
+    a head fall back to the FOUR_DISPATCH_TTL_SECONDS wall clock.
 
     Returns (ok, error_message). Empty `stamped_todos` -> (True, "")
     (the four-dispatch check does not fire on implementation commits;
@@ -1284,12 +1364,10 @@ def _four_dispatch_evidence(
     except Exception:
         pass
 
-    # Codex post-commit perf M1(b): cache `_git_is_ancestor` results
-    # by (dispatch_head, current_head) pair. Without the cache, a
-    # 3-stamped-TODO commit ran up to 9 `git merge-base` subprocesses
-    # (3 kinds * 3 todos), each ~10-30ms. With the cache, distinct
-    # dispatch heads are checked once.
-    ancestry_cache: dict[tuple[str, str], bool] = {}
+    # Content-bound freshness cache by (dispatch_head, current_head) pair
+    # (perf lineage: Codex post-commit M1(b) ancestry cache). Distinct
+    # dispatch heads are diffed once per commit, not once per kind*todo.
+    freshness_cache: dict[tuple[str, str], tuple[bool, str]] = {}
 
     legacy_warned = False
     issues: list[str] = []
@@ -1309,42 +1387,45 @@ def _four_dispatch_evidence(
             if not isinstance(ts, int) or ts <= 0:
                 missing.append(kind)
                 continue
-            if ts < cutoff_ns:
-                age_min = (now_ns - ts) / 1e9 / 60
-                stale.append(f"{kind} ({age_min:.0f} min old)")
-                continue
-            # Ancestry check (Codex M2): per-kind dispatch HEAD must
-            # be reachable from the current HEAD. Legacy entries (no
-            # `<kind>_head`) pass with a one-shot WARN.
             disp_head = entry.get(f"{kind}_head")
             if disp_head and current_head:
+                # Content-bound validity: valid while no source changed
+                # since the dispatch's HEAD, regardless of wall-clock age.
                 cache_key = (disp_head, current_head)
-                if cache_key not in ancestry_cache:
-                    ancestry_cache[cache_key] = _git_is_ancestor(
+                if cache_key not in freshness_cache:
+                    freshness_cache[cache_key] = _dispatch_content_fresh(
                         root, disp_head, current_head
                     )
-                if not ancestry_cache[cache_key]:
-                    cross_branch.append(
-                        f"{kind} (dispatch_head {disp_head[:10]} not ancestor of HEAD {current_head[:10]})"
-                    )
+                fresh, why = freshness_cache[cache_key]
+                if not fresh:
+                    if "cross-branch" in why:
+                        cross_branch.append(f"{kind} ({why})")
+                    else:
+                        stale.append(f"{kind} ({why})")
                     continue
-            elif current_head and not disp_head and not legacy_warned:
-                sys.stderr.write(
-                    f"[section-commit-gate] WARN: {todo} {kind} dispatch "
-                    f"entry predates the head-binding fix (no `{kind}_head` "
-                    f"field). Allowing on TTL alone for this commit; future "
-                    f"dispatches will record the binding.\n"
-                )
-                legacy_warned = True
+            else:
+                # Legacy entry without a head binding: wall-clock TTL is the
+                # only available freshness signal.
+                if ts < cutoff_ns:
+                    age_min = (now_ns - ts) / 1e9 / 60
+                    stale.append(f"{kind} ({age_min:.0f} min old, legacy "
+                                 f"no-head entry)")
+                    continue
+                if current_head and not legacy_warned:
+                    sys.stderr.write(
+                        f"[section-commit-gate] WARN: {todo} {kind} dispatch "
+                        f"entry predates the head-binding fix (no `{kind}_head` "
+                        f"field). Allowing on TTL alone for this commit; future "
+                        f"dispatches will record the binding.\n"
+                    )
+                    legacy_warned = True
         if missing or stale or cross_branch:
             parts: list[str] = []
             if missing:
                 parts.append(f"missing: {', '.join(missing)}")
             if stale:
-                parts.append(
-                    f"stale (>{FOUR_DISPATCH_TTL_SECONDS // 60} min): "
-                    f"{', '.join(stale)}"
-                )
+                parts.append(f"stale (source drift or legacy TTL): "
+                             f"{', '.join(stale)}")
             if cross_branch:
                 parts.append(
                     f"cross-branch (not ancestor of HEAD): {', '.join(cross_branch)}"
@@ -1356,8 +1437,8 @@ def _four_dispatch_evidence(
         more = f" (+{len(issues)-5} more)" if len(issues) > 5 else ""
         return (False, (
             f"review-todo-section step-8 four-dispatch policy violated. "
-            f"Stamps added without all three dispatches recorded within "
-            f"the last {FOUR_DISPATCH_TTL_SECONDS // 60} min: {joined}{more}. "
+            f"Stamps added without all three dispatches content-valid "
+            f"(recorded, head-bound, no source drift since): {joined}{more}. "
             f"Re-run the missing dispatches; each prompt MUST include "
             f"`[review-kind: adversarial|consistency|perf]` and the "
             f"TODO path so the §3 PostToolUse hook can attribute it."
@@ -1606,30 +1687,32 @@ def _re_adversarial_trigger_check(
     now_ns = time.time_ns()
     cutoff_ns = now_ns - RE_ADV_TRIGGER_TTL_SECONDS * 1_000_000_000
 
-    # Codex adversarial H1 fix (2026-04-28): when re-adv stamp carries a
-    # head SHA, verify it is an ancestor of the current HEAD. Mirrors
-    # the four-dispatch gate's M2 cross-branch check; prevents a re-adv
-    # dispatched on an unrelated branch from satisfying the gate. Legacy
-    # entries with empty head field pass through (warned at write time).
+    # Content-bound validity (2026-07-11; supersedes the pure-TTL check).
+    # When the re-adv entry carries a head SHA (Codex adversarial H1,
+    # 2026-04-28), the dispatch is valid while that head equals HEAD or is
+    # an ancestor with no source drift since -- wall-clock age irrelevant.
+    # Legacy entries with no head fall back to the TTL.
+    if re_adv_ts > 0 and re_adv_head:
+        current_head = ""
+        try:
+            current_head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=str(root),
+                text=True, timeout=2, stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            pass
+        fresh, why = _dispatch_content_fresh(root, re_adv_head, current_head)
+        if fresh:
+            return (True, "")
+        return (False, (
+            f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) "
+            f"on {todo}; the recorded `re-adversarial` dispatch is not "
+            f"content-valid ({why}). Re-run the re-adversarial Codex "
+            f"with [review-kind: re-adversarial] in the prompt."
+        ))
+
     if re_adv_ts >= cutoff_ns and re_adv_ts > 0:
-        if re_adv_head:
-            try:
-                current_head = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=str(root),
-                    text=True, timeout=2, stderr=subprocess.DEVNULL,
-                ).strip()
-                if current_head and not _git_is_ancestor(
-                    root, re_adv_head, current_head
-                ):
-                    return (False, (
-                        f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) "
-                        f"on {todo}; the recorded `re-adversarial` dispatch was "
-                        f"made against {re_adv_head[:12]} which is NOT an "
-                        f"ancestor of HEAD {current_head[:12]} (cross-branch). "
-                        f"Re-run the re-adversarial Codex on the current branch."
-                    ))
-            except Exception:
-                pass
+        # Legacy no-head entry inside the TTL window.
         return (True, "")
 
     if re_adv_ts > 0:
@@ -1637,7 +1720,7 @@ def _re_adversarial_trigger_check(
         return (False, (
             f"step-13.5 trigger(s) fired ({', '.join(triggers_fired)}) on "
             f"{todo} but the recorded `re-adversarial` dispatch is stale "
-            f"({age_min:.0f} min old; TTL "
+            f"(legacy no-head entry, {age_min:.0f} min old; TTL "
             f"{RE_ADV_TRIGGER_TTL_SECONDS // 60} min). Re-run the "
             f"re-adversarial Codex with [review-kind: re-adversarial] "
             f"in the prompt before committing."

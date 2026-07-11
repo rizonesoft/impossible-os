@@ -1874,10 +1874,27 @@ JSON
     _gate_run 2 "trigger_files don't cover staged source blocks" \
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
 
-    # 9: review older than 30 min TTL -> block.
+    # 9: review far older than the legacy TTL but content-bound (trigger_blobs
+    #    match the staged tree) -> ALLOW. Content-addressed receipts
+    #    (2026-07-11): a review's validity is its blob binding, not a clock.
     _write_received_state "true" '["src/kernel/foo.c"]' "3600"
-    _gate_run 2 "review older than 30 min TTL blocks" \
+    _gate_run 0 "old review with matching content binding allows (receipts)" \
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+
+    # 9b: same old review, staged content edited AFTER the review (blob
+    #     mismatch) -> block. The binding, not the age, is the receipt.
+    (
+        cd "$GATE_REPO"
+        cat > src/kernel/foo.c <<'CMOD'
+int seed_only(void) { return 1; }
+int new_helper(int n) { return n + 2; }
+CMOD
+        git add src/kernel/foo.c
+    )
+    touch "$GATE_REPO/build/build.log"  # keep legacy build evidence fresh
+    _gate_run 2 "old review with post-review edit blocks (blob mismatch)" \
+        '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
+    _stage_section_commit  # restore canonical staged content for later cases
 
     # 10: ALL 3 evidence pieces -> allow.
     _write_received_state "true" '["src/kernel/foo.c"]' "60"

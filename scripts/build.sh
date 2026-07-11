@@ -540,6 +540,10 @@ TOTAL_SECS=$(elapsed "$BUILD_START")
 print_summary "$TOTAL_SECS"
 echo "=== BUILD OK ===" >> "$LOG"
 
+# Content-addressed build receipt: binds this green build to the exact build
+# inputs + toolchain so evidence gates validate on content, not wall-clock age.
+python3 scripts/overnight/receipts.py record-build . >/dev/null 2>&1 || true
+
 # Update test coverage report (static source scan, no QEMU needed)
 bash scripts/test-coverage.sh --save --quiet 2>/dev/null || true
 
