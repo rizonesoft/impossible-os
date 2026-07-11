@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-11T00:23:15+02:00",
-  "total_suites": 1902,
-  "total_assertions": 7029,
+  "timestamp": "2026-07-11T14:04:22+02:00",
+  "total_suites": 1908,
+  "total_assertions": 7046,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -32,7 +32,7 @@
     {"file": "test_ci.c", "suites": 14, "assertions": 81},
     {"file": "test_cpu_security.c", "suites": 108, "assertions": 218},
     {"file": "test_crashdump.c", "suites": 35, "assertions": 112},
-    {"file": "test_desktop.c", "suites": 46, "assertions": 204},
+    {"file": "test_desktop.c", "suites": 48, "assertions": 211},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
     {"file": "test_entropy.c", "suites": 15, "assertions": 172},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
@@ -67,7 +67,7 @@
     {"file": "test_pmm.c", "suites": 7, "assertions": 23},
     {"file": "test_proc_ext.c", "suites": 18, "assertions": 31},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},
-    {"file": "test_sched.c", "suites": 54, "assertions": 180},
+    {"file": "test_sched.c", "suites": 58, "assertions": 190},
     {"file": "test_security.c", "suites": 29, "assertions": 190},
     {"file": "test_sha1.c", "suites": 3, "assertions": 7},
     {"file": "test_sha256.c", "suites": 3, "assertions": 7},

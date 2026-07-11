@@ -180,6 +180,30 @@ struct task {
      * A stuck exec_pending means the task was never scheduled in -- frame is lost. */
     uint32_t    exec_pending;       /* 1 = exec'd frame pending, skip save on switch-out */
     uint64_t    exec_pending_tick;  /* tick when exec_pending was set (0 = not pending) */
+    /* --- Process accounting: times, I/O, context switches ---
+     * Statistical tick accounting: the timer-tick ISR charges one tick quantum
+     * to user_time_ns or kernel_time_ns by the interrupted ring (CS & 3). I/O
+     * counters are bumped in the handle-based read/write path; ctxsw counters
+     * in the two scheduler switch paths. All plain uint64_t written with
+     * __atomic RELAXED -- independent monotonic counters, single-writer on the
+     * single-CPU BSP today, RELAXED-in-spirit for the future SMP scheduler (no
+     * multi-field snapshot coherence is required, so no acquire/release).
+     * create_time_filetime is an absolute FILETIME captured ONCE at creation
+     * (stable across a later KeSetSystemTime/NTP step); create_time_ns is the
+     * monotonic creation stamp. Per-THREAD ctxsw/CPU-time + the /sys/sched view
+     * are owned by the per-thread scheduler-stats surface (which aggregates, not
+     * duplicates, these per-process totals); VM/fault counters are owned by the
+     * VMM per-process memory-counter surface. */
+    uint64_t    create_time_ns;      /* uptime_ns() at task_create() */
+    uint64_t    create_time_filetime;/* absolute FILETIME at creation, or 0 if unsourced */
+    uint64_t    user_time_ns;        /* ring-3 ticks charged (statistical) */
+    uint64_t    kernel_time_ns;      /* ring-0 ticks charged (statistical) */
+    uint64_t    io_read_count;       /* handle/legacy file read operations */
+    uint64_t    io_read_bytes;       /* bytes read via handle/legacy file path */
+    uint64_t    io_write_count;      /* handle file write operations */
+    uint64_t    io_write_bytes;      /* bytes written via handle file path */
+    uint64_t    vol_ctxsw;           /* voluntary switches (yield/block) */
+    uint64_t    invol_ctxsw;         /* involuntary switches (preempt) */
     uintptr_t   cr3;            /* per-process PML4 phys addr (0 = kernel PML4) */
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */

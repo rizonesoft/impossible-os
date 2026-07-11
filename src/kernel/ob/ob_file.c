@@ -145,8 +145,14 @@ int64_t ob_file_read(HANDLE_TABLE *ht, HANDLE h, void *buf, uint32_t size)
         return -1;
 
     bytes = vfs_read(fo->vfs_node, (uint32_t)fo->offset, size, (uint8_t *)buf);
-    if (bytes > 0)
+    if (bytes > 0) {
+        struct task *cur = task_current();
         fo->offset += (uint64_t)bytes;
+        /* Per-process I/O accounting (process accounting): count file reads on
+         * the calling process. RELAXED -- independent monotonic counters. */
+        __atomic_fetch_add(&cur->io_read_count, 1ull, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&cur->io_read_bytes, (uint64_t)bytes, __ATOMIC_RELAXED);
+    }
 
     return (int64_t)bytes;
 }
@@ -196,8 +202,14 @@ int64_t ob_file_write(HANDLE_TABLE *ht, HANDLE h, const void *buf, uint32_t size
      * sys_writehandle calls stream instead of overwriting byte 0.
      * Mirrors ob_file_read's post-read offset bump and the NT-path
      * NtWriteFile semantics. */
-    if (bytes > 0)
+    if (bytes > 0) {
+        struct task *cur = task_current();
         fo->offset += (uint64_t)bytes;
+        /* Per-process I/O accounting (process accounting): count file writes on
+         * the calling process. RELAXED -- independent monotonic counters. */
+        __atomic_fetch_add(&cur->io_write_count, 1ull, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&cur->io_write_bytes, (uint64_t)bytes, __ATOMIC_RELAXED);
+    }
 
     return bytes;
 }

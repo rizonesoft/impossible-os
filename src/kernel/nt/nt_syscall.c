@@ -331,6 +331,14 @@ static NTSTATUS NtWriteFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 if (written < 0)
                     goto write_bad_handle;
                 fo->offset += (uint64_t)written;
+                if (written > 0) {
+                    /* Per-process I/O accounting (process accounting): the
+                     * native NtWriteFile path counts actual transferred bytes on
+                     * the caller, same as the legacy handle path (ob_file_write). */
+                    struct task *cur = task_current();
+                    __atomic_fetch_add(&cur->io_write_count, 1ull, __ATOMIC_RELAXED);
+                    __atomic_fetch_add(&cur->io_write_bytes, (uint64_t)written, __ATOMIC_RELAXED);
+                }
                 if (iosb) {
                     iosb->Status = STATUS_SUCCESS;
                     iosb->Information = (uint64_t)written;
@@ -433,6 +441,14 @@ static NTSTATUS NtReadFile(uint64_t a1, uint64_t a2, uint64_t a3,
                 if (bytes < 0)
                     goto read_bad_handle;
                 fo->offset += (uint64_t)bytes;
+                if (bytes > 0) {
+                    /* Per-process I/O accounting (process accounting): the native
+                     * NtReadFile path counts actual transferred bytes on the
+                     * caller, same as the legacy handle path (ob_file_read). */
+                    struct task *cur = task_current();
+                    __atomic_fetch_add(&cur->io_read_count, 1ull, __ATOMIC_RELAXED);
+                    __atomic_fetch_add(&cur->io_read_bytes, (uint64_t)bytes, __ATOMIC_RELAXED);
+                }
                 if (iosb) {
                     iosb->Status = (bytes == 0) ? STATUS_END_OF_FILE
                                                 : STATUS_SUCCESS;

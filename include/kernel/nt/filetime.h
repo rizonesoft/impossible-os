@@ -28,6 +28,7 @@ typedef uint64_t FILETIME;
 #define FILETIME_TICKS_PER_SECOND       10000000ULL   /* 100 ns units */
 #define FILETIME_TICKS_PER_MS           10000ULL
 #define FILETIME_TICKS_PER_US           10ULL
+#define NS_PER_FILETIME_TICK            100ULL         /* 1 FILETIME tick = 100 ns; ns / this = ticks */
 
 /* Sentinel: returned before wall clock is initialized */
 #define FILETIME_NOW_PLACEHOLDER        0ULL

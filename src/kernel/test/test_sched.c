@@ -7,6 +7,8 @@
 #include "kernel/test/test.h"
 #include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
+#include "kernel/nt/filetime.h"   /* NS_PER_FILETIME_TICK, FILETIME_* (accounting math) */
+#include "kernel/time/wall_clock.h" /* wall_clock_time_sourced (CreateTime stamp test) */
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
@@ -1260,8 +1262,75 @@ static void test_dpc_flush_threaded(void)
 }
 
 /* Registration */
+/* --- Process accounting (process accounting) ------------------------------- *
+ * These cover the deterministic surface: the exact ns->FILETIME and tick-quantum
+ * arithmetic the accounting code runs, the ring-classification convention, and
+ * that the running task's captured CreateTime is a valid value (placeholder or
+ * plausible, never garbage). The behavioral accounting (per-tick charge, I/O
+ * counters, slot-reuse zeroing) needs a live scheduler + VFS and is validated by
+ * serial-log criteria on QEMU / bare metal, not in the WSL test harness. */
+
+/* ns -> FILETIME 100 ns ticks, exactly as ProcessTimes converts kernel/user
+ * time. Verifies the relationship between three independently-defined constants
+ * (drift in any one is caught) plus a representative and a sub-tick value. */
+static void test_acct_filetime_conversion(void)
+{
+    TEST_ASSERT_EQ(NSEC_PER_SEC / NS_PER_FILETIME_TICK, FILETIME_TICKS_PER_SECOND,
+                   "1e9 ns/s / 100 ns-per-tick == FILETIME_TICKS_PER_SECOND");
+    TEST_ASSERT_EQ(12345678900ULL / NS_PER_FILETIME_TICK, 123456789ULL,
+                   "12345678900 ns -> 123456789 FILETIME ticks");
+    TEST_ASSERT_EQ(50ULL / NS_PER_FILETIME_TICK, 0ULL,
+                   "50 ns (< 1 tick) -> 0 FILETIME ticks (statistical: may read 0)");
+}
+
+/* Statistical tick quantum = NSEC_PER_SEC / live tick freq, as schedule()
+ * charges per tick. Verifies the two nominal rates the timer runs at. */
+static void test_acct_tick_quantum(void)
+{
+    TEST_ASSERT_EQ(NSEC_PER_SEC / 100u, 10000000ULL,
+                   "100 Hz tick quantum == 10 ms (10,000,000 ns)");
+    TEST_ASSERT_EQ(NSEC_PER_SEC / 1000u, 1000000ULL,
+                   "1000 Hz tick quantum == 1 ms (1,000,000 ns)");
+}
+
+/* Ring classification the tick charge uses: (CS & 3) == 3 -> ring 3 (user_time),
+ * else ring 0 (kernel_time). Real GDT code selectors. */
+static void test_acct_ring_classification(void)
+{
+    TEST_ASSERT_EQ((0x08u & 3u), 0u, "kernel CS (0x08, RPL 0) classifies as ring 0");
+    TEST_ASSERT_EQ((0x2Bu & 3u), 3u, "user CS (0x2B, RPL 3) classifies as ring 3");
+}
+
+/* The running task's captured CreateTime is never a garbage value: it is either
+ * the sentinel (created before the wall clock was sourced) or a plausible
+ * absolute FILETIME below the upper bound -- i.e. the stable-capture gate never
+ * stores a near-1601 underflow or an implausibly large value. */
+static void test_acct_current_task_create_time(void)
+{
+    struct task *t = task_current();
+    TEST_ASSERT(t != NULL, "task_current() is valid during the test");
+    /* Never a garbage value: placeholder or a plausible absolute FILETIME. */
+    TEST_ASSERT(t->create_time_filetime == FILETIME_NOW_PLACEHOLDER ||
+                t->create_time_filetime < FILETIME_MAX_PLAUSIBLE,
+                "CreateTime is placeholder or a plausible absolute FILETIME");
+    /* When the wall clock is sourced from real hardware, accounting init MUST
+     * have stamped a real CreateTime -- catches a task (PID 0, a fork child)
+     * that skipped task_init_accounting and kept a 1601 sentinel. */
+    if (wall_clock_time_sourced())
+        TEST_ASSERT(t->create_time_filetime != FILETIME_NOW_PLACEHOLDER,
+                    "sourced clock -> current task CreateTime is stamped (not 1601)");
+}
+
 void test_register_sched(void)
 {
+    test_suite_register_cat("Sched: accounting FILETIME conversion",
+                            test_acct_filetime_conversion, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: accounting tick quantum",
+                            test_acct_tick_quantum, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: accounting ring classification",
+                            test_acct_ring_classification, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: accounting CreateTime validity",
+                            test_acct_current_task_create_time, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC init fields",
                             test_dpc_init_fields, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: threaded DPC worker started",

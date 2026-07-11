@@ -48,6 +48,9 @@ void sleep_ms(uint32_t ms);
  * Safe to call before g_system_timer is set (returns 0). */
 uint64_t system_get_ticks(void);
 
+/* Nanoseconds per second -- named for accounting math (avoid the bare literal). */
+#define NSEC_PER_SEC    1000000000ULL
+
 /* Return the current timer tick frequency in Hz.
  * Safe to call before g_system_timer is set (returns 0). */
 uint32_t system_get_freq(void);

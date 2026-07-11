@@ -36,6 +36,8 @@
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
 #include "kernel/timer.h"
+#include "kernel/time/wall_clock.h"  /* KeQuerySystemTime / wall_clock_time_sourced (accounting CreateTime) */
+#include "kernel/nt/filetime.h"      /* FILETIME_NOW_PLACEHOLDER (accounting CreateTime) */
 #include "kernel/vectors.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"
@@ -69,6 +71,7 @@ static volatile uint32_t sched_ticks = 0;    /* ticks since last switch */
 /* Forward declarations */
 static uint64_t yield_irq_handler(struct interrupt_frame *frame);
 uint64_t schedule_now(struct interrupt_frame *frame);
+static void task_init_accounting(struct task *t);
 static int task_inherit_primary_token(uint32_t parent_pid, ACCESS_TOKEN **out);
 
 /* exec_pending stuck detection threshold (ticks).
@@ -402,6 +405,7 @@ boot_result_t task_init(void)
     tasks[0].stack_base = (uint8_t *)0;  /* boot stack, don't free */
     tasks[0].name = "main";
     task_set_cwd(&tasks[0], "C:\\");     /* system process starts at the boot drive root */
+    task_init_accounting(&tasks[0]);     /* PID 0 accrues time too; stamp its CreateTime */
     num_tasks = 1;
     current_task = 0;
 
@@ -442,6 +446,31 @@ boot_result_t task_init(void)
     idt_register_handler(7, nm_handler);
 
     return BOOT_OK;
+}
+
+/* Initialize the per-process accounting fields (times, I/O, ctxsw) on a fresh
+ * or reused task slot. Called from BOTH task_create() and task_create_user() so
+ * the two init paths can never drift.
+ * create_time_filetime is a STABLE absolute FILETIME captured ONLY when the wall
+ * clock was sourced from real hardware; otherwise FILETIME_NOW_PLACEHOLDER, so a
+ * later KeSetSystemTime/NTP step cannot retroactively move an old CreateTime.
+ * Runs single-threaded at creation (the slot is not yet schedulable), so plain
+ * stores are correct here; the counters become __atomic RELAXED once the task
+ * can run and the tick ISR / I/O paths touch them. */
+static void task_init_accounting(struct task *t)
+{
+    t->create_time_ns = uptime_ns();
+    t->create_time_filetime = wall_clock_time_sourced()
+                                  ? KeQuerySystemTime()
+                                  : FILETIME_NOW_PLACEHOLDER;
+    t->user_time_ns   = 0;
+    t->kernel_time_ns = 0;
+    t->io_read_count  = 0;
+    t->io_read_bytes  = 0;
+    t->io_write_count = 0;
+    t->io_write_bytes = 0;
+    t->vol_ctxsw      = 0;
+    t->invol_ctxsw    = 0;
 }
 
 int task_create(task_entry_t entry, const char *name)
@@ -546,6 +575,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+    task_init_accounting(&tasks[pid]);
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
@@ -691,6 +721,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+    task_init_accounting(&tasks[pid]);
 
     /* Per-process page table: clone kernel PML4, mark ELF + user stack as User */
     {
@@ -803,6 +834,11 @@ uint64_t schedule_now(struct interrupt_frame *frame)
 
     if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
+
+    /* Voluntary switch (process accounting): prev_task reached schedule_now() via
+     * an explicit yield()/block, not a tick preempt -- so this is a voluntary
+     * context switch out. */
+    __atomic_fetch_add(&tasks[prev_task].vol_ctxsw, 1ull, __ATOMIC_RELAXED);
 
     /* FPU/SIMD save for cooperative path (mirrors preemptive schedule).
      * CLTS before save: FXSAVE/XSAVE fault #NM when CR0.TS=1
@@ -1004,6 +1040,26 @@ uint64_t schedule(struct interrupt_frame *frame)
     uint32_t prev_task, prev_thread;
     uint32_t next_task, next_thread;
 
+    /* Statistical tick accounting (process accounting): charge one tick quantum
+     * to the running task's user_time_ns (interrupted in ring 3) or
+     * kernel_time_ns (ring 0). Runs on EVERY tick -- before the single-task and
+     * quantum early-returns below -- so even a lone CPU-bound task accrues time.
+     * The quantum is the nominal tick period (NSEC_PER_SEC / live tick freq),
+     * re-read each tick so a KeSetTimerResolution rate change is tracked; the
+     * freq==0 guard skips charging before the timer is up. RELAXED: an
+     * independent monotonic counter, single-writer on the BSP tick path today. */
+    if (sched_enabled) {
+        uint32_t hz = system_get_freq();
+        if (hz) {
+            uint64_t quantum_ns = NSEC_PER_SEC / hz;
+            struct task *cur = &tasks[current_task];
+            if ((frame->cs & 3) == 3)
+                __atomic_fetch_add(&cur->user_time_ns, quantum_ns, __ATOMIC_RELAXED);
+            else
+                __atomic_fetch_add(&cur->kernel_time_ns, quantum_ns, __ATOMIC_RELAXED);
+        }
+    }
+
     /* Match schedule_now: a single-task kernel with multiple runnable
      * kernel threads must still preempt, otherwise any CPU-bound thread
      * in the sole task can monopolize the CPU even when kthread_create
@@ -1025,6 +1081,11 @@ uint64_t schedule(struct interrupt_frame *frame)
 
     if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
+
+    /* Involuntary switch (process accounting): prev_task is being preempted by
+     * the periodic tick, not yielding -- the reason is the entry path itself
+     * (schedule() = tick ISR, schedule_now() = cooperative yield). */
+    __atomic_fetch_add(&tasks[prev_task].invol_ctxsw, 1ull, __ATOMIC_RELAXED);
 
     /* Save current task/thread's interrupt frame pointer
      * (skip if exec_pending -- don't overwrite the exec'd frame) */
@@ -1507,6 +1568,11 @@ int task_fork(struct interrupt_frame *frame)
      * inherit a prior tenant's impersonation token. */
     tasks[child_pid].token = inherited_token;
     tasks[child_pid].threads[0].impersonation_token = (void *)0;
+
+    /* Fresh accounting for the child: its own times/I/O/ctxsw start at zero and
+     * CreateTime is stamped at fork (a fork child is a distinct process, not a
+     * continuation of the parent's accounting). Before num_tasks++ publishes it. */
+    task_init_accounting(&tasks[child_pid]);
 
     num_tasks++;
 

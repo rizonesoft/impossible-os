@@ -540,7 +540,7 @@ Provides OS version, process list, performance counters, and detailed process in
 - [/] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege enforcement)
 - [x] `NtQueryInformationProcess` extended with 7 new info classes:
   - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
-  - `ProcessTimes (4)`: creation, exit, kernel, user times (zeroed -- not tracked yet)
+  - `ProcessTimes (4)`: creation, exit, kernel, user times (zeroed -- the per-task fields exist (TODO-21 §8) but the ring-3 output copy is gated on PTE-aware usercopy; wire here when that lands)
   - `ProcessDebugPort (7)`: 0 (not debugged)
   - `ProcessPriorityClass (18)`: base priority (done in §7)
   - `ProcessHandleCount (20)`: handle_table.count

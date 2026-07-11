@@ -169,6 +169,9 @@ Pin threads to specific CPUs by setting an `affinity_mask` bitmask on the task; 
 
 Expose per-thread scheduler metrics as a readable VFS file -- class, priority, vruntime, CPU time, voluntary and involuntary context-switch counts -- queryable by the `sched` shell command and Task Manager without a dedicated syscall.
 
+> [!NOTE]
+> → XREF: `02-kernel-core/TODO-21-process-model-extensions.md §8` already added per-PROCESS `vol_ctxsw`/`invol_ctxsw` and `user_time_ns`+`kernel_time_ns` to `struct task` (statistical tick accounting, incremented in `schedule()`/`schedule_now()`). This section's per-THREAD counters belong on `struct thread`, and the process-level row should AGGREGATE the §8 task totals -- do NOT re-instrument the switch paths or add parallel process-level counters.
+
 **Files:** `src/kernel/fs/sysfs_sched.c` (new), `src/shell/cmd_sched.c` (new)
 
 - [ ] Add to `task_t`: `cpu_time_ns`, `ctx_switches_vol` (yield/block), `ctx_switches_invol` (preemption), `slice_overruns`, `last_cpu`
