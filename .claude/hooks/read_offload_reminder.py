@@ -124,6 +124,12 @@ def main() -> int:
         pass
 
     if warn:
+        try:
+            import _offload_log
+            _offload_log.log_event(root, "fire", "read_offload_reminder",
+                                   f"{len({e['path'] for e in events})} big reads")
+        except Exception:
+            pass
         print(json.dumps({"systemMessage": _MSG.format(
             n=len({e["path"] for e in events}),
             win=WINDOW_NS // 60_000_000_000)}))

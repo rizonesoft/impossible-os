@@ -91,6 +91,11 @@ def main() -> int:
         "by_type": by_type,
     }
     _write_atomic(path, state)
+    try:
+        import _offload_log
+        _offload_log.log_event(root, "dispatch", "agent_dispatch_recorder", stype)
+    except Exception:
+        pass
     return 0
 
 

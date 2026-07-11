@@ -94,6 +94,11 @@ def main() -> int:
         return 0
     if _recent_checks_runner_dispatch(root):
         return 0
+    try:
+        import _offload_log
+        _offload_log.log_event(root, "fire", "build_offload_reminder", m.group(0))
+    except Exception:
+        pass
     print(json.dumps({"systemMessage": _MSG.format(script=m.group(0))}))
     return 0
 

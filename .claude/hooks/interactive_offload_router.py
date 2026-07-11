@@ -78,6 +78,13 @@ def main() -> int:
 
     for pat, agent, note in _ROUTES:
         if re.search(pat, prompt, re.I):
+            try:
+                import _offload_log
+                from pathlib import Path
+                _offload_log.log_event(Path.cwd(), "fire",
+                                       "interactive_offload_router", agent)
+            except Exception:
+                pass
             print(json.dumps(
                 {"systemMessage": _HINT.format(agent=agent, note=note)}))
             return 0

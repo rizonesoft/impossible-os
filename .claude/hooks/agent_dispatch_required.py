@@ -111,6 +111,12 @@ def main() -> int:
         (rel.startswith(("src/", "include/")) or "/src/" in path or "/include/" in path)
         and rel.endswith((".c", ".h", ".asm", ".S"))
     )
+    try:
+        import _offload_log
+        _offload_log.log_event(root, "fire", "agent_dispatch_required",
+                               ("block " if kernelish else "warn ") + rel)
+    except Exception:
+        pass
     if kernelish:
         sys.stderr.write(
             "[agent-dispatch BLOCK] kernel/boot source edit in the SECTIONS phase "
