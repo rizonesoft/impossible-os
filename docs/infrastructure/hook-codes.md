@@ -60,6 +60,21 @@ then re-invoke.
 Armed unattended run, not yet started: the only valid skill is
 `Skill(overnight-sequencer)`. Invoke it now.
 
+### SEQ-CODEX-WRITE
+A write-capable Codex dispatch (`task --write`, `--sandbox workspace-write`,
+`--full-auto`, `--dangerously-bypass-approvals-and-sandbox`, or `-s
+danger-full-access`) was attempted inside the unattended headless run. Codex
+write is INTERACTIVE-ONLY (Option A, 2026-07-11): the autonomous-agent
+boundary (CLAUDE.md) forbids an agent mutating the tree with no per-step human
+authorship. The runner uses read-only reviews (`adversarial-review`, the
+review broker, `task` without `--write`) only. Remediation: implement the
+change yourself and dispatch a read-only review, or defer the section for an
+operator's interactive rescue (`codex … task --write` or `Skill(codex:rescue)`
+from an interactive session, where this guard is inert). The reviewer sandbox
+is separately pinned read-only in `codex-companion.mjs`, and
+`codex_review_completed.py` firewalls a write dispatch out of the review
+receipt state so it can never satisfy or queue a review gate.
+
 ## CACHE-* (agent_result_cache.py)
 
 ### CACHE-HIT

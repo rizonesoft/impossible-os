@@ -96,6 +96,44 @@ _MUTATE_OPS = ("rm ", "rm-", "mv ", "unlink", "truncate", "tee ", " > ", ">>",
                "shutil.")
 
 
+# Codex write/sandbox-escalation markers (mirrors
+# codex_review_completed._CODEX_WRITE_FLAGS). A dispatch carrying any of these
+# is Codex making CHANGES, not reviewing -- interactive-only per Option A.
+_CODEX_WRITE_MARKERS = ("--write", "--full-auto", "--yolo",
+                        "--dangerously-bypass-approvals-and-sandbox")
+_CODEX_WRITE_SANDBOX = ("workspace-write", "danger-full-access")
+
+
+def _is_codex_write_dispatch(cmd):
+    """True iff cmd is a Codex dispatch AND carries a write marker. Kept
+    self-contained (a frozenset/shlex scan) so the guard has no heavy import
+    on its hot pretool path."""
+    c = cmd or ""
+    if not ("codex" in c):  # cheap prefilter; not a codex surface -> not write
+        return False
+    import shlex
+    try:
+        toks = shlex.split(c)
+    except ValueError:
+        toks = c.split()
+    # confirm it's actually a codex dispatch surface, not prose mentioning it
+    is_codex = any(t == "codex" or t.endswith("codex-companion.mjs")
+                   or t.endswith("codex-dispatch.sh")
+                   or t.endswith("codex-bg-dispatch.sh")
+                   or t.endswith("codex-dispatch-with-files.sh") for t in toks)
+    if not is_codex:
+        return False
+    for i, t in enumerate(toks):
+        if t in _CODEX_WRITE_MARKERS:
+            return True
+        if t in ("--sandbox", "-s"):
+            if (toks[i + 1] if i + 1 < len(toks) else "") in _CODEX_WRITE_SANDBOX:
+                return True
+        if t.startswith("--sandbox=") and t.split("=", 1)[1] in _CODEX_WRITE_SANDBOX:
+            return True
+    return False
+
+
 def _is_self_teardown(cmd):
     c = " ".join((cmd or "").split())
     # Disarm via either wrapper.
@@ -210,6 +248,20 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             "[SEQ-TEARDOWN] blocked: disarm/clear/stop is human-only. Keep "
             "going -- continue the pipeline. "
             "Details: docs/infrastructure/hook-codes.md#seq-teardown")
+
+    # Codex WRITE is interactive-only (Option A, 2026-07-11). The unattended
+    # run dispatches READ-ONLY reviews; a write-capable Codex mutating the
+    # tree with no per-step human authorship crosses the autonomous-agent
+    # boundary (CLAUDE.md). The headless main session is physically blocked
+    # from write dispatches; interactive sessions (guard inert) are not.
+    if tool_name == "Bash" and _is_codex_write_dispatch(tool_input.get("command", "")):
+        return False, (
+            "[SEQ-CODEX-WRITE] blocked: Codex write (`task --write` / sandbox "
+            "override) is INTERACTIVE-ONLY (autonomous-agent boundary). The "
+            "unattended run uses read-only reviews only. Implement the change "
+            "yourself and dispatch a read-only review, or defer for an "
+            "operator's interactive rescue. "
+            "Details: docs/infrastructure/hook-codes.md#seq-codex-write")
 
     # Armed but not yet started: force the redirect onto overnight-sequencer.
     if not active and armed:
@@ -881,6 +933,22 @@ def selftest():
     # Not armed, not active (headless): everything passes.
     a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False, headless=H)
     check(a, "skill blocked while neither armed nor active")
+
+    # Codex WRITE is interactive-only: blocked in the headless active run,
+    # never blocked interactively; read-only reviews always pass.
+    for wcmd in ("node /x/codex-companion.mjs task --write 'fix it'",
+                 "codex exec --sandbox workspace-write 'do it'",
+                 "codex --full-auto 'go'",
+                 "bash scripts/codex-dispatch.sh 'x' && codex task --write 'y'"):
+        a, _ = evaluate("Bash", {"command": wcmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
+        check(not a, f"headless Codex write allowed: {wcmd[:40]}")
+        a, _ = evaluate("Bash", {"command": wcmd}, {"active": True, "phase": "SECTIONS"}, headless=False)
+        check(a, f"interactive Codex write blocked (must not): {wcmd[:40]}")
+    for rcmd in ("node /x/codex-companion.mjs adversarial-review 'review'",
+                 "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] todo/x.md b'",
+                 "node /x/codex-companion.mjs task --background 'review-kind design'"):
+        a, _ = evaluate("Bash", {"command": rcmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
+        check(a, f"headless read-only review blocked: {rcmd[:40]}")
 
     # Lifecycle routing (Stage 0): Stage 1-2 skills blocked on a mature file.
     a, _ = evaluate("Skill", {"skill": "validate-todo-file"},

@@ -481,6 +481,55 @@ def _is_codex_bash_trigger(cmd: str) -> bool:
     return _cd.is_codex_dispatch(cmd)
 
 
+# Write-capable Codex markers. The companion pins `adversarial-review` to a
+# read-only sandbox; the WRITE surface is `task --write` (workspace-write) or
+# a CLI sandbox override. A write dispatch is Codex making CHANGES (interactive
+# rescue, Option A 2026-07-11), NOT a review -- it must NEVER register as a
+# review trigger, or its receipt would satisfy/queue a review gate it never
+# performed. These markers never appear on a legit read-only review dispatch,
+# so matching them is safe (fail-safe direction: a firewalled write can't
+# corrupt receipt state).
+_CODEX_WRITE_FLAGS = frozenset({
+    "--write",                                    # companion `task --write`
+    "--full-auto",                                # CLI: sandboxed auto-exec
+    "--dangerously-bypass-approvals-and-sandbox",  # CLI: danger-full-access
+    "--yolo",
+})
+_CODEX_WRITE_SANDBOX_VALUES = frozenset({"workspace-write", "danger-full-access"})
+
+
+def _is_codex_write_dispatch(cmd: str) -> bool:
+    """True if a Codex dispatch carries a WRITE/sandbox-escalation marker.
+    Caller must have confirmed `_is_codex_bash_trigger(cmd)` first so a bare
+    `--write` on some unrelated command cannot false-match."""
+    import shlex
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        toks = cmd.split()
+    for i, t in enumerate(toks):
+        if t in _CODEX_WRITE_FLAGS:
+            return True
+        # --sandbox <val> / -s <val> / --sandbox=<val>
+        if t in ("--sandbox", "-s"):
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            if nxt in _CODEX_WRITE_SANDBOX_VALUES:
+                return True
+        if t.startswith("--sandbox="):
+            if t.split("=", 1)[1] in _CODEX_WRITE_SANDBOX_VALUES:
+                return True
+        # -c sandbox_mode="workspace-write" / -c 'sandbox_permissions=[...write...]'
+        if t == "-c":
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            if "sandbox" in nxt and any(v in nxt for v in
+                                        _CODEX_WRITE_SANDBOX_VALUES | {"write"}):
+                return True
+        elif t.startswith("-c") and "sandbox" in t and \
+                any(v in t for v in _CODEX_WRITE_SANDBOX_VALUES | {"write"}):
+            return True
+    return False
+
+
 # ----------------------------------------------------------------------
 # Four-dispatch policy state (§5 last-review-stamps.json)
 # ----------------------------------------------------------------------
@@ -850,6 +899,15 @@ def _classify(payload: dict) -> tuple[str, str]:
     if tool_name == "Bash":
         cmd = tool_input.get("command", "")
         if _is_codex_bash_trigger(cmd):
+            # Receipt-state firewall (Option A, 2026-07-11): a WRITE-capable
+            # Codex dispatch (`task --write` / sandbox override) is Codex
+            # implementing changes, not reviewing. It must never touch
+            # last-codex-review.json -- otherwise an interactive rescue would
+            # queue or satisfy a review gate it never performed. Reviews stay
+            # read-only (`adversarial-review`, the broker, `task` w/o --write)
+            # and register normally.
+            if _is_codex_write_dispatch(cmd):
+                return ("", "")
             # Truncate cmd label to keep state file readable.
             label = cmd.strip().split("\n", 1)[0]
             if len(label) > 120:
@@ -1134,5 +1192,52 @@ def main() -> int:
     return 0
 
 
+def _selftest() -> int:
+    """Receipt-state firewall: write dispatches excluded, reviews kept."""
+    fails = []
+
+    def classify_bash(cmd):
+        return _classify({"tool_name": "Bash", "tool_input": {"command": cmd}})[0]
+
+    COMP = "node /x/codex-companion.mjs"
+    # WRITE dispatches -> must NOT be a review trigger (no-op).
+    write_cases = [
+        f"{COMP} task --write 'fix the bug in src/kernel/foo.c'",
+        f"{COMP} task --background --write 'implement X'",
+        "codex exec --sandbox workspace-write 'do it'",
+        "codex exec -s danger-full-access 'do it'",
+        "codex --full-auto 'go'",
+        "bash scripts/codex-dispatch.sh 'x' && codex task --write 'y'",
+    ]
+    for c in write_cases:
+        if classify_bash(c) != "":
+            fails.append(f"write dispatch recorded as review trigger: {c[:60]}")
+    # READ-ONLY review dispatches -> must STAY review triggers.
+    review_cases = [
+        f"{COMP} adversarial-review 'review this'",
+        f"{COMP} task --background 'review-kind: design ...'",  # no --write
+        "bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/x.md body'",
+        "bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] todo/x.md body'",
+    ]
+    for c in review_cases:
+        if classify_bash(c) != "trigger":
+            fails.append(f"read-only review lost its trigger: {c[:60]}")
+    # A bare `--write` on a NON-codex command must not be misread (it isn't a
+    # codex dispatch, so it's a no-op either way -- sanity check).
+    if classify_bash("git commit --write-something") != "":
+        fails.append("non-codex --write misclassified")
+
+    if fails:
+        for f in fails:
+            print("FAIL:", f, file=sys.stderr)
+        print(f"codex_review_completed selftest: {len(fails)} failure(s)",
+              file=sys.stderr)
+        return 1
+    print("codex_review_completed selftest OK (receipt-state firewall)")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     sys.exit(main())
