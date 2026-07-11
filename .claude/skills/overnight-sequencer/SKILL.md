@@ -211,6 +211,47 @@ needed, records the green stamp, and queries CI directly via `gh run list`
 For each `## N.` section in Implementation-Order order, classify it with
 `python3 .claude/hooks/sequencer_triage.py --classify <file>`:
 
+**Per-section efficiency discipline (every expensive turn must carry new
+information or judgment; none of this weakens a gate):**
+
+- **Start oriented, not exploring:** `python3
+  scripts/overnight/section-manifest.py <todo> <n>` gives the deterministic
+  manifest (open items, likely files, tests, XREFs, gates, blob hashes).
+  Feed it as the seed of the enrichment dispatch (`enrich_with` names the
+  agent); read the manifest + the enriched map, then do your 2-3
+  verification slice reads and design.
+- **Batch coherent edits.** Gather ALL evidence first, then apply ONE
+  carefully scoped patch per file (or per concern), then verify -- never
+  alternate read/edit/read/edit across the same files (the 2026-07-10 run
+  spent 500+ Edit calls that way). MultiEdit or a single large Edit per
+  file over five small ones.
+- **Review the impact cone, not the repo:** `python3
+  scripts/overnight/impact-cone.py` (staged) derives changed symbols,
+  callers, header includers, tests, and registration touches -- scope Codex
+  prompts and your own reads to that set. `global_state_escalation: true`
+  widens the scope; the final whole-diff review pipeline is unchanged.
+- **Targeted verification in fix loops; full gates at the boundary.** After
+  a local fix, run the OWNING suite (`bash scripts/test.sh SUITE=<cat>`),
+  not the world; `receipts.py check-suite . <cat>` skips a suite that is
+  already green over unchanged inputs (record with `record-suite` after a
+  green run). The section boundary still runs the unchanged full
+  build + test + (boot-path) smoke gates.
+- **Never rediscover a failure:** on any build/test/smoke/Codex failure,
+  `python3 scripts/overnight/failure-ledger.py check <kind> < <log>` FIRST
+  -- a hit returns the stored diagnosis (reuse it; 3+ recurrences =
+  defer-and-escalate). After diagnosing a new failure, `record` it with
+  `--diagnosis`.
+- **Never re-triage a settled finding:** before classifying a Codex
+  finding, `python3 scripts/overnight/finding-ledger.py lookup <kind>
+  <severity> <file:line> <title>` -- a hit is a prior Fix/Reject/Accept
+  with evidence (IDs are blob-bound: changed content = new finding =
+  re-triage). `record` every decision as you make it; compaction and
+  rollover then cannot trigger reclassification.
+- **Unchanged-input retry rule (soft):** do not repeat a build, review,
+  agent dispatch, or failed edit unless its input hash changed (the
+  receipts/caches tell you) or you record a one-line reason for the
+  deliberate re-run.
+
 - `DONE` -> skip.
 - `DONE_UNSTAMPED` -> `Skill(review-todo-section)` (stamps it).
 - `NEEDS_WORK` -> `Skill(implement-todo-section)` (its step 20 chains

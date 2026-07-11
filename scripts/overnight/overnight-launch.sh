@@ -152,6 +152,22 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ "${OVERNIGHT_SEQUENCER_FORC
 fi
 # ------------------------------------------------------------------------------
 
+# Runner-doctor (2026-07-11): deterministic pre-launch health check + stale
+# context pruning. A dead Codex login, corrupt recorder state, or a missing
+# compiler fails HERE for free instead of after Opus loaded its context.
+# Hard failure -> notify + 30-min backoff, stay armed (transient host issues
+# heal; persistent ones surface to the operator via notify + questions file).
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$SCRIPT_DIR/runner-doctor.py" ]; then
+  if ! DOCTOR_JSON="$(cd "$PROJECT_DIR" && python3 "$SCRIPT_DIR/runner-doctor.py" . 2>&1)"; then
+    echo "runner-doctor HARD failure; launch skipped $(date -Is)"
+    echo "$DOCTOR_JSON" | tail -20
+    echo "$(( $(date +%s) + 1800 )) 1" > "$BACKOFF_FILE"
+    bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
+      "runner-doctor failed pre-launch (see report); watchdog backing off 30 min, still armed." 2>/dev/null || true
+    exit 0
+  fi
+fi
+
 # WS3: per-run metrics sidecar (read by stream-report.py). Shares the report
 # log's basename so a report and its metrics pair up. Defined before the prune
 # so sidecars rotate with their logs.

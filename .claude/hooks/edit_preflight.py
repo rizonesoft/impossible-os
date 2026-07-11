@@ -106,6 +106,30 @@ def _selftest() -> int:
     return 0
 
 
+def _repeat_count(tool_input: dict) -> int:
+    """Unchanged-input retry tracking: count how often this EXACT failing
+    edit (path + old_string) has been blocked. Bounded state; fail-open."""
+    import hashlib
+    import pathlib
+    try:
+        key = hashlib.sha256((str(tool_input.get("file_path")) + "\0" +
+                              str(tool_input.get("old_string"))).encode()
+                             ).hexdigest()[:16]
+        p = pathlib.Path(".claude/state/edit-preflight-repeats.json")
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            data = {}
+        data[key] = data.get(key, 0) + 1
+        if len(data) > 64:
+            data = dict(list(data.items())[-64:])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data))
+        return data[key]
+    except Exception:
+        return 1
+
+
 def main() -> int:
     if "--selftest" in sys.argv:
         return _selftest()
@@ -121,6 +145,12 @@ def main() -> int:
         return 0  # fail-open
     if allow:
         return 0
+    n = _repeat_count(d.get("tool_input") or {})
+    if n > 1:
+        msg = (f"[EDIT-RETRY-UNCHANGED] this EXACT edit has now been blocked "
+               f"{n}x with identical inputs -- retrying variants from memory "
+               f"is the failure mode. Read the target slice, then edit.\n"
+               + msg)
     sys.stderr.write(msg)
     return 2
 

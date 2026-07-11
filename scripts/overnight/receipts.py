@@ -146,15 +146,68 @@ def check_build(project: Path) -> tuple[bool, str]:
     return True, f"receipt matches current build inputs ({key[:12]})"
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[0] not in ("record-build", "check-build"):
-        print("usage: receipts.py record-build|check-build PROJECT_DIR",
+def suite_receipts_path(project: Path) -> Path:
+    return project / "build" / "suite-receipts.json"
+
+
+def record_suite(project: Path, suite: str) -> int:
+    """Record a GREEN run of one test suite (e.g. mm, ob, exec) bound to the
+    current build-input + toolchain fingerprints. Enables targeted fix-loop
+    verification: re-running an owning suite over unchanged content is free."""
+    key = build_input_key(project)
+    if key is None:
+        print("receipts: git unavailable, suite receipt not recorded",
               file=sys.stderr)
+        return 1
+    p = suite_receipts_path(project)
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, ValueError):
+        data = {}
+    data[suite] = {"build_input_key": key, "toolchain_key": toolchain_key(),
+                   "epoch": int(time.time())}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data))
+    print(f"suite receipt recorded: {suite} ({key[:12]})")
+    return 0
+
+
+def check_suite(project: Path, suite: str) -> tuple[bool, str]:
+    try:
+        rec = json.loads(suite_receipts_path(project).read_text()).get(suite)
+    except (OSError, ValueError):
+        rec = None
+    if not rec:
+        return False, f"no receipt for suite {suite}"
+    key = build_input_key(project)
+    if key is None:
+        return False, "git unavailable for fingerprinting"
+    if rec.get("build_input_key") != key:
+        return False, "build inputs changed since the receipted suite run"
+    if rec.get("toolchain_key") != toolchain_key():
+        return False, "toolchain changed since the receipted suite run"
+    return True, f"suite {suite} green over current inputs ({key[:12]})"
+
+
+def main(argv: list[str]) -> int:
+    verbs = ("record-build", "check-build", "record-suite", "check-suite")
+    if len(argv) < 2 or argv[0] not in verbs:
+        print("usage: receipts.py record-build|check-build PROJECT_DIR | "
+              "record-suite|check-suite PROJECT_DIR SUITE", file=sys.stderr)
         return 2
     project = Path(argv[1])
     if argv[0] == "record-build":
         return record_build(project)
-    ok, reason = check_build(project)
+    if argv[0] == "check-build":
+        ok, reason = check_build(project)
+        print(("VALID: " if ok else "MISS: ") + reason)
+        return 0 if ok else 1
+    if len(argv) < 3:
+        print("suite verbs need a SUITE name", file=sys.stderr)
+        return 2
+    if argv[0] == "record-suite":
+        return record_suite(project, argv[2])
+    ok, reason = check_suite(project, argv[2])
     print(("VALID: " if ok else "MISS: ") + reason)
     return 0 if ok else 1
 

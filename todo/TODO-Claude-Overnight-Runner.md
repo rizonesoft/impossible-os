@@ -250,6 +250,25 @@ fix the WORKFLOW, never to skip a gate, review, or test:
   identical re-dispatch over unchanged content means the workflow re-asked a
   settled question; `scripts/overnight/offload-report.py` and the cache-hit
   block messages surface these.
+- **Unchanged-input retry rule (soft):** no build, review, agent dispatch, or
+  failed edit is repeated unless its relevant input hash changed (receipts,
+  agent cache, failure ledger, finding ledger are the oracles) or an explicit
+  one-line reason is recorded for the deliberate re-run.
+- **Agent scorecard -- score by NET savings, not dispatch count.** Per agent
+  type, periodically assess: main-session requests avoided, main cache-read
+  reduction, Sonnet cost added, share of claims the main session rejects at
+  verification, re-dispatch frequency (cache should absorb repeats), and
+  misses later caught by Codex. Retire or revise an agent that adds more
+  context than it removes. Inputs: metrics sidecar (main vs sidechain split),
+  `offload-report.py`, `section-cost-report.py`, agent-cache hit logs.
+- **Decision capsules (EXPERIMENTAL, A/B-gated, default OFF).** Protocol for
+  a future A/B leg only -- never a default: a short high-effort session
+  produces a content-bound implementation/review plan (bound to the section
+  manifest's blob hashes); a fresh medium-effort worker executes the
+  mechanical portion; high-effort handles security/ABI decisions and final
+  finding triage. Run it only against a measured baseline (normalized by
+  `section-cost-report.py`) -- two sessions can cost MORE when the plan is
+  weak; abandon the leg if quality or cost regresses.
 
 ## Enforcement & Scheduling
 
