@@ -81,6 +81,45 @@ def _recent_dispatch(root: Path) -> bool:
     return pass_start > 0 and ts >= pass_start
 
 
+def _fresh_section_pack(root: Path) -> bool:
+    """A section-pack run IS the deterministic equivalent of the discovery
+    agent, so a FRESH pack satisfies this gate. 'Fresh' is content-bound: the
+    receipt's recorded working-tree digest must still equal a recomputed key
+    over the same inputs -- ANY edit since the pack (staged, unstaged, or
+    untracked) invalidates it. Fail-closed: a missing/stale/mismatched receipt
+    returns False and the agent stays required.
+
+    Also requires the pack to cover the CURRENT cursor TODO file, so a pack for
+    an unrelated section can never satisfy the gate."""
+    try:
+        rc = json.loads((root / ".claude/state/last-section-pack.json").read_text())
+    except Exception:
+        return False
+    key_inputs = rc.get("key_inputs")
+    digest = rc.get("digest")
+    todo = rc.get("todo") or ""
+    if not (isinstance(key_inputs, list) and isinstance(digest, str) and todo):
+        return False
+    # bind to the section under work: the pack's TODO must be the live cursor's
+    try:
+        st = json.loads((root / ".claude/state/sequencer-run.json").read_text())
+        cursor_file = st.get("file") or ""
+    except Exception:
+        cursor_file = ""
+    if cursor_file and todo != cursor_file:
+        return False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                              / "scripts/overnight"))
+        from worktree_hash import worktree_key
+    except Exception:
+        return False
+    try:
+        return worktree_key(root, key_inputs) == digest
+    except Exception:
+        return False
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
@@ -104,6 +143,18 @@ def main() -> int:
     if root is None or not _guard_in_sections(root):
         return 0
     if _recent_dispatch(root):
+        return 0
+    # A fresh, content-bound section-pack is the deterministic equivalent of the
+    # discovery agent (WS2) -- accept it in lieu of a dispatch. Fail-closed: a
+    # stale/absent/mismatched receipt does not satisfy the gate.
+    if _fresh_section_pack(root):
+        try:
+            import _offload_log
+            _offload_log.log_event(root, "receipt-accepted",
+                                   "agent_dispatch_required",
+                                   "fresh section-pack satisfied the gate")
+        except Exception:
+            pass
         return 0
     path = ti.get("file_path") or ti.get("path") or ""
     rel = path.split("/impossible-os/", 1)[-1] if "/impossible-os/" in path else path

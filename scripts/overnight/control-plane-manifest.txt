@@ -29,3 +29,7 @@ scripts/overnight/
 
 # Commit-time gate the runner's own section commits must pass
 .claude/hooks/section_commit_gate.py
+
+# Enforcement gates whose weakening could let unreviewed/unexplored work through
+.claude/hooks/agent_dispatch_required.py
+.claude/hooks/review_dispatch_gate.py
