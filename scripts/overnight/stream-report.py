@@ -12,8 +12,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime
+
+# A Bash command that is really a code SEARCH (grep/rg/find/...). Split out so
+# the report can prove whether an optimization actually cut main-loop search
+# volume rather than just moving it into a subagent.
+_SEARCH_RE = re.compile(
+    r"(?:^|[|;&`]|\$\()\s*(?:rg|grep|egrep|fgrep|find|ag|ack|locate)\b")
 
 
 def stamp() -> str:
@@ -221,6 +228,11 @@ class SectionMetrics:
         self.agent_dispatches = 0
         self.grep_calls = 0
         self.lsp_calls = 0
+        # Per-origin tool attribution (main loop vs subagent sidechain), so a
+        # report can prove WHICH loop an optimization moved work out of. Keys:
+        # read, grep, glob, bash, bash_search, lsp, agent, edit, other.
+        self.main_tools: dict = {}
+        self.side_tools: dict = {}
 
     def note_model(self, model) -> None:
         """Log the ACTUAL model id from each MAIN-LOOP assistant turn's API
@@ -268,13 +280,35 @@ class SectionMetrics:
             if isinstance(v, int):
                 bucket[k] += v
 
-    def add_tool(self, name: str) -> None:
+    def add_tool(self, name: str, inp=None, sidechain: bool = False) -> None:
+        # Legacy aggregate counters (main + sidechain combined) kept for
+        # back-compat with metrics-report / existing dashboards.
         if name in ("Task", "Agent"):
             self.agent_dispatches += 1
         elif name == "Grep":
             self.grep_calls += 1
         elif name.startswith("mcp__lsp-bridge__"):
             self.lsp_calls += 1
+        # Per-origin split.
+        if name in ("Task", "Agent"):
+            key = "agent"
+        elif name == "Read":
+            key = "read"
+        elif name == "Grep":
+            key = "grep"
+        elif name == "Glob":
+            key = "glob"
+        elif name in ("Edit", "Write", "MultiEdit"):
+            key = "edit"
+        elif name.startswith(("mcp__lsp-bridge__", "mcp__lsp")):
+            key = "lsp"
+        elif name == "Bash":
+            cmd = (inp or {}).get("command", "") if isinstance(inp, dict) else ""
+            key = "bash_search" if _SEARCH_RE.search(cmd or "") else "bash"
+        else:
+            key = "other"
+        bucket = self.side_tools if sidechain else self.main_tools
+        bucket[key] = bucket.get(key, 0) + 1
 
     def flush(self, marker: str) -> None:
         if not self.path:
@@ -290,6 +324,8 @@ class SectionMetrics:
             "agent_dispatches": self.agent_dispatches,
             "grep_calls": self.grep_calls,
             "lsp_calls": self.lsp_calls,
+            "main_tools": self.main_tools,
+            "sidechain_tools": self.side_tools,
             "model": self.model_seen,
             "effort": os.environ.get("OVERNIGHT_EFFORT") or None,
         }
@@ -316,7 +352,7 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
                 emit(block["text"])
             elif block.get("type") == "tool_use":
                 name = block.get("name", "unknown")
-                metrics.add_tool(name)
+                metrics.add_tool(name, block.get("input"), sidechain=sidechain)
                 summary = summarize_tool(name, block.get("input"))
                 emit(f"tool: {name}  {summary}".rstrip())
                 if name == "Bash":

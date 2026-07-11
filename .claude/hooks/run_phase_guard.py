@@ -706,6 +706,16 @@ def cli(argv):
         # watchdog relaunches a fresh session. No custom watcher.
         state["rollover"] = {"pending": True, "epoch": int(time.time())}
         save_state(state)
+        # Durable checkpoint so the relaunched session loads settled facts
+        # (section-pack digest, receipts, review status) instead of
+        # rediscovering them. Best-effort -- never blocks the rollover.
+        try:
+            subprocess.run(
+                ["python3", str(repo_root()
+                                / "scripts/overnight/section-checkpoint.py"),
+                 "write"], cwd=str(repo_root()), capture_output=True, timeout=30)
+        except Exception:
+            pass
         print("[sequencer] rollover VERIFIED: clean tree, pushed, graph OK, "
               "receipts content-valid, no outstanding jobs. Final-answer now "
               "with a one-line checkpoint summary and END the turn -- the "

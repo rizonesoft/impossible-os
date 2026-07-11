@@ -153,6 +153,24 @@ def test_model_inherit_skips_validation():
         assert "model confirmed: claude-sonnet-5-20260101" in out
 
 
+def test_main_vs_sidechain_tool_attribution():
+    # The whole point: prove which LOOP an optimization moved work out of.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=1), [("Read", {"file_path": "a.c"})]),          # main read
+            _assistant(_usage(o=1), [("Bash", {"command": "rg foo src/"})]),    # main bash-search
+            _assistant(_usage(o=1), [("Bash", {"command": "make -j"})]),        # main bash (not search)
+            _assistant(_usage(o=1), [("Grep", {"pattern": "x"})], parent="p1"),  # sidechain grep
+            _assistant(_usage(o=1), [("Read", {"file_path": "b.c"})], parent="p1"),  # sidechain read
+            {"type": "result", "result": "done", "usage": _usage(o=1)},
+        ]
+        _run(events, mp)
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["main_tools"] == {"read": 1, "bash_search": 1, "bash": 1}, rec["main_tools"]
+        assert rec["sidechain_tools"] == {"grep": 1, "read": 1}, rec["sidechain_tools"]
+
+
 def test_no_env_writes_nothing():
     payload = json.dumps(_assistant(_usage(o=1))) + "\n"
     env = {k: v for k, v in os.environ.items() if k != "OVERNIGHT_METRICS_FILE"}
@@ -169,5 +187,6 @@ if __name__ == "__main__":
     test_sidechain_model_ignored()
     test_duplicate_message_id_counts_once()
     test_model_inherit_skips_validation()
+    test_main_vs_sidechain_tool_attribution()
     test_no_env_writes_nothing()
     print("PASS: stream-report metrics")
