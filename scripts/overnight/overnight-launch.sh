@@ -69,12 +69,19 @@ fi
 # rc 3), a watchdog tick must NOT spin up Claude against an unfinished review
 # -- the session-watcher wakes the run the moment the artifacts land. Ready,
 # expired, or absent waits fall through to a normal launch.
+#
+# FAIL-CLOSED: rc 4 (state error) or any unexpected rc is treated like "still
+# pending" -- the launch is SKIPPED, not proceeded. Waking into an unresolved
+# wait on a corrupt/unreadable state file could bypass an unfinished review;
+# the watchdog re-checks on the next tick once state is readable again. Only
+# rc 0 (no wait / ready / expired) proceeds. The `wake` consumption below is
+# what actually clears a satisfied wait; a bare gate error never does.
 WAIT_GUARD="$PROJECT_DIR/.claude/hooks/run_phase_guard.py"
 if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$WAIT_GUARD" ]; then
   WAIT_RC=0
   WAIT_JSON="$(cd "$PROJECT_DIR" && python3 "$WAIT_GUARD" wait-ready 2>/dev/null)" || WAIT_RC=$?
-  if [ "$WAIT_RC" = 3 ]; then
-    echo "WAITING_REVIEW still pending (${WAIT_JSON:-}); launch skipped $(date -Is)"
+  if [ "$WAIT_RC" != 0 ]; then
+    echo "WAITING_REVIEW gate: rc=$WAIT_RC (${WAIT_JSON:-}); launch skipped $(date -Is)"
     exit 0
   fi
 fi

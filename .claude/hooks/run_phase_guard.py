@@ -205,9 +205,16 @@ def load_state():
 
 
 def save_state(state):
+    """ATOMIC write (tmp + os.replace). Truncate-and-write let a concurrent
+    reader (watcher poll, launcher gate) see partial JSON and misread it as
+    'no active wait' -- which bypasses an unfinished review (2026-07-11)."""
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with STATE_PATH.open("w", encoding="utf-8") as fh:
+    tmp = STATE_PATH.with_suffix(f".{os.getpid()}.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
         json.dump(state, fh, indent=1)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(str(tmp), str(STATE_PATH))
 
 
 def _skill_name(tool_input):
@@ -409,7 +416,7 @@ def _wait_expired(waiting: dict) -> bool:
     return time.time() - since > timeout
 
 
-def _spawn_watcher(mode: str) -> int:
+def _spawn_watcher(mode: str, gen: int = 0):
     """Spawn scripts/overnight/session-watcher.sh OUTSIDE the calling
     session's systemd cgroup. setsid alone is NOT enough: the headless run
     lives in a systemd service, and when its main process exits (the very
@@ -421,32 +428,61 @@ def _spawn_watcher(mode: str) -> int:
     Returns the pid (or unit-tagged 1 for systemd-run), 0 on failure."""
     script = repo_root() / "scripts/overnight/session-watcher.sh"
     if not script.exists():
-        return 0
+        return (0, "")
     log = repo_root() / ".claude/overnight/watcher.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     unit = f"seq-watcher-{mode}-{os.getpid()}-{int(time.time())}"
     try:
         env_pass = [f"--setenv={k}={v}" for k, v in os.environ.items()
-                    if k.startswith("OVERNIGHT_") or k in ("PATH", "HOME")]
+                    if k.startswith("OVERNIGHT_")
+                    or k in ("PATH", "HOME", "SEQ_WATCHER_POLL_SECS")]
         r = subprocess.run(
             ["systemd-run", "--user", "--collect", f"--unit={unit}",
-             *env_pass, "/bin/bash", str(script), str(repo_root()), mode],
+             *env_pass, "/bin/bash", str(script), str(repo_root()), mode,
+             str(gen)],
             capture_output=True, timeout=15)
         if r.returncode == 0:
             with log.open("a") as fh:
-                fh.write(f"spawned watcher via systemd-run unit {unit}\n")
-            return 1  # alive-in-own-scope; pid tracked by systemd
+                fh.write(f"spawned watcher gen={gen} via systemd-run "
+                         f"unit {unit}\n")
+            return (1, unit)  # own scope; lifecycle owned by systemd
     except Exception:
         pass
     try:
         with log.open("a") as fh:
             p = subprocess.Popen(
-                ["bash", str(script), str(repo_root()), mode],
+                ["bash", str(script), str(repo_root()), mode, str(gen)],
                 stdout=fh, stderr=fh, stdin=subprocess.DEVNULL,
                 start_new_session=True, cwd=str(repo_root()))
-        return p.pid
+        return (p.pid, "")
     except Exception:
-        return 0
+        return (0, "")
+
+
+def _cancel_watcher(entry: dict) -> None:
+    """Cancel a superseded/consumed watcher by its systemd UNIT (the reliable
+    handle -- the systemd path records pid 1, so a pid-only cancel could never
+    stop it and let a stale generation double-wake). Falls back to the pid for
+    the non-systemd spawn path. Best-effort, never raises."""
+    if not isinstance(entry, dict):
+        return
+    unit = entry.get("watcher_unit")
+    if unit:
+        try:
+            subprocess.run(["systemctl", "--user", "stop", str(unit)],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass
+        return
+    try:
+        pid = int(entry.get("watcher_pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid > 1:  # never signal pid 0/1 (spawn-failure / init)
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
 
 
 def _rollover_failures(root: Path, state: dict) -> list:
@@ -454,11 +490,19 @@ def _rollover_failures(root: Path, state: dict) -> list:
     reason the worker context may NOT rotate yet."""
     fails = []
     try:
-        out = subprocess.run(["git", "status", "--porcelain", "-uno"],
+        # UNTRACKED FILES COUNT (-uall): a stranded new file is uncommitted
+        # state a fresh worker must not inherit silently. The old `-uno`
+        # called a tree with untracked junk "clean" (2026-07-11).
+        out = subprocess.run(["git", "status", "--porcelain", "-uall"],
                              cwd=str(root), capture_output=True, text=True,
                              timeout=30)
-        if out.returncode != 0 or out.stdout.strip():
-            fails.append("tree not clean (tracked changes present)")
+        if out.returncode != 0:
+            fails.append("git status unavailable")
+        elif out.stdout.strip():
+            dirty = [ln for ln in out.stdout.splitlines() if ln.strip()]
+            untracked = sum(1 for ln in dirty if ln.startswith("??"))
+            fails.append(f"tree not clean ({len(dirty)} change(s), "
+                         f"{untracked} untracked)")
     except Exception:
         fails.append("git status unavailable")
     try:
@@ -489,9 +533,26 @@ def _rollover_failures(root: Path, state: dict) -> list:
         ok, why = mod.check_build(root)
         if not ok:
             fails.append(f"build receipt not content-valid ({why})")
+        # Test + smoke receipts: a rollover asserts a green checkpoint, so the
+        # test suite (and, for boot-path work, the smoke test) must be
+        # content-valid over the current tree, not just the build.
+        try:
+            t_ok, t_why = mod.check_suite(root, "all")
+            if not t_ok:
+                fails.append(f"test receipt not content-valid ({t_why})")
+        except Exception:
+            fails.append("test receipt missing (record with receipts.py "
+                         "record-suite . all after a green test.sh)")
+        try:
+            s_ok, s_why = mod.check_suite(root, "smoke")
+            if not s_ok:
+                fails.append(f"smoke receipt not content-valid ({s_why})")
+        except Exception:
+            fails.append("smoke receipt missing (record with receipts.py "
+                         "record-suite . smoke after a green test-smoke.sh)")
     except Exception as exc:  # noqa: BLE001
-        fails.append(f"build receipt check unavailable ({exc})")
-    # No outstanding review obligation.
+        fails.append(f"build/test receipt check unavailable ({exc})")
+    # No outstanding review obligation. Fail CLOSED on unreadable state.
     review_state = root / ".claude/state/last-codex-review.json"
     if review_state.exists():
         try:
@@ -499,7 +560,20 @@ def _rollover_failures(root: Path, state: dict) -> list:
             if rs.get("received") is not True:
                 fails.append("outstanding Codex review not yet received")
         except (OSError, ValueError):
-            fails.append("last-codex-review.json unreadable")
+            fails.append("last-codex-review.json unreadable (fail-closed)")
+    # No outstanding background jobs: a running codex-review or seq-watcher
+    # unit means work is in flight the rollover would strand.
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "list-units", "--state=active",
+             "--no-legend", "codex-rev-*", "seq-watcher-*"],
+            capture_output=True, text=True, timeout=10)
+        jobs = [ln.split()[0] for ln in out.stdout.splitlines() if ln.strip()]
+        if jobs:
+            fails.append(f"outstanding background job(s) still active: "
+                         f"{', '.join(jobs[:4])}")
+    except Exception:
+        pass  # systemctl absent -> cannot enumerate; not a hard fail
     if state.get("waiting"):
         fails.append("a WAITING_REVIEW wait is still declared")
     return fails
@@ -763,56 +837,71 @@ def cli(argv):
                   "its completion pattern -- nothing to wait for. Read the "
                   "verdict(s) and continue.", file=sys.stderr)
             return 1
-        # Replace any prior wait (best-effort kill of its watcher). pids <= 1
-        # are sentinels (1 = systemd-run scope, cleaned up by --collect;
-        # 0 = spawn failure) -- signalling them would hit init or our own
-        # process group.
-        prior = state.get("waiting") or {}
-        try:
-            prior_pid = int(prior.get("watcher_pid") or 0)
-        except (TypeError, ValueError):
-            prior_pid = 0
-        if prior_pid > 1:
-            try:
-                os.kill(prior_pid, 15)
-            except OSError:
-                pass
-        waiting["watcher_pid"] = _spawn_watcher("wait")
+        # Supersede any prior wait: cancel its watcher (by UNIT, the reliable
+        # handle -- pid was recorded as 1 for the systemd path and could never
+        # be cancelled, producing duplicate wakes) and bump the generation so
+        # a stale watcher that already passed its poll aborts before waking.
+        _cancel_watcher(state.get("waiting") or {})
+        gen = int((state.get("waiting") or {}).get("gen") or 0) + 1
+        waiting["gen"] = gen
+        # PERSIST FIRST, then spawn: the watcher polls wait-ready immediately,
+        # so the wait state must be durable (atomic save) BEFORE the watcher
+        # can read it, or it sees "no wait" and wakes prematurely (2026-07-11).
         state["waiting"] = waiting
         state.pop("woke_from_wait", None)
         save_state(state)
-        print(f"[sequencer] WAITING_REVIEW declared ({len(arts)} artifact(s), "
-              f"timeout {timeout_s}s, watcher pid {waiting['watcher_pid']}). "
-              "Final-answer now with a one-line status -- the Stop hook "
-              "permits this stop and the watcher wakes a fresh session when "
-              "the artifact(s) complete.", file=sys.stderr)
+        pid, unit = _spawn_watcher("wait", gen)
+        # Record the watcher handle for later cancellation (second atomic save;
+        # between the two saves wait-ready already returns "still waiting").
+        waiting["watcher_pid"] = pid
+        waiting["watcher_unit"] = unit
+        state["waiting"] = waiting
+        save_state(state)
+        print(f"[sequencer] WAITING_REVIEW declared gen={gen} "
+              f"({len(arts)} artifact(s), timeout {timeout_s}s, "
+              f"watcher {unit or ('pid ' + str(pid))}). Final-answer now "
+              "with a one-line status -- the Stop hook permits this stop and "
+              "the watcher wakes a fresh session when the artifact(s) "
+              "complete.", file=sys.stderr)
         return 0
     if cmd == "wait-ready":
         # Launcher/watcher query. Exit 0 = proceed with a launch (no wait, or
-        # artifacts ready, or wait expired); exit 3 = still waiting.
-        w = state.get("waiting") or {}
+        # artifacts ready, or wait expired); exit 3 = still waiting; exit 4 =
+        # STATE ERROR (fail-closed: callers must NOT wake on this). The `gen`
+        # lets a watcher confirm it still owns the current wait.
+        try:
+            w = state.get("waiting") or {}
+        except Exception:
+            print(json.dumps({"error": "state unreadable"}))
+            return 4
         if not (isinstance(w, dict) and w.get("artifacts")):
             print(json.dumps({"waiting": False}))
             return 0
         ready = _wait_satisfied(w)
         expired = _wait_expired(w)
         print(json.dumps({"waiting": True, "ready": ready, "expired": expired,
-                          "reason": w.get("reason")}))
+                          "reason": w.get("reason"), "gen": w.get("gen", 0)}))
         return 0 if (ready or expired) else 3
     if cmd == "wake":
         # Called by the launcher right before spinning up Claude: consume the
         # wait and any pending rollover flag, leaving a one-shot note the
-        # fresh session reads via `status`.
+        # fresh session reads via `status`. Cancels the consumed wait's/
+        # rollover's watcher unit so a stale generation cannot double-wake.
+        # DO NOT cancel the consumed wait's/rollover's watcher here: by the
+        # time `wake` runs, that watcher has already exec'd into THIS launcher
+        # (the caller). Its `watcher_unit` is the scope this process runs in --
+        # stopping it is suicide (killed the launcher mid-wake, 2026-07-11).
+        # Stale watchers are handled at supersede time (the `wait` verb cancels
+        # the prior unit) and by the watcher's own generation re-check.
         woke = {}
         w = state.pop("waiting", None)
         if isinstance(w, dict) and w.get("artifacts"):
             woke = {"reason": w.get("reason"),
                     "artifacts": [a.get("path") for a in w["artifacts"]],
                     "ready": _wait_satisfied(w), "expired": _wait_expired(w),
-                    "epoch": int(time.time())}
+                    "gen": w.get("gen", 0), "epoch": int(time.time())}
             state["woke_from_wait"] = woke
-        if isinstance(state.get("rollover"), dict):
-            state.pop("rollover", None)
+        state.pop("rollover", None)
         save_state(state)
         print(json.dumps({"woke_from_wait": woke or None}))
         return 0
@@ -829,8 +918,14 @@ def cli(argv):
                   + "\nFinish/clean these first, or continue in-session.",
                   file=sys.stderr)
             return 1
+        gen = int((state.get("rollover") or {}).get("gen") or 0) + 1
+        # Persist the pending flag FIRST (atomic), then spawn the watcher.
         state["rollover"] = {"pending": True, "epoch": int(time.time()),
-                             "watcher_pid": _spawn_watcher("relaunch")}
+                             "gen": gen}
+        save_state(state)
+        pid, unit = _spawn_watcher("relaunch", gen)
+        state["rollover"]["watcher_pid"] = pid
+        state["rollover"]["watcher_unit"] = unit
         save_state(state)
         print("[sequencer] rollover VERIFIED: clean tree, pushed, graph OK, "
               "receipts content-valid, no outstanding jobs. Final-answer now "

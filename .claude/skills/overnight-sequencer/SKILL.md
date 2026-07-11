@@ -89,18 +89,24 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 
-**Structural waiting is the default (2026-07-11).** When a background wait has
-nothing you can usefully do in parallel, do not hold the session open at all --
-declare the wait and END the session; a non-model watcher wakes a fresh one
-exactly once when the artifacts complete. Zero model turns are spent waiting,
-and no review is skipped (the woken session must still receive the verdict):
+**Structural waiting is MANDATORY for review verdicts -- declare and EXIT
+IMMEDIATELY, never poll first (2026-07-11).** A Codex review whose result gates
+your next step is NEVER absorbed in a foreground poll loop: that burned ~10
+model minutes per review before the wait was even declared (live 2026-07-11;
+the review itself ran ~16 min / peaked 4.6 GB). Instead: broker-dispatch,
+declare the wait, and end the session in the SAME turn -- no `for i in
+$(seq...)` absorb, no "holding for the verdict". A non-model watcher (its own
+systemd scope) wakes a fresh session exactly once when the artifact completes.
+Zero model turns are spent waiting; the woken session still receives the
+verdict.
 
 ```
 # 1. Dispatch the review so it SURVIVES this session's exit (own systemd
 #    scope) -- REQUIRED for anything a wait will watch:
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
 #    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
-# 2. Declare the wait on the broker's logFile(s):
+# 2. Declare the wait on the broker's logFile(s) and END the turn -- do NOT
+#    poll the logFile yourself first:
 python3 .claude/hooks/run_phase_guard.py wait 3600 "codex design review" \
   <logFile> "Turn completed"
 # 3. Final-answer with a one-line status; the Stop hook permits THIS stop.
@@ -133,19 +139,21 @@ python3 .claude/hooks/run_phase_guard.py wait 3600 "codex design review" \
 - The Stop hook REFUSES the stop when the artifacts are already complete --
   that means read the verdict now, not wait.
 
-**In-session waits are the exception**, justified only when you have genuine
-parallel forward work (prep the next section's reads, unrelated TODO edits):
+**In-session waiting is NOT allowed for a gating review verdict** -- that is
+always a structural wait (above). It is permitted ONLY for a NON-gating
+background watch you can genuinely work ALONGSIDE (e.g. a CI run you monitor
+while doing unrelated forward work), and even then:
 
 - **One wait mechanism per wait.** Once a Monitor (or a background Bash with a
   completion condition) is armed, HOLD until it fires: no Bash re-polls, no
   per-poll "holding for the verdict" narrator turns (the 2026-07-02 run burned
   ~1,100 turns on 531 `Holding ...` narrations + 610 manual re-polls).
-- **Prefer ONE foreground Bash call that absorbs a short wait** when the
-  result gates everything anyway and the wait is minutes, not tens of minutes:
-  `for i in $(seq 1 90); do grep -q "Turn completed" <out> && break; sleep 10; done`
-- If Monitor keeps handing control back before its condition is met, that is
-  still "checking the wait" -- do not narrate each resume; for a long stall,
-  convert to a structural wait (`wait` verb) and end the session.
+- **Never poll a review verdict in the foreground.** The moment a review gates
+  your next edit, it is a structural wait -- broker-dispatch, `wait` verb,
+  end the turn. Do not `for i in $(seq...)` / `sleep`-loop on a `logFile`.
+- If a Monitor keeps handing control back before its condition is met, that is
+  still "checking the wait" -- do not narrate each resume; convert it to a
+  structural wait (`wait` verb) and end the session.
 
 ## Procedure
 
