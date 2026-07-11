@@ -145,6 +145,7 @@ static const struct {
     /* --- process / handle / device class --- */
     { (NTSTATUS)0xC0000024,   6    },  /* OBJECT_TYPE_MISMATCH -> INVALID_HANDLE */
     { (NTSTATUS)0xC000010A,   5    },  /* PROCESS_IS_TERMINATING -> ACCESS_DENIED */
+    { STATUS_CHILD_PROCESS_BLOCKED, 367 },  /* -> ERROR_CHILD_PROCESS_BLOCKED */
     { (NTSTATUS)0xC0000010,   1    },  /* INVALID_DEVICE_REQUEST -> INVALID_FUNCTION */
     { (NTSTATUS)0xC00000BB,   50   },  /* NOT_SUPPORTED -> NOT_SUPPORTED */
     /* --- sync class (error-severity) --- */

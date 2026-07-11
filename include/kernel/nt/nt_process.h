@@ -33,6 +33,7 @@ void nt_process_register_ssdt(void);
 #define ProcessWow64Information     26
 #define ProcessImageFileName        27
 #define ProcessSystemCallFilterPolicy 41  /* per-process SSDT filter (Win: ProcessSystemCallDisablePolicy=0x29) */
+#define ProcessMitigationPolicy     52  /* per-process mitigation policy (see nt/mitigation_policy.h) */
 
 /* ---- Thread basic information output ------------------------------------ */
 typedef struct {

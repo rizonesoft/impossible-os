@@ -17,6 +17,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/nt_file.h"
+#include "kernel/nt/mitigation_policy.h"
 #include "kernel/types.h"
 
 /* Local ASCII string compare (no dependency on live libc in the test TU). */
@@ -391,6 +392,78 @@ static void test_rlimit_memlock_hard_ceiling_default(void)
                    "unprivileged raise above a finite MEMLOCK hard ceiling is denied");
 }
 
+/* ---- Per-process mitigation policy (section 11) -------------------------
+ * Pure tests over the task_mitigation_* accessors on a stack-local fixture.
+ * The NtSet/QueryInformationProcess ABI path needs ring-3 user buffers and is
+ * validated at runtime (serial log); these cover the kernel-side invariants:
+ * monotonic set, no-clear, and the child-policy decision helper. */
+
+static struct task s_mit_fixture;
+
+static void mit_fixture_reset(void)
+{
+    s_mit_fixture.mitigation_flags = 0;
+}
+
+static void test_mit_fresh_is_zero(void)
+{
+    mit_fixture_reset();
+    TEST_ASSERT_EQ((int)task_mitigation_get(&s_mit_fixture), 0,
+                   "a fresh task carries no mitigation policy");
+}
+
+static void test_mit_apply_sets_bit(void)
+{
+    mit_fixture_reset();
+    task_mitigation_apply(&s_mit_fixture, MIT_NO_CHILD_PROCESS);
+    TEST_ASSERT((task_mitigation_get(&s_mit_fixture) & MIT_NO_CHILD_PROCESS) != 0,
+                "task_mitigation_apply sets MIT_NO_CHILD_PROCESS");
+}
+
+static void test_mit_apply_is_monotonic(void)
+{
+    mit_fixture_reset();
+    task_mitigation_apply(&s_mit_fixture, MIT_NO_CHILD_PROCESS);
+    /* OR-ing an unrelated bit must not clear the first; re-applying is idempotent. */
+    task_mitigation_apply(&s_mit_fixture, (1ull << 5));
+    task_mitigation_apply(&s_mit_fixture, MIT_NO_CHILD_PROCESS);
+    TEST_ASSERT((task_mitigation_get(&s_mit_fixture) & MIT_NO_CHILD_PROCESS) != 0,
+                "monotonic OR preserves an already-set bit across later applies");
+    TEST_ASSERT((task_mitigation_get(&s_mit_fixture) & (1ull << 5)) != 0,
+                "monotonic OR accumulates additional bits");
+}
+
+static void test_mit_child_set_enables(void)
+{
+    mit_fixture_reset();
+    TEST_ASSERT_EQ(task_mitigation_child_set(&s_mit_fixture,
+                       PROC_MIT_CHILD_NO_CHILD_CREATION), 0,
+                   "NoChildProcessCreation request succeeds");
+    TEST_ASSERT((task_mitigation_get(&s_mit_fixture) & MIT_NO_CHILD_PROCESS) != 0,
+                "child-policy request sets MIT_NO_CHILD_PROCESS");
+}
+
+static void test_mit_child_set_noop_when_unset(void)
+{
+    mit_fixture_reset();
+    /* A request that omits the bit while it is not set is a benign no-op. */
+    TEST_ASSERT_EQ(task_mitigation_child_set(&s_mit_fixture, 0), 0,
+                   "omitting the bit while unset is a benign no-op");
+    TEST_ASSERT_EQ((int)(task_mitigation_get(&s_mit_fixture) & MIT_NO_CHILD_PROCESS), 0,
+                   "no-op request leaves the bit clear");
+}
+
+static void test_mit_child_set_clear_denied(void)
+{
+    mit_fixture_reset();
+    task_mitigation_child_set(&s_mit_fixture, PROC_MIT_CHILD_NO_CHILD_CREATION);
+    /* Omitting the bit once it is set is a clear attempt: refused, bit intact. */
+    TEST_ASSERT_EQ(task_mitigation_child_set(&s_mit_fixture, 0), -1,
+                   "clearing an already-set NO_CHILD is refused");
+    TEST_ASSERT((task_mitigation_get(&s_mit_fixture) & MIT_NO_CHILD_PROCESS) != 0,
+                "a refused clear leaves MIT_NO_CHILD_PROCESS set");
+}
+
 void test_register_proc_ext(void)
 {
     test_suite_register_cat("ProcExt: resolve absolute passthrough",
@@ -445,6 +518,18 @@ void test_register_proc_ext(void)
                             test_rlimit_inherit_copies_full_array, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: rlimit MEMLOCK hard ceiling default",
                             test_rlimit_memlock_hard_ceiling_default, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation fresh is zero",
+                            test_mit_fresh_is_zero, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation apply sets bit",
+                            test_mit_apply_sets_bit, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation apply is monotonic",
+                            test_mit_apply_is_monotonic, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation child-set enables",
+                            test_mit_child_set_enables, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation child-set no-op when unset",
+                            test_mit_child_set_noop_when_unset, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: mitigation child-set clear denied",
+                            test_mit_child_set_clear_denied, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */

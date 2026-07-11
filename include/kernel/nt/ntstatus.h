@@ -75,6 +75,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_REPLY_MESSAGE_MISMATCH       ((NTSTATUS)0xC000021F)  /* ALPC reply MessageId not in PendingQueue */
 #define STATUS_NOT_FOUND                    ((NTSTATUS)0xC0000225)  /* generic not-found (UEFI vars etc.) */
 #define STATUS_INVALID_IMAGE_FORMAT         ((NTSTATUS)0xC000007B)  /* on-disk blob format/bounds/CRC fail */
+#define STATUS_CHILD_PROCESS_BLOCKED        ((NTSTATUS)0xC000049D)  /* child creation blocked by MIT_NO_CHILD_PROCESS */
 
 /* ---- Error codes -- sync ------------------------------------------------- */
 

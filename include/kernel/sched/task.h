@@ -233,6 +233,15 @@ struct task {
      * waits for the reap barrier -- and neither step double-counts. */
     struct syscall_filter *syscall_filter;
     uint8_t syscall_filter_counted;
+    /* --- Per-process mitigation policy (SetProcessMitigationPolicy /
+     * prctl-style hardening) --- monotonic bitmask: bits are only ever set,
+     * never cleared, for a process's lifetime. Set via __atomic_fetch_or
+     * (ACQ_REL) and read via __atomic_load_n (ACQUIRE) through the
+     * task_mitigation_* accessors; a plain |= would drop a concurrent set on
+     * SMP. Zeroed on slot (re)creation like syscall_filter; inherited from the
+     * parent at task_fork (a spawn via NtCreateProcess starts fresh). See
+     * include/kernel/nt/mitigation_policy.h for the MIT_* bit definitions. */
+    uint64_t mitigation_flags;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */
@@ -340,6 +349,18 @@ int task_rlimit_set(struct task *t, int resource, const rlimit_t *nl,
  * RLIM_NLIMITS entries also guarantees a reused slot carries no prior tenant's
  * limits. `child` must not be schedulable yet (no lock is taken on it). */
 void task_rlimit_inherit(struct task *child, struct task *parent);
+
+/* Per-process mitigation policy (mitigation_flags). apply OR-sets bits
+ * atomically (monotonic -- bits are never cleared); get is an acquire load.
+ * Both are SMP-safe: a plain |= would drop a concurrent set. */
+void     task_mitigation_apply(struct task *t, uint64_t add_mask);
+uint64_t task_mitigation_get(struct task *t);
+/* Apply a Win32 ProcessChildProcessPolicy request to t. Monotonic: a
+ * NoChildProcessCreation request OR-sets MIT_NO_CHILD_PROCESS; a request that
+ * omits the bit while it is already set is a clear attempt and is refused.
+ * Returns 0 on success (set, or benign leave-unset), -1 if the request would
+ * clear an already-set MIT_NO_CHILD_PROCESS (caller maps to STATUS_ACCESS_DENIED). */
+int      task_mitigation_child_set(struct task *t, uint32_t child_flags);
 
 /* Resolve `in` (relative or absolute) against the CURRENT task's cwd into a
  * canonical absolute path `out`. The single entry point every NT pathname

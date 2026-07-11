@@ -63,7 +63,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |   8   | Process accounting fields (times, I/O counters)           | §1             |  [/]   |
 | 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [/]   |
 | 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [/]   |
-| 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [ ]   |
+| 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [/]   |
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [ ]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [ ]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
@@ -335,22 +335,28 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > [!NOTE]
 > → XREF: `TODO-10-kernel-security-hardening.md §1` (NX/DEP), `TODO-17-binary-system.md §15` (ASLR), `TODO-17 §12` (CFG), `TODO-12-native-api-ssdt.md §25` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs. This is a deliberate SUBSET of Win11's ~21 `PROCESS_MITIGATION_*` policies -- the high-value ones with an enforcement owner in-tree; CET (IBT/SHSTK) enforcement → `TODO-10-kernel-security-hardening.md §10`, dynamic-code and image-signature policy → `TODO-19-code-integrity-trust-policy.md`.
 
-- [ ] Add `uint64_t mitigation_flags` to `struct task` with bit definitions:
-  - `MIT_DEP_ENABLE (1 << 0)` -- permanent DEP/NX for the process
-  - `MIT_ASLR_FORCE (1 << 1)` -- force ASLR even for non-PIE binaries
-  - `MIT_CFG_STRICT (1 << 2)` -- CFG strict mode (no suppressed exports)
-  - `MIT_NO_CHILD_PROCESS (1 << 3)` -- process cannot create child processes
-  - `MIT_NO_REMOTE_IMAGES (1 << 4)` -- process cannot load images from network paths
-  - `MIT_NO_LOW_INTEGRITY_IMAGES (1 << 5)` -- reject low-integrity DLLs
-  - `MIT_NO_NEW_PRIVS (1 << 6)` -- Linux `PR_SET_NO_NEW_PRIVS` equivalent; exec cannot gain capabilities
-- [ ] `NtSetInformationProcess(ProcessHandle, ProcessMitigationPolicy, &policy, size)`: set mitigation bits; once set, bits cannot be cleared (monotonically increasing restriction)
-- [ ] `NtQueryInformationProcess(ProcessHandle, ProcessMitigationPolicy, ...)`: return current flags
-- [ ] Win32 wrapper: `SetProcessMitigationPolicy(MitigationType, &info, size)` → `NtSetInformationProcess`
-- [ ] Enforce `MIT_NO_CHILD_PROCESS` in `NtCreateProcess` / `task_fork()` path
-- [ ] Inherit mitigation flags from parent at `task_fork()` -- child gets at least the parent's flags
-- [ ] Commit: `"kernel: task -- per-process mitigation policy flags"`
+> Design rule adopted (each flag ships WITH its enforcement, never as dormant state): a bit the setter accepts but nothing enforces is false security. Only `MIT_NO_CHILD_PROCESS` has a live in-tree enforcement owner (child creation), so it is the only bit that ships; every other Win11 policy is added to `mitigation_policy.h` in the same change that wires its enforcement.
 
-**Test checkpoint:** `SetProcessMitigationPolicy(DEP_ENABLE)` sets the bit; subsequent query returns it set. Attempting to clear the bit returns `STATUS_ACCESS_DENIED`. Process with `MIT_NO_CHILD_PROCESS` calling `NtCreateProcess` returns `STATUS_CHILD_PROCESS_BLOCKED`. Serial log shows `"task: mitigation flags updated: 0x<flags>"`. Test on: QEMU WHPX + TCG.
+- [x] `uint64_t mitigation_flags` on `struct task` + `task_mitigation_apply`/`_get` accessors (`__atomic` ACQ_REL/ACQUIRE, monotonic); only `MIT_NO_CHILD_PROCESS (1<<3)` defined (`nt/mitigation_policy.h`)
+- [x] `NtSetInformationProcess(ProcessMitigationPolicy)`: self-only, exact-length, probe+bounce; `ProcessChildProcessPolicy` only (monotonic; clear->ACCESS_DENIED); other flags->NOT_SUPPORTED, reserved->INVALID_PARAMETER
+- [/] `NtQueryInformationProcess(ProcessMitigationPolicy)` deferred: copy_to_user to a range-only-probed buffer is a kernel-write primitive (kernel heap identity-mapped low); NOT_SUPPORTED -> XREF: `TODO-12 §29` + `TODO-02(mm) §4`
+- [x] Enforce `MIT_NO_CHILD_PROCESS` in `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED` -> `ERROR_CHILD_PROCESS_BLOCKED` 367) + `task_fork` (fail -1); checked against creator before allocation
+- [x] Inherit `mitigation_flags` from parent at `task_fork` via a single acquire snapshot committed before `num_tasks++`; zero-init on `task_create`/`task_create_user`
+- [/] DEP/ASLR/CFG/NO_REMOTE_IMAGES/NO_LOW_INTEGRITY flags deferred (no enforcement = false security) -> XREF: `TODO-10 §1` NX/DEP + `TODO-17 §15` ASLR + `§12` CFG + `TODO-19 §9` image enforcement
+- [/] `MIT_NO_NEW_PRIVS` deferred: exec-cannot-gain-caps needs the capability model -> XREF: `TODO-21 §6` (item: "Add `uint64_t capabilities` to `struct task`") + §7
+- [/] Win32 `SetProcessMitigationPolicy` A/W wrapper is user-mode surface -> XREF: `TODO-08-win32-api-surface.md §4`
+- [x] Commit: `"kernel: task -- per-process mitigation policy flags"`
+
+**Test checkpoint:** `task_mitigation_child_set(NoChildProcessCreation)` sets `MIT_NO_CHILD_PROCESS`; a later clear attempt returns -1 (handler maps to `STATUS_ACCESS_DENIED`) with the bit intact; `task_mitigation_apply` is monotonic (an unrelated OR never clears it). A process carrying the bit is blocked from `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED`) and `task_fork` (fail -1). A fork child inherits the parent's `mitigation_flags`. Unsupported policy selectors + Audit/AllowSecure flags return `STATUS_NOT_SUPPORTED`; reserved bits `STATUS_INVALID_PARAMETER`. No POST16 (post-Phase-3; klog is the diagnostic surface). Unit tests: 6 `ProcExt:` mitigation suites (TEST_CAT_SCHED) cover the accessors + child-policy decision; the Nt setter ABI (probe/bounce) is serial-validated on WHPX/TCG (the ring-3 query is deferred -- kernel-write primitive). Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 6 ProcExt mitigation suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- reduced §11 core: `mitigation_flags` on `struct task` + `MIT_NO_CHILD_PROCESS` (sole enforced flag), `nt/mitigation_policy.h` ABI header, and the self-only `NtSetInformationProcess(ProcessMitigationPolicy)` setter (ring-3 query deferred).
+> - **How it integrates** -- monotonic atomic flag (ACQ_REL set / ACQUIRE get); enforced in `NtCreateProcess` + `task_fork`; inherited via one fork snapshot before `num_tasks++`; Codex design + adversarial adoptions in the commit message.
+> - **Downstream effects** -- added `STATUS_CHILD_PROCESS_BLOCKED` (0xC000049D) + its `ERROR_CHILD_PROCESS_BLOCKED` (367) DOS-error mapping to the NTSTATUS tables.
+> - **Canonical doc** -- `include/kernel/nt/mitigation_policy.h` (ABI + `MIT_*` bits + the flag-ships-with-enforcement rule).
+> - **Scope boundary** -- §11 owns the field + child-process policy; DEP/ASLR/CFG/image enforcement -> TODO-10 §1 / TODO-17 §15,§12 / TODO-19 §9; `MIT_NO_NEW_PRIVS` -> §6; Win32 A/W wrapper -> TODO-08 §4.
 
 ## 12. Pledge/Unveil-Style Process Restriction
 
@@ -471,7 +477,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Process accounting            | ✅ ProcessTimes + IoCounters   | ✅ getrusage / times       | ⚠️ §8 fields (ring-3 query deferred) |
 | 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors             |
 | 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                                |
-| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | ⬜ §11                                |
+| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD_PROCESS (rest deferred) |
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                                |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                                |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |

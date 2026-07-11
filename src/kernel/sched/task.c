@@ -31,6 +31,7 @@
 #include "kernel/ob/ob_ns.h"
 #include "kernel/security/token.h"  /* SeCreateSystemToken, NtDuplicateToken, primary-token API */
 #include "kernel/nt/syscall_filter.h"
+#include "kernel/nt/mitigation_policy.h"
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -521,6 +522,33 @@ void task_rlimit_inherit(struct task *child, struct task *parent)
     spin_unlock_irqrestore(&parent->rlimit_lock, flags);
 }
 
+/* --- Per-process mitigation policy (mitigation_flags) -------------------- */
+
+void task_mitigation_apply(struct task *t, uint64_t add_mask)
+{
+    /* Monotonic OR: acquire-release RMW so a concurrent setter on another CPU
+     * cannot lose a bit (a plain t->mitigation_flags |= mask would). */
+    __atomic_fetch_or(&t->mitigation_flags, add_mask, __ATOMIC_ACQ_REL);
+}
+
+uint64_t task_mitigation_get(struct task *t)
+{
+    return __atomic_load_n(&t->mitigation_flags, __ATOMIC_ACQUIRE);
+}
+
+int task_mitigation_child_set(struct task *t, uint32_t child_flags)
+{
+    if (child_flags & PROC_MIT_CHILD_NO_CHILD_CREATION) {
+        task_mitigation_apply(t, MIT_NO_CHILD_PROCESS);
+        return 0;
+    }
+    /* The request omits NoChildProcessCreation. If the policy is already set,
+     * this is an attempt to clear an irreversible restriction -- refuse it. */
+    if (task_mitigation_get(t) & MIT_NO_CHILD_PROCESS)
+        return -1;
+    return 0;  /* not set, not being set: benign no-op */
+}
+
 int task_rlimit_get(struct task *t, int resource, rlimit_t *out)
 {
     uint64_t flags;
@@ -673,6 +701,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
+    tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -839,6 +868,7 @@ int task_create_user(task_entry_t entry, const char *name)
     }
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
+    tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -1495,9 +1525,24 @@ int task_fork(struct interrupt_frame *frame)
     uint64_t parent_pid_val = current_task;
     struct syscall_filter *inherited_filter = (struct syscall_filter *)0;
     ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
+    uint64_t parent_mit;
 
     if (num_tasks >= TASK_MAX) {
         klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
+        return -1;
+    }
+
+    /* Single parent mitigation snapshot used for BOTH the NO_CHILD reject and
+     * child inheritance, so an in-flight parent policy change linearizes at
+     * this one acquire load (the child either fully predates or fully postdates
+     * it). MIT_NO_CHILD_PROCESS: a fork is child creation, so a parent that
+     * pledged no children cannot fork -- reject before any allocation. */
+    parent_mit = __atomic_load_n(&tasks[parent_pid_val].mitigation_flags,
+                                 __ATOMIC_ACQUIRE);
+    if (parent_mit & MIT_NO_CHILD_PROCESS) {
+        klog(LOG_WARN, "sched",
+             "task_fork: blocked by MIT_NO_CHILD_PROCESS (pid %u)",
+             (uint64_t)parent_pid_val);
         return -1;
     }
 
@@ -1663,6 +1708,11 @@ int task_fork(struct interrupt_frame *frame)
      * inherit a prior tenant's impersonation token. */
     tasks[child_pid].token = inherited_token;
     tasks[child_pid].threads[0].impersonation_token = (void *)0;
+
+    /* Inherit the parent's mitigation policy from the single fork snapshot,
+     * committed before num_tasks++ publishes the child so it can never run with
+     * weaker mitigations than its parent (monotonic-restriction inheritance). */
+    tasks[child_pid].mitigation_flags = parent_mit;
 
     /* Fresh accounting for the child: its own times/I/O/ctxsw start at zero and
      * CreateTime is stamped at fork (a fork child is a distinct process, not a
