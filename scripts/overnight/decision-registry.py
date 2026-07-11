@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Indexed decision registry -- settled questions get an ID, not re-research.
+
+Deterministically extracts approved decisions from their three authoritative
+homes and builds a searchable index, so agents and the main session cite a
+decision ID instead of re-deriving (or worse, re-litigating) it:
+
+  1. todo/answers.md               operator answers (`A: (operator, DATE)`)
+                                   and proposed defaults (`A: (proposed ...)`)
+  2. Accepted/Deferred stamp XREFs from build/todo-cache.json (ownership
+                                   decisions: who owns what, what was parked)
+  3. CLAUDE.md pinned decisions    `##`/`###` sections whose text contains a
+                                   pin marker (pinned / permanently / policy /
+                                   deliberate divergence / never / MUST)
+
+  decision-registry.py build [PROJECT]         rebuild the index
+  decision-registry.py search <terms...>       keyword search (AND), top 10
+  decision-registry.py get <id>                full record
+
+Index: .claude/state/decision-registry.jsonl. IDs are content hashes --
+stable while the decision text is unchanged, new ID when it is amended
+(an agent citing a dead ID is told to re-check the source).
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+INDEX_REL = ".claude/state/decision-registry.jsonl"
+PIN_RE = re.compile(r"(?i)\b(pinned|permanently|policy|deliberate divergence"
+                    r"|never|must not|hard rule)\b")
+
+
+def _mk(kind: str, source: str, title: str, body: str) -> dict:
+    body = re.sub(r"\s+", " ", body).strip()[:900]
+    did = hashlib.sha256(f"{kind}\0{title}\0{body}".encode()).hexdigest()[:12]
+    return {"id": did, "kind": kind, "source": source,
+            "title": title.strip()[:160], "body": body}
+
+
+def extract_answers(root: Path) -> list:
+    p = root / "todo/answers.md"
+    out = []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    # Q/A blocks: a `Q:` line followed by an `A: (...)` line.
+    q = None
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith(("Q:", "**Q:")):
+            q = s.lstrip("*").lstrip("Q:").strip()
+        elif s.startswith(("A:", "**A:")) and q:
+            out.append(_mk("operator-answer", "todo/answers.md", q,
+                           s.lstrip("*").lstrip("A:").strip()))
+            q = None
+    return out
+
+
+def extract_stamp_xrefs(root: Path) -> list:
+    out = []
+    try:
+        cache = json.loads((root / "build/todo-cache.json").read_text())
+        entries = cache if isinstance(cache, list) else cache.get("entries", [])
+    except (OSError, ValueError):
+        return out
+    for e in entries:
+        for x in e.get("stamps_xrefs") or []:
+            if not isinstance(x, dict):
+                continue
+            kind = (x.get("kind") or "").lower()
+            if kind not in ("accepted", "deferred"):
+                continue
+            tgt = x.get("target") or x.get("target_file") or ""
+            body = x.get("text") or x.get("raw") or json.dumps(x)
+            out.append(_mk(f"stamp-{kind}", e.get("file_path", ""),
+                           f"{kind}: {e.get('file_path', '')} -> {tgt}", body))
+    return out
+
+
+def extract_claude_md(root: Path) -> list:
+    out = []
+    try:
+        text = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    sections = re.split(r"^(#{2,3} .+)$", text, flags=re.M)
+    for i in range(1, len(sections) - 1, 2):
+        title = sections[i].lstrip("# ").strip()
+        body = sections[i + 1]
+        if PIN_RE.search(body[:1500]):
+            out.append(_mk("claude-md-policy", "CLAUDE.md", title, body[:1200]))
+    return out
+
+
+def build(root: Path) -> int:
+    records = (extract_answers(root) + extract_stamp_xrefs(root)
+               + extract_claude_md(root))
+    # de-dup by id
+    seen, uniq = set(), []
+    for r in records:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            uniq.append(r)
+    p = root / INDEX_REL
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(json.dumps(r) for r in uniq) + "\n",
+                 encoding="utf-8")
+    print(json.dumps({"built": len(uniq),
+                      "by_kind": {k: sum(1 for r in uniq if r['kind'] == k)
+                                  for k in {r['kind'] for r in uniq}}}))
+    return 0
+
+
+def load(root: Path) -> list:
+    try:
+        return [json.loads(ln) for ln in
+                (root / INDEX_REL).read_text(encoding="utf-8").splitlines()
+                if ln.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def main(argv) -> int:
+    root = Path(".").resolve()
+    if not argv or argv[0] == "build":
+        if len(argv) > 1:
+            root = Path(argv[1]).resolve()
+        return build(root)
+    if argv[0] == "search":
+        terms = [t.lower() for t in argv[1:]]
+        if not terms:
+            print("search needs terms", file=sys.stderr)
+            return 2
+        hits = [r for r in load(root)
+                if all(t in (r["title"] + " " + r["body"]).lower()
+                       for t in terms)]
+        for r in hits[:10]:
+            print(json.dumps({"id": r["id"], "kind": r["kind"],
+                              "title": r["title"],
+                              "body": r["body"][:200]}))
+        if len(hits) > 10:
+            print(json.dumps({"more_available": len(hits) - 10}))
+        return 0 if hits else 1
+    if argv[0] == "get" and len(argv) > 1:
+        for r in load(root):
+            if r["id"] == argv[1]:
+                print(json.dumps(r, indent=1))
+                return 0
+        print(json.dumps({"error": "no such decision id (index stale? "
+                                   "rebuild with `build`; amended decisions "
+                                   "get NEW ids)"}))
+        return 1
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

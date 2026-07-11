@@ -216,10 +216,27 @@ information or judgment; none of this weakens a gate):**
 
 - **Start oriented, not exploring:** `python3
   scripts/overnight/section-manifest.py <todo> <n>` gives the deterministic
-  manifest (open items, likely files, tests, XREFs, gates, blob hashes).
-  Feed it as the seed of the enrichment dispatch (`enrich_with` names the
-  agent); read the manifest + the enriched map, then do your 2-3
-  verification slice reads and design.
+  manifest (open items, likely files, tests, XREFs, gates, blob hashes,
+  complexity verdict). A `SPLIT-RECOMMENDED` complexity verdict is handled
+  BEFORE implementation: split the section (TODO edit, quality pipeline per
+  resulting section), never implement past one worker context. Then build
+  the shared evidence bundle ONCE -- `python3
+  scripts/overnight/evidence-bundle.py --manifest <manifest.json>` -- and
+  reference its `dir` in EVERY agent prompt for this section (parity,
+  coverage, XREF, quality, context agents all consume the same
+  structure.md + diff with lens-specific prompts; nobody re-reads the same
+  source into a fresh sidechain). Read the manifest + the enriched map,
+  then do your 2-3 verification slice reads (FULL source) and design.
+- **Settled questions have IDs, not re-research:** before researching an
+  ABI/ownership/security/architecture question, `python3
+  scripts/overnight/decision-registry.py search <terms>` -- a hit is an
+  approved decision; cite its ID and move on. Rebuild the index after
+  landing decisions (`build`). Agents citing a dead ID re-check the source.
+- **Agent uncertainty contracts are load-bearing:** every mapper response
+  ends with confidence/unknowns/unverified_claims/inputs/escalate. Treat
+  `confidence: low` or `escalate: yes` as "verify everything at file:line
+  yourself"; security/ABI/SMP-sensitive surfaces always escalate to you
+  regardless of the agent's confidence.
 - **Batch coherent edits.** Gather ALL evidence first, then apply ONE
   carefully scoped patch per file (or per concern), then verify -- never
   alternate read/edit/read/edit across the same files (the 2026-07-10 run

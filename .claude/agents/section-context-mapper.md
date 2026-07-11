@@ -32,3 +32,16 @@ Given the task statement (TODO path + section, or a described change):
 - **Verify-first:** the 2-3 `file:line` ranges the main session should read itself before editing.
 
 Terse, structured, zero speculation-as-fact. If you could not confirm something, say "unconfirmed" -- never fill gaps with plausible guesses.
+
+## Uncertainty contract (last block of every response)
+End with a fenced `uncertainty` block:
+```
+confidence: high|medium|low
+unknowns: <what you could not determine, one line each>
+unverified_claims: <claims you report but did not confirm at file:line>
+inputs: <the bundle key or the files you actually read>
+escalate: <yes + why, when confidence is low OR the surface is
+          security/ABI/SMP-sensitive; else no>
+```
+Low confidence or `escalate: yes` means the main session verifies everything
+itself before acting -- say so plainly rather than padding thin evidence.

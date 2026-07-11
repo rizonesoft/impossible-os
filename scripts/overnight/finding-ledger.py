@@ -9,9 +9,19 @@ means the finding (or the content it targets) is genuinely new.
 
   finding-ledger.py id     <kind> <severity> <file:line> <title...>
   finding-ledger.py record <kind> <severity> <file:line> --decision fix|reject|accept
-                     --evidence "<text>" <title...>
+                     [--class <defect-class>] --evidence "<text>" <title...>
   finding-ledger.py lookup <kind> <severity> <file:line> <title...>
   finding-ledger.py list [--todo PATH]
+  finding-ledger.py classes                 promotion report: per defect class,
+                     fixed-finding count; classes at >= 3 are flagged
+                     PROMOTE (build a lint/static-assert/test-helper/hook so
+                     the class is caught deterministically before review)
+
+Defect classes are short kebab-case tags chosen at record time (e.g.
+overflow-guard, raw-user-pointer, lock-misuse, stale-xref,
+unchecked-allocation, missing-error-path, abi-mismatch). Reviewer-to-
+automation promotion: every expensive discovery makes the whole class
+cheaper to detect next time.
 
 Blob binding: the ID includes the CURRENT staged/worktree blob of the target
 file, so the same words against changed content is a different finding (it
@@ -84,13 +94,30 @@ def main(argv) -> int:
             print(json.dumps(e))
         return 0
 
+    if verb == "classes":
+        counts: dict = {}
+        for e in entries:
+            c = e.get("class")
+            if c and e.get("decision") == "fix":
+                counts[c] = counts.get(c, 0) + 1
+        promote = {c: n for c, n in counts.items() if n >= 3}
+        print(json.dumps({
+            "classes": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+            "promote": promote,
+            "note": ("PROMOTE classes have >= 3 fixed findings: create a "
+                     "lint check / _Static_assert pattern / test helper / "
+                     "PreToolUse hook so the class is caught before review, "
+                     "then tag the automation here via a doctrine note.")
+        }, indent=1))
+        return 0
+
     if len(argv) < 5:
         print("usage: finding-ledger.py id|record|lookup <kind> <severity> "
               "<file:line> [flags] <title...>", file=sys.stderr)
         return 2
     kind, severity, loc = argv[1], argv[2], argv[3]
     rest = argv[4:]
-    decision = evidence = None
+    decision = evidence = dclass = None
     if "--decision" in rest:
         i = rest.index("--decision")
         decision = rest[i + 1]
@@ -98,6 +125,10 @@ def main(argv) -> int:
     if "--evidence" in rest:
         i = rest.index("--evidence")
         evidence = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
+    if "--class" in rest:
+        i = rest.index("--class")
+        dclass = rest[i + 1]
         rest = rest[:i] + rest[i + 2:]
     title = " ".join(rest)
     fid = finding_id(root, kind, severity, loc, title)
@@ -112,7 +143,7 @@ def main(argv) -> int:
         entries = [e for e in entries if e.get("id") != fid]
         entries.append({"id": fid, "kind": kind, "severity": severity,
                         "loc": loc, "title": title[:300],
-                        "decision": decision,
+                        "decision": decision, "class": dclass,
                         "evidence": (evidence or "")[:1000],
                         "epoch": int(time.time())})
         save(root, entries)

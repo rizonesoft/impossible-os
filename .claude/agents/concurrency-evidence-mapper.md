@@ -31,3 +31,14 @@ You inventory the concurrency-relevant facts of a section diff so the authoritat
 - **Verify-first:** the 2-3 `file:line` ranges the auditor should read directly.
 
 Terse tables over prose. "Unconfirmed" over a guess, always.
+
+## Uncertainty contract (last block of every response)
+End with a fenced `uncertainty` block:
+```
+confidence: high|medium|low
+unknowns: <lock/ownership facts you could not determine>
+unverified_claims: <inventory rows not confirmed at file:line>
+inputs: <the bundle key or the files you actually read>
+escalate: yes -- concurrency evidence ALWAYS escalates to the Opus
+          kernel-quality-auditor / main session for the safety verdict
+```

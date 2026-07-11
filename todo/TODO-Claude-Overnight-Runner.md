@@ -261,6 +261,36 @@ fix the WORKFLOW, never to skip a gate, review, or test:
   misses later caught by Codex. Retire or revise an agent that adds more
   context than it removes. Inputs: metrics sidecar (main vs sidechain split),
   `offload-report.py`, `section-cost-report.py`, agent-cache hit logs.
+- **Reviewer-to-automation promotion (the compounding rule).** Every Codex
+  finding recorded in the finding ledger carries a `--class` tag
+  (overflow-guard, raw-user-pointer, lock-misuse, stale-xref,
+  unchecked-allocation, missing-error-path, abi-mismatch, ...). When
+  `finding-ledger.py classes` flags a class at >= 3 FIXED findings, the next
+  session in that area MUST promote it into deterministic automation -- a
+  `scripts/lint.sh` check, a `_Static_assert` pattern, a test helper, or a
+  PreToolUse hook -- so the whole class is caught before review, forever.
+  Every expensive discovery makes its class cheaper to detect next time.
+- **Review debt converts to tests.** A section that needed 2+ Codex fix
+  rounds leaves behind regression tests (or a promoted deterministic gate)
+  for the bug classes found -- the review taught something; the tests keep
+  the lesson. `complete-todo-file` checks the conversion happened.
+- **Cost-ordered work inside every section.** Cheap structural validation
+  (manifest, lint, todo-graph) -> static analysis + targeted compile ->
+  targeted owning-suite tests -> expensive Codex reviews -> full
+  build/test/smoke boundary gate. A cheap-stage failure STOPS the ladder:
+  never launch reviewers against work that fails a deterministic check.
+- **Shadow mode for new Sonnet routes.** A newly added agent route runs in
+  shadow first: the agent produces its map/recommendation, the main session
+  proceeds exactly as WITHOUT it, and the delta is measured (what the agent
+  missed, what the main session re-read anyway, whether acting on the output
+  would have been safe). Only a route that survives shadow becomes
+  authoritative (default-on). Record shadow runs in the offload events log.
+- **Offline model-routing evaluation, not live experiments.** Before routing
+  a work class to a cheaper model/effort tier, build an eval set from
+  HISTORY (prior section inputs via `section-manifest.py` at the pre-ship
+  commit, the shipped patch, the finding-ledger decisions, test failures)
+  and compare candidates read-only against that ground truth. Live kernel
+  work is never the first experiment.
 - **Decision capsules (EXPERIMENTAL, A/B-gated, default OFF).** Protocol for
   a future A/B leg only -- never a default: a short high-effort session
   produces a content-bound implementation/review plan (bound to the section

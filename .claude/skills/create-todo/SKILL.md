@@ -19,6 +19,7 @@ description: Create lean project TODO files under todo/, choose the correct doma
 > - **Consider architectural trade-offs** -- document why this approach was chosen over alternatives.
 > - **Define clear milestones** -- each `## N.` section is a milestone with a commit checkpoint.
 > - **Sequence dependencies correctly** -- the Implementation Order table IS the dependency graph.
+> - **Budget section complexity at authoring time.** Estimate per section: files touched, subsystems, expected LOC, ABI impact, and tests. A section likely to exceed ONE fresh worker context gets split NOW (each resulting section runs the full quality pipeline) -- splitting during implementation costs a wasted context. Rule of thumb (mirrors `scripts/overnight/section-manifest.py` complexity verdict): > 8 files, > 12 checklist items, > 3 subsystems, or ABI impact + a wide item list means split.
 > - **Make it executable** -- someone (human or AI) should be able to follow §1 through §N without guessing.
 > - **Plan for credible completeness** -- do not stop at the obvious happy-path steps. Include adjacent work needed so the feature feels real, wired, testable, and not one missing piece away from a scope-gap stub.
 > - **Plan for competitive advantage** -- parity with Win11 and Linux is the floor. Capture the cleaner, faster, or more refined design choices that make Impossible OS better where that is feasible.

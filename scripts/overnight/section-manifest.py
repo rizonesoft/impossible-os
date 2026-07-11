@@ -132,12 +132,38 @@ def main(argv) -> int:
         if len(parts) >= 4:
             blobs[entry.split("\t", 1)[1]] = parts[1]
 
+    # Complexity budget (authoring-time split signal): a section likely to
+    # exceed one fresh worker context should be SPLIT before implementation;
+    # the quality pipeline runs per resulting section either way.
+    subsystems = sorted({"/".join(f.split("/")[:2]) for f in likely_files})
+    abi_impact = bool(re.search(
+        r"(?i)\b(ABI|NTSTATUS|SSDT|boot_info|struct offset|BOOT_INFO_VERSION"
+        r"|syscall number|PEB|TEB)\b", block))
+    split_reasons = []
+    if len(likely_files) > 8:
+        split_reasons.append(f"{len(likely_files)} files")
+    if len(open_items) > 12:
+        split_reasons.append(f"{len(open_items)} open items")
+    if len(subsystems) > 3:
+        split_reasons.append(f"{len(subsystems)} subsystems")
+    if abi_impact and len(open_items) > 8:
+        split_reasons.append("ABI impact + wide item list")
+    complexity = {
+        "files": len(likely_files) + len(input_files),
+        "subsystems": subsystems,
+        "open_items": len(open_items),
+        "abi_impact": abi_impact,
+        "verdict": ("SPLIT-RECOMMENDED (" + "; ".join(split_reasons) + ")")
+        if split_reasons else "fits-one-context",
+    }
+
     manifest = {
         "todo": todo_rel, "section": n, "heading": heading,
         "open_items": open_items, "done_items": done_items,
         "xrefs": xrefs, "likely_files": likely_files,
         "input_files": input_files, "relevant_tests": tests,
         "required_gates": gates, "blob_hashes": blobs,
+        "complexity": complexity,
         "enrich_with": ("kernel-explorer" if (kernelish or bootish)
                         else "section-context-mapper"),
     }
