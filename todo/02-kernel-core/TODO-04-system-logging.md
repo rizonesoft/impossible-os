@@ -236,7 +236,7 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 > - Scope boundary: the `eventview.exe` viewer and the crash-dump JSON keys are owned by other TODOs (see Accepted XREFs).
 > **Verified:** 2026-06-21 | ship `8956eb92` + review fixes | 6/8 items | build OK | smoke PASS (TCG 2.63s); 3212 kernel + 16 user PASS
 > **Accepted:** [L] no in-OS viewer for `events.jsonl` (raw file / serial only) -> XREF: 13-tools-accessories/TODO-02-event-viewer.md (item: "Open and parse `X:\Logs\events.jsonl` line by line" at line 57)
-> **Accepted:** [L] dump-partition JSON keys (`dump_encryption_state`, `dump_present_on_raw`) not emitted -- blocked on the dump sink existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`DUMP_PARTITION_HEADER` at physical sector 0 of the dump partition" at line 237)
+> **Accepted:** [L] dump-partition JSON keys (`dump_encryption_state`, `dump_present_on_raw`) not emitted -- blocked on the dump sink existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`DUMP_PARTITION_HEADER` at physical sector 0 of the dump partition" at line 242)
 > **Quality reviewed:** 2026-06-21 | Codex 9x (adversarial, consistency, perf, re-adversarial x6) + auditor | 5H+3M+3L fixed | scope: kernel-code-quality
 
 ---
@@ -364,7 +364,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 353)
-> **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 285)
+> **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 290)
 
 ---
 
