@@ -68,7 +68,7 @@ def test_wait_declare_ready_wake():
         r = _guard(fx, "wait-ready")
         assert r.returncode == 0 and json.loads(r.stdout)["ready"] is True
         r = _guard(fx, "stop", env_extra=HEADLESS)
-        assert r.returncode == 2 and "already complete" in r.stderr
+        assert r.returncode == 2 and "SEQ-WAIT-READY" in r.stderr
         # wake consumes the wait and leaves the one-shot note
         r = _guard(fx, "wake")
         assert r.returncode == 0
@@ -119,7 +119,7 @@ def test_lifecycle_routing_block_and_override():
                               "tool_input": {"skill": "validate-todo-file"}})
         # mature file (both stamps) -> Stage 1-2 skill blocked
         r = _guard(fx, "pretool", env_extra=HEADLESS, stdin=payload)
-        assert r.returncode == 2 and "stages_1_2_done" in r.stderr
+        assert r.returncode == 2 and "SEQ-LIFECYCLE" in r.stderr
         # relifecycle override -> allowed once, then consumed
         r = _guard(fx, "relifecycle", "new section 2 appeared in fixture")
         assert r.returncode == 0

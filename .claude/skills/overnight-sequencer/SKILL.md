@@ -104,6 +104,16 @@ python3 .claude/hooks/run_phase_guard.py wait 3600 "codex section review" \
 
 - Batch every outstanding verdict of the wait into ONE declaration (all
   path/pattern pairs must match before the wake).
+- **Multi-kind review rounds go through the broker.** Dispatch each kind as
+  its own `bash scripts/overnight/review-broker-codex-dispatch.sh
+  '[review-kind: X] <todo> <body>'` call (one Bash call per kind, in one
+  parallel message -- the per-kind gate receipts attribute off the command
+  line, so NEVER bundle several dispatches behind one opaque shell command).
+  Then declare ONE wait over the returned logFile paths. On wake, read ONE
+  combined envelope: `python3 scripts/overnight/review-envelope.py .` --
+  per-kind status, every severity-marked finding, artifact path + sha256.
+  Slice-read an artifact only for findings needing full context; never pull
+  whole review transcripts into the session.
 - On resume, `run_phase_guard.py status` shows `woke_from_wait` (also injected
   into the session brief): FIRST read the artifact(s) and receive the review
   (`superpowers:receiving-code-review`), then continue the pipeline.
@@ -237,8 +247,10 @@ For each `## N.` section in Implementation-Order order, classify it with
 
 ### 7. ADVANCE (`phase ADVANCE`)
 
-- Append a one-line Run Log entry to the doctrine file (date, cursor, sections
-  shipped, deferrals). Then `phase TRIAGE` and pick the next file (step 2).
+- Append a one-line Run Log entry to `docs/overnight/run-log.md` (date, cursor,
+  sections shipped, deferrals) -- NOT to the doctrine file (the log is archived
+  there so the doctrine re-read stays small). Then `phase TRIAGE` and pick the
+  next file (step 2).
 
 ## Hard rules (the guard enforces these; do not fight them)
 

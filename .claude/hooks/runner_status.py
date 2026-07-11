@@ -101,15 +101,19 @@ def gotchas(root: Path) -> list[str]:
 
 
 def recent_decisions(root: Path, n: int = 3) -> list[str]:
+    # Run Log archived out of the doctrine file 2026-07-11 (it was 64 KB of
+    # append-only history re-read on every compaction). Archive first; the
+    # doctrine split remains as fallback for pre-archive checkouts.
     try:
-        text = (root / DOCTRINE_REL).read_text(encoding="utf-8")
+        text = (root / "docs/overnight/run-log.md").read_text(encoding="utf-8")
     except Exception:
-        return []
-    after = text.split("## Run Log", 1)
-    if len(after) < 2:
-        return []
-    entries = [ln.strip() for ln in after[1].splitlines()
-               if ln.strip().startswith("- ")]
+        try:
+            text = (root / DOCTRINE_REL).read_text(encoding="utf-8")
+            text = text.split("## Run Log", 1)[1] if "## Run Log" in text else ""
+        except Exception:
+            return []
+    entries = [ln.strip() for ln in text.splitlines()
+               if ln.strip().startswith("- 20")]
     return [_clip(e) for e in entries[-n:]]
 
 

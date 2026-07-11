@@ -198,22 +198,18 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
     # AskUserQuestion is never allowed inside the unattended run.
     if tool_name == "AskUserQuestion":
         return False, (
-            "[sequencer] AskUserQuestion is blocked during an unattended run. "
-            "Decide with the conservative/no-op choice and log the assumption, "
-            "or DEFER the item (mark [/] + a Deferred stamp with an XREF) and "
-            "advance. The run never stops to ask. "
-            "(todo/TODO-Claude-Overnight-Runner.md hard rules.)")
+            "[SEQ-ASK] blocked: decide conservatively + log the assumption, or "
+            "defer ([/] + Deferred awaiting-answer + XREF) and advance. "
+            "Details: docs/infrastructure/hook-codes.md#seq-ask")
 
     # The unattended run must never tear itself down. Disarm/clear/stop is a
     # human-only operation, performed from an interactive session (where the
     # OVERNIGHT_SEQUENCER_RUN discriminator is absent and this guard is inert).
     if tool_name == "Bash" and _is_self_teardown(tool_input.get("command", "")):
         return False, (
-            "[sequencer] self-teardown blocked: the unattended run cannot "
-            "disarm, clear the guard, remove the armed marker, or stop its own "
-            "service. Only the human operator ends the run, from an interactive "
-            "session, via `bash .claude/skills/overnight-sequencer/"
-            "arm-sequencer.sh --disarm`. Keep going -- continue the pipeline.")
+            "[SEQ-TEARDOWN] blocked: disarm/clear/stop is human-only. Keep "
+            "going -- continue the pipeline. "
+            "Details: docs/infrastructure/hook-codes.md#seq-teardown")
 
     # Armed but not yet started: force the redirect onto overnight-sequencer.
     if not active and armed:
@@ -222,11 +218,9 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             if sk == "overnight-sequencer":
                 return True, ""
             return False, (
-                "[sequencer] ARMED unattended run: your only valid skill right now "
-                "is Skill(overnight-sequencer), which drives the per-file pipeline "
-                "from todo/TODO-Claude-Overnight-Runner.md. Do NOT run the generic "
-                "overnight-runner flow or any other skill first. Invoke "
-                "Skill(overnight-sequencer) now.")
+                "[SEQ-REDIRECT] armed run: invoke Skill(overnight-sequencer) "
+                "now (no other skill first). "
+                "Details: docs/infrastructure/hook-codes.md#seq-redirect")
         return True, ""  # Bash / Read / Grep / Glob allowed for setup
 
     # Active run: phase enforcement. (AskUserQuestion already handled above.)
@@ -242,16 +236,11 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
         if (sk in LIFECYCLE_SKILLS and stages_done
                 and not state.get("lifecycle_override")):
             return False, (
-                f"[sequencer] Skill({sk}) blocked: the cursor file already "
-                "carries BOTH `> **Validated:**` and `> **Gap-audited:**` "
-                "stamps (oracle: stages_1_2_done=true). Doctrine Stage 0: "
-                "SKIP Stages 1-2 on a mature file -- run "
-                "`python3 .claude/hooks/run_phase_guard.py phase SECTIONS` "
-                "and proceed to per-section work. If a genuinely NEW `## N.` "
-                "section appeared since the stamps (not just new items in an "
-                "existing section), record the exception first: "
-                "`python3 .claude/hooks/run_phase_guard.py relifecycle "
-                "\"<why>\"` then re-invoke the skill.")
+                f"[SEQ-LIFECYCLE] Skill({sk}) blocked: cursor file is mature "
+                "(both preamble stamps). Run `run_phase_guard.py phase "
+                "SECTIONS` and proceed; for a genuinely NEW section, "
+                "`relifecycle \"<which>\"` first. "
+                "Details: docs/infrastructure/hook-codes.md#seq-lifecycle")
 
     # Sequence-skill ordering: a controlled skill may only fire in a phase
     # that allows it.
@@ -260,12 +249,10 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
         if sk in SEQUENCE_SKILLS and sk not in PHASE_ALLOWED_SKILLS.get(phase, set()):
             allowed = sorted(PHASE_ALLOWED_SKILLS.get(phase, set())) or ["(none)"]
             return False, (
-                f"[sequencer] phase={phase}: Skill({sk}) is out of sequence. "
-                f"Allowed sequence skills in this phase: {', '.join(allowed)}. "
-                "Follow the per-file pipeline (PREFLIGHT -> TRIAGE -> VALIDATE -> "
-                "GAP_AUDIT -> SECTIONS -> FILE_CLOSE -> ADVANCE); transition with "
-                "`python3 .claude/hooks/run_phase_guard.py phase <PHASE>`. "
-                "(todo/TODO-Claude-Overnight-Runner.md per-file pipeline.)")
+                f"[SEQ-PHASE] Skill({sk}) out of sequence in {phase} "
+                f"(allowed: {', '.join(allowed)}). Set the correct phase via "
+                "`run_phase_guard.py phase <PHASE>` and re-invoke. "
+                "Details: docs/infrastructure/hook-codes.md#seq-phase")
 
     # Everything else (Bash, Edit, Write, Read, Grep, Glob, inner-pipeline
     # skills) passes -- the within-section gates govern it.
@@ -502,17 +489,15 @@ def handle_stop():
     if isinstance(w, dict) and w.get("artifacts"):
         if _wait_satisfied(w):
             sys.stderr.write(
-                "[sequencer] do NOT stop: the awaited artifact(s) are already "
-                "complete. Read the verdict(s) now, receive the review, and "
-                "continue the pipeline (the wait is over; run "
-                "`run_phase_guard.py wake` to clear it).\n")
+                "[SEQ-WAIT-READY] artifacts complete -- read the verdict(s), "
+                "receive the review, `run_phase_guard.py wake`, continue. "
+                "Details: docs/infrastructure/hook-codes.md#seq-wait-ready\n")
             return 2
         if _wait_expired(w):
             sys.stderr.write(
-                "[sequencer] do NOT stop: the declared wait EXPIRED without "
-                "the artifact(s) completing. Handle the timeout (re-dispatch "
-                "the review or defer with the captured diagnostic), then "
-                "continue. Run `run_phase_guard.py wake` to clear the wait.\n")
+                "[SEQ-WAIT-EXPIRED] wait timed out -- re-dispatch or defer "
+                "with the diagnostic, `run_phase_guard.py wake`, continue. "
+                "Details: docs/infrastructure/hook-codes.md#seq-wait-expired\n")
             return 2
         sys.stderr.write(
             "[sequencer] stop allowed: WAITING_REVIEW declared -- the "
@@ -539,16 +524,11 @@ def handle_stop():
         return 0
     state = load_state()
     sys.stderr.write(
-        "[sequencer] headless unattended run: do NOT stop. The work unit is the "
-        "ENTIRE queue, not one section or file. A user-reserved decision or a "
-        "per-file blocker is DEFERRED ([/] + Deferred stamp + XREF) and you "
-        "ADVANCE to the next file -- it is NEVER a reason to stop or disarm. "
-        f"pass={state.get('pass_no')} file={state.get('file')} "
-        f"phase={state.get('phase')}. Re-read todo/TODO-Claude-Overnight-Runner.md, "
-        "run `run_phase_guard.py status`, re-invoke Skill(overnight-sequencer), and "
-        "continue. The run ends ONLY on the human's --disarm or an oracle-verified "
-        "`run_phase_guard.py fixpoint` (all work done). The watchdog relaunches any "
-        "death, so a voluntary exit accomplishes nothing.")
+        f"[SEQ-STOP] do not stop (pass={state.get('pass_no')} "
+        f"file={state.get('file')} phase={state.get('phase')}). Defer-and-"
+        "advance, or declare a structural wait (`wait` verb) / verified "
+        "`rollover`. Re-invoke Skill(overnight-sequencer) and continue. "
+        "Details: docs/infrastructure/hook-codes.md#seq-stop")
     return 2
 
 

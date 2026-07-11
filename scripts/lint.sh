@@ -246,6 +246,11 @@ if [ "$#" -eq 0 ]; then
             scripts/test-ai-system.sh) continue ;;
             scripts/todo-graph/*) continue ;;
             *.claude/*) continue ;;
+            # Append-only historical run log (archived out of the doctrine
+            # file 2026-07-11): entries reference TODO numbers/sections AS
+            # THEY WERE at the time; renumbering-drift rules are for live
+            # references, not history.
+            docs/overnight/run-log.md) continue ;;
         esac
         if is_todo_xref_legacy "$relpath"; then
             warn "$relpath" "$linenum" "numeric TODO shorthand (legacy; tracked for cleanup)"
@@ -334,6 +339,11 @@ if [ "$#" -eq 0 ]; then
             scripts/test-ai-system.sh) continue ;;
             scripts/todo-graph/*) continue ;;
             *.claude/*) continue ;;
+            # Append-only historical run log (archived out of the doctrine
+            # file 2026-07-11): entries reference TODO numbers/sections AS
+            # THEY WERE at the time; renumbering-drift rules are for live
+            # references, not history.
+            docs/overnight/run-log.md) continue ;;
         esac
         # Path-based spec-code exemption (NTFS etc.).
         if is_bare_section_spec_code "$relpath"; then
