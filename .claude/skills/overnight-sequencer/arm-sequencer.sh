@@ -108,6 +108,7 @@ write_sequencer_model_dropin() {
       echo "# Overnight model policy captured at arm time (arm-sequencer.sh)."
       [ -n "$ARM_PRIMARY" ] && echo "Environment=OVERNIGHT_MODEL=$ARM_PRIMARY"
       echo "Environment=OVERNIGHT_FALLBACK_MODEL=$ARM_FALLBACK"
+      [ -n "$ARM_EFFORT" ] && echo "Environment=OVERNIGHT_EFFORT=$ARM_EFFORT"
     } > "$d/sequencer-model.conf"
   done
 }
@@ -179,6 +180,11 @@ fi
 WITH_BROWSER=0
 ARM_PRIMARY="opus"         # runner default: Opus primary (see policy block above)
 ARM_FALLBACK="sonnet"      # transient overload fallback; primary re-tried each turn
+ARM_EFFORT=""              # empty = inherit the CLI's saved default (High on this
+                           # host). A/B knob: --effort medium pins the run's
+                           # reasoning effort; metrics records carry the value so
+                           # medium-vs-high legs are comparable. Default stays
+                           # inherit-High until quality holds on medium.
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -193,6 +199,11 @@ while [ $# -gt 0 ]; do
       ;;
     --fallback-model)
       ARM_FALLBACK="${2:?--fallback-model needs a value}"
+      shift 2
+      ;;
+    --effort)
+      ARM_EFFORT="${2:?--effort needs low|medium|high|xhigh|max|inherit}"
+      [ "$ARM_EFFORT" = "inherit" ] && ARM_EFFORT=""
       shift 2
       ;;
     *)
