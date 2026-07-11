@@ -298,15 +298,20 @@ PROMPT_EOF
 #     sessions never received its SessionStart instruction anyway, so the old
 #     contradictory NO_INSIGHTS suppression prompt was dead weight -- removed;
 #     the settings disable is belt-and-suspenders.
-#   - OVERNIGHT_DISALLOWED_TOOLS (comma/space-separated) trims tool schemas
-#     the unattended run never needs; empty = no restriction. Load-bearing
-#     hooks are untouched (never --bare / safe mode).
+#   - Tool-schema trim: the unattended run has a TESTED default denylist
+#     (OVERNIGHT_DISALLOWED_DEFAULT below) of tools it provably never uses.
+#     AskUserQuestion is the safe floor -- run_phase_guard.py HARD-BLOCKS it
+#     in every phase (selftest-covered), so it can never be called
+#     successfully; dropping its schema is pure win. Operators EXTEND (not
+#     replace) via OVERNIGHT_DISALLOWED_TOOLS. Load-bearing HOOKS are always
+#     active (never --bare / safe mode); this trims tool SCHEMAS only.
 STABLE_PROMPT_ARGS=(--exclude-dynamic-system-prompt-sections
   --settings '{"enabledPlugins":{"explanatory-output-style@claude-plugins-official":false}}')
-DISALLOWED_ARGS=()
-if [ -n "${OVERNIGHT_DISALLOWED_TOOLS:-}" ]; then
-  DISALLOWED_ARGS=(--disallowedTools "$OVERNIGHT_DISALLOWED_TOOLS")
-fi
+OVERNIGHT_DISALLOWED_DEFAULT="AskUserQuestion"
+DISALLOWED_TOOLS="$OVERNIGHT_DISALLOWED_DEFAULT"
+[ -n "${OVERNIGHT_DISALLOWED_TOOLS:-}" ] && \
+  DISALLOWED_TOOLS="$DISALLOWED_TOOLS ${OVERNIGHT_DISALLOWED_TOOLS}"
+DISALLOWED_ARGS=(--disallowedTools "$DISALLOWED_TOOLS")
 
 # Stream machine-readable output through the formatter so the report streams
 # progress live (plain text stays silent until the run ends).

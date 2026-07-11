@@ -3535,7 +3535,7 @@ fi
 printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
 BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
     python3 "$BOR_HOOK" 2>/dev/null)"
-if echo "$BOR_OUT2" | grep -q "checks-runner offload"; then
+if echo "$BOR_OUT2" | grep -q "build-offload"; then
     t_pass "build_offload_sections  warns on bare test.sh in SECTIONS phase"
 else
     t_fail "build_offload_sections  expected checks-runner reminder, got: $BOR_OUT2"
@@ -3549,7 +3549,7 @@ printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"ke
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
 BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
     python3 "$BOR_HOOK" 2>/dev/null)"
-if echo "$BOR_OUT3" | grep -q "checks-runner offload"; then
+if echo "$BOR_OUT3" | grep -q "build-offload"; then
     t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
 else
     t_fail "build_offload_type_specific  expected reminder despite unrelated dispatch, got: $BOR_OUT3"

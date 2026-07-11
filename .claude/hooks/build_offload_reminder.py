@@ -38,13 +38,15 @@ _SCRIPT_RE = re.compile(
     r"\bbash\s+scripts/(?:build|test|test-smoke|lint|test-tooling)\.sh\b")
 
 _MSG = (
-    "[checks-runner offload -- not a block] Overnight SECTIONS phase is "
-    "running `{script}` in the MAIN context with no recent Agent dispatch. "
-    "Doctrine (implement-todo-section step 15/16, review-todo-section "
-    "build steps): route loop rebuilds and suite runs through "
-    "Agent(subagent_type=\"checks-runner\") and quote the on-disk artifact "
-    "tail yourself. Measured cost of ignoring this: 91 in-context "
-    "build/test runs in the 2026-07-02 overnight run."
+    "[build-offload -- not a block] Overnight SECTIONS phase is running "
+    "`{script}` bare in the MAIN context. Route it through the DETERMINISTIC "
+    "wrapper (NO model): `bash scripts/overnight/run-artifact.sh <label> -- "
+    "{script}` returns a compact JSON envelope (verdict + error lines + "
+    "artifact path) and tees full output to disk; you quote the tail "
+    "yourself. A green run spends ZERO Sonnet -- dispatch diagnostic-digester "
+    "ONLY on a FAIL envelope. (checks-runner is deprecated for green "
+    "mechanics, 2026-07-11.) Measured cost of the bare path: 91 in-context "
+    "build/test runs floods the 2026-07-02 overnight context."
 )
 
 

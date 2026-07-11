@@ -38,11 +38,13 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    - Read the relevant source file at the cited line numbers.
    - Understand the root cause (not just the symptom).
    - Apply the fix following the `kernel-code-quality` skill gates.
-   - Build **via `Agent(subagent_type="checks-runner", ...)` by DEFAULT** (this
-     IS the iterative fix loop: measured 21 in-context builds on one section,
-     zero checks-runner dispatches). The runner returns PASS/FAIL + failure
-     digest; you quote the `build/build.log` tail yourself and it must show
-     `=== BUILD OK ===`. Repeated symbol lookups across fix rounds go through
+   - Build **via `bash scripts/overnight/run-artifact.sh fixloop -- bash
+     scripts/build.sh` (deterministic, NO model): the iterative fix loop is
+     where context burns (measured 21 in-context builds on one section). The
+     envelope returns verdict + error lines + artifact path; you quote the
+     `build/build.log` tail yourself and it must show `=== BUILD OK ===`.
+     `diagnostic-digester` is for a FAILING artifact only, never a green run.
+     Repeated symbol lookups across fix rounds go through
      lsp-bridge (`definition`/`references`), not inline `bash grep`; when the
      round's fix targets moved to new files, re-dispatch
      `Agent(subagent_type="review-evidence-mapper", ...)` for the fresh

@@ -254,13 +254,29 @@ fix the WORKFLOW, never to skip a gate, review, or test:
   failed edit is repeated unless its relevant input hash changed (receipts,
   agent cache, failure ledger, finding ledger are the oracles) or an explicit
   one-line reason is recorded for the deliberate re-run.
+- **HARD COST CONSTRAINT (2026-07-11): every change is cost-neutral or
+  cost-negative.** No new model call unless it REPLACES a more expensive call
+  and measured total cost (main + sidechain tokens per accepted section)
+  decreases. Corollaries, all enforced above: add no standing Sonnet agents;
+  green builds/tests/CI-status/triage/graph-checks run through deterministic
+  scripts (`run-artifact.sh`, `preflight.py`, `gh run list --json`,
+  `sequencer_triage.py`) and spend NO model; Sonnet is used ONLY to digest a
+  FAILURE or to replace substantial Opus reading (the mapper must replace
+  reading, never supplement it); all mandatory Codex reviews stay intact; new
+  specialties EXTEND an existing agent's checklist rather than spawning one
+  (heap ownership/refcount/teardown -> concurrency-evidence-mapper). A new
+  agent or hook ships only with proven token ROI.
 - **Agent scorecard -- score by NET savings, not dispatch count.** Per agent
   type, periodically assess: main-session requests avoided, main cache-read
   reduction, Sonnet cost added, share of claims the main session rejects at
-  verification, re-dispatch frequency (cache should absorb repeats), and
-  misses later caught by Codex. Retire or revise an agent that adds more
+  verification, re-dispatch frequency (the content cache should absorb
+  repeats -- watch agent-cache `cache-hit` events in `offload-events.jsonl`),
+  and misses later caught by Codex. Retire or revise an agent that adds more
   context than it removes. Inputs: metrics sidecar (main vs sidechain split),
-  `offload-report.py`, `section-cost-report.py`, agent-cache hit logs.
+  `offload-report.py`, `section-cost-report.py` (normalized per accepted
+  section, alongside Critical/High findings + regressions), agent-cache hit
+  log. A/B effort compares NORMAL comparable sections -- never duplicate paid
+  runs of the same section.
 - **Reviewer-to-automation promotion (the compounding rule).** Every Codex
   finding recorded in the finding ledger carries a `--class` tag
   (overflow-guard, raw-user-pointer, lock-misuse, stale-xref,
