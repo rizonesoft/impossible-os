@@ -232,28 +232,32 @@ Capabilities can be inherited across `fork` / `exec` but can only be dropped, ne
 
 > **Deferred:** 2026-07-11 | Depends entirely on §6's capability model (inherit-at-fork, mask-at-exec, `NtDropCapability`, the `child->capabilities` subset-of `parent->capabilities` invariant). §6 is deferred pending the operator's capability-authority decision, so §7 cannot define inheritance/drop semantics on a model that does not exist yet. The drop path also carries §6 finding 2 (atomic `fetch_and` on the shared process-wide mask -- a plain load/AND/store loses concurrent restrictions on SMP), and the exec mask depends on the EIF capabilities header field that is still unspecified (already noted in-item as XREF `TODO-17 §1`). -> XREF `02-kernel-core/TODO-21-process-model-extensions.md §6` (item: "Add `uint64_t capabilities` to `struct task`; system processes get `CAP_ALL = ~0ULL` at kernel init"). Re-enters with §6.
 
-## 8. Process Accounting Fields (Times, I/O Counters, VM Counters)
+## 8. Process Accounting Fields (Times, I/O Counters)
 
-Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`, `ProcessVmCounters`) and Linux (`getrusage`, `times(2)`, `/proc/[pid]/stat`) track per-process resource usage. These fields must exist in `struct task` before TODO-12 §10 can return meaningful data.
+Both Win11 (`NtQueryInformationProcess` with `ProcessTimes`, `ProcessIoCounters`) and Linux (`getrusage`, `times(2)`) track per-process CPU time and I/O. These fields must exist in `struct task` before TODO-12 §10 can return meaningful `ProcessTimes`/`ProcessIoCounters`. VM/fault counters (`ProcessVmCounters`, page-fault counts, working set) are NOT owned here -- see the note below.
 
-- [ ] Add to `struct task`:
-  - `uint64_t create_time_ns` -- set once at `task_create()` from `uptime_ns()`
-  - `uint64_t user_time_ns` -- accumulated in scheduler tick handler when running in ring 3
-  - `uint64_t kernel_time_ns` -- accumulated in scheduler tick handler when running in ring 0
-  - `uint64_t io_read_count`, `io_read_bytes` -- incremented in VFS read path
-  - `uint64_t io_write_count`, `io_write_bytes` -- incremented in VFS write path
-  - `uint64_t minor_faults`, `major_faults` -- split at the `#PF` handler by whether a backing frame was already resident (`ru_minflt`/`ru_majflt`)
-  - `uint64_t vol_ctxsw`, `invol_ctxsw` -- voluntary (yield/block) vs involuntary (preempt) context switches, incremented in the scheduler (`ru_nvcsw`/`ru_nivcsw`)
-  - `uint64_t peak_working_set` -- updated on page allocation; tracks high-water mark
-- [ ] In the scheduler tick ISR: determine ring from saved CS on interrupt frame; add tick duration to `user_time_ns` or `kernel_time_ns`
+> [!NOTE]
+> → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §16` (item: "Add counters to `struct task`: `page_fault_count`, `working_set_pages`, `peak_working_set_pages`, `private_pages`") owns `ProcessVmCounters`, page-fault counts, minor/major fault classification, and residency-based working set. This section owns ONLY times + I/O + context-switch counters and does not add VM/fault fields.
+
+**Accounting model (single-CPU-correct, SMP-approximate):** CPU time uses **statistical tick accounting** -- at each scheduler tick the interrupted ring (the tick ISR's own saved `CS`) decides whether the whole tick quantum is charged to `user_time_ns` or `kernel_time_ns` of the running task. This is classic Linux/NT tick-based accounting; it is exact on the single-CPU BSP scheduler today (a delta-since-last-schedule model over the coarse clock is NOT used -- it under-samples cooperative switches and mis-attributes DPC/callback work). Precise per-CPU cycle accounting is deferred to the SMP scheduler redesign (→ XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md` -- per-CPU run queues + per-CPU `task_current`). Counter fields are `_Atomic uint64_t` accessed RELAXED (independent monotonic counters; no multi-field snapshot coherence is required, so acquire/release is unnecessary).
+
+- [ ] Add to `struct task` (all `_Atomic uint64_t`, RELAXED access):
+  - `create_time_ns` -- monotonic, set once at `task_create()` from `uptime_ns()`
+  - `create_time_filetime` -- absolute FILETIME captured at `task_create()` via `KeQuerySystemTime()` IFF `wall_clock_time_sourced()`; else `FILETIME_NOW_PLACEHOLDER` (stable -- never recomputed, so a later `KeSetSystemTime`/NTP step cannot retroactively move it)
+  - `user_time_ns`, `kernel_time_ns` -- charged per tick by sampled ring (statistical)
+  - `io_read_count`, `io_read_bytes`, `io_write_count`, `io_write_bytes` -- VFS read/write path
+  - `vol_ctxsw`, `invol_ctxsw` -- voluntary (yield/block) vs involuntary (preempt) switches (`ru_nvcsw`/`ru_nivcsw`)
+- [ ] In the scheduler tick ISR: read ring from the tick's saved `CS`; charge one tick quantum to `user_time_ns` (ring 3) or `kernel_time_ns` (ring 0) of the current task
 - [ ] In the scheduler switch path: increment `vol_ctxsw` when the outgoing thread yielded/blocked, `invol_ctxsw` when it was preempted
-- [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on the current task
-- [ ] In `#PF` handler: increment `page_fault_count`, and classify into `minor_faults` vs `major_faults` by whether the frame was already backed
-- [ ] `getrusage(RUSAGE_SELF)` Linux-compat wrapper: populate `struct rusage` (incl. `ru_minflt`/`ru_majflt`/`ru_nvcsw`/`ru_nivcsw`) from task accounting fields
-- [ ] `getrusage(RUSAGE_CHILDREN)`: return usage accumulated from reaped children (fed by §15 reap path)
-- [ ] Commit: `"kernel: task -- process accounting fields for times, I/O, and VM counters"`
+- [ ] In VFS `vfs_read()` / `vfs_write()`: increment `io_read_count`/`io_write_count` and byte counters on `task_current()` (correct on single-CPU; AP-side I/O accounting waits on per-CPU `task_current`)
+- [ ] `NtQueryInformationProcess(ProcessTimes)` / `(ProcessIoCounters)` for the SELF handle: return the accumulated fields; `CreateTime` is the stored absolute `create_time_filetime` (never recomputed from uptime, so it is stable across clock steps)
+- [ ] `getrusage(RUSAGE_SELF)` helper: fill `ru_utime`/`ru_stime`/`ru_nvcsw`/`ru_nivcsw` from these fields (`ru_minflt`/`ru_majflt`/RSS come from §16) -- register the syscall in `10-platform-services/TODO-10-linux-compat.md §4`
+- [ ] Commit: `"kernel: task -- process accounting fields for times and I/O counters"`
 
-**Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` returns non-zero `KernelTime` and `UserTime`. `ProcessVmCounters` returns non-zero `PageFaultCount`. `ProcessIoCounters` returns non-zero `ReadOperationCount` after a file read. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns faults=<F>"` at process exit. `POST16(0xD080)` on entry, `POST16(0xD081)` after struct fields added, `POST16(0xD082)` after scheduler tick ISR instrumented, `POST16(0xD083)` after `#PF` handler instrumented. Range `0xD08x` confirmed free. If crash at 0xD082: scheduler tick ISR modification broke -- revert ISR change and fall back to un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
+> [!NOTE]
+> **Deferred within this section (XREF, not implemented here):** (1) Cross-process `ProcessTimes`/`ProcessIoCounters` via another process's handle -- `task_from_handle()` (`src/kernel/nt/nt_process.c`) currently casts `HANDLE`→PID and cannot safely resolve or ref-hold a *remote* `PROCESS_OBJECT`; blocked on typed process-handle lifetime (→ XREF `02-kernel-core/TODO-12-native-api-ssdt.md §7`, item: "process/thread lifecycle handlers"). (2) `getrusage(RUSAGE_CHILDREN)` -- accumulate from reaped children, fed by §15 reap path (→ XREF `02-kernel-core/TODO-21-process-model-extensions.md §15`, item: "Process Parenting, Reaping, and Wait Semantics"). Both land when their prerequisites ship; self-process accounting is the credible unit for this section.
+
+**Test checkpoint:** After running a process, `NtQueryInformationProcess(ProcessTimes)` on the self handle returns a stable non-1601 `CreateTime` (when the wall clock was sourced) and `KernelTime`/`UserTime` that accumulate over ticks -- statistical, so a short-lived process may show one component as zero while the sum tracks its on-CPU ticks (the checkpoint asserts the sum grows, NOT that both are non-zero). `ProcessIoCounters` returns non-zero `ReadOperationCount`/`ReadTransferCount` after a file read. `vol_ctxsw`+`invol_ctxsw` increase across scheduling. Serial log shows `"task: accounting -- user=<N>ns kernel=<M>ns rio=<R> wio=<W>"` at process exit. `POST16(0xD080)` on entry, `0xD081` after struct fields, `0xD082` after tick-ISR charge wired, `0xD083` after VFS counters wired. Range `0xD08x` confirmed free. If crash at 0xD082: tick-ISR charge broke -- revert the ISR charge and fall back to an un-instrumented tick. Test on: QEMU WHPX + TCG. Verify on bare metal -- ISR timing may differ.
 
 ## 9. Per-Process Resource Limits (rlimits)
 

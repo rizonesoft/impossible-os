@@ -178,6 +178,8 @@ Populate `linux_syscall_table[]`. All translations go through the fd table (§1)
 - [ ] `set_tid_address(218)` → store pointer, return TID (no-op for static apps)
 - [ ] `arch_prctl(158, code, addr)` → `ARCH_SET_FS (0x1002)` → write `MSR_FS_BASE` (TLS); `ARCH_GET_FS (0x1003)` → read `MSR_FS_BASE`
 - [ ] `uname(63, buf)` → fill `struct utsname`: `sysname="Linux"`, `nodename="impossible"`, `release="5.15.0"`, `version="#1"`, `machine="x86_64"` (returns "Linux" to satisfy apps that check kernel identity)
+- [ ] `getrusage(98, who, usage)` → `RUSAGE_SELF` fills `struct rusage` from the §8 task accounting fields (→ XREF `02-kernel-core/TODO-21-process-model-extensions.md §8`); `RUSAGE_CHILDREN` zeros until §21 reap lands
+- [ ] `times(100, buf)` → fill `struct tms` (`tms_utime`/`tms_stime` in clock ticks) from the same §8 `user_time_ns`/`kernel_time_ns`; return elapsed ticks since boot
 
 **Memory:**
 

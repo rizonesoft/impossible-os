@@ -317,17 +317,21 @@ Track system-wide committed virtual memory (sum of all MEM_COMMIT pages across a
 
 ## 16. Process Memory Counters (`GetProcessMemoryInfo`)
 
-Expose per-process memory statistics: working set size, peak working set, page fault count, private bytes. Required for Task Manager, performance monitoring, and process diagnostics. Windows provides `GetProcessMemoryInfo` / `NtQueryInformationProcess(ProcessVmCounters)`; Linux provides `/proc/PID/status` (VmRSS, VmPeak, etc.).
+Expose per-process memory statistics: working set size, peak working set, page fault count (minor/major split), private bytes. Required for Task Manager, performance monitoring, and process diagnostics. Windows provides `GetProcessMemoryInfo` / `NtQueryInformationProcess(ProcessVmCounters)`; Linux provides `/proc/PID/status` (VmRSS, VmPeak) plus `getrusage` `ru_minflt`/`ru_majflt`.
 
-- [ ] Add counters to `struct task`: `page_fault_count`, `working_set_pages`, `peak_working_set_pages`, `private_pages`
-- [ ] Increment `page_fault_count` in the page fault handler
-- [ ] Update `working_set_pages` on commit/decommit; track `peak_working_set_pages` as max
+> [!NOTE]
+> → XREF: `02-kernel-core/TODO-21-process-model-extensions.md §8` (item: "`getrusage(RUSAGE_SELF)` helper") owns the times + I/O + context-switch accounting fields. This section is the SOLE owner of the VM/fault fields: page-fault counts, minor/major classification, and residency-based working set. §8's `getrusage` helper leaves `ru_minflt`/`ru_majflt`/RSS zero until this section populates them.
+
+- [ ] Add counters to `struct task`: `page_fault_count`, `minor_faults`, `major_faults`, `working_set_pages`, `peak_working_set_pages`, `private_pages` (all `_Atomic uint64_t`)
+- [ ] In the `#PF` handler: increment `page_fault_count`, and classify `minor_faults` (backing frame already resident) vs `major_faults` (frame had to be sourced) -- feeds `ru_minflt`/`ru_majflt`
+- [ ] Track `working_set_pages` by actual residency transitions (page mapped-in / evicted), not commit/decommit; track `peak_working_set_pages` as the high-water max
 - [ ] Wire `NtQueryInformationProcess(ProcessVmCounters)` -- return `VM_COUNTERS` struct
 - [ ] Wire `GetProcessMemoryInfo()` Win32 wrapper (psapi.h style)
-- [ ] Surface in `meminfo` shell command per-process: `PID N: RSS X KiB, Peak Y KiB, Faults Z`
+- [ ] Populate the VM fields of §8's `getrusage(RUSAGE_SELF)` (`ru_minflt`/`ru_majflt`/`ru_maxrss`) from these counters (→ XREF `02-kernel-core/TODO-21-process-model-extensions.md §8`)
+- [ ] Surface in `meminfo` shell command per-process: `PID N: RSS X KiB, Peak Y KiB, min/maj F/G`
 - [ ] Commit: `"mm: process memory counters -- GetProcessMemoryInfo + VM_COUNTERS"`
 
-**Test checkpoint:** After booting, `meminfo` shows per-process RSS and fault counts. Page fault count increases on demand-paged access. Peak working set is >= current. Verify on QEMU WHPX, TCG, VBox, bare metal.
+**Test checkpoint:** After booting, `meminfo` shows per-process RSS and minor/major fault counts. Page fault count increases on demand-paged access; a first-touch fault counts as major, a re-map of a resident frame as minor. Peak working set is >= current. Verify on QEMU WHPX, TCG, VBox, bare metal.
 
 ---
 
