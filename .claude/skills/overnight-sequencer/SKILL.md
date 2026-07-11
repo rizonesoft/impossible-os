@@ -35,7 +35,15 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
   progress                mark that this pass shipped/cleared something
   next-pass               start the next full sweep (resets progress)
   fixpoint                run complete -> stops the watchdog
-  status                  print the cursor state
+  status                  print the cursor state (incl. woke_from_wait)
+  relifecycle <reason>    one-shot Stage 1-2 override for a mature file that
+                          grew a genuinely NEW section
+  wait <timeout_s> <reason> <path> <pattern> [...]
+                          declare a structural wait on background artifact(s);
+                          the Stop hook then permits ending the session and a
+                          non-model watcher wakes a fresh one when they finish
+  rollover                verified worker-context rotation after a fully
+                          shipped section (machine-gated; see below)
 ```
 
 ## Situational awareness (read before acting)
@@ -81,40 +89,42 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 
-The single biggest measured token leak of the 2026-07-02 run (~1,100 wasted
-turns): every background wait from section 25 onward was covered by a Monitor
-AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
-610 `Check ... status` Bash polls against only 40 Monitor arms. The rules:
+**Structural waiting is the default (2026-07-11).** When a background wait has
+nothing you can usefully do in parallel, do not hold the session open at all --
+declare the wait and END the session; a non-model watcher wakes a fresh one
+exactly once when the artifacts complete. Zero model turns are spent waiting,
+and no review is skipped (the woken session must still receive the verdict):
+
+```
+python3 .claude/hooks/run_phase_guard.py wait 3600 "codex section review" \
+  /path/to/task1.output "Turn completed" \
+  /path/to/task2.output "Turn completed"
+# then final-answer with a one-line status; the Stop hook permits THIS stop.
+```
+
+- Batch every outstanding verdict of the wait into ONE declaration (all
+  path/pattern pairs must match before the wake).
+- On resume, `run_phase_guard.py status` shows `woke_from_wait` (also injected
+  into the session brief): FIRST read the artifact(s) and receive the review
+  (`superpowers:receiving-code-review`), then continue the pipeline.
+- A wait that EXPIRES (timeout, default 3600s) wakes you anyway -- handle the
+  timeout (re-dispatch or defer with the captured diagnostic).
+- The Stop hook REFUSES the stop when the artifacts are already complete --
+  that means read the verdict now, not wait.
+
+**In-session waits are the exception**, justified only when you have genuine
+parallel forward work (prep the next section's reads, unrelated TODO edits):
 
 - **One wait mechanism per wait.** Once a Monitor (or a background Bash with a
   completion condition) is armed, HOLD until it fires: no Bash re-polls, no
-  per-poll "holding for the verdict" narrator turns. The notification is the
-  signal; emitting turns while waiting buys nothing and burns the budget.
-- **Prefer ONE foreground Bash call that absorbs the whole wait** when you need
-  the result before anything else can proceed:
+  per-poll "holding for the verdict" narrator turns (the 2026-07-02 run burned
+  ~1,100 turns on 531 `Holding ...` narrations + 610 manual re-polls).
+- **Prefer ONE foreground Bash call that absorbs a short wait** when the
+  result gates everything anyway and the wait is minutes, not tens of minutes:
   `for i in $(seq 1 90); do grep -q "Turn completed" <out> && break; sleep 10; done`
-  held a 6-min verdict wait in a SINGLE turn (2026-07-02 log line 1838; a
-  13-min wait at line 497). This is the early-run pattern that later sections
-  regressed away from.
-- **If a manual poll is genuinely unavoidable** (Monitor timed out, host-load
-  slowdown made the ETA unknowable), poll at a 30-60s cadence, never ~10s, and
-  do not narrate between polls.
-- **Batch multi-kind review waits into ONE Monitor condition**
-  (`grep -q A f1 && grep -q B f2 && grep -q C f3`-style, as done correctly at
-  log line 4996) instead of serial per-kind poll clusters -- the section-28
-  antipattern was 43 polls for one verdict, x3 kinds.
-- While a wait is armed you may do UNRELATED forward work (prep the next
-  section's reads, update the cursor) -- what you may not do is spend turns
-  checking or narrating the wait itself.
-- **The "one wait mechanism" rule also covers Monitor's OWN resume cadence.**
-  The 2026-07-04/05 run cut the antipattern above dramatically (67 `Holding`
-  turns / 0 manual re-polls / 29 Monitor arms, vs the 2026-07-02 531/610/40 --
-  real progress) but still showed 3 clusters of 15-20s-interval "Holding..."
-  turns with zero work done between them (a stalled/slow Monitor resuming
-  itself repeatedly). If Monitor keeps handing control back before its
-  condition is met, that is still "checking the wait" even without a manual
-  Bash poll -- do not add a narrator line on every resume; only act (or
-  narrate) once real state changed.
+- If Monitor keeps handing control back before its condition is met, that is
+  still "checking the wait" -- do not narrate each resume; for a long stall,
+  convert to a structural wait (`wait` verb) and end the session.
 
 ## Procedure
 
@@ -126,49 +136,28 @@ AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
 
 ### 1. PREFLIGHT (`phase PREFLIGHT`)
 
-- `bash scripts/todo-graph/build-and-validate.sh --keep-cache` (refresh the oracle).
-- `python3 scripts/overnight/preflight-stamp.py . check` -- exit 0 means the
-  build+test baseline below is ALREADY green for this exact tree (HEAD + dirty
-  diff unchanged since the recorded stamp, < 12h old): note the cached summary
-  in the report and SKIP the `build.sh` + `test.sh` gates, jump to the CI
-  check. Exit 1 (any tree change or expiry) -> run the gates as written.
-- `bash scripts/build.sh` then `tail -1 build/build.log`. If HEAD does NOT show
-  `=== BUILD OK ===`, the tree is broken before any work: try to fix the root
-  cause (it is usually a half-committed change); if it cannot be made green,
-  `run_phase_guard.py fixpoint` with a Run Log note "HEAD broken at preflight"
-  and stop (relaunching cannot help a broken HEAD).
-- `bash scripts/test.sh QUIET=1` -- a green baseline. A FAIL here is the same
-  broken-HEAD case.
-- After BOTH gates are green:
-  `python3 scripts/overnight/preflight-stamp.py . record --summary "<BUILD OK + test PASS line>"`
-  -- an unchanged tree never pays the build+test baseline twice (any commit,
-  tracked edit, or new untracked path invalidates the stamp automatically).
-- **CI check (self-heal red CI instead of pushing past it).** After the local
-  baseline is green, dispatch `Agent(subagent_type="gh-query-runner", ...)` to
-  report the latest `build.yml` + `todo-graph.yml` conclusions and head SHAs
-  (`gh run list --workflow=<wf> --limit 3`). Triage the report:
-  - **failure AND the run's head SHA is an ancestor of local HEAD**
-    (`git merge-base --is-ancestor <sha> HEAD`) -> our pushed work broke CI.
-    Treat it like the broken-HEAD case ABOVE new section work: dispatch
-    gh-query-runner again for the failing step's output (`--log-failed`
-    slices), diagnose the root cause (superpowers:systematic-debugging; the
-    2026-07-03 incident class was non-hermetic fixtures -- reproduce with
-    `git clone --no-local . /tmp/cirepo && TEST_TOOLING_SKIP_LSP_MCP=1 bash
-    scripts/test-tooling.sh` when CI fails but local passes), fix, commit,
-    push, then dispatch gh-query-runner to WATCH the new run to conclusion
-    (`gh run watch --exit-status`; one watch dispatch, no manual poll loops)
-    before starting section work. If it cannot be made green this session,
-    handle as the broken-HEAD case (Run Log note "CI broken at preflight",
-    fixpoint, stop).
-  - **failure but the head SHA is NOT ours** (not an ancestor, or the failing
-    step is provider infra) -> Run Log NOTE and continue; do not chase other
-    branches' failures.
-  - **in_progress / queued** -> NOTE and continue (never wait on a running CI
-    at preflight; the next relaunch re-checks).
-  - **gh unauthenticated or network error** -> NOTE "CI check unavailable"
-    and continue -- the CI check must NEVER block the run on tooling absence.
-    (`gh` IS authenticated headless: rizonesoft token in `~/.config/gh`,
-    scopes include `workflow`.)
+**One deterministic call -- no model-shepherded mechanics, no subagent on the
+success path:**
+
+```
+python3 scripts/overnight/preflight.py .
+```
+
+It runs the todo-graph rebuild, the tree-hash stamp check (an unchanged tree
+never pays the build+test baseline twice), `build.sh` + `test.sh QUIET=1` when
+needed, records the green stamp, and queries CI directly via `gh run list`
+(a JSON query needs no gh-query-runner dispatch). Read the JSON verdict:
+
+- `"ok": true` -> note the one-line baseline in the report and go to TRIAGE.
+- `"ok": false` -> the failures array names each failing step + evidence
+  artifact. Dispatch `diagnostic-digester` (Sonnet) on the named log to
+  digest it; YOU diagnose the root cause and decide the fix
+  (superpowers:systematic-debugging). A broken HEAD that cannot be made green
+  is the fixpoint-and-stop case (Run Log note "HEAD broken at preflight").
+  For `ci` failures (ours_red): dispatch gh-query-runner for `--log-failed`
+  slices, fix, push, then ONE `gh run watch --exit-status` dispatch -- no
+  manual poll loops. CI unavailability is a NOTE in the JSON, never a
+  blocker.
 
 ### 2. TRIAGE (`phase TRIAGE`)
 
@@ -183,16 +172,26 @@ AND a manual ~10s poll loop on top of it -- 531 `Holding ...` narrator turns +
     (or this pass made progress): `run_phase_guard.py next-pass` and TRIAGE again
     -- temporal blockers may now be unblocked. You may ONLY finish via a verified
     fixpoint; never disarm or final-answer otherwise (the Stop hook blocks it).
-  - `{"status":"NEEDS_WORK","file":F}` -> `cursor <domain> F`; go to VALIDATE.
+  - `{"status":"NEEDS_WORK","file":F}` -> `cursor <domain> F`, then **route by
+    the `stages_1_2_done` field IN THE SAME JSON -- never re-run mature
+    lifecycle stages** (the guard hard-blocks Stage 1-2 skills on a file that
+    carries both preamble stamps):
+    - `"stages_1_2_done": true` -> `phase SECTIONS` directly. Do NOT re-run
+      validate/gap-audit (each costs a Codex pass) on a mature file.
+    - `false` with `lifecycle.validated: true` only -> `phase GAP_AUDIT`
+      (skip the already-stamped VALIDATE).
+    - `false` with neither stamp -> `phase VALIDATE` and run both stages.
+    - Exception: a genuinely NEW `## N.` section since the stamps ->
+      `run_phase_guard.py relifecycle "<which section>"` then run Stages 1-2.
   - `{"status":"DONE_UNSTAMPED","file":F}` -> `cursor <domain> F`; skip
     VALIDATE+GAP_AUDIT, go straight to SECTIONS (review-only; the file is
     implemented, just unstamped old-system work).
 
-### 3. VALIDATE (`phase VALIDATE`) -- NEEDS_WORK files only
+### 3. VALIDATE (`phase VALIDATE`) -- NEEDS_WORK files WITHOUT a `Validated:` stamp only
 
 - `Skill(validate-todo-file)` on the cursor file. Fix structural findings.
 
-### 4. GAP_AUDIT (`phase GAP_AUDIT`) -- NEEDS_WORK files only
+### 4. GAP_AUDIT (`phase GAP_AUDIT`) -- NEEDS_WORK files WITHOUT a `Gap-audited:` stamp only
 
 - `Skill(gap-audit-todo)` on the cursor file (runs the mandatory
   `codex-gap-audit` secondary pass). Land the resulting TODO edits before code.
@@ -209,6 +208,18 @@ For each `## N.` section in Implementation-Order order, classify it with
   items, `Skill(implement-todo-item)` is allowed.
 - **Commit AND push after every section** (one atomic act). After a section
   ships+reviews+pushes, `run_phase_guard.py progress`.
+- **Verified session rollover after every fully-shipped section.** A fresh
+  worker context is cheaper and sharper than a long-tail one; the durable
+  cursor (sequencer-run.json) carries all run state. After `progress`, run
+  `python3 .claude/hooks/run_phase_guard.py rollover`:
+  - **VERIFIED** (clean tree, nothing unpushed, todo-graph rebuild OK,
+    content-bound build receipt valid, no unreceived review, no declared
+    wait) -> final-answer with a one-line checkpoint summary. The Stop hook
+    permits exactly this stop; the watcher relaunches a fresh session that
+    resumes from the recorded phase. This is a CONTEXT ROTATION, not a stop
+    -- the run stays armed throughout (doctrine: "Rollover is not a stop").
+  - **REFUSED** -> the listed failures are unfinished work: finish/clean them
+    and continue in-session (never force a rollover past a red gate).
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
   (missing prerequisite owned elsewhere, hardware-only validation, deliberate
   roadmap "no code today"), the implement/review skill marks it `[/]` + a

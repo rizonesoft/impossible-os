@@ -64,6 +64,21 @@ if [ -f "$BACKOFF_FILE" ]; then
   fi
 fi
 
+# Structural-wait gate (2026-07-11): while the run has a declared
+# WAITING_REVIEW wait whose artifacts are not yet complete (guard `wait-ready`
+# rc 3), a watchdog tick must NOT spin up Claude against an unfinished review
+# -- the session-watcher wakes the run the moment the artifacts land. Ready,
+# expired, or absent waits fall through to a normal launch.
+WAIT_GUARD="$PROJECT_DIR/.claude/hooks/run_phase_guard.py"
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$WAIT_GUARD" ]; then
+  WAIT_RC=0
+  WAIT_JSON="$(cd "$PROJECT_DIR" && python3 "$WAIT_GUARD" wait-ready 2>/dev/null)" || WAIT_RC=$?
+  if [ "$WAIT_RC" = 3 ]; then
+    echo "WAITING_REVIEW still pending (${WAIT_JSON:-}); launch skipped $(date -Is)"
+    exit 0
+  fi
+fi
+
 # Concurrency lock: only one launch per project at a time. Watchdog timers can
 # call this freely -- it exits 0 immediately while a run is alive. The kernel
 # releases the flock when the holding process dies (any exit, crash, or kill),
@@ -283,7 +298,21 @@ MODEL_ARGS=()
 OVERNIGHT_MODEL_EFFECTIVE="${OVERNIGHT_MODEL:-opus}"
 [ "$OVERNIGHT_MODEL_EFFECTIVE" != "inherit" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL_EFFECTIVE")
 MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-sonnet}")
-echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback" >> "$REPORT"
+# Effort pin (A/B knob, 2026-07-11): unset/`inherit` keeps the CLI's saved
+# default (this host inherits High). Set OVERNIGHT_EFFORT=medium via
+# `arm-sequencer.sh --effort medium` to run an A/B leg; stream-report tags
+# every metrics record with the effective effort so runs are comparable.
+if [ -n "${OVERNIGHT_EFFORT:-}" ] && [ "$OVERNIGHT_EFFORT" != "inherit" ]; then
+  MODEL_ARGS+=(--effort "$OVERNIGHT_EFFORT")
+fi
+echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback, effort ${OVERNIGHT_EFFORT:-inherit}" >> "$REPORT"
+
+# Consume any declared wait / pending rollover flag (one-shot): this launch IS
+# the wake. `wake` records a woke_from_wait note the fresh session reads via
+# `run_phase_guard.py status` to know it must go receive the verdict first.
+WOKE_JSON="$(cd "$PROJECT_DIR" && python3 "$WAIT_GUARD" wake 2>/dev/null || true)"
+[ -n "$WOKE_JSON" ] && [ "$WOKE_JSON" != '{"woke_from_wait": null}' ] \
+  && echo "woke: $WOKE_JSON" >> "$REPORT"
 # Snapshot for the post-run circuit breaker: a run that ends with HEAD
 # unmoved, a nonzero exit, or a sub-15-min zero-commit session counts as
 # unproductive (run-outcome.py classifies; Codex-runner lesson 2026-07-04).

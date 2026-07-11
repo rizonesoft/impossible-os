@@ -171,6 +171,30 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   FIXPOINT sentinel and auto-disarms the watchdog) or the human's `--disarm`.
   The watchdog relaunches any death; mid-queue voluntary exits accomplish
   nothing.
+- **"The run stays active" vs "the worker context rotates" (2026-07-11).**
+  Two session endings are NOT stops -- in both, the run stays ARMED, the
+  durable cursor (`sequencer-run.json`) carries all state, and a fresh worker
+  session resumes the same run. They are the only guard-sanctioned session
+  endings besides fixpoint/disarm:
+  - **Structural wait (WAITING_REVIEW).** When a background review/agent
+    verdict is the only thing between you and the next action, declare it
+    (`run_phase_guard.py wait <timeout_s> <reason> <artifact> <pattern>
+    [...]`) and end the session. A non-model watcher wakes a fresh session
+    exactly once when every artifact matches its completion pattern (watchdog
+    tick as fallback; expiry wakes you to handle the timeout). Zero model
+    turns are spent holding; no review is skipped -- the woken session reads
+    `woke_from_wait` from `status` and MUST receive the verdict before
+    anything else.
+  - **Verified rollover.** After a section is implemented, reviewed, pushed,
+    and fully stamped, `run_phase_guard.py rollover` machine-verifies the
+    checkpoint -- clean tracked tree, zero unpushed commits, todo-graph
+    rebuild green, content-bound build receipt valid for the current tree,
+    no unreceived Codex review, no declared wait -- and only then permits ONE
+    clean session end; the watcher relaunches a fresh worker context
+    immediately. A REFUSED rollover lists unfinished work: finish it and
+    continue in-session. Rollover exists because a fresh context outperforms
+    a long-tail one; it is never a way to leave work behind (the gates make
+    that impossible).
 - **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own
   smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace),
   `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build).

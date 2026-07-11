@@ -16,8 +16,10 @@ Roles (dispatched on argv[1]):
             watchdog handles real death. Interactive sessions (env unset) are
             never blocked, so the operator is never trapped in the repo.
   CLI       start / status / phase / cursor / progress / next-pass / fixpoint /
-            clear / selftest -- the overnight-sequencer skill drives phase
-            transitions through these.
+            clear / selftest / relifecycle / wait / wait-ready / wake /
+            rollover -- the overnight-sequencer skill drives phase
+            transitions (and structural waits + verified context rotations)
+            through these.
 
 State (run cursor only; deferrals live in the TODO files, not here):
   .claude/state/sequencer-run.json
@@ -32,7 +34,9 @@ within-section hooks -- this guard does not micro-manage it.
 """
 import json
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 HOOK_DIR = Path(__file__).resolve().parent
@@ -142,6 +146,15 @@ PHASE_ALLOWED_SKILLS = {
     "FIXPOINT": set(),
 }
 
+# Stage 1-2 skills, blocked on a cursor file that already carries BOTH
+# file-preamble stamps (`> **Validated:**` + `> **Gap-audited:**`). The oracle
+# reports this as `stages_1_2_done: true`; doctrine Stage 0 says SKIP straight
+# to SECTIONS. Re-running them (each with a Codex pass) on a mature file was
+# the single largest source of unnecessary phases. Escape hatch for the
+# genuinely-new-section case: `run_phase_guard.py relifecycle <reason>` sets a
+# one-shot override consumed by the next Stage 1-2 skill invocation.
+LIFECYCLE_SKILLS = {"validate-todo-file", "gap-audit-todo", "codex-gap-audit"}
+
 
 def load_state():
     if not STATE_PATH.exists():
@@ -163,13 +176,17 @@ def _skill_name(tool_input):
     return tool_input.get("skill") or tool_input.get("name") or ""
 
 
-def evaluate(tool_name, tool_input, state, armed=False, headless=False):
+def evaluate(tool_name, tool_input, state, armed=False, headless=False,
+             stages_done=False):
     """Return (allow: bool, message: str). Pure -- unit-testable.
 
     The guard governs ONLY the headless unattended run. An interactive operator
     session (headless=False) is never constrained -- it can ask, stop, and run
     --disarm freely. This is what lets the human share the repo's hooks without
     being trapped by the run cursor on disk.
+
+    `stages_done` is the cursor file's `stages_1_2_done` verdict (computed by
+    the caller only when the tool is a Stage 1-2 skill; False otherwise).
     """
     if not headless:
         return True, ""
@@ -215,6 +232,27 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False):
     # Active run: phase enforcement. (AskUserQuestion already handled above.)
     phase = state.get("phase", "PREFLIGHT")
 
+    # Lifecycle routing (Stage 0): a mature file (both preamble stamps) never
+    # re-runs Stage 1-2 -- the oracle already said so via stages_1_2_done, and
+    # honoring it removes whole VALIDATE/GAP_AUDIT phases (each with a Codex
+    # pass). One-shot escape: `relifecycle <reason>` for a genuinely new
+    # `## N.` section (doctrine Stage 0 exception).
+    if tool_name == "Skill":
+        sk = _skill_name(tool_input)
+        if (sk in LIFECYCLE_SKILLS and stages_done
+                and not state.get("lifecycle_override")):
+            return False, (
+                f"[sequencer] Skill({sk}) blocked: the cursor file already "
+                "carries BOTH `> **Validated:**` and `> **Gap-audited:**` "
+                "stamps (oracle: stages_1_2_done=true). Doctrine Stage 0: "
+                "SKIP Stages 1-2 on a mature file -- run "
+                "`python3 .claude/hooks/run_phase_guard.py phase SECTIONS` "
+                "and proceed to per-section work. If a genuinely NEW `## N.` "
+                "section appeared since the stamps (not just new items in an "
+                "existing section), record the exception first: "
+                "`python3 .claude/hooks/run_phase_guard.py relifecycle "
+                "\"<why>\"` then re-invoke the skill.")
+
     # Sequence-skill ordering: a controlled skill may only fire in a phase
     # that allows it.
     if tool_name == "Skill":
@@ -234,18 +272,177 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False):
     return True, ""
 
 
+def _cursor_stages_done(state):
+    """Live stages_1_2_done verdict for the cursor file, via the triage
+    oracle's file_lifecycle. Fail-open (False) on any error -- a broken
+    oracle must not block Stage 1-2 work."""
+    rel = state.get("file")
+    if not rel:
+        return False
+    try:
+        sys.path.insert(0, str(HOOK_DIR))
+        import sequencer_triage
+        lc = sequencer_triage.file_lifecycle(str(repo_root() / rel))
+        return bool(lc.get("validated") and lc.get("gap_audited"))
+    except Exception:
+        return False
+
+
 def handle_pretool():
     try:
         d = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0
-    allow, msg = evaluate(d.get("tool_name", ""), d.get("tool_input", {}),
-                          load_state(), armed=ARMED_MARKER.exists(),
-                          headless=is_headless())
+    tool_name = d.get("tool_name", "")
+    tool_input = d.get("tool_input", {})
+    state = load_state()
+    stages_done = False
+    if (is_headless() and state.get("active") and tool_name == "Skill"
+            and _skill_name(tool_input) in LIFECYCLE_SKILLS):
+        stages_done = _cursor_stages_done(state)
+    allow, msg = evaluate(tool_name, tool_input, state,
+                          armed=ARMED_MARKER.exists(),
+                          headless=is_headless(), stages_done=stages_done)
     if allow:
+        # Consume the one-shot relifecycle override when a Stage 1-2 skill
+        # actually fires against a mature file under it.
+        if (stages_done and state.get("lifecycle_override")
+                and tool_name == "Skill"
+                and _skill_name(tool_input) in LIFECYCLE_SKILLS):
+            state.pop("lifecycle_override", None)
+            save_state(state)
         return 0
     sys.stderr.write(msg)
     return 2
+
+
+# ---- structural waiting + verified rollover (2026-07-11) -------------------
+#
+# WAITING_REVIEW: a background Codex review used to cost one Opus turn per
+# "Holding..." poll because the Stop hook rejected every voluntary stop. Now
+# the session DECLARES the wait (`wait` verb: artifact paths + completion
+# patterns), the Stop hook lets it end, and a non-model watcher
+# (scripts/overnight/session-watcher.sh) wakes the run exactly once when the
+# artifacts complete (watchdog tick as fallback). Zero model turns are spent
+# waiting; no review is skipped -- the woken session must still receive it.
+#
+# ROLLOVER: after a section is shipped+reviewed+pushed+stamped, a fresh
+# worker context is cheaper than a long-tail one. `rollover` machine-verifies
+# the checkpoint (clean tree, nothing unpushed, graph rebuild OK, content-
+# bound receipts, no outstanding jobs) and only then permits ONE clean stop;
+# the watcher relaunches immediately. The RUN stays active the whole time --
+# only the worker context rotates (doctrine: run-active vs context-rotates).
+
+WAIT_TIMEOUT_MIN_S = 60
+WAIT_TIMEOUT_MAX_S = 7200
+WAIT_TIMEOUT_DEFAULT_S = 3600
+ROLLOVER_PENDING_FRESH_S = 1800  # stale pending flags stop permitting stops
+_WAIT_TAIL_BYTES = 1 << 20  # completion markers live at the artifact tail
+
+
+def _artifact_matches(path: str, pattern: str) -> bool:
+    import re as _re
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - _WAIT_TAIL_BYTES))
+            text = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return False
+    try:
+        return _re.search(pattern, text) is not None
+    except _re.error:
+        return pattern in text
+
+
+def _wait_satisfied(waiting: dict) -> bool:
+    arts = waiting.get("artifacts") or []
+    if not arts:
+        return True
+    return all(_artifact_matches(a.get("path", ""), a.get("pattern", ""))
+               for a in arts)
+
+
+def _wait_expired(waiting: dict) -> bool:
+    since = waiting.get("since_epoch") or 0
+    timeout = waiting.get("timeout_s") or WAIT_TIMEOUT_DEFAULT_S
+    return time.time() - since > timeout
+
+
+def _spawn_watcher(mode: str) -> int:
+    """Detach scripts/overnight/session-watcher.sh (inherits the headless
+    session's env, incl. OVERNIGHT_*). Returns the pid, 0 on failure."""
+    script = repo_root() / "scripts/overnight/session-watcher.sh"
+    if not script.exists():
+        return 0
+    try:
+        log = repo_root() / ".claude/overnight/watcher.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a") as fh:
+            p = subprocess.Popen(
+                ["bash", str(script), str(repo_root()), mode],
+                stdout=fh, stderr=fh, stdin=subprocess.DEVNULL,
+                start_new_session=True, cwd=str(repo_root()))
+        return p.pid
+    except Exception:
+        return 0
+
+
+def _rollover_failures(root: Path, state: dict) -> list:
+    """Machine gates for a verified rollover checkpoint. Every failure is a
+    reason the worker context may NOT rotate yet."""
+    fails = []
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "-uno"],
+                             cwd=str(root), capture_output=True, text=True,
+                             timeout=30)
+        if out.returncode != 0 or out.stdout.strip():
+            fails.append("tree not clean (tracked changes present)")
+    except Exception:
+        fails.append("git status unavailable")
+    try:
+        out = subprocess.run(["git", "rev-list", "--count", "@{u}..HEAD"],
+                             cwd=str(root), capture_output=True, text=True,
+                             timeout=30)
+        if out.returncode != 0:
+            fails.append("no upstream configured (cannot verify pushed)")
+        elif out.stdout.strip() != "0":
+            fails.append(f"{out.stdout.strip()} commit(s) not pushed")
+    except Exception:
+        fails.append("git rev-list unavailable")
+    try:
+        out = subprocess.run(
+            ["bash", "scripts/todo-graph/build-and-validate.sh", "--keep-cache"],
+            cwd=str(root), capture_output=True, text=True, timeout=300)
+        if out.returncode != 0:
+            fails.append("todo-graph build-and-validate failed")
+    except Exception:
+        fails.append("todo-graph rebuild unavailable")
+    # Content-bound build receipt: green build over the CURRENT build inputs.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "overnight_receipts", str(root / "scripts/overnight/receipts.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ok, why = mod.check_build(root)
+        if not ok:
+            fails.append(f"build receipt not content-valid ({why})")
+    except Exception as exc:  # noqa: BLE001
+        fails.append(f"build receipt check unavailable ({exc})")
+    # No outstanding review obligation.
+    review_state = root / ".claude/state/last-codex-review.json"
+    if review_state.exists():
+        try:
+            rs = json.loads(review_state.read_text())
+            if rs.get("received") is not True:
+                fails.append("outstanding Codex review not yet received")
+        except (OSError, ValueError):
+            fails.append("last-codex-review.json unreadable")
+    if state.get("waiting"):
+        fails.append("a WAITING_REVIEW wait is still declared")
+    return fails
 
 
 def _live_oracle_status():
@@ -254,7 +451,6 @@ def _live_oracle_status():
     Returns the oracle's `status` string (DONE / BLOCKED / NEEDS_WORK) or None
     on any failure -- callers treat None as "keep blocking" (fail-closed).
     """
-    import subprocess
     try:
         out = subprocess.run(
             [sys.executable, str(repo_root() / ".claude/hooks/sequencer_triage.py"),
@@ -284,6 +480,45 @@ def handle_stop():
     # The human's --disarm removes the master switch (and kills the service); if
     # the marker is already gone, the run has been disarmed -- allow the stop.
     if not ARMED_MARKER.exists():
+        return 0
+    state_early = load_state()
+    # VERIFIED ROLLOVER (2026-07-11): the `rollover` verb machine-verified the
+    # checkpoint (clean tree, pushed, graph OK, content-bound receipts, no
+    # outstanding jobs) and spawned the relaunch watcher. Permit exactly this
+    # one stop; the flag is one-shot (cleared by the next launch's `wake`) and
+    # honored only while fresh. The RUN stays active -- the context rotates.
+    ro = state_early.get("rollover") or {}
+    if (isinstance(ro, dict) and ro.get("pending")
+            and time.time() - (ro.get("epoch") or 0) < ROLLOVER_PENDING_FRESH_S):
+        sys.stderr.write(
+            "[sequencer] stop allowed: verified rollover checkpoint -- the "
+            "watcher relaunches a fresh worker context immediately; the run "
+            "stays ARMED and the cursor carries the state.\n")
+        return 0
+    # WAITING_REVIEW (2026-07-11): a declared structural wait lets the session
+    # end INSTEAD of burning turns on 'Holding...' polls. The watcher (or the
+    # watchdog fallback) wakes a fresh session when the artifacts complete.
+    w = state_early.get("waiting") or {}
+    if isinstance(w, dict) and w.get("artifacts"):
+        if _wait_satisfied(w):
+            sys.stderr.write(
+                "[sequencer] do NOT stop: the awaited artifact(s) are already "
+                "complete. Read the verdict(s) now, receive the review, and "
+                "continue the pipeline (the wait is over; run "
+                "`run_phase_guard.py wake` to clear it).\n")
+            return 2
+        if _wait_expired(w):
+            sys.stderr.write(
+                "[sequencer] do NOT stop: the declared wait EXPIRED without "
+                "the artifact(s) completing. Handle the timeout (re-dispatch "
+                "the review or defer with the captured diagnostic), then "
+                "continue. Run `run_phase_guard.py wake` to clear the wait.\n")
+            return 2
+        sys.stderr.write(
+            "[sequencer] stop allowed: WAITING_REVIEW declared -- the "
+            "session-watcher wakes a fresh session when the artifact(s) "
+            "complete (watchdog as fallback). No model turns are spent "
+            "waiting; the woken session must receive the verdict first.\n")
         return 0
     # Oracle-consulting fallback (runner-kit law 2, adopted 2026-07-03): a
     # session at a TRUE lifecycle end (oracle DONE, or BLOCKED once the 3-state
@@ -442,6 +677,107 @@ def cli(argv):
         save_state({"active": False})
         print(f"[sequencer] cleared: {' '.join(argv[1:]) or 'no reason'}", file=sys.stderr)
         return 0
+    if cmd == "relifecycle":
+        # One-shot Stage 1-2 override for a mature file that grew a genuinely
+        # NEW section. Consumed by the next Stage 1-2 skill invocation.
+        reason = " ".join(argv[1:]).strip()
+        if len(reason) < 12:
+            print("[sequencer] relifecycle needs a reason (>= 12 chars) naming "
+                  "the new section", file=sys.stderr)
+            return 1
+        state["lifecycle_override"] = reason
+        save_state(state)
+        print(f"[sequencer] lifecycle override recorded: {reason}", file=sys.stderr)
+        return 0
+    if cmd == "wait":
+        # wait <timeout_s> <reason> <path> <pattern> [<path> <pattern>...]
+        if len(argv) < 5 or (len(argv) - 3) % 2 != 0:
+            print("[sequencer] usage: wait <timeout_s> <reason> <path> "
+                  "<pattern> [<path> <pattern>...]", file=sys.stderr)
+            return 1
+        try:
+            timeout_s = max(WAIT_TIMEOUT_MIN_S,
+                            min(WAIT_TIMEOUT_MAX_S, int(argv[1])))
+        except ValueError:
+            print("[sequencer] wait: timeout_s must be an integer", file=sys.stderr)
+            return 1
+        arts = [{"path": argv[i], "pattern": argv[i + 1]}
+                for i in range(3, len(argv), 2)]
+        waiting = {"reason": argv[2], "since_epoch": int(time.time()),
+                   "timeout_s": timeout_s, "artifacts": arts}
+        if _wait_satisfied(waiting):
+            print("[sequencer] wait REFUSED: every artifact already matches "
+                  "its completion pattern -- nothing to wait for. Read the "
+                  "verdict(s) and continue.", file=sys.stderr)
+            return 1
+        # Replace any prior wait (best-effort kill of its watcher).
+        prior = state.get("waiting") or {}
+        if prior.get("watcher_pid"):
+            try:
+                os.kill(int(prior["watcher_pid"]), 15)
+            except (OSError, ValueError):
+                pass
+        waiting["watcher_pid"] = _spawn_watcher("wait")
+        state["waiting"] = waiting
+        state.pop("woke_from_wait", None)
+        save_state(state)
+        print(f"[sequencer] WAITING_REVIEW declared ({len(arts)} artifact(s), "
+              f"timeout {timeout_s}s, watcher pid {waiting['watcher_pid']}). "
+              "Final-answer now with a one-line status -- the Stop hook "
+              "permits this stop and the watcher wakes a fresh session when "
+              "the artifact(s) complete.", file=sys.stderr)
+        return 0
+    if cmd == "wait-ready":
+        # Launcher/watcher query. Exit 0 = proceed with a launch (no wait, or
+        # artifacts ready, or wait expired); exit 3 = still waiting.
+        w = state.get("waiting") or {}
+        if not (isinstance(w, dict) and w.get("artifacts")):
+            print(json.dumps({"waiting": False}))
+            return 0
+        ready = _wait_satisfied(w)
+        expired = _wait_expired(w)
+        print(json.dumps({"waiting": True, "ready": ready, "expired": expired,
+                          "reason": w.get("reason")}))
+        return 0 if (ready or expired) else 3
+    if cmd == "wake":
+        # Called by the launcher right before spinning up Claude: consume the
+        # wait and any pending rollover flag, leaving a one-shot note the
+        # fresh session reads via `status`.
+        woke = {}
+        w = state.pop("waiting", None)
+        if isinstance(w, dict) and w.get("artifacts"):
+            woke = {"reason": w.get("reason"),
+                    "artifacts": [a.get("path") for a in w["artifacts"]],
+                    "ready": _wait_satisfied(w), "expired": _wait_expired(w),
+                    "epoch": int(time.time())}
+            state["woke_from_wait"] = woke
+        if isinstance(state.get("rollover"), dict):
+            state.pop("rollover", None)
+        save_state(state)
+        print(json.dumps({"woke_from_wait": woke or None}))
+        return 0
+    if cmd == "rollover":
+        # Verified worker-context rotation. Machine gates decide; on success
+        # the Stop hook permits exactly one stop and the watcher relaunches.
+        if not state.get("active"):
+            print("[sequencer] rollover REFUSED: no active run", file=sys.stderr)
+            return 1
+        fails = _rollover_failures(repo_root(), state)
+        if fails:
+            print("[sequencer] rollover REFUSED (checkpoint not verified):\n"
+                  + "\n".join(f"  - {f}" for f in fails)
+                  + "\nFinish/clean these first, or continue in-session.",
+                  file=sys.stderr)
+            return 1
+        state["rollover"] = {"pending": True, "epoch": int(time.time()),
+                             "watcher_pid": _spawn_watcher("relaunch")}
+        save_state(state)
+        print("[sequencer] rollover VERIFIED: clean tree, pushed, graph OK, "
+              "receipts content-valid, no outstanding jobs. Final-answer now "
+              "with a one-line checkpoint summary -- the watcher relaunches "
+              "a fresh worker context; the run stays armed and the cursor "
+              "carries the state.", file=sys.stderr)
+        return 0
     if cmd == "selftest":
         return selftest()
     print(f"[sequencer] unknown command: {cmd}", file=sys.stderr)
@@ -537,6 +873,53 @@ def selftest():
     # Not armed, not active (headless): everything passes.
     a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False, headless=H)
     check(a, "skill blocked while neither armed nor active")
+
+    # Lifecycle routing (Stage 0): Stage 1-2 skills blocked on a mature file.
+    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
+                    {"active": True, "phase": "VALIDATE"}, headless=H,
+                    stages_done=True)
+    check(not a, "validate-todo-file allowed on stages_1_2_done file")
+    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"},
+                    {"active": True, "phase": "GAP_AUDIT"}, headless=H,
+                    stages_done=True)
+    check(not a, "gap-audit-todo allowed on stages_1_2_done file")
+    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
+                    {"active": True, "phase": "VALIDATE",
+                     "lifecycle_override": "new section 21 appeared"},
+                    headless=H, stages_done=True)
+    check(a, "relifecycle override did not unblock validate-todo-file")
+    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
+                    {"active": True, "phase": "VALIDATE"}, headless=H,
+                    stages_done=False)
+    check(a, "validate-todo-file blocked on an immature file")
+    a, _ = evaluate("Skill", {"skill": "validate-todo-file"},
+                    {"active": True, "phase": "VALIDATE"}, headless=False,
+                    stages_done=True)
+    check(a, "interactive validate-todo-file blocked (must never trap operator)")
+
+    # Structural-wait helpers: artifact matching + expiry truth table.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".out", delete=False) as tf:
+        tf.write("dispatch running...\nTurn completed after 214s\n")
+        wait_art = tf.name
+    try:
+        check(_artifact_matches(wait_art, "Turn completed"),
+              "_artifact_matches missed a present completion marker")
+        check(not _artifact_matches(wait_art, "NO_SUCH_MARKER"),
+              "_artifact_matches false-positive")
+        check(not _artifact_matches("/nonexistent/artifact.out", "x"),
+              "_artifact_matches true on missing file")
+        w_ok = {"artifacts": [{"path": wait_art, "pattern": "Turn completed"}],
+                "since_epoch": int(time.time()), "timeout_s": 3600}
+        check(_wait_satisfied(w_ok), "_wait_satisfied false on matched artifact")
+        w_pending = {"artifacts": [{"path": wait_art, "pattern": "NOPE"}],
+                     "since_epoch": int(time.time()), "timeout_s": 3600}
+        check(not _wait_satisfied(w_pending), "_wait_satisfied true on unmatched")
+        check(not _wait_expired(w_pending), "fresh wait reported expired")
+        w_old = dict(w_pending, since_epoch=int(time.time()) - 7200)
+        check(_wait_expired(w_old), "expired wait reported fresh")
+    finally:
+        os.unlink(wait_art)
 
     if fails:
         for f in fails:

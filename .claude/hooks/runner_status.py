@@ -113,10 +113,25 @@ def recent_decisions(root: Path, n: int = 3) -> list[str]:
     return [_clip(e) for e in entries[-n:]]
 
 
+def _woke_line(root: Path) -> str | None:
+    """One-shot wake note left by `run_phase_guard.py wake`: the fresh session
+    must read the awaited artifact(s) and receive the verdict FIRST."""
+    st = _state(root)
+    w = st.get("woke_from_wait")
+    if not isinstance(w, dict):
+        return None
+    kind = "READY" if w.get("ready") else ("EXPIRED" if w.get("expired") else "?")
+    arts = ", ".join(w.get("artifacts") or [])
+    return (f"WOKE FROM WAIT [{kind}] ({w.get('reason', '')}): read + receive "
+            f"the verdict(s) FIRST: {arts}")
+
+
 def anchor_line(root: Path) -> str:
     st = _state(root)
+    woke = " | WOKE-FROM-WAIT" if st.get("woke_from_wait") else ""
     return (f"cursor {st.get('file', '(none)')} | phase {st.get('phase', '(none)')} "
-            f"| obligations:{len(obligations(root))} | gotchas:{len(gotchas(root))}")
+            f"| obligations:{len(obligations(root))} | gotchas:{len(gotchas(root))}"
+            f"{woke}")
 
 
 def full_brief(root: Path) -> str:
@@ -124,6 +139,9 @@ def full_brief(root: Path) -> str:
     got = gotchas(root)
     dec = recent_decisions(root)
     parts = [where(root), git_state(root)]
+    woke = _woke_line(root)
+    if woke:
+        parts.append(woke)
     parts.append("OBLIGATIONS: " + ("none" if not obl else ""))
     parts += [f"  - {o}" for o in obl]
     parts.append("GOTCHAS: " + ("none" if not got else ""))
