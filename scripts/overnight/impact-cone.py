@@ -11,7 +11,8 @@ The bounded set scopes Codex prompts and the main session's own reads; the
 final full pipeline (build/tests/smoke, whole-diff Codex review) is unchanged
 -- this bounds the READING, not the gates.
 
-Usage: impact-cone.py [--project DIR] [--range REF]   (default: staged diff)
+Usage: impact-cone.py [--project DIR] [--range REF]
+       (default: WORKING TREE vs HEAD -- staged + unstaged + untracked)
 """
 from __future__ import annotations
 
@@ -20,6 +21,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from worktree_hash import changed_paths  # noqa: E402  (sibling helper)
 
 FUNC_HUNK_RE = re.compile(r"^@@ .* @@ (?:static\s+)?[\w*]+[\s*]+(\w+)\s*\(")
 FUNC_DEF_RE = re.compile(r"^[+-](?:static\s+)?[\w*]+[\s*]+(\w+)\s*\([^;]*$")
@@ -36,12 +40,37 @@ def git(root, *args, timeout=60):
     return r.stdout if r.returncode == 0 else ""
 
 
-def grep_files(root, pattern, globs):
+def _diff_no_index(root, path):
+    """All-added diff of an untracked file (git diff --no-index exits 1 when
+    files differ, so the returncode-gated `git` helper can't be used)."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(root), "grep", "-l", "-E", pattern, "--", *globs],
-            capture_output=True, text=True, timeout=60)
-        return r.stdout.splitlines()
+            ["git", "-C", str(root), "diff", "--no-index", "--unified=1",
+             "/dev/null", path], capture_output=True, text=True, timeout=30)
+        return r.stdout
+    except Exception:
+        return ""
+
+
+def grep_files(root, pattern, paths):
+    """Files under `paths` matching `pattern`. Uses ripgrep over the WORKING
+    TREE (honors .gitignore, so untracked-but-not-ignored files ARE searched;
+    `git grep` only saw the index/tracked tree and missed a caller in a new
+    untracked file). Falls back to git grep if rg is unavailable."""
+    try:
+        r = subprocess.run(
+            ["rg", "-l", "--no-messages", "-g", "*.c", "-g", "*.h",
+             "-g", "*.asm", "-g", "*.S", "-e", pattern, "--", *paths],
+            cwd=str(root), capture_output=True, text=True, timeout=60)
+        return [ln for ln in r.stdout.splitlines() if ln.strip()]
+    except FileNotFoundError:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(root), "grep", "-l", "-E", pattern, "--", *paths],
+                capture_output=True, text=True, timeout=60)
+            return r.stdout.splitlines()
+        except Exception:
+            return []
     except Exception:
         return []
 
@@ -54,10 +83,21 @@ def main(argv) -> int:
         diff = git(root, "diff", rng, "--unified=1")
         files = git(root, "diff", "--name-only", rng).splitlines()
     else:
-        diff = git(root, "diff", "--cached", "--unified=1")
-        files = git(root, "diff", "--cached", "--name-only").splitlines()
+        # Default = WORKING TREE vs HEAD (staged + unstaged) plus untracked.
+        # `git diff --cached` (staged only) missed the unstaged/untracked
+        # changes the runner actually executes (2026-07-11 fix).
+        diff = git(root, "diff", "HEAD", "--unified=1")
+        files = changed_paths(root)
     files = [f for f in files if f.strip()]
     src_files = [f for f in files if f.endswith((".c", ".h", ".asm", ".S"))]
+    # Untracked new source files have no diff-vs-HEAD; synthesize an all-added
+    # diff so their new symbols/globals/registrations enter the cone.
+    if "--range" not in argv:
+        tracked = set(git(root, "ls-files", "--", *src_files).splitlines()) \
+            if src_files else set()
+        for uf in src_files:
+            if uf not in tracked:
+                diff += _diff_no_index(root, uf)
 
     # Changed symbols: hunk headers + added/removed definition lines.
     symbols = set()

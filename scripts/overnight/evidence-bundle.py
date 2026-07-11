@@ -31,6 +31,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from worktree_hash import content_hashes  # noqa: E402  (sibling helper)
+
 BUNDLE_DIR_REL = ".claude/overnight/bundles"
 MAX_BUNDLES = 12
 SIG_RE = re.compile(
@@ -103,8 +106,11 @@ def main(argv) -> int:
     files: list = []
     manifest_obj = None
     if "--manifest" in argv:
-        mp = Path(argv[argv.index("--manifest") + 1])
-        manifest_obj = json.loads(mp.read_text())
+        mref = argv[argv.index("--manifest") + 1]
+        # "-" reads the manifest from stdin so `section-manifest.py ... |
+        # evidence-bundle.py --manifest -` works without a temp file.
+        raw = sys.stdin.read() if mref == "-" else Path(mref).read_text()
+        manifest_obj = json.loads(raw)
         files = (manifest_obj.get("likely_files", [])
                  + manifest_obj.get("input_files", [])
                  + manifest_obj.get("relevant_tests", []))
@@ -117,12 +123,10 @@ def main(argv) -> int:
         print(json.dumps({"error": "no existing files to bundle"}))
         return 1
 
-    ls = git(root, "ls-files", "-s", "--", *files)
-    blobs = {}
-    for entry in ls.splitlines():
-        parts = entry.split()
-        if len(parts) >= 4:
-            blobs[entry.split("\t", 1)[1]] = parts[1]
+    # WORKING-TREE content hashes (untracked + unstaged included), NOT git-index
+    # blobs. The bundle key must change the instant any input's bytes change,
+    # or a mid-implementation session reuses a stale bundle (2026-07-11 fix).
+    blobs = content_hashes(root, files)
     key = hashlib.sha256(json.dumps(sorted(blobs.items())).encode()
                          ).hexdigest()[:12]
     bdir = root / BUNDLE_DIR_REL / key

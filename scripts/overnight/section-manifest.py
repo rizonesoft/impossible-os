@@ -19,6 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from worktree_hash import content_hashes  # noqa: E402  (sibling helper)
+
 SECTION_RE = re.compile(r"^## (\d+)\.\s*(.*)")
 ITEM_RE = re.compile(r"^- \[([ x/])\]\s*(.*)")
 XREF_RE = re.compile(r"XREF:\s*`?([^`\n]+)`?")
@@ -124,13 +127,11 @@ def main(argv) -> int:
         gates.insert(0, "boot-code-quality gates (auto)")
         gates.append("smoke test (boot-path change)")
 
-    # Blob hashes: TODO + likely files (content binding for caches/receipts).
-    blobs = {}
-    ls = _git(root, "ls-files", "-s", "--", todo_rel, *likely_files)
-    for entry in ls.splitlines():
-        parts = entry.split()
-        if len(parts) >= 4:
-            blobs[entry.split("\t", 1)[1]] = parts[1]
+    # Content hashes: TODO + likely files. WORKING-TREE bytes (untracked +
+    # unstaged included), NOT git-index blobs -- a mid-implementation session
+    # has unstaged/untracked changes, and the run executes the live tree, so
+    # index-blob binding would reuse stale evidence (2026-07-11 fix).
+    blobs = content_hashes(root, [todo_rel, *likely_files])
 
     # Complexity budget (authoring-time split signal): a section likely to
     # exceed one fresh worker context should be SPLIT before implementation;
@@ -162,12 +163,24 @@ def main(argv) -> int:
         "open_items": open_items, "done_items": done_items,
         "xrefs": xrefs, "likely_files": likely_files,
         "input_files": input_files, "relevant_tests": tests,
-        "required_gates": gates, "blob_hashes": blobs,
+        "required_gates": gates,
+        # Working-tree content hashes (see the content_hashes call above). Key
+        # kept as blob_hashes for reader compatibility; values are sha256 of
+        # current bytes, not index blobs.
+        "blob_hashes": blobs,
         "complexity": complexity,
         "enrich_with": ("kernel-explorer" if (kernelish or bootish)
                         else "section-context-mapper"),
     }
-    print(json.dumps(manifest, indent=1))
+    out = json.dumps(manifest, indent=1)
+    # --out PATH persists the manifest so evidence-bundle.py --manifest <PATH>
+    # can consume it (the chain was broken: the manifest was only ever printed,
+    # and piping it through head truncated the JSON so no bundle was produced).
+    if "--out" in argv:
+        dest = Path(argv[argv.index("--out") + 1])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(out, encoding="utf-8")
+    print(out)
     return 0
 
 
