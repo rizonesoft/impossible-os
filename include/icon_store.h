@@ -124,12 +124,22 @@ typedef enum {
 
 /* ---- Icon bitmap (cached rasterized icon) ---- */
 
+/* Pixel-buffer ownership. Explicit because releasing with the wrong
+ * allocator is a heap-corruption bugcheck: BORROWED pixels point into a
+ * buffer owned by someone else (the IRES file image, PMM-allocated) and
+ * must NEVER be freed by the bitmap's releaser. */
+typedef enum icon_px_ownership {
+    ICON_PX_HEAP     = 0,  /* kmalloc'd; released with kfree */
+    ICON_PX_PMM      = 1,  /* pmm_alloc_contiguous'd; released frame-by-frame */
+    ICON_PX_BORROWED = 2,  /* borrowed view into another owner's buffer */
+} icon_px_ownership_t;
+
 typedef struct icon_bitmap {
     uint32_t *pixels;      /* BGRA pixel data (GFX_RGBA format) */
     uint16_t  width;       /* Bitmap width */
     uint16_t  height;      /* Bitmap height */
-    uint32_t  alloc_size;  /* Allocation size in bytes */
-    uint8_t   from_pmm;    /* 1 = PMM allocation, 0 = kmalloc */
+    uint32_t  alloc_size;  /* Allocation size in bytes (0 for BORROWED) */
+    uint8_t   ownership;   /* icon_px_ownership_t */
     uint8_t   _pad[3];
 } icon_bitmap_t;
 
@@ -164,6 +174,11 @@ icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
 /* Look up an icon by string name (e.g., "folder_closed", "cut", "save").
  * Returns ICON_TOTAL_COUNT if not found. */
 system_icon_t icon_get_by_name(const char *name);
+
+/* Number of live entries in the rasterized-icon cache. Diagnostic/test
+ * accessor: a stable count across repeated same-icon lookups proves the
+ * cache key is hitting (a growing count is the duplicate-flood bug). */
+uint32_t icon_cache_entry_count(void);
 
 /* Draw an icon onto a GFX surface at (x, y) with alpha blending. */
 void icon_draw(gfx_surface_t *s, const icon_bitmap_t *bmp,

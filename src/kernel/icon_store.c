@@ -363,30 +363,42 @@ static int load_icon_font(int variant, const char *filename)
 
 /* ---- Internal: allocate pixel buffer ---- */
 
-static uint32_t *alloc_pixels(uint32_t byte_count, uint8_t *from_pmm)
+static uint32_t *alloc_pixels(uint32_t byte_count, uint8_t *ownership)
 {
     if (byte_count > LARGE_ALLOC_THRESH) {
         uint64_t frames = (byte_count + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);
         if (phys != 0) {
-            *from_pmm = 1;
+            *ownership = ICON_PX_PMM;
             return (uint32_t *)phys;
         }
     }
-    *from_pmm = 0;
+    *ownership = ICON_PX_HEAP;
     return (uint32_t *)kmalloc(byte_count);
 }
 
+/* Release a bitmap's pixels per their OWNERSHIP. BORROWED pixels (IRES
+ * entries point into the PMM-loaded icons.ires file buffer) are only
+ * detached: freeing them with either allocator corrupts the real owner,
+ * and the hardened heap bugchecks a kfree of a PMM interior pointer as
+ * HEAP_FAULT_WILD. */
 static void free_pixels(icon_bitmap_t *bmp)
 {
     if (!bmp->pixels) return;
-    if (bmp->from_pmm) {
+    switch (bmp->ownership) {
+    case ICON_PX_PMM: {
         uint64_t frames = (bmp->alloc_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uint64_t fi;
         for (fi = 0; fi < frames; fi++)
             pmm_free_frame((uintptr_t)bmp->pixels + fi * PMM_FRAME_SIZE);
-    } else {
+        break;
+    }
+    case ICON_PX_HEAP:
         kfree(bmp->pixels);
+        break;
+    case ICON_PX_BORROWED:
+    default:
+        break;  /* not ours to free */
     }
     bmp->pixels = (uint32_t *)0;
 }
@@ -438,6 +450,30 @@ static cache_entry_t *cache_alloc(void)
     return (cache_entry_t *)0;  /* should not happen */
 }
 
+/* ---- Internal: store a BORROWED (IRES-view) cache entry ----
+ * SINGLE ownership-assignment point for borrowed pixels: production
+ * (ires_get_bitmap) and the KERNEL_TESTS seam both store through here, so
+ * the borrowed-eviction regression test covers the same BORROWED marking
+ * the production path uses. */
+static cache_entry_t *cache_store_borrowed(system_icon_t id, uint32_t size,
+                                           uint32_t *pixels,
+                                           uint16_t w, uint16_t h)
+{
+    cache_entry_t *entry = cache_alloc();
+    if (!entry) return (cache_entry_t *)0;
+    entry->icon_id           = id;
+    entry->size              = size;
+    entry->color             = 0;  /* Color icons don't have tint */
+    entry->bitmap.pixels     = pixels;
+    entry->bitmap.width      = w;
+    entry->bitmap.height     = h;
+    entry->bitmap.alloc_size = 0;
+    entry->bitmap.ownership  = ICON_PX_BORROWED;
+    entry->last_access       = ++cache_access_counter;
+    entry->valid             = 1;
+    return entry;
+}
+
 /* ---- Internal: get color icon bitmap from IRES ---- */
 
 static icon_bitmap_t *ires_get_bitmap(system_icon_t id, uint32_t size)
@@ -470,20 +506,9 @@ static icon_bitmap_t *ires_get_bitmap(system_icon_t id, uint32_t size)
     if (best_si < 0) return (icon_bitmap_t *)0;
     is = &ires_icons[color_idx].sizes[best_si];
 
-    /* Store in cache (pixels point into IRES file buffer -- no alloc needed) */
-    entry = cache_alloc();
+    /* Store in cache (pixels point into the IRES file buffer -- borrowed) */
+    entry = cache_store_borrowed(id, size, is->pixels, is->width, is->height);
     if (!entry) return (icon_bitmap_t *)0;
-
-    entry->icon_id              = id;
-    entry->size                 = size;
-    entry->color                = 0;  /* Color icons don't have tint */
-    entry->bitmap.pixels        = is->pixels;
-    entry->bitmap.width         = is->width;
-    entry->bitmap.height        = is->height;
-    entry->bitmap.alloc_size    = 0;  /* Don't free -- points into IRES buffer */
-    entry->bitmap.from_pmm      = 0;
-    entry->last_access          = ++cache_access_counter;
-    entry->valid                = 1;
 
     return &entry->bitmap;
 }
@@ -502,7 +527,7 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
     unsigned char *alpha_bmp;
     uint32_t *pixels;
     uint32_t byte_count;
-    uint8_t from_pmm;
+    uint8_t ownership;
     uint32_t cr, cg, cb;
     int row, col;
     if ((uint32_t)id >= ICON_MONO_COUNT) return (icon_bitmap_t *)0;
@@ -530,7 +555,7 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
 
     /* Allocate BGRA pixel buffer */
     byte_count = (uint32_t)(width * height) * 4;
-    pixels = alloc_pixels(byte_count, &from_pmm);
+    pixels = alloc_pixels(byte_count, &ownership);
     if (!pixels) {
         kfree(alpha_bmp);
         return (icon_bitmap_t *)0;
@@ -558,7 +583,7 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
     entry = cache_alloc();
     if (!entry) {
         /* Cache full -- shouldn't happen with LRU but handle gracefully */
-        if (from_pmm) {
+        if (ownership == ICON_PX_PMM) {
             uint64_t frames = (byte_count + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
             uint64_t fi;
             for (fi = 0; fi < frames; fi++)
@@ -576,7 +601,7 @@ static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
     entry->bitmap.width         = (uint16_t)width;
     entry->bitmap.height        = (uint16_t)height;
     entry->bitmap.alloc_size    = byte_count;
-    entry->bitmap.from_pmm      = from_pmm;
+    entry->bitmap.ownership     = ownership;
     entry->last_access          = ++cache_access_counter;
     entry->valid                = 1;
 
@@ -632,6 +657,81 @@ icon_bitmap_t *icon_get(system_icon_t id, uint32_t size)
     return icon_get_colored(id, size, icon_theme_color);
 }
 
+uint32_t icon_cache_entry_count(void)
+{
+    uint32_t n = 0;
+    int i;
+    for (i = 0; i < ICON_CACHE_MAX; i++) {
+        if (icon_cache[i].valid)
+            n++;
+    }
+    return n;
+}
+
+#ifdef KERNEL_TESTS
+/* ---- Test seams (KERNEL_TESTS only) ----
+ * The unit-test boot has no icons.ires and no fonts, so the cache-key and
+ * borrowed-eviction regressions (window-drag 0xE0000002 class) cannot be
+ * exercised through file loading. These seams inject cache entries through
+ * the SAME cache_alloc/free_pixels mechanics the production paths use;
+ * save/restore of icon_store_ready follows the sanctioned test pattern. */
+
+int icon_store_test_force_ready(int on)
+{
+    int prev = icon_store_ready;
+    icon_store_ready = on;
+    return prev;
+}
+
+int icon_cache_insert_borrowed_for_test(system_icon_t id, uint32_t size,
+                                        uint32_t *pixels,
+                                        uint16_t w, uint16_t h)
+{
+    /* Through the SAME store helper production uses -- the ownership
+     * assignment under test is the production one, not a test copy. */
+    return cache_store_borrowed(id, size, pixels, w, h) ? 0 : -1;
+}
+
+void icon_cache_reset_for_test(void)
+{
+    int i;
+    for (i = 0; i < ICON_CACHE_MAX; i++) {
+        if (icon_cache[i].valid) {
+            free_pixels(&icon_cache[i].bitmap);  /* ownership-aware */
+            icon_cache[i].valid = 0;
+        }
+    }
+}
+
+uint32_t icon_cache_flood_owned_for_test(uint32_t n)
+{
+    uint32_t inserted = 0, i;
+    for (i = 0; i < n; i++) {
+        uint8_t ownership;
+        uint32_t *px = alloc_pixels(16 * 16 * 4, &ownership);
+        cache_entry_t *entry;
+        if (!px) break;
+        entry = cache_alloc();
+        if (!entry) {
+            if (ownership == ICON_PX_HEAP) kfree(px);
+            break;
+        }
+        entry->icon_id           = ICON_CUT;
+        entry->size              = 1000 + i;  /* unique key per entry */
+        entry->color             = 0xFFFFFFFF;
+        entry->bitmap.pixels     = px;
+        entry->bitmap.width      = 16;
+        entry->bitmap.height     = 16;
+        entry->bitmap.alloc_size = 16 * 16 * 4;
+        entry->bitmap.ownership  = ownership;
+        entry->last_access       = ++cache_access_counter;
+        entry->valid             = 1;
+        inserted++;
+    }
+    return inserted;
+}
+#endif /* KERNEL_TESTS */
+
 icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
                                  gfx_color_t color,
                                  icon_font_variant_t variant)
@@ -640,6 +740,14 @@ icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
 
     if (!icon_store_ready || (uint32_t)id >= ICON_TOTAL_COUNT)
         return (icon_bitmap_t *)0;
+
+    /* Color (IRES) icons carry their own pixels and ignore tint; their cache
+     * entries are stored with color=0. Normalize the key HERE so every
+     * requested tint maps to that one entry -- otherwise each differing tint
+     * missed the cache and inserted a duplicate entry per frame, flooding
+     * the cache into eviction (the window-drag crash trigger). */
+    if ((uint32_t)id >= ICON_MONO_COUNT)
+        color = 0;
 
     /* Check cache first */
     cached = cache_lookup(id, size, color);

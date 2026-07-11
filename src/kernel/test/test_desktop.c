@@ -20,6 +20,8 @@
 #include "kernel/test/wcag.h"
 #include "kernel/test/test_desktop_reset.h"
 #include "kernel/boot_info.h"
+#include "icon_store.h"
+#include "kernel/test/icon_store_test.h"
 #include "main/main_internal.h"
 
 /* ---- section 4 Input Event Injection ----------------------------------------- */
@@ -1523,6 +1525,91 @@ static void test_desktop_reset_action_wrapper_matches(void)
                    "post-action: window count 0");
 }
 
+/* ---- Icon cache regression tests (window-drag 0xE0000002 crash class) ---- */
+
+/* Stand-in "IRES" pixel buffer: BSS-resident, so a pre-fix wild kfree of it
+ * is exactly the non-heap-pointer class the hardened heap bugchecks. */
+static uint32_t s_test_borrowed_px[4 * 4];
+
+/* Color (IRES) icons ignore tint: every requested tint must hit the ONE
+ * cache entry stored with color=0. Pre-fix, each nonzero tint missed and
+ * inserted a duplicate entry per lookup -- three per composited frame --
+ * flooding the 128-entry cache into eviction within ~40 drag frames.
+ * Exercised via the test seams (no icons.ires in the test boot): a borrowed
+ * color-icon entry is injected exactly as ires_get_bitmap stores it, then
+ * looked up through the real public API with varying tints. */
+static void test_icon_color_tint_normalized(void)
+{
+    int prev_ready;
+    uint32_t count_before, i;
+    icon_bitmap_t *first;
+
+    s_test_borrowed_px[0] = 0xA5F00D01u;
+    prev_ready = icon_store_test_force_ready(1);
+    if (icon_cache_insert_borrowed_for_test(ICON_FOLDER_CLOSED, 32,
+                                            s_test_borrowed_px, 4, 4) != 0) {
+        icon_store_test_force_ready(prev_ready);
+        TEST_SKIP("no icon cache slot available");
+        return;
+    }
+    count_before = icon_cache_entry_count();
+
+    /* Pre-fix: nonzero tints missed the color=0 entry, fell to the (absent)
+     * IRES loader, and returned NULL -- and in a real boot inserted a
+     * duplicate per lookup. Post-fix: every tint hits the one entry. */
+    first = icon_get_colored(ICON_FOLDER_CLOSED, 32, 0xFFFFFFFF);
+    TEST_ASSERT(first && first->pixels == s_test_borrowed_px,
+                "tinted lookup must hit the color=0 cached entry (key normalized)");
+    for (i = 0; i < 10; i++) {
+        icon_bitmap_t *b = icon_get_colored(ICON_FOLDER_CLOSED, 32,
+                                            0xFF000000u | (i * 0x1F2F3Fu));
+        TEST_ASSERT(b == first,
+                    "every tint must resolve to the same cached color-icon entry");
+    }
+    TEST_ASSERT_EQ(icon_cache_entry_count(), count_before,
+                   "repeated tinted lookups must not grow the icon cache");
+    icon_cache_reset_for_test();
+    icon_store_test_force_ready(prev_ready);
+}
+
+/* Evicting past the cache capacity with MIXED owned and borrowed entries
+ * must never free the borrowed pixels: production borrowed entries point
+ * into the PMM-loaded icons.ires buffer, and pre-fix the eviction kfree()'d
+ * them -- the hardened heap bugchecked that as HEAP_FAULT_WILD (0xE0000002,
+ * the window-drag crash). Here the borrowed buffer is BSS-resident, so a
+ * regressed wild free bugchecks the test run outright; a clean pass with
+ * the sentinel intact proves eviction skipped the borrowed entry. */
+static void test_icon_cache_eviction_borrowed_safe(void)
+{
+    int prev_ready;
+    uint32_t flooded;
+
+    s_test_borrowed_px[0] = 0xA5F00D02u;
+    prev_ready = icon_store_test_force_ready(1);
+    if (icon_cache_insert_borrowed_for_test(ICON_RECYCLE_BIN_EMPTY, 32,
+                                            s_test_borrowed_px, 4, 4) != 0) {
+        icon_store_test_force_ready(prev_ready);
+        TEST_SKIP("no icon cache slot available");
+        return;
+    }
+
+    /* Force LRU eviction well past the 128-entry capacity; the borrowed
+     * entry is the oldest and is evicted early in the flood. */
+    flooded = icon_cache_flood_owned_for_test(140);
+    TEST_ASSERT(flooded >= 130,
+                "owned flood must exceed the cache capacity to force eviction");
+    TEST_ASSERT(icon_cache_entry_count() <= 128,
+                "cache must stay bounded at ICON_CACHE_MAX after the flood");
+    TEST_ASSERT_EQ(s_test_borrowed_px[0], 0xA5F00D02u,
+                   "borrowed pixels must be untouched by eviction (no wild free)");
+    /* Ownership-aware full release: also exercises free_pixels across every
+     * remaining owned entry (and any borrowed survivor) in one sweep. */
+    icon_cache_reset_for_test();
+    TEST_ASSERT_EQ(icon_cache_entry_count(), 0u,
+                   "cache reset must release every entry");
+    icon_store_test_force_ready(prev_ready);
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_desktop(void)
@@ -1619,6 +1706,10 @@ void test_register_desktop(void)
                             test_desktop_reset_closes_leaked_terminal, TEST_CAT_DESKTOP);
     test_suite_register_cat("Desktop: test_desktop_reset_action wrapper matches direct call",
                             test_desktop_reset_action_wrapper_matches, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: color icon cache key ignores tint (no duplicate flood)",
+                            test_icon_color_tint_normalized, TEST_CAT_DESKTOP);
+    test_suite_register_cat("Desktop: icon cache eviction never frees borrowed IRES pixels",
+                            test_icon_cache_eviction_borrowed_safe, TEST_CAT_DESKTOP);
 }
 
 #endif /* KERNEL_TESTS */

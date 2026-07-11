@@ -291,6 +291,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   - Pass `-fno-record-gcc-switches` equivalent for clang-19: none needed (already deterministic)
   - Ensure `llvm-ar-19` archives are deterministic: use `llvm-ar-19 rcsD` (`D` = deterministic mode, strips timestamps from archive)
   - `ld.lld-19` is deterministic by default; confirm `--build-id=none` or `--build-id=sha1` (consistent hash)
+- [ ] **Release build strips test code**: add `RELEASE=1` omitting `-DKERNEL_TESTS` (today every artifact ships the full test suite + seams) plus an `nm` assertion that no `*_for_test` / `test_register_*` symbols remain
 - [ ] **`make verify-reproducible`** target:
   ```bash
   bash scripts/build.sh clean

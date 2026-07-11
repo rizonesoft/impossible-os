@@ -132,6 +132,15 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
 
     POST16(0xDE40);
 
+    /* NOTE: g_last_bugcheck and the desc buffer are written before
+     * panic_screen's owner arbitration, so two SIMULTANEOUS bugchecks on
+     * different CPUs can interleave this record (narrow, long-standing
+     * window; render/dump stay owner-serialized). Claiming ownership HERE
+     * is wrong: the claim must come after the async-worker isolation
+     * branch in panic_screen, or an async AP would park holding ownership
+     * and silence every later panic. The unified owner-token design is
+     * tracked in the crash-dump TODO. */
+
     /* Store bugcheck params for dump pipeline and BSOD display */
     g_last_bugcheck.code      = code;
     g_last_bugcheck.param1    = p1;
@@ -164,16 +173,18 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
         }
     }
 
-    /* Build description string for panic_screen */
-    static char desc[128];
+    /* Build description string for panic_screen. Includes ALL FOUR bugcheck
+     * parameters: they are the diagnosis (e.g. for IOS_HEAP_CORRUPTION,
+     * P1=faulting pointer, P4=fault class) and previously reached only the
+     * registry -- useless when the machine cannot boot back up. */
+    static char desc[320];
     {
+        const char hex[] = "0123456789ABCDEF";
         const char *name = bugcheck_name(code);
         uint32_t pos = 0;
         const char *p = "STOP 0x";
-        while (*p && pos < 120) desc[pos++] = *p++;
-        /* hex code */
+        while (*p && pos < 300) desc[pos++] = *p++;
         {
-            const char hex[] = "0123456789ABCDEF";
             int started = 0;
             for (int shift = 28; shift >= 0; shift -= 4) {
                 uint32_t nib = (code >> shift) & 0xF;
@@ -184,9 +195,29 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
             }
         }
         p = " (";
-        while (*p && pos < 120) desc[pos++] = *p++;
-        while (*name && pos < 120) desc[pos++] = *name++;
+        while (*p && pos < 300) desc[pos++] = *p++;
+        while (*name && pos < 300) desc[pos++] = *name++;
         desc[pos++] = ')';
+        /* Append P1..P4 as 64-bit hex. */
+        {
+            const uint64_t params[4] = { p1, p2, p3, p4 };
+            int pi;
+            for (pi = 0; pi < 4 && pos < 300; pi++) {
+                const char *lbl = (pi == 0) ? "\n    P1=0x" :
+                                  (pi == 1) ? " P2=0x" :
+                                  (pi == 2) ? " P3=0x" : " P4=0x";
+                int shift;
+                int started = 0;
+                while (*lbl && pos < 300) desc[pos++] = *lbl++;
+                for (shift = 60; shift >= 0; shift -= 4) {
+                    uint64_t nib = (params[pi] >> shift) & 0xF;
+                    if (nib || started || shift == 0) {
+                        if (pos < 316) desc[pos++] = hex[nib];
+                        started = 1;
+                    }
+                }
+            }
+        }
         desc[pos] = '\0';
     }
 
@@ -524,9 +555,12 @@ static void draw_bsod_icon(uint32_t x, uint32_t y)
 
 /* --- Crash dump to file --- */
 
-static void write_crash_dump(struct interrupt_frame *frame,
-                             const char *description, const char *file,
-                             uint32_t line)
+/* Returns 1 only when the FULL dump was confirmed written (vfs_write
+ * accepted every byte); the caller's "saved" message must not lie about a
+ * dump that never landed (previously it printed whenever C: was mounted). */
+static int write_crash_dump(struct interrupt_frame *frame,
+                            const char *description, const char *file,
+                            uint32_t line)
 {
     char buf[2048];
     int pos = 0;
@@ -537,7 +571,7 @@ static void write_crash_dump(struct interrupt_frame *frame,
     char num[12];
 
     if (!vfs_is_mounted('C'))
-        return;
+        return 0;
 
     /* Build crash dump text manually (no snprintf in freestanding) */
     /* Header */
@@ -683,13 +717,22 @@ static void write_crash_dump(struct interrupt_frame *frame,
 
     vfs_create("C:\\Impossible\\System\\crashdump.log", 1);
     {
+        /* TRUNC: a shorter record must not leave the previous dump's tail
+         * spliced onto this one (the klog.c 2026-06 stale-bytes class).
+         * Success requires the full write AND a durable flush -- the BSOD
+         * "saved" line must not vouch for bytes still in a cache. */
         struct vfs_node *dump_file = vfs_open(
-            "C:\\Impossible\\System\\crashdump.log", VFS_O_WRITE);
+            "C:\\Impossible\\System\\crashdump.log",
+            VFS_O_WRITE | VFS_O_TRUNC);
         if (dump_file) {
-            vfs_write(dump_file, 0, (uint32_t)pos, (const uint8_t *)buf);
+            int wrote = vfs_write(dump_file, 0, (uint32_t)pos,
+                                  (const uint8_t *)buf);
+            int flushed = vfs_flush(dump_file);
             vfs_close(dump_file);
+            return wrote == pos && flushed == 0;
         }
     }
+    return 0;
 }
 
 /* --- Main panic screen --- */
@@ -1366,15 +1409,17 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
            (uint64_t)(uintptr_t)version_git_hash());
 
     /* === Write crash dump to disk === */
-    write_crash_dump(frame, description, file, line);
+    int dump_written = write_crash_dump(frame, description, file, line);
 
     /* === Persist klog ring buffer to reserved physical memory === */
     klog_crash_persist();
 
     {
         fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
-        if (vfs_is_mounted('C'))
+        if (dump_written)
             printk("\n    Crash dump saved to C:\\Impossible\\System\\crashdump.log\n");
+        else if (vfs_is_mounted('C'))
+            printk("\n    Crash dump write FAILED (see serial/klog persist for the record)\n");
     }
 
     /* Swap to show everything */

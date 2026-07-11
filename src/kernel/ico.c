@@ -166,7 +166,7 @@ static int decode_bmp_dib(icon_bitmap_t *out, const uint8_t *data,
     out->width      = (uint16_t)w;
     out->height     = (uint16_t)h;
     out->alloc_size = pixel_bytes;
-    out->from_pmm   = (pixel_bytes > 4096) ? 1 : 0;
+    out->ownership  = (pixel_bytes > 4096) ? ICON_PX_PMM : ICON_PX_HEAP;
 
     return 0;
 }
@@ -254,7 +254,8 @@ int ico_load(ico_file_t *ico, const char *path)
                 ico->entries[decoded].bitmap.width      = (uint16_t)img.width;
                 ico->entries[decoded].bitmap.height     = (uint16_t)img.height;
                 ico->entries[decoded].bitmap.alloc_size = img.alloc_size;
-                ico->entries[decoded].bitmap.from_pmm   = (uint8_t)img.from_pmm;
+                ico->entries[decoded].bitmap.ownership  =
+                    img.from_pmm ? ICON_PX_PMM : ICON_PX_HEAP;
                 ico->entries[decoded].valid = 1;
                 decoded++;
             }
@@ -319,7 +320,7 @@ void ico_free(ico_file_t *ico)
 
         icon_bitmap_t *bmp = &ico->entries[i].bitmap;
         if (bmp->pixels && bmp->alloc_size > 0) {
-            if (bmp->from_pmm) {
+            if (bmp->ownership == ICON_PX_PMM) {
                 uint64_t frames = (bmp->alloc_size + 4095) / 4096;
                 pmm_free_range((uintptr_t)bmp->pixels, frames);
             } else {

@@ -94,6 +94,11 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 - [x] Keyboard-triggered crash: `bugcheck_keyboard_check()` called from keyboard IRQ handler on every scancode; Ctrl+ScrollLock x2 within 2s triggers `KeBugCheckEx` if `HKLM\SYSTEM\CrashControl\CrashOnCtrlScroll` == 1
 - [x] 6 test assertions in `test_crashdump.c`: name resolution (known, unknown, exclusive), info struct, constants, POST codes
 - [x] Commit: `"kernel/panic: KeBugCheckEx, STOP code table, NMI/keyboard crash triggers"`
+- [ ] **Unified panic owner token**: one first-caller claim for KeBugCheckEx + direct panic_screen entries, claimed AFTER async-worker isolation (an async AP must never park holding ownership and silence later panics)
+- [ ] **Nested/NMI owner re-entry policy**: owner-side NMI or nested fault must not republish `g_last_bugcheck`/desc; route to a minimal serial-only emergency halt instead of re-entering the collector
+- [ ] **POST16 after owner arbitration**: losers must not touch shared POST/framebuffer state pre-claim (raw port breadcrumb only)
+- [ ] **Two-slot crash-dump publication**: generation + checksum protocol replacing in-place TRUNC so a failed rewrite never destroys the last good dump
+- [ ] **IXFS flush honesty for the dump path**: `ixfs` flush must propagate bitmap/cache/journal errors and reach a device durability boundary before `write_crash_dump` may report success
 
 **Test checkpoint:** `KeBugCheckEx(0xE2, 1, 2, 3, 4)` stores correct values in `g_last_bugcheck`. `bugcheck_name(0x50)` returns `"PAGE_FAULT_IN_NONPAGED_AREA"`. BSOD screen shows hex STOP code. `POST16(0xDE40)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
