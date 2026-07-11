@@ -36,17 +36,38 @@ COMPANION="${CODEX_COMPANION_PATH:-$HOME/.claude/plugins/marketplaces/openai-cod
 [[ -f "$COMPANION" ]] || { echo "ERROR: codex-companion.mjs not found at $COMPANION" >&2; exit 1; }
 export CODEX_REVIEWER_DISPATCH=1
 
-OUTPUT="$(node "$COMPANION" task --background --json "$PROMPT")"
-JOB_ID="$(printf '%s' "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("jobId",""))' 2>/dev/null || true)"
-LOG_FILE="$(printf '%s' "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("logFile",""))' 2>/dev/null || true)"
-[[ -n "$JOB_ID" && -n "$LOG_FILE" ]] || { echo "ERROR: background dispatch returned no jobId/logFile: $OUTPUT" >&2; exit 1; }
-
 MANIFEST_DIR=".claude/overnight/reviews"
 mkdir -p "$MANIFEST_DIR"
 MANIFEST="$MANIFEST_DIR/manifest.jsonl"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="$PWD/$MANIFEST_DIR/${STAMP}-${KIND}.out"
+UNIT="codex-rev-${KIND}-${STAMP}-$$"
+
+# CGROUP SURVIVAL IS LOAD-BEARING (live incident 2026-07-11): a review
+# spawned inside the headless session's systemd service dies with the
+# session when it exits for a structural wait -- systemd kills every
+# process left in the control group, and the wait then waits forever on a
+# corpse (until expiry). systemd-run puts the review in its OWN transient
+# scope; the sentinel line is what `run_phase_guard.py wait` watches for.
+PROMPT_FILE="$(mktemp)"
+printf '%s' "$PROMPT" > "$PROMPT_FILE"
+if systemd-run --user --collect "--unit=$UNIT" \
+     "--setenv=CODEX_REVIEWER_DISPATCH=1" "--setenv=HOME=$HOME" \
+     "--setenv=PATH=$PATH" --same-dir \
+     /bin/bash -c "node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\" > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
+     >/dev/null 2>&1; then
+  DETACH="systemd-run:$UNIT"
+else
+  # Non-systemd fallback: setsid detach (survives plain shells; NOT a
+  # systemd cgroup -- callers inside a service should have systemd-run).
+  setsid bash -c "node '$COMPANION' adversarial-review \"\$(cat '$PROMPT_FILE')\" > '$LOG_FILE' 2>&1; rc=\$?; echo \"Turn completed (rc=\$rc)\" >> '$LOG_FILE'; rm -f '$PROMPT_FILE'" \
+    < /dev/null >/dev/null 2>&1 &
+  DETACH="setsid:$!"
+fi
+
 PROMPT_SHA="$(printf '%s' "$PROMPT" | sha256sum | cut -d' ' -f1)"
 printf '{"ts": %s, "kind": "%s", "todo": "%s", "jobId": "%s", "logFile": "%s", "prompt_sha256": "%s"}\n' \
-  "$(date +%s)" "$KIND" "$TODO_PATH" "$JOB_ID" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
+  "$(date +%s)" "$KIND" "$TODO_PATH" "$DETACH" "$LOG_FILE" "$PROMPT_SHA" >> "$MANIFEST"
 
 printf '{"kind": "%s", "jobId": "%s", "logFile": "%s", "manifest": "%s"}\n' \
-  "$KIND" "$JOB_ID" "$LOG_FILE" "$MANIFEST"
+  "$KIND" "$DETACH" "$LOG_FILE" "$MANIFEST"

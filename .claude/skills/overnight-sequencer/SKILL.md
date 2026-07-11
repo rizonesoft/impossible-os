@@ -96,12 +96,23 @@ exactly once when the artifacts complete. Zero model turns are spent waiting,
 and no review is skipped (the woken session must still receive the verdict):
 
 ```
-python3 .claude/hooks/run_phase_guard.py wait 3600 "codex section review" \
-  /path/to/task1.output "Turn completed" \
-  /path/to/task2.output "Turn completed"
-# then final-answer with a one-line status; the Stop hook permits THIS stop.
+# 1. Dispatch the review so it SURVIVES this session's exit (own systemd
+#    scope) -- REQUIRED for anything a wait will watch:
+bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
+#    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
+# 2. Declare the wait on the broker's logFile(s):
+python3 .claude/hooks/run_phase_guard.py wait 3600 "codex design review" \
+  <logFile> "Turn completed"
+# 3. Final-answer with a one-line status; the Stop hook permits THIS stop.
 ```
 
+- **NEVER declare a wait on a harness background-task output** (the
+  `/tmp/.../tasks/*.output` paths): those processes are children of THIS
+  session inside its systemd cgroup and are KILLED the moment the session
+  exits -- the wait then watches a corpse until expiry (live incident
+  2026-07-11). Only broker-dispatched artifacts (own transient scope)
+  survive a structural wait. A harness-background dispatch is fine ONLY
+  for waits absorbed in-session.
 - Batch every outstanding verdict of the wait into ONE declaration (all
   path/pattern pairs must match before the wake).
 - **Multi-kind review rounds go through the broker.** Dispatch each kind as

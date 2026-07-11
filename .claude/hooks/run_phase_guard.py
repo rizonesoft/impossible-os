@@ -358,14 +358,35 @@ def _wait_expired(waiting: dict) -> bool:
 
 
 def _spawn_watcher(mode: str) -> int:
-    """Detach scripts/overnight/session-watcher.sh (inherits the headless
-    session's env, incl. OVERNIGHT_*). Returns the pid, 0 on failure."""
+    """Spawn scripts/overnight/session-watcher.sh OUTSIDE the calling
+    session's systemd cgroup. setsid alone is NOT enough: the headless run
+    lives in a systemd service, and when its main process exits (the very
+    stop the watcher exists to follow), systemd kills every process left in
+    the control group -- watcher included (live incident 2026-07-11, first
+    structural wait: watcher + awaited Codex review both died with the
+    session). `systemd-run --user` puts the watcher in its own transient
+    scope that survives; plain Popen remains the non-systemd fallback.
+    Returns the pid (or unit-tagged 1 for systemd-run), 0 on failure."""
     script = repo_root() / "scripts/overnight/session-watcher.sh"
     if not script.exists():
         return 0
+    log = repo_root() / ".claude/overnight/watcher.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    unit = f"seq-watcher-{mode}-{os.getpid()}-{int(time.time())}"
     try:
-        log = repo_root() / ".claude/overnight/watcher.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
+        env_pass = [f"--setenv={k}={v}" for k, v in os.environ.items()
+                    if k.startswith("OVERNIGHT_") or k in ("PATH", "HOME")]
+        r = subprocess.run(
+            ["systemd-run", "--user", "--collect", f"--unit={unit}",
+             *env_pass, "/bin/bash", str(script), str(repo_root()), mode],
+            capture_output=True, timeout=15)
+        if r.returncode == 0:
+            with log.open("a") as fh:
+                fh.write(f"spawned watcher via systemd-run unit {unit}\n")
+            return 1  # alive-in-own-scope; pid tracked by systemd
+    except Exception:
+        pass
+    try:
         with log.open("a") as fh:
             p = subprocess.Popen(
                 ["bash", str(script), str(repo_root()), mode],
@@ -690,12 +711,19 @@ def cli(argv):
                   "its completion pattern -- nothing to wait for. Read the "
                   "verdict(s) and continue.", file=sys.stderr)
             return 1
-        # Replace any prior wait (best-effort kill of its watcher).
+        # Replace any prior wait (best-effort kill of its watcher). pids <= 1
+        # are sentinels (1 = systemd-run scope, cleaned up by --collect;
+        # 0 = spawn failure) -- signalling them would hit init or our own
+        # process group.
         prior = state.get("waiting") or {}
-        if prior.get("watcher_pid"):
+        try:
+            prior_pid = int(prior.get("watcher_pid") or 0)
+        except (TypeError, ValueError):
+            prior_pid = 0
+        if prior_pid > 1:
             try:
-                os.kill(int(prior["watcher_pid"]), 15)
-            except (OSError, ValueError):
+                os.kill(prior_pid, 15)
+            except OSError:
                 pass
         waiting["watcher_pid"] = _spawn_watcher("wait")
         state["waiting"] = waiting
