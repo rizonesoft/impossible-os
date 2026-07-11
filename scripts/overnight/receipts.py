@@ -107,6 +107,30 @@ def toolchain_key() -> str:
     return h.hexdigest()
 
 
+# Built artifacts a smoke test actually boots. The smoke receipt binds to their
+# CONTENT (not just the build inputs) so a stale image can never pass as green.
+IMAGE_PATHS = ["build/kernel.exe", "build/BOOTX64.EFI", "build/impossible.img",
+               "build/disk.img", "build/esp.img", "build/impossible-os.img"]
+# Markers that prove a green boot-to-userspace (test-smoke.sh success condition).
+SMOKE_MARKERS_DEFAULT = "Boot complete;C:\\>"
+
+
+def image_key(project: Path) -> str:
+    """Fingerprint of the built image artifacts. 'no-image' when none exist."""
+    h = hashlib.sha256()
+    found = False
+    for rel in IMAGE_PATHS:
+        p = project / rel
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        found = True
+        h.update(rel.encode())
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest() if found else "no-image"
+
+
 def receipt_path(project: Path) -> Path:
     return project / "build" / "build-receipt.json"
 
@@ -189,17 +213,71 @@ def check_suite(project: Path, suite: str) -> tuple[bool, str]:
     return True, f"suite {suite} green over current inputs ({key[:12]})"
 
 
+def smoke_receipt_path(project: Path) -> Path:
+    return project / "build" / "smoke-receipt.json"
+
+
+def record_smoke(project: Path, markers: str = SMOKE_MARKERS_DEFAULT) -> int:
+    """Record a GREEN smoke run bound to build inputs + toolchain + the built
+    IMAGE bytes + the success markers. Stronger than a suite receipt: it also
+    invalidates when the image changes, even if the tracked inputs somehow did
+    not (a rebuilt or partially-clobbered image)."""
+    key = build_input_key(project)
+    if key is None:
+        print("receipts: git unavailable, smoke receipt not recorded",
+              file=sys.stderr)
+        return 1
+    rp = smoke_receipt_path(project)
+    rp.parent.mkdir(parents=True, exist_ok=True)
+    img = image_key(project)
+    rp.write_text(json.dumps({
+        "build_input_key": key, "toolchain_key": toolchain_key(),
+        "image_key": img, "markers": markers, "epoch": int(time.time())}))
+    print(f"smoke receipt recorded ({key[:12]}, image {img[:12]})")
+    return 0
+
+
+def check_smoke(project: Path, markers: str = SMOKE_MARKERS_DEFAULT
+                ) -> tuple[bool, str]:
+    """(valid, reason). Valid iff build inputs, toolchain, built image, AND the
+    expected markers all match the receipt -- age irrelevant by design."""
+    try:
+        rec = json.loads(smoke_receipt_path(project).read_text())
+    except (OSError, ValueError):
+        return False, "no smoke receipt (record with receipts.py record-smoke .)"
+    key = build_input_key(project)
+    if key is None:
+        return False, "git unavailable for fingerprinting"
+    if rec.get("build_input_key") != key:
+        return False, "build inputs changed since the receipted smoke"
+    if rec.get("toolchain_key") != toolchain_key():
+        return False, "toolchain changed since the receipted smoke"
+    if rec.get("image_key") != image_key(project):
+        return False, "built image changed since the receipted smoke"
+    if markers and rec.get("markers") != markers:
+        return False, "expected smoke markers differ from the receipt"
+    return True, f"smoke green over current inputs+image ({key[:12]})"
+
+
 def main(argv: list[str]) -> int:
-    verbs = ("record-build", "check-build", "record-suite", "check-suite")
+    verbs = ("record-build", "check-build", "record-suite", "check-suite",
+             "record-smoke", "check-smoke")
     if len(argv) < 2 or argv[0] not in verbs:
         print("usage: receipts.py record-build|check-build PROJECT_DIR | "
-              "record-suite|check-suite PROJECT_DIR SUITE", file=sys.stderr)
+              "record-suite|check-suite PROJECT_DIR SUITE | "
+              "record-smoke|check-smoke PROJECT_DIR", file=sys.stderr)
         return 2
     project = Path(argv[1])
     if argv[0] == "record-build":
         return record_build(project)
     if argv[0] == "check-build":
         ok, reason = check_build(project)
+        print(("VALID: " if ok else "MISS: ") + reason)
+        return 0 if ok else 1
+    if argv[0] == "record-smoke":
+        return record_smoke(project)
+    if argv[0] == "check-smoke":
+        ok, reason = check_smoke(project)
         print(("VALID: " if ok else "MISS: ") + reason)
         return 0 if ok else 1
     if len(argv) < 3:

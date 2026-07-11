@@ -393,6 +393,10 @@ elif [ "$BOOT_PASSED" = true ]; then
     fi
     echo -e "${GREEN}══════════════════════════════════════════════════${NC}"
     echo ""
+    # Content-bound smoke receipt (image + build inputs + toolchain + markers).
+    # A rollover / verification over an unchanged image + inputs is then free;
+    # any change to the image or a build input invalidates it. Best-effort.
+    python3 "$(dirname "$0")/overnight/receipts.py" record-smoke . >/dev/null 2>&1 || true
     exit 0
 else
     echo ""

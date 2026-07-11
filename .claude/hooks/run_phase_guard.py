@@ -437,12 +437,16 @@ def _rollover_failures(root: Path, state: dict) -> list:
             fails.append("test receipt missing (record with receipts.py "
                          "record-suite . all after a green test.sh)")
         try:
-            s_ok, s_why = mod.check_suite(root, "smoke")
+            # Prefer the image-bound smoke receipt; accept the legacy suite
+            # "smoke" receipt during migration. Fail-closed if neither is valid.
+            s_ok, s_why = mod.check_smoke(root)
             if not s_ok:
-                fails.append(f"smoke receipt not content-valid ({s_why})")
+                l_ok, _ = mod.check_suite(root, "smoke")
+                if not l_ok:
+                    fails.append(f"smoke receipt not content-valid ({s_why})")
         except Exception:
             fails.append("smoke receipt missing (record with receipts.py "
-                         "record-suite . smoke after a green test-smoke.sh)")
+                         "record-smoke . after a green test-smoke.sh)")
     except Exception as exc:  # noqa: BLE001
         fails.append(f"build/test receipt check unavailable ({exc})")
     # No outstanding review obligation. Fail CLOSED on unreadable state.

@@ -483,6 +483,10 @@ if [ "$TOTAL_FAIL" = "0" ]; then
     fi
     # Update coverage report on success
     bash "$PROJECT/scripts/test-coverage.sh" --save --quiet
+    # Content-bound suite receipt so a re-run over unchanged inputs is free
+    # (rollover gate + targeted fix-loop verification read this). Records the
+    # suite that ran (a filtered SUITE=, else "all"). Best-effort.
+    python3 "$PROJECT/scripts/overnight/receipts.py" record-suite . "${SUITE:-all}" >/dev/null 2>&1 || true
     exit 0
 else
     TOTAL=$((TOTAL_PASS + TOTAL_FAIL))

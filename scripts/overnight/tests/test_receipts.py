@@ -52,6 +52,36 @@ def test_receipt_lifecycle():
         assert _run(fx, "check-build").returncode == 0
 
 
+def test_smoke_receipt_binds_image_and_inputs():
+    with tempfile.TemporaryDirectory() as d:
+        fx = pathlib.Path(d) / "fx"
+        (fx / "src/kernel").mkdir(parents=True)
+        (fx / "build").mkdir()
+        subprocess.run(["git", "init", "-q", str(fx)], check=True)
+        (fx / "src/kernel/a.c").write_text("int a(void){return 1;}\n")
+        (fx / "build/kernel.exe").write_bytes(b"IMAGEv1")
+        subprocess.run(["git", "-C", str(fx), "add", "src/kernel/a.c"], check=True)
+        subprocess.run(["git", "-C", str(fx), "-c", "user.email=t@t", "-c",
+                        "user.name=t", "commit", "-qm", "c"], check=True,
+                       capture_output=True)
+        # no receipt -> miss
+        assert _run(fx, "check-smoke").returncode == 1
+        # record -> valid
+        assert _run(fx, "record-smoke").returncode == 0
+        assert _run(fx, "check-smoke").returncode == 0
+        # image changes (rebuilt/clobbered) but inputs same -> MISS (image-bound)
+        (fx / "build/kernel.exe").write_bytes(b"IMAGEv2-different")
+        r = _run(fx, "check-smoke")
+        assert r.returncode == 1 and "image changed" in r.stdout, r.stdout
+        # restore image -> valid again (content-addressed, no clock)
+        (fx / "build/kernel.exe").write_bytes(b"IMAGEv1")
+        assert _run(fx, "check-smoke").returncode == 0
+        # a build-input content change -> MISS
+        (fx / "src/kernel/a.c").write_text("int a(void){return 2;}\n")
+        assert _run(fx, "check-smoke").returncode == 1
+
+
 if __name__ == "__main__":
     test_receipt_lifecycle()
+    test_smoke_receipt_binds_image_and_inputs()
     print("PASS: receipts")
