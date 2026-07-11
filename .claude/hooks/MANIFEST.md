@@ -35,6 +35,12 @@
 | agent_dispatch_required | `.claude/hooks/agent_dispatch_required.py` | BLOCK+WARN | Y | exit 2 | `SKIP_AGENT_DISPATCH_HOOK=1` | Overnight agent-discipline gate (WS1b, BLOCK promotion 2026-07-02). Fires ONLY when `OVERNIGHT_SEQUENCER_RUN` is set AND `sequencer-run.json` phase is SECTIONS AND no agent dispatch recorded within 30 min: BLOCKs (exit 2, `[agent-dispatch BLOCK]`) edits to `.c`/`.h`/`.asm`/`.S` under `src/`/`include/`; WARNs (exit 0) for other source. Interactive sessions and markdown/docs targets are untouched. Fail-open. |
 | _skip_env | `.claude/hooks/_skip_env.py` | HELPER | N | -- | -- | TODO-08 §23 -- shared SKIP-env scanner used by all 7 PreToolUse gates that honor a `SKIP_*` (or similar) opt-out env. `read_skip_envs(cmd, keys, fallback_to_environ=True)` merges inline-cmd-env-prefix (`SKIP_FOO=1 git commit ...`, `env SKIP_FOO=1 ...`, `sudo SKIP_FOO=1 ...`) with `os.environ`; inline wins on key collision. Each consumer passes an EXPLICIT key list (not a prefix) to prevent suffix-collision capture of unrelated secrets. Migrated consumers: `section_review_required`, `section_commit_gate` (delegated `_scan_inline_env_prefix`), `phase1_evidence_gate`, `step5_quality_gate`, `skill_step_block`, `design_review_required`, `receiving_review_required`. |
 
+### Matcher: `Task|Agent`
+
+| Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
+|---|---|---|---|---|---|---|
+| agent_result_cache (pre) | `.claude/hooks/agent_result_cache.py` | BLOCK | N | -- | `AGENT_RESULT_CACHE_DISABLE=1` | On a cacheable analyst dispatch whose key (agent type + normalized prompt + git content fingerprint of the scopes that agent reads) matches a stored report, BLOCKS the re-dispatch (exit 2) and returns the cached report in the block message -- an identical dispatch over byte-identical inputs re-derives the same answer, so the model reuses it instead of paying Sonnet again. Force a fresh run by changing the prompt (any change alters the key). Cacheable set: kernel-explorer, section-context-mapper, concurrency-evidence-mapper, review-evidence-mapper, test-coverage-mapper, xref-dependency-mapper, parity-research-analyst. |
+
 ### Matcher: `Bash`
 
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
@@ -67,6 +73,7 @@
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
 |---|---|---|---|---|---|---|
 | agent_dispatch_recorder | `.claude/hooks/agent_dispatch_recorder.py` | STATE | N | -- | -- | After every `Agent`/Task dispatch, atomically records the dispatch (subagent type + HEAD sha + ts) into `.claude/state/last-agent-dispatch.json` so the WS1b `agent_dispatch_required` PreToolUse backstop can tell whether the default-on specialist agents ran for the current section. Never blocks; fail-open. |
+| agent_result_cache (post) | `.claude/hooks/agent_result_cache.py` | STATE | N | -- | `AGENT_RESULT_CACHE_DISABLE=1` | Stores each cacheable analyst dispatch's report into `.claude/state/agent-cache/` keyed by sha256(agent type + normalized prompt + git content fingerprint of the scopes that agent reads). Content-addressed: any relevant edit changes the key, so staleness is impossible by construction. Bounded (64 entries, 32 KB reports, 7-day hygiene prune). Fail-open. |
 
 ### Matcher: `Bash|Skill`
 

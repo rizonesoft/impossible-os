@@ -181,6 +181,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_result_cache.py\" pre",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -417,6 +427,16 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_graph_auto_rewrite.py\"",
             "timeout": 20
+          }
+        ]
+      },
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_result_cache.py\" post",
+            "timeout": 30
           }
         ]
       }
