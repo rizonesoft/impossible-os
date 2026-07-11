@@ -72,7 +72,15 @@ static volatile uint32_t sched_ticks = 0;    /* ticks since last switch */
 static uint64_t yield_irq_handler(struct interrupt_frame *frame);
 uint64_t schedule_now(struct interrupt_frame *frame);
 static void task_init_accounting(struct task *t);
+static void task_init_rlimits_defaults(struct task *t);
 static int task_inherit_primary_token(uint32_t parent_pid, ACCESS_TOKEN **out);
+
+/* The rlimits[] array is indexed by the RLIMIT_* ABI values and its size must
+ * stay pinned to the Linux UAPI count so a future getrlimit(resource) never
+ * indexes out of bounds. */
+_Static_assert(RLIM_NLIMITS == 16, "RLIM_NLIMITS must match Linux UAPI RLIM_NLIMITS");
+_Static_assert(RLIMIT_RTTIME == RLIM_NLIMITS - 1, "RTTIME must be the last resource index");
+_Static_assert(RLIMIT_AS < RLIM_NLIMITS, "every RLIMIT_* index must fit rlimits[]");
 
 /* exec_pending stuck detection threshold (ticks).
  * If exec_pending has been set for more than this many ticks without the
@@ -378,6 +386,7 @@ boot_result_t task_init(void)
         {
             spinlock_t init = SPINLOCK_INIT;
             tasks[i].cwd_lock = init;
+            tasks[i].rlimit_lock = init;
         }
         tasks[i].num_threads = 0;
         for (j = 0; j < THREAD_MAX; j++) {
@@ -406,6 +415,7 @@ boot_result_t task_init(void)
     tasks[0].name = "main";
     task_set_cwd(&tasks[0], "C:\\");     /* system process starts at the boot drive root */
     task_init_accounting(&tasks[0]);     /* PID 0 accrues time too; stamp its CreateTime */
+    task_init_rlimits_defaults(&tasks[0]); /* PID 0 is the one true source of default limits */
     num_tasks = 1;
     current_task = 0;
 
@@ -471,6 +481,89 @@ static void task_init_accounting(struct task *t)
     t->io_write_bytes = 0;
     t->vol_ctxsw      = 0;
     t->invol_ctxsw    = 0;
+}
+
+/* Stamp the sane per-process rlimit defaults. Called for PID 0 ONLY; every other
+ * task inherits its creator's limits via task_rlimit_inherit(), so a process that
+ * irreversibly lowered a hard limit cannot spawn a child with fresh, higher
+ * defaults. Runs single-threaded at PID 0 setup, so no lock is taken here. */
+static void task_init_rlimits_defaults(struct task *t)
+{
+    int i;
+    for (i = 0; i < RLIM_NLIMITS; i++) {
+        t->rlimits[i].rlim_cur = RLIM_INFINITY;
+        t->rlimits[i].rlim_max = RLIM_INFINITY;
+    }
+    t->rlimits[RLIMIT_STACK].rlim_cur   = RLIMIT_DEFAULT_STACK_CUR;
+    t->rlimits[RLIMIT_CORE].rlim_cur    = 0;                       /* no core dumps by default */
+    t->rlimits[RLIMIT_NOFILE].rlim_cur  = RLIMIT_DEFAULT_NOFILE_CUR;
+    t->rlimits[RLIMIT_NOFILE].rlim_max  = RLIMIT_DEFAULT_NOFILE_MAX;
+    /* MEMLOCK carries a FINITE hard ceiling: an unprivileged raise of the soft
+     * limit is capped at the hard limit, so leaving rlim_max at RLIM_INFINITY
+     * would let any process restore an unbounded pin allowance. Match Linux
+     * (soft == hard == 8 MiB for the unprivileged default). */
+    t->rlimits[RLIMIT_MEMLOCK].rlim_cur = RLIMIT_DEFAULT_MEMLOCK_CUR;
+    t->rlimits[RLIMIT_MEMLOCK].rlim_max = RLIMIT_DEFAULT_MEMLOCK_MAX;
+}
+
+/* Copy the creator's full rlimit array into a fresh child slot. Snapshots the
+ * parent under its rlimit_lock (an SMP-coherent read; uncontended on the single
+ * CPU today). The child is not yet published (num_tasks not yet bumped), so it
+ * needs no lock of its own. Copying ALL RLIM_NLIMITS entries also guarantees a
+ * reused slot never inherits a prior tenant's limits. */
+void task_rlimit_inherit(struct task *child, struct task *parent)
+{
+    uint64_t flags;
+    int i;
+    spin_lock_irqsave(&parent->rlimit_lock, &flags);
+    for (i = 0; i < RLIM_NLIMITS; i++)
+        child->rlimits[i] = parent->rlimits[i];
+    spin_unlock_irqrestore(&parent->rlimit_lock, flags);
+}
+
+int task_rlimit_get(struct task *t, int resource, rlimit_t *out)
+{
+    uint64_t flags;
+    if (!t || !out || resource < 0 || resource >= RLIM_NLIMITS) {
+        if (out) {
+            out->rlim_cur = 0;
+            out->rlim_max = 0;
+        }
+        return RLIMIT_ERR_INVAL;
+    }
+    spin_lock_irqsave(&t->rlimit_lock, &flags);
+    *out = t->rlimits[resource];
+    spin_unlock_irqrestore(&t->rlimit_lock, flags);
+    return RLIMIT_OK;
+}
+
+int task_rlimit_set(struct task *t, int resource, const rlimit_t *nl,
+                    int caller_privileged)
+{
+    uint64_t flags;
+    rlimit_t want;
+    int rc = RLIMIT_OK;
+
+    if (!t || !nl || resource < 0 || resource >= RLIM_NLIMITS)
+        return RLIMIT_ERR_INVAL;
+    /* Single copy-in: validate, authorize, and commit the SAME snapshot so a
+     * concurrent writer (or a future user-copy boundary) cannot present an
+     * allowed value at the check and a different one at the commit. A userspace
+     * caller must copy_from_user into *nl before calling this. */
+    want = *nl;
+    if (want.rlim_cur > want.rlim_max)
+        return RLIMIT_ERR_INVAL;
+
+    spin_lock_irqsave(&t->rlimit_lock, &flags);
+    if (want.rlim_max > t->rlimits[resource].rlim_max && !caller_privileged) {
+        /* Raising the hard limit needs SeIncreaseQuotaPrivilege; lowering it (or
+         * moving the soft limit within the hard cap) is always self-permitted. */
+        rc = RLIMIT_ERR_PERM;
+    } else {
+        t->rlimits[resource] = want;
+    }
+    spin_unlock_irqrestore(&t->rlimit_lock, flags);
+    return rc;
 }
 
 int task_create(task_entry_t entry, const char *name)
@@ -576,6 +669,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
     task_init_accounting(&tasks[pid]);
+    task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
@@ -722,6 +816,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
     task_init_accounting(&tasks[pid]);
+    task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
     /* Per-process page table: clone kernel PML4, mark ELF + user stack as User */
     {
@@ -1573,6 +1668,7 @@ int task_fork(struct interrupt_frame *frame)
      * CreateTime is stamped at fork (a fork child is a distinct process, not a
      * continuation of the parent's accounting). Before num_tasks++ publishes it. */
     task_init_accounting(&tasks[child_pid]);
+    task_rlimit_inherit(&tasks[child_pid], &tasks[parent_pid_val]); /* rlimits inherited across fork */
 
     num_tasks++;
 

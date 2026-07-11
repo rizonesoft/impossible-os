@@ -61,7 +61,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |   6   | Process capabilities and privilege bitmask                | --             |  [/]   |
 | ⭐   |   7   | Capability inheritance and drop-only policy               | §6             |  [/]   |
 | 💎   |   8   | Process accounting fields (times, I/O counters)           | §1             |  [/]   |
-| 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [ ]   |
+| 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [/]   |
 | 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [ ]   |
 | 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [ ]   |
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [ ]   |
@@ -277,20 +277,33 @@ Both Win11 (Job Object quotas + `QUOTA_LIMITS` via `NtQueryInformationProcess`) 
 > [!NOTE]
 > → XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §12` -- dynamic thread storage and thread admission are implemented in the scheduler domain. This section owns the quota/accounting surface; §12 consumes those limits so thread creation fails on real resource pressure instead of a fixed `THREAD_MAX` array ceiling.
 
-- [ ] Define `rlimit_t` in `include/kernel/task_limits.h`: `{ uint64_t rlim_cur; uint64_t rlim_max; }` with `RLIM_INFINITY = UINT64_MAX`
-- [ ] Define limit indices `RLIMIT_AS`, `RLIMIT_NOFILE` (coordinates with TODO-05 §14), `RLIMIT_CPU`, `RLIMIT_STACK`, `RLIMIT_NPROC`, `RLIMIT_FSIZE`, `RLIMIT_CORE`, `RLIMIT_MEMLOCK`, `RLIMIT_COUNT`
-- [ ] Wire `RLIMIT_CORE` as the size gate consumed by crash-dump generation (-> XREF: `TODO-27-crash-dump-generation.md`; a value of 0 suppresses the dump, matching the `PR_SET_DUMPABLE`/§15 policy flag)
-- [ ] Wire `RLIMIT_MEMLOCK` as the ceiling checked by the memory-pinning path (-> XREF: `TODO-12-native-api-ssdt.md §9` VirtualLock / the VMM pin owner); reject a lock that would exceed the cap
-- [ ] Add `rlimit_t rlimits[RLIMIT_COUNT]` to `struct task`; populate with sane defaults at `task_create()` (e.g., `RLIMIT_NOFILE.rlim_cur = 256`, `RLIMIT_AS.rlim_cur = RLIM_INFINITY`)
-- [ ] Inherit rlimits from parent at `task_fork()`
-- [ ] `sys_getrlimit(resource, &rlimit)` / `sys_setrlimit(resource, &rlimit)`: unprivileged process can lower `rlim_max` (irreversible) or set `rlim_cur` within `[0, rlim_max]`; raising `rlim_max` requires `CAP_SYS_ADMIN`
-- [ ] `sys_prlimit(pid, resource, new, old)`: get/set limits for another process (requires `CAP_SYS_ADMIN` if pid != self)
-- [ ] Enforce `RLIMIT_AS` in VMM `vmm_map_page()` / `sys_brk()`: reject if total mapped pages would exceed limit
-- [ ] Enforce `RLIMIT_CPU`: in scheduler tick, check `user_time_ns + kernel_time_ns > rlim_cur * 1e9`; send `SIGXCPU` (or terminate) if exceeded
-- [ ] Register as Linux-compat syscalls; `NtQueryInformationProcess(ProcessQuotaLimits)` returns `QUOTA_LIMITS_EX` populated from rlimits
-- [ ] Commit: `"kernel: task -- per-process resource limits (rlimits)"`
+This section ships the native rlimit STORAGE + a locked, privilege-aware accessor API. A faithful Windows `QUOTA_LIMITS` projection needs real VM/working-set counters and is owned by the unified quota authority; enforcement and the Linux syscalls are wired by their owners (below). The accessors are the ready call target for every deferred consumer.
 
-**Test checkpoint:** `sys_setrlimit(RLIMIT_AS, 64MB)` then `sys_brk()` beyond 64 MB returns `ENOMEM`. `sys_setrlimit(RLIMIT_CPU, 2)` causes process termination after 2 seconds of CPU time. Unprivileged `sys_setrlimit` raising `rlim_max` returns `EPERM`. Serial log shows `"task: rlimit RLIMIT_AS enforced -- rejected allocation"`. `POST16(0xD090)` on entry, `POST16(0xD091)` after struct/defaults set, `POST16(0xD092)` after `vmm_map_page()` enforcement wired. Range `0xD09x` confirmed free. If crash at 0xD092: VMM enforcement check broke page allocation -- revert the `vmm_map_page` guard. Test on: QEMU WHPX + TCG.
+> [!NOTE]
+> Create-path inheritance (`task_rlimit_inherit` at `task_create`/`task_create_user`/`task_fork`) shares the task allocator's single-CPU-by-construction slot model with every other per-process inheritance (token, accounting, cwd): the child slot is fully written before `num_tasks++` publishes it, and `current_task` is the creator. Atomic slot reservation + per-CPU `current_task` are owned by `03-memory-concurrency/TODO-06-scheduler-enhancement.md §13`; when they land, all create-path inheritance becomes SMP-correct together.
+
+- [x] `rlimit_t` + `RLIM_INFINITY` + Linux-UAPI-numbered `RLIMIT_*` (`CPU`=0..`AS`=9..`RTTIME`=15, `RLIM_NLIMITS`=16) in new `include/kernel/task_limits.h` -- Linux ABI numbering lets a future `getrlimit` index `rlimits[]`
+- [x] `rlimit_t rlimits[RLIM_NLIMITS]` + leaf `spinlock_t rlimit_lock` on `struct task`; PID 0 seeded by `task_init_rlimits_defaults()` (8 MiB stack, 0 core, 256/4096 NOFILE, 8 MiB memlock; rest `RLIM_INFINITY`)
+- [x] Inherit the creator's full array at `task_create()`/`task_create_user()`/`task_fork()` (defaults live at PID 0 only, so a lowered hard limit is not escapable via a child) and preserve it across `task_exec()`
+- [x] Locked accessors `task_rlimit_get()`/`task_rlimit_set()` (irqsave snapshot/commit): lowering unprivileged, raising the hard limit needs `caller_privileged` (`SeIncreaseQuotaPrivilege`), `rlim_cur <= rlim_max` enforced
+- [x] Commit: `"kernel: task -- per-process resource limits (rlimits)"`
+- [/] Enforce `RLIMIT_AS` in `vmm_map_page()`/`sys_brk()` (reject when mapped pages would exceed the cap) -- deferred: needs per-process VM/page counters + the deferred §3 program break; owned here
+- [/] Enforce `RLIMIT_CPU` in the timer-tick charger (joins §8 accounting in `schedule()`): `SIGXCPU`/terminate past `rlim_cur` seconds -- deferred hot-path follow-up owned here (needs ISR-context signal raise)
+- [/] Wire `RLIMIT_MEMLOCK` as the pin ceiling (reject a lock past the cap) -- deferred (-> XREF: `TODO-12-native-api-ssdt.md §9` Virtual Memory, the `VirtualLock` pin path)
+- [/] Wire `RLIMIT_CORE` as the crash-dump size gate (0 suppresses the dump) -- deferred (-> XREF: `TODO-27-crash-dump-generation.md`, the dump-writer size check)
+- [/] Linux `sys_getrlimit`/`sys_setrlimit`/`sys_prlimit` -- deferred pending a `linux_syscall_table` registration point (same blocker as §8 getrusage); the accessors above are the ready call target
+- [/] Windows `ProcessQuotaLimits` query/set + reconcile `RLIMIT_NOFILE` with the existing `handle_table.handle_limit` -- deferred to the unified quota authority (-> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`)
+
+**Test checkpoint:** `task_rlimit_set(RLIMIT_NOFILE, {500,1500}, caller_privileged=0)` commits (lowering within the cap is unprivileged) and `task_rlimit_get` reads it back. `rlim_cur > rlim_max` returns `RLIMIT_ERR_INVAL`. Raising `rlim_max` with `caller_privileged=0` returns `RLIMIT_ERR_PERM` and leaves the hard limit intact; with `caller_privileged=1` it commits. Lowering `rlim_max` unprivileged is allowed. An out-of-range resource index returns `RLIMIT_ERR_INVAL` (get zeroes its output). PID 0 carries the 8 MiB stack / 4096 NOFILE-max defaults; the task running the suite carries the same inherited defaults. No POST16 (post-Phase-3 task code -- klog only). Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 8 rlimit tests (roundtrip, cur>max, privilege matrix, bad-resource, PID0 defaults, inherit full-array, MEMLOCK ceiling) | 0 failures
+
+> **Notes:**
+> - **What shipped** -- `include/kernel/task_limits.h` (rlimit ABI + defaults) and `rlimits[RLIM_NLIMITS]` + `rlimit_lock` on `struct task`, with locked accessors `task_rlimit_get`/`task_rlimit_set` in `task.c` (irqsave snapshot/commit; privilege-aware).
+> - **How it integrates** -- PID 0 gets defaults; every create/fork path inherits the creator's full array (preserved across `task_exec`); the accessors are the ready call target for the deferred syscalls/NT surface.
+> - **Downstream effects** -- unblocks the deferred consumers once their owners land: `TODO-25 §8` (Windows `ProcessQuotaLimits` + NOFILE/handle-limit reconcile), `TODO-12 §9` (MEMLOCK pin), `TODO-27` (CORE dump gate).
+> - **Canonical doc** -- `include/kernel/task_limits.h` header block (ABI numbering + scope/ownership map).
+> - **Scope boundary** -- §9 owns rlimit STORAGE + accessors + inheritance; enforcement (AS/CPU) is a follow-up owned here, the Windows quota projection is `TODO-25 §8`, Linux `get/set/prlimit` await a `linux_syscall_table`.
 
 ## 10. CPU Affinity per Process
 
@@ -441,26 +454,26 @@ No section owns session ID, process-group ID, session leadership, the foreground
 
 ## OS Comparison
 
-| ⭐   | Feature                       | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS            |
-| --- | ----------------------------- | ----------------------------- | ------------------------- | -------------------------- |
-| 💎   | Per-process CWD               | ✅ SetCurrentDirectory         | ✅ chdir / getcwd          | ✅ §1 cwd + Nt syscalls     |
-| 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit       | ✅ fd 0/1/2 via fork       | ⬜ §2                       |
-| 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory     | ✅ brk / sbrk              | ⬜ §3                       |
-| 💎   | Process priority class        | ✅ SetPriorityClass            | ✅ nice / setpriority      | ⬜ §4                       |
-| 💎   | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS     | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                       |
-| 💎   | Capability / privilege model  | ✅ Access tokens               | ✅ POSIX capabilities      | ⬜ §6                       |
+| ⭐   | Feature                       | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS                      |
+| --- | ----------------------------- | ----------------------------- | ------------------------- | ------------------------------------ |
+| 💎   | Per-process CWD               | ✅ SetCurrentDirectory         | ✅ chdir / getcwd          | ✅ §1 cwd + Nt syscalls               |
+| 💎   | STD handle pre-wiring         | ✅ CreateProcess inherit       | ✅ fd 0/1/2 via fork       | ⬜ §2                                 |
+| 💎   | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory     | ✅ brk / sbrk              | ⬜ §3                                 |
+| 💎   | Process priority class        | ✅ SetPriorityClass            | ✅ nice / setpriority      | ⬜ §4                                 |
+| 💎   | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS     | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                                 |
+| 💎   | Capability / privilege model  | ✅ Access tokens               | ✅ POSIX capabilities      | ⬜ §6                                 |
 | 💎   | Process accounting            | ✅ ProcessTimes + IoCounters   | ✅ getrusage / times       | ⚠️ §8 fields (ring-3 query deferred) |
-| 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | ⬜ §9                       |
-| 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                      |
-| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | ⬜ §11                      |
-| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                      |
-| 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                      |
-| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                      |
-| 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                      |
-| 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                      |
-| 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10) |
-| ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease |
-| ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired  |
+| 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors             |
+| 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                                |
+| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | ⬜ §11                                |
+| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                                |
+| 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                                |
+| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |
+| 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |
+| 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
+| 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
+| ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease           |
+| ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired            |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.

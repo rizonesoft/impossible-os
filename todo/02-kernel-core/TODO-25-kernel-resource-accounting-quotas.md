@@ -97,6 +97,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 ## 8. Native Query/Set Quota Syscalls
 
 - [ ] Add `NtQueryQuotaInformationProcess`, `NtSetQuotaInformationProcess`.
+- [ ] `ProcessQuotaLimits`: project `QUOTA_LIMITS` from the TODO-21 §9 `rlimits[]` + real VM/working-set counters; reconcile `RLIMIT_NOFILE` with `handle_table.handle_limit`. -> XREF: `TODO-21-process-model-extensions.md §9`
 - [ ] Extend Job Object information classes for aggregate limits.
 - [ ] Add `SystemResourcePressureInformation`.
 - [ ] Require privilege for raising limits; lowering own soft limit is allowed.

@@ -22,6 +22,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
+#include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
 
 /* Task states */
 #define TASK_RUNNING    0   /* currently on the CPU */
@@ -264,6 +265,16 @@ struct task {
      * fragmentation, bounded by SECTION_VIEW_LIMIT). Resets on
      * task_exec (fresh process image starts fresh). */
     uintptr_t next_section_view_va;      /* 0 = uninitialized, >0 = next free VA */
+    /* --- Per-process resource limits (POSIX rlimit model) ---
+     * Process-wide, shared by every thread in threads[]. Read/written ONLY via
+     * task_rlimit_get / task_rlimit_set, which snapshot/commit under rlimit_lock
+     * (irqsave, because a future RLIMIT_CPU enforcer runs in the timer-tick ISR
+     * that already touches this struct). rlimit_lock is a leaf lock: never held
+     * across another lock or any blocking op. Indexed by the RLIMIT_* ABI values
+     * in kernel/task_limits.h; PID 0 gets defaults, every other task inherits its
+     * creator's array at create/fork and preserves it across exec. */
+    rlimit_t    rlimits[RLIM_NLIMITS];
+    spinlock_t  rlimit_lock;
 };
 
 /* Task entry function type */
@@ -304,6 +315,31 @@ void task_get_cwd(struct task *t, char *out, uint32_t out_size);
 /* Commit `abs` (a canonical absolute path) as the task's cwd under cwd_lock.
  * Returns 0 on success, -1 if `abs` does not fit TASK_CWD_MAX. */
 int task_set_cwd(struct task *t, const char *abs);
+
+/* Snapshot resource limit `resource` (a RLIMIT_* index) into *out under
+ * rlimit_lock. Returns RLIMIT_OK, or RLIMIT_ERR_INVAL for a NULL arg or a
+ * resource index outside [0, RLIM_NLIMITS) (in which case *out is zeroed). */
+int task_rlimit_get(struct task *t, int resource, rlimit_t *out);
+
+/* Validate and commit a new limit for `resource` under rlimit_lock. Policy:
+ *   - nl->rlim_cur must be <= nl->rlim_max              -> RLIMIT_ERR_INVAL
+ *   - RAISING the hard limit (rlim_max) above its current value requires
+ *     caller_privileged != 0                            -> RLIMIT_ERR_PERM
+ *   - lowering either limit is always permitted (an unprivileged lower of the
+ *     hard limit is irreversible, matching getrlimit(2))
+ * caller_privileged is precomputed at the syscall/NT boundary via
+ * SeSinglePrivilegeCheck(&SeIncreaseQuotaPrivilege, previous_mode); passing it in
+ * keeps this helper free of any security-header dependency and directly testable.
+ * Returns RLIMIT_OK on commit, or a RLIMIT_ERR_* code (nothing is written on error). */
+int task_rlimit_set(struct task *t, int resource, const rlimit_t *nl,
+                    int caller_privileged);
+
+/* Copy `parent`'s entire rlimit array into a fresh (unpublished) `child` slot,
+ * snapshotting the parent under its rlimit_lock. Called on every process-creation
+ * path so a child inherits (never resets) its creator's limits; copying all
+ * RLIM_NLIMITS entries also guarantees a reused slot carries no prior tenant's
+ * limits. `child` must not be schedulable yet (no lock is taken on it). */
+void task_rlimit_inherit(struct task *child, struct task *parent);
 
 /* Resolve `in` (relative or absolute) against the CURRENT task's cwd into a
  * canonical absolute path `out`. The single entry point every NT pathname

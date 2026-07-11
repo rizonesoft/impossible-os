@@ -242,6 +242,150 @@ static void test_ntcreatefile_zero_length_name(void)
                    "zero-Length name -> NOT_FOUND (Buffer never scanned)");
 }
 
+/* --- Section 9: per-process resource limits (rlimits) ---
+ * Pure tests over the locked accessor API on a stack-local fixture, plus two
+ * read-only oracle queries against the live PID 0 / current task to prove the
+ * boot-time default + create-path inherit ran. No live boot infra touched. */
+
+static struct task s_rlimit_fixture;
+static struct task s_rlimit_child;
+
+/* Seed every resource to a known baseline {cur=1000, max=2000} under a fresh lock. */
+static void rlimit_fixture_reset(void)
+{
+    spinlock_t init = SPINLOCK_INIT;
+    int i;
+    s_rlimit_fixture.rlimit_lock = init;
+    for (i = 0; i < RLIM_NLIMITS; i++) {
+        s_rlimit_fixture.rlimits[i].rlim_cur = 1000;
+        s_rlimit_fixture.rlimits[i].rlim_max = 2000;
+    }
+}
+
+static void test_rlimit_get_set_roundtrip(void)
+{
+    rlimit_t rl;
+    rlimit_t nl = { 500, 1500 };
+    rlimit_fixture_reset();
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_NOFILE, &nl, 0), RLIMIT_OK,
+                   "moving soft/hard within the cap is unprivileged");
+    TEST_ASSERT_EQ(task_rlimit_get(&s_rlimit_fixture, RLIMIT_NOFILE, &rl), RLIMIT_OK,
+                   "get succeeds");
+    TEST_ASSERT_EQ((int)rl.rlim_cur, 500, "soft limit committed");
+    TEST_ASSERT_EQ((int)rl.rlim_max, 1500, "hard limit committed");
+}
+
+static void test_rlimit_cur_gt_max_rejected(void)
+{
+    rlimit_t nl = { 3000, 2000 };  /* rlim_cur > rlim_max */
+    rlimit_fixture_reset();
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_AS, &nl, 1), RLIMIT_ERR_INVAL,
+                   "rlim_cur > rlim_max is invalid even for a privileged caller");
+}
+
+static void test_rlimit_raise_hard_needs_priv(void)
+{
+    rlimit_t rl;
+    rlimit_t nl = { 1000, 5000 };  /* raise hard limit 2000 -> 5000 */
+    rlimit_fixture_reset();
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_AS, &nl, 0), RLIMIT_ERR_PERM,
+                   "unprivileged raise of the hard limit is denied");
+    task_rlimit_get(&s_rlimit_fixture, RLIMIT_AS, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, 2000, "denied set leaves the hard limit intact");
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_AS, &nl, 1), RLIMIT_OK,
+                   "privileged raise of the hard limit is allowed");
+    task_rlimit_get(&s_rlimit_fixture, RLIMIT_AS, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, 5000, "privileged raise committed");
+}
+
+static void test_rlimit_lower_hard_unprivileged(void)
+{
+    rlimit_t rl;
+    rlimit_t nl = { 500, 1000 };  /* lower hard limit 2000 -> 1000 */
+    rlimit_fixture_reset();
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_AS, &nl, 0), RLIMIT_OK,
+                   "unprivileged lowering of the hard limit is allowed (irreversible)");
+    task_rlimit_get(&s_rlimit_fixture, RLIMIT_AS, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, 1000, "hard limit lowered");
+}
+
+static void test_rlimit_bad_resource_rejected(void)
+{
+    rlimit_t rl;
+    rlimit_t nl = { 1, 1 };
+    rlimit_fixture_reset();
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIM_NLIMITS, &nl, 1), RLIMIT_ERR_INVAL,
+                   "out-of-range resource index rejected on set");
+    rl.rlim_cur = 7;
+    rl.rlim_max = 7;
+    TEST_ASSERT_EQ(task_rlimit_get(&s_rlimit_fixture, -1, &rl), RLIMIT_ERR_INVAL,
+                   "negative resource index rejected on get");
+    TEST_ASSERT_EQ((int)rl.rlim_cur, 0, "get failure zeroes the output");
+}
+
+static void test_rlimit_pid0_defaults(void)
+{
+    rlimit_t rl;
+    struct task *sys = task_get_by_pid(0);
+    TEST_ASSERT(sys != (struct task *)0, "PID 0 task exists");
+    TEST_ASSERT_EQ(task_rlimit_get(sys, RLIMIT_STACK, &rl), RLIMIT_OK, "get PID0 stack limit");
+    TEST_ASSERT_EQ((int)rl.rlim_cur, (int)RLIMIT_DEFAULT_STACK_CUR,
+                   "PID 0 carries the default 8 MiB soft stack limit");
+    task_rlimit_get(sys, RLIMIT_NOFILE, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, (int)RLIMIT_DEFAULT_NOFILE_MAX,
+                   "PID 0 carries the default NOFILE hard limit");
+}
+
+static void test_rlimit_inherit_copies_full_array(void)
+{
+    spinlock_t init = SPINLOCK_INIT;
+    rlimit_t rl;
+    int i;
+    /* Seed the parent with distinctive per-resource values (incl. a lowered hard
+     * limit), then inherit into a poisoned fresh child: a missed entry shows up
+     * as the poison value, and the lowered hard limit must carry over intact. */
+    rlimit_fixture_reset();  /* parent baseline: every resource {1000, 2000} */
+    s_rlimit_fixture.rlimits[RLIMIT_AS].rlim_cur = 111;
+    s_rlimit_fixture.rlimits[RLIMIT_AS].rlim_max = 222;   /* deliberately lowered hard limit */
+    s_rlimit_fixture.rlimits[RLIMIT_NOFILE].rlim_cur = 64;
+    s_rlimit_fixture.rlimits[RLIMIT_STACK].rlim_max = 333;
+
+    s_rlimit_child.rlimit_lock = init;
+    for (i = 0; i < RLIM_NLIMITS; i++) {
+        s_rlimit_child.rlimits[i].rlim_cur = 0xDEAD;
+        s_rlimit_child.rlimits[i].rlim_max = 0xBEEF;
+    }
+
+    task_rlimit_inherit(&s_rlimit_child, &s_rlimit_fixture);
+
+    task_rlimit_get(&s_rlimit_child, RLIMIT_AS, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_cur, 111, "child inherits parent RLIMIT_AS soft");
+    TEST_ASSERT_EQ((int)rl.rlim_max, 222, "child inherits parent's lowered RLIMIT_AS hard limit");
+    task_rlimit_get(&s_rlimit_child, RLIMIT_NOFILE, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_cur, 64, "child inherits parent RLIMIT_NOFILE soft");
+    task_rlimit_get(&s_rlimit_child, RLIMIT_STACK, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, 333, "child inherits parent RLIMIT_STACK hard");
+    task_rlimit_get(&s_rlimit_child, RLIMIT_CPU, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_cur, 1000, "child inherits an unmodified baseline entry");
+    TEST_ASSERT_EQ((int)rl.rlim_max, 2000, "no child entry retains its poison value");
+}
+
+/* MEMLOCK ships a FINITE hard ceiling, so an unprivileged raise above it is denied. */
+static void test_rlimit_memlock_hard_ceiling_default(void)
+{
+    rlimit_t rl;
+    rlimit_t nl;
+    struct task *sys = task_get_by_pid(0);
+    TEST_ASSERT(sys != (struct task *)0, "PID 0 task exists");
+    task_rlimit_get(sys, RLIMIT_MEMLOCK, &rl);
+    TEST_ASSERT_EQ((int)rl.rlim_max, (int)RLIMIT_DEFAULT_MEMLOCK_MAX,
+                   "MEMLOCK default hard limit is finite (not RLIM_INFINITY)");
+    nl.rlim_cur = rl.rlim_max + 1;
+    nl.rlim_max = rl.rlim_max + 1;
+    TEST_ASSERT_EQ(task_rlimit_set(sys, RLIMIT_MEMLOCK, &nl, 0), RLIMIT_ERR_PERM,
+                   "unprivileged raise above the MEMLOCK hard ceiling is denied");
+}
+
 void test_register_proc_ext(void)
 {
     test_suite_register_cat("ProcExt: resolve absolute passthrough",
@@ -280,6 +424,22 @@ void test_register_proc_ext(void)
                             test_resolve_component_256_rejected, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: NtCreateFile zero-Length name",
                             test_ntcreatefile_zero_length_name, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit get/set roundtrip",
+                            test_rlimit_get_set_roundtrip, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit cur>max rejected",
+                            test_rlimit_cur_gt_max_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit raise hard needs privilege",
+                            test_rlimit_raise_hard_needs_priv, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit lower hard unprivileged",
+                            test_rlimit_lower_hard_unprivileged, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit bad resource rejected",
+                            test_rlimit_bad_resource_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit PID0 defaults",
+                            test_rlimit_pid0_defaults, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit inherit copies full array",
+                            test_rlimit_inherit_copies_full_array, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: rlimit MEMLOCK hard ceiling default",
+                            test_rlimit_memlock_hard_ceiling_default, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */
