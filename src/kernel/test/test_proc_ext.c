@@ -370,7 +370,9 @@ static void test_rlimit_inherit_copies_full_array(void)
     TEST_ASSERT_EQ((int)rl.rlim_max, 2000, "no child entry retains its poison value");
 }
 
-/* MEMLOCK ships a FINITE hard ceiling, so an unprivileged raise above it is denied. */
+/* MEMLOCK ships a FINITE hard ceiling, so an unprivileged raise above it is denied.
+ * The PID 0 check stays READ-ONLY (mutating live PID 0 would poison every later
+ * task via inheritance); the denial semantics are exercised on a stack fixture. */
 static void test_rlimit_memlock_hard_ceiling_default(void)
 {
     rlimit_t rl;
@@ -380,10 +382,13 @@ static void test_rlimit_memlock_hard_ceiling_default(void)
     task_rlimit_get(sys, RLIMIT_MEMLOCK, &rl);
     TEST_ASSERT_EQ((int)rl.rlim_max, (int)RLIMIT_DEFAULT_MEMLOCK_MAX,
                    "MEMLOCK default hard limit is finite (not RLIM_INFINITY)");
-    nl.rlim_cur = rl.rlim_max + 1;
-    nl.rlim_max = rl.rlim_max + 1;
-    TEST_ASSERT_EQ(task_rlimit_set(sys, RLIMIT_MEMLOCK, &nl, 0), RLIMIT_ERR_PERM,
-                   "unprivileged raise above the MEMLOCK hard ceiling is denied");
+    /* Denial on a stack fixture (hard limit 2000): an unprivileged raise to 2001
+     * is rejected. No live-task mutation, no rlim_max+1 overflow risk. */
+    rlimit_fixture_reset();
+    nl.rlim_cur = 2001;
+    nl.rlim_max = 2001;
+    TEST_ASSERT_EQ(task_rlimit_set(&s_rlimit_fixture, RLIMIT_MEMLOCK, &nl, 0), RLIMIT_ERR_PERM,
+                   "unprivileged raise above a finite MEMLOCK hard ceiling is denied");
 }
 
 void test_register_proc_ext(void)
