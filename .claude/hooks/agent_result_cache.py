@@ -11,10 +11,21 @@ todo/ tree, or both) -- so ANY relevant edit invalidates and staleness is
 impossible by construction (same model as scripts/overnight/receipts.py).
 
 Modes (argv[1]):
-  post   PostToolUse on Task/Agent: store the agent's report under the key.
-  pre    PreToolUse on Task/Agent: on a key hit, BLOCK the dispatch (exit 2)
-         and hand the cached report back in the block message -- the model
-         reuses it instead of re-paying for the dispatch.
+  pre           PreToolUse on Task/Agent: on a key hit, BLOCK the dispatch
+                (exit 2) and hand the cached report back in the block message --
+                the model reuses it instead of re-paying for the dispatch.
+  subagentstop  SubagentStop: store the agent's report under the key. This is
+                the ONLY reliable store point -- the Agent tool runs subagents
+                in the BACKGROUND by default, so the Task PostToolUse fires at
+                DISPATCH time with the ack, not the report (empirically verified
+                2026-07-11). The SubagentStop payload carries agent_type +
+                last_assistant_message (the report) + agent_transcript_path
+                (whose first user message is the exact dispatched prompt), so
+                the same content-bound key can be recomputed and stored.
+  post          PostToolUse on Task/Agent: legacy store point, still fires for
+                FOREGROUND (synchronous) dispatches whose PostToolUse carries the
+                report; a no-op for background (report absent). Kept as
+                belt-and-suspenders; subagentstop is the primary path.
 
 To force a fresh run, change the prompt (e.g. append "fresh run: <why>") --
 any prompt change changes the key. Operator kill-switch:
@@ -140,6 +151,57 @@ def _extract_report(resp) -> str:
     return ""
 
 
+def _first_user_message(transcript_path: str) -> str:
+    """The first user message in a subagent's transcript IS the exact prompt the
+    parent dispatched (empirically verified 2026-07-11) -- so the content-bound
+    key recomputed here matches the one `pre` computed from tool_input.prompt."""
+    try:
+        with open(transcript_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                m = ev.get("message")
+                if not isinstance(m, dict) or m.get("role") != "user":
+                    continue
+                c = m.get("content")
+                if isinstance(c, str):
+                    t = c
+                elif isinstance(c, list):
+                    t = "".join(b.get("text", "") for b in c
+                                if isinstance(b, dict) and b.get("type") == "text")
+                else:
+                    t = ""
+                if t.strip():
+                    return t
+    except OSError:
+        return ""
+    return ""
+
+
+def _store(root: Path, stype: str, prompt: str, report: str) -> None:
+    key = _cache_key(root, stype, prompt)
+    if key is None:
+        return
+    cache_dir = root / CACHE_DIR_REL
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / f"{key}.json").write_text(json.dumps({
+            "agent": stype, "stored_epoch": int(time.time()),
+            "report": report}), encoding="utf-8")
+        _prune(cache_dir)
+    except Exception:
+        return
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import _offload_log
+        _offload_log.log_event(root, "cache-store", "agent_result_cache",
+                               f"{stype} report cached ({len(report)} bytes)")
+    except Exception:
+        pass
+
+
 def _prune(cache_dir: Path) -> None:
     try:
         entries = sorted(cache_dir.glob("*.json"),
@@ -159,14 +221,32 @@ def main(mode: str) -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    root = _repo_root()
+    if root is None:
+        return 0
+
+    # SubagentStop: the primary store point. Payload has no tool_name/tool_input;
+    # it carries agent_type + last_assistant_message (report) + the leaf
+    # agent_transcript_path (first user message == the dispatched prompt).
+    if mode == "subagentstop":
+        stype = d.get("agent_type") or d.get("subagent_type") or ""
+        if stype not in CACHE_SCOPES:
+            return 0
+        report = _extract_report(d.get("last_assistant_message"))[:MAX_REPORT_BYTES]
+        if len(report) < 80:
+            return 0  # too small to be a real analyst report; don't cache
+        prompt = _first_user_message(d.get("agent_transcript_path") or "")
+        if not prompt:
+            return 0
+        _store(root, stype, prompt, report)
+        return 0
+
+    # pre / post operate on the Task/Agent tool call payload.
     if d.get("tool_name") not in ("Task", "Agent"):
         return 0
     ti = d.get("tool_input") or {}
     stype = ti.get("subagent_type") or ""
     if stype not in CACHE_SCOPES:
-        return 0
-    root = _repo_root()
-    if root is None:
         return 0
     key = _cache_key(root, stype, ti.get("prompt") or "")
     if key is None:
@@ -175,17 +255,13 @@ def main(mode: str) -> int:
     entry = cache_dir / f"{key}.json"
 
     if mode == "post":
+        # Legacy path: only fires usefully for FOREGROUND dispatches (background
+        # PostToolUse has the dispatch ack, not the report). subagentstop is the
+        # primary store; this is belt-and-suspenders for synchronous dispatches.
         report = _extract_report(d.get("tool_response"))[:MAX_REPORT_BYTES]
         if len(report) < 80:
-            return 0  # too small to be a real analyst report; don't cache
-        try:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            entry.write_text(json.dumps({
-                "agent": stype, "stored_epoch": int(time.time()),
-                "report": report}), encoding="utf-8")
-            _prune(cache_dir)
-        except Exception:
-            pass
+            return 0
+        _store(root, stype, ti.get("prompt") or "", report)
         return 0
 
     # pre: block the dispatch on a hit and return the cached report.

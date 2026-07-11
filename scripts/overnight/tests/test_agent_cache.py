@@ -82,6 +82,46 @@ def test_non_cacheable_agent_passthrough():
         assert _hook(fx, "pre", p).returncode == 0
 
 
+def _leaf_transcript(fx, prompt, report):
+    """A subagent's own transcript: first user message == the dispatched prompt,
+    then an assistant reply (mirrors the real background-subagent JSONL)."""
+    tp = fx / "leaf.jsonl"
+    tp.write_text(
+        json.dumps({"message": {"role": "user", "content": prompt}}) + "\n"
+        + json.dumps({"message": {"role": "assistant",
+                     "content": [{"type": "text", "text": report}]}}) + "\n")
+    return tp
+
+
+def test_subagentstop_store_then_pre_hit():
+    # The Agent tool runs subagents in the BACKGROUND, so the report only
+    # arrives at SubagentStop. Storing there must produce a key a later `pre`
+    # (which sees the same prompt via tool_input) hits.
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        prompt = "Map the frob path integration surface in src/kernel."
+        tp = _leaf_transcript(fx, prompt, REPORT)
+        # pre before store: miss
+        assert _hook(fx, "pre", _payload(prompt)).returncode == 0
+        # SubagentStop payload (agent_type + last_assistant_message + leaf path)
+        stop = {"agent_type": "kernel-explorer",
+                "last_assistant_message": REPORT,
+                "agent_transcript_path": str(tp)}
+        assert _hook(fx, "subagentstop", stop).returncode == 0
+        assert list((fx / ".claude/state/agent-cache").glob("*.json")), \
+            "SubagentStop did not store a cache entry"
+        # now the identical dispatch is served from cache
+        r = _hook(fx, "pre", _payload(prompt))
+        assert r.returncode == 2 and "frob path" in r.stderr, r.stderr
+        # non-cacheable agent type at SubagentStop is ignored
+        stop2 = {"agent_type": "checks-runner",
+                 "last_assistant_message": REPORT,
+                 "agent_transcript_path": str(tp)}
+        n0 = len(list((fx / ".claude/state/agent-cache").glob("*.json")))
+        assert _hook(fx, "subagentstop", stop2).returncode == 0
+        assert len(list((fx / ".claude/state/agent-cache").glob("*.json"))) == n0
+
+
 def test_kill_switch_and_tiny_reports():
     with tempfile.TemporaryDirectory() as d:
         fx = _mk_fixture(pathlib.Path(d))
@@ -102,5 +142,6 @@ def test_kill_switch_and_tiny_reports():
 if __name__ == "__main__":
     test_cache_roundtrip_and_invalidation()
     test_non_cacheable_agent_passthrough()
+    test_subagentstop_store_then_pre_hit()
     test_kill_switch_and_tiny_reports()
     print("PASS: agent-result cache")
