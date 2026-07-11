@@ -22,6 +22,11 @@ _spec = importlib.util.spec_from_file_location(
 adr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(adr)
 
+_rspec = importlib.util.spec_from_file_location(
+    "rdg", REPO / ".claude/hooks/review_dispatch_gate.py")
+rdg = importlib.util.module_from_spec(_rspec)
+_rspec.loader.exec_module(rdg)
+
 
 def _fixture(d):
     root = pathlib.Path(d)
@@ -74,7 +79,31 @@ def test_malformed_receipt_refused():
         assert adr._fresh_section_pack(root) is False
 
 
+def test_diff_facts_receipt_fail_closed_and_window():
+    with tempfile.TemporaryDirectory() as d:
+        root = _fixture(d)
+        files = ["src/kernel/x.c"]
+        window = 1000
+        rp = root / ".claude/state/last-diff-facts.json"
+        # A) absent -> refused
+        assert rdg._fresh_diff_facts(root, window) is False
+        # B) fresh + in-window -> accepted
+        rp.write_text(json.dumps({"digest": worktree_key(root, files),
+                                  "changed_files": files, "ts_ns": window + 5}))
+        assert rdg._fresh_diff_facts(root, window) is True
+        # C) out-of-window (older than pass start) -> refused
+        rp.write_text(json.dumps({"digest": worktree_key(root, files),
+                                  "changed_files": files, "ts_ns": window - 5}))
+        assert rdg._fresh_diff_facts(root, window) is False
+        # D) stale content (edit since the receipt) -> refused
+        rp.write_text(json.dumps({"digest": worktree_key(root, files),
+                                  "changed_files": files, "ts_ns": window + 5}))
+        (root / "src/kernel/x.c").write_text("int x(void){return 9;}\n")
+        assert rdg._fresh_diff_facts(root, window) is False
+
+
 if __name__ == "__main__":
     test_receipt_fail_closed_and_fresh_accept()
     test_malformed_receipt_refused()
+    test_diff_facts_receipt_fail_closed_and_window()
     print("PASS: dispatch-receipt (WS2)")

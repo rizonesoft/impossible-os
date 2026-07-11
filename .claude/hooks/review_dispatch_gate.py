@@ -128,6 +128,32 @@ def _dispatched_within(root: Path, agent_type: str, window_start: int) -> bool:
         return True  # fail-open
 
 
+def _fresh_diff_facts(root: Path, window_start: int) -> bool:
+    """A fresh diff-facts run IS the deterministic equivalent of the
+    review-evidence-mapper's evidence gathering (changed defs/callers/tests +
+    concurrency/ABI/user-ptr inventory + cppcheck), so it satisfies the MAPPER
+    requirement only -- the kernel/boot QUALITY auditors are judgment nets and
+    stay mandatory. FAIL-CLOSED: a missing/malformed/out-of-window/stale receipt
+    returns False and the mapper dispatch stays required."""
+    try:
+        rc = json.loads((root / ".claude/state/last-diff-facts.json").read_text())
+    except Exception:
+        return False
+    ts = rc.get("ts_ns")
+    files = rc.get("changed_files")
+    digest = rc.get("digest")
+    if not (isinstance(ts, int) and ts >= window_start
+            and isinstance(files, list) and isinstance(digest, str)):
+        return False
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                              / "scripts/overnight"))
+        from worktree_hash import worktree_key
+        return worktree_key(root, files) == digest
+    except Exception:
+        return False
+
+
 def _reviewed_ship_files(root: Path, todo_rel: str) -> list[str]:
     """Files touched by the reviewed ship commit (adversarial_head), or []."""
     try:
@@ -223,11 +249,13 @@ def main() -> int:
                     for f in ship_files)
     mapper_required = kernelish or len(src_ship) > 5
     if mapper_required and \
-       not _dispatched_within(root, "review-evidence-mapper", window_start):
+       not _dispatched_within(root, "review-evidence-mapper", window_start) and \
+       not _fresh_diff_facts(root, window_start):
         failures.append(
-            "no review-evidence-mapper dispatch in this pass window "
-            "(required for large or kernel/boot diffs; a tiny non-kernel diff "
-            "is exempt -- Opus reads it directly)")
+            "no review-evidence-mapper dispatch (or fresh diff-facts receipt) "
+            "in this pass window (required for large or kernel/boot diffs; a "
+            "tiny non-kernel diff is exempt -- Opus reads it directly). Run "
+            "scripts/overnight/diff-facts.py to satisfy this deterministically")
 
     if any(f.startswith(KERNEL_PREFIXES) for f in ship_files) and \
        not _dispatched_within(root, "kernel-quality-auditor", window_start):
