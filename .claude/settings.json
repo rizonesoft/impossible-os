@@ -191,6 +191,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_preflight.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [

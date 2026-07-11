@@ -41,6 +41,12 @@
 |---|---|---|---|---|---|---|
 | agent_result_cache (pre) | `.claude/hooks/agent_result_cache.py` | BLOCK | N | -- | `AGENT_RESULT_CACHE_DISABLE=1` | On a cacheable analyst dispatch whose key (agent type + normalized prompt + git content fingerprint of the scopes that agent reads) matches a stored report, BLOCKS the re-dispatch (exit 2) and returns the cached report in the block message -- an identical dispatch over byte-identical inputs re-derives the same answer, so the model reuses it instead of paying Sonnet again. Force a fresh run by changing the prompt (any change alters the key). Cacheable set: kernel-explorer, section-context-mapper, concurrency-evidence-mapper, review-evidence-mapper, test-coverage-mapper, xref-dependency-mapper, parity-research-analyst. |
 
+
+### Matcher: `Edit`
+
+| Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
+|---|---|---|---|---|---|---|
+| edit_preflight | `.claude/hooks/edit_preflight.py` | BLOCK | N | -- | -- | Deterministic Edit preflight (102/544 Edit attempts failed in run-20260710, mostly stale old_string): 0 matches -> `[EDIT-STALE]` block including the CLOSEST real lines from the current file so the retry re-anchors on current content; 2+ matches without replace_all -> `[EDIT-AMBIGUOUS]` block with the count. Fail-open; `--selftest`. Codes: docs/infrastructure/hook-codes.md. |
 ### Matcher: `Bash`
 
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |

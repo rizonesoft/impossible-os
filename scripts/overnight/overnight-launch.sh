@@ -270,12 +270,27 @@ You are this repository's unattended overnight sequencer, running headless under
 Hard rules from that doctrine: the work unit is the ENTIRE TODO queue, not one section. NEVER stop or disarm the run. A blocker, hard failure, or operator-reserved decision is DEFERRED ([/] + a Deferred stamp + an XREF) and you ADVANCE to the next section/file -- it is never a reason to stop. The run ends ONLY on an oracle-verified \`run_phase_guard.py fixpoint\` (all work DONE or deferred-with-XREF) or the human operator's --disarm. If the guard cursor looks inactive after a relaunch, re-invoke Skill(overnight-sequencer) and resume from the recorded phase.
 PROMPT_EOF
 
-# Operational headless runs do NOT need the explanatory output style -- its
-# "Insight" callout blocks are wasted output tokens in an unattended run.
-# Override it on THIS invocation only (interactive sessions keep the style).
-# The explanatory plugin's SessionStart hook still injects its instruction
-# (cheap, prompt-cached input); this suppresses the expensive OUTPUT side.
-NO_INSIGHTS_PROMPT='Operational headless run: ignore any "explanatory" output-style instruction from session context. Do NOT produce educational "Insight" callout blocks or teaching asides. Keep every response terse and operational.'
+# Byte-stable worker prompts (2026-07-11): every fresh worker session should
+# present an IDENTICAL prompt prefix so the provider prompt cache re-hits
+# across section workers and watchdog relaunches.
+#   - --exclude-dynamic-system-prompt-sections moves per-machine sections
+#     (cwd, env, git status) out of the system prompt into the first user
+#     message; dynamic cursor/status data already arrives via the SessionStart
+#     brief (user-side, after the cached prefix).
+#   - The explanatory-output-style plugin is disabled per-invocation via
+#     --settings (interactive sessions keep it). Probe 2026-07-11: headless -p
+#     sessions never received its SessionStart instruction anyway, so the old
+#     contradictory NO_INSIGHTS suppression prompt was dead weight -- removed;
+#     the settings disable is belt-and-suspenders.
+#   - OVERNIGHT_DISALLOWED_TOOLS (comma/space-separated) trims tool schemas
+#     the unattended run never needs; empty = no restriction. Load-bearing
+#     hooks are untouched (never --bare / safe mode).
+STABLE_PROMPT_ARGS=(--exclude-dynamic-system-prompt-sections
+  --settings '{"enabledPlugins":{"explanatory-output-style@claude-plugins-official":false}}')
+DISALLOWED_ARGS=()
+if [ -n "${OVERNIGHT_DISALLOWED_TOOLS:-}" ]; then
+  DISALLOWED_ARGS=(--disallowedTools "$OVERNIGHT_DISALLOWED_TOOLS")
+fi
 
 # Stream machine-readable output through the formatter so the report streams
 # progress live (plain text stays silent until the run ends).
@@ -321,8 +336,9 @@ START_HEAD="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
 "$CLAUDE" -p "$CLAUDE_PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
-  --append-system-prompt "$NO_INSIGHTS_PROMPT" \
+  "${STABLE_PROMPT_ARGS[@]}" \
   "${MODEL_ARGS[@]}" \
+  ${DISALLOWED_ARGS[@]+"${DISALLOWED_ARGS[@]}"} \
   ${MCP_CONFIG_ARGS[@]+"${MCP_CONFIG_ARGS[@]}"} 2>&1 \
   | python3 "$SCRIPT_DIR/stream-report.py" \
   | tee -a "$REPORT"
