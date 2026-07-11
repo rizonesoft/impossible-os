@@ -141,6 +141,21 @@ separate re-poll turns.
 - `run_phase_guard.py status`. If `active` is false, `run_phase_guard.py start <today>`.
   If active, you are resuming after a watchdog relaunch -- continue from the
   recorded `phase` + `file`.
+- **Orient DETERMINISTICALLY before spending a model turn on mechanics.** Run
+  `python3 scripts/overnight/advance-work.py` once: it returns ONE bounded packet
+  -- the oracle's action (work / fixpoint / blocked), the next open section, that
+  section's `section-pack` (symbol defs, tests, registrations, ABI), the durable
+  checkpoint from the prior session, and the cached preflight verdict -- so a
+  fresh or rolled-over worker starts oriented instead of re-running status,
+  triage, classify, and manifest turn by turn. You still drive the phase machine
+  below (its transitions are the gate), but act on the packet's answers rather
+  than re-deriving them.
+- **On resume** (active run), also run `python3 scripts/overnight/section-checkpoint.py show`.
+  If `stale` is false, REUSE its settled facts (section-pack digest+path, verified
+  receipts, outstanding-review flag) -- do NOT re-discover the same symbols and
+  constants the prior session already established (measured waste: two resumes
+  re-derived identical facts). If `stale`, the tree moved since the checkpoint --
+  re-orient via the packet above.
 
 ### 1. PREFLIGHT (`phase PREFLIGHT`)
 
