@@ -64,27 +64,12 @@ if [ -f "$BACKOFF_FILE" ]; then
   fi
 fi
 
-# Structural-wait gate (2026-07-11): while the run has a declared
-# WAITING_REVIEW wait whose artifacts are not yet complete (guard `wait-ready`
-# rc 3), a watchdog tick must NOT spin up Claude against an unfinished review
-# -- the session-watcher wakes the run the moment the artifacts land. Ready,
-# expired, or absent waits fall through to a normal launch.
-#
-# FAIL-CLOSED: rc 4 (state error) or any unexpected rc is treated like "still
-# pending" -- the launch is SKIPPED, not proceeded. Waking into an unresolved
-# wait on a corrupt/unreadable state file could bypass an unfinished review;
-# the watchdog re-checks on the next tick once state is readable again. Only
-# rc 0 (no wait / ready / expired) proceeds. The `wake` consumption below is
-# what actually clears a satisfied wait; a bare gate error never does.
-WAIT_GUARD="$PROJECT_DIR/.claude/hooks/run_phase_guard.py"
-if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$WAIT_GUARD" ]; then
-  WAIT_RC=0
-  WAIT_JSON="$(cd "$PROJECT_DIR" && python3 "$WAIT_GUARD" wait-ready 2>/dev/null)" || WAIT_RC=$?
-  if [ "$WAIT_RC" != 0 ]; then
-    echo "WAITING_REVIEW gate: rc=$WAIT_RC (${WAIT_JSON:-}); launch skipped $(date -Is)"
-    exit 0
-  fi
-fi
+# NOTE: there is no structural-wait gate. Reviews are polled IN-SESSION in a
+# single blocking Bash call (a sleeping shell costs ~0 model tokens), so a
+# session never exits to wait on a review. The only relaunch mechanism is the
+# *:0/10 watchdog (crash / usage-limit / verified rollover). The custom
+# wait/wake/watcher apparatus was removed 2026-07-11 after it deadlocked the
+# runner -- the flock below is the sole concurrency guard.
 
 # Concurrency lock: only one launch per project at a time. Watchdog timers can
 # call this freely -- it exits 0 immediately while a run is alive. The kernel
@@ -350,12 +335,6 @@ if [ -n "${OVERNIGHT_EFFORT:-}" ] && [ "$OVERNIGHT_EFFORT" != "inherit" ]; then
 fi
 echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback, effort ${OVERNIGHT_EFFORT:-inherit}" >> "$REPORT"
 
-# Consume any declared wait / pending rollover flag (one-shot): this launch IS
-# the wake. `wake` records a woke_from_wait note the fresh session reads via
-# `run_phase_guard.py status` to know it must go receive the verdict first.
-WOKE_JSON="$(cd "$PROJECT_DIR" && python3 "$WAIT_GUARD" wake 2>/dev/null || true)"
-[ -n "$WOKE_JSON" ] && [ "$WOKE_JSON" != '{"woke_from_wait": null}' ] \
-  && echo "woke: $WOKE_JSON" >> "$REPORT"
 # Snapshot for the post-run circuit breaker: a run that ends with HEAD
 # unmoved, a nonzero exit, or a sub-15-min zero-commit session counts as
 # unproductive (run-outcome.py classifies; Codex-runner lesson 2026-07-04).

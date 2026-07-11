@@ -12,22 +12,14 @@ Codes are stable -- docs and transcripts reference them.
 The headless unattended run may not stop voluntarily. The work unit is the
 entire TODO queue; a blocker, hard failure, or operator-reserved decision is
 DEFERRED (`[/]` + Deferred stamp + XREF) and you ADVANCE. The only endings:
-oracle-verified `run_phase_guard.py fixpoint`, the operator's `--disarm`, a
-declared structural wait (`wait` verb), or a verified `rollover`. The watchdog
-relaunches any death, so a voluntary exit accomplishes nothing. Remediation:
-re-invoke `Skill(overnight-sequencer)`, run `run_phase_guard.py status`, and
-continue from the recorded phase. Doctrine: todo/TODO-Claude-Overnight-Runner.md
-"Session-exit policy".
-
-### SEQ-WAIT-READY
-A declared wait's artifacts are already complete. Do not stop -- read the
-verdict(s), receive the review (`superpowers:receiving-code-review`), run
-`run_phase_guard.py wake`, continue.
-
-### SEQ-WAIT-EXPIRED
-The declared wait timed out without the artifacts completing. Do not stop --
-handle the timeout (re-dispatch the review, or defer the section with the
-captured diagnostic), `run_phase_guard.py wake`, continue.
+oracle-verified `run_phase_guard.py fixpoint`, the operator's `--disarm`, or a
+verified `rollover`. Reviews are polled IN-SESSION (a blocking Bash `sleep`
+loop, ~0 tokens) -- the runner never exits to wait. The watchdog relaunches
+any death, so a voluntary exit accomplishes nothing. Remediation: re-invoke
+`Skill(overnight-sequencer)`, run `run_phase_guard.py status`, and continue
+from the recorded phase. Doctrine: todo/TODO-Claude-Overnight-Runner.md
+"Session-exit policy". (The `wait`/`wake` verbs + watcher were removed
+2026-07-11; see the doctrine's in-session-poll rule.)
 
 ### SEQ-ASK
 `AskUserQuestion` is never allowed in the unattended run. Decide with the

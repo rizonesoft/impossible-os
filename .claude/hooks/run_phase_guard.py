@@ -15,11 +15,10 @@ Roles (dispatched on argv[1]):
             human's `--disarm` (which removes the armed marker) ends it. The
             watchdog handles real death. Interactive sessions (env unset) are
             never blocked, so the operator is never trapped in the repo.
-  CLI       start / status / phase / cursor / progress / next-pass / fixpoint /
-            clear / selftest / relifecycle / wait / wait-ready / wake /
-            rollover -- the overnight-sequencer skill drives phase
-            transitions (and structural waits + verified context rotations)
-            through these.
+  CLI      start / status / phase / cursor / progress / next-pass / fixpoint /
+            clear / selftest / relifecycle / rollover -- the
+            overnight-sequencer skill drives phase transitions (and verified
+            context rotations) through these.
 
 State (run cursor only; deferrals live in the TODO files, not here):
   .claude/state/sequencer-run.json
@@ -362,127 +361,21 @@ def handle_pretool():
     return 2
 
 
-# ---- structural waiting + verified rollover (2026-07-11) -------------------
+# ---- verified rollover (context rotation) ----------------------------------
 #
-# WAITING_REVIEW: a background Codex review used to cost one Opus turn per
-# "Holding..." poll because the Stop hook rejected every voluntary stop. Now
-# the session DECLARES the wait (`wait` verb: artifact paths + completion
-# patterns), the Stop hook lets it end, and a non-model watcher
-# (scripts/overnight/session-watcher.sh) wakes the run exactly once when the
-# artifacts complete (watchdog tick as fallback). Zero model turns are spent
-# waiting; no review is skipped -- the woken session must still receive it.
-#
-# ROLLOVER: after a section is shipped+reviewed+pushed+stamped, a fresh
-# worker context is cheaper than a long-tail one. `rollover` machine-verifies
-# the checkpoint (clean tree, nothing unpushed, graph rebuild OK, content-
-# bound receipts, no outstanding jobs) and only then permits ONE clean stop;
-# the watcher relaunches immediately. The RUN stays active the whole time --
+# ROLLOVER: after a section is shipped+reviewed+pushed+stamped, a fresh worker
+# context is cheaper than a long-tail one. `rollover` machine-verifies the
+# checkpoint (clean tree, pushed, graph rebuild OK, content-bound receipts, no
+# outstanding jobs) and only then permits ONE clean session exit; the *:0/10
+# watchdog relaunches a fresh session on its next tick. The RUN stays active --
 # only the worker context rotates (doctrine: run-active vs context-rotates).
+# There is NO custom relaunch watcher: the watchdog is the sole, systemd-owned
+# relaunch mechanism (the structural-wait watcher apparatus was removed
+# 2026-07-11 after it deadlocked the runner -- a session polling a review
+# in-session in a single blocking Bash call costs ~0 tokens, so exit-and-wake
+# was solving a non-problem while adding a fatal process-lifecycle bug class).
 
-WAIT_TIMEOUT_MIN_S = 60
-WAIT_TIMEOUT_MAX_S = 7200
-WAIT_TIMEOUT_DEFAULT_S = 3600
 ROLLOVER_PENDING_FRESH_S = 1800  # stale pending flags stop permitting stops
-_WAIT_TAIL_BYTES = 1 << 20  # completion markers live at the artifact tail
-
-
-def _artifact_matches(path: str, pattern: str) -> bool:
-    import re as _re
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - _WAIT_TAIL_BYTES))
-            text = fh.read().decode("utf-8", "replace")
-    except OSError:
-        return False
-    try:
-        return _re.search(pattern, text) is not None
-    except _re.error:
-        return pattern in text
-
-
-def _wait_satisfied(waiting: dict) -> bool:
-    arts = waiting.get("artifacts") or []
-    if not arts:
-        return True
-    return all(_artifact_matches(a.get("path", ""), a.get("pattern", ""))
-               for a in arts)
-
-
-def _wait_expired(waiting: dict) -> bool:
-    since = waiting.get("since_epoch") or 0
-    timeout = waiting.get("timeout_s") or WAIT_TIMEOUT_DEFAULT_S
-    return time.time() - since > timeout
-
-
-def _spawn_watcher(mode: str, gen: int = 0):
-    """Spawn scripts/overnight/session-watcher.sh OUTSIDE the calling
-    session's systemd cgroup. setsid alone is NOT enough: the headless run
-    lives in a systemd service, and when its main process exits (the very
-    stop the watcher exists to follow), systemd kills every process left in
-    the control group -- watcher included (live incident 2026-07-11, first
-    structural wait: watcher + awaited Codex review both died with the
-    session). `systemd-run --user` puts the watcher in its own transient
-    scope that survives; plain Popen remains the non-systemd fallback.
-    Returns the pid (or unit-tagged 1 for systemd-run), 0 on failure."""
-    script = repo_root() / "scripts/overnight/session-watcher.sh"
-    if not script.exists():
-        return (0, "")
-    log = repo_root() / ".claude/overnight/watcher.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    unit = f"seq-watcher-{mode}-{os.getpid()}-{int(time.time())}"
-    try:
-        env_pass = [f"--setenv={k}={v}" for k, v in os.environ.items()
-                    if k.startswith("OVERNIGHT_")
-                    or k in ("PATH", "HOME", "SEQ_WATCHER_POLL_SECS")]
-        r = subprocess.run(
-            ["systemd-run", "--user", "--collect", f"--unit={unit}",
-             *env_pass, "/bin/bash", str(script), str(repo_root()), mode,
-             str(gen)],
-            capture_output=True, timeout=15)
-        if r.returncode == 0:
-            with log.open("a") as fh:
-                fh.write(f"spawned watcher gen={gen} via systemd-run "
-                         f"unit {unit}\n")
-            return (1, unit)  # own scope; lifecycle owned by systemd
-    except Exception:
-        pass
-    try:
-        with log.open("a") as fh:
-            p = subprocess.Popen(
-                ["bash", str(script), str(repo_root()), mode, str(gen)],
-                stdout=fh, stderr=fh, stdin=subprocess.DEVNULL,
-                start_new_session=True, cwd=str(repo_root()))
-        return (p.pid, "")
-    except Exception:
-        return (0, "")
-
-
-def _cancel_watcher(entry: dict) -> None:
-    """Cancel a superseded/consumed watcher by its systemd UNIT (the reliable
-    handle -- the systemd path records pid 1, so a pid-only cancel could never
-    stop it and let a stale generation double-wake). Falls back to the pid for
-    the non-systemd spawn path. Best-effort, never raises."""
-    if not isinstance(entry, dict):
-        return
-    unit = entry.get("watcher_unit")
-    if unit:
-        try:
-            subprocess.run(["systemctl", "--user", "stop", str(unit)],
-                           capture_output=True, timeout=10)
-        except Exception:
-            pass
-        return
-    try:
-        pid = int(entry.get("watcher_pid") or 0)
-    except (TypeError, ValueError):
-        pid = 0
-    if pid > 1:  # never signal pid 0/1 (spawn-failure / init)
-        try:
-            os.kill(pid, 15)
-        except OSError:
-            pass
 
 
 def _rollover_failures(root: Path, state: dict) -> list:
@@ -574,8 +467,6 @@ def _rollover_failures(root: Path, state: dict) -> list:
                          f"{', '.join(jobs[:4])}")
     except Exception:
         pass  # systemctl absent -> cannot enumerate; not a hard fail
-    if state.get("waiting"):
-        fails.append("a WAITING_REVIEW wait is still declared")
     return fails
 
 
@@ -616,41 +507,18 @@ def handle_stop():
     if not ARMED_MARKER.exists():
         return 0
     state_early = load_state()
-    # VERIFIED ROLLOVER (2026-07-11): the `rollover` verb machine-verified the
-    # checkpoint (clean tree, pushed, graph OK, content-bound receipts, no
-    # outstanding jobs) and spawned the relaunch watcher. Permit exactly this
-    # one stop; the flag is one-shot (cleared by the next launch's `wake`) and
-    # honored only while fresh. The RUN stays active -- the context rotates.
+    # VERIFIED ROLLOVER: the `rollover` verb machine-verified the checkpoint
+    # (clean tree, pushed, graph OK, content-bound receipts, no outstanding
+    # jobs). Permit exactly this one stop; the *:0/10 watchdog relaunches a
+    # fresh session on its next tick. The flag is one-shot (cleared on the next
+    # launch's `start`) and honored only while fresh. The RUN stays active.
     ro = state_early.get("rollover") or {}
     if (isinstance(ro, dict) and ro.get("pending")
             and time.time() - (ro.get("epoch") or 0) < ROLLOVER_PENDING_FRESH_S):
         sys.stderr.write(
             "[sequencer] stop allowed: verified rollover checkpoint -- the "
-            "watcher relaunches a fresh worker context immediately; the run "
-            "stays ARMED and the cursor carries the state.\n")
-        return 0
-    # WAITING_REVIEW (2026-07-11): a declared structural wait lets the session
-    # end INSTEAD of burning turns on 'Holding...' polls. The watcher (or the
-    # watchdog fallback) wakes a fresh session when the artifacts complete.
-    w = state_early.get("waiting") or {}
-    if isinstance(w, dict) and w.get("artifacts"):
-        if _wait_satisfied(w):
-            sys.stderr.write(
-                "[SEQ-WAIT-READY] artifacts complete -- read the verdict(s), "
-                "receive the review, `run_phase_guard.py wake`, continue. "
-                "Details: docs/infrastructure/hook-codes.md#seq-wait-ready\n")
-            return 2
-        if _wait_expired(w):
-            sys.stderr.write(
-                "[SEQ-WAIT-EXPIRED] wait timed out -- re-dispatch or defer "
-                "with the diagnostic, `run_phase_guard.py wake`, continue. "
-                "Details: docs/infrastructure/hook-codes.md#seq-wait-expired\n")
-            return 2
-        sys.stderr.write(
-            "[sequencer] stop allowed: WAITING_REVIEW declared -- the "
-            "session-watcher wakes a fresh session when the artifact(s) "
-            "complete (watchdog as fallback). No model turns are spent "
-            "waiting; the woken session must receive the verdict first.\n")
+            "watchdog relaunches a fresh worker context on its next tick; the "
+            "run stays ARMED and the cursor carries the state.\n")
         return 0
     # Oracle-consulting fallback (runner-kit law 2, adopted 2026-07-03): a
     # session at a TRUE lifecycle end (oracle DONE, or BLOCKED once the 3-state
@@ -816,98 +684,10 @@ def cli(argv):
         save_state(state)
         print(f"[sequencer] lifecycle override recorded: {reason}", file=sys.stderr)
         return 0
-    if cmd == "wait":
-        # wait <timeout_s> <reason> <path> <pattern> [<path> <pattern>...]
-        if len(argv) < 5 or (len(argv) - 3) % 2 != 0:
-            print("[sequencer] usage: wait <timeout_s> <reason> <path> "
-                  "<pattern> [<path> <pattern>...]", file=sys.stderr)
-            return 1
-        try:
-            timeout_s = max(WAIT_TIMEOUT_MIN_S,
-                            min(WAIT_TIMEOUT_MAX_S, int(argv[1])))
-        except ValueError:
-            print("[sequencer] wait: timeout_s must be an integer", file=sys.stderr)
-            return 1
-        arts = [{"path": argv[i], "pattern": argv[i + 1]}
-                for i in range(3, len(argv), 2)]
-        waiting = {"reason": argv[2], "since_epoch": int(time.time()),
-                   "timeout_s": timeout_s, "artifacts": arts}
-        if _wait_satisfied(waiting):
-            print("[sequencer] wait REFUSED: every artifact already matches "
-                  "its completion pattern -- nothing to wait for. Read the "
-                  "verdict(s) and continue.", file=sys.stderr)
-            return 1
-        # Supersede any prior wait: cancel its watcher (by UNIT, the reliable
-        # handle -- pid was recorded as 1 for the systemd path and could never
-        # be cancelled, producing duplicate wakes) and bump the generation so
-        # a stale watcher that already passed its poll aborts before waking.
-        _cancel_watcher(state.get("waiting") or {})
-        gen = int((state.get("waiting") or {}).get("gen") or 0) + 1
-        waiting["gen"] = gen
-        # PERSIST FIRST, then spawn: the watcher polls wait-ready immediately,
-        # so the wait state must be durable (atomic save) BEFORE the watcher
-        # can read it, or it sees "no wait" and wakes prematurely (2026-07-11).
-        state["waiting"] = waiting
-        state.pop("woke_from_wait", None)
-        save_state(state)
-        pid, unit = _spawn_watcher("wait", gen)
-        # Record the watcher handle for later cancellation (second atomic save;
-        # between the two saves wait-ready already returns "still waiting").
-        waiting["watcher_pid"] = pid
-        waiting["watcher_unit"] = unit
-        state["waiting"] = waiting
-        save_state(state)
-        print(f"[sequencer] WAITING_REVIEW declared gen={gen} "
-              f"({len(arts)} artifact(s), timeout {timeout_s}s, "
-              f"watcher {unit or ('pid ' + str(pid))}). Final-answer now "
-              "with a one-line status -- the Stop hook permits this stop and "
-              "the watcher wakes a fresh session when the artifact(s) "
-              "complete.", file=sys.stderr)
-        return 0
-    if cmd == "wait-ready":
-        # Launcher/watcher query. Exit 0 = proceed with a launch (no wait, or
-        # artifacts ready, or wait expired); exit 3 = still waiting; exit 4 =
-        # STATE ERROR (fail-closed: callers must NOT wake on this). The `gen`
-        # lets a watcher confirm it still owns the current wait.
-        try:
-            w = state.get("waiting") or {}
-        except Exception:
-            print(json.dumps({"error": "state unreadable"}))
-            return 4
-        if not (isinstance(w, dict) and w.get("artifacts")):
-            print(json.dumps({"waiting": False}))
-            return 0
-        ready = _wait_satisfied(w)
-        expired = _wait_expired(w)
-        print(json.dumps({"waiting": True, "ready": ready, "expired": expired,
-                          "reason": w.get("reason"), "gen": w.get("gen", 0)}))
-        return 0 if (ready or expired) else 3
-    if cmd == "wake":
-        # Called by the launcher right before spinning up Claude: consume the
-        # wait and any pending rollover flag, leaving a one-shot note the
-        # fresh session reads via `status`. Cancels the consumed wait's/
-        # rollover's watcher unit so a stale generation cannot double-wake.
-        # DO NOT cancel the consumed wait's/rollover's watcher here: by the
-        # time `wake` runs, that watcher has already exec'd into THIS launcher
-        # (the caller). Its `watcher_unit` is the scope this process runs in --
-        # stopping it is suicide (killed the launcher mid-wake, 2026-07-11).
-        # Stale watchers are handled at supersede time (the `wait` verb cancels
-        # the prior unit) and by the watcher's own generation re-check.
-        woke = {}
-        w = state.pop("waiting", None)
-        if isinstance(w, dict) and w.get("artifacts"):
-            woke = {"reason": w.get("reason"),
-                    "artifacts": [a.get("path") for a in w["artifacts"]],
-                    "ready": _wait_satisfied(w), "expired": _wait_expired(w),
-                    "gen": w.get("gen", 0), "epoch": int(time.time())}
-            state["woke_from_wait"] = woke
-        state.pop("rollover", None)
-        save_state(state)
-        print(json.dumps({"woke_from_wait": woke or None}))
-        return 0
     if cmd == "rollover":
         # Verified worker-context rotation. Machine gates decide; on success
-        # the Stop hook permits exactly one stop and the watcher relaunches.
+        # the Stop hook permits exactly one stop and the *:0/10 watchdog
+        # relaunches a fresh session on its next tick.
         if not state.get("active"):
             print("[sequencer] rollover REFUSED: no active run", file=sys.stderr)
             return 1
@@ -918,20 +698,16 @@ def cli(argv):
                   + "\nFinish/clean these first, or continue in-session.",
                   file=sys.stderr)
             return 1
-        gen = int((state.get("rollover") or {}).get("gen") or 0) + 1
-        # Persist the pending flag FIRST (atomic), then spawn the watcher.
-        state["rollover"] = {"pending": True, "epoch": int(time.time()),
-                             "gen": gen}
-        save_state(state)
-        pid, unit = _spawn_watcher("relaunch", gen)
-        state["rollover"]["watcher_pid"] = pid
-        state["rollover"]["watcher_unit"] = unit
+        # Atomic pending flag; the Stop hook permits ONE exit and the *:0/10
+        # watchdog relaunches a fresh session. No custom watcher.
+        state["rollover"] = {"pending": True, "epoch": int(time.time())}
         save_state(state)
         print("[sequencer] rollover VERIFIED: clean tree, pushed, graph OK, "
               "receipts content-valid, no outstanding jobs. Final-answer now "
-              "with a one-line checkpoint summary -- the watcher relaunches "
-              "a fresh worker context; the run stays armed and the cursor "
-              "carries the state.", file=sys.stderr)
+              "with a one-line checkpoint summary and END the turn -- the "
+              "watchdog relaunches a fresh worker context on its next tick; "
+              "the run stays armed and the cursor carries the state.",
+              file=sys.stderr)
         return 0
     if cmd == "selftest":
         return selftest()
@@ -1067,30 +843,6 @@ def selftest():
                     {"active": True, "phase": "VALIDATE"}, headless=False,
                     stages_done=True)
     check(a, "interactive validate-todo-file blocked (must never trap operator)")
-
-    # Structural-wait helpers: artifact matching + expiry truth table.
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".out", delete=False) as tf:
-        tf.write("dispatch running...\nTurn completed after 214s\n")
-        wait_art = tf.name
-    try:
-        check(_artifact_matches(wait_art, "Turn completed"),
-              "_artifact_matches missed a present completion marker")
-        check(not _artifact_matches(wait_art, "NO_SUCH_MARKER"),
-              "_artifact_matches false-positive")
-        check(not _artifact_matches("/nonexistent/artifact.out", "x"),
-              "_artifact_matches true on missing file")
-        w_ok = {"artifacts": [{"path": wait_art, "pattern": "Turn completed"}],
-                "since_epoch": int(time.time()), "timeout_s": 3600}
-        check(_wait_satisfied(w_ok), "_wait_satisfied false on matched artifact")
-        w_pending = {"artifacts": [{"path": wait_art, "pattern": "NOPE"}],
-                     "since_epoch": int(time.time()), "timeout_s": 3600}
-        check(not _wait_satisfied(w_pending), "_wait_satisfied true on unmatched")
-        check(not _wait_expired(w_pending), "fresh wait reported expired")
-        w_old = dict(w_pending, since_epoch=int(time.time()) - 7200)
-        check(_wait_expired(w_old), "expired wait reported fresh")
-    finally:
-        os.unlink(wait_art)
 
     if fails:
         for f in fails:

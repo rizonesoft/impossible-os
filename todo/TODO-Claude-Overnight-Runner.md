@@ -171,30 +171,32 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   FIXPOINT sentinel and auto-disarms the watchdog) or the human's `--disarm`.
   The watchdog relaunches any death; mid-queue voluntary exits accomplish
   nothing.
-- **"The run stays active" vs "the worker context rotates" (2026-07-11).**
-  Two session endings are NOT stops -- in both, the run stays ARMED, the
-  durable cursor (`sequencer-run.json`) carries all state, and a fresh worker
-  session resumes the same run. They are the only guard-sanctioned session
-  endings besides fixpoint/disarm:
-  - **Structural wait (WAITING_REVIEW).** When a background review/agent
-    verdict is the only thing between you and the next action, declare it
-    (`run_phase_guard.py wait <timeout_s> <reason> <artifact> <pattern>
-    [...]`) and end the session. A non-model watcher wakes a fresh session
-    exactly once when every artifact matches its completion pattern (watchdog
-    tick as fallback; expiry wakes you to handle the timeout). Zero model
-    turns are spent holding; no review is skipped -- the woken session reads
-    `woke_from_wait` from `status` and MUST receive the verdict before
-    anything else.
-  - **Verified rollover.** After a section is implemented, reviewed, pushed,
-    and fully stamped, `run_phase_guard.py rollover` machine-verifies the
-    checkpoint -- clean tracked tree, zero unpushed commits, todo-graph
-    rebuild green, content-bound build receipt valid for the current tree,
-    no unreceived Codex review, no declared wait -- and only then permits ONE
-    clean session end; the watcher relaunches a fresh worker context
-    immediately. A REFUSED rollover lists unfinished work: finish it and
-    continue in-session. Rollover exists because a fresh context outperforms
-    a long-tail one; it is never a way to leave work behind (the gates make
-    that impossible).
+- **Reviews are polled IN-SESSION; the runner never exits to wait
+  (2026-07-11).** A Codex/agent verdict that gates the next action is polled
+  in ONE blocking Bash call at 60s cadence (`for i in $(seq 1 9); do grep -q
+  "Turn completed" <logFile> && break; sleep 60; done`) -- a sleeping shell
+  costs ~0 model tokens (the model is idle while it sleeps), so holding the
+  session open is free. Past the Bash 10-min wall, issue ONE more blocking
+  poll (a 16-min review = 2 turns). Do NOT narrate between polls. The
+  structural-wait apparatus (a `wait`/`wake` verb + a background watcher that
+  relaunched a fresh session) was REMOVED after it deadlocked the runner
+  2026-07-11: it existed only to shave ~10 min of latency off the watchdog and
+  bought a fatal process-lifecycle bug class (watchers dying in their own
+  systemd cgroup) for a cost saving that a single blocking poll already
+  provides. The lesson: reliability first -- a cost feature that breaks the
+  runner is net-negative.
+- **Verified rollover is the one deliberate session exit** (2026-07-11).
+  After a section is implemented, reviewed, pushed, and fully stamped,
+  `run_phase_guard.py rollover` machine-verifies the checkpoint -- clean tree
+  INCLUDING untracked files, zero unpushed commits, todo-graph rebuild green,
+  content-bound build + test + smoke receipts valid, no unreceived Codex
+  review, no outstanding background jobs -- and only then permits ONE clean
+  session end. The `*:0/10` watchdog (the sole, systemd-owned relaunch
+  mechanism) starts a fresh session on its next tick; the run stays ARMED and
+  the durable cursor (`sequencer-run.json`) carries all state. A REFUSED
+  rollover lists unfinished work: finish it and continue in-session. Rollover
+  exists because a fresh context outperforms a long-tail one; it is never a
+  way to leave work behind (the gates make that impossible).
 - **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own
   smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace),
   `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build).
@@ -232,8 +234,9 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 Efficiency targets the run self-checks against; breaching one is a signal to
 fix the WORKFLOW, never to skip a gate, review, or test:
 
-- **Zero inference requests while waiting** -- background verdicts go through
-  the structural wait (`run_phase_guard.py wait`), not held-open sessions.
+- **Zero inference requests while waiting** -- a gating verdict is polled in
+  ONE blocking Bash call (`sleep 60` loop), which spends ~0 tokens; never a
+  burst of separate re-poll turns with narration between them.
 - **At most one full load of each skill per section** (compaction excepted) --
   re-reads are slices.
 - **No successful build/test through the main session** -- green mechanics run

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Contract tests for run_phase_guard.py structural waiting + rollover +
-lifecycle routing (2026-07-11). Runs the guard from a FIXTURE repo (the hook
-resolves repo_root from its own location) so real run state is never touched.
+"""Contract tests for run_phase_guard.py rollover + lifecycle routing.
+Runs the guard from a FIXTURE repo (the hook resolves repo_root from its own
+location) so real run state is never touched. (The structural-wait verbs were
+removed 2026-07-11; reviews are polled in-session, not exit-and-waited.)
 """
 import json
 import os
@@ -40,52 +41,6 @@ def _guard(fx, *args, env_extra=None, stdin=None):
 
 
 HEADLESS = {"OVERNIGHT_SEQUENCER_RUN": "1"}
-
-
-def test_wait_declare_ready_wake():
-    with tempfile.TemporaryDirectory() as d:
-        fx = _mk_fixture(pathlib.Path(d))
-        _guard(fx, "start", "2026-07-11")
-        art = fx / "task.output"
-        art.write_text("dispatch running...\n")
-        # declare (watcher script absent in fixture -> pid 0, harmless)
-        r = _guard(fx, "wait", "3600", "codex verdict", str(art), "Turn completed")
-        assert r.returncode == 0, r.stderr
-        assert "WAITING_REVIEW declared" in r.stderr
-        # still waiting -> rc 3
-        r = _guard(fx, "wait-ready")
-        assert r.returncode == 3, (r.returncode, r.stdout)
-        assert json.loads(r.stdout)["waiting"] is True
-        # Stop hook: unsatisfied wait -> allow (rc 0)
-        r = _guard(fx, "stop", env_extra=HEADLESS)
-        # needs armed marker for the wait branch to be reached
-        (fx / ".claude/state/sequencer-armed").write_text("")
-        r = _guard(fx, "stop", env_extra=HEADLESS)
-        assert r.returncode == 0, (r.returncode, r.stderr)
-        assert "WAITING_REVIEW" in r.stderr
-        # artifact completes -> wait-ready rc 0, Stop now BLOCKS (read verdict)
-        art.write_text("dispatch running...\nTurn completed after 200s\n")
-        r = _guard(fx, "wait-ready")
-        assert r.returncode == 0 and json.loads(r.stdout)["ready"] is True
-        r = _guard(fx, "stop", env_extra=HEADLESS)
-        assert r.returncode == 2 and "SEQ-WAIT-READY" in r.stderr
-        # wake consumes the wait and leaves the one-shot note
-        r = _guard(fx, "wake")
-        assert r.returncode == 0
-        woke = json.loads(r.stdout)["woke_from_wait"]
-        assert woke and woke["ready"] is True
-        state = json.loads((fx / ".claude/state/sequencer-run.json").read_text())
-        assert "waiting" not in state and state.get("woke_from_wait")
-
-
-def test_wait_refused_when_already_complete():
-    with tempfile.TemporaryDirectory() as d:
-        fx = _mk_fixture(pathlib.Path(d))
-        _guard(fx, "start", "2026-07-11")
-        art = fx / "done.output"
-        art.write_text("Turn completed\n")
-        r = _guard(fx, "wait", "3600", "already done", str(art), "Turn completed")
-        assert r.returncode == 1 and "REFUSED" in r.stderr
 
 
 def test_rollover_refused_on_dirty_or_unpushed():
@@ -135,8 +90,6 @@ def test_lifecycle_routing_block_and_override():
 
 
 if __name__ == "__main__":
-    test_wait_declare_ready_wake()
-    test_wait_refused_when_already_complete()
     test_rollover_refused_on_dirty_or_unpushed()
     test_lifecycle_routing_block_and_override()
-    print("PASS: phase-guard wait/rollover/lifecycle")
+    print("PASS: phase-guard rollover/lifecycle")

@@ -101,7 +101,7 @@ def test_snoozed_run_leaves_streak_untouched():
         assert _streak(root) == 1  # unchanged
 
 
-def test_waiting_checkpoint_leaves_streak_untouched():
+def test_rollover_checkpoint_leaves_streak_untouched():
     with tempfile.TemporaryDirectory() as d:
         root = _mkrepo(d)
         head = _head(root)
@@ -111,14 +111,13 @@ def test_waiting_checkpoint_leaves_streak_untouched():
         (root / ".claude/overnight/state").mkdir(parents=True)
         (root / ".claude/overnight/state/unproductive-streak").write_text(
             json.dumps({"count": 2, "last": NOW}))
-        # a declared structural wait in the guard state
+        # a verified rollover pending in the guard state
         (state / "sequencer-run.json").write_text(json.dumps(
-            {"active": True, "waiting": {"artifacts": [
-                {"path": "/tmp/x.out", "pattern": "done"}]}}))
+            {"active": True, "rollover": {"pending": True, "epoch": NOW}}))
         d1 = _run(root, "--exit", "0", "--start-head", head,
                   "--run-secs", "120")
         assert d1["outcome"] == "checkpoint", d1
-        assert d1["checkpoint_kind"] == "waiting"
+        assert d1["checkpoint_kind"] == "rollover"
         # streak untouched (still 2), breaker NOT tripped, no backoff written
         assert _streak(root) == 2
         assert _backoff(root) is None
@@ -153,7 +152,7 @@ if __name__ == "__main__":
     test_fast_dead_run_increments_streak_no_breaker_below_threshold()
     test_breaker_trips_at_threshold_and_escalates()
     test_snoozed_run_leaves_streak_untouched()
-    test_waiting_checkpoint_leaves_streak_untouched()
+    test_rollover_checkpoint_leaves_streak_untouched()
     test_rollover_checkpoint_classified()
     test_git_unavailable_fails_open()
     print("PASS: run_outcome")

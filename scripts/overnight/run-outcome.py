@@ -12,15 +12,12 @@ burning tokens at full cadence all night.
 Outcome model (fail-open: git errors -> "unknown", no state change):
   productive   -- HEAD moved during the run (work landed), or the agent exited
                   0 after a substantive session (>= --min-secs, default 900s).
-  checkpoint   -- the session ended in a DECLARED structural wait or a
-                  verified rollover (guard state carries `waiting` /
-                  `rollover.pending`). A planned WAITING_REVIEW exit is short
-                  and commit-free BY DESIGN; counting it unproductive would
-                  trip the breaker after 3 review waits, and the breaker's
-                  backoff suppresses the watcher's wake (the launcher checks
-                  backoff before the wait gate). Streak is left UNTOUCHED --
-                  not reset -- so a genuinely dead loop interleaved with
-                  waits still trips on its own runs.
+  checkpoint   -- the session ended in a verified ROLLOVER (guard state
+                  carries `rollover.pending`): a planned context rotation,
+                  short and commit-free BY DESIGN. Counting it unproductive
+                  would trip the breaker after 3 rollovers. Streak is left
+                  UNTOUCHED -- not reset -- so a genuinely dead loop
+                  interleaved with rollovers still trips on its own runs.
   unproductive -- the agent exited nonzero, or exited 0 quickly with no HEAD
                   move (classic dead-on-arrival relaunch).
   snoozed      -- a usage-limit snooze was recorded for this run; the snooze
@@ -100,17 +97,16 @@ def main() -> int:
         print(json.dumps(decision))
         return 0
 
-    # Planned checkpoint exits (structural wait / verified rollover) are not
-    # unproductive: the guard state says the session ended ON PURPOSE and a
-    # wake is already scheduled. Streak untouched (see outcome model).
+    # A planned VERIFIED-ROLLOVER exit is not unproductive: the guard state
+    # says the session ended ON PURPOSE (context rotation) and the watchdog
+    # relaunches. Streak untouched (see outcome model).
     try:
         guard = json.loads(
             (project / ".claude/state/sequencer-run.json").read_text())
-        waiting = bool((guard.get("waiting") or {}).get("artifacts"))
         rolling = bool((guard.get("rollover") or {}).get("pending"))
-        if waiting or rolling:
+        if rolling:
             decision["outcome"] = "checkpoint"
-            decision["checkpoint_kind"] = "waiting" if waiting else "rollover"
+            decision["checkpoint_kind"] = "rollover"
             print(json.dumps(decision))
             return 0
     except Exception:

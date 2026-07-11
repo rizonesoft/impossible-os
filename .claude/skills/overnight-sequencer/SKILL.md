@@ -35,15 +35,12 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
   progress                mark that this pass shipped/cleared something
   next-pass               start the next full sweep (resets progress)
   fixpoint                run complete -> stops the watchdog
-  status                  print the cursor state (incl. woke_from_wait)
+  status                  print the cursor state
   relifecycle <reason>    one-shot Stage 1-2 override for a mature file that
                           grew a genuinely NEW section
-  wait <timeout_s> <reason> <path> <pattern> [...]
-                          declare a structural wait on background artifact(s);
-                          the Stop hook then permits ending the session and a
-                          non-model watcher wakes a fresh one when they finish
   rollover                verified worker-context rotation after a fully
-                          shipped section (machine-gated; see below)
+                          shipped section (machine-gated; the watchdog then
+                          relaunches a fresh session -- see below)
 ```
 
 ## Situational awareness (read before acting)
@@ -89,71 +86,53 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
 
 ## Wait discipline (background Codex verdicts, agent results, CI watches)
 
-**Structural waiting is MANDATORY for review verdicts -- declare and EXIT
-IMMEDIATELY, never poll first (2026-07-11).** A Codex review whose result gates
-your next step is NEVER absorbed in a foreground poll loop: that burned ~10
-model minutes per review before the wait was even declared (live 2026-07-11;
-the review itself ran ~16 min / peaked 4.6 GB). Instead: broker-dispatch,
-declare the wait, and end the session in the SAME turn -- no `for i in
-$(seq...)` absorb, no "holding for the verdict". A non-model watcher (its own
-systemd scope) wakes a fresh session exactly once when the artifact completes.
-Zero model turns are spent waiting; the woken session still receives the
-verdict.
+**Poll a gating review IN-SESSION, in ONE blocking Bash call. Do NOT exit to
+wait (2026-07-11).** A sleeping shell costs ~0 model tokens -- the model emits
+one Bash call and is idle while `sleep` runs -- so holding the session open
+during a review is free. The expensive antipattern is MANY separate poll calls
+with narration between them (the 2026-07-02 run: 531 `Holding...` turns + 610
+re-polls). The fix is one blocking call, no narration:
 
 ```
-# 1. Dispatch the review so it SURVIVES this session's exit (own systemd
-#    scope) -- REQUIRED for anything a wait will watch:
+# 1. Dispatch the review (harness backgrounds it, or the broker for a bounded
+#    multi-kind envelope). Reviews are READ-ONLY (adversarial-review sandbox).
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
 #    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
-# 2. Declare the wait on the broker's logFile(s) and END the turn -- do NOT
-#    poll the logFile yourself first:
-python3 .claude/hooks/run_phase_guard.py wait 3600 "codex design review" \
-  <logFile> "Turn completed"
-# 3. Final-answer with a one-line status; the Stop hook permits THIS stop.
+# 2. Poll it IN ONE blocking Bash call at 60s cadence (reviews always exceed a
+#    minute, so 60s never wastes a cycle). ~9 min ceiling stays under the Bash
+#    10-min wall; this is ONE model turn, idle while it sleeps:
+for i in $(seq 1 9); do grep -q "Turn completed" <logFile> && break; sleep 60; done
+# 3. If it didn't finish, issue ONE more blocking poll (a 16-min review = 2
+#    turns, not 500). Then read the verdict and continue -- SAME session.
 ```
 
-- **NEVER declare a wait on a harness background-task output** (the
-  `/tmp/.../tasks/*.output` paths): those processes are children of THIS
-  session inside its systemd cgroup and are KILLED the moment the session
-  exits -- the wait then watches a corpse until expiry (live incident
-  2026-07-11). Only broker-dispatched artifacts (own transient scope)
-  survive a structural wait. A harness-background dispatch is fine ONLY
-  for waits absorbed in-session.
-- Batch every outstanding verdict of the wait into ONE declaration (all
-  path/pattern pairs must match before the wake).
+- **The session NEVER exits to wait on a review.** There is no `wait`/`wake`
+  verb and no watcher -- that apparatus deadlocked the runner and was removed.
+  The only session exits are: a verified `rollover` (context hygiene; the
+  watchdog relaunches), external death (crash/usage-limit; watchdog
+  relaunches), or an oracle-verified `fixpoint`.
+- **Do NOT narrate between polls.** One blocking Bash call absorbs the whole
+  wait; emitting turns while it sleeps is the exact cost blowup to avoid. If
+  you need a second poll call past the 10-min wall, that is fine -- just don't
+  add "holding for the verdict" turns.
 - **Multi-kind review rounds go through the broker.** Dispatch each kind as
   its own `bash scripts/overnight/review-broker-codex-dispatch.sh
   '[review-kind: X] <todo> <body>'` call (one Bash call per kind, in one
   parallel message -- the per-kind gate receipts attribute off the command
   line, so NEVER bundle several dispatches behind one opaque shell command).
-  Then declare ONE wait over the returned logFile paths. On wake, read ONE
-  combined envelope: `python3 scripts/overnight/review-envelope.py .` --
-  per-kind status, every severity-marked finding, artifact path + sha256.
-  Slice-read an artifact only for findings needing full context; never pull
-  whole review transcripts into the session.
-- On resume, `run_phase_guard.py status` shows `woke_from_wait` (also injected
-  into the session brief): FIRST read the artifact(s) and receive the review
-  (`superpowers:receiving-code-review`), then continue the pipeline.
-- A wait that EXPIRES (timeout, default 3600s) wakes you anyway -- handle the
-  timeout (re-dispatch or defer with the captured diagnostic).
-- The Stop hook REFUSES the stop when the artifacts are already complete --
-  that means read the verdict now, not wait.
+  Poll all their logFiles in ONE blocking Bash call
+  (`grep -q A f1 && grep -q B f2 && grep -q C f3`), then read ONE combined
+  envelope: `python3 scripts/overnight/review-envelope.py .` -- per-kind
+  status, every severity-marked finding, artifact path + sha256. Slice-read an
+  artifact only for findings needing full context; never pull whole
+  transcripts into the session.
+- Receive every findings set through `superpowers:receiving-code-review`
+  before acting; then continue the pipeline in the same session.
 
-**In-session waiting is NOT allowed for a gating review verdict** -- that is
-always a structural wait (above). It is permitted ONLY for a NON-gating
-background watch you can genuinely work ALONGSIDE (e.g. a CI run you monitor
-while doing unrelated forward work), and even then:
-
-- **One wait mechanism per wait.** Once a Monitor (or a background Bash with a
-  completion condition) is armed, HOLD until it fires: no Bash re-polls, no
-  per-poll "holding for the verdict" narrator turns (the 2026-07-02 run burned
-  ~1,100 turns on 531 `Holding ...` narrations + 610 manual re-polls).
-- **Never poll a review verdict in the foreground.** The moment a review gates
-  your next edit, it is a structural wait -- broker-dispatch, `wait` verb,
-  end the turn. Do not `for i in $(seq...)` / `sleep`-loop on a `logFile`.
-- If a Monitor keeps handing control back before its condition is met, that is
-  still "checking the wait" -- do not narrate each resume; convert it to a
-  structural wait (`wait` verb) and end the session.
+**Non-gating background watches** (a CI run you monitor while doing unrelated
+forward work) follow the same rule: ONE wait mechanism, no per-poll narration.
+Convert any long stall into a single blocking Bash poll -- never a burst of
+separate re-poll turns.
 
 ## Procedure
 
@@ -299,12 +278,15 @@ information or judgment; none of this weakens a gate):**
   worker context is cheaper and sharper than a long-tail one; the durable
   cursor (sequencer-run.json) carries all run state. After `progress`, run
   `python3 .claude/hooks/run_phase_guard.py rollover`:
-  - **VERIFIED** (clean tree, nothing unpushed, todo-graph rebuild OK,
-    content-bound build receipt valid, no unreceived review, no declared
-    wait) -> final-answer with a one-line checkpoint summary. The Stop hook
-    permits exactly this stop; the watcher relaunches a fresh session that
-    resumes from the recorded phase. This is a CONTEXT ROTATION, not a stop
-    -- the run stays armed throughout (doctrine: "Rollover is not a stop").
+  - **VERIFIED** (clean tree incl. untracked, nothing unpushed, todo-graph
+    rebuild OK, content-bound build + test + smoke receipts valid, no
+    unreceived review, no outstanding background jobs) -> final-answer with a
+    one-line checkpoint summary and END the turn. The Stop hook permits exactly
+    this stop; the `*:0/10` watchdog relaunches a fresh session on its next
+    tick, which resumes from the recorded phase. This is a CONTEXT ROTATION,
+    not a stop -- the run stays armed throughout. (Since reviews are now polled
+    in-session, rollover is the main deliberate exit; the watchdog is the sole
+    relaunch mechanism.)
   - **REFUSED** -> the listed failures are unfinished work: finish/clean them
     and continue in-session (never force a rollover past a red gate).
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
