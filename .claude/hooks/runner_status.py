@@ -81,14 +81,37 @@ def obligations(root: Path) -> list[str]:
     return out
 
 
-def gotchas(root: Path) -> list[str]:
+GOTCHA_BRIEF_CAP = 6          # cards injected into a brief
+GOTCHA_BYTE_CAP = 2400        # hard byte ceiling on the injected block
+
+
+def _gotcha_context(root: Path) -> str:
+    """Deterministic relevance context: cursor file + phase + its basename
+    stem (a cheap symbol proxy). No embeddings, no model."""
+    st = _state(root)
+    f = (st.get("file") or "")
+    bits = [f, st.get("phase") or ""]
+    if f:
+        import os as _os
+        bits.append(_os.path.basename(f).rsplit(".", 1)[0])
+    return " ".join(bits).lower()
+
+
+def gotchas(root: Path, relevant_only: bool = False) -> list[str]:
+    """Unexpired gotcha cards. With relevant_only, keep global cards (no
+    scope tag) plus cards whose deterministic tags -- `[path:...]`,
+    `[phase:...]`, `[todo:...]`, `[sym:...]` -- match the current cursor
+    context, capped by count and bytes. No model / embedding involved."""
     p = root / ".claude" / "state" / "live-gotchas.md"
     try:
         lines = p.read_text(encoding="utf-8").splitlines()
     except Exception:
         return []
     today = date.today().isoformat()
-    out = []
+    ctx = _gotcha_context(root) if relevant_only else ""
+    tag_re = re.compile(r"\[(path|phase|todo|sym):([^\]]+)\]", re.I)
+    out: list[str] = []
+    budget = GOTCHA_BYTE_CAP
     for ln in lines:
         ln = ln.strip()
         if not ln or ln.startswith("#"):
@@ -96,7 +119,17 @@ def gotchas(root: Path) -> list[str]:
         m = re.search(r"\(expires (\d{4}-\d{2}-\d{2})\)", ln)
         if m and m.group(1) < today:
             continue
-        out.append(ln.lstrip("- ").strip())
+        card = ln.lstrip("- ").strip()
+        if relevant_only:
+            tags = tag_re.findall(card)
+            if tags:  # tagged card: keep only when a tag hits the context
+                if not any(val.strip().lower() in ctx for _, val in tags):
+                    continue
+            # untagged cards are global -> always kept
+            if len(out) >= GOTCHA_BRIEF_CAP or budget - len(card) < 0:
+                continue
+            budget -= len(card)
+        out.append(card)
     return out
 
 
@@ -140,7 +173,11 @@ def anchor_line(root: Path) -> str:
 
 def full_brief(root: Path) -> str:
     obl = obligations(root)
-    got = gotchas(root)
+    # Relevance-filtered: only gotchas matching the cursor context (path /
+    # phase / todo / symbol tags) plus untagged globals, capped by count +
+    # bytes -- the brief carries only facts that can affect the next action.
+    got = gotchas(root, relevant_only=True)
+    total = len(gotchas(root))
     dec = recent_decisions(root)
     parts = [where(root), git_state(root)]
     woke = _woke_line(root)
@@ -148,11 +185,21 @@ def full_brief(root: Path) -> str:
         parts.append(woke)
     parts.append("OBLIGATIONS: " + ("none" if not obl else ""))
     parts += [f"  - {o}" for o in obl]
-    parts.append("GOTCHAS: " + ("none" if not got else ""))
+    suppressed = total - len(got)
+    hdr = "GOTCHAS: " + ("none" if not got else "")
+    if suppressed > 0:
+        hdr += f"  ({suppressed} off-context suppressed; `runner_status.py --all-gotchas`)"
+    parts.append(hdr)
     parts += [f"  - {g}" for g in got]
     parts.append("RECENT DECISIONS: " + ("none" if not dec else ""))
     parts += [f"  {d}" for d in dec]
     return "\n".join(p for p in parts if p is not None)
+
+
+def all_gotchas_brief(root: Path) -> str:
+    got = gotchas(root)
+    return "ALL GOTCHAS:\n" + "\n".join(f"  - {g}" for g in got) if got \
+        else "ALL GOTCHAS: none"
 
 
 def _resolve_root(argv: list[str]) -> Path:
@@ -172,6 +219,8 @@ def main(argv: list[str]) -> int:
     try:
         if "--anchor" in argv:
             print(anchor_line(root))
+        elif "--all-gotchas" in argv:
+            print(all_gotchas_brief(root))
         else:
             print(full_brief(root))
     except Exception:

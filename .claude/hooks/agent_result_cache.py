@@ -76,9 +76,10 @@ def _git(root: Path, *args: str) -> str | None:
 
 def _scope_key(root: Path, paths: list) -> str | None:
     """Content fingerprint of the given paths: HEAD tree + worktree diff +
-    untracked names (names suffice here -- an analyst re-reads the worktree,
-    and new untracked content shows up in the diff-of-names churn; the heavy
-    hash-object pass is reserved for build receipts)."""
+    untracked file CONTENTS. Untracked contents must be hashed (same as
+    receipts.build_input_key): an edit to an existing untracked file changes
+    neither the name list nor the diff, and a name-only hash would serve a
+    stale cached report over changed content."""
     tree = _git(root, "ls-tree", "-r", "HEAD", "--", *paths)
     diff = _git(root, "diff", "HEAD", "--", *paths)
     untracked = _git(root, "ls-files", "-o", "--exclude-standard", "--", *paths)
@@ -87,7 +88,19 @@ def _scope_key(root: Path, paths: list) -> str | None:
     h = hashlib.sha256()
     h.update(tree.encode())
     h.update(diff.encode())
-    h.update(untracked.encode())
+    names = [n for n in untracked.splitlines() if n.strip()]
+    h.update("\n".join(names).encode())
+    if names:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(root), "hash-object", "--stdin-paths"],
+                input="\n".join(names).encode(), capture_output=True,
+                timeout=120)
+            if r.returncode != 0:
+                return None  # fail toward no-cache, never a stale hit
+            h.update(r.stdout)
+        except Exception:
+            return None
     return h.hexdigest()
 
 
@@ -181,6 +194,17 @@ def main(mode: str) -> int:
     except (OSError, ValueError):
         return 0
     age_min = (time.time() - rec.get("stored_epoch", 0)) / 60
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import _offload_log
+        # ~4 chars/token on the report the dispatch would have re-derived,
+        # plus the agent's own reading -- a floor estimate, logged for the
+        # net-savings scorecard.
+        est_tokens = max(500, len(rec.get("report", "")) // 4)
+        _offload_log.log_event(root, "cache-hit", "agent_result_cache",
+                               f"{stype} ~{est_tokens} sidechain tokens avoided")
+    except Exception:
+        pass
     sys.stderr.write(
         f"[agent-cache] HIT: an identical {stype} dispatch already ran over "
         f"content-identical inputs ({age_min:.0f} min ago; every file that "

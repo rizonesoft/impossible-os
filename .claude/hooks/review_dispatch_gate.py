@@ -210,12 +210,25 @@ def main() -> int:
             "through it")
 
     window_start = _pass_window_start(root, todo_rel)
-    if not _dispatched_within(root, "review-evidence-mapper", window_start):
+    ship_files = _reviewed_ship_files(root, todo_rel)
+    # Cost-neutral routing (2026-07-11): the mapper must REPLACE reading, not
+    # supplement it. A tiny non-kernel/non-boot diff is cheaper for Opus to
+    # read directly than to pay a Sonnet mapper -- so require the mapper ONLY
+    # for large diffs or any kernel/boot/security surface (the expensive bug
+    # class warrants the extra breadth net). Source .c/.h/.asm files only;
+    # docs/TODO churn does not count toward the size.
+    src_ship = [f for f in ship_files
+                if f.endswith((".c", ".h", ".asm", ".S"))]
+    kernelish = any(f.startswith(KERNEL_PREFIXES) or f.startswith(BOOT_PREFIX)
+                    for f in ship_files)
+    mapper_required = kernelish or len(src_ship) > 5
+    if mapper_required and \
+       not _dispatched_within(root, "review-evidence-mapper", window_start):
         failures.append(
             "no review-evidence-mapper dispatch in this pass window "
-            "(review-todo-section Phase 1; measured missing in 6/17 passes)")
+            "(required for large or kernel/boot diffs; a tiny non-kernel diff "
+            "is exempt -- Opus reads it directly)")
 
-    ship_files = _reviewed_ship_files(root, todo_rel)
     if any(f.startswith(KERNEL_PREFIXES) for f in ship_files) and \
        not _dispatched_within(root, "kernel-quality-auditor", window_start):
         failures.append(
@@ -258,6 +271,24 @@ def _selftest() -> int:
     todo_rel = "todo/02-kernel-core/TODO-99-fixture.md"
     (tmp / todo_rel).write_text("## 1. X\n- [x] item\n")
 
+    # A real git commit touching >5 src files so _reviewed_ship_files() sees a
+    # LARGE diff -- the mapper-required routing (2026-07-11) exempts tiny
+    # non-kernel diffs, so the mapper cases need a large-diff head to exercise.
+    import subprocess as _sp
+    _sp.run(["git", "init", "-q", str(tmp)], check=True)
+    (tmp / "src").mkdir(parents=True, exist_ok=True)
+    big_files = []
+    for i in range(6):
+        f = f"src/mod{i}.c"
+        (tmp / f).write_text(f"int m{i}(void){{return {i};}}\n")
+        big_files.append(f)
+    _sp.run(["git", "-C", str(tmp), "add", "-A"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp), "-c", "user.email=t@t", "-c",
+             "user.name=t", "commit", "-qm", "big"], check=True,
+            capture_output=True)
+    big_head = _sp.check_output(["git", "-C", str(tmp), "rev-parse", "HEAD"],
+                                text=True).strip()
+
     global _repo_root
     orig_root = _repo_root
     _repo_root = lambda: tmp
@@ -297,10 +328,11 @@ def _selftest() -> int:
             by_type["kernel-quality-auditor"] = {"timestamp_ns": now}
         (tmp / ".claude/state/last-agent-dispatch.json").write_text(
             json.dumps({"timestamp_ns": now, "by_type": by_type}))
-        stamps = {todo_rel: {"adversarial": now}}
-        # no adversarial_head -> ship files unknown -> kernel check skipped
-        # unless ship_kernel, which we cannot simulate without git; covered
-        # by the fail-open contract instead.
+        # adversarial_head points at the 6-src-file commit -> LARGE diff, so
+        # the mapper is genuinely required (the tiny-diff exemption does not
+        # apply); this exercises the mapper cases as before the 2026-07-11
+        # routing change.
+        stamps = {todo_rel: {"adversarial": now, "adversarial_head": big_head}}
         (tmp / ".claude/state/last-review-stamps.json").write_text(
             json.dumps(stamps))
 
@@ -327,10 +359,36 @@ def _selftest() -> int:
     rc, err = run(stamp_edit())
     check("inline-shape-blocked", rc == 2 and "inline" in err)
 
-    # 5. missing mapper dispatch -> BLOCK.
+    # 5. missing mapper dispatch on a LARGE diff -> BLOCK.
     write_state(skill_ok=True, mapper_ok=False)
     rc, err = run(stamp_edit())
     check("missing-mapper-blocked", rc == 2 and "review-evidence-mapper" in err)
+
+    # 5b. tiny non-kernel diff (2 src files) with no mapper -> ALLOW
+    #     (2026-07-11 cost-neutral routing: Opus reads a tiny diff directly).
+    small_head = _sp.check_output(
+        ["git", "-C", str(tmp), "rev-parse", "HEAD"], text=True).strip()
+    # rewrite HEAD to a 2-file commit
+    for i in range(2, 6):
+        (tmp / f"src/mod{i}.c").unlink()
+    _sp.run(["git", "-C", str(tmp), "add", "-A"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp), "-c", "user.email=t@t", "-c",
+             "user.name=t", "commit", "-qm", "small"], check=True,
+            capture_output=True)
+    small_head = _sp.check_output(
+        ["git", "-C", str(tmp), "rev-parse", "HEAD"], text=True).strip()
+    (tmp / ".claude/state/last-review-stamps.json").write_text(json.dumps(
+        {todo_rel: {"adversarial": now, "adversarial_head": small_head}}))
+    prog = {"review-todo-section": {"session_id": "sess-1",
+                                    "args": f"{todo_rel} section 1"}}
+    (tmp / ".claude/state/skill-progress.json").write_text(json.dumps(prog))
+    (tmp / ".claude/state/last-agent-dispatch.json").write_text(
+        json.dumps({"timestamp_ns": now, "by_type": {}}))
+    rc, _ = run(stamp_edit())
+    check("tiny-diff-mapper-exempt", rc == 0)
+    # restore the large head for later cases
+    (tmp / ".claude/state/last-review-stamps.json").write_text(json.dumps(
+        {todo_rel: {"adversarial": now, "adversarial_head": big_head}}))
 
     # 6. skip env with reason allows + logs.
     write_state(skill_ok=False, mapper_ok=False)
