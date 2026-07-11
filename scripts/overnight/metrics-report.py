@@ -27,7 +27,9 @@ def load(path: str) -> list[dict]:
 
 def totals(recs: list[dict]) -> dict:
     agg = {k: 0 for k in TOKEN_FIELDS}
-    agg.update(turns=0, agent_dispatches=0, grep_calls=0, lsp_calls=0)
+    agg.update({f"sidechain_{k}": 0 for k in TOKEN_FIELDS})
+    agg.update(turns=0, sidechain_turns=0, agent_dispatches=0,
+               grep_calls=0, lsp_calls=0)
     for r in recs:
         for k in agg:
             v = r.get(k)
@@ -40,9 +42,13 @@ def fmt_row(label: str, r: dict) -> str:
     lsp = r.get("lsp_calls", 0)
     grep = r.get("grep_calls", 0)
     ratio = f"{lsp}/{grep}"
-    return (f"{label:<10} out={r.get('output_tokens', 0):>9} "
+    # Main-loop token fields; sidechain (subagent) usage is its own bucket so
+    # A/B comparisons on main-only tokens are not polluted by fleet activity.
+    return (f"{label:<10} turns={r.get('turns', 0):>5} "
+            f"out={r.get('output_tokens', 0):>9} "
             f"in={r.get('input_tokens', 0):>9} "
             f"cache_r={r.get('cache_read_input_tokens', 0):>9} "
+            f"side_out={r.get('sidechain_output_tokens', 0):>9} "
             f"agents={r.get('agent_dispatches', 0):>3} "
             f"lsp/grep={ratio:>7}")
 

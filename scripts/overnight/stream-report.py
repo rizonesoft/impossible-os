@@ -206,11 +206,18 @@ class SectionMetrics:
         self.path = path
         self.index = 0
         self.model_seen: str | None = None  # run-level, NOT reset per section
+        # Run-level dedupe: the CLI emits one stream event PER CONTENT BLOCK,
+        # each repeating the same message envelope (id + usage). Counting every
+        # event inflated turns ~1.9x (7101 reported vs 3688 real requests in
+        # run-20260710) and double-added usage. One message id = one API request.
+        self._seen_msg_ids: set = set()
         self._reset()
 
     def _reset(self) -> None:
         self.turns = 0
         self.tokens = {k: 0 for k in self.TOKEN_FIELDS}
+        self.sidechain_turns = 0
+        self.sidechain_tokens = {k: 0 for k in self.TOKEN_FIELDS}
         self.agent_dispatches = 0
         self.grep_calls = 0
         self.lsp_calls = 0
@@ -240,14 +247,26 @@ class SectionMetrics:
                  f"(fallback engaged mid-run, or an override took effect)")
             self.model_seen = model
 
-    def add_usage(self, usage) -> None:
+    def add_usage(self, usage, msg_id=None, sidechain: bool = False) -> None:
+        """Count one API request's usage exactly once, into the main-loop or
+        sidechain (subagent) bucket. Duplicate stream events for the same
+        message id (one per content block) are ignored; events without an id
+        (synthetic/test) count individually as before."""
         if not isinstance(usage, dict):
             return
-        self.turns += 1
+        if msg_id:
+            if msg_id in self._seen_msg_ids:
+                return
+            self._seen_msg_ids.add(msg_id)
+        bucket = self.sidechain_tokens if sidechain else self.tokens
+        if sidechain:
+            self.sidechain_turns += 1
+        else:
+            self.turns += 1
         for k in self.TOKEN_FIELDS:
             v = usage.get(k)
             if isinstance(v, int):
-                self.tokens[k] += v
+                bucket[k] += v
 
     def add_tool(self, name: str) -> None:
         if name in ("Task", "Agent"):
@@ -266,10 +285,13 @@ class SectionMetrics:
             "timestamp": stamp(),
             "turns": self.turns,
             **self.tokens,
+            "sidechain_turns": self.sidechain_turns,
+            **{f"sidechain_{k}": v for k, v in self.sidechain_tokens.items()},
             "agent_dispatches": self.agent_dispatches,
             "grep_calls": self.grep_calls,
             "lsp_calls": self.lsp_calls,
             "model": self.model_seen,
+            "effort": os.environ.get("OVERNIGHT_EFFORT") or None,
         }
         with open(self.path, "a", encoding="ascii") as fh:
             fh.write(json.dumps(rec) + "\n")
@@ -284,9 +306,11 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
         # parent_tool_use_id marks a subagent sidechain event; those carry the
         # SUBAGENT's model (Sonnet analyst fleet), so only main-loop events
         # (parent_tool_use_id absent/null) witness a genuine fallback flip.
-        if not event.get("parent_tool_use_id"):
+        sidechain = bool(event.get("parent_tool_use_id"))
+        if not sidechain:
             metrics.note_model(message.get("model"))
-        metrics.add_usage(message.get("usage"))
+        metrics.add_usage(message.get("usage"), msg_id=message.get("id"),
+                          sidechain=sidechain)
         for block in message.get("content") or []:
             if block.get("type") == "text" and block.get("text"):
                 emit(block["text"])
