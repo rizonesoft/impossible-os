@@ -69,6 +69,14 @@ green deterministic run rather than a watched canary each.
   SHIPPED 2026-07-12. Extracted the parser into a standalone, test-backed `scripts/overnight/parse-usage-limit.py` that reads the report FILE by path (killing the heredoc/stdin collision); `overnight-launch.sh` now calls it in one line. `test_usage_limit_snooze.py` (8 cases: session/weekly/no-minutes/fallback/8-day-cap + end-to-end file-not-stdin). Suite 21/21. (NOTE: the deterministic parser is canary-free, but the one-line `overnight-launch.sh` call is a flow-critical wiring edit -> rides on the batch's canary.) Original scope:
   `overnight-launch.sh:366` -- the heredoc clobbers the piped report so `sys.stdin.read()` gets EOF and the limit banner never parses; the runner cannot snooze on a real limit. Fix: pass the report by argv/path, end-to-end test with a captured banner. Correctness fix now; hard prerequisite for Phase 5.
 
+> **Field observation (2026-07-12 attended canary, TODO-21 §14) -- corroborates P1.2 + P1.3:**
+> the `codex_review_completed` recorder mis-fired repeatedly this session (didn't persist review verdicts despite clean approves), forcing several logged gate opt-outs
+> (`SKIP_REVIEW_HOOK` / `SKIP_SKILL_STEP_BLOCK` / `SKIP_DISPATCH_GATE`) -- all with documented reasons. That's a runner-infrastructure flake, not a review shortcut (every review
+> genuinely ran), but it slowed the canary considerably and is worth fixing before it costs the unattended run the same friction. Concretely: `last-codex-review.json` stayed at
+> `verdict=None / received=False` even after a `Turn completed` clean approve (foreground AND background dispatches), and its `trigger_blobs` froze at a pre-fix state so the
+> section-commit gate read stale evidence. P1.2 (bind the record to the actual staged diff) and P1.3 (completion-bound, transactional receipt state: `running -> completed(rc=0) ->
+> received -> content-valid`) are the direct fixes; prioritize both before the next unattended arm.
+
 ### Phase 2 -- Convergence + churn reduction (low-medium risk; big turn savings, no depth loss)
 
 - [ ] **[det] P2.1 Convergence-based review: never redispatch an UNCHANGED review kind on UNCHANGED relevant inputs.**
