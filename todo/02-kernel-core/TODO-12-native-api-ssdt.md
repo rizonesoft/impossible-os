@@ -409,7 +409,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] New file: `src/kernel/nt/nt_process.c` with 23 SSDT handlers
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
 - [ ] NtGetNextProcess (0x0202) + NtGetNextThread (0x0203): modern enumeration -- restart from a previous handle with rights checks, no leaked references (slots reserved in `TODO-A-SSDT-Master-Table` / `service_numbers.h`; XREF `T21 §4`)
-- [ ] NtSet/QueryInformationProcess Signature + ImageLoad mitigation carriers (monotonic, no relaxation); SystemCallDisablePolicy -> §25. ChildProcessPolicy carrier shipped in T21 §11 (ProcessMitigationPolicy dispatch, nt_process.c)
+- [ ] NtSet/QueryInformationProcess mitigation carriers (ChildProcessPolicy + Signature + ImageLoad); SystemCallDisablePolicy -> §25. T21 §11 dispatch wired but both handlers DEFER (NOT_SUPPORTED) pending usercopy (TODO-23 §13)
 - [ ] [Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects (`nt_process.c`) -- corrupts OB metadata, no type/access check. Use real OB objects + rights -> XREF `D02 T05 §2`. (§7)
 - [ ] [Critical] NtCreateProcess leaves a runnable NULL-entry task (`nt_process.c:70` task_create entry=0) + no teardown on post-create alloc fail; create non-runnable until exec + add teardown. (§7)
 - [ ] [H] Process-handle waits reap and require parentage: `wait_on_body` (nt_sync.c) uses parent-only reaping `task_waitpid`; NT waits are neither -- add a non-reaping process exit event for any handle holder. (§7)
