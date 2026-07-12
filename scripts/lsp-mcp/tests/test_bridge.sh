@@ -32,14 +32,16 @@
 #   4c -- bash_server.required_capabilities() returns a non-empty tuple
 #         covering the providers the tool-wiring commit will route.
 #   5a -- --self-test --lang=py: SKIP when pyright-langserver missing,
-#         or OK with a non-zero workspace-symbol count on
-#         scripts/todo-graph/build.py.
+#         or OK with a non-zero documentSymbol count on
+#         scripts/todo-graph/build.py (per-file cap; open-source
+#         pyright has no cross-file workspace-symbol index -- TODO-07).
 #   5b -- python_server module imports + exposes the standard surface
 #         (PYRIGHT_BIN / LANG_TAG / is_available / install_hint / spawn /
 #         required_capabilities).
-#   5c -- python_server.required_capabilities() includes
-#         workspaceSymbolProvider (the load-bearing cap for the smoke
-#         path; pyright reliably advertises it across releases).
+#   5c -- python_server.required_capabilities() lists the four per-file
+#         providers and OMITS workspaceSymbolProvider (advertised by
+#         pyright but non-functional cross-file; smoke uses
+#         documentSymbol).
 #   6a -- --self-test --lang=ps1: SKIP when pwsh+PSES unavailable, or
 #         OK with a non-negative document-symbol count on
 #         scripts/machines/run-qemu.ps1.
@@ -706,11 +708,15 @@ t_selftest_lang_py() {
         printf '[lsp-mcp-tests] debug (5a): exit=%s output: %s\n' "$rc" "$out" >&2
         return 1
     fi
-    # Accept either the pyright OK banner with a non-zero result count
-    # (workspace/symbol "main" against scripts/todo-graph/build.py
-    # produces multiple matches once pyright finishes indexing), or the
-    # SKIP banner when pyright-langserver is not installed on this host.
-    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: pyright spawned, workspace-symbol main returned [1-9][0-9]* results|SKIP: pyright not installed)"
+    # Accept either the pyright OK banner with a non-zero symbol count
+    # (documentSymbol on scripts/todo-graph/build.py returns its
+    # top-level symbols once pyright finishes parsing the opened file),
+    # or the SKIP banner when pyright-langserver is not installed on
+    # this host. The smoke is documentSymbol (per-file), NOT
+    # workspace/symbol: open-source pyright has no cross-file symbol
+    # index (Pylance-only), so a workspace-symbol smoke returns empty
+    # and would flip SKIP->FAIL on install. See TODO-07.
+    echo "$out" | grep -qE "^\[lsp-mcp\] (OK: pyright spawned, documentSymbol on build\.py returned [1-9][0-9]* symbols|SKIP: pyright not installed)"
 }
 
 # --- 5b: python_server module imports + standard surface ------------------
@@ -744,11 +750,15 @@ sys.path.insert(0, 'scripts/lsp-mcp')
 from servers import python_server
 caps = python_server.required_capabilities()
 assert isinstance(caps, tuple) and caps, caps
-# workspaceSymbolProvider IS asserted (unlike bash_server which drops
-# it). Pyright ships the cap reliably; the sub-test 5a smoke path
-# depends on it directly.
-for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider','workspaceSymbolProvider'):
+# workspaceSymbolProvider is intentionally OMITTED (same disposition as
+# bash_server, different reason): open-source pyright advertises the cap
+# but its workspace/symbol has no cross-file index (Pylance-only) and
+# returns empty here, so we do not assert advertised-but-nonfunctional.
+# The sub-test 5a smoke exercises documentSymbol (per-file) instead.
+# See python_server.required_capabilities() docstring + TODO-07.
+for name in ('hoverProvider','definitionProvider','referencesProvider','documentSymbolProvider'):
     assert name in caps, name
+assert 'workspaceSymbolProvider' not in caps, 'see python_server.required_capabilities() docstring'
 "
 }
 

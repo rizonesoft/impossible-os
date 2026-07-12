@@ -39,8 +39,16 @@
 #      notifications, but does NOT answer server-initiated requests.
 #      Advertising the cap would let pyright send a workspace/
 #      configuration request and block waiting for a reply we never
-#      produce. Pyright tolerates the missing cap fine -- it falls
-#      back to defaults that still produce useful workspace symbols.
+#      produce. Pyright degrades gracefully to its hardcoded server
+#      defaults (openFilesOnly, standard type-checking) with the cap
+#      absent -- it checks hasConfigurationCapability BEFORE issuing
+#      the RPC, so it never even asks (verified 2026-07-12 against
+#      pyright languageServerBase.ts getConfiguration()). This does
+#      NOT affect workspace/symbol: pyright's cross-file symbol
+#      indexing is a Pylance-only feature that open-source pyright
+#      simply lacks, so no configuration value could turn it on. See
+#      required_capabilities() for why workspaceSymbolProvider is
+#      dropped and py is treated as a per-file engine.
 #      Reverse-RPC handling is a bridge-skeleton retrofit if a future
 #      server requires dynamic config reads.
 #
@@ -153,13 +161,15 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     a CLI flag.
 
     Capability shape advertises hover / definition / references /
-    documentSymbol / workspaceSymbol / publishDiagnostics. We do NOT
-    advertise workspace.configuration -- see the file header for why.
-    workspaceSymbol IS advertised here (unlike asm_server) because
-    pyright reliably ships workspaceSymbolProvider on every release;
-    the workspace-symbol smoke path in the self-test depends on it
-    (workspace/symbol query for 'main' against scripts/todo-graph/
-    build.py).
+    documentSymbol / workspaceSymbol / publishDiagnostics on the
+    CLIENT side. We do NOT advertise workspace.configuration -- see
+    the file header for why. The client-side workspace.symbol
+    advertisement is kept (harmless; the generic bridge tool routes
+    through it), but pyright's workspace/symbol is NOT a relied-on cap
+    here: open-source pyright has no cross-file symbol index and
+    returns empty in practice on this repo, so required_capabilities()
+    drops workspaceSymbolProvider and the self-test smoke exercises
+    documentSymbol (a per-file cap that works) instead.
     """
     if not is_available():
         raise LspError(
@@ -221,18 +231,29 @@ def spawn(workspace_root: Path) -> LspSubprocess:
 
 def required_capabilities() -> tuple[str, ...]:
     """Capabilities the pyright handshake MUST report back so the
-    tool-wiring commit can depend on them. Pyright today reliably
-    advertises all five providers below across every release that
-    ships on npm; asserting them here means a future pyright
-    regression that drops one surfaces in our self-test instead of
-    in a user's hover/symbol call that silently returns null.
+    tool-wiring commit can depend on them. Pyright reliably advertises
+    all four per-file providers below across every release that ships
+    on npm; asserting them here means a future pyright regression that
+    drops one surfaces in our self-test instead of in a user's
+    hover/symbol call that silently returns null.
 
-    workspaceSymbolProvider IS in this tuple (unlike bash_server,
-    which intentionally drops it because bash-language-server's
-    advertisement of that cap is uneven across releases). Pyright
-    upstream has shipped workspaceSymbolProvider continuously since
-    1.1.0; the workspace-symbol smoke path in the self-test depends
-    on it directly.
+    workspaceSymbolProvider is NOT in this tuple (same disposition as
+    bash_server, for a different reason). Open-source pyright DOES
+    advertise workspaceSymbolProvider in the handshake, but its
+    workspace/symbol only searches files already tracked by the
+    program (open files); it has no persisted workspace index -- that
+    background-indexing feature is Pylance-only and does not exist in
+    open-source pyright-langserver (verified 2026-07-12 against
+    microsoft/pyright workspaceSymbolProvider.ts + docs/settings.md:
+    no `python.analysis.indexing`, no on-disk `indexing` key). On this
+    repo the query returns empty in practice, so we do NOT assert the
+    cap (advertised != functional) and treat pyright as a per-file
+    engine (hover / definition / references / documentSymbol). Root
+    cause of the empty result is left for TODO-07 to chase with a live
+    LSP wire trace; the `initialized` notification is already sent
+    (lsp_client.py), so the common client-side cause is ruled out.
+    Cross-file py symbol lookup uses the deterministic fallback
+    (scripts/todo-graph/resolve_symbol.py + ripgrep).
 
     publishDiagnostics is NOT in this tuple because it is a
     notification direction, not a server capability key. Diagnostic
@@ -243,5 +264,4 @@ def required_capabilities() -> tuple[str, ...]:
         "definitionProvider",
         "referencesProvider",
         "documentSymbolProvider",
-        "workspaceSymbolProvider",
     )

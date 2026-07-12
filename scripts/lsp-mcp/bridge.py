@@ -4335,19 +4335,31 @@ def _self_test_bash(workspace_root: Path) -> int:
 def _self_test_pyright(workspace_root: Path) -> int:
     """pyright end-to-end smoke: SKIP when pyright-langserver is missing,
     else spawn + initialize + didOpen(scripts/todo-graph/build.py) +
-    workspace/symbol query for 'main', then assert at least one symbol
-    came back.
+    textDocument/documentSymbol on that file, then assert a non-empty
+    symbol list came back.
 
-    The smoke target is workspace symbols rather than hover because
-    pyright's workspaceSymbolProvider is the highest-leverage cap we
-    will route through MCP -- agents asking "where is symbol X defined
-    across all .py files?" depend on it -- and exercising it end-to-end
-    catches indexer regressions that a hover smoke would miss.
+    The smoke target is documentSymbol (per-file), NOT workspace/symbol.
+    Open-source pyright-langserver has no cross-file workspace symbol
+    index -- that background-indexing feature is Pylance-only (verified
+    2026-07-12 against microsoft/pyright: no `python.analysis.indexing`
+    setting exists, workspaceSymbolProvider.ts only walks already-open
+    program files) -- so a workspace/symbol smoke returns empty on this
+    repo and would flip SKIP->FAIL the moment pyright is installed
+    (that is exactly what happened when pyright was trial-installed;
+    the install had to be reverted). documentSymbol is pyright's honest
+    per-file cap and works reliably; asserting a non-empty result on a
+    file we just did_open validates the real end-to-end path (did_open
+    forwarded -> pyright parses -> documentSymbol returns our symbols)
+    with no cross-file ambiguity, since the response is scoped to the
+    URI we pass. Cross-file py symbol lookup uses the deterministic
+    fallback (scripts/todo-graph/resolve_symbol.py + ripgrep). Chasing
+    a real workspace/symbol path is deferred to TODO-07.
 
     Mirrors the fail-closed discipline of the clangd / asm / bash
     smokes: every transport / IO / protocol failure after the SKIP
-    branch becomes an explicit FAIL with exit 1. Best-effort symbol
-    scans that could falsely report OK on an empty index are rejected.
+    branch becomes an explicit FAIL with exit 1. An empty symbol list
+    (a file we opened that pyright reports zero symbols for) is a FAIL,
+    not a pass.
     """
     try:
         from servers import python_server
@@ -4443,89 +4455,73 @@ def _self_test_pyright(workspace_root: Path) -> int:
         sys.stderr.write(f"[lsp-mcp] FAIL: pyright didOpen: {exc}\n")
         return 1
 
-    # Pyright indexes the workspace asynchronously. workspace/symbol
-    # against a freshly-spawned server can return an empty list before
-    # the indexer finishes, even though the symbol exists. Poll with a
-    # bounded deadline (10 s; pyright indexes the scripts/ tree in
-    # 2-3 s on a warm cache).
+    # Pyright analyzes an opened file asynchronously; documentSymbol
+    # against a freshly-opened file can briefly return an empty list
+    # before the parse completes. Poll with a bounded deadline (10 s;
+    # a single-file parse is sub-second on a warm host).
     #
-    # CRITICAL discrimination: query "main" matches every `main`
-    # function in the workspace (bridge.py has one too, mcp_server.py
-    # has one, etc.), so a non-empty result does NOT prove build.py
-    # was indexed. Require at least one returned symbol to resolve to
-    # the URI we just did_open'd. That is the only assertion that
-    # actually validates the end-to-end path: did_open is forwarded ->
-    # pyright indexer ingests our file -> workspace/symbol returns a
-    # match in our file. Without this filter the smoke can go green
-    # while the indexer is broken on build.py specifically.
+    # documentSymbol is scoped to the URI we pass, so ANY non-empty
+    # result is proof pyright ingested THIS file end-to-end (did_open
+    # forwarded -> pyright parses -> documentSymbol returns our
+    # symbols). No cross-file ambiguity to filter, unlike the retired
+    # workspace/symbol smoke: that cap is Pylance-only indexing that
+    # open-source pyright lacks (returns empty here) -- see
+    # python_server.required_capabilities() and TODO-07.
     import time as _time
     deadline = _time.monotonic() + 10.0
-    matching: list[Any] = []
-    total_count = 0
     last_err: Optional[LspError] = None
     symbols: Any = None
     while _time.monotonic() < deadline:
         if not lsp.alive:
             sys.stderr.write(
                 "[lsp-mcp] FAIL: pyright subprocess exited before "
-                "workspace/symbol returned a result\n"
+                "documentSymbol returned a result\n"
             )
             return 1
         if lsp._reader_dead:
             sys.stderr.write(
                 "[lsp-mcp] FAIL: pyright reader thread died before "
-                "workspace/symbol returned a result\n"
+                "documentSymbol returned a result\n"
             )
             return 1
         try:
             symbols = lsp.request(
-                "workspace/symbol",
-                {"query": "main"},
+                "textDocument/documentSymbol",
+                {"textDocument": {"uri": uri}},
                 timeout=5.0,
             )
         except LspError as exc:
             last_err = exc
             symbols = None
         if isinstance(symbols, list) and symbols:
-            total_count = len(symbols)
-            matching = [
-                s for s in symbols
-                if isinstance(s, dict)
-                and isinstance(s.get("location"), dict)
-                and s["location"].get("uri") == uri
-            ]
-            if matching:
-                break
+            break
         _time.sleep(0.25)
 
     if symbols is None:
         sys.stderr.write(
-            f"[lsp-mcp] FAIL: pyright workspace/symbol: {last_err}\n"
+            f"[lsp-mcp] FAIL: pyright documentSymbol: {last_err}\n"
         )
         return 1
     if not isinstance(symbols, list):
         sys.stderr.write(
-            "[lsp-mcp] FAIL: pyright workspace/symbol returned "
+            "[lsp-mcp] FAIL: pyright documentSymbol returned "
             f"{type(symbols).__name__}; expected list per LSP spec.\n"
         )
         return 1
-    if not matching:
+    if not symbols:
         sys.stderr.write(
-            "[lsp-mcp] FAIL: pyright workspace/symbol query 'main' "
-            f"returned {total_count} results after 10s, but NONE "
-            f"resolved to {uri}. The indexer is producing matches "
-            "from elsewhere in the workspace but did_open on "
-            "scripts/todo-graph/build.py was not picked up. Either "
-            "the indexer is still cold (raise the deadline), the "
-            "did_open uri did not match what pyright expects, or "
-            "scripts/todo-graph/build.py no longer defines a "
-            "top-level `main` symbol.\n"
+            f"[lsp-mcp] FAIL: pyright documentSymbol on {uri} returned "
+            "an empty list after 10s. The file was did_open'd but "
+            "pyright reported zero symbols -- either the parse is still "
+            "cold (raise the deadline), the did_open uri did not match "
+            "what pyright expects, or scripts/todo-graph/build.py no "
+            "longer defines any top-level symbols.\n"
         )
         return 1
 
     sys.stdout.write(
-        f"[lsp-mcp] OK: pyright spawned, workspace-symbol main "
-        f"returned {total_count} results\n"
+        f"[lsp-mcp] OK: pyright spawned, documentSymbol on build.py "
+        f"returned {len(symbols)} symbols\n"
     )
     return 0
 
