@@ -51,7 +51,21 @@ typedef struct object_header {
 
 /* --- Limits -------------------------------------------------------------- */
 
-#define OB_MAX_TYPES  32
+/* Capacity of the global registered-type table (g_ob_types[]). The table is
+ * append-only: types register once and live for the boot, so this is a hard
+ * ceiling, not a working-set size. Production registers ~16-20 real types
+ * (File/Process/Thread/Job/Section/Timer/Semaphore/Event/Mutant/Directory/
+ * SymbolicLink/Peb/Teb/...), and more are coming (tokens, ALPC ports, rlimit
+ * quota objects). Raised 32 -> 64 (2026-07-12): the Job Object type is a new
+ * permanent registration that, on top of the ob test suite's accumulated
+ * throwaway stress/type-test registrations in a single boot, tipped the table
+ * to 32/32 and failed "OB: namespace locking stress". 64 gives NT-scale
+ * headroom (real NT has ~40-70 types). Safe to grow: OBJECT_TYPES_INFORMATION
+ * .types[] is sized by this, but NtQueryObject(ObjectTypesInformation) is
+ * size-negotiated (writes number_of_types entries and returns the exact needed
+ * length), so a larger array never truncates or breaks a caller; there is no
+ * external user-mode consumer today. */
+#define OB_MAX_TYPES  64
 
 /* --- Built-in type singletons (populated by ob_init) --------------------- */
 
@@ -188,6 +202,16 @@ typedef struct {
     uint32_t                number_of_types;
     OBJECT_TYPE_INFORMATION types[OB_MAX_TYPES];
 } OBJECT_TYPES_INFORMATION;
+
+/* Layer-1 guard (kernel-code-quality Gate 3): keep the query-returned struct
+ * within a page so a future OB_MAX_TYPES bump cannot silently turn it into a
+ * kernel-stack / large-allocation hazard. ~3.6 KiB at OB_MAX_TYPES=64; if
+ * growth breaks this, switch NtQueryObject(ObjectTypesInformation) to a
+ * variable-length output rather than enlarging the fixed array. */
+_Static_assert(sizeof(OBJECT_TYPES_INFORMATION) <= 4096,
+               "OBJECT_TYPES_INFORMATION must stay within a page; make "
+               "ObjectTypesInformation variable-length instead of growing "
+               "OB_MAX_TYPES further");
 
 /* NtClose -- close a handle in the current process */
 int NtClose(HANDLE_TABLE *ht, HANDLE handle);

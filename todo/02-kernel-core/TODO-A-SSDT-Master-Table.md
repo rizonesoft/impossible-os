@@ -320,14 +320,14 @@ title: "SSDT Master Table"
 
 | Index  | Function                    | §   | Owner   | Done |
 | ------ | --------------------------- | --- | ------- | ---- |
-| 0x0160 | NtCreateJobObject           | §7  | T21 §13 | [ ]  |
-| 0x0161 | NtOpenJobObject             | §7  | T21 §13 | [ ]  |
-| 0x0162 | NtAssignProcessToJobObject  | §7  | T21 §13 | [ ]  |
-| 0x0163 | NtTerminateJobObject        | §7  | T21 §13 | [ ]  |
-| 0x0164 | NtQueryInformationJobObject | §7  | T21 §13 | [ ]  |
-| 0x0165 | NtSetInformationJobObject   | §7  | T21 §13 | [ ]  |
-| 0x0166 | NtIsProcessInJob            | §7  | T21 §13 | [ ]  |
-| 0x0167 | NtCreateJobSet              | §7  | T21 §13 | [ ]  |
+| 0x0160 | NtCreateJobObject           | §7  | T21 §13 | [x]  |
+| 0x0161 | NtOpenJobObject             | §7  | T21 §13 | [x]  |
+| 0x0162 | NtAssignProcessToJobObject  | §7  | T21 §13 | [x]  |
+| 0x0163 | NtTerminateJobObject        | §7  | T21 §13 | [x]  |
+| 0x0164 | NtQueryInformationJobObject | §7  | T21 §13 | [x]  |
+| 0x0165 | NtSetInformationJobObject   | §7  | T21 §13 | [x]  |
+| 0x0166 | NtIsProcessInJob            | §7  | T21 §13 | [x]  |
+| 0x0167 | NtCreateJobSet              | §7  | T21 §13 | [/]  |
 
 **0x0180–0x019F: Worker Factory (Thread Pool)**
 

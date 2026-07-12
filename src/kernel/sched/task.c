@@ -33,6 +33,7 @@
 #include "kernel/nt/syscall_filter.h"
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/pledge.h"       /* pledge_unveil_inherit / _teardown */
+#include "kernel/ob/ob_job.h"       /* ob_job_fork_inherit / _detach_task */
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -120,6 +121,13 @@ static void task_wrapper(void)
      * here -- consistent with stack/CR3 reclaim and safe once every thread is
      * proven off-CPU. */
     syscall_filter_task_dead(&tasks[current_task]);
+    /* A task whose entry returns normally dies HERE (not via task_exit), so it
+     * must run the same OB teardown: mark the process object dead and detach any
+     * inherited Job Object membership. Omitting the detach leaked the membership
+     * (and its reference + active-process quota) for a job-inheriting task that
+     * simply returned. */
+    ob_process_mark_dead(tasks[current_task].pid);
+    ob_job_detach_task(&tasks[current_task]);
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
@@ -396,6 +404,8 @@ boot_result_t task_init(void)
         tasks[i].unveil_locked = 0;
         tasks[i].unveil_active = 0;
         tasks[i].unveil_gen = 0;
+        tasks[i].job = NULL;
+        tasks[i].job_lock.flag = 0;
         tasks[i].num_threads = 0;
         for (j = 0; j < THREAD_MAX; j++) {
             tasks[i].threads[j].id = 0;
@@ -627,6 +637,27 @@ int task_create(task_entry_t entry, const char *name)
         return -1;
     }
 
+    /* Job Object inheritance BEFORE any further allocation, so a creator whose
+     * job is terminated or at its active-process limit fails process creation
+     * CLOSED with only the token to unwind. Without this, a job member could
+     * spawn a child outside the job via NtCreateProcess, escaping active-process
+     * limits and job-wide termination. Set the fields ob_job_assign reads (pid,
+     * state, job) FIRST -- a reused slot still holds a prior tenant's stale
+     * state (possibly TASK_DEAD, which would wrongly reject) and job pointer.
+     * The TCB init block re-sets pid/state idempotently and no longer clears
+     * job (this call owns it). */
+    tasks[pid].pid = pid;
+    tasks[pid].state = TASK_READY;
+    tasks[pid].job = NULL;
+    tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
+    if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
+        klog(LOG_ERROR, "sched",
+             "task_create: job inheritance rejected (terminated/at-limit); failing closed");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        return -1;
+    }
+
     /* Allocate task stack from PMM with guard page at the bottom.
      * Stack grows down, so guard page catches overflow before it
      * corrupts adjacent memory.  PMM gives identity-mapped pages. */
@@ -635,6 +666,7 @@ int task_create(task_entry_t entry, const char *name)
         uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
         if (!stack_base) {
             klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
+            ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
             if (inherited_token)
                 PsDereferencePrimaryToken(inherited_token);
             return -1;
@@ -715,6 +747,8 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].unveil_locked = 0;
     tasks[pid].unveil_active = 0;
     tasks[pid].unveil_gen = 0;
+    /* tasks[pid].job is set by the early ob_job_fork_inherit above (creator's
+     * job or NULL) -- do NOT clear it here or the inheritance would be lost. */
     tasks[pid].threads[0].pledge_pending = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
@@ -787,10 +821,28 @@ int task_create_user(task_entry_t entry, const char *name)
         return -1;
     }
 
+    /* Job Object inheritance BEFORE any further allocation (see task_create):
+     * a job member spawning a user process inherits the job, fail-closed if the
+     * job is terminated or at its active-process limit. Fields ob_job_assign
+     * reads (pid, state, job) are set first; the TCB init block re-sets pid/state
+     * and no longer clears job (this call owns it). */
+    tasks[pid].pid = pid;
+    tasks[pid].state = TASK_READY;
+    tasks[pid].job = NULL;
+    tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
+    if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
+        klog(LOG_ERROR, "sched",
+             "task_create_user: job inheritance rejected (terminated/at-limit); failing closed");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        return -1;
+    }
+
     /* Allocate kernel stack (for interrupt/syscall handling) */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_create_user: cannot allocate kernel stack");
+        ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
         return -1;
@@ -888,6 +940,8 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].unveil_locked = 0;
     tasks[pid].unveil_active = 0;
     tasks[pid].unveil_gen = 0;
+    /* tasks[pid].job is set by the early ob_job_fork_inherit above (creator's
+     * job or NULL) -- do NOT clear it here or the inheritance would be lost. */
     tasks[pid].threads[0].pledge_pending = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
@@ -1618,6 +1672,35 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
+    /* The child's PID must be set BEFORE job inheritance: ob_job_assign records
+     * child->pid into the job's member array, and a fresh/reused slot still
+     * holds a stale (often 0) pid until the TCB init block below. Recording PID
+     * 0 would leave the real child unfindable on exit (ref leak) and let
+     * NtTerminateJobObject resolve pid 0 and kill the system task. The pid is
+     * just the slot index; the TCB init block re-assigns it idempotently.
+     * state=TASK_READY is likewise set first so ob_job_assign's under-lock
+     * liveness check does not see a reused slot's stale TASK_DEAD. */
+    tasks[child_pid].pid = child_pid;
+    tasks[child_pid].state = TASK_READY;
+    tasks[child_pid].job_lock.flag = 0;   /* unlocked; guards t->job for assign/detach */
+
+    /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
+     * the child, so a fork can never be used to escape a job's active-process
+     * limit or job-wide termination. Fails the fork CLOSED if the parent's job
+     * is terminated or at capacity. Rolled back (ob_job_detach_task) on every
+     * later fork-failure path, symmetric with pledge/unveil. */
+    if (ob_job_fork_inherit(&tasks[child_pid], &tasks[parent_pid_val]) != 0) {
+        klog(LOG_ERROR, "sched",
+             "task_fork: job inheritance rejected (terminated/at-limit); "
+             "failing fork closed");
+        pledge_unveil_teardown(&tasks[child_pid]);
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        if (inherited_filter)
+            kfree(inherited_filter);
+        return -1;
+    }
+
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
@@ -1626,6 +1709,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        ob_job_detach_task(&tasks[child_pid]);
         pledge_unveil_teardown(&tasks[child_pid]);
         return -1;
     }
@@ -1639,6 +1723,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        ob_job_detach_task(&tasks[child_pid]);
         pledge_unveil_teardown(&tasks[child_pid]);
         return -1;
     }
@@ -2602,6 +2687,21 @@ int task_exec(const uint8_t *data, uint64_t size)
     return 0;
 }
 
+/* Centralized remote-death transition (see task.h). Idempotent: returns
+ * immediately if the target is already dead, so concurrent kill paths and a
+ * racing self-exit never double-teardown. Mirrors task_exit's TASK_DEAD-side
+ * teardown for a process that will NEVER run its own task_exit. */
+void task_terminate_remote(struct task *t, int32_t exit_code)
+{
+    if (!t || t->state == TASK_DEAD)
+        return;
+    t->state = TASK_DEAD;
+    t->exit_status = exit_code;
+    syscall_filter_task_dead(t);
+    ob_process_mark_dead(t->pid);
+    ob_job_detach_task(t);
+}
+
 void task_exit(int32_t status)
 {
     uint32_t pid = current_task;
@@ -2627,6 +2727,13 @@ void task_exit(int32_t status)
 
     /* Mark process object as temporary so it can be freed */
     ob_process_mark_dead(pid);
+
+    /* Leave any Job Object cleanly: removes the pid, decrements the active
+     * count, and drops this membership's Ob reference. Placed alongside the
+     * other TASK_DEAD-transition teardown; ob_job_detach_task takes only its
+     * own irqsave lock, so it is safe at this elevated IRQL and nests under no
+     * caller-held lock. Safe (no-op) when the task is not in a job. */
+    ob_job_detach_task(&tasks[pid]);
 
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited with status %d",
            (uint64_t)pid,

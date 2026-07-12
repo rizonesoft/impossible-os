@@ -12,6 +12,8 @@
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/task.h"
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on signal kill */
+#include "kernel/ob/ob_process.h"       /* ob_process_mark_dead on signal kill */
+#include "kernel/ob/ob_job.h"           /* ob_job_detach_task on signal kill */
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -100,12 +102,16 @@ static void signal_default_action(struct task *t, int sig)
         break;
     }
 
-    /* If this signal killed the task, drop its syscall-filter count
-     * contribution now (memory frees at the reap barrier). Guarded on the
-     * DEAD transition so the non-fatal branches (SIGCHLD) are unaffected;
-     * idempotent via syscall_filter_counted. */
-    if (t->state == TASK_DEAD)
+    /* If this signal killed the task, run the remote-death teardown: drop its
+     * syscall-filter count (memory frees at the reap barrier), mark the OB
+     * process object dead (this path previously skipped that), and detach any
+     * Job Object membership. Guarded on the DEAD transition so the non-fatal
+     * branches (SIGCHLD) are unaffected; each call is idempotent. */
+    if (t->state == TASK_DEAD) {
         syscall_filter_task_dead(t);
+        ob_process_mark_dead(t->pid);
+        ob_job_detach_task(t);
+    }
 }
 
 void signal_check(void)

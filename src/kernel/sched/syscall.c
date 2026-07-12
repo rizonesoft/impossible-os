@@ -509,12 +509,12 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         if (arg1 > 0 && arg1 < task_count()) {
             struct task *t = task_get_by_pid((uint32_t)arg1);
             if (t && t->state != TASK_DEAD) {
-                t->state = TASK_DEAD;
-                t->exit_status = -1;
-                /* Drop the killed task's syscall-filter count contribution
-                 * (memory frees at the reap barrier) so a killed-but-unreaped
-                 * filtered task stops taxing the global dispatch fast path. */
-                syscall_filter_task_dead(t);
+                /* Centralized remote-death transition: TASK_DEAD + exit status,
+                 * drop the syscall-filter count (killed-but-unreaped filtered
+                 * task stops taxing the fast path), mark the OB process object
+                 * dead (this legacy path previously skipped that), and detach
+                 * any Job Object membership. */
+                task_terminate_remote(t, -1);
                 klog(LOG_DEBUG, "sys", "Task %u killed", (uint64_t)arg1);
                 ret = 0;
             } else {

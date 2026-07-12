@@ -18,6 +18,7 @@
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob_semaphore.h"
 #include "kernel/ob/ob_timer.h"
+#include "kernel/ob/ob_job.h"
 #include "kernel/ob/ob_section.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
@@ -816,6 +817,7 @@ boot_result_t ob_init(void)
     ob_section_type_init();
     ob_timer_type_init();
     ob_token_type_init();
+    ob_job_type_init();
 
     /* PEB and TEB types -- exposed in \KernelObjects\Process<PID>\ */
     ObpPebType = ob_create_type(&(OBJECT_TYPE){

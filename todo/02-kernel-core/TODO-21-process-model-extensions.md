@@ -65,7 +65,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [/]   |
 | 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [/]   |
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
-| 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [ ]   |
+| 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
 | 💎   |  15   | Parenting, reaping, and wait4/waitid semantics            | §14            |  [ ]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
@@ -402,18 +402,33 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 
 Register Job Object management syscalls in the SSDT for process-group resource control. Win11 Job Objects are the primary mechanism for process-group resource limits (CPU rate, memory cap, I/O throttle). Linux uses cgroups v2 for equivalent functionality. (→ XREF: TODO-12-native-api-ssdt.md §5)
 
-- [ ] `NtCreateJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0160
-- [ ] `NtOpenJobObject(JobHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0161
-- [ ] `NtAssignProcessToJobObject(JobHandle, ProcessHandle)` → SSDT 0x0162
-- [ ] `NtTerminateJobObject(JobHandle, ExitStatus)` → SSDT 0x0163
-- [ ] `NtQueryInformationJobObject(JobHandle, InfoClass, Buffer, Length, RetLen)` → SSDT 0x0164
-- [ ] `NtSetInformationJobObject(JobHandle, InfoClass, Buffer, Length)` → SSDT 0x0165
-- [ ] `NtIsProcessInJob(ProcessHandle, JobHandle)` → SSDT 0x0166
-- [ ] `NtCreateJobSet(NumJob, UserJobSet, Flags)` → SSDT 0x0167
-- [ ] All functions return `NTSTATUS`
-- [ ] Commit: `"kernel: wire Job Object syscalls to SSDT (0x0160–0x0167)"`
+- [x] `NtCreateJobObject` → SSDT 0x0160 -- `nt_job.c` handler + `ob_job_create` (anon/named via `\BaseNamedObjects` with collision redirect); `ObpJobType` registered in `ob_init`
+- [x] `NtOpenJobObject` → SSDT 0x0161 -- opens an existing named job (`ob_job_open`)
+- [x] `NtAssignProcessToJobObject` → SSDT 0x0162 -- `ob_job_assign`: fail-closed on terminated/active-process-limit/full; typed `task->job` holds one Ob ref per membership
+- [x] `NtTerminateJobObject` → SSDT 0x0163 -- `ob_job_terminate`: snapshot-then-kill all members via centralized `task_terminate_remote`
+- [x] `NtQueryInformationJobObject` → SSDT 0x0164 -- Basic/Io accounting, Basic/Extended limit, BasicProcessIdList (partial-fill `STATUS_BUFFER_OVERFLOW`)
+- [x] `NtSetInformationJobObject` → SSDT 0x0165 -- Basic/Extended limit; rejects unenforceable LimitFlags (`STATUS_NOT_SUPPORTED`, no false-containment)
+- [x] `NtIsProcessInJob` → SSDT 0x0166 -- any-job (NULL handle) + specific-job membership
+- [x] `NtCreateJobSet` → SSDT 0x0167 -- registered + arg-validated; empty set succeeds; real job-set scheduling deferred (item below)
+- [x] All functions return `NTSTATUS`
+- [x] Commit: `"kernel: wire Job Object syscalls to SSDT (0x0160-0x0167)"`
+- [ ] Enforce memory limits (`PROCESS_MEMORY`/`JOB_MEMORY`): add to `JOB_SUPPORTED_LIMIT_FLAGS` + enforce on commit once VMM per-process accounting exists (today rejected at set)
+- [ ] Enforce CPU-rate limit (`JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`): per-job scheduler quota (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2, "starvation prevention" line 93)
+- [ ] Real job-set scheduling (`NtCreateJobSet` NumJob>0, today `STATUS_NOT_IMPLEMENTED`): needs scheduler group support (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2)
 
-**Test checkpoint:** `NtCreateJobObject` creates a job. `NtAssignProcessToJobObject` assigns a child process. `NtQueryInformationJobObject` returns accounting data. `NtTerminateJobObject` kills all processes in the job. Serial log shows `"job: created job <handle>, assigned pid <N>"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `NtCreateJobObject` creates a job (serial: `"job: created job handle 0x<h>"`). `NtAssignProcessToJobObject` assigns a process (serial: `"job: assigned pid <N> to job"`). `NtQueryInformationJobObject` returns accounting (process counts + summed CPU time). `NtTerminateJobObject` kills all members. `NtSetInformationJobObject` rejects an unenforceable limit flag. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 7 ProcExt job suites, 0 failures (limit-flag validation, accept/reject, membership scan, pid-list partial fill, accounting counts)
+
+> **Notes:**
+> - **What shipped** -- `ob_job.c`/`ob_job.h` (JOB_OBJECT: dense `member_pids[TASK_MAX]` + one spinlock + one Ob ref per membership) + `nt_job.c` (8 SSDT handlers) + typed `task->job`.
+> - **How it integrates** -- `ob_job_type_init` in `ob_init`, `nt_job_register_ssdt` in `boot_desktop.c`; every process-death path detaches via `task_terminate_remote`/`ob_job_detach_task`; fork inherits before child publication, fail-closed.
+> - **Downstream effects** -- SSDT rows 0x0160-0x0167 now have handlers; SYS_KILL + signal-kill gained the previously-missing `ob_process_mark_dead`. Design + adversarial adoptions in commit `<hash>`.
+> - **Canonical doc** -- `include/kernel/ob/ob_job.h` (reference-ownership invariant + lifecycle contract).
+> - **Scope boundary** -- §13 owns lifecycle + accounting + active-process-limit + kill-on-close; CPU/memory/IO enforcement + job sets are the open items above; process-handle access-checks owned elsewhere (see Deferred).
+> - **OB type-table headroom (2026-07-12 landing fix)** -- registering the permanent `Job` object type tipped the append-only global type table to 32/32 (on top of the ob test suite's accumulated throwaway types in one boot) and failed "OB: namespace locking stress". Raised `OB_MAX_TYPES` 32 -> 64 (`include/kernel/ob/ob.h`) for NT-scale headroom + a Layer-1 `_Static_assert` pinning `sizeof(OBJECT_TYPES_INFORMATION) <= 4096`. Safe: `NtQueryObject(ObjectTypesInformation)` is size-negotiated (writes `number_of_types` entries, returns the exact needed length) with no external user-mode consumer, so a larger array cannot truncate or break a caller. Scoped Codex adversarial review of this delta: approve, no material findings. Landing evidence: build OK; full suite 20456 kernel + 16 user PASS (incl. 7 ProcExt job suites + OB namespace-stress now green); smoke PASS (TCG 2.9s). [/] partial: memory/CPU-rate limits + real job-set scheduling stay deferred to the items above w/ scheduler XREF.
+
+> **Deferred:** 2026-07-12 | Codex design review (needs-attention: 4 High + 1 Medium, each verified at file:line via `superpowers:receiving-code-review`). Adopted: typed `task->job` + per-membership Ob ref (KILL_ON_JOB_CLOSE in on_close, not on_delete); centralized `task_terminate_remote` so remote kills detach job membership; fork-inherit before publication (fail-closed); reject-don't-echo unenforceable limits. Accepted out-of-scope: [High] process handles are raw PIDs with no granted-access check -- `proc_from_handle()` (`nt_job.c`) mirrors the codebase-wide PID model, so assign/is-in-job cannot enforce `PROCESS_SET_QUOTA`/`PROCESS_TERMINATE` rights; owned by the process-object handle model -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7` (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 413) + `02-kernel-core/TODO-05-object-manager.md §2` (item: "Reference Counting and Object Lifetime" at line 112). Adversarial rounds surfaced several SMP membership races, all FIXED via a per-task `job_lock` serializing every `t->job` read/write (lock order `job_lock` -> the JOB_OBJECT spinlock): assign-vs-exit (dying task left a permanent member), the bulk-kill and assign-rollback raw-pointer UAFs (a task's membership reference keeps the job alive until its own detach drops it, so no assignment frees the job under a concurrent detacher), fork-inherit pinning the parent job under `parent->job_lock` + a temp ref, and every death path (task_exit, task_terminate_remote, task_wrapper normal return, NtCreateProcess OOM) routing through the centralized teardown that detaches membership. DEFERRED (needs a task-publication lock, entangled with the pre-existing unlocked `num_tasks++`): the terminate-vs-unpublished-child race (an inherited child not yet published is skipped by termination) -> XREF: this file §14 (item: "Job membership vs publication SMP").
 
 ## 14. Process Exit Cleanup
 
@@ -433,6 +448,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 - [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
 - [ ] Unpublished-child construction: inherit all security state AND revalidate the pledge/unveil generation just before `task_fork`/`task_create` publish the child (an early inherit misses a concurrent tighten), full rollback.
 - [ ] Coordinated SMP process termination: `task_exit` publishes TASK_DEAD with no sibling-stop barrier, so `task_cleanup` may free stacks/CR3 under a sibling mid-syscall. Rendezvous threads off-CPU before reap.
+- [ ] Job membership vs publication SMP: commit membership + `num_tasks++` under the job lock so `NtTerminateJobObject` cannot miss an inherited-but-unpublished child (needs a task-publication lock; blocked on the unlocked `num_tasks++`)
 - [ ] Commit: `"kernel: task -- process exit cleanup (handles, locks, timer res, memory)"`
 
 **Test checkpoint:** Create a process that opens files with locks + timer resolution request. Kill the process. Verify: all locks released, timer resolution reverts to default, handles closed, no resource leak. Serial log shows cleanup counts. Test on QEMU WHPX, TCG.
@@ -502,7 +518,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors             |
 | 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                                |
 | 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred) |
-| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                                |
+| 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                                |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |
 | 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |

@@ -266,6 +266,24 @@ struct task {
     uint32_t unveil_gen;         /* bumped under unveil_lock on every add/replace;
                                   * lets a lock-free clone detect concurrent mutation */
     spinlock_t unveil_lock;
+    /* --- Job Object membership (Win32 Job Objects) ---
+     * NULL = not in a job. When set, this task holds ONE Ob reference on the
+     * JOB_OBJECT body (so the job outlives the member); the job's member_pids
+     * array holds this task's pid. Set only under the job's own spinlock by
+     * ob_job assign / fork-inherit; cleared (and the Ob ref dropped) by
+     * ob_job_detach_task from EVERY process-death path. Zeroed on slot
+     * (re)creation like the pledge fields. Typed struct pointer (not void*) so
+     * the compiler enforces the lifetime contract. See kernel/ob/ob_job.h.
+     *
+     * job_lock serializes ALL reads/writes of `job` (assign, detach, fork
+     * inherit) so the raw pointer is never freed out from under a concurrent
+     * user. Lock order is job_lock -> the JOB_OBJECT's own spinlock (never the
+     * reverse). A task holding its membership reference keeps the job alive
+     * until its own detach drops it under job_lock, so no assignment can free
+     * the job while a detacher is mid-flight. Zero-init (SPINLOCK_INIT) is an
+     * unlocked lock. */
+    struct job_object *job;
+    spinlock_t job_lock;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */
@@ -422,6 +440,16 @@ int task_exec(const uint8_t *data, uint64_t size);
 /* Exit the current task with a status code.
  * Wakes any parent waiting via waitpid. */
 void task_exit(int32_t status);
+
+/* Centralized remote-death transition for killing ANOTHER task (never the
+ * caller). Idempotent: a no-op if the target is already TASK_DEAD. Performs the
+ * full teardown that a remote kill must do without running the target's
+ * task_exit -- mark TASK_DEAD + exit status, drop the syscall-filter count,
+ * mark the OB process object dead, and detach any Job Object membership. Used
+ * by NtTerminateProcess and NtTerminateJobObject; the target notices the state
+ * at its next kernel entry (coordinated cross-CPU teardown is tracked
+ * separately). Safe to call at elevated IRQL (takes only irqsave locks). */
+void task_terminate_remote(struct task *t, int32_t exit_code);
 
 /* Wait for a child task to exit. Returns exit status, or -1 on error. */
 int32_t task_waitpid(uint32_t child_pid);

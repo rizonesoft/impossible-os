@@ -111,6 +111,13 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_THREAD_IS_TERMINATING        ((NTSTATUS)0xC000004B)  /* op on dying thread */
 #define STATUS_PROCESS_IS_TERMINATING       ((NTSTATUS)0xC000010A)  /* op on dying process */
 #define STATUS_THREAD_NOT_IN_PROCESS        ((NTSTATUS)0xC000012A)  /* thread not in target process */
+#define STATUS_QUOTA_EXCEEDED               ((NTSTATUS)0xC0000044)  /* job active-process/quota limit hit */
+
+/* ---- Job Object informational status (success severity) ------------------
+ * NtIsProcessInJob returns these AS its status; callers test equality, not
+ * NT_SUCCESS(). Both are success-severity per the Windows NTSTATUS convention. */
+#define STATUS_PROCESS_IN_JOB               ((NTSTATUS)0x00000105)  /* process IS in the job */
+#define STATUS_PROCESS_NOT_IN_JOB           ((NTSTATUS)0x00000106)  /* process is NOT in the job */
 
 /* ---- Error codes -- memory ----------------------------------------------- */
 

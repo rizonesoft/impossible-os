@@ -115,14 +115,15 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         struct task *child = task_get_by_pid((uint32_t)pid);
         if (child && pledge_unveil_inherit(child, task_current()) != 0) {
             /* OOM cloning the unveil set: refuse to run an under-restricted
-             * child. Mark it DEAD so find_next_task skips it and it is reaped;
-             * do NOT free it here -- task_create already published it READY, so
-             * another CPU could be mid-task_wrapper and freeing its stack would
-             * be a use-after-free. Closing the pre-exec entry==0 window and the
-             * general publish-before-inherit ordering is the unpublished-child-
-             * construction work in the process-exit-cleanup TODO. */
-            child->state = TASK_DEAD;
-            child->exit_status = (int32_t)STATUS_INSUFFICIENT_RESOURCES;
+             * child. Run the FULL remote-death teardown (marks DEAD so
+             * find_next_task skips it + it is reaped, AND detaches the Job
+             * membership task_create inherited -- omitting the detach leaked the
+             * membership reference + active-process quota). task_terminate_remote
+             * does NOT free the task, so the mid-task_wrapper stack-free UAF the
+             * old direct-write guarded against still cannot happen. Closing the
+             * pre-exec entry==0 window is the unpublished-child-construction work
+             * in the process-exit-cleanup TODO. */
+            task_terminate_remote(child, (int32_t)STATUS_INSUFFICIENT_RESOURCES);
             if (inherited_filter)
                 kfree(inherited_filter);
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -330,13 +331,13 @@ static NTSTATUS NtTerminateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3
     if (t->state == TASK_DEAD)
         return STATUS_PROCESS_IS_TERMINATING;
 
-    t->state = TASK_DEAD;
-    t->exit_status = (int32_t)exit_code;
-    /* Drop the target's syscall-filter count contribution now (remote kill);
-     * the memory frees at the reap barrier. Without this a killed-but-unreaped
-     * filtered process would keep the global dispatch fast path armed. */
-    syscall_filter_task_dead(t);
-    ob_process_mark_dead(t->pid);
+    /* Centralized remote-death transition: marks TASK_DEAD + exit status, drops
+     * the target's syscall-filter count contribution (so a killed-but-unreaped
+     * filtered process stops arming the global dispatch fast path), marks the OB
+     * process object dead, AND detaches any Job Object membership -- the last of
+     * which this inline sequence previously missed, leaving stale job state on a
+     * remote kill. */
+    task_terminate_remote(t, (int32_t)exit_code);
     klog(LOG_DEBUG, "nt", "NtTerminateProcess: PID %u (0x%x)",
          (uint64_t)t->pid, (uint64_t)(uint32_t)exit_code);
     return STATUS_SUCCESS;

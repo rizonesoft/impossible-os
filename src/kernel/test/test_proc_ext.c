@@ -19,6 +19,7 @@
 #include "kernel/nt/nt_file.h"
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/pledge.h"
+#include "kernel/ob/ob_job.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/types.h"
 
@@ -660,6 +661,133 @@ static void test_unveil_perms_tighten_only(void)
     pledge_unveil_teardown(&fix);   /* free the list */
 }
 
+/* ==========================================================================
+ * Section 13: Job Objects -- pure-logic tests on the ob_job helpers.
+ *
+ * These exercise the limit-flag validation (the false-containment fix), the
+ * accounting/limit/pid-list marshalling, and the membership scan against a
+ * stack JOB_OBJECT (zero-initialized == unlocked lock, no members). The Ob
+ * reference-counted lifecycle (assign / detach / terminate / fork-inherit /
+ * kill-on-close) needs real multi-process fixtures and is validated by the
+ * boot smoke path, not these in-memory unit tests. No live boot infrastructure.
+ * ========================================================================== */
+
+/* An unenforceable limit flag must be REJECTED, leaving job state unchanged --
+ * a caller can never configure a silent no-op limit (false containment). */
+static void test_job_limits_reject_unsupported(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_LIMIT_INFORMATION lim = {0};
+    NTSTATUS st;
+
+    lim.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY;   /* not enforceable */
+    st = ob_job_set_basic_limits(&job, &lim);
+    TEST_ASSERT_EQ(st, STATUS_NOT_SUPPORTED, "unenforceable limit rejected");
+    TEST_ASSERT_EQ(job.limit_flags, 0u, "state unchanged after rejection");
+}
+
+/* ACTIVE_PROCESS is enforceable: accepted and stored, round-tripped by query. */
+static void test_job_limits_accept_active_process(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_LIMIT_INFORMATION lim = {0};
+    JOBOBJECT_BASIC_LIMIT_INFORMATION got = {0};
+    NTSTATUS st;
+
+    lim.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    lim.ActiveProcessLimit = 4;
+    st = ob_job_set_basic_limits(&job, &lim);
+    TEST_ASSERT_EQ(st, STATUS_SUCCESS, "active-process limit accepted");
+
+    ob_job_collect_limits(&job, &got);
+    TEST_ASSERT_EQ(got.LimitFlags, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, "flag stored");
+    TEST_ASSERT_EQ(got.ActiveProcessLimit, 4u, "limit value stored");
+}
+
+/* ACTIVE_PROCESS with a zero limit is nonsensical -> rejected. */
+static void test_job_limits_active_zero_rejected(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_LIMIT_INFORMATION lim = {0};
+
+    lim.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    lim.ActiveProcessLimit = 0;
+    TEST_ASSERT_EQ(ob_job_set_basic_limits(&job, &lim),
+                   STATUS_INVALID_PARAMETER, "zero active-process limit rejected");
+}
+
+/* KILL_ON_JOB_CLOSE is honored (enforced at on_close) -> accepted. */
+static void test_job_limits_kill_on_close_ok(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_LIMIT_INFORMATION lim = {0};
+
+    lim.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    TEST_ASSERT_EQ(ob_job_set_basic_limits(&job, &lim),
+                   STATUS_SUCCESS, "kill-on-close accepted");
+    TEST_ASSERT_EQ(job.limit_flags, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                   "kill-on-close flag stored");
+}
+
+/* Membership scan finds present pids and rejects absent ones. */
+static void test_job_is_member_scan(void)
+{
+    JOB_OBJECT job = {0};
+
+    job.member_pids[0] = 5;
+    job.member_pids[1] = 9;
+    job.num_members = 2;
+    TEST_ASSERT_EQ(ob_job_is_member(&job, 5), 1, "pid 5 is a member");
+    TEST_ASSERT_EQ(ob_job_is_member(&job, 9), 1, "pid 9 is a member");
+    TEST_ASSERT_EQ(ob_job_is_member(&job, 7), 0, "pid 7 is not a member");
+}
+
+/* A pid-list buffer too small for every member returns a partial fill:
+ * written < assigned, and only `capacity` pids are copied in order. */
+static void test_job_pid_list_partial(void)
+{
+    JOB_OBJECT job = {0};
+    uint64_t out[2] = {0, 0};
+    uint32_t written = 99, assigned = 99;
+
+    job.member_pids[0] = 10;
+    job.member_pids[1] = 20;
+    job.member_pids[2] = 30;
+    job.num_members = 3;
+
+    ob_job_collect_pid_list(&job, out, 2, &written, &assigned);
+    TEST_ASSERT_EQ(assigned, 3u, "assigned == total members");
+    TEST_ASSERT_EQ(written, 2u, "written == capacity (partial)");
+    TEST_ASSERT_EQ((uint32_t)out[0], 10u, "first pid copied");
+    TEST_ASSERT_EQ((uint32_t)out[1], 20u, "second pid copied");
+}
+
+/* Accounting reports the live/active/terminated process counts; CPU times are
+ * zero when the (invalid) member pids resolve to no task. */
+static void test_job_accounting_counts(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+
+    /* High, out-of-range pids -> task_get_by_pid returns NULL -> no live sum. */
+    job.member_pids[0] = TASK_MAX + 100;
+    job.member_pids[1] = TASK_MAX + 101;
+    job.member_pids[2] = TASK_MAX + 102;
+    job.num_members = 3;         /* currently live */
+    job.total_processes = 5;     /* ever associated (monotonic) */
+    job.total_terminated = 2;    /* killed by a limit / TerminateJobObject */
+    job.acc_user_ns = 100 * 100; /* departed-member CPU: 100 units of 100ns */
+    job.acc_read_ops = 7;        /* departed-member I/O persists */
+
+    ob_job_collect_accounting(&job, &acct, &io);
+    TEST_ASSERT_EQ(acct.TotalProcesses, 5u, "total == ever-associated (not live)");
+    TEST_ASSERT_EQ(acct.ActiveProcesses, 3u, "active == live members");
+    TEST_ASSERT_EQ(acct.TotalTerminatedProcesses, 2u, "terminated count");
+    TEST_ASSERT_EQ((uint32_t)acct.TotalUserTime, 100u, "departed CPU time persists");
+    TEST_ASSERT_EQ((uint32_t)io.ReadOperationCount, 7u, "departed I/O persists");
+}
+
 void test_register_proc_ext(void)
 {
     test_suite_register_cat("ProcExt: resolve absolute passthrough",
@@ -758,6 +886,20 @@ void test_register_proc_ext(void)
                             test_unveil_lock_empty_denies, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: unveil perms tighten-only",
                             test_unveil_perms_tighten_only, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job limits reject unenforceable",
+                            test_job_limits_reject_unsupported, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job limits accept active-process",
+                            test_job_limits_accept_active_process, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job active-process zero rejected",
+                            test_job_limits_active_zero_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job kill-on-close accepted",
+                            test_job_limits_kill_on_close_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job membership scan",
+                            test_job_is_member_scan, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job pid-list partial fill",
+                            test_job_pid_list_partial, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job accounting counts",
+                            test_job_accounting_counts, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */
