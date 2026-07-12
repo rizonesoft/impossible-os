@@ -625,6 +625,7 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] [HIGH] Resolve the Process<PID> collision with ob_process_create (task.c:2049 vs ob_process.c:73): one owner of the dir; expose Peb/Teb under it; check every ObInsertObject return + unwind on failure
 - [ ] [HIGH] Remove the per-process directory + Peb/Teb wrappers in task_exit/task_cleanup BEFORE destroying the user address space; add exec/exit/repeat-PID lifecycle tests
 - [ ] [LOW] pdir_name digit build (2044-2045) only handles 2 digits; correct for PID >= 100 (latent under TASK_MAX=32) or use snprintf
+- [ ] [HIGH] Free the primary PEB/RTLPP/env/TEB physical frames at exit: `peb_alloc_for_task` allocs them at fixed shared VAs, nothing frees them; store phys per-task + `pmm_free_frame` at `task_cleanup` (-> XREF: `02-kernel-core/TODO-21 §14`)
 - [ ] Commit: `"kernel: ob -- safe PEB/TEB namespace wrappers + lifecycle cleanup"`
 
 **Test checkpoint:** inserting a PEB/TEB does not write a header into the adjacent RTLPP/pre-TEB page (no user-ABI corruption); `\KernelObjects\Process<PID>\Peb` resolves via NtOpenDirectoryObject; after the process exits the directory + entries are gone (no stale-VA lookup); a re-used PID does not collide. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.

@@ -454,6 +454,8 @@ Central cleanup point for all per-process resources when a process terminates. W
 - [ ] Coordinated SMP termination (sibling-stop reap barrier before CR3/stack free) -- DEFERRED, no cross-CPU rendezvous primitive (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §2` TLB-shootdown IPI, `§3`)
 - [ ] Job membership vs publication lock (`num_tasks++` committed atomically) -- DEFERRED, needs a tasks-publication lock; races only under true concurrency (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
 - [x] Self-directed `SYS_KILL` routes through the non-returning `task_exit` (never resumes in ring-3), so a self-killed task cannot issue further syscalls; `task_terminate_remote` stays remote-only
+- [ ] Wire `signal_check()` into the scheduler / kernel-entry boundary: it is defined but never called, so `signal_default_action` (and its `task_death_teardown` leg) is dormant -- fatal signals set a pending bit nothing dispatches
+- [ ] Remote/signal death (`task_terminate_remote`, `signal_default_action`) skips the thread-0 APC rundown + THREAD_DEAD publish the self-death paths do inline; run it once the target is stopped so queued thread-0 APCs are not leaked
 - [x] Commit: `"kernel: task -- process exit cleanup (timer-res reap, shared death teardown, cleanup log)"`
 
 **Test checkpoint:** A process that requests a fast timer resolution and exits (via any death path) has its request reaped and the tick re-arbitrated; handles/share-modes/delete-on-close/tokens/job-membership/address-space are released at exit; the serial log shows the reap handle count. Unit tests: 2 `time:` suites (TEST_CAT_SCHED) cover the timer-res reap no-op + round-trip. Byte-range-lock / oplock / PEB-TEB-frame / SMP-barrier release are tracked as concrete follow-ups above. Test on QEMU WHPX, TCG.
@@ -462,10 +464,14 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 > **Notes:**
 > - Shipped `timer_resolution_release_process()` (bulk per-pid slot reap + re-arbitrate, no-restore-on-refuse for a dead owner) and `task_death_teardown(struct task *)`, a shared DEAD-transition helper wired into all four death paths.
-> - `task_death_teardown` replaces the copy-pasted teardown so no resource slips through remote-kill / normal-return / fatal-signal exits; `KeSetTimerResolution` gained a TASK_DEAD admission guard.
+> - Self-directed `SYS_KILL` routes through the non-returning `task_exit` so a dead task cannot recreate a reaped slot; the fatal-signal leg is wired but dormant until `signal_check` delivery lands.
 > - Most per-process resources were already freed (handles, tokens, pledge/unveil, stacks, PML4); the real gaps were the timer-res leak + firing job-detach on every death path. Codex design + adversarial adoptions in the commit message.
 > - Canonical doc: `include/kernel/time/timer_resolution.h` + `include/kernel/sched/task.h` (`task_death_teardown`).
 > - Scope boundary: §14 owns the death-path release walk; byte-lock/oplock -> TODO-04, PEB/TEB frames -> TODO-11 §24, fini/module-deregister -> TODO-17, SMP barrier + tasks-lock -> TODO-07.
+> **Verified:** 2026-07-12 | commit `55678cd7` | 8/18 items | build OK | tests 20465/20465 PASS
+> **Accepted:** [H] remote/self death has no off-CPU SMP reap barrier -- task_cleanup can free CR3/handle-table under a still-running victim (incl. concurrent NtClose vs ob_handle_table_destroy) on real SMP (reason: not-functional-today on the single-cursor scheduler) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 120)
+> **Deferred:** [M] fatal-signal death path dormant -- `signal_check()` is never called, so `signal_default_action` + its `task_death_teardown` leg never run -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Wire `signal_check()` into the scheduler / kernel-entry boundary" at line 457)
+> **Quality reviewed:** 2026-07-12 | Codex 9x (design + adversarial + re-adversarial + consistency + perf) | 5H+2M fixed, 1H+3M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
