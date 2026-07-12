@@ -67,9 +67,10 @@ title: "TODO-21 -- Process Model Extensions"
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
-| 💎   |  15   | Parenting, reaping, and wait4/waitid semantics            | §14            |  [ ]   |
+| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [ ]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
+| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -389,8 +390,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 392)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 393)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 393)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 394)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 655)
 > **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 657)
 > **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 659)
@@ -479,17 +480,18 @@ Central cleanup point for all per-process resources when a process terminates. W
 
 Exit cleanup (§14) frees resources but does not define WHEN exit status is observable, WHO reaps an orphan, or how competing waits serialize. `task_waitpid` today accepts one exact child PID, blocks unconditionally, and immediately reaps (`task.c`), so it cannot support `waitpid(-1)`, `WNOHANG`/`WUNTRACED`/`WCONTINUED`, `waitid`, `wait4` child usage, or subreaper adoption. This is the child-lifecycle contract §14 depends on.
 
-- [ ] Add a `RUNNING -> ZOMBIE -> REAPED` lifecycle to `struct task`: on exit, transition to ZOMBIE retaining `exit_status` + accumulated child `rusage`; free the task struct only at REAPED (a successful wait).
-- [ ] Extend `task_waitpid` to `sys_wait4(pid, status, options, rusage)`: `pid` selectors (any-child, process-group, exact), `WNOHANG`/`WUNTRACED`/`WCONTINUED` options, atomic single-reaper (one waiter per zombie).
-- [ ] `sys_waitid(idtype, id, siginfo, options)` with `WEXITED`/`WSTOPPED`/`WCONTINUED`/`WNOWAIT`; accumulate reaped-child usage into the parent for `RUSAGE_CHILDREN` (-> XREF: §8).
-- [ ] Orphan reparenting: on parent exit, reparent live/zombie children to the nearest `PR_SET_CHILD_SUBREAPER` ancestor, else to init (pid 1).
-- [ ] `prctl(PR_SET_PDEATHSIG)` signals a child on parent death; `prctl(PR_SET_CHILD_SUBREAPER)` marks a subreaper. Linux-compat adapters -> XREF: `TODO-10-kernel-security-hardening.md`.
-- [ ] NT non-reaping: a process HANDLE stays signalable after exit (all `NtWaitForSingleObject` waiters wake), independent of the POSIX single-reaper -> XREF: `TODO-12-native-api-ssdt.md` (wait-vs-reap).
-- [ ] `dumpable`/core-dump policy flag per process (`PR_SET_DUMPABLE`): gates whether a crashing process produces a dump (-> XREF: `TODO-27-crash-dump-generation.md`; `RLIMIT_CORE` gate in §9).
-- [ ] Overflow-safe status/rusage retention; a reaped zombie's storage is reclaimed exactly once (no double-free, no premature status loss).
-- [ ] Commit: `"kernel: task -- parenting, reaping, and wait4/waitid semantics"`
+- [ ] Add a `TASK_ZOMBIE` state (distinct from the transient `TASK_DEAD` mark): on exit, transition RUNNING -> ZOMBIE retaining `exit_status` + accumulated child rusage; `task_cleanup` (REAPED) frees the struct only via a reaper.
+- [ ] `sys_wait4(pid, status, options, rusage)`: any-child (-1) and exact-pid selectors, `WNOHANG`; atomic single-reaper CAS on the zombie (one waiter reaps, a lost race returns `ECHILD`). Process-group selector + `WUNTRACED`/`WCONTINUED` -> §18.
+- [ ] `RUSAGE_CHILDREN` accumulator on `struct task`; on reap, fold the child's user/kernel time + IO counters into the parent (mirror `ob_job_detach_task`) (-> XREF: §8).
+- [ ] Orphan reparenting: on parent ZOMBIE, reparent live/zombie children to the nearest `PR_SET_CHILD_SUBREAPER` ancestor, else PID 0 (reaper-of-last-resort); an orphan zombie under a non-waiting init is auto-reaped (no slot leak at `TASK_MAX`).
+- [ ] `task_set_child_subreaper` + a `child_subreaper` field consumed by the reparent selector above. Linux `prctl(PR_SET_CHILD_SUBREAPER)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
+- [ ] NT non-reap decouple (ZOMBIE safety): `nt_sync.c` process-wait observes ZOMBIE + `exit_status` without `task_cleanup`, so a waiter's `struct task*` stays valid until a POSIX reaper (-> XREF: `TODO-12-native-api-ssdt.md`).
+- [ ] Overflow-safe status/rusage retention, reclaimed exactly once (no double-free, no lost status); the single-reaper CAS is the exactly-once barrier.
+- [ ] Commit: `"kernel: task -- parenting, reaping, and wait4 semantics"`
 
-**Test checkpoint:** `sys_wait4(-1, ...)` reaps any child; `WNOHANG` returns 0 when no child exited; a double-reap of the same zombie returns ECHILD to the second waiter; an orphan's parent-pid becomes 1 (or the subreaper) after its parent exits; `PR_SET_PDEATHSIG` delivers on parent death. `klog(LOG_DEBUG, "task", "reaped pid %u status %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+> **Scope note (SPLIT 2026-07-12):** the richer wait variants (`sys_waitid`, `WUNTRACED`/`WCONTINUED` job-control waits), `PR_SET_PDEATHSIG`, full NT multi-waiter wake, and the `PR_SET_DUMPABLE` core-dump gate moved to **§18** -- they layer on the §15 foundation and cross into job-control signals / crash-dump policy. The minimal NT non-reap decouple stays in §15 because ZOMBIE retention is unsafe otherwise (a process-handle waiter reads `t->state` off a `struct task*` that `task_cleanup` would free).
+
+**Test checkpoint:** `sys_wait4(-1, ...)` reaps any child; `WNOHANG` returns 0 when no child exited; a double-reap of the same zombie returns ECHILD to the second waiter; an orphan's parent-pid becomes 0 (or the subreaper) after its parent exits; an NT process-handle wait observes exit without reaping. `klog(LOG_DEBUG, "task", "reaped pid %u status %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
 ---
 
@@ -524,6 +526,22 @@ No section owns session ID, process-group ID, session leadership, the foreground
 
 ---
 
+## 18. Rich Wait Variants, NT Multi-Waiter Wake, and Dumpable Policy
+
+Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation: the richer POSIX wait variants (`waitid`, job-control stop/continue waits), the NT semantic that every process-handle waiter wakes (not one reaper), the parent-death signal, and the per-process core-dump policy gate. Each crosses into a subsystem §15 does not own (job-control signals, the OB wait queue, crash-dump generation).
+
+- [ ] `sys_waitid(idtype, id, siginfo, options)`: `WEXITED`/`WSTOPPED`/`WCONTINUED`/`WNOWAIT`; peek-without-reap on `WNOWAIT` (leaves the zombie for a later reaper).
+- [ ] `WUNTRACED`/`WCONTINUED` in `sys_wait4`/`sys_waitid`: report stopped/continued children, gated on job-control stop/cont signals (-> XREF: §17 group signals; `TODO-10-kernel-security-hardening.md`).
+- [ ] `task_set_pdeathsig` + a `pdeathsig` field; delivered to a child on the exiting parent's reparent sweep. Linux `prctl(PR_SET_PDEATHSIG)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
+- [ ] Full NT multi-waiter wake: every `NtWaitForSingleObject`/`NtWaitForMultipleObjects` waiter on an exited process handle wakes off the ZOMBIE signal (no single-reaper starvation) (-> XREF: `TODO-12-native-api-ssdt.md`).
+- [ ] `PR_SET_DUMPABLE`/`dumpable` per-process flag gating core-dump generation on crash; default dumpable, cleared on privilege transition (Linux `SUID_DUMP`) -> XREF: `TODO-27-crash-dump-generation.md`.
+- [ ] `RLIMIT_CORE == 0` also suppresses the dump (composes with the `dumpable` flag) -> XREF: §9.
+- [ ] Commit: `"kernel: task -- rich wait variants, NT multi-waiter wake, dumpable policy"`
+
+**Test checkpoint:** two `NtWaitForSingleObject` waiters on the same exited process handle BOTH wake; a POSIX `sys_wait4` reaps that process exactly once; `sys_waitid(WNOWAIT)` leaves the zombie reapable; a `dumpable=0` process produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable. `klog(LOG_DEBUG, "task", "proc %u signaled, %u NT waiters woken")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                       | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS                      |
@@ -540,9 +558,10 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred) |
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
-| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |
+| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15 core reap + §18 waitid/NT wake |
 | 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |
 | 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
+| 💎   | Core-dump / dumpable policy   | ✅ WER / MiniDump              | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 (RLIMIT_CORE gate)             |
 | 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
 | ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease           |
 | ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ✅ §12 pledge+unveil (SSDT dispatch)  |
@@ -594,6 +613,9 @@ No section owns session ID, process-group ID, session leadership, the foreground
   - The PPL dominance matrix: a higher-level process opening a lower one for VM_WRITE succeeds (§16)
   - `setsid()` makes the caller a session+group leader (`getsid() == getpid()`) (§17)
   - `setpgid` moves a child into a new group; a signal to `-pgid` reaches every member (§17)
+  - `sys_waitid(P_PID, child, WEXITED|WNOWAIT)` reports exit but leaves the zombie reapable by a later `sys_wait4` (§18)
+  - Two NT `NtWaitForSingleObject` waiters on the same exited process handle both wake; a `sys_wait4` reaps it exactly once (§18)
+  - A process with `dumpable=0` produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable (§18)
 - [ ] Register in `test_runner_init()`: `test_register_proc_ext()`
 - [ ] Commit: `"test: add process model extensions test suite"`
 
