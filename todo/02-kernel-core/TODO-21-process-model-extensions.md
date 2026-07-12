@@ -335,10 +335,10 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > [!NOTE]
 > → XREF: `TODO-10-kernel-security-hardening.md §1` (NX/DEP), `TODO-17-binary-system.md §15` (ASLR), `TODO-17 §12` (CFG), `TODO-12-native-api-ssdt.md §25` (syscall filtering). This section defines the per-process flags and API surface; enforcement is authoritative in those TODOs. This is a deliberate SUBSET of Win11's ~21 `PROCESS_MITIGATION_*` policies -- the high-value ones with an enforcement owner in-tree; CET (IBT/SHSTK) enforcement → `TODO-10-kernel-security-hardening.md §10`, dynamic-code and image-signature policy → `TODO-19-code-integrity-trust-policy.md`.
 
-> Design rule adopted (each flag ships WITH its enforcement, never as dormant state): a bit the setter accepts but nothing enforces is false security. Only `MIT_NO_CHILD_PROCESS` has a live in-tree enforcement owner (child creation), so it is the only bit that ships; every other Win11 policy is added to `mitigation_policy.h` in the same change that wires its enforcement.
+> Design rule adopted (each flag ships WITH its enforcement, never as dormant state): a mitigation bit reported as active but not actually enforced is false security. Only `MIT_NO_CHILD_PROCESS` has a live in-tree enforcement owner (child creation), so it is the only bit that ships; every other Win11 policy is added to `mitigation_policy.h` in the same change that wires its enforcement.
 
 - [x] `uint64_t mitigation_flags` on `struct task` + `task_mitigation_apply`/`_get` accessors (`__atomic` ACQ_REL/ACQUIRE, monotonic); only `MIT_NO_CHILD_PROCESS (1<<3)` defined (`nt/mitigation_policy.h`)
-- [x] `NtSetInformationProcess(ProcessMitigationPolicy)`: self-only, exact-length, probe+bounce; `ProcessChildProcessPolicy` only (monotonic; clear->ACCESS_DENIED); other flags->NOT_SUPPORTED, reserved->INVALID_PARAMETER
+- [/] `NtSetInformationProcess(ProcessMitigationPolicy)` deferred: reading a range-only-probed ring-3 buffer via non-fault-recoverable copy_from_user is an unprivileged kernel-crash DoS; NOT_SUPPORTED -> XREF: `TODO-23 §13` try_copy_from_user
 - [/] `NtQueryInformationProcess(ProcessMitigationPolicy)` deferred: copy_to_user to a range-only-probed buffer is a kernel-write primitive (kernel heap identity-mapped low); NOT_SUPPORTED -> XREF: `TODO-12 §29` + `TODO-02(mm) §4`
 - [x] Enforce `MIT_NO_CHILD_PROCESS` in `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED` -> `ERROR_CHILD_PROCESS_BLOCKED` 367) + `task_fork` (fail -1); checked against creator before allocation
 - [x] Inherit `mitigation_flags` from parent at `task_fork` via a single acquire snapshot committed before `num_tasks++`; zero-init on `task_create`/`task_create_user`
@@ -347,16 +347,19 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 - [/] Win32 `SetProcessMitigationPolicy` A/W wrapper is user-mode surface -> XREF: `TODO-08-win32-api-surface.md §4`
 - [x] Commit: `"kernel: task -- per-process mitigation policy flags"`
 
-**Test checkpoint:** `task_mitigation_child_set(NoChildProcessCreation)` sets `MIT_NO_CHILD_PROCESS`; a later clear attempt returns -1 (handler maps to `STATUS_ACCESS_DENIED`) with the bit intact; `task_mitigation_apply` is monotonic (an unrelated OR never clears it). A process carrying the bit is blocked from `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED`) and `task_fork` (fail -1). A fork child inherits the parent's `mitigation_flags`. Unsupported policy selectors + Audit/AllowSecure flags return `STATUS_NOT_SUPPORTED`; reserved bits `STATUS_INVALID_PARAMETER`. No POST16 (post-Phase-3; klog is the diagnostic surface). Unit tests: 6 `ProcExt:` mitigation suites (TEST_CAT_SCHED) cover the accessors + child-policy decision; the Nt setter ABI (probe/bounce) is serial-validated on WHPX/TCG (the ring-3 query is deferred -- kernel-write primitive). Test on: QEMU WHPX + TCG.
+**Test checkpoint:** the kernel helper `task_mitigation_child_set(NoChildProcessCreation)` sets `MIT_NO_CHILD_PROCESS`; a later clear attempt returns -1 with the bit intact; `task_mitigation_apply` is monotonic (an unrelated OR never clears it). A process carrying the bit is blocked from `NtCreateProcess` (`STATUS_CHILD_PROCESS_BLOCKED`) and `task_fork` (silent fail -1, reject before the capacity check). A fork child inherits the parent's `mitigation_flags`. Both ring-3 `NtSet/QueryInformationProcess(ProcessMitigationPolicy)` handlers return `STATUS_NOT_SUPPORTED` (deferred -- the fault-safe usercopy the per-selector validation needs is owned by TODO-23 §13). No POST16 (post-Phase-3; klog is the diagnostic surface). Unit tests: 6 `ProcExt:` mitigation suites (TEST_CAT_SCHED) cover the accessors + child-policy decision; `MIT_NO_CHILD_PROCESS` enforcement is serial-validated on WHPX/TCG. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 6 ProcExt mitigation suites, 0 failures
 
 > **Notes:**
-> - **What shipped** -- reduced §11 core: `mitigation_flags` on `struct task` + `MIT_NO_CHILD_PROCESS` (sole enforced flag), `nt/mitigation_policy.h` ABI header, and the self-only `NtSetInformationProcess(ProcessMitigationPolicy)` setter (ring-3 query deferred).
+> - **What shipped** -- reduced §11 core: `mitigation_flags` + `MIT_NO_CHILD_PROCESS` (sole enforced flag) + `task_mitigation_apply/get/child_set` accessors + `nt/mitigation_policy.h` ABI; both ring-3 handlers defer (usercopy).
 > - **How it integrates** -- monotonic atomic flag (ACQ_REL set / ACQUIRE get); enforced in `NtCreateProcess` + `task_fork`; inherited via one fork snapshot before `num_tasks++`; Codex design + adversarial adoptions in the commit message.
 > - **Downstream effects** -- added `STATUS_CHILD_PROCESS_BLOCKED` (0xC000049D) + its `ERROR_CHILD_PROCESS_BLOCKED` (367) DOS-error mapping to the NTSTATUS tables.
 > - **Canonical doc** -- `include/kernel/nt/mitigation_policy.h` (ABI + `MIT_*` bits + the flag-ships-with-enforcement rule).
 > - **Scope boundary** -- §11 owns the field + child-process policy; DEP/ASLR/CFG/image enforcement -> TODO-10 §1 / TODO-17 §15,§12 / TODO-19 §9; `MIT_NO_NEW_PRIVS` -> §6; Win32 A/W wrapper -> TODO-08 §4.
+> **Verified:** 2026-07-12 | impl `a22dabc1` + this review commit (both ring-3 handlers deferred) | 3/8 items | build OK | 6 ProcExt tests PASS | smoke PASS (TCG 6.0s)
+> **Accepted:** [H] both ring-3 handlers return `STATUS_NOT_SUPPORTED` -- reading/writing a range-only-probed ring-3 buffer via the non-fault-recoverable `copy_from_user`/`copy_to_user` is an unprivileged kernel-crash (unmapped) / kernel-corruption (identity-mapped) path, systemic across every SSDT user-buffer handler; the field + enforcement + fork inheritance ship -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 377)
+> **Quality reviewed:** 2026-07-12 | Codex 11x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor | 2H+3M fixed, 1C+1H accepted-XREF | scope: kernel-code-quality
 
 ## 12. Pledge/Unveil-Style Process Restriction
 
@@ -477,7 +480,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Process accounting            | ✅ ProcessTimes + IoCounters   | ✅ getrusage / times       | ⚠️ §8 fields (ring-3 query deferred) |
 | 💎   | Per-process resource limits   | ✅ Job Object quotas           | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors             |
 | 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                                |
-| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD_PROCESS (rest deferred) |
+| 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred) |
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | ⬜ §13                                |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                                |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |
@@ -521,8 +524,8 @@ No section owns session ID, process-group ID, session leadership, the foreground
   - `sys_setrlimit(RLIMIT_AS, {64MB, 64MB})` then `sys_brk` beyond 64 MB returns `ENOMEM` (§9)
   - `sys_setrlimit` raising `rlim_max` without `CAP_SYS_ADMIN` returns `EPERM` (§9)
   - `SetProcessAffinityMask(current, 0x1)` restricts to CPU 0; new thread inherits mask (§10)
-  - `SetProcessMitigationPolicy(MIT_NO_CHILD_PROCESS)` blocks subsequent `NtCreateProcess` (§11)
-  - Mitigation bit once set cannot be cleared -- returns `STATUS_ACCESS_DENIED` (§11)
+  - `task_mitigation_apply(MIT_NO_CHILD_PROCESS)` then `NtCreateProcess` returns `STATUS_CHILD_PROCESS_BLOCKED` (§11; ring-3 setter deferred -- usercopy)
+  - `task_mitigation_child_set` clear attempt on an already-set `MIT_NO_CHILD_PROCESS` returns -1 (monotonic) (§11)
   - `NtPledge("stdio rpath")` then `NtCreateFile(WRITE)` terminates with `STATUS_PLEDGE_VIOLATION` (§12)
   - `NtUnveil("/C:\\Tmp", "rw")` then `NtUnveil(NULL, NULL)` locks; access to `/C:\\Users` fails (§12)
   - `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns child (§13)
@@ -554,7 +557,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 - [ ] `NtQueryInformationProcess(ProcessIoCounters)` returns non-zero `ReadOperationCount` after file read
 - [ ] `sys_setrlimit(RLIMIT_AS, 64MB)` then `sys_brk()` beyond 64 MB returns `ENOMEM`
 - [ ] `SetProcessAffinityMask(current, 0x1)` restricts to CPU 0; `GetProcessAffinityMask` returns `0x1`
-- [ ] `SetProcessMitigationPolicy(MIT_NO_CHILD_PROCESS)` then `NtCreateProcess` returns `STATUS_CHILD_PROCESS_BLOCKED`
+- [ ] `task_mitigation_apply(MIT_NO_CHILD_PROCESS)` then `NtCreateProcess` returns `STATUS_CHILD_PROCESS_BLOCKED` (ring-3 `SetProcessMitigationPolicy` deferred -- usercopy)
 - [ ] After `NtPledge("stdio rpath")`, write syscall terminates process with `STATUS_PLEDGE_VIOLATION`
 - [ ] After `NtUnveil("/C:\\System", "rx")` and lock, access to `C:\Users` returns `STATUS_ACCESS_DENIED`
 - [ ] `NtCreateJobObject` creates a job; `NtAssignProcessToJobObject` assigns a child; `NtTerminateJobObject` kills all

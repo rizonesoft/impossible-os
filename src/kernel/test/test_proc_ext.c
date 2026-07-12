@@ -393,10 +393,12 @@ static void test_rlimit_memlock_hard_ceiling_default(void)
 }
 
 /* ---- Per-process mitigation policy (section 11) -------------------------
- * Pure tests over the task_mitigation_* accessors on a stack-local fixture.
- * The NtSet/QueryInformationProcess ABI path needs ring-3 user buffers and is
- * validated at runtime (serial log); these cover the kernel-side invariants:
- * monotonic set, no-clear, and the child-policy decision helper. */
+ * Pure tests over the task_mitigation_* accessors on a stack-local fixture:
+ * monotonic set, no-clear, and the child-policy decision helper. The ring-3
+ * NtSet/QueryInformationProcess(ProcessMitigationPolicy) handlers are deferred
+ * (both return STATUS_NOT_SUPPORTED) pending fault-safe usercopy, so there is
+ * no ring-3 ABI surface to exercise here; MIT_NO_CHILD_PROCESS enforcement is
+ * serial-validated. */
 
 static struct task s_mit_fixture;
 

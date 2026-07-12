@@ -600,13 +600,15 @@ static NTSTATUS NtQueryInformationProcess_handler(uint64_t a1, uint64_t a2,
         return STATUS_SUCCESS;
     }
     case ProcessMitigationPolicy:
-        /* Ring-3 query DEFERRED: writing the result to a caller-supplied buffer
-         * (or ReturnLength) needs PTE-aware, fault-recoverable usercopy.
+        /* Ring-3 query DEFERRED (the set path above defers for the mirror
+         * reason): writing the result to a caller-supplied buffer (or
+         * ReturnLength) needs PTE-aware, fault-recoverable usercopy.
          * ProbeForWrite is range-only (address < MM_USER_PROBE_ADDRESS) and the
          * kernel heap is identity-mapped inside that window, so copy_to_user to
          * an aligned kernel address would corrupt kernel state -- the systemic
-         * NtQuery usercopy gap. The set path enforces the policy; querying it
-         * from ring-3 lands with the hardened usercopy. */
+         * usercopy gap. The MIT_NO_CHILD_PROCESS policy is enforced
+         * kernel-internally (task_mitigation_apply); both ring-3 handlers land
+         * with the fault-recoverable usercopy. */
         return STATUS_NOT_SUPPORTED;
     default:
         return STATUS_INVALID_INFO_CLASS;
@@ -672,46 +674,17 @@ static NTSTATUS NtSetInformationProcess_handler(uint64_t a1, uint64_t a2,
             return STATUS_ACCESS_VIOLATION;
         return syscall_filter_set_policy(t, &pol);
     }
-    case ProcessMitigationPolicy: {
-        /* SetProcessMitigationPolicy. Self-only + probe+bounce (same security
-         * boundary as ProcessSystemCallFilterPolicy above -- task_from_handle
-         * resolves a raw PID with no granted-access check, so a cross-process
-         * install would be an unprivileged DoS on an arbitrary PID). Only the
-         * child-process policy has live enforcement; every other selector is
-         * recognized but returns STATUS_NOT_SUPPORTED and stores nothing (a
-         * reported-but-unenforced mitigation is false security). */
-        PROCESS_MITIGATION_POLICY_INFORMATION info;
-        NTSTATUS st;
-        if (t != task_current())
-            return STATUS_ACCESS_DENIED;
-        if (length != sizeof(info))
-            return STATUS_INFO_LENGTH_MISMATCH;
-        st = ProbeForReadIfUser(buffer, sizeof(info), 4);
-        if (st != STATUS_SUCCESS)
-            return st;
-        if (copy_from_user(&info, buffer, (uint32_t)sizeof(info)) != 0)
-            return STATUS_ACCESS_VIOLATION;
-        if (info.Policy != ProcessChildProcessPolicy)
-            return STATUS_NOT_SUPPORTED;
-        /* Validate the WHOLE Flags word before any mutation so an unsupported
-         * request never reports false success. Only NoChildProcessCreation is
-         * enforced; AuditNoChildProcessCreation / AllowSecureProcessCreation
-         * are recognized Win32 flags with no implementation here (NOT_SUPPORTED),
-         * and any other bit is reserved (INVALID_PARAMETER). */
-        if (info.Flags & (PROC_MIT_CHILD_AUDIT_NO_CHILD |
-                          PROC_MIT_CHILD_ALLOW_SECURE_CREATION))
-            return STATUS_NOT_SUPPORTED;
-        if (info.Flags & ~(uint32_t)(PROC_MIT_CHILD_NO_CHILD_CREATION |
-                                     PROC_MIT_CHILD_AUDIT_NO_CHILD |
-                                     PROC_MIT_CHILD_ALLOW_SECURE_CREATION))
-            return STATUS_INVALID_PARAMETER;
-        /* Monotonic: set NoChildProcessCreation, or refuse a clear attempt. */
-        if (task_mitigation_child_set(t, info.Flags) != 0)
-            return STATUS_ACCESS_DENIED;
-        klog(LOG_DEBUG, "nt", "NtSetInformationProcess: mitigation flags 0x%x",
-             task_mitigation_get(t));
-        return STATUS_SUCCESS;
-    }
+    case ProcessMitigationPolicy:
+        /* Ring-3 SET DEFERRED (same reason as the query above): reading the
+         * caller's policy buffer needs PTE-aware, fault-recoverable usercopy.
+         * ProbeForRead is range-only and copy_from_user is not fault-safe, so
+         * an aligned, in-range but UNMAPPED buffer would take a kernel-mode
+         * page fault (an unprivileged ring-3 crash/DoS) instead of returning an
+         * error -- the systemic usercopy gap. The mitigation_flags field +
+         * MIT_NO_CHILD_PROCESS enforcement + fork inheritance ship and are set
+         * via the kernel-internal task_mitigation_apply; the ring-3 setter
+         * lands with the fault-recoverable usercopy. */
+        return STATUS_NOT_SUPPORTED;
     default:
         return STATUS_INVALID_INFO_CLASS;
     }

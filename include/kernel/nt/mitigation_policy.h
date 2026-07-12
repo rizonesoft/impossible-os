@@ -2,24 +2,25 @@
  * SetProcessMitigationPolicy parity) and the internal per-task mitigation
  * flags.
  *
- * Only the child-process-creation policy has LIVE enforcement in-tree today,
- * so it is the only PROCESS_MITIGATION_POLICY selector the setter accepts.
- * Every other selector returns STATUS_NOT_SUPPORTED and stores NOTHING --
- * reporting a dormant, unenforced mitigation as active would be false
- * security. A new flag is added to this header only in the same change that
- * wires its enforcement (per-process NX/DEP, ASLR base randomization,
- * CFG/CET, image-load signature policy, or the capability-model
- * no-new-privileges gate).
+ * The ring-3 NtSet/NtQueryInformationProcess(ProcessMitigationPolicy) handlers
+ * are currently DEFERRED (both return STATUS_NOT_SUPPORTED, copying nothing):
+ * reading/writing a range-only-probed ring-3 buffer via the non-fault-
+ * recoverable copy_from_user/copy_to_user is an unprivileged kernel-crash /
+ * corruption path (the systemic usercopy gap). These ABI definitions serve the
+ * LIVE kernel-internal path -- the MIT_NO_CHILD_PROCESS enforcement set via
+ * task_mitigation_apply -- and the future ring-3 API once fault-recoverable
+ * usercopy exists. Design rule for when the ring-3 API re-enters: only a bit
+ * with live enforcement is accepted; reporting a dormant, unenforced
+ * mitigation as active would be false security.
  */
 #ifndef KERNEL_NT_MITIGATION_POLICY_H
 #define KERNEL_NT_MITIGATION_POLICY_H
 
 #include "kernel/types.h"
 
-/* PROCESS_MITIGATION_POLICY selector values (Win32 enum). The setter/query
- * only ACT on ProcessChildProcessPolicy; the rest are named so the ABI is
- * complete and a caller gets STATUS_NOT_SUPPORTED (not STATUS_INVALID_*) for a
- * recognized-but-unenforced policy. */
+/* PROCESS_MITIGATION_POLICY selector values (Win32 enum). Named so the ABI is
+ * complete for the deferred ring-3 handlers and the future implementation;
+ * ProcessChildProcessPolicy is the one the enforcement path backs today. */
 #define ProcessDEPPolicy                      0
 #define ProcessASLRPolicy                     1
 #define ProcessDynamicCodePolicy              2

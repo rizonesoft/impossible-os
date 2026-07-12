@@ -1527,22 +1527,20 @@ int task_fork(struct interrupt_frame *frame)
     ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
     uint64_t parent_mit;
 
-    if (num_tasks >= TASK_MAX) {
-        klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
-        return -1;
-    }
-
     /* Single parent mitigation snapshot used for BOTH the NO_CHILD reject and
      * child inheritance, so an in-flight parent policy change linearizes at
      * this one acquire load (the child either fully predates or fully postdates
      * it). MIT_NO_CHILD_PROCESS: a fork is child creation, so a parent that
-     * pledged no children cannot fork -- reject before any allocation. */
+     * pledged no children cannot fork. The reject sits BEFORE the capacity
+     * check so a policy-blocked fork returns silently in every capacity state
+     * (never reaching the TASK_MAX log path) -- and before any allocation. */
     parent_mit = __atomic_load_n(&tasks[parent_pid_val].mitigation_flags,
                                  __ATOMIC_ACQUIRE);
-    if (parent_mit & MIT_NO_CHILD_PROCESS) {
-        klog(LOG_WARN, "sched",
-             "task_fork: blocked by MIT_NO_CHILD_PROCESS (pid %u)",
-             (uint64_t)parent_pid_val);
+    if (parent_mit & MIT_NO_CHILD_PROCESS)
+        return -1;  /* silent: a ring-3 loop retrying a blocked fork must not hammer the global klog lock */
+
+    if (num_tasks >= TASK_MAX) {
+        klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
         return -1;
     }
 

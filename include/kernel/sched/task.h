@@ -355,11 +355,12 @@ void task_rlimit_inherit(struct task *child, struct task *parent);
  * Both are SMP-safe: a plain |= would drop a concurrent set. */
 void     task_mitigation_apply(struct task *t, uint64_t add_mask);
 uint64_t task_mitigation_get(struct task *t);
-/* Apply a Win32 ProcessChildProcessPolicy request to t. Monotonic: a
+/* Apply a ProcessChildProcessPolicy request to t. Monotonic: a
  * NoChildProcessCreation request OR-sets MIT_NO_CHILD_PROCESS; a request that
  * omits the bit while it is already set is a clear attempt and is refused.
  * Returns 0 on success (set, or benign leave-unset), -1 if the request would
- * clear an already-set MIT_NO_CHILD_PROCESS (caller maps to STATUS_ACCESS_DENIED). */
+ * clear an already-set MIT_NO_CHILD_PROCESS. Consumed by unit tests + the
+ * future ring-3 setter (currently deferred); no live ring-3 caller today. */
 int      task_mitigation_child_set(struct task *t, uint32_t child_flags);
 
 /* Resolve `in` (relative or absolute) against the CURRENT task's cwd into a
