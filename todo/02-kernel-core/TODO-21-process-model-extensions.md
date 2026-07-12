@@ -470,7 +470,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 > - Canonical doc: `include/kernel/time/timer_resolution.h` + `include/kernel/sched/task.h` (`task_death_teardown`).
 > - Scope boundary: §14 owns the death-path release walk; byte-lock/oplock -> TODO-04, PEB/TEB frames -> TODO-11 §24, fini/module-deregister -> TODO-17, SMP barrier + tasks-lock -> TODO-07.
 > **Verified:** 2026-07-12 | commit `55678cd7` | 8/18 items | build OK | tests 20465/20465 PASS
-> **Accepted:** [H] remote/self death has no off-CPU SMP reap barrier -- task_cleanup can free CR3/handle-table under a still-running victim (incl. concurrent NtClose vs ob_handle_table_destroy) on real SMP (reason: not-functional-today on the single-cursor scheduler) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 120)
+> **Accepted:** [H] remote/self death has no off-CPU SMP reap barrier -- task_cleanup can free CR3/handle-table under a still-running victim (incl. concurrent NtClose vs ob_handle_table_destroy) on real SMP (reason: not-functional-today on the single-cursor scheduler) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 122)
 > **Deferred:** [M] fatal-signal death path dormant -- `signal_check()` is never called, so `signal_default_action` + its `task_death_teardown` leg never run -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Wire `signal_check()` into the scheduler / kernel-entry boundary" at line 457)
 > **Quality reviewed:** 2026-07-12 | Codex 9x (design + adversarial + re-adversarial + consistency + perf) | 5H+2M fixed, 1H+3M+1L accepted-XREF | scope: kernel-code-quality
 
@@ -487,6 +487,7 @@ Exit cleanup (§14) frees resources but does not define WHEN exit status is obse
 - [ ] `task_set_child_subreaper` + a `child_subreaper` field consumed by the reparent selector above. Linux `prctl(PR_SET_CHILD_SUBREAPER)` adapter -> XREF: `TODO-10-kernel-security-hardening.md`.
 - [ ] NT non-reap decouple (ZOMBIE safety): `nt_sync.c` process-wait observes ZOMBIE + `exit_status` without `task_cleanup`, so a waiter's `struct task*` stays valid until a POSIX reaper (-> XREF: `TODO-12-native-api-ssdt.md`).
 - [ ] Overflow-safe status/rusage retention, reclaimed exactly once (no double-free, no lost status); the single-reaper CAS is the exactly-once barrier.
+- [ ] `task_waitpid`/`sys_wait4` must LOOP until the child is DEAD/ZOMBIE: one `yield()` + unconditional `exit_status` read false-completes on any spurious wake (e.g. §17 group SIGINT); interrupted wait returns EINTR when delivery lands.
 - [ ] Commit: `"kernel: task -- parenting, reaping, and wait4 semantics"`
 
 > **Scope note (SPLIT 2026-07-12):** the richer wait variants (`sys_waitid`, `WUNTRACED`/`WCONTINUED` job-control waits), `PR_SET_PDEATHSIG`, full NT multi-waiter wake, and the `PR_SET_DUMPABLE` core-dump gate moved to **§18** -- they layer on the §15 foundation and cross into job-control signals / crash-dump policy. The minimal NT non-reap decouple stays in §15 because ZOMBIE retention is unsafe otherwise (a process-handle waiter reads `t->state` off a `struct task*` that `task_cleanup` would free).
@@ -532,13 +533,20 @@ No section owns session ID, process-group ID, session leadership, the foreground
 
 **Test checkpoint:** `setsid()` makes the caller a session+group leader (getsid==getpid); `setpgid` moves a child into a new group; a signal to `-pgid` sets pending SIGINT on all members; Ctrl+C fans to the foreground group, not just the leader. The pure POSIX decision cores (invariants + full errno matrix) are unit-tested (TEST_CAT_SCHED); the live cross-task fan-out is serial-validated on QEMU. **Delivery dependency:** the fan-out sets each member's pending SIGINT bit; the pre-existing `signal_check` drain is not yet wired into any thread-context return path, so end-to-end interruption/termination lands when the signal-delivery boundary ships -> XREF: `10-platform-services/TODO-10-linux-compat.md §8` (item: "SIGINT delivery (signal 2)" at line 265). Test on: QEMU WHPX, QEMU TCG; bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 14 ProcExt group/session suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 21 ProcExt group/session suites, 0 failures
 
 > **Notes:**
-> - **What shipped:** `src/kernel/ipc/pgroup.{c,h}` -- POSIX groups/sessions + a singleton console job-control object; `struct task` gains pgid/sid/has_execed; 8 INT 0x80 syscalls + GenerateConsoleCtrlEvent; 14 pure-decision unit tests.
+> - **What shipped:** `src/kernel/ipc/pgroup.{c,h}` -- POSIX groups/sessions + a singleton console job-control object; `struct task` gains pgid/sid/has_execed; 8 INT 0x80 syscalls + GenerateConsoleCtrlEvent; 21 pure-decision unit tests.
 > - **How it integrates:** Ctrl+C (keyboard ISR) fans SIGINT to the console foreground group via `signal_send_group` -- a NO-OP until a shell claims the console (never signals PID 0); the signal pending mask is now atomic, so group delivery is SMP-safe.
 > - **Downstream effects:** unblocks a shell's job control + `kill -pgid`; §18 WUNTRACED/WCONTINUED and orphan SIGHUP/SIGCONT delivery still need job-control stop/cont signals. Design + review adoptions in the commit message.
 > - **Scope boundary:** §17 owns the kernel primitives + foreground-group API; Linux syscall adapters -> TODO-10; the terminal/user-lib consumer -> terminal TODO; job-control stop/cont signals -> the orphan-delivery follow-up above.
+> **Verified:** 2026-07-13 | commit `31fcdfde` | 6/7 items | build OK | tests 470/470 PASS, smoke PASS (KVM 2.5s)
+> **Accepted:** [H] concurrent creators can corrupt the task table -- slot reservation (`pid = num_tasks`) stays lock-free; §17's job-control lock only linearizes the pgid/sid+`num_tasks++` publish (pre-existing convention, Opus auditor rates LOW) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Tasks-publication lock: serialize num_tasks++/slot-publish vs scheduler enumeration" at line 123)
+> **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
+> **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
+> **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 548)
+> **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

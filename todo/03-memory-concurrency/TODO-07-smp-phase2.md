@@ -76,6 +76,8 @@ Audit every lock, atomic, and shared-variable access in the codebase for missing
 - [ ] Audit `mutex_lock()` / `mutex_unlock()` -- ensure store of `owner = NULL` is not hoisted before critical-section stores
 - [ ] Audit `rwlock` -- reader fast-path must use `LOCK XADD`; writer must use `LOCK CMPXCHG` loop
 - [ ] Audit all drivers that touch MMIO-mapped shared flags -- add `smp_mb()` where a DMA completion bit is polled
+- [ ] Audit `signal_send` `t->state` wake (`src/kernel/ipc/signal.c`): plain BLOCKED/WAITING->READY RMW can resurrect a DEAD task (UAF); CAS-from-BLOCKED/WAITING or task-state lock. Amplified by TODO-21 §17 group fan-out.
+- [ ] Shrink IRQ-off time in `src/kernel/ipc/pgroup.c` job-control paths: scan tasks[] lock-free, hold `g_console.lock` only for the O(1) validate+commit (no bounded scan under irqsave). Consumed by TODO-21 §17.
 - [ ] Boot log (SMP only): `[SMP] atomics audit: LOCK-prefix verified, smp_mb/rmb/wmb active`
 - [ ] Commit: `"smp: SMP-safe atomics audit -- LOCK-prefix, smp_mb/rmb/wmb barriers"`
 

@@ -852,15 +852,43 @@ static void test_pgrp_setpgid_dest_other_session_eperm(void)
 static void test_pgrp_setsid_leader_denied(void)
 {
     /* caller is a process-group leader: pgid == pid */
-    int rc = pgroup_setsid_decide(4, 4);
+    int rc = pgroup_setsid_decide(4, 4, 0);
     TEST_ASSERT_EQ(rc, -EPERM, "a group leader cannot setsid (EPERM)");
 }
 
 static void test_pgrp_setsid_nonleader_ok(void)
 {
-    /* caller is not a group leader (pgid 2 != pid 4) */
-    int rc = pgroup_setsid_decide(4, 2);
-    TEST_ASSERT_EQ(rc, 0, "a non-leader may setsid");
+    /* caller is not a group leader (pgid 2 != pid 4), no colliding group members */
+    int rc = pgroup_setsid_decide(4, 2, 0);
+    TEST_ASSERT_EQ(rc, 0, "a non-leader with no colliding group may setsid");
+}
+
+static void test_pgrp_setsid_nonleader_group_members_denied(void)
+{
+    /* non-leader, but a group named caller_pid still has other live members */
+    int rc = pgroup_setsid_decide(4, 2, 1);
+    TEST_ASSERT_EQ(rc, -EPERM, "a populated caller-pid group blocks setsid (EPERM)");
+}
+
+static void test_pgrp_setpgid_negative_pgid_einval(void)
+{
+    /* A negative pgid (0xFFFFFFFF == -1 as int32) is EINVAL (POSIX). */
+    int rc = pgroup_setpgid_decide(1, 5, 1, 1, 0, 0, 0xFFFFFFFFu, 0, 0);
+    TEST_ASSERT_EQ(rc, -EINVAL, "negative pgid is EINVAL");
+}
+
+static void test_pgrp_orphan_link_alive(void)
+{
+    /* Live parent in a different group, same session -> keeps the group alive. */
+    int rc = pgroup_orphan_link_keeps_alive(5, 1, 1, 3, 1);
+    TEST_ASSERT_EQ(rc, 1, "in-session parent outside the group prevents orphaning");
+}
+
+static void test_pgrp_orphan_link_not_alive(void)
+{
+    /* Parent in the SAME group does not disqualify orphaning. */
+    int rc = pgroup_orphan_link_keeps_alive(5, 1, 1, 5, 1);
+    TEST_ASSERT_EQ(rc, 0, "a same-group parent does not keep the group non-orphaned");
 }
 
 static void test_pgrp_getpgid_unknown_esrch(void)
@@ -1046,6 +1074,14 @@ void test_register_proc_ext(void)
                             test_pgrp_setsid_leader_denied, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: setsid non-leader ok",
                             test_pgrp_setsid_nonleader_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setsid non-leader populated group denied",
+                            test_pgrp_setsid_nonleader_group_members_denied, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid negative pgid EINVAL",
+                            test_pgrp_setpgid_negative_pgid_einval, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: orphan link in-session parent keeps alive",
+                            test_pgrp_orphan_link_alive, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: orphan link same-group parent no-op",
+                            test_pgrp_orphan_link_not_alive, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: getpgid unknown ESRCH",
                             test_pgrp_getpgid_unknown_esrch, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: setpgid self after exec ok",

@@ -37,13 +37,19 @@ struct task;
  * (an acquire load alone orders but does not EXCLUDE). Called from task_exec. */
 void pgroup_note_exec(struct task *t);
 
-/* Acquire/release the job-control lock so the task lifecycle can assign a child's
- * (pgid, sid) membership from its parent AND publish the child (num_tasks++) in
- * ONE critical section -- the same lock setsid's group-reuse scan holds. Without
- * this, a child snapshotted early but published later could appear in a group
- * mid-setsid, letting one group span two sessions on SMP. Returns saved IRQ
- * flags for the matching unlock. The lock is a strict leaf (takes nothing else);
- * task creation never runs while a job-control op holds it, so no nesting. */
+/* Acquire/release the job-control lock so the task lifecycle can commit a child's
+ * (pgid, sid) membership together with num_tasks++ in ONE critical section -- the
+ * same lock setsid's group-reuse scan holds. This linearizes the child's
+ * GROUP-MEMBERSHIP publication against setsid, so a group cannot span two
+ * sessions on SMP. It does NOT serialize task-SLOT reservation (pid = num_tasks
+ * and most TCB init stay lock-free per the pre-existing task-table convention);
+ * it guards exactly the (pgid, sid, num_tasks) triple a job-control scan reads.
+ * IRQ-safe (spin_lock_irqsave): the publication must keep the calling CPU's IRQs
+ * off across num_tasks++ so a timer cannot schedule the half-built child before
+ * fork finishes (INT 0x80 runs with IF=0; irqrestore preserves that). Returns
+ * saved IRQ flags for the matching unlock. A strict leaf (takes nothing else);
+ * task creation never runs while a job-control op holds it, so no nesting. The
+ * Ctrl+C ISR reads the foreground group lock-free and never takes this lock. */
 uint64_t pgroup_jobctl_lock(void);
 void     pgroup_jobctl_unlock(uint64_t flags);
 
@@ -110,8 +116,19 @@ int pgroup_setpgid_decide(uint32_t caller_sid,
                           uint32_t new_pgid, int dest_present, uint32_t dest_sid);
 
 /* setsid policy: -EPERM if the caller is already a process-group leader
- * (caller_pgid == caller_pid), else 0. */
-int pgroup_setsid_decide(uint32_t caller_pid, uint32_t caller_pgid);
+ * (caller_pgid == caller_pid) OR a process group named caller_pid still has other
+ * live members (the caller led it earlier and left) -- either would make the new
+ * session's pgid=caller_pid collide. `group_has_other_members` is that live fact.
+ * Else 0. */
+int pgroup_setsid_decide(uint32_t caller_pid, uint32_t caller_pgid,
+                         int group_has_other_members);
+
+/* is_orphaned per-link predicate: 1 if a member's parent link DISQUALIFIES the
+ * group from being orphaned (the parent is live, in a different group, same
+ * session). A group is orphaned iff no member has such a link. Pure + testable. */
+int pgroup_orphan_link_keeps_alive(uint32_t member_pgid, uint32_t member_sid,
+                                   int parent_alive, uint32_t parent_pgid,
+                                   uint32_t parent_sid);
 
 /* GenerateConsoleCtrlEvent authorization: 1 (allow) iff the console has an owner,
  * the caller is in the controlling session, and the target group is present in

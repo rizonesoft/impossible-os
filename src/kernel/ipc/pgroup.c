@@ -3,16 +3,18 @@
  *
  * See kernel/ipc/pgroup.h for the ownership boundary. Load-bearing invariants:
  *   - The Ctrl+C fan-out is a NO-OP until a shell establishes a foreground group
- *     (g_console.has_fg), so a bare pgid==0 scan can never terminate PID 0 or the
- *     kernel session.
+ *     (g_console.foreground_pgid != 0), so a bare pgid==0 scan can never terminate
+ *     PID 0 or the kernel session.
  *   - setpgid returns EACCES for a child that has already exec'd (the fork/exec
  *     race POSIX defines), with the full ESRCH/EPERM/EINVAL/EACCES mapping.
- *   - A single IRQ-safe job-control lock covers pgid/sid validate-and-commit AND
- *     the console object, so a parent setpgid(child) cannot race the child's
- *     setsid/setpgid into an inconsistent (pgid, sid) pair. Mutators hold the
- *     lock with IRQs disabled, so the same-CPU keyboard ISR can never interrupt a
- *     held lock (no self-deadlock); the ISR only snapshots under the lock and
- *     delivers outside it.
+ *   - A single IRQ-safe (spin_lock_irqsave) job-control lock covers pgid/sid
+ *     validate-and-commit AND the console owner fields, so a parent setpgid(child)
+ *     cannot race the child's setsid/setpgid into an inconsistent (pgid, sid)
+ *     pair; irqsave also keeps IRQs off across the task-publication num_tasks++ so
+ *     a timer cannot schedule a half-built fork child. The latency-critical Ctrl+C
+ *     ISR reads foreground_pgid LOCK-FREE (atomic) and never takes this lock, so
+ *     it never spins behind a process-context scan (a bounded O(TASK_MAX) scan
+ *     under the lock is a self-inflicted, non-ISR latency).
  *   - tcsetpgrp enforces the caller-in-controlling-session + non-empty-target-
  *     group-in-session authorization boundary rather than a raw global write.
  * ============================================================================ */
@@ -25,16 +27,19 @@
 #include "kernel/klog.h"
 
 /* --- Controlling-console job-control object (singleton) ------------------- *
- * One console today. `lock` is THE job-control lock: it serializes every
- * pgid/sid mutation as well as the console fields, so cross-task setpgid/setsid
- * validate-and-commit transactions linearize. IRQ-safe because the Ctrl+C fan-
- * out snapshots foreground_pgid from the keyboard ISR. */
+ * One console today. `lock` serializes every pgid/sid mutation and the owner
+ * fields, so setpgid/setsid/tcsetpgrp validate-and-commit transactions linearize.
+ * `foreground_pgid` is a SINGLE-WORD ATOMIC (0 = no foreground group): the Ctrl+C
+ * keyboard ISR reads it LOCK-FREE (an aligned uint32 never tears), so the ISR
+ * never takes `lock` and can never spin behind a process-context scan. Writers
+ * hold `lock` for validation but commit `foreground_pgid` with an atomic store.
+ * pgid 0 is rejected as a foreground group (tcsetpgrp EINVAL), so 0 unambiguously
+ * means "unset". */
 struct console_jobctl {
     spinlock_t lock;
     uint32_t   controlling_sid;   /* session that owns the console (valid iff has_owner) */
-    uint32_t   foreground_pgid;   /* current foreground group (valid iff has_fg) */
+    uint32_t   foreground_pgid;   /* ATOMIC: foreground group, 0 = none (ISR reads lock-free) */
     uint8_t    has_owner;         /* 1 once a session has claimed the console */
-    uint8_t    has_fg;            /* 1 once a foreground group is set */
 };
 
 static struct console_jobctl g_console = {
@@ -42,7 +47,6 @@ static struct console_jobctl g_console = {
     .controlling_sid = 0,
     .foreground_pgid = 0,
     .has_owner       = 0,
-    .has_fg          = 0,
 };
 
 /* Look up a live (non-dead) task by pid; NULL if absent or dead. */
@@ -111,7 +115,9 @@ static void console_reclaim_if_dead(void)
 {
     if (g_console.has_owner && !session_alive(g_console.controlling_sid)) {
         g_console.has_owner = 0;
-        g_console.has_fg    = 0;        /* foreground group belonged to the dead session */
+        /* foreground group belonged to the dead session -- atomic store so the
+         * lock-free ISR reader observes the clear. */
+        __atomic_store_n(&g_console.foreground_pgid, 0u, __ATOMIC_RELEASE);
     }
 }
 
@@ -147,6 +153,10 @@ int pgroup_setpgid_decide(uint32_t caller_sid,
                           int target_has_execed,
                           uint32_t new_pgid, int dest_present, uint32_t dest_sid)
 {
+    /* A negative pgid (arrives as a high-bit-set uint32 from the syscall register)
+     * is invalid (POSIX EINVAL). Valid pgids are small positive process ids. */
+    if ((int32_t)new_pgid < 0)
+        return -EINVAL;
     /* The target must be the caller or one of the caller's children. */
     if (!target_is_caller && !target_is_child)
         return -ESRCH;
@@ -168,13 +178,27 @@ int pgroup_setpgid_decide(uint32_t caller_sid,
     return 0;
 }
 
-int pgroup_setsid_decide(uint32_t caller_pid, uint32_t caller_pgid)
+int pgroup_setsid_decide(uint32_t caller_pid, uint32_t caller_pgid,
+                         int group_has_other_members)
 {
     /* A process-group leader cannot create a new session (POSIX EPERM): a leader
      * is exactly a process whose pgid equals its own pid. */
     if (caller_pgid == caller_pid)
         return -EPERM;
+    /* Even a non-leader is rejected if a group named caller_pid still has other
+     * live members: a new session with pgid=caller_pid would span two sessions. */
+    if (group_has_other_members)
+        return -EPERM;
     return 0;
+}
+
+int pgroup_orphan_link_keeps_alive(uint32_t member_pgid, uint32_t member_sid,
+                                   int parent_alive, uint32_t parent_pgid,
+                                   uint32_t parent_sid)
+{
+    /* A live parent in a DIFFERENT group but the SAME session keeps the member's
+     * group non-orphaned (a signal could still reach it via that parent). */
+    return parent_alive && parent_pgid != member_pgid && parent_sid == member_sid;
 }
 
 int pgroup_genconsole_authorized(uint32_t caller_sid, int has_owner,
@@ -199,9 +223,9 @@ int pgroup_setpgid(uint32_t pid, uint32_t pgid)
 {
     struct task *caller = task_current();
     uint32_t caller_pid, caller_sid;
-    uint64_t flags;
     int rc;
 
+    uint64_t flags;
     spin_lock_irqsave(&g_console.lock, &flags);
     /* Sample caller identity INSIDE the lock: a concurrent setsid on another
      * thread of the caller must not leave us validating against a stale sid. */
@@ -211,6 +235,13 @@ int pgroup_setpgid(uint32_t pid, uint32_t pgid)
         pid = caller_pid;
     if (pgid == 0)
         pgid = pid;                     /* pgid 0 => create/join the target's own group */
+    /* Reject a negative pgid (EINVAL) BEFORE the target lookup, so the live path
+     * and pgroup_setpgid_decide agree on precedence -- e.g. setpgid(unknown, -1)
+     * is EINVAL on both, not ESRCH here vs EINVAL in the core. */
+    if ((int32_t)pgid < 0) {
+        rc = -EINVAL;
+        goto out;
+    }
     {
         struct task *target = live_task(pid);
         if (!target) {
@@ -248,17 +279,15 @@ int pgroup_setsid(void)
 {
     struct task *caller = task_current();
     uint32_t caller_pid;
-    uint64_t flags;
     int rc;
 
+    uint64_t flags;
     spin_lock_irqsave(&g_console.lock, &flags);
     caller_pid = caller->pid;
-    rc = pgroup_setsid_decide(caller_pid, caller->pgid);
-    /* Even a non-leader is rejected if a process group named caller_pid already
-     * has live members (the caller LED it earlier, left, and members remain): a
-     * new session with pgid=caller_pid would otherwise span two sessions. */
-    if (rc == 0 && pgrp_member_count(caller_pid) > 0)
-        rc = -EPERM;
+    /* Gather the live group-collision fact under the lock, then let the pure core
+     * decide (so the tested decider and the live path can never diverge). */
+    rc = pgroup_setsid_decide(caller_pid, caller->pgid,
+                              pgrp_member_count(caller_pid) > 0);
     if (rc == 0) {
         caller->sid  = caller_pid;
         caller->pgid = caller_pid;
@@ -302,7 +331,6 @@ int pgroup_getpgrp(void)
 int pgroup_tcsetpgrp(uint32_t pgid)
 {
     struct task *caller = task_current();
-    uint64_t flags;
     uint32_t caller_sid, grp_sid, effective_sid;
     int rc;
 
@@ -311,6 +339,7 @@ int pgroup_tcsetpgrp(uint32_t pgid)
     if (pgid == 0)
         return -EINVAL;
 
+    uint64_t flags;
     spin_lock_irqsave(&g_console.lock, &flags);
     console_reclaim_if_dead();          /* a dead controlling session releases the console */
     caller_sid = caller->sid;
@@ -342,8 +371,9 @@ int pgroup_tcsetpgrp(uint32_t pgid)
         g_console.controlling_sid = caller_sid;
         g_console.has_owner       = 1;
     }
-    g_console.foreground_pgid = pgid;
-    g_console.has_fg          = 1;
+    /* Atomic store so the lock-free Ctrl+C ISR observes the new foreground group
+     * without taking g_console.lock. */
+    __atomic_store_n(&g_console.foreground_pgid, pgid, __ATOMIC_RELEASE);
     rc = 0;
 out:
     spin_unlock_irqrestore(&g_console.lock, flags);
@@ -352,11 +382,14 @@ out:
 
 int pgroup_tcgetpgrp(void)
 {
-    uint64_t flags;
     int rc;
+    uint64_t flags;
     spin_lock_irqsave(&g_console.lock, &flags);
     console_reclaim_if_dead();
-    rc = g_console.has_fg ? (int)g_console.foreground_pgid : -ENOTTY;
+    {
+        uint32_t fg = g_console.foreground_pgid;
+        rc = fg ? (int)fg : -ENOTTY;
+    }
     spin_unlock_irqrestore(&g_console.lock, flags);
     return rc;
 }
@@ -373,7 +406,9 @@ int pgroup_is_orphaned(uint32_t pgid)
         if (!t || t->state == TASK_DEAD || t->pgid != pgid)
             continue;
         p = live_task(t->parent_pid);
-        if (p && p->pgid != pgid && p->sid == t->sid)
+        if (pgroup_orphan_link_keeps_alive(t->pgid, t->sid,
+                                           p != (struct task *)0,
+                                           p ? p->pgid : 0, p ? p->sid : 0))
             return 0;                   /* has an in-session parent outside the group */
     }
     return 1;
@@ -383,7 +418,6 @@ int GenerateConsoleCtrlEvent(uint32_t dwCtrlEvent, uint32_t dwProcessGroupId)
 {
     struct task *caller = task_current();
     uint32_t pgid, caller_sid, grp_sid = 0;
-    uint64_t flags;
     int grp_present, authorized;
 
     if (dwCtrlEvent != CTRL_C_EVENT && dwCtrlEvent != CTRL_BREAK_EVENT)
@@ -391,6 +425,7 @@ int GenerateConsoleCtrlEvent(uint32_t dwCtrlEvent, uint32_t dwProcessGroupId)
 
     /* Gather the console + target-group facts and authorize under the lock; then
      * fan the signal out AFTER releasing it (never klog/signal under the lock). */
+    uint64_t flags;
     spin_lock_irqsave(&g_console.lock, &flags);
     console_reclaim_if_dead();
     caller_sid = caller->sid;
@@ -410,13 +445,16 @@ int GenerateConsoleCtrlEvent(uint32_t dwCtrlEvent, uint32_t dwProcessGroupId)
 
 int pgroup_foreground_snapshot(uint32_t *out_pgid)
 {
-    uint64_t flags;
-    int have;
-    spin_lock_irqsave(&g_console.lock, &flags);
-    console_reclaim_if_dead();          /* stop fanning Ctrl+C into a dead session */
-    have = g_console.has_fg;
-    if (have && out_pgid)
-        *out_pgid = g_console.foreground_pgid;
-    spin_unlock_irqrestore(&g_console.lock, flags);
-    return have;
+    /* ISR path (Ctrl+C): a single LOCK-FREE atomic load. The ISR does NOT take
+     * g_console.lock -- so it can never spin behind a process-context tcsetpgrp/
+     * GenerateConsoleCtrlEvent scan -- and does NOT run the O(TASK_MAX) reclaim
+     * scan (dead-owner reclamation is the process-context callers' job). A stale
+     * foreground group here is harmless: signal_send_group finds no live members
+     * of a dead group and no-ops. 0 unambiguously means "no foreground group". */
+    uint32_t fg = __atomic_load_n(&g_console.foreground_pgid, __ATOMIC_ACQUIRE);
+    if (fg == 0)
+        return 0;
+    if (out_pgid)
+        *out_pgid = fg;
+    return 1;
 }
