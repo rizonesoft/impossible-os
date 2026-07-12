@@ -69,7 +69,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
 | 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [/]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1, T12 §7 |  [/]   |
-| 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
+| 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [/]   |
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [/]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
@@ -521,15 +521,24 @@ Windows exposes per-process protection levels (`PROCESS_PROTECTION_LEVEL_INFORMA
 
 No section owns session ID, process-group ID, session leadership, the foreground terminal group, or group signal delivery -- so a shell cannot background jobs, `kill -pgid` a pipeline, or fan Ctrl+C out to a process tree. TODO-10 currently sends SIGINT to a single foreground task; `GenerateConsoleCtrlEvent` cannot target a group. This section owns the per-process fields + invariants; the Linux syscall adapters live in TODO-10 and the terminal consumes the foreground-group API.
 
-- [ ] Add `pgid` + `sid` fields to `struct task`; a new process inherits its parent's pgid/sid.
-- [ ] `sys_setpgid(pid, pgid)` with POSIX invariants (same session, not a session leader, target in the caller's session); `sys_setsid()` creates a new session + process group led by the caller (fails for a group leader).
-- [ ] `getpgid`/`getsid`/`getpgrp` queries.
-- [ ] Foreground-console-group state on the controlling terminal; `tcsetpgrp`/`tcgetpgrp` equivalent to set/query the foreground group.
-- [ ] Group signal fan-out: a signal to `-pgid` (or the foreground group on Ctrl+C) is delivered to every process in the group; orphaned-process-group handling per POSIX.
-- [ ] `GenerateConsoleCtrlEvent(CTRL_C_EVENT/CTRL_BREAK_EVENT, pgid)` targets the console group; the terminal TODO consumes this API. Linux `setpgid`/`setsid` adapters -> `TODO-10-kernel-security-hardening.md`.
-- [ ] Commit: `"kernel: task -- process groups and sessions (setpgid/setsid + group signals)"`
+- [x] `pgid` + `sid` (+ monotonic `has_execed`) on `struct task`; inherited from the creator at task_create/create_user/fork (pre-fork snapshot); PID 0 leads session 0. `src/kernel/sched/task.c`.
+- [x] `pgroup_setpgid`/`setsid` + `SYS_SETPGID`/`SYS_SETSID`; full POSIX errno (ESRCH/EPERM/EINVAL/EACCES; exec'd child EACCES via `has_execed`); pure decide-cores unit-tested. `src/kernel/ipc/pgroup.c`.
+- [x] `pgroup_getpgid`/`getsid`/`getpgrp` (+ `SYS_GETPGID`/`SYS_GETSID`/`SYS_GETPGRP`); `pid==0` means the caller.
+- [x] Singleton `console_jobctl` (controlling sid + fg pgid + validity) + `pgroup_tcsetpgrp`/`tcgetpgrp` (`SYS_TCSETPGRP`/`SYS_TCGETPGRP`); enforces same-session + non-empty group (ENOTTY/EPERM/EINVAL).
+- [x] `signal_send_group(pgid,sig)` reaches every live member (PID 0 excluded); `signal_ctrl_c` fans SIGINT to the console fg group -- NO-OP until a shell claims it; pending mask now atomic; `pgroup_is_orphaned` detector ships.
+- [ ] Orphaned-pgroup SIGHUP+SIGCONT delivery: detector ships, delivery blocked on job-control stop/cont signals (SIGTSTP/SIGSTOP/SIGCONT) -> XREF: `§18` + `TODO-10-kernel-security-hardening.md`.
+- [x] `GenerateConsoleCtrlEvent(event, pgid)` (`SYS_GENCONSOLECTRL`): CTRL_C/CTRL_BREAK -> SIGINT to the group. Consumer (terminal/user-lib shim) + Linux adapters owned elsewhere -> XREF: `TODO-10-kernel-security-hardening.md`.
+- [x] Commit: `"kernel: task -- process groups and sessions (setpgid/setsid + group signals)"`
 
-**Test checkpoint:** `setsid()` makes the caller a session+group leader (getsid==getpid); `setpgid` moves a child into a new group; a signal to `-pgid` reaches all members; Ctrl+C on the foreground group interrupts a pipeline, not just the leader. `klog(LOG_DEBUG, "task", "pgid %u signal %u -> %u procs")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
+**Test checkpoint:** `setsid()` makes the caller a session+group leader (getsid==getpid); `setpgid` moves a child into a new group; a signal to `-pgid` sets pending SIGINT on all members; Ctrl+C fans to the foreground group, not just the leader. The pure POSIX decision cores (invariants + full errno matrix) are unit-tested (TEST_CAT_SCHED); the live cross-task fan-out is serial-validated on QEMU. **Delivery dependency:** the fan-out sets each member's pending SIGINT bit; the pre-existing `signal_check` drain is not yet wired into any thread-context return path, so end-to-end interruption/termination lands when the signal-delivery boundary ships -> XREF: `10-platform-services/TODO-10-linux-compat.md §8` (item: "SIGINT delivery (signal 2)" at line 265). Test on: QEMU WHPX, QEMU TCG; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 14 ProcExt group/session suites, 0 failures
+
+> **Notes:**
+> - **What shipped:** `src/kernel/ipc/pgroup.{c,h}` -- POSIX groups/sessions + a singleton console job-control object; `struct task` gains pgid/sid/has_execed; 8 INT 0x80 syscalls + GenerateConsoleCtrlEvent; 14 pure-decision unit tests.
+> - **How it integrates:** Ctrl+C (keyboard ISR) fans SIGINT to the console foreground group via `signal_send_group` -- a NO-OP until a shell claims the console (never signals PID 0); the signal pending mask is now atomic, so group delivery is SMP-safe.
+> - **Downstream effects:** unblocks a shell's job control + `kill -pgid`; §18 WUNTRACED/WCONTINUED and orphan SIGHUP/SIGCONT delivery still need job-control stop/cont signals. Design + review adoptions in the commit message.
+> - **Scope boundary:** §17 owns the kernel primitives + foreground-group API; Linux syscall adapters -> TODO-10; the terminal/user-lib consumer -> terminal TODO; job-control stop/cont signals -> the orphan-delivery follow-up above.
 
 ---
 
@@ -569,7 +578,7 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15/§18 deferred (needs TODO-06 §357 slot reuse) |
 | 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16 deferred (needs T12 §7 handle-rights model) |
-| 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
+| 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | 🟡 §17 groups+sessions+fanout+GenerateConsoleCtrlEvent; orphan SIGHUP/SIGCONT deferred |
 | 💎   | Core-dump / dumpable policy   | ✅ WER / MiniDump              | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 deferred (needs §15 + TODO-27) |
 | 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
 | ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease           |
@@ -620,8 +629,9 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
   - `getrusage(RUSAGE_CHILDREN)` returns non-zero usage after a child with CPU work is reaped (§15)
   - A None-protection process opening a WinTcb process for TERMINATE is denied `STATUS_ACCESS_DENIED` (§16)
   - The PPL dominance matrix: a higher-level process opening a lower one for VM_WRITE succeeds (§16)
-  - `setsid()` makes the caller a session+group leader (`getsid() == getpid()`) (§17)
-  - `setpgid` moves a child into a new group; a signal to `-pgid` reaches every member (§17)
+  - `pgroup_setsid_decide` denies a process-group leader (EPERM) and allows a non-leader (§17)
+  - `pgroup_setpgid_decide` maps every POSIX case: self/child, exec'd child EACCES, cross-session/session-leader/bad-dest EPERM (§17)
+  - `GenerateConsoleCtrlEvent` returns FALSE on a bad control event and on an empty target group (§17)
   - `sys_waitid(P_PID, child, WEXITED|WNOWAIT)` reports exit but leaves the zombie reapable by a later `sys_wait4` (§18)
   - Two NT `NtWaitForSingleObject` waiters on the same exited process handle both wake; a `sys_wait4` reaps it exactly once (§18)
   - A process with `dumpable=0` produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable (§18)

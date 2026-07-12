@@ -24,6 +24,7 @@
 #include "kernel/exec.h"
 #include "kernel/eif.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ipc/pgroup.h"       /* pgroup_note_exec, pgroup_jobctl_lock/unlock */
 #include "kernel/ob/handle_table.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/ob/ob_thread.h"
@@ -367,6 +368,9 @@ boot_result_t task_init(void)
         tasks[i].user_stack_base = (uint8_t *)0;
         tasks[i].name = (const char *)0;
         tasks[i].parent_pid = 0;
+        tasks[i].pgid = 0;        /* clear stale group/session on slot reuse; */
+        tasks[i].sid = 0;         /* PID 0 (set below) legitimately leads session 0 */
+        tasks[i].has_execed = 0;
         tasks[i].exit_status = 0;
         tasks[i].wait_pid = -1;
         tasks[i].exec_pending = 0;
@@ -727,6 +731,9 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].name = name;
     task_set_cwd(&tasks[pid], "C:\\");   /* kernel threads default to the boot drive root */
     tasks[pid].parent_pid = current_task;
+    /* pgid/sid/has_execed are inherited + published atomically under the
+     * job-control lock at num_tasks++ (see below), so the child can never appear
+     * in a process group mid-setsid. */
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
@@ -777,7 +784,18 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].token = inherited_token;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
-    num_tasks++;
+    /* Inherit the creator's process group + session AND publish the child in one
+     * job-control critical section: a concurrent setsid group-reuse scan then
+     * either sees this child (and rejects) or does not (child not yet a member) --
+     * never a half-published cross-session membership. */
+    {
+        uint64_t jf = pgroup_jobctl_lock();
+        tasks[pid].pgid = tasks[current_task].pgid;
+        tasks[pid].sid  = tasks[current_task].sid;
+        tasks[pid].has_execed = 0;
+        num_tasks++;
+        pgroup_jobctl_unlock(jf);
+    }
 
     /* Register process and main thread with Object Manager */
     ob_process_create(&tasks[pid]);
@@ -901,6 +919,9 @@ int task_create_user(task_entry_t entry, const char *name)
         task_set_cwd(&tasks[pid], parent_cwd[0] ? parent_cwd : "C:\\");
     }
     tasks[pid].parent_pid = current_task;
+    /* pgid/sid/has_execed inherited + published atomically under the job-control
+     * lock at num_tasks++ (below); CreateProcess starts the child in its parent's
+     * group until it setpgid/setsid to detach. */
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
@@ -968,7 +989,18 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].token = inherited_token;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
-    num_tasks++;
+    /* Inherit the creator's process group + session AND publish the child in one
+     * job-control critical section: a concurrent setsid group-reuse scan then
+     * either sees this child (and rejects) or does not (child not yet a member) --
+     * never a half-published cross-session membership. */
+    {
+        uint64_t jf = pgroup_jobctl_lock();
+        tasks[pid].pgid = tasks[current_task].pgid;
+        tasks[pid].sid  = tasks[current_task].sid;
+        tasks[pid].has_execed = 0;
+        num_tasks++;
+        pgroup_jobctl_unlock(jf);
+    }
 
     /* Register process and main thread with Object Manager */
     ob_process_create(&tasks[pid]);
@@ -1835,7 +1867,19 @@ int task_fork(struct interrupt_frame *frame)
     task_init_accounting(&tasks[child_pid]);
     task_rlimit_inherit(&tasks[child_pid], &tasks[parent_pid_val]); /* rlimits inherited across fork */
 
-    num_tasks++;
+    /* Inherit the parent's process group + session AND publish the child in ONE
+     * job-control critical section: the child reads the parent's CURRENT (pgid,
+     * sid) and becomes num_tasks-visible atomically, so a concurrent setsid
+     * group-reuse scan can never straddle it (a fork child joins its parent's
+     * group and has NOT exec'd -- the shell can still setpgid it before exec). */
+    {
+        uint64_t jf = pgroup_jobctl_lock();
+        tasks[child_pid].pgid = tasks[parent_pid_val].pgid;
+        tasks[child_pid].sid  = tasks[parent_pid_val].sid;
+        tasks[child_pid].has_execed = 0;
+        num_tasks++;
+        pgroup_jobctl_unlock(jf);
+    }
 
     /* Per-process page table: clone kernel PML4 + mark image + new
      * user stack as User. Without this the child inherits cr3=0 from
@@ -2232,6 +2276,12 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
     tasks[pid].loaded_format = fmt_name;
+
+    /* Mark the process as having exec'd (monotonic). Done under the job-control
+     * lock (pgroup_note_exec) so it is mutually EXCLUSIVE with a concurrent
+     * setpgid validation -- a parent can never move a child after its exec
+     * completes; such a setpgid returns EACCES (POSIX). */
+    pgroup_note_exec(&tasks[pid]);
 
     /* Register module if the loader didn't already (PE registers in pe_load).
      * For ELF/EIF, register with the identity-mapped user ELF range. */

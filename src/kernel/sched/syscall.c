@@ -32,6 +32,7 @@
 #include "kernel/acpi.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ipc/pgroup.h"          /* setpgid/setsid/getpgid/getsid/getpgrp/tc*pgrp */
 #include "kernel/ipc/shmem.h"
 #include "kernel/ob/ob_file.h"
 #include "kernel/ob/ob_section.h"
@@ -584,6 +585,34 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = t ? (int64_t)t->pid : 0;
         break;
     }
+    case SYS_SETPGID:
+        /* setpgid(pid, pgid): move a task into a process group (POSIX). */
+        ret = (int64_t)pgroup_setpgid((uint32_t)arg1, (uint32_t)arg2);
+        break;
+    case SYS_GETPGID:
+        ret = (int64_t)pgroup_getpgid((uint32_t)arg1);
+        break;
+    case SYS_SETSID:
+        /* setsid(): the caller leads a new session + process group. */
+        ret = (int64_t)pgroup_setsid();
+        break;
+    case SYS_GETSID:
+        ret = (int64_t)pgroup_getsid((uint32_t)arg1);
+        break;
+    case SYS_GETPGRP:
+        ret = (int64_t)pgroup_getpgrp();
+        break;
+    case SYS_TCSETPGRP:
+        /* tcsetpgrp(pgid): set the console's foreground process group. */
+        ret = (int64_t)pgroup_tcsetpgrp((uint32_t)arg1);
+        break;
+    case SYS_TCGETPGRP:
+        ret = (int64_t)pgroup_tcgetpgrp();
+        break;
+    case SYS_GENCONSOLECTRL:
+        /* GenerateConsoleCtrlEvent(dwCtrlEvent, dwProcessGroupId) -> BOOL. */
+        ret = (int64_t)GenerateConsoleCtrlEvent((uint32_t)arg1, (uint32_t)arg2);
+        break;
     case SYS_PIPE: {
         HANDLE *user_handles = (HANDLE *)arg1;
         HANDLE pipe_handles[2];

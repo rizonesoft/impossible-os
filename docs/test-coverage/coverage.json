@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-12T22:06:11+02:00",
-  "total_suites": 1948,
-  "total_assertions": 7163,
+  "timestamp": "2026-07-12T23:28:50+02:00",
+  "total_suites": 1965,
+  "total_assertions": 7180,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -65,7 +65,7 @@
     {"file": "test_ob.c", "suites": 51, "assertions": 275},
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 93},
     {"file": "test_pmm.c", "suites": 7, "assertions": 23},
-    {"file": "test_proc_ext.c", "suites": 55, "assertions": 139},
+    {"file": "test_proc_ext.c", "suites": 72, "assertions": 156},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},
     {"file": "test_sched.c", "suites": 58, "assertions": 190},
     {"file": "test_security.c", "suites": 29, "assertions": 190},

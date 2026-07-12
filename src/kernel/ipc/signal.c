@@ -10,6 +10,7 @@
  * ============================================================================ */
 
 #include "kernel/ipc/signal.h"
+#include "kernel/ipc/pgroup.h"          /* pgroup_foreground_snapshot (Ctrl+C fan-out) */
 #include "kernel/sched/task.h"
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on signal kill */
 #include "kernel/ob/ob_process.h"       /* ob_process_mark_dead on signal kill */
@@ -36,17 +37,22 @@ int signal_send(uint32_t pid, int sig)
     if (!t || t->state == TASK_DEAD)
         return -1;
 
-    /* Set the pending bit */
-    t->signals.pending |= (1U << (uint32_t)sig);
+    /* Set the pending bit with an atomic OR: a plain |= would lose a concurrent
+     * signal_send on another CPU (read-modify-write torn against signal_check's
+     * drain). ACQ_REL so the wake below is ordered after the bit is visible. */
+    __atomic_fetch_or(&t->signals.pending, (1U << (uint32_t)sig), __ATOMIC_ACQ_REL);
 
-    /* If the task is blocked, wake it so it can process the signal */
+    /* If the task is blocked, wake it so it can process the signal. Ordered after
+     * the pending publish so a target that observes TASK_READY also observes the
+     * bit (no wake-without-signal window on SMP). */
     if (t->state == TASK_BLOCKED || t->state == TASK_WAITING) {
         t->state = TASK_READY;
     }
 
-    klog(LOG_DEBUG, "sig", "Signal %d sent to PID %u",
-         (uint64_t)(uint32_t)sig, (uint64_t)pid);
-
+    /* No logging here: signal_send is ISR-reachable (Ctrl+C -> signal_send_group)
+     * and must stay a pure, nonblocking primitive -- klog can flush the disk log,
+     * which must never run in interrupt context. Delivery is still observable via
+     * signal_check's default-action logs (e.g. "PID N interrupted (SIGINT)"). */
     return 0;
 }
 
@@ -117,16 +123,18 @@ void signal_check(void)
     uint32_t pending;
     int sig;
 
-    pending = t->signals.pending;
+    /* Atomically drain the whole pending set to zero and process the snapshot. A
+     * plain read + per-bit clear can erase a signal posted concurrently on
+     * another CPU (the clear's read-modify-write races signal_send's OR); the
+     * exchange takes an all-or-nothing snapshot. A signal arriving AFTER the
+     * exchange stays in the field and is handled on the next signal_check. */
+    pending = __atomic_exchange_n(&t->signals.pending, 0u, __ATOMIC_ACQ_REL);
     if (pending == 0)
         return;
 
     for (sig = 1; sig < (int)SIG_MAX; sig++) {
         if (!(pending & (1U << (uint32_t)sig)))
             continue;
-
-        /* Clear the pending bit */
-        t->signals.pending &= ~(1U << (uint32_t)sig);
 
         /* SIGKILL is always forced -- no handler */
         if (sig == SIGKILL) {
@@ -154,18 +162,32 @@ void signal_check(void)
     }
 }
 
-void signal_ctrl_c(void)
+void signal_send_group(uint32_t pgid, int sig)
 {
     uint32_t num = task_count();
     uint32_t i;
 
-    /* Send SIGINT to the last non-dead, non-idle task (the "foreground" task).
-     * In a real OS this would be the foreground process group. */
-    for (i = num; i > 0; i--) {
-        struct task *t = task_get_by_pid(i - 1);
-        if (t && t->state != TASK_DEAD && t->pid != 0) {
-            signal_send(t->pid, SIGINT);
-            return;
-        }
+    /* i starts at 1: PID 0 (the kernel session) is never a job-control target,
+     * so a "group 0" fan-out can never terminate the system task. Bounded scan;
+     * pgid is read racily against a concurrent setpgid by design (same as the
+     * single-signal path). */
+    for (i = 1; i < num; i++) {
+        struct task *t = task_get_by_pid(i);
+        if (t && t->state != TASK_DEAD && t->pgid == pgid)
+            signal_send(t->pid, sig);
     }
+}
+
+void signal_ctrl_c(void)
+{
+    uint32_t fg_pgid;
+
+    /* Fan SIGINT out to the console's foreground process group. NO-OP until a
+     * shell claims the console (pgroup_foreground_snapshot returns 0): with no
+     * foreground group, there is deliberately nothing to interrupt -- delivering
+     * to "group 0" would otherwise reach PID 0 / the kernel session. Runs in the
+     * keyboard ISR; signal_send_group is ISR-safe (atomic pending bit only). */
+    if (!pgroup_foreground_snapshot(&fg_pgid))
+        return;
+    signal_send_group(fg_pgid, SIGINT);
 }

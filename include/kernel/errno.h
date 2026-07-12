@@ -30,6 +30,7 @@
 #define EINVAL      22   /* invalid argument */
 #define ENFILE      23   /* file table overflow */
 #define EMFILE      24   /* too many open files */
+#define ENOTTY      25   /* inappropriate ioctl for device (no controlling tty) */
 #define ENOSPC      28   /* no space left on device */
 #define ENOSYS      38   /* function not implemented */
 #define ENOTEMPTY   39   /* directory not empty */

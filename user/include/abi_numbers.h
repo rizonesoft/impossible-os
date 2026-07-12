@@ -44,6 +44,14 @@
 #define SYS_NETINFO              16
 #define SYS_LOG                  17
 #define SYS_GETPID               18
+#define SYS_SETPGID              19
+#define SYS_GETPGID              20
+#define SYS_SETSID               21
+#define SYS_GETSID               22
+#define SYS_GETPGRP              23
+#define SYS_TCSETPGRP            24
+#define SYS_TCGETPGRP            25
+#define SYS_GENCONSOLECTRL       26
 #define SYS_PIPE                 33
 #define SYS_SIGNAL               34
 #define SYS_SHMEM_CREATE         35
@@ -97,5 +105,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x6B215C89AEF18DF0ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0xDA542906ED8AC9D8ULL
 #define EX_ABI_MISMATCH          0x42

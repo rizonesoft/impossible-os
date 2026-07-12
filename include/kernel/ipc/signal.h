@@ -48,6 +48,13 @@ void signal_init_task(struct signal_state *ss);
  * Returns 0 on success, -1 if invalid PID. */
 int signal_send(uint32_t pid, int sig);
 
+/* Send a signal to every live member of a process group (job-control fan-out).
+ * PID 0 (the kernel session) is never targeted. Bounded, lock-free scan of the
+ * task table -- membership is read racily against concurrent setpgid, matching
+ * the single-signal convention. Safe to call from interrupt context (the Ctrl+C
+ * path): signal_send only sets an atomic pending bit and flips task state. */
+void signal_send_group(uint32_t pgid, int sig);
+
 /* Register a signal handler for the current task.
  * Returns the previous handler, or SIG_DFL on error. */
 signal_handler_t signal_handler(int sig, signal_handler_t handler);

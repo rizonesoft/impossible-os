@@ -269,6 +269,8 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 - [ ] User-mode signal frame: push `rip`, `rflags`, `rsp`, signal number onto user stack; set `rip = handler_fn`; on `sigreturn(15)` → restore saved frame
 - [ ] Commit: `"compat: Linux signal stubs (SIGINT, SIGCHLD, SIGKILL, rt_sigaction)"`
 
+> **Note (foreground-group source):** the Ctrl+C `SIGINT` fan-out is now group-aware -- `02-kernel-core/TODO-21-process-model-extensions.md §17` sets pending SIGINT on every foreground process-group member (`signal_send_group` / `signal_ctrl_c`). This §8 delivery boundary must drain that pending set per member (inject the ring-3 frame or apply the `SIG_DFL` terminate), not just the single leader; there is currently NO `signal_check` call site, so §17's queued SIGINT is not yet acted on until this ships.
+
 ---
 
 ## 9. Shell ELF Integration + `[Linux]` Process Tag `[Sonnet]`

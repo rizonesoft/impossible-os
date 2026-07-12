@@ -170,6 +170,18 @@ struct task {
     uint8_t    *user_stack_base;/* base of user stack (NULL for kernel tasks) */
     const char *name;           /* human-readable name */
     uint32_t    parent_pid;     /* PID of parent (0 for init) */
+    /* --- POSIX process group + session (job control) ---
+     * pgid/sid are the process-group and session IDs. PID 0 is its own
+     * session+group leader (pgid=sid=0); every other task inherits its creator's
+     * pgid+sid at create/fork (a fresh new process joins the parent group until
+     * it setpgid/setsid). Mutated only via pgroup_setpgid/pgroup_setsid under the
+     * single job-control lock (kernel/ipc/pgroup.h); a lone getter read is a
+     * plain aligned load (no tearing). has_execed is a monotonic flag set once
+     * after a successful task_exec (atomic RELEASE); pgroup_setpgid ACQUIRE-loads
+     * it and returns EACCES for an already-exec'd child, per POSIX. */
+    uint32_t    pgid;           /* process-group ID */
+    uint32_t    sid;            /* session ID */
+    uint8_t     has_execed;     /* 1 after first successful exec (setpgid -> EACCES) */
     int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
     int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
     /* --- Current working directory (process-wide, shared by all threads) ---

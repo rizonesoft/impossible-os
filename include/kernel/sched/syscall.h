@@ -29,6 +29,14 @@
 #define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
 #define SYS_LOG      17  /* sys_log(level, msg, len)     → 0 / -1 */
 #define SYS_GETPID   18  /* sys_getpid()                  → current task PID */
+#define SYS_SETPGID  19  /* sys_setpgid(pid, pgid)        → 0 / -errno */
+#define SYS_GETPGID  20  /* sys_getpgid(pid)              → pgid / -errno */
+#define SYS_SETSID   21  /* sys_setsid()                  → new sid / -errno */
+#define SYS_GETSID   22  /* sys_getsid(pid)               → sid / -errno */
+#define SYS_GETPGRP  23  /* sys_getpgrp()                 → caller pgid */
+#define SYS_TCSETPGRP 24 /* sys_tcsetpgrp(pgid)           → 0 / -errno */
+#define SYS_TCGETPGRP 25 /* sys_tcgetpgrp()               → fg pgid / -errno */
+#define SYS_GENCONSOLECTRL 26 /* GenerateConsoleCtrlEvent(event, pgid) → 1 / 0 */
 #define SYS_PIPE     33  /* sys_pipe(fds)                → 0 / -1 */
 #define SYS_SIGNAL   34  /* sys_signal(sig, handler)      → old handler */
 #define SYS_SHMEM_CREATE 35 /* sys_shmem_create(name, size) → id / -1 */

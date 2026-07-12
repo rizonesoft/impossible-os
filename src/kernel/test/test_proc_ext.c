@@ -20,6 +20,8 @@
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/pledge.h"
 #include "kernel/ob/ob_job.h"
+#include "kernel/ipc/pgroup.h"
+#include "kernel/errno.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/types.h"
 
@@ -788,6 +790,130 @@ static void test_job_accounting_counts(void)
     TEST_ASSERT_EQ((uint32_t)io.ReadOperationCount, 7u, "departed I/O persists");
 }
 
+/* --- Process groups + sessions: pure POSIX decision cores --- */
+
+/* Convenience: caller sid=1, target is the caller (own group) -> allow. */
+static void test_pgrp_setpgid_self_own_group(void)
+{
+    /* caller_sid=1, target pid=5 sid=1, is_caller=1, new_pgid=5 (own group) */
+    int rc = pgroup_setpgid_decide(1, 5, 1, 1, 0, 0, 5, 0, 0);
+    TEST_ASSERT_EQ(rc, 0, "self creating own group is allowed");
+}
+
+static void test_pgrp_setpgid_child_join_same_session(void)
+{
+    /* child pid=6 sid=1, join existing group pgid=5 present in session 1 */
+    int rc = pgroup_setpgid_decide(1, 6, 1, 0, 1, 0, 5, 1, 1);
+    TEST_ASSERT_EQ(rc, 0, "child joining a same-session group is allowed");
+}
+
+static void test_pgrp_setpgid_not_child_esrch(void)
+{
+    /* target is neither the caller nor a child */
+    int rc = pgroup_setpgid_decide(1, 9, 1, 0, 0, 0, 9, 0, 0);
+    TEST_ASSERT_EQ(rc, -ESRCH, "non-child target is ESRCH");
+}
+
+static void test_pgrp_setpgid_execed_child_eacces(void)
+{
+    /* child that has already exec'd */
+    int rc = pgroup_setpgid_decide(1, 6, 1, 0, 1, 1, 6, 0, 0);
+    TEST_ASSERT_EQ(rc, -EACCES, "exec'd child cannot be moved (EACCES)");
+}
+
+static void test_pgrp_setpgid_cross_session_eperm(void)
+{
+    /* child in a different session (target_sid=2 != caller_sid=1) */
+    int rc = pgroup_setpgid_decide(1, 6, 2, 0, 1, 0, 6, 0, 0);
+    TEST_ASSERT_EQ(rc, -EPERM, "cross-session target is EPERM");
+}
+
+static void test_pgrp_setpgid_session_leader_eperm(void)
+{
+    /* target is a session leader: target_sid == target_pid (7) */
+    int rc = pgroup_setpgid_decide(7, 7, 7, 0, 1, 0, 7, 0, 0);
+    TEST_ASSERT_EQ(rc, -EPERM, "moving a session leader is EPERM");
+}
+
+static void test_pgrp_setpgid_dest_absent_eperm(void)
+{
+    /* join a group that does not exist (dest_present=0), new_pgid != target */
+    int rc = pgroup_setpgid_decide(1, 6, 1, 0, 1, 0, 5, 0, 0);
+    TEST_ASSERT_EQ(rc, -EPERM, "unknown destination group is EPERM");
+}
+
+static void test_pgrp_setpgid_dest_other_session_eperm(void)
+{
+    /* dest group present but in a different session (dest_sid=2) */
+    int rc = pgroup_setpgid_decide(1, 6, 1, 0, 1, 0, 5, 1, 2);
+    TEST_ASSERT_EQ(rc, -EPERM, "destination group in another session is EPERM");
+}
+
+static void test_pgrp_setsid_leader_denied(void)
+{
+    /* caller is a process-group leader: pgid == pid */
+    int rc = pgroup_setsid_decide(4, 4);
+    TEST_ASSERT_EQ(rc, -EPERM, "a group leader cannot setsid (EPERM)");
+}
+
+static void test_pgrp_setsid_nonleader_ok(void)
+{
+    /* caller is not a group leader (pgid 2 != pid 4) */
+    int rc = pgroup_setsid_decide(4, 2);
+    TEST_ASSERT_EQ(rc, 0, "a non-leader may setsid");
+}
+
+static void test_pgrp_getpgid_unknown_esrch(void)
+{
+    /* A pid at/above the task table cannot exist. */
+    int rc = pgroup_getpgid(0x7fffffffu);
+    TEST_ASSERT_EQ(rc, -ESRCH, "getpgid of an unknown pid is ESRCH");
+}
+
+static void test_pgrp_setpgid_self_after_exec_ok(void)
+{
+    /* A process may always setpgid ITSELF, even after it has exec'd; the EACCES
+     * rule only bars a PARENT from moving an exec'd CHILD (target_is_caller=1). */
+    int rc = pgroup_setpgid_decide(1, 5, 1, 1, 0, 1, 5, 0, 0);
+    TEST_ASSERT_EQ(rc, 0, "self setpgid allowed even after exec");
+}
+
+static void test_pgrp_genconsolectrl_bad_event(void)
+{
+    /* An unsupported control event returns FALSE (0) without delivering. */
+    int rc = GenerateConsoleCtrlEvent(99u, 1u);
+    TEST_ASSERT_EQ(rc, 0, "unsupported console control event returns FALSE");
+}
+
+static void test_pgrp_genconsolectrl_empty_group(void)
+{
+    /* CTRL_C for a group with no live members returns FALSE (nothing delivered);
+     * 0x7fffffff cannot name a live pgid (bounded by TASK_MAX). */
+    int rc = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0x7fffffffu);
+    TEST_ASSERT_EQ(rc, 0, "CTRL_C to an empty group returns FALSE");
+}
+
+static void test_pgrp_genconsole_auth_ok(void)
+{
+    /* Caller in the controlling session, target group present in that session. */
+    int rc = pgroup_genconsole_authorized(5, 1, 5, 1, 5);
+    TEST_ASSERT_EQ(rc, 1, "same-session console control event is authorized");
+}
+
+static void test_pgrp_genconsole_auth_foreign_target(void)
+{
+    /* Target group is in a DIFFERENT session than the controlling console. */
+    int rc = pgroup_genconsole_authorized(5, 1, 5, 1, 7);
+    TEST_ASSERT_EQ(rc, 0, "cross-session target group is denied");
+}
+
+static void test_pgrp_genconsole_auth_no_owner(void)
+{
+    /* No session controls the console yet. */
+    int rc = pgroup_genconsole_authorized(5, 0, 0, 1, 5);
+    TEST_ASSERT_EQ(rc, 0, "no console owner denies control events");
+}
+
 void test_register_proc_ext(void)
 {
     test_suite_register_cat("ProcExt: resolve absolute passthrough",
@@ -900,6 +1026,40 @@ void test_register_proc_ext(void)
                             test_job_pid_list_partial, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: job accounting counts",
                             test_job_accounting_counts, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid self own-group ok",
+                            test_pgrp_setpgid_self_own_group, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid child join same-session ok",
+                            test_pgrp_setpgid_child_join_same_session, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid non-child ESRCH",
+                            test_pgrp_setpgid_not_child_esrch, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid exec'd child EACCES",
+                            test_pgrp_setpgid_execed_child_eacces, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid cross-session EPERM",
+                            test_pgrp_setpgid_cross_session_eperm, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid session-leader EPERM",
+                            test_pgrp_setpgid_session_leader_eperm, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid dest-absent EPERM",
+                            test_pgrp_setpgid_dest_absent_eperm, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid dest other-session EPERM",
+                            test_pgrp_setpgid_dest_other_session_eperm, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setsid group-leader denied",
+                            test_pgrp_setsid_leader_denied, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setsid non-leader ok",
+                            test_pgrp_setsid_nonleader_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: getpgid unknown ESRCH",
+                            test_pgrp_getpgid_unknown_esrch, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: setpgid self after exec ok",
+                            test_pgrp_setpgid_self_after_exec_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: GenerateConsoleCtrlEvent bad event FALSE",
+                            test_pgrp_genconsolectrl_bad_event, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: GenerateConsoleCtrlEvent empty group FALSE",
+                            test_pgrp_genconsolectrl_empty_group, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: GenerateConsoleCtrlEvent same-session authorized",
+                            test_pgrp_genconsole_auth_ok, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: GenerateConsoleCtrlEvent cross-session denied",
+                            test_pgrp_genconsole_auth_foreign_target, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: GenerateConsoleCtrlEvent no-owner denied",
+                            test_pgrp_genconsole_auth_no_owner, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */
