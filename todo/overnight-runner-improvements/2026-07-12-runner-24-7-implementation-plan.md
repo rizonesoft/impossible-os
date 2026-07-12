@@ -131,7 +131,37 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
 - [ ] **[det] P5.4 Activation floor** so the backstop can't dominate; gate it behind Phases 1-4 landing (a runner that mostly sleeps ships nothing).
 - [ ] **[det] P5.5 Test the project -> snooze -> resume transition** at the ceiling.
 
-## Acceptance spec -- the 8 runner invariants (the next canary asserts these pass/fail)
+### Phase 6 -- Blocked-item recovery completeness (correctness gap; surfaced 2026-07-12 canary)
+
+Not a cost item -- a completeness gap in the fixpoint loop, found while explaining the runner's
+blocked-item behavior. **Terminal-park** cross-TODO deferrals (`[/]` + a plain `Deferred:` / `Accepted:`
++ XREF, with NO `awaiting-<token>`) are DONE-equivalent to the triage oracle (`sequencer_triage.py`
+3-state model), so the runner never re-visits them. When the XREF owner section later ships, the
+owner's `implement/review` step-18 inbound Accepted/Deferred sweep only TIDIES the stale stamp -- it
+never re-opens the now-unblocked dependent work. Net: cross-TODO work that has BECOME runnable is
+stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverable-park and plain
+`[ ]` blocker-noted items do NOT have this gap -- only terminal-park `[/]` deferrals do.)
+
+- [ ] **[canary] P6.1 Owner-side sweep re-opens unblocked dependents (not just tidies the stamp).**
+  When a section ships and its step-18 inbound sweep finds an Accepted/Deferred stamp whose concern
+  this section just FULLY satisfied, flip the dependent item from `[/]` back to `[ ]` -- re-classifying
+  its file NEEDS_WORK for the next fixpoint pass -- instead of only deleting the stale line. Gate the
+  flip on the sweep's existing fully-vs-partially-resolved decision: only a fully-resolved concern
+  flips; a partially-resolved one keeps its remaining XREFs untouched. Live-flow behavior (re-opens
+  work mid-run, changes what the runner picks next pass) -- canary.
+- [ ] **[det] P6.2 Deterministic stranded-deferral audit.**
+  A `todo-graph` / `sequencer_triage` verb that enumerates every terminal-park `[/]` deferral whose
+  XREF owner section is now DONE (both stamps present) but which is still parked -- the
+  stranded-unblocked backlog. Reuse `query.py deferred-by` + the stamp resolver + the section DONE
+  oracle. Surfaces the gap on the CURRENT tree today, validates P6.1, and feeds P6.3. Deterministic +
+  unit-testable, no live run needed.
+- [ ] **[det] P6.3 Fixpoint DONE-check consults the stranded-deferral audit.**
+  Before `run_phase_guard.py fixpoint` declares true DONE, run the P6.2 audit; a non-empty stranded
+  set is NOT-fixpoint (re-open the dependents + `next-pass`), not a false finish. Safety net for when
+  the owner-side sweep (P6.1) misses a satisfy-mapping, and it closes the "runner stops with
+  recoverable cross-TODO work still parked" hole directly. Deterministic gate + test.
+
+## Acceptance spec -- the 9 runner invariants (the next canary asserts these pass/fail)
 
 1. Never start another section after a refused rollover.
 2. Never directly edit `last-codex-review.json` in normal operation.
@@ -141,6 +171,7 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
 6. Preserve unlimited productive Critical/High review convergence.
 7. Run full validation once at the stable section boundary.
 8. Rotate context after every shipped section.
+9. Re-open (never strand) a terminal-park deferral once its XREF owner section ships.
 
 ## Recorded decisions (do NOT re-litigate)
 
