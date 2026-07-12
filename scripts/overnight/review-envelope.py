@@ -22,6 +22,16 @@ import sys
 from pathlib import Path
 
 COMPLETE_MARKERS = ("Turn completed", "Review complete", "turn.completed")
+# The broker (review-broker-codex-dispatch.sh) appends "Turn completed (rc=N)"
+# where N is the Codex process exit code. rc != 0 means the leg CRASHED (the
+# recurring "codex app-server exited unexpectedly, rc=1" is the live case) and
+# produced no usable verdict -- it must be RE-DISPATCHED, but ONLY that leg,
+# not the whole 3-leg bundle. Without parsing rc, leg_summary marked a crashed
+# leg `complete: True` (the marker is present regardless of rc), so the runner
+# could not tell a crash from a clean verdict and re-ran every leg. Measured
+# 2026-07-12: 16 rc=1 crash lines / 5+ full re-dispatches in one section.
+RC_RE = re.compile(r"Turn completed \(rc=(\d+)\)")
+CRASH_SIGNATURES = ("app-server exited unexpectedly", "exited unexpectedly, rc=")
 FINDING_RE = re.compile(
     r"(?i)^\s*(?:[-*\d.\s]*)?\[?(critical|high|medium|low|C\d|H\d|M\d|L\d)\b")
 MAX_FINDING_LINES = 120
@@ -31,8 +41,8 @@ TAIL_LINES = 30
 def leg_summary(entry: dict) -> dict:
     path = Path(entry.get("logFile") or "")
     out = {"kind": entry.get("kind"), "jobId": entry.get("jobId"),
-           "artifact": str(path), "complete": False, "findings": [],
-           "sha256": None, "bytes": 0, "tail": []}
+           "artifact": str(path), "complete": False, "crashed": False,
+           "rc": None, "findings": [], "sha256": None, "bytes": 0, "tail": []}
     try:
         data = path.read_bytes()
     except OSError:
@@ -42,6 +52,15 @@ def leg_summary(entry: dict) -> dict:
     out["sha256"] = hashlib.sha256(data).hexdigest()
     text = data.decode("utf-8", "replace")
     out["complete"] = any(m in text for m in COMPLETE_MARKERS)
+    # Crash detection: an explicit rc != 0 in the completion marker, OR a known
+    # Codex crash signature anywhere in the leg output. A crashed leg is NOT a
+    # valid verdict even though its "Turn completed" marker is present.
+    rc_m = RC_RE.search(text)
+    if rc_m:
+        out["rc"] = int(rc_m.group(1))
+    if (out["rc"] is not None and out["rc"] != 0) or \
+            any(sig in text for sig in CRASH_SIGNATURES):
+        out["crashed"] = True
     lines = text.splitlines()
     findings = [ln.strip()[:400] for ln in lines if FINDING_RE.match(ln)]
     if len(findings) > MAX_FINDING_LINES:
@@ -69,18 +88,39 @@ def main(argv) -> int:
     except OSError:
         print(json.dumps({"error": "no broker manifest", "kinds": {}}))
         return 1
-    env = {"kinds": {}, "all_complete": True, "missing": []}
+    # all_complete: every leg produced a completion marker (back-compat).
+    # all_clean:    every leg completed AND did not crash (rc==0) -- the real
+    #               "the review is usable" signal.
+    # needs_redispatch: exactly the legs to re-run (missing OR crashed). The
+    #               runner re-dispatches ONLY these, never the whole bundle;
+    #               a completed clean leg is reused as-is.
+    env = {"kinds": {}, "all_complete": True, "all_clean": True,
+           "missing": [], "crashed": [], "needs_redispatch": []}
     for k in kinds:
         if k not in latest:
             env["missing"].append(k)
             env["all_complete"] = False
+            env["all_clean"] = False
+            env["needs_redispatch"].append(k)
             continue
         leg = leg_summary(latest[k])
         env["kinds"][k] = leg
         if not leg["complete"]:
             env["all_complete"] = False
+            env["all_clean"] = False
+            env["needs_redispatch"].append(k)
+        elif leg["crashed"]:
+            # Completed-but-crashed: has a marker, no usable verdict. Re-run
+            # this leg only; do NOT let it greenlight the review.
+            env["crashed"].append(k)
+            env["all_clean"] = False
+            if k not in env["needs_redispatch"]:
+                env["needs_redispatch"].append(k)
     print(json.dumps(env, indent=1))
-    return 0 if env["all_complete"] else 1
+    # Exit 0 only when the review is genuinely usable (all legs clean). A
+    # crashed leg used to slip through on all_complete; gating on all_clean
+    # stops the runner proceeding on a non-verdict.
+    return 0 if env["all_clean"] else 1
 
 
 if __name__ == "__main__":

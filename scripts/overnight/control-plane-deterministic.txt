@@ -1,0 +1,61 @@
+# Overnight-runner control-plane DETERMINISTIC allowlist (canary-tiering, P0.0 2026-07-12).
+#
+# A SUBSET of control-plane-manifest.txt: the files whose failure mode is FULLY
+# caught by the deterministic runner suite (scripts/overnight/tests/run-all.sh +
+# test-launch.sh dry-run + runner-doctor.py) -- pure data / computation /
+# reporting / receipt modules, each backed by a test in tests/. A change limited
+# to these files does NOT re-arm the watched attended canary; it is proven by a
+# green deterministic suite instead (which the pre-commit / pre-push runner-suite
+# gate already runs for ANY control-plane change).
+#
+# DEFAULT IS FLOW-CRITICAL. This file is an ALLOWLIST, not a denylist: a
+# control-plane file NOT listed here is treated as flow-critical (re-arms the
+# canary), so a NEW or unclassified control-plane file stays conservative until
+# someone deliberately downgrades it here AFTER it has real test coverage.
+#
+# NOT eligible (kept flow-critical on purpose, even where a test exists):
+#   - arm / launch / watchdog lifecycle (overnight-arm/launch/monitor.sh,
+#     pre-arm-check.sh, lifecycle-unblocked.sh, arm-sequencer.sh)
+#   - the phase machine, triage, status brief, and every blocking gate hook
+#     (.claude/hooks/*) -- their failure mode is emergent/live
+#   - section-manifest.py (drives the SPLIT verdict -> live flow)
+#   - review-broker-codex-dispatch.sh (review dispatch flow)
+#   - runner-doctor.py / preflight.py / run-artifact.sh (health + green-mechanics
+#     wrappers whose mis-report could mis-gate a live run)
+#   - the gating machinery itself (control-plane-manifest.txt,
+#     control-plane-deterministic.txt, control-plane-match.sh)
+#
+# Consumed by control-plane-match.sh's `--flow-critical` mode (used by the
+# arm-sequencer canary gate). Format matches the manifest: one repo-relative
+# path (or "/"-suffixed dir prefix) per line; blank lines and #-comments ignored.
+
+# Reporting / metrics (observability -- cannot hang the run)
+scripts/overnight/metrics-report.py
+scripts/overnight/stream-report.py
+scripts/overnight/section-cost-report.py
+scripts/overnight/offload-report.py
+scripts/overnight/run-status.py
+scripts/overnight/run-outcome.py
+
+# Receipts / ledgers / typed evidence (pure data, test-backed)
+scripts/overnight/receipts.py
+scripts/overnight/review-envelope.py
+scripts/overnight/finding-ledger.py
+scripts/overnight/decision-registry.py
+scripts/overnight/failure-ledger.py
+scripts/overnight/evidence-bundle.py
+scripts/overnight/evidence-schema.py
+
+# Bounded computations (pure functions, test-backed)
+scripts/overnight/parse-usage-limit.py
+scripts/overnight/advance-work.py
+scripts/overnight/collect-questions.py
+scripts/overnight/diff-facts.py
+scripts/overnight/impact-cone.py
+scripts/overnight/section-checkpoint.py
+scripts/overnight/section-pack.py
+scripts/overnight/worktree_hash.py
+scripts/overnight/preflight-stamp.py
+
+# The deterministic test suite itself
+scripts/overnight/tests/

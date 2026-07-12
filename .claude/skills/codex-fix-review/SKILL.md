@@ -61,6 +61,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 ### Phase 3 -- Re-Review
 
 8b. **Pre-dispatch self-diff gate (before the re-review dispatch).** Read the fix diff against this round's + every prior round's findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6): scope creep, an operation reordered before its precondition, `==` where a bit-flag/mask test is required, sentinel/boundary handling (INVALID_HANDLE_VALUE / -1 / caps), and whether this fix re-opens a prior finding. This gate is what keeps the fix->re-review loop from becoming a fix-then-regress marathon (TODO-12 section 28: 15 dispatches, 67 min). A localized fix that passes the gate can be self-verified without a fresh round.
+8c. **Round counter + standing evidence map (P2.3, canonical rule: review-todo-section step 6).** After each re-dispatch, `bash .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress <new|none>`; exit 2 = CAPPED (stall, not a fixed cap) -> stop, spin unresolved findings to a follow-up. For rounds >= 4, verify at file:line via one `review-evidence-mapper` dispatch (the agent cache reuses the map when the tree is unchanged), not inline re-reads of the same hot files.
 9. **Push the commit.**
 10. **Re-run the Codex adversarial review** with a focused prompt:
     ```
@@ -71,6 +72,7 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
     Focus on: [list of modified files]
     ```
 11. **Evaluate the re-review output** -- the PostToolUse hook fires `receiving-code-review` reminder again on the re-review; follow it on any new findings.
+    - **Crash != verdict.** If the re-dispatch exits non-zero or the `.out` shows a Codex crash (`app-server exited unexpectedly`, `rc=1`) instead of a structured verdict, RE-DISPATCH (crashes are intermittent, measured 2026-07-12); never read a crash as `all-clear`/`approve` or as a new finding. This round did not happen.
     - If verdict is `all-clear` or only has "accepted" items: **done**.
     - If new findings appear: go back to Phase 1 with the new findings -- verify each before fixing.
     - If original findings are "still live": the fix was incomplete -- go back to Phase 2. But also ask: did Codex re-flag a finding I already rejected? If so, re-verify; if I'm still right, the rejection stands and I document the disagreement, not the fix.

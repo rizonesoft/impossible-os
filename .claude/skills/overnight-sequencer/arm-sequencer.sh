@@ -271,11 +271,18 @@ fi
 # ---- Canary gate (guardrail Layer 4) ----------------------------------------
 # An UNATTENDED arm on an UNPROVEN control-plane change is what broke the runner
 # repeatedly. Require a green ATTENDED canary (recorded via --record-canary)
-# whenever the control plane changed since the last stamp.
+# whenever a FLOW-CRITICAL control-plane path changed since the last stamp.
+#
+# Canary tiering (P0.0, 2026-07-12): only FLOW-CRITICAL changes re-arm this gate
+# (--flow-critical subtracts the deterministic allowlist,
+# control-plane-deterministic.txt). A change limited to deterministically-
+# covered files (metrics/receipts/reporting -- all test-backed) is proven by the
+# pre-arm-check suite run, not a watched canary, so it does NOT trip this gate.
+# The FULL-manifest suite-run gate (pre-commit/pre-push/lint) is unchanged.
 canary_unproven=""
-# The unattended run executes the live WORKING TREE, so uncommitted control-plane
-# changes can never have been proven by any stamp -- flag them first.
-cp_dirty="$( { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | sort -u | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" || true)"
+# The unattended run executes the live WORKING TREE, so uncommitted flow-critical
+# control-plane changes can never have been proven by any stamp -- flag them first.
+cp_dirty="$( { git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | sort -u | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" --flow-critical || true)"
 if [ -n "$cp_dirty" ]; then
   canary_unproven="uncommitted control-plane changes in the working tree (commit + canary them first):
 $(printf '%s\n' "$cp_dirty" | sed 's/^/    /')"
@@ -286,8 +293,8 @@ else
   if [ -z "$stamp_sha" ] || ! git rev-parse --quiet --verify "$stamp_sha^{commit}" >/dev/null 2>&1; then
     canary_unproven="canary stamp references an unknown commit (${stamp_sha:-empty})"
   else
-    cp_changed="$(git diff --name-only "$stamp_sha" HEAD 2>/dev/null | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" || true)"
-    [ -n "$cp_changed" ] && canary_unproven="control plane changed since the last canary (${stamp_sha:0:12}):
+    cp_changed="$(git diff --name-only "$stamp_sha" HEAD 2>/dev/null | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" --flow-critical || true)"
+    [ -n "$cp_changed" ] && canary_unproven="flow-critical control plane changed since the last canary (${stamp_sha:0:12}):
 $(printf '%s\n' "$cp_changed" | sed 's/^/    /')"
   fi
 fi

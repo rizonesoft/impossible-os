@@ -356,65 +356,12 @@ if [ "$AGENT_EXIT" -ne 0 ]; then
 fi
 
 # Usage-limit detection: parse the reset hint from the report tail and write the
-# snooze file the pre-flight honors. Session limits give a time of day ("resets
-# 8:10pm (Area/City)"); weekly limits give a DATE AND a time ("resets Jun 19,
-# 9am (Area/City)"). The time may omit minutes ("9am"), so minutes are optional
-# in the time regex -- the old colon-required pattern missed "9am", snoozed only
-# until midnight-ish, and relaunched ~9h early straight back into the limit,
-# spamming one retry log per watchdog tick. A +3 min margin keeps the relaunch
-# just after the real reset; unparseable hints snooze 30 min; cap is 8 days.
-tail -60 "$REPORT" | python3 - "$SNOOZE_FILE" <<'PYEOF' >> "$REPORT" 2>&1 || true
-import re, sys, time, datetime
-text = sys.stdin.read()
-m = re.search(r"hit your .{0,40}limit.{0,12}resets ([^\n]*)", text, re.I)
-if not m:
-    sys.exit(0)
-hint = m.group(1).strip()
-now = datetime.datetime.now()
-
-# time-of-day with OPTIONAL minutes: "9am", "8:10pm", "12 am"
-tm = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", hint, re.I)
-hour = minute = None
-if tm:
-    hour = int(tm.group(1)) % 12
-    minute = int(tm.group(2) or 0)
-    if tm.group(3).lower() == "pm":
-        hour += 12
-
-# date ("Jun 19") accompanies a weekly limit; a session limit omits it.
-dm = re.search(r"([A-Z][a-z]{2,8})\s+(\d{1,2})", hint)
-
-until = None
-if dm:
-    try:
-        month = datetime.datetime.strptime(dm.group(1)[:3], "%b").month
-        until = now.replace(month=month, day=int(dm.group(2)),
-                            hour=(hour if hour is not None else 9),
-                            minute=(minute if minute is not None else 0),
-                            second=0, microsecond=0)
-        if until <= now:
-            until = until.replace(year=until.year + 1)
-    except ValueError:
-        until = None
-elif hour is not None:
-    until = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if until <= now:
-        until += datetime.timedelta(days=1)
-
-if until is None:
-    until = now + datetime.timedelta(minutes=30)
-
-# land the relaunch just AFTER the real reset, never a minute early (early =
-# re-hit the same limit and write yet another report).
-until += datetime.timedelta(minutes=3)
-
-cap = now + datetime.timedelta(days=8)
-if until > cap:
-    until = cap
-epoch = int(time.mktime(until.timetuple()))
-open(sys.argv[1], "w").write(str(epoch))
-print(f"usage limit detected (resets {hint}); snoozing launches until {until.isoformat()}")
-PYEOF
+# snooze file the pre-flight honors. Logic + parsing rationale live in the
+# standalone, test-backed parse-usage-limit.py, which reads the report FILE by
+# path (NOT stdin) -- the old inline `tail -60 | python3 - <<'PYEOF'` had the
+# heredoc clobber stdin, so `sys.stdin.read()` hit EOF, the banner never parsed,
+# and the runner never snoozed on a real limit (2026-07-12 P1.4 fix).
+python3 "$SCRIPT_DIR/parse-usage-limit.py" "$REPORT" "$SNOOZE_FILE" >> "$REPORT" 2>&1 || true
 
 # Unproductive-run circuit breaker (Codex-runner lesson, 2026-07-04): classify
 # this run; after 3 consecutive dead runs, run-outcome.py writes the same

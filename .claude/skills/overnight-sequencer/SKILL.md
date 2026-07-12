@@ -126,8 +126,27 @@ for i in $(seq 1 9); do grep -q "Turn completed" <logFile> && break; sleep 60; d
   status, every severity-marked finding, artifact path + sha256. Slice-read an
   artifact only for findings needing full context; never pull whole
   transcripts into the session.
+- **On a crashed leg, re-dispatch ONLY that leg -- NEVER the whole bundle.**
+  Codex `app-server exited unexpectedly, rc=1` crashes are common and produce
+  no verdict. The envelope now reports this: `crashed` lists completed-but-
+  crashed kinds and `needs_redispatch` lists exactly the legs to re-run
+  (missing OR crashed); envelope exit 0 means `all_clean` (every leg completed
+  AND rc==0). Re-dispatch precisely `needs_redispatch` via the broker and REUSE
+  the already-clean legs' artifacts as-is. Re-running the full 3-leg bundle
+  when one leg crashed was a top measured token sink (16 crashes / 5+ full
+  re-dispatches in one section, 2026-07-12).
 - Receive every findings set through `superpowers:receiving-code-review`
   before acting; then continue the pipeline in the same session.
+- **Round counter + standing evidence map (P2.3).** After each Codex re-dispatch
+  in a fix loop, `bash .claude/hooks/review_round_guard.py --bump
+  '<todo>#<section>' --progress <new|none>`. Exit 2 = CAPPED (K consecutive
+  no-new rounds or the 30-round infinite-loop ceiling) -> stop the loop, spin
+  unresolved findings to a concrete follow-up `[ ]` + XREF, advance. This is
+  STALL detection, never a fixed round cap -- a productive review runs as long
+  as it keeps finding new Critical/High. For rounds >= 4 (`--status`), verify at
+  file:line through ONE `review-evidence-mapper` dispatch (the `agent_result_cache`
+  serves an unchanged-content map from cache) instead of inline re-reading the
+  same hot files -- the 2026-07-12 run re-read task.c ~31x across rounds.
 
 **Non-gating background watches** (a CI run you monitor while doing unrelated
 forward work) follow the same rule: ONE wait mechanism, no per-poll narration.

@@ -2,16 +2,26 @@
 #
 # Every path prefix below names code whose breakage breaks the UNATTENDED
 # overnight run (arm / launch / phase-machine / watchdog / circuit-breaker /
-# review dispatch). A commit or push touching any of them must pass the runner
-# test suite (scripts/overnight/tests/run-all.sh); an unattended arm after such
-# a change requires a green attended canary first.
+# review dispatch). A commit or push touching ANY of them must pass the runner
+# test suite (scripts/overnight/tests/run-all.sh).
+#
+# Canary tiering (P0.0, 2026-07-12): the ATTENDED-canary requirement now applies
+# only to the FLOW-CRITICAL subset. control-plane-deterministic.txt is a strict
+# ALLOWLIST of files whose failure mode is fully caught by the deterministic
+# suite (metrics / receipts / reporting, all test-backed); a change limited to
+# those is proven by the suite, NOT a watched canary. Everything NOT on that
+# allowlist stays flow-critical (re-arms the canary) -- default-flow-critical, so
+# a new/unclassified control-plane file is always conservative. The FULL-manifest
+# suite gate below is unchanged; only the canary gate reads the subset.
 #
 # Consumed by (keep them all reading THIS file, never a private copy):
-#   - .githooks/pre-commit           (commit gate: run the suite)
-#   - .githooks/pre-push             (push gate: suite + runner-doctor)
-#   - .claude/skills/overnight-sequencer/arm-sequencer.sh  (canary gate)
+#   - .githooks/pre-commit           (commit gate: run the suite -- FULL manifest)
+#   - .githooks/pre-push             (push gate: suite + runner-doctor -- FULL)
+#   - .claude/skills/overnight-sequencer/arm-sequencer.sh  (canary gate -- reads
+#       the FLOW-CRITICAL subset via control-plane-match.sh --flow-critical)
 #   - scripts/lint.sh Check (architectural lint: no bespoke lifecycle code)
-#   - scripts/overnight/control-plane-match.sh  (the shared matcher)
+#   - scripts/overnight/control-plane-match.sh  (the shared matcher; --flow-critical
+#       subtracts control-plane-deterministic.txt)
 #
 # Format: one path or path-prefix per line; blank lines and #-comments ignored.
 # A candidate file MATCHES if it equals a line or begins with a line that ends

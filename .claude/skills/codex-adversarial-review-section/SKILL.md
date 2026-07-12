@@ -48,6 +48,13 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
      double-poll ban (codex-design-review "Wait discipline"): one absorbing
      foreground wait or one armed Monitor held silently -- never ~10s manual
      re-polls with narrator turns.
+   - **Crash != verdict.** If the dispatch exits non-zero or the `.out` shows a
+     Codex crash (`app-server exited unexpectedly`, `rc=1`) instead of a
+     structured verdict, RE-DISPATCH that leg; never treat the crash output as
+     findings or as "approve". Codex `rc=1` crashes are intermittent (measured
+     2026-07-12); a re-dispatch of the SAME prompt usually succeeds. In a
+     multi-kind broker round this is the `review-envelope.py` `needs_redispatch`
+     set -- re-run only the crashed leg(s), reuse the already-clean ones.
 4. Triage findings -- the new `receiving_review_required.py` PreToolUse hook BLOCKS any subsequent `Edit` / `Write` / `MultiEdit` until you invoke `Skill(name="superpowers:receiving-code-review")` to triage the findings. The block is the hard gate; the existing PostToolUse `systemMessage` reminder is the secondary signal. State lives in `.claude/state/last-codex-review.json` (gitignored, schema documented in `.claude/state/README.md`); 1 hour TTL stale-pass; opt-out via `RECEIVING_REVIEW_OVERRIDE=1` env var on the same call (the agent must state what code-evidence quote justifies skipping). **Adversarial-review false-positive watch:** Codex reads code without runtime context and frequently flags "missing lock" when the caller already holds it, "race" on paths single-threaded by construction (BSP boot phase 0), or "buffer overflow" on buffers static-asserted larger than the access. Verify at file:line before classifying. Priority for valid findings: always fix `Critical` and `High`; fix `Medium` unless accepted with a concrete technical reason.
 5. Rebuild and run relevant tests after fixes -- **via
    `bash scripts/overnight/run-artifact.sh <label> -- <command>` on every

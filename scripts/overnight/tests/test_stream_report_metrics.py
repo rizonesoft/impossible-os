@@ -179,6 +179,73 @@ def test_no_env_writes_nothing():
     assert proc.returncode == 0, proc.stderr
 
 
+def test_growing_output_uses_max_per_msg():
+    # P0.1: the CLI repeats a message envelope PER content block with a GROWING
+    # output_tokens; first-seen dedupe captured the partial count (the ~47x
+    # undercount). We must keep the MAX per id; input/cache-read stay stable.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(i=1000, o=2, cr=5000), [("Read", {"file_path": "a.c"})], msg_id="A"),
+            _assistant(_usage(i=1000, o=50, cr=5000), [("Grep", {"pattern": "x"})], msg_id="A"),
+            _assistant(_usage(i=1000, o=500, cr=5000), msg_id="A"),   # final, complete
+            {"type": "result", "result": "done"},
+        ]
+        _run(events, mp)
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["turns"] == 1, rec
+        assert rec["output_tokens"] == 500, ("must be MAX not first-seen 2", rec)
+        assert rec["input_tokens"] == 1000, ("stable field, not summed", rec)
+        assert rec["cache_read_input_tokens"] == 5000, rec
+
+
+def test_eof_flush_captures_trailing_section():
+    # P0.1: a section that ends with NO progress/result marker (killed run /
+    # stream EOF) must still be flushed -- this is the tail that used to vanish.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=100), [("Read", {"file_path": "a.c"})], msg_id="m1"),
+            _assistant(_usage(o=5), [("Bash", {"command": "python3 .claude/hooks/run_phase_guard.py progress"})], msg_id="m2"),
+            # trailing work, NO result event and NO further progress marker:
+            _assistant(_usage(o=777), [("Edit", {"file_path": "b.c"})], msg_id="m3"),
+        ]
+        _run(events, mp)
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        assert [r["marker"] for r in recs] == ["progress", "eof"], recs
+        assert recs[0]["output_tokens"] == 105, recs[0]
+        assert recs[1]["output_tokens"] == 777, ("trailing tail captured", recs[1])
+
+
+def test_attribution_and_live_snapshot():
+    # P0.1: every record carries run/TODO/section + start/end SHA, and a live
+    # snapshot is written atomically alongside the jsonl each turn.
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        events = [
+            _assistant(_usage(o=42), [("Read", {"file_path": "a.c"})], msg_id="m1"),
+            {"type": "result", "result": "done"},
+        ]
+        _run(events, mp, {"OVERNIGHT_RUN_ID": "run-TEST",
+                          "OVERNIGHT_TODO": "todo/x.md", "OVERNIGHT_SECTION": "7"})
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["run_id"] == "run-TEST"
+        assert rec["todo"] == "todo/x.md" and rec["section"] == "7"
+        assert "start_sha" in rec and "end_sha" in rec   # present (None outside git ok)
+        live = pathlib.Path(str(mp) + ".live")
+        assert live.exists(), "live snapshot must be written"
+        snap = json.loads(live.read_text().strip().splitlines()[-1])
+        assert snap["marker"] == "live" and snap["run_id"] == "run-TEST"
+
+
+def test_run_id_derived_from_metrics_path():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "run-20260712-021311.jsonl"
+        _run([_assistant(_usage(o=1), msg_id="m1"), {"type": "result", "result": "x"}], mp)
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["run_id"] == "run-20260712-021311", rec
+
+
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
     test_model_confirmed_matches_expected_no_warning()
@@ -189,4 +256,8 @@ if __name__ == "__main__":
     test_model_inherit_skips_validation()
     test_main_vs_sidechain_tool_attribution()
     test_no_env_writes_nothing()
+    test_growing_output_uses_max_per_msg()
+    test_eof_flush_captures_trailing_section()
+    test_attribution_and_live_snapshot()
+    test_run_id_derived_from_metrics_path()
     print("PASS: stream-report metrics")

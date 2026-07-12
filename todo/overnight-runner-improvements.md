@@ -16,379 +16,174 @@
 ## P1 -- correctness / stop the bleeding
 
 - [x] **Fix the non-hermetic `ai_workflow_*` tooling tests so CI (`build.yml`) goes green.**
-  FIXED 2026-07-03. Root cause (systematic-debugging, hypothesis verified both
-  directions): the ai_workflow fixtures recorded build-evidence provenance
-  pointing at the REAL repo's untracked `build/build.log` (10 sites: 4 CLI
-  `--log-path` records + 6 embedded ledger events), and the obligations source
-  check opens `root/log_path` and tails for `=== BUILD OK ===` -- present on a
-  dev box from routine builds, absent in a clean actions/checkout. Adding ONLY
-  a marker build.log to the failing clone flipped 5 FAIL -> 582/582 PASS
-  (single cause). Fix: fixture-owned `$AIWF_TMP/fixture-build.log` (rel_path
-  keeps out-of-root absolute paths absolute, so no product change needed).
-  Also fixed the Check 16 cleanup: `git rm --cached -f` (the fixture
-  deliberately leaves staged != worktree != HEAD, which plain --cached
-  refuses -- the "docs/staged-leak.md" error on every CI run). Verified:
-  clean clone 582/582, dev 583/583.
+  FIXED 2026-07-03. Root cause (systematic-debugging, hypothesis verified both directions): the ai_workflow fixtures recorded build-evidence provenance pointing at the REAL repo's untracked `build/build.log` (10 sites: 4 CLI `--log-path` records + 6 embedded ledger events), and the obligations source check opens `root/log_path` and tails for `=== BUILD OK ===` -- present on a dev box from routine builds, absent in a clean actions/checkout. Adding ONLY a marker build.log to the failing clone flipped 5 FAIL -> 582/582 PASS (single cause). Fix: fixture-owned `$AIWF_TMP/fixture-build.log` (rel_path keeps out-of-root absolute paths absolute, so no product change needed). Also fixed the Check 16 cleanup: `git rm --cached -f` (the fixture deliberately leaves staged != worktree != HEAD, which plain --cached refuses -- the "docs/staged-leak.md" error on every CI run). Verified: clean clone 582/582, dev 583/583.
 
 - [x] **Make the runner CI-aware (self-heal red CI instead of advancing past it).**
-  DONE 2026-07-03: wired into `.claude/skills/overnight-sequencer/SKILL.md`
-  PREFLIGHT as a triage table after the local baseline -- attributable
-  failure (failed run's head SHA is an ancestor of HEAD via
-  `git merge-base --is-ancestor`) -> gh-query-runner `--log-failed` digest +
-  systematic-debugging + fix/commit/push + one `gh run watch` dispatch to
-  conclusion before section work (unfixable -> broken-HEAD stop path);
-  non-ancestor/infra failure -> NOTE and continue; in_progress -> NOTE and
-  continue (never wait at preflight); gh unauthenticated/network -> NOTE
-  "CI check unavailable" and continue. Includes the clean-clone hermeticity
-  repro pointer from the 2026-07-03 incident. Live-run validation pending
-  (next overnight).
+  DONE 2026-07-03: wired into `.claude/skills/overnight-sequencer/SKILL.md` PREFLIGHT as a triage table after the local baseline -- attributable failure (failed run's head SHA is an ancestor of HEAD via `git merge-base --is-ancestor`) -> gh-query-runner `--log-failed` digest + systematic-debugging + fix/commit/push + one `gh run watch` dispatch to conclusion before section work (unfixable -> broken-HEAD stop path); non-ancestor/infra failure -> NOTE and continue; in_progress -> NOTE and continue (never wait at preflight); gh unauthenticated/network -> NOTE "CI check unavailable" and continue. Includes the clean-clone hermeticity repro pointer from the 2026-07-03 incident. Live-run validation pending (next overnight).
 
 - [x] **Make the driver/runner model configurable at launch, DEFAULT to Opus (not Fable 5).**
-  DONE 2026-07-03, both launchers: arm-sequencer.sh defaults flipped to
-  `--model opus --fallback-model sonnet` (`--model inherit` sentinel restores
-  saved-default; interactive /model untouched; launcher's direct-invocation
-  fallback default aligned to sonnet). Conductor (b877662):
-  PrimaryModel/FallbackModel per-project fields (defaults opus/sonnet,
-  metachar-validated) -> Arm() flag pass-through + dogfood chain
-  (arm-sequencer -> overnight-arm --setenv -> launch FALLBACK_ARGS +
-  DRYRUN echo); 486/486 tests + test-launch PASS in both repos. Original
-  rationale follows.
-  Fable 5 (Mythos-tier, above Opus) is overkill as the runner's PRIMARY: Codex
-  adversarial/consistency/perf reviews already provide the quality net, and Opus
-  is the judgment floor the doctrine reserves for `implement-todo-section` /
-  `review-todo-section` / receiving-review (Fix/Reject/Accept) work. Opus is
-  cheaper than Fable/Mythos-tier AND sidesteps the safeguard-flag friction on
-  kernel/security work entirely (flags route to Opus anyway). Do NOT drop the
-  MAIN loop to Sonnet -- Sonnet is for the read-only agents (already there); the
-  main loop's receive/defer/debug judgment stays Opus-class. Plan:
-  - **arm-sequencer.sh:** already has `--model` / `--fallback-model` + the
-    systemd model drop-in (commit 053d1643). CHANGE the default from "inherit
-    the saved default" (currently Fable 5) to **`--model opus --fallback-model sonnet`**
-    (Opus primary, Sonnet only on transient overload; `--fallback-model`
-    re-tries the primary each turn). Keep the flags so Fable 5 / Sonnet can be
-    forced per-arm. Leave the operator's INTERACTIVE `/model` default untouched.
-  - **Conductor (external WPF runner):** expose the same primary + fallback model
-    selection in its launch UI/config, defaulting to Opus, and pass it straight
-    into the `claude -p --model <primary> --fallback-model <fallback>` invocation
-    so a Conductor-launched run and an arm-sequencer-launched run share ONE model
-    policy. The two launchers must not diverge on model handling.
-  - **Compatibility contract:** both launchers converge on the same
-    `--model`/`--fallback-model` pass-through; the default is Opus in both;
-    overrides (Fable 5 for a hard section, Sonnet for a cheap pass) work in both.
+  DONE 2026-07-03, both launchers: arm-sequencer.sh defaults flipped to `--model opus --fallback-model sonnet` (`--model inherit` sentinel restores saved-default; interactive /model untouched; launcher's direct-invocation fallback default aligned to sonnet). Conductor (b877662): PrimaryModel/FallbackModel per-project fields (defaults opus/sonnet, metachar-validated) -> Arm() flag pass-through + dogfood chain (arm-sequencer -> overnight-arm --setenv -> launch FALLBACK_ARGS + DRYRUN echo); 486/486 tests + test-launch PASS in both repos. Original rationale follows. Fable 5 (Mythos-tier, above Opus) is overkill as the runner's PRIMARY: Codex adversarial/consistency/perf reviews already provide the quality net, and Opus is the judgment floor the doctrine reserves for `implement-todo-section` / `review-todo-section` / receiving-review (Fix/Reject/Accept) work. Opus is cheaper than Fable/Mythos-tier AND sidesteps the safeguard-flag friction on kernel/security work entirely (flags route to Opus anyway). Do NOT drop the MAIN loop to Sonnet -- Sonnet is for the read-only agents (already there); the main loop's receive/defer/debug judgment stays Opus-class. Plan:
+  - **arm-sequencer.sh:** already has `--model` / `--fallback-model` + the systemd model drop-in (commit 053d1643). CHANGE the default from "inherit the saved default" (currently Fable 5) to **`--model opus --fallback-model sonnet`** (Opus primary, Sonnet only on transient overload; `--fallback-model` re-tries the primary each turn). Keep the flags so Fable 5 / Sonnet can be forced per-arm. Leave the operator's INTERACTIVE `/model` default untouched.
+  - **Conductor (external WPF runner):** expose the same primary + fallback model selection in its launch UI/config, defaulting to Opus, and pass it straight into the `claude -p --model <primary> --fallback-model <fallback>` invocation so a Conductor-launched run and an arm-sequencer-launched run share ONE model policy. The two launchers must not diverge on model handling.
+  - **Compatibility contract:** both launchers converge on the same `--model`/`--fallback-model` pass-through; the default is Opus in both; overrides (Fable 5 for a hard section, Sonnet for a cheap pass) work in both.
 
-- [x] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).**
-  DONE 2026-07-03 (all three gates):
-  - `review_dispatch_gate.py` (BLOCK, PreToolUse Edit/Write/MultiEdit): a
-    todo edit ADDING a Verified/Quality-reviewed stamp requires a live
-    review-class Skill invocation for this TODO this session (kills the
-    section-25 inline-review shape) AND a review-evidence-mapper dispatch in
-    the pass window (window = earliest review-kind ts for the TODO - 2h
-    grace, else 6h), plus kernel/boot-quality-auditor when the reviewed ship
-    commit (adversarial_head) touched kernel/boot paths. Hash-fills into
-    existing stamps exempt; fail-open on state/git errors;
-    SKIP_DISPATCH_GATE=1 + >= 12-char reason (skip-logged); 9-case selftest.
-  - agent_dispatch_recorder now keeps a bounded per-type dispatch map
-    (by_type) so gates ask "was THIS agent dispatched", not "was anything".
-  - `xref_dispatch_reminder.py` (WARN, once per pass): 3+ distinct foreign
-    TODO-NN in tool inputs during a live implement-todo-section pass with no
-    fresh xref-dependency-mapper dispatch. Live-run validation pending
-    (next overnight). Original measurements follow.
-  The agent-lens sweep of run-20260702-141810.log produced a per-invocation
-  compliance matrix: kernel-quality-auditor missing in 10/17 review passes,
-  review-evidence-mapper missing in 6/17, parity-research-analyst 0/17 (but
-  see the CLAUDE.md proportionality note added 2026-07-03: 1-row table syncs
-  are legitimately main-session), xref-dependency-mapper 0 dispatches in 20h
-  despite several 3+-XREF sections resolving owners inline (log:24-36,
-  2672-2679, 5225-5310, 6532-6548), and TODO-12 §25's ENTIRE review ran
-  inline with no Skill(review-todo-section) invocation and no Phase-1 mapper
-  (log:5160 self-report) while consuming 8 receiving-code-review passes.
-  Remaining enforcement work (the warning layer shipped 2026-07-03; these
-  need gates):
-  - Stamp-time completion check: before review-todo-section can write its
-    Verified/Quality-reviewed stamps for a kernel/boot section, require
-    evidence of a review-evidence-mapper AND (kernel/boot) quality-auditor
-    dispatch for THIS pass (extend the section-review hook family; the
-    recorder already writes last-agent-dispatch.json).
-  - Detect the "review pipeline executed inline" shape (stamp written with
-    zero review-todo-section Skill invocation this session) and remind/BLOCK
-    per the same gate.
-  - xref-trigger reminder: implement-todo-section step 2's "3+ cross-TODO
-    XREFs -> xref-dependency-mapper" is text-only; count distinct TODO-NN
-    greps in the first N calls of a section pass and remind.
+- [x] **Enforce per-review-pass agent dispatches (compliance-matrix follow-up, measured 2026-07-03).** DONE 2026-07-03 (all three gates):
+  - `review_dispatch_gate.py` (BLOCK, PreToolUse Edit/Write/MultiEdit): a todo edit ADDING a Verified/Quality-reviewed stamp requires a live review-class Skill invocation for this TODO this session (kills the section-25 inline-review shape) AND a review-evidence-mapper dispatch in the pass window (window = earliest review-kind ts for the TODO - 2h grace, else 6h), plus kernel/boot-quality-auditor when the reviewed ship commit (adversarial_head) touched kernel/boot paths. Hash-fills into existing stamps exempt; fail-open on state/git errors; SKIP_DISPATCH_GATE=1 + >= 12-char reason (skip-logged); 9-case selftest.
+  - agent_dispatch_recorder now keeps a bounded per-type dispatch map (by_type) so gates ask "was THIS agent dispatched", not "was anything".
+  - `xref_dispatch_reminder.py` (WARN, once per pass): 3+ distinct foreign TODO-NN in tool inputs during a live implement-todo-section pass with no fresh xref-dependency-mapper dispatch. Live-run validation pending (next overnight). Original measurements follow. The agent-lens sweep of run-20260702-141810.log produced a per-invocation compliance matrix: kernel-quality-auditor missing in 10/17 review passes, review-evidence-mapper missing in 6/17, parity-research-analyst 0/17 (but see the CLAUDE.md proportionality note added 2026-07-03: 1-row table syncs are legitimately main-session), xref-dependency-mapper 0 dispatches in 20h despite several 3+-XREF sections resolving owners inline (log:24-36, 2672-2679, 5225-5310, 6532-6548), and TODO-12 §25's ENTIRE review ran inline with no Skill(review-todo-section) invocation and no Phase-1 mapper (log:5160 self-report) while consuming 8 receiving-code-review passes. Remaining enforcement work (the warning layer shipped 2026-07-03; these need gates):
+  - Stamp-time completion check: before review-todo-section can write its Verified/Quality-reviewed stamps for a kernel/boot section, require evidence of a review-evidence-mapper AND (kernel/boot) quality-auditor dispatch for THIS pass (extend the section-review hook family; the recorder already writes last-agent-dispatch.json).
+  - Detect the "review pipeline executed inline" shape (stamp written with zero review-todo-section Skill invocation this session) and remind/BLOCK per the same gate.
+  - xref-trigger reminder: implement-todo-section step 2's "3+ cross-TODO XREFs -> xref-dependency-mapper" is text-only; count distinct TODO-NN greps in the first N calls of a section pass and remind.
 
 - [x] **Make the fix/review LOOP agent-aware (keep the Codex loops; cut the Claude-side overhead per round).**
-  DONE 2026-07-03 across ALL four loop surfaces: implement-todo-section step
-  15 + review-todo-section step 6 (shipped a7ca3263, see Done entry) and --
-  closing sweep -- codex-fix-review step 5 + codex-adversarial-review-section
-  step 5 (both previously instructed bare in-context `bash scripts/build.sh`
-  per round): loop rebuilds/tests via checks-runner BY DEFAULT, lsp-bridge
-  for repeated symbol lookups, evidence-mapper re-dispatch on moved fix
-  targets. implement-todo-item's single build stays inline (one-shot, the
-  documented exception). Enforcement nets: build_offload_reminder (WARN,
-  overnight SECTIONS) + inline_churn_monitor (both modes). No Codex-round
-  cap added, per the correctness-over-cost rule. Live-run adoption
-  measurement: next overnight (compare checks-runner dispatch count vs the
-  0/29 baseline). Original rationale + measurements follow.
-  The Codex convergence loops stay UNTOUCHED -- each round produces a distinct
-  real fix (verified on TODO-12 §8: sem_signal_n rework -> excess-path ->
-  wake-budget -> snapshot-budget). The waste is what the CLAUDE main loop does
-  AROUND each round: on §8 it ran 21 `build.sh` + 5 `test.sh` + 76 inline
-  `bash grep` all IN-CONTEXT and dispatched `checks-runner` ZERO times. The
-  default-on agent wiring covers the one-shot steps (explore, initial review,
-  gate walk) but NOT the iterative fix loop -- which is where ~90% of the
-  tokens go (measured: ~290 context-heavy ops this section, 6 agent dispatches,
-  ~2% offloaded). Two offloads, both keeping the main context lean every round:
-  - Route every loop rebuild/test through `Agent(subagent_type="checks-runner")`
-    -- returns PASS/FAIL + failure digest + artifact path; the main loop quotes
-    `build.log` itself (verification-before-completion). Wire into the
-    implement/review FIX LOOP, not just one-shot step 16.
-  - Re-dispatch `Agent(subagent_type="review-evidence-mapper")` each fix round
-    for the file:line edit targets, and use `lsp-bridge` (definition/references)
-    for repeated internal-symbol lookups instead of inline `bash grep`.
-  Do NOT add a Codex-round cap -- the loops find real bugs; correctness over
-  cost on kernel code.
-  Run-wide confirmation (run-20260702-141810.log, 20h, measured 2026-07-03 via
-  the new `overnight-log-explorer` agent): checks-runner was dispatched 0 times
-  out of 38 Agent dispatches while 57 build.sh + 55 test.sh + 17 lint.sh +
-  24 todo-graph-validate runs all went through in-context Bash -- the gap is
-  run-wide, not a one-section anomaly.
+  DONE 2026-07-03 across ALL four loop surfaces: implement-todo-section step 15 + review-todo-section step 6 (shipped a7ca3263, see Done entry) and -- closing sweep -- codex-fix-review step 5 + codex-adversarial-review-section step 5 (both previously instructed bare in-context `bash scripts/build.sh` per round): loop rebuilds/tests via checks-runner BY DEFAULT, lsp-bridge for repeated symbol lookups, evidence-mapper re-dispatch on moved fix targets. implement-todo-item's single build stays inline (one-shot, the documented exception). Enforcement nets: build_offload_reminder (WARN, overnight SECTIONS) + inline_churn_monitor (both modes). No Codex-round cap added, per the correctness-over-cost rule. Live-run adoption measurement: next overnight (compare checks-runner dispatch count vs the 0/29 baseline). Original rationale + measurements follow. The Codex convergence loops stay UNTOUCHED -- each round produces a distinct real fix (verified on TODO-12 §8: sem_signal_n rework -> excess-path -> wake-budget -> snapshot-budget). The waste is what the CLAUDE main loop does AROUND each round: on §8 it ran 21 `build.sh` + 5 `test.sh` + 76 inline `bash grep` all IN-CONTEXT and dispatched `checks-runner` ZERO times. The default-on agent wiring covers the one-shot steps (explore, initial review, gate walk) but NOT the iterative fix loop -- which is where ~90% of the tokens go (measured: ~290 context-heavy ops this section, 6 agent dispatches, ~2% offloaded). Two offloads, both keeping the main context lean every round:
+  - Route every loop rebuild/test through `Agent(subagent_type="checks-runner")` -- returns PASS/FAIL + failure digest + artifact path; the main loop quotes `build.log` itself (verification-before-completion). Wire into the implement/review FIX LOOP, not just one-shot step 16.
+  - Re-dispatch `Agent(subagent_type="review-evidence-mapper")` each fix round for the file:line edit targets, and use `lsp-bridge` (definition/references) for repeated internal-symbol lookups instead of inline `bash grep`. Do NOT add a Codex-round cap -- the loops find real bugs; correctness over cost on kernel code. Run-wide confirmation (run-20260702-141810.log, 20h, measured 2026-07-03 via the new `overnight-log-explorer` agent): checks-runner was dispatched 0 times out of 38 Agent dispatches while 57 build.sh + 55 test.sh + 17 lint.sh + 24 todo-graph-validate runs all went through in-context Bash -- the gap is run-wide, not a one-section anomaly.
 
 - [x] **Kill the Monitor double-poll antipattern (biggest measured token leak: ~1,100 wasted turns/run).**
-  DONE 2026-07-03: "Wait discipline" section added to overnight-sequencer
-  SKILL.md (one wait mechanism per wait; prefer the single absorbing
-  foreground Bash wait; hold an armed Monitor silently; 30-60s cadence when a
-  manual poll is truly unavoidable; batch multi-kind waits into ONE combined
-  condition; unrelated forward work allowed while holding). Full rule also in
-  codex-design-review "Wait discipline" (the canonical background-dispatch
-  doc) with pointer lines at the three other codex background-wait sites
-  (adversarial-review-section, review-todo, fix-review). Live-run validation:
-  next overnight (compare Holding/Check-poll counts vs the 531/610 baseline
-  via overnight-log-explorer). Original measurements follow.
-  From §25 (03:30) to the end of the 2026-07-02 20h run, every background
-  Codex/agent wait was covered by a Monitor AND a manual poll loop on top of it:
-  531 `Holding ...` narrator turns + 610 `Check ... status` Bash polls at a
-  ~10s cadence, against only 40 Monitor arms (heaviest single episode:
-  `Check §28 final-v2 adversarial` x43, log lines 5999-6083, ~7.5 min). The
-  early sections (§8-§24) did it right: ONE foreground Bash call absorbing the
-  whole wait (line 1838: `for i in $(seq 1 90); do grep -q "Turn completed"
-  ...; sleep ...done` held a 6-min verdict wait in a single turn; line 497 a
-  13-min one, zero extra turns). Fix at doctrine level (overnight-sequencer
-  SKILL.md wait guidance + the codex-* skills): once a Monitor is armed, HOLD
-  until it fires -- no Bash re-polls, no per-poll narrator turns; where a poll
-  is genuinely needed (Monitor timeout, host-load slowdown), use a 30-60s
-  cadence, never ~10s. Also batch multi-kind review waits into ONE Monitor
-  condition (done correctly at line 4996) instead of serial per-kind poll
-  clusters (§28 pattern).
+  DONE 2026-07-03: "Wait discipline" section added to overnight-sequencer SKILL.md (one wait mechanism per wait; prefer the single absorbing foreground Bash wait; hold an armed Monitor silently; 30-60s cadence when a manual poll is truly unavoidable; batch multi-kind waits into ONE combined condition; unrelated forward work allowed while holding). Full rule also in codex-design-review "Wait discipline" (the canonical background-dispatch doc) with pointer lines at the three other codex background-wait sites (adversarial-review-section, review-todo, fix-review). Live-run validation: next overnight (compare Holding/Check-poll counts vs the 531/610 baseline via overnight-log-explorer). Original measurements follow. From §25 (03:30) to the end of the 2026-07-02 20h run, every background Codex/agent wait was covered by a Monitor AND a manual poll loop on top of it: 531 `Holding ...` narrator turns + 610 `Check ... status` Bash polls at a ~10s cadence, against only 40 Monitor arms (heaviest single episode: `Check §28 final-v2 adversarial` x43, log lines 5999-6083, ~7.5 min). The early sections (§8-§24) did it right: ONE foreground Bash call absorbing the whole wait (line 1838: `for i in $(seq 1 90); do grep -q "Turn completed" ...; sleep ...done` held a 6-min verdict wait in a single turn; line 497 a 13-min one, zero extra turns). Fix at doctrine level (overnight-sequencer SKILL.md wait guidance + the codex-* skills): once a Monitor is armed, HOLD until it fires -- no Bash re-polls, no per-poll narrator turns; where a poll is genuinely needed (Monitor timeout, host-load slowdown), use a 30-60s cadence, never ~10s. Also batch multi-kind review waits into ONE Monitor condition (done correctly at line 4996) instead of serial per-kind poll clusters (§28 pattern).
+
+## Cost / 24-7 sustainability (2026-07-12 run analysis)
+
+Goal: run the sequencer 24/7 without exhausting the weekly token budget while retaining quality. Measured baseline (run-20260712-021311, ~6h main segment, 591 turns, opus-4-8[1m]): burn is ~20%/day -> x7 = ~140% of the weekly budget, so today it must stop+resume on reset. Cost is ~96% cache-read input (340.5M tokens = ~576K re-read PER turn) and only 12.5K output -- so the ONLY levers that move cost are (context-size x turn-count). Root cause this run: the entire budget went into ONE section (TODO-21 §12 Pledge/Unveil) stuck in a ~20-round Codex review-fix loop that never rotated context, inflated by fixable infra (16 `rc=1` Codex crashes forcing full 3-leg re-dispatches; 60 stale-gate lines + 2 `SKIP_REVIEW_HOOK` bypasses from `last-codex-review.json` mis-binding; task.c re-read ~31x with no standing evidence map; ~75 inline calls duplicating 4 agent dispatches). Verified against the log 2026-07-12 (main-session greps + overnight-log-explorer digest).
+
+**Suggested order -- pick one or more sub-steps per overnight run.** Ship the cheap pure-correctness wins first (crashed-leg re-dispatch, then the diff-binding fix), then spiral-detection (which may stop sections ballooning enough that Path B is never needed), then Path B's low-risk pieces (size trigger + checkpoint enrich) BEFORE its relaxed rollover gate, and finally budget-pacing as the backstop. Each `[ ]` below is sized to land in a single session; the parent item stays open until its sub-steps are all checked. Safety analysis for Path B (2026-07-12): risk is concentrated entirely in the relaxed gate (1e/1f) -- 1a-1d are low-risk additive/advisory work.
+
+- [ ] **Context-cap rollover: rotate the worker context mid-section on a size trigger, not only on section-ship (Path B).**
+  Today the only context reset is `run_phase_guard.py rollover`, and `_rollover_failures()` refuses it unless the section is fully shipped (clean tree, pushed, green build/test/smoke receipts, no unreceived review, no background jobs). So a long/stuck section (§12: 591 turns) never rotates and context balloons to ~576K/turn, re-charged as cache-read every turn. Path A (proactively lower the compaction threshold) is NOT cleanly buildable: Claude Code exposes no auto-compact threshold knob (only internal `rolling_compact`/`autoCompactWindowsCache` flags), headless cannot invoke `/compact` on demand, and native auto-compaction only fires near ~95% of the window (~950K on the 1M model). The one native lever is the window SIZE (model variant) -- see the separate decision. Path B = a real size/turn-triggered rotation at SAFE micro-boundaries. Mechanism: when context (or a turn-count proxy) crosses a threshold (~350K), set a "rotate at next safe point" flag; at the next micro-boundary -- a WIP commit (tree clean), between Codex rounds, or after a green fix-loop round -- persist in-flight state and rotate via the existing rollover + `session_brief_inject` + `section-checkpoint.py` path. Requires: (1) a size/turn trigger; (2) enriching `section-checkpoint.py` to capture mid-section reasoning state (open Codex findings + verdicts via `finding-ledger.py`, decisions via `decision-registry.py`, current phase, next intended action) so a fresh session resumes without re-deriving; (3) a relaxed mid-section rollover gate that accepts a WIP-commit-clean tree (not the full "shipped" gate). HARD safety rule (acceptance criteria): NEVER rotate during an active review wait or an uncommitted edit or mid-fix-loop -- only at a boundary where `finding-ledger.py` has the round's state committed; otherwise a dropped fix-log resurrects the fix-then-regress bug the 2026-07-03 self-diff gate exists to prevent. Quality: the runner's own doctrine says a fresh context is "cheaper AND sharper" (long-context attention rot), so safe-boundary rotation is expected quality-neutral-to-positive; the residual risk (reasoning-thread loss) is bounded by (2). Cost: holding avg context ~300K vs 576K is ~1.9x off the 96% -> ~50% burn cut; ~2-3 re-orientations/section (~100K tokens) vs ~170M saved is negligible. NOTE: if the review-spiral fixes below stop sections ballooning, most sections never grow large enough to need Path B, so ship those first.
+  Small steps (safest-first; the relaxed gate 1e/1f is the only high-risk piece -- ship it last and canary it):
+  - [ ] **(1a) Size/turn trigger, advisory only.** When context (or a turn-count proxy) crosses ~350K, set a "rotate at next safe point" flag. Sets the flag ONLY; takes no action. Cannot corrupt state -- low risk. Ship independently.
+  - [ ] **(1b) Enrich `section-checkpoint.py gather()`.** Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, and next intended action. Additive + fail-open per field. Ship independently.
+  - [ ] **(1c) Wire the resume path to CONSUME the enriched checkpoint.** `session_brief_inject.py` today recomputes `runner_status.full_brief` and NEVER reads `section-checkpoint.json` -- so 1b is dead weight until this lands. This is a gap the item text glossed over.
+  - [ ] **(1d) Attended-canary the enriched re-orient.** Prove a resumed session re-orients from the brief WITHOUT re-deriving the same file:line facts. Gates whether 1a-1c pay off before any gate work is built.
+  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a WIP-commit-clean (committed, unpushed, unstamped) tree but KEEPS the review-received + no-background-jobs checks. Do NOT weaken the shipped `_rollover_failures()` -- it also governs the ship rollover.
+  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-commit-clean tree / between Codex rounds / after a green fix-loop round. Hard-forbid rotation during a review wait, an uncommitted edit, or mid-fix-loop (the fix-then-regress guard).
+  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
+  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
+- [ ] **Codex review: on `rc=1` app-server crash, re-dispatch ONLY the crashed leg(s), never the full 3-leg bundle.**
+  Measured: 16 crash lines in run-20260712-021311; §12 did 5+ full design+adversarial+consistency+perf re-dispatches where 1-2 legs had already returned a clean verdict (each restart is a multi-minute Codex run + poll + disposition turns). `review-broker-codex-dispatch.sh` should accept a leg-subset arg and the runner should pass only the leg(s) whose `.out` is missing/crashed while reusing prior clean verdicts. Pure waste removal, zero quality cost.
+  Small steps:
+  - [ ] **(2a) Leg-subset arg for `review-broker-codex-dispatch.sh`** (`--legs design,adversarial,consistency,perf`; default = all four).
+  - [ ] **(2b) Per-leg verdict persistence** so a completed leg (clean `.out` + verdict) is distinguishable from a crashed/missing one.
+  - [ ] **(2c) On `rc=1`, re-dispatch ONLY the crashed/missing leg(s)** and reuse prior clean verdicts.
+  - [ ] **(2d) Wire detect + partial-redispatch into the review skills** (review-todo-section step 5, codex-adversarial-review-section, codex-fix-review, codex-review-todo).
+  - [ ] **(2e) Test: a single-leg crash re-runs only that leg**, never the full bundle.
+- [ ] **Fix `last-codex-review.json` diff-binding so the commit gate can't read a foreign-TODO record in a multi-file staged diff.**
+  Measured: 60 stale-gate lines; §12 blocked its ship 5x because the gate matched a re-adversarial record keyed to a DIFFERENT TODO in the multi-file staged diff, "resolved" twice only via `SKIP_REVIEW_HOOK=1` -- which WEAKENS the review guarantee, so fixing the binding strictly IMPROVES quality. Bind the review record to the actual staged diff (paths + head SHA), reject a record whose scope does not intersect the staged files, and stop forcing re-dispatches that exist only to satisfy the gate.
+  Small steps:
+  - [ ] **(3a) Record review scope** (staged file paths + head SHA) into `last-codex-review.json` when a review completes.
+  - [ ] **(3b) Compute the actual staged diff** (paths + head SHA) at commit-gate time.
+  - [ ] **(3c) Reject a record whose scope does not intersect the staged files** (fail-closed on non-intersection).
+  - [ ] **(3d) Drop the forced re-dispatch** that existed only to satisfy the gate; a scope-matched record passes without it.
+  - [ ] **(3e) Audit + shrink `SKIP_REVIEW_HOOK=1` usage** once binding is correct; add a test for the multi-file foreign-TODO shape.
+- [ ] **Reuse a standing evidence map across review rounds, and alarm on review-round count (spiral detection).**
+  Measured: `task.c` re-read ~31x; 23 of 24 §12 rounds re-derived the same file:line facts inline over the same ~7 hot files instead of refreshing one `review-evidence-mapper` map per round; §12 reached round 20 on a section its own round-18 commit called "maximally hardened." Make round-N verification route through `review-evidence-mapper` unconditionally for rounds >= ~4, and emit a spiral-check `systemMessage` at round ~8/12 so a non-converging section is caught before it eats the night.
+  Small steps:
+  - [ ] **(4a) Per-section review-round counter** (increment per Codex re-dispatch; persist in run state).
+  - [ ] **(4b) Route round-N verification through `review-evidence-mapper` for rounds >= ~4** instead of inline re-reads of the same hot files.
+  - [ ] **(4c) Reuse the evidence map across rounds** when the hot-file set is unchanged (skip re-dispatch when the tree has not moved).
+  - [ ] **(4d) Spiral-check `systemMessage` at round ~8 (warn) and ~12 (escalate)** so a non-converging section is caught before it eats the night.
+  - [ ] **(4e) Wire the counter + reminders into the review skills; test the round->=4 routing and the round-8/12 alarm.**
+- [ ] **Make offload actually bite: promote the warning-only offload hooks to enforced routing for the expensive inline shapes.**
+  Measured (run-20260712-021311, 6h): 140 `bash_search` + 62 grep + 48 read ran INLINE in the main loop against only 3-4 subagent dispatches; each inline big-search/read bakes permanently into the cached prefix and is re-charged as cache-read on every remaining turn (a single 35-call exploration burst at log:41-113 was estimated ~70K tokens x ~550 remaining turns ~= ~38M cache-read, >10% of the run). The `build_offload_reminder.py` / `inline_churn_monitor.py` hooks only WARN today. Promote the expensive shapes to enforced routing: full-log greps, single reads > ~50 KB, and the 3+-search-round exploration pattern should BLOCK-with-reroute (dispatch `kernel-explorer` / `section-context-mapper` / `serial-log-auditor`) rather than run inline, and running inline exploration in parallel with an Agent dispatch covering the same surface should be caught (log:41-113, 964-1010, 1144-1201 each did ~20-35 inline calls beside a concurrent dispatch). Keep the checks-runner/run-artifact deterministic paths for build/test. Compounds multiplicatively with the context-cap (Path B): every KB kept out of main context saves KB x remaining-turns of cache-read.
+- [ ] **Budget-aware pacing: track 7-day token burn and self-snooze near the weekly-reset ceiling (backstop, not primary).**
+  With ~20%/day x7 = ~140%, a weekly-budget tracker in the arm/launch layer should project 7-day burn and, when it would exceed 100%, self-snooze until reset using the existing snooze/backoff plumbing. This is the safety net AFTER the context-cap + review-spiral fixes bring the baseline under ~14.3%/day; it must not become the primary strategy (a runner that mostly sleeps ships nothing).
+  Small steps (backstop -- land AFTER the context-cap + review-spiral fixes bring the baseline under ~14.3%/day):
+  - [ ] **(5a) Track cumulative 7-day token burn** in the arm/launch layer (rolling window sourced from run reports).
+  - [ ] **(5b) Project 7-day burn** from the current rate; surface it in the status brief / monitor.
+  - [ ] **(5c) Self-snooze until reset** via the existing snooze/backoff plumbing when projected burn would exceed 100% of the weekly budget.
+  - [ ] **(5d) Add an activation floor** so the backstop can't dominate; gate it behind the context-cap + review-spiral fixes landing.
+  - [ ] **(5e) Test the project -> snooze -> resume transition** at the ceiling.
+
+### From the 2026-07-12 Codex efficiency review (verified at file:line before adding)
+
+- [ ] **Fix the metrics pipeline FIRST: capture the full run, correct output accounting, per-commit token attribution.**
+  `stream-report.py` flushes only at `progress`/`final` markers, so the entire §13 tail (08:22-10:35) is absent from `run-20260712-021311.jsonl` (verified: that file holds ONE progress record covering only the §12 window -- which is why the earlier analysis stopped at 591 turns). The sidecar output count is also untrustworthy: 12,553 output tokens for 591 §12 requests is ~21/request (implausibly low); Codex's de-duplicated API records show ~588,840, so output is a real ~5-8% slice, NOT the "negligible ~0.2%" the sidecar implied (this corrects the earlier analysis). Fix: flush at EOF/error (not only progress/final), write an atomic live snapshot, record final/max usage per message, and stamp run/TODO/section/start+end SHA. No budget governor can work on partial/wrong metrics -- this is the prerequisite for item 3. (`TODO-Claude-Overnight-Runner.md:249` already asks for per-commit cache-read+output tracking; verify the 588,840 figure against the raw API records when implementing.)
+- [ ] **Fix the broken usage-limit snooze parser -- the budget backstop is currently non-functional.**
+  `overnight-launch.sh:366` runs `tail -60 "$REPORT" | python3 - "$SNOOZE_FILE" <<'PYEOF'`. Verified bug: the heredoc redirect wins over the pipe, so `python3 -` reads its PROGRAM from stdin and `sys.stdin.read()` (line 368) hits EOF -- `text` is empty, the "hit your ... limit ... resets ..." banner never matches, and the snooze file is never written. After a real usage limit the runner therefore cannot snooze-until-reset; it relaunches straight back into the limit. Fix: feed the report through a channel the heredoc cannot clobber -- pass the report PATH as argv and read the file (`python3 script.py "$SNOOZE_FILE" "$REPORT"`), or use a real `.py` file. End-to-end test with a captured limit banner. This is a hard prerequisite for item 3 (budget-aware pacing) to function at all.
+- [ ] **Hard-enforce SPLIT-RECOMMENDED + fix the split-predictor boundary so big sections split BEFORE they balloon context.**
+  `section-manifest.py` emits a SPLIT-RECOMMENDED verdict but it is advisory -- the §13 run overrode it as "cohesive" and built ~1400 lines in one growing context (log:1484), a direct cause of the context balloon. Verified boundary gaps: the ABI clause is `abi_impact and len(open_items) > 8` (`section-manifest.py:150`) and the file clause is `> 8` (line 144), so an ABI/SSDT section with EXACTLY 8 items (e.g. an 8-syscall SSDT block like §13's 0x0160-0x0167) slips through unflagged. Fix: make SPLIT-RECOMMENDED a hard block (no self-override without an explicit reclassification), and lower the ABI-weighted threshold (>= ~6 open items when `abi_impact`). A section that fits one worker context never balloons -- this is the upstream half of item 1: enforce rollover AND split.
+- [ ] **Make Codex completion receipts completion-bound (after rc=0), not dispatch-bound -- the broker isn't classified as background.**
+  Verified: the broker (`review-broker-codex-dispatch.sh`) detaches each review via `systemd-run` and returns immediately, but `is_background_dispatch` (`_codex_dispatch.py:223`) recognizes only `codex-companion.mjs task` / `codex-bg-dispatch.sh`, NOT the review-broker shape. So `codex_review_completed.py` sees `background_dispatch=False` and records the receipt at DISPATCH time (`stamp_attempted=True`, line 1155) -- a receipt claiming completion before the review's rc=0 / typed result exists, which feeds the stale/wrongly-scoped-receipt churn (67 §12 legs, 13 crashed, many re-dispatched over receipts not code). Fix: the broker CHILD writes completion evidence only after rc=0 + a valid typed result; keep dispatch-time attribution (the per-kind four-dispatch proof) SEPARATE from completion proof. Complements the crash-aware envelope (`review-envelope.py` `needs_redispatch`, shipped this session) and the `last-codex-review.json` diff-binding fix above.
+- [x] **Rejected: make the rollover smoke check conditional on boot-path changes; and NO hard cap on review rounds.**
+  Codex flagged `run_phase_guard.py:442` running `check_smoke` unconditionally at rollover (even for non-boot sections like §13). NOT adopted: the smoke test is ~3s and fully deterministic (zero model tokens), so the efficiency gain is negligible, while an unconditional boot check is a cheap safety net that catches boot regressions from non-obvious changes (bare-metal-first doctrine). Revisit only if smoke ever becomes expensive. Also NOT adopting any hard CAP on review rounds -- Codex itself confirmed late rounds found real criticals (INT 0x80 sandbox bypass, path-traversal bypass, read-only-handle mutation); the spiral-check (item 4d) stays a signal/escalation, never a cap.
+
+### Flow / cadence pass (2026-07-12)
+
+Assessment: the MACRO flow is sound -- a rigid, enforced state machine (`PHASES` = PREFLIGHT -> TRIAGE -> VALIDATE -> GAP_AUDIT -> SECTIONS -> FILE_CLOSE -> ADVANCE -> FIXPOINT with `PHASE_ALLOWED_SKILLS`, `run_phase_guard.py:155`), and OUTPUT quality is high (every shipped section reviewed; late rounds caught real criticals). The problems are RHYTHM inside the machine: the per-section reset beat (rollover) is soft and gets skipped, oversized sections stretch the beat between commits, and the ship/stamp path thrashes the gates. The items below are flow/cadence-specific (the cost items above cover the token side).
+
+- [ ] **Flow: a REFUSED rollover must BLOCK starting the next section, not "continue in-session" into it.**
+  The macro phase machine is rigid, but the per-section rollover cadence inside the SECTIONS phase is soft: `SKILL.md:314` says a REFUSED rollover means "finish/clean them and continue in-session," with no rule against advancing to the NEXT section first. Result (§12 -> §13, Codex log:1480): §12's rollover was refused (dirty tree / receipts), the worker advanced into §13 anyway, and context ran unbroken from §12's start through §13 -- the reset beat never fired, which is the balloon's boundary-side cause. Fix: a refused rollover HARD-BLOCKS the next section -- either the blockers get cleaned and the rotation fires, or the section is deferred with its state; never start a fresh section on an un-rotated context. Boundary-side complement to item 1 (size trigger = mid-section) and the split-enforcement item.
+- [ ] **Flow: give a reviewed [/]-partial section a clean ship+stamp path -- today the gates deadlock and force a manual opt-out.**
+  Hit directly this session landing §13 (a legit [/] partial). Flipping the Commit item [x] without a formal stamp trips `section_review_required` (post-commit); adding the stamp trips `review_dispatch_gate` (`REVIEW_SKILLS` = review-todo-section / verify-todo-section only). Both funnel to a FULL review-todo-section re-run even when the section was ALREADY reviewed (cross-session, or via a scoped delta review of just the new bytes). The only escapes are a wasteful full re-review or a `SKIP_REVIEW_HOOK` / `SKIP_DISPATCH_GATE` opt-out -- exactly the "manual review-receipt flips / commit-gate opt-outs" Codex's canary target says to drive to ZERO. Fix: recognize a partial ship carrying fresh review evidence (a scoped adversarial receipt for the delta AND a valid cross-session review record for the unchanged bytes) as satisfying the stamp gate, so a reviewed [/] section ships + stamps without a full-pipeline re-run and without a bypass. Also relaxes the reliance the runner already has on opt-outs.
+- [ ] **Cadence: targeted suites DURING the fix loop; ONE full suite + smoke at the section boundary -- not re-run every round.**
+  Codex measured 40 builds + 19 tests + 17 smoke + 8 lint before §12 shipped -- an arrhythmic verify cadence where full suites and smoke re-ran on nearly every fix round. The rhythm should be: a TARGETED suite over the files under the current fix during the loop; the FULL suite + smoke exactly ONCE at the section boundary (which also satisfies the rollover receipt). This is a FREQUENCY discipline, distinct from the offload ROUTING item (which is about WHERE the run executes) and fully compatible with the rejected-smoke note (smoke still runs unconditionally at the boundary -- just not 17x mid-loop). Pairs with routing green mechanics through the deterministic `run-artifact.sh` envelopes.
+
+#### Refinements from the 2nd Codex flow/cadence pass (2026-07-12) -- sharpen the items above, not new work
+
+- [ ] **Refine 4d -> convergence-based review as a RULE: never redispatch an UNCHANGED review kind on UNCHANGED relevant inputs.**
+  This is the primary mechanism; the round-8/12 alarm becomes a secondary signal. Precise rule: CONTINUE a review kind while it produces a NEW Critical/High; STOP redispatching that kind once neither its relevant file set nor their content changed since its last verdict; after convergence, disposition Medium/Low through Fix/Reject/Accept. §12's 21 rounds included redispatches with ZERO substantive code change -- that is the waste, not the review depth. Still no round cap (see the Rejected note): productive Critical/High convergence stays unlimited.
+- [ ] **Add per-kind x per-file review invalidation: one changed file must not re-trigger ALL review kinds.**
+  Scope each kind to the file classes it covers: a docs/TODO-only fix reruns nothing (or only consistency); a kernel-path change reruns adversarial + the affected consistency review, NOT perf; a hot-path change reruns perf. Today any relevant-file change invalidates the whole receipt set and redispatches all three legs. This is the mechanical half of the convergence rule and pairs with the crash-aware envelope + completion-bound receipts.
+- [ ] **Refine the split-enforcement item: override SPLIT-RECOMMENDED only via a STRUCTURED preflight waiver, never free-form model judgment.**
+  For unattended runs: `fits-one-context` -> proceed; `SPLIT-RECOMMENDED` -> require deterministic sub-packets BEFORE implementation. An override must be a structured waiver carrying estimated files, subsystems, tests, and context budget -- not a model asserting "cohesive" (the exact §13 loophole: the worker overrode the split despite discovering the entire Job Object subsystem did not yet exist). Section-manifest already emits the verdict; the gate must refuse a bare override.
+- [ ] **Refine the completion-bound-receipts item: make the broker receipt a 4-state transaction.**
+  States: dispatch -> `running`; review process exits rc=0 -> `completed`; findings formally received via receiving-code-review -> `received`; staged tree hash still matches the reviewed bytes -> `content-valid`. Only `content-valid` satisfies the commit gate. The broker currently writes its manifest immediately after the background launch (`review-broker-codex-dispatch.sh:62`), so a receipt can read `completed` while the review is still running -- the root of the commit-gate disagreement. Complements `is_background_dispatch` learning the broker shape.
+- [ ] **Adopt the 8 runner invariants as the acceptance spec for all the flow/cadence items above.**
+  A run is healthy iff all hold: (1) never start another section after a refused rollover; (2) never directly edit `last-codex-review.json` in normal operation; (3) never override SPLIT-RECOMMENDED unattended without a structured waiver; (4) never repeat an unchanged build/review without changed input or a recorded retry reason; (5) don't rerun all review kinds because one relevant file changed; (6) preserve unlimited productive Critical/High review convergence; (7) run full validation once at the stable section boundary; (8) rotate context after every shipped section. The next canary can assert these directly as pass/fail.
 
 ## P2 -- efficiency / robustness
 
 - [x] **Harden `test_perf_syscall` against the TCG timing flake under concurrent Codex load.**
-  DONE 2026-07-03. Measured root cause: the gate asserted a fixed 200k-cycle
-  ceiling on the MEDIAN of 16, and the idle-host median is already 160,535
-  cycles (20% headroom) -- under TCG the guest TSC tracks HOST time, so any
-  concurrent load drags the median over. Fix: gate on MIN of 32 samples
-  (whichever sample escapes host preemption; a real syscall regression
-  inflates every sample incl. the min) + one bounded in-test retry round,
-  ceiling re-derived FOR the min estimator from measurements (idle min
-  ~150k; loaded min-of-two-rounds observed 212,011 -- host bursts outlast
-  in-test retries, so the bound carries the load headroom): 400k = ~2.5x
-  idle floor, still trips on a 2x syscall-path regression. Trend keys
-  (sys_yield_ns/cycles) keep median semantics; sys_yield_min_cycles added.
-  Verified: 2 consecutive green SUITE=exec runs (min 158,734 / median
-  176,601 on the final run); the mid-hardening run that FAILED at min
-  212,011 vs the old 200k proved the load case live.
+  DONE 2026-07-03. Measured root cause: the gate asserted a fixed 200k-cycle ceiling on the MEDIAN of 16, and the idle-host median is already 160,535 cycles (20% headroom) -- under TCG the guest TSC tracks HOST time, so any concurrent load drags the median over. Fix: gate on MIN of 32 samples (whichever sample escapes host preemption; a real syscall regression inflates every sample incl. the min) + one bounded in-test retry round, ceiling re-derived FOR the min estimator from measurements (idle min ~150k; loaded min-of-two-rounds observed 212,011 -- host bursts outlast in-test retries, so the bound carries the load headroom): 400k = ~2.5x idle floor, still trips on a 2x syscall-path regression. Trend keys (sys_yield_ns/cycles) keep median semantics; sys_yield_min_cycles added. Verified: 2 consecutive green SUITE=exec runs (min 158,734 / median 176,601 on the final run); the mid-hardening run that FAILED at min 212,011 vs the old 200k proved the load case live.
 
 - [x] **Verify the headless model-fallback behavior on the first real overload/flag.**
-  RESOLVED 2026-07-03 by official docs (code.claude.com model-config) +
-  policy change, not by waiting for the event:
-  (a) CONFIRMED: the fallback switch "lasts for the current turn only";
-  next turn re-tries the primary. Triggers are overload/unavailable/
-  non-retryable server errors -- NOT auth/billing/rate-limit/flags.
-  (b) ANSWERED: there is NO safeguard auto-switch under `-p` -- "a flagged
-  request ends the turn with a refusal" in non-interactive mode
-  (documented, hardcoded). So a Fable-primary overnight run could
-  refusal-loop on kernel/security sections; the 2026-07-03 Opus-primary
-  default eliminates the whole class (flags route TO Opus). The
-  "periodic --model opus pass over deferrals" idea is moot.
-  (c) primary == fallback is UNDOCUMENTED (chain dedupe implies the
-  fallback vanishes -- no degradation path); arm-sequencer.sh now WARNs
-  on that degenerate shape at arm time.
-  Residual: the first real 529 during an overnight confirms (a)
-  empirically -- gotcha line filed; nothing further to build.
+  RESOLVED 2026-07-03 by official docs (code.claude.com model-config) + policy change, not by waiting for the event: (a) CONFIRMED: the fallback switch "lasts for the current turn only"; next turn re-tries the primary. Triggers are overload/unavailable/ non-retryable server errors -- NOT auth/billing/rate-limit/flags. (b) ANSWERED: there is NO safeguard auto-switch under `-p` -- "a flagged request ends the turn with a refusal" in non-interactive mode (documented, hardcoded). So a Fable-primary overnight run could refusal-loop on kernel/security sections; the 2026-07-03 Opus-primary default eliminates the whole class (flags route TO Opus). The "periodic --model opus pass over deferrals" idea is moot. (c) primary == fallback is UNDOCUMENTED (chain dedupe implies the fallback vanishes -- no degradation path); arm-sequencer.sh now WARNs on that degenerate shape at arm time. Residual: the first real 529 during an overnight confirms (a) empirically -- gotcha line filed; nothing further to build.
 
-- [x] **Slice-read the active TODO and big sources instead of whole-file re-reads.**
-  DONE 2026-07-03, two layers:
-  - `slice_read_reminder.py` (PostToolUse Read, warning-only): whole-file
-    RE-read of a > 32 KB file within 30 min of a prior read -> one reminder
-    per path per window that a slice read satisfies the Edit freshness gate.
-    First full reads and slice reads never warn; selftest + tooling test.
-  - Doctrine at the three re-read hotspots: implement-todo-section step 1
-    (one full read per pass = orientation, later reads are slices),
-    review-todo-section Phase 1 (verification reads are slices at the
-    mapper's file:line targets), overnight-sequencer Read-discipline bullet.
-  Measured baseline for the next run's comparison: TODO-12 (1441 lines)
-  fully Read 59x, task.c (3216 lines) 40x, back-to-back duplicates within
-  one second; the Edit "file has not been read yet" re-gate drove 19 of 62
-  tool_use_errors. Original text follows.
+- [x] **Slice-read the active TODO and big sources instead of whole-file re-reads.** DONE 2026-07-03, two layers:
+  - `slice_read_reminder.py` (PostToolUse Read, warning-only): whole-file RE-read of a > 32 KB file within 30 min of a prior read -> one reminder per path per window that a slice read satisfies the Edit freshness gate. First full reads and slice reads never warn; selftest + tooling test.
+  - Doctrine at the three re-read hotspots: implement-todo-section step 1 (one full read per pass = orientation, later reads are slices), review-todo-section Phase 1 (verification reads are slices at the mapper's file:line targets), overnight-sequencer Read-discipline bullet. Measured baseline for the next run's comparison: TODO-12 (1441 lines) fully Read 59x, task.c (3216 lines) 40x, back-to-back duplicates within one second; the Edit "file has not been read yet" re-gate drove 19 of 62 tool_use_errors. Original text follows.
 
 - [x] **Pre-empt the top three hook-block churn sources (167 PreToolUse BLOCKs in one run).**
-  DONE 2026-07-03, each at its root:
-  (a) `todo_item_line_length` (77 blocks, 36% re-blocked): block message now
-  shows per-line overage + a count-before-retry recipe + an aim-for-230
-  margin target (retries were trimmed by feel and landed still-over); plus
-  a TODO-write-discipline bullet in the sequencer skill (count BEFORE the
-  first write).
-  (b) `agent_dispatch_required` (23 blocks, ~once per section): ROOT CAUSE
-  was the fixed 30-min freshness TTL expiring mid-section -- the mandated
-  step-3 dispatch had happened but long sections outlived the window. Now
-  section-pass-bound: a dispatch newer than the live implement-todo-section
-  entry's started_ts stays valid for the whole pass (orphaned entries
-  ignored; 30-min TTL kept as the no-pass fallback). 5-case fixture test.
-  (c) stale oracle cache (3 recurrences): explicit ordering rule in the
-  sequencer skill -- all TODO edits -> rebuild -> commit; the rebuild is
-  the LAST action before any todo/-touching commit.
+  DONE 2026-07-03, each at its root: (a) `todo_item_line_length` (77 blocks, 36% re-blocked): block message now shows per-line overage + a count-before-retry recipe + an aim-for-230 margin target (retries were trimmed by feel and landed still-over); plus a TODO-write-discipline bullet in the sequencer skill (count BEFORE the first write). (b) `agent_dispatch_required` (23 blocks, ~once per section): ROOT CAUSE was the fixed 30-min freshness TTL expiring mid-section -- the mandated step-3 dispatch had happened but long sections outlived the window. Now section-pass-bound: a dispatch newer than the live implement-todo-section entry's started_ts stays valid for the whole pass (orphaned entries ignored; 30-min TTL kept as the no-pass fallback). 5-case fixture test. (c) stale oracle cache (3 recurrences): explicit ordering rule in the sequencer skill -- all TODO edits -> rebuild -> commit; the rebuild is the LAST action before any todo/-touching commit.
 
 - [x] **Find out why MCP-first never fires in headless runs, then fix the root cause.**
-  DIAGNOSED + RESOLVED 2026-07-03 (systematic-debugging, empirical repro).
-  ROOT CAUSE: a startup RACE, not a connection failure and not approval.
-  Headless `claude -p` discovers the project MCP servers and connects them
-  ASYNCHRONOUSLY (~0.7s stdio handshake each -- neither is slow; both verified
-  handshaking) but does NOT block session init on the connection, and no knob
-  forces it (`MCP_TIMEOUT`/`MCP_TOOL_TIMEOUT` tested: no effect). On a cold
-  start -- the launcher's exact shape -- the init tool-list snapshot catches
-  both servers still `pending` ~2/3 of the time (measured: 2 of 3 cold runs =
-  0 mcp tools; the third = 29 tools + a successful `mcp__todo-graph__stats`
-  call), so the session begins with zero `mcp__` tools and cannot call them.
-  Approval is NOT the gate (`hasTrustDialogAccepted:true`; empty
-  `enabledMcpjsonServers` still loads them). No launcher-side deterministic
-  fix exists (init is async by design) and a non-deterministic pre-warm would
-  be a band-aid. FIX = the "explicitly scope the doctrine" branch: CLAUDE.md
-  MCP Usage rule 3 + overnight-sequencer skill + docs/infrastructure/
-  mcp-usage.md now scope MCP-first to "when the tools are loaded this
-  session" and point the headless fallback at the DETERMINISTIC CLIs the
-  servers wrap (`scripts/todo-graph/query.py`, `resolve_symbol.py`) + the
-  Grep/Glob tools (never Bash grep/sed). The Grep-tool-over-Bash-grep floor
-  is MCP-independent and stays always-on; NO MCP-non-use enforcement was
-  added (can't penalize a race the runner cannot win).
+  DIAGNOSED + RESOLVED 2026-07-03 (systematic-debugging, empirical repro). ROOT CAUSE: a startup RACE, not a connection failure and not approval. Headless `claude -p` discovers the project MCP servers and connects them ASYNCHRONOUSLY (~0.7s stdio handshake each -- neither is slow; both verified handshaking) but does NOT block session init on the connection, and no knob forces it (`MCP_TIMEOUT`/`MCP_TOOL_TIMEOUT` tested: no effect). On a cold start -- the launcher's exact shape -- the init tool-list snapshot catches both servers still `pending` ~2/3 of the time (measured: 2 of 3 cold runs = 0 mcp tools; the third = 29 tools + a successful `mcp__todo-graph__stats` call), so the session begins with zero `mcp__` tools and cannot call them. Approval is NOT the gate (`hasTrustDialogAccepted:true`; empty `enabledMcpjsonServers` still loads them). No launcher-side deterministic fix exists (init is async by design) and a non-deterministic pre-warm would be a band-aid. FIX = the "explicitly scope the doctrine" branch: CLAUDE.md MCP Usage rule 3 + overnight-sequencer skill + docs/infrastructure/ mcp-usage.md now scope MCP-first to "when the tools are loaded this session" and point the headless fallback at the DETERMINISTIC CLIs the servers wrap (`scripts/todo-graph/query.py`, `resolve_symbol.py`) + the Grep/Glob tools (never Bash grep/sed). The Grep-tool-over-Bash-grep floor is MCP-independent and stays always-on; NO MCP-non-use enforcement was added (can't penalize a race the runner cannot win).
 
 - [x] **Self-review each fix diff against the prior findings list before re-dispatching Codex.**
-  DONE 2026-07-03: added a mandatory PRE-DISPATCH SELF-DIFF GATE at all four
-  Codex re-dispatch points. Canonical rule in review-todo-section step 6
-  (where the §28 marathon ran), referenced from implement-todo-section step
-  15, codex-adversarial-review-section step 6, and codex-fix-review step 8b.
-  The gate reads the fix diff against this round's + prior rounds' findings
-  and self-checks the four fix-then-regress shapes §28 exhibited: scope creep,
-  an op reordered before its precondition (iosb-probe), `==` where a bit-flag
-  test is needed, and sentinel/boundary handling (INVALID_HANDLE_VALUE) --
-  plus a re-open check (a fix for finding N must not resurrect N-1). Clean
-  gate + localized fix = self-verify and proceed without a full round.
-  Doctrine, not a hook: the gate is a self-review discipline a deterministic
-  hook can't meaningfully verify, and the item frames it as a cheap
-  pre-dispatch pass. Original measurements follow.
+  DONE 2026-07-03: added a mandatory PRE-DISPATCH SELF-DIFF GATE at all four Codex re-dispatch points. Canonical rule in review-todo-section step 6 (where the §28 marathon ran), referenced from implement-todo-section step 15, codex-adversarial-review-section step 6, and codex-fix-review step 8b. The gate reads the fix diff against this round's + prior rounds' findings and self-checks the four fix-then-regress shapes §28 exhibited: scope creep, an op reordered before its precondition (iosb-probe), `==` where a bit-flag test is needed, and sentinel/boundary handling (INVALID_HANDLE_VALUE) -- plus a re-open check (a fix for finding N must not resurrect N-1). Clean gate + localized fix = self-verify and proceed without a full round. Doctrine, not a hook: the gate is a self-review discipline a deterministic hook can't meaningfully verify, and the item frames it as a cheap pre-dispatch pass. Original measurements follow.
 
 - [x] **Add `QUIET=1` to the straggler test.sh calls.**
-  DONE 2026-07-03 at the ROOT rather than per-call: `scripts/test.sh` now
-  defaults `QUIET_MODE=1` when `OVERNIGHT_SEQUENCER_RUN=1` (explicit `QUIET=0`
-  overrides for debugging; `QUIET=1` still works everywhere). Catches ALL
-  stragglers regardless of which skill/call omitted the flag -- no doctrine
-  reliance. QUIET keeps FAIL lines + summary + format lines, so nothing is
-  hidden. Interactive/CI unchanged (env unset -> default verbose). 5-case
-  precedence truth-table verified.
+  DONE 2026-07-03 at the ROOT rather than per-call: `scripts/test.sh` now defaults `QUIET_MODE=1` when `OVERNIGHT_SEQUENCER_RUN=1` (explicit `QUIET=0` overrides for debugging; `QUIET=1` still works everywhere). Catches ALL stragglers regardless of which skill/call omitted the flag -- no doctrine reliance. QUIET keeps FAIL lines + summary + format lines, so nothing is hidden. Interactive/CI unchanged (env unset -> default verbose). 5-case precedence truth-table verified.
 
 ## P3 -- operator UX
 
-- [x] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).**
-  DONE 2026-07-03 via the DEGRADE-CLEAN prong; the install prong was tried,
-  reverted, and re-scoped to TODO-07 (see the new follow-up below). Findings:
-  - Root cause of the WARN noise: pyright simply not installed (node/npm
-    present via nvm; setup.sh already declares it OPTIONAL-tier).
-  - DEGRADE-CLEAN (shipped): `scripts/lsp-mcp/bridge.py` now logs a missing
-    OPTIONAL LSP binary at INFO with status `not-installed` (new
-    `warm-skipped-not-installed` event) and `_emit_health_event` downgrades
-    `lsp-binary-missing` restart-failed/failed to INFO. Verified 0 WARN lines
-    when pyright is hidden from PATH; test_bridge.sh 99/99 (5a SKIPs).
-  - INSTALL tried + REVERTED: `npm install -g pyright` (v1.1.411) made
-    `is_available()` True and warm-start + documentSymbol work, BUT
-    `workspace/symbol` returns EMPTY even with a scoped pyrightconfig (probed
-    to 60s; documentSymbol returns 38 syms incl. `main`, workspaceSymbol
-    returns 0). That is the bridge's flagship py cap, and the 5a self-test
-    correctly turned SKIP->FAIL. Rather than paper over the self-test or ship
-    a red suite (which would re-red the CI just fixed), reverted the install;
-    the deeper integration gap is the new TODO-07 follow-up.
+- [x] **Fix the lsp-bridge pyright health gap (found during MCP-race diagnosis 2026-07-03).** DONE 2026-07-03 via the DEGRADE-CLEAN prong; the install prong was tried, reverted, and re-scoped to TODO-07 (see the new follow-up below). Findings:
+  - Root cause of the WARN noise: pyright simply not installed (node/npm present via nvm; setup.sh already declares it OPTIONAL-tier).
+  - DEGRADE-CLEAN (shipped): `scripts/lsp-mcp/bridge.py` now logs a missing OPTIONAL LSP binary at INFO with status `not-installed` (new `warm-skipped-not-installed` event) and `_emit_health_event` downgrades `lsp-binary-missing` restart-failed/failed to INFO. Verified 0 WARN lines when pyright is hidden from PATH; test_bridge.sh 99/99 (5a SKIPs).
+  - INSTALL tried + REVERTED: `npm install -g pyright` (v1.1.411) made `is_available()` True and warm-start + documentSymbol work, BUT `workspace/symbol` returns EMPTY even with a scoped pyrightconfig (probed to 60s; documentSymbol returns 38 syms incl. `main`, workspaceSymbol returns 0). That is the bridge's flagship py cap, and the 5a self-test correctly turned SKIP->FAIL. Rather than paper over the self-test or ship a red suite (which would re-red the CI just fixed), reverted the install; the deeper integration gap is the new TODO-07 follow-up.
 
-- [ ] **Fix pyright workspace/symbol integration in lsp-bridge (TODO-07).**
-  With pyright-langserver installed (v1.1.411), the bridge's per-file py
-  analysis works (`textDocument/documentSymbol` returns build.py's 38 symbols
-  incl. `main`) but `workspace/symbol` returns 0 for any query (empty or
-  `main`), even with a `pyrightconfig.json` scoping `include: ["scripts"]`
-  (probed to 60s, fresh spawn). This is the flagship py cap the bridge routes
-  to MCP ("where is symbol X across all .py files"), and the `_self_test_pyright`
-  5a smoke asserts exactly it. Likely community-pyright (open-source
-  langserver) not populating a workspace symbol index the way Pylance does,
-  or a missing initialize option the bridge should advertise/drive. Investigate:
-  (a) does pyright need `initializationOptions`/`workspace.symbol` capability
-  the bridge omits; (b) does it need files pre-opened or a didChangeWatchedFiles
-  index prime; (c) if community pyright genuinely lacks workspace symbols,
-  decide whether to keep it for per-file features only (hover/def/refs/
-  documentSymbol) and adjust the 5a smoke to a capability pyright provides, or
-  swap the Python LSP. Owner: TODO-07 lsp-mcp-bridge. Repro: install pyright,
-  `python3 scripts/lsp-mcp/bridge.py --self-test --lang=py`.
+- [x] **Fix pyright workspace/symbol integration in lsp-bridge (TODO-07).**
+  RESOLVED 2026-07-12 via option (c) (accept per-file-only + fix the smoke). Root cause researched against microsoft/pyright source + docs: open-source `pyright-langserver` has NO cross-file workspace symbol index -- `workspace/symbol` only walks already-open program files, gated on `workspace.isInitialized`, and the persisted background-index feature is Pylance-only (`python.analysis.indexing` does not exist in open-source pyright; not settable via `initializationOptions`, `workspace/configuration`, or `pyrightconfig.json`). The `initialized` notification is already sent (`lsp_client.py:1157`), ruling out the common client-side cause; the residual empty-on-open-file cause needs a live LSP wire trace and is left open in TODO-07. Shipped: dropped `workspaceSymbolProvider` from `python_server.required_capabilities()`, retargeted `_self_test_pyright` (5a) to `textDocument/documentSymbol` (asserts non-empty; works and stays green on install), updated tests 5a/5c + the TODO-07 §5 follow-up + `docs/infrastructure/mcp-usage.md`. Cross-file py symbol lookup uses the deterministic fallback (`resolve_symbol.py` + rg). test_bridge.sh 99/99 (pyright SKIP on this host; live-install verification pending). Chasing a real workspace/symbol path or swapping to an indexing Python LSP (basedpyright / jedi-language-server / pylsp) stays owned by TODO-07.
 
 - [x] **Fix / document the `latest.log` path friction.**
-  DONE 2026-07-03, both levers (no new script -- enhanced the existing
-  `scripts/overnight/overnight-monitor.sh`, which had the exact friction):
-  it now resolves the repo root from BASH_SOURCE (absolute paths -- works
-  from ANY directory, not just repo root), and waits for the first report
-  when armed-but-not-yet-launched (`--no-wait` to fail fast). `tail -F`
-  follows the symlink across watchdog relaunches. The arm-sequencer summary
-  now prints the ABSOLUTE monitor command + report path. Verified: runs from
-  /tmp resolving the absolute latest.log; clean rc=1 on an empty report dir.
+  DONE 2026-07-03, both levers (no new script -- enhanced the existing `scripts/overnight/overnight-monitor.sh`, which had the exact friction): it now resolves the repo root from BASH_SOURCE (absolute paths -- works from ANY directory, not just repo root), and waits for the first report when armed-but-not-yet-launched (`--no-wait` to fail fast). `tail -F` follows the symlink across watchdog relaunches. The arm-sequencer summary now prints the ABSOLUTE monitor command + report path. Verified: runs from /tmp resolving the absolute latest.log; clean rc=1 on an empty report dir.
 
 ## Evaluated and rejected (recorded so we don't re-litigate)
 
-- [x] **`tuannvm/codex-mcp-server`** (evaluated 2026-07-02) -- NOT adopted. An MCP
-  server wrapping the same Codex CLI we already drive; exposes `codex` / `review`
-  / `websearch` / session tools (522 stars, ISC, active). Rejected because: (1) it
-  duplicates existing infra -- `codex-companion.mjs` already yields structured
-  verdicts + task-thread sessions, and `web-research-analyst` covers web search;
-  (2) the ENTIRE evidence/gate/receipt layer keys on the Bash shape
-  `bash scripts/codex-dispatch.sh '[review-kind: ...] ...'` (section-commit gate,
-  `codex_review_completed` receipt, four-dispatch gate, receiving-review gate,
-  model-flag block, `runner_bash_guard`); an MCP tool call is invisible to all of
-  them, so adopting it means rewriting the whole layer and forking the one
-  canonical dispatch shape; (3) MCP servers needing interactive `codex login` may
-  be unauthenticated in the headless systemd overnight run -- the exact context
-  we are improving; (4) its general `codex` coding-assistant tool invites
-  Codex-as-implementer, which the TODO-10 tool-neutral re-scope deliberately
-  removed (Codex is the sole external reviewer, never a driver). Reconsider only
-  if the repo ever needs a reviewer path the CLI genuinely cannot provide.
+- [x] **`rg` vs `grep` across the runner's shell scripts**
+  (asked 2026-07-11, investigated 2026-07-12) -- NO change needed; the current split is correct by design. `rg`'s only advantage is recursive file-tree traversal (fast walk + `.gitignore`-awareness), which exists ONLY when searching files on disk. All 13 `grep` calls in `scripts/overnight/*.sh` + the sequencer skill are STREAM FILTERS -- `systemctl | grep -F`, `echo "$OUT" | grep -q`, `printf | grep -oE` -- where `rg` gives zero benefit and `grep` (POSIX, always present) is the right tool. Zero recursive `grep -r` exists anywhere in the control plane, so there is no "should be rg but isn't" case. The ONE place that does a recursive file-tree search -- `impact-cone.py:55` (`grep_files`, the changed-symbol caller scan) -- already prefers `rg` with a documented rationale (honors `.gitignore`, sees untracked-but-not-ignored files that `git grep` misses) and a `git grep` FALLBACK. That fallback is the tell: the runner treats `rg` as OPTIONAL, not guaranteed, which is exactly why the stream-filter greps must NOT become `rg` (it would add a hard dependency the runner deliberately avoids). Separately, the CLAUDE.md `"Grep/Glob tools (never Bash grep/sed)"` doctrine governs Claude's own session tool-calls, NOT the runner's internal shell plumbing -- different layer, no conflict. Reconsider only if a new recursive file-tree search is added to a runner shell script; that one should use `rg` with a `git grep` fallback, mirroring `impact-cone.py`.
+
+- [x] **`tuannvm/codex-mcp-server`**
+  (evaluated 2026-07-02) -- NOT adopted. An MCP server wrapping the same Codex CLI we already drive; exposes `codex` / `review` / `websearch` / session tools (522 stars, ISC, active). Rejected because: (1) it duplicates existing infra -- `codex-companion.mjs` already yields structured verdicts + task-thread sessions, and `web-research-analyst` covers web search; (2) the ENTIRE evidence/gate/receipt layer keys on the Bash shape `bash scripts/codex-dispatch.sh '[review-kind: ...] ...'` (section-commit gate, `codex_review_completed` receipt, four-dispatch gate, receiving-review gate, model-flag block, `runner_bash_guard`); an MCP tool call is invisible to all of them, so adopting it means rewriting the whole layer and forking the one canonical dispatch shape; (3) MCP servers needing interactive `codex login` may be unauthenticated in the headless systemd overnight run -- the exact context we are improving; (4) its general `codex` coding-assistant tool invites Codex-as-implementer, which the TODO-10 tool-neutral re-scope deliberately removed (Codex is the sole external reviewer, never a driver). Reconsider only if the repo ever needs a reviewer path the CLI genuinely cannot provide.
 
 ## Done (recorded so we don't redo)
 
-- [x] Model policy: `--model` primary + `--fallback-model opus` wired into the
-  launcher, captured at arm time (commit 053d1643).
-- [x] `agent_dispatch_recorder` accepting the harness-renamed `Agent` tool name
-  (was keying on the old `Task`); fixed by the runner itself (commit 78a69f8c).
-- [x] `overnight-log-explorer` agent created 2026-07-03 (`.claude/agents/`,
-  sonnet analyst, Read/Grep/Glob): run-transcript cost/efficiency digests
-  (tool-call accounting, wait/poll waste, churn). Source of the measured
-  counts in the P1/P2 items above (three parallel lens sweeps over
-  run-20260702-141810.log; load-bearing counts re-verified by the main
-  session per the trust contract).
-- [x] Fix/review LOOP wiring shipped 2026-07-03: implement-todo-section
-  step 15 and review-todo-section step 6 now route loop rebuilds/tests
-  through checks-runner BY DEFAULT (with the measured 21-build/§8 rationale
-  inline) + re-dispatch review-evidence-mapper on moved fix targets +
-  lsp-bridge for repeated symbol lookups. Backed by two warning-only hooks:
-  `build_offload_reminder.py` (overnight SECTIONS, bare build/test Bash with
-  no recent dispatch -> checks-runner reminder; warning-only because
-  checks-runner's own Bash traverses the hook) and `inline_churn_monitor.py`
-  (25+ inline ops since last dispatch -> route reminder, interactive +
-  overnight). Live-run adoption still to be verified on the next overnight.
-- [x] review-todo-section step 7 duplicate gate-walk removed 2026-07-03: a
-  fresh same-diff kernel/boot-quality-auditor dispatch now IS the mechanical
-  gate pass (main session triages findings per receiving-code-review);
-  the main-session domain-skill re-read/re-walk is required only when the
-  auditor was not dispatched or failed. Measured: 8/8 auditor dispatches in
-  run-20260702-141810.log were followed within seconds by a full 235-line
-  kernel-code-quality/SKILL.md re-read (log:402/403 through 5694/5696).
+- [x] Model policy: `--model` primary + `--fallback-model opus` wired into the launcher, captured at arm time (commit 053d1643).
+- [x] `agent_dispatch_recorder` accepting the harness-renamed `Agent` tool name (was keying on the old `Task`); fixed by the runner itself (commit 78a69f8c).
+- [x] `overnight-log-explorer` agent created 2026-07-03 (`.claude/agents/`, sonnet analyst, Read/Grep/Glob): run-transcript cost/efficiency digests (tool-call accounting, wait/poll waste, churn).
+  Source of the measured counts in the P1/P2 items above (three parallel lens sweeps over run-20260702-141810.log; load-bearing counts re-verified by the main session per the trust contract).
+- [x] Fix/review LOOP wiring shipped 2026-07-03: implement-todo-section step 15 and review-todo-section step 6 now route loop rebuilds/tests through checks-runner BY DEFAULT (with the measured 21-build/§8 rationale inline) +
+  re-dispatch review-evidence-mapper on moved fix targets + lsp-bridge for repeated symbol lookups. Backed by two warning-only hooks: `build_offload_reminder.py` (overnight SECTIONS, bare build/test Bash with no recent dispatch -> checks-runner reminder; warning-only because checks-runner's own Bash traverses the hook) and `inline_churn_monitor.py` (25+ inline ops since last dispatch -> route reminder, interactive + overnight). Live-run adoption still to be verified on the next overnight.
+- [x] review-todo-section step 7 duplicate gate-walk removed 2026-07-03: a fresh same-diff kernel/boot-quality-auditor dispatch now IS the mechanical gate pass (main session triages findings per receiving-code-review); the
+  main-session domain-skill re-read/re-walk is required only when the auditor was not dispatched or failed. Measured: 8/8 auditor dispatches in run-20260702-141810.log were followed within seconds by a full 235-line kernel-code-quality/SKILL.md re-read (log:402/403 through 5694/5696).

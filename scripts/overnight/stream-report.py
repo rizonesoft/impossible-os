@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 
@@ -21,6 +22,43 @@ from datetime import datetime
 # volume rather than just moving it into a subagent.
 _SEARCH_RE = re.compile(
     r"(?:^|[|;&`]|\$\()\s*(?:rg|grep|egrep|fgrep|find|ag|ack|locate)\b")
+
+
+def _git_head() -> str | None:
+    """Current HEAD SHA, best-effort (None on any failure). Called only at a
+    section flush (a handful of times per run), never per-turn."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        out = r.stdout.strip()
+        return out if r.returncode == 0 and out else None
+    except Exception:
+        return None
+
+
+def _atomic_write(path: str, data: str) -> None:
+    """Overwrite `path` atomically (temp + os.replace) so a crash mid-write can
+    never leave a torn live snapshot. Best-effort; never raises into the pipe."""
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="ascii") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def _run_id_from_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    stem = os.path.basename(path)
+    for suf in (".jsonl", ".json"):
+        if stem.endswith(suf):
+            stem = stem[: -len(suf)]
+    return stem or None
 
 
 def stamp() -> str:
@@ -211,20 +249,35 @@ class SectionMetrics:
 
     def __init__(self, path: str | None) -> None:
         self.path = path
+        # Live snapshot: the running (unflushed) section state, rewritten
+        # atomically each turn so a crash mid-section does not lose the tail --
+        # a final section with no progress/result marker used to vanish entirely.
+        self.snapshot_path = os.environ.get("OVERNIGHT_METRICS_SNAPSHOT") or (
+            (path + ".live") if path else None)
+        # Attribution stamps carried on every record.
+        self.run_id = os.environ.get("OVERNIGHT_RUN_ID") or _run_id_from_path(path)
         self.index = 0
         self.model_seen: str | None = None  # run-level, NOT reset per section
-        # Run-level dedupe: the CLI emits one stream event PER CONTENT BLOCK,
-        # each repeating the same message envelope (id + usage). Counting every
-        # event inflated turns ~1.9x (7101 reported vs 3688 real requests in
-        # run-20260710) and double-added usage. One message id = one API request.
-        self._seen_msg_ids: set = set()
+        # Section boundary SHAs: a section starts at the prior flush's HEAD and
+        # ends at the HEAD read when it flushes.
+        self._start_sha: str | None = _git_head()
+        self._last_head: str | None = self._start_sha
         self._reset()
 
     def _reset(self) -> None:
+        # tokens/turns hold ONLY id-less (synthetic/test) usage, summed as-is.
         self.turns = 0
         self.tokens = {k: 0 for k in self.TOKEN_FIELDS}
         self.sidechain_turns = 0
         self.sidechain_tokens = {k: 0 for k in self.TOKEN_FIELDS}
+        # Per-message-id best usage (main + sidechain). The CLI emits one stream
+        # event PER CONTENT BLOCK, each repeating the message envelope; input +
+        # cache-read are stable across them but output_tokens GROWS as the message
+        # streams. First-seen dedupe therefore captured a PARTIAL output count
+        # (the ~47x undercount: 12,553 reported vs ~588,840 real for one section).
+        # Keep the MAX per field per id; turns = number of distinct ids.
+        self._main_msg: dict = {}
+        self._side_msg: dict = {}
         self.agent_dispatches = 0
         self.grep_calls = 0
         self.lsp_calls = 0
@@ -260,25 +313,35 @@ class SectionMetrics:
             self.model_seen = model
 
     def add_usage(self, usage, msg_id=None, sidechain: bool = False) -> None:
-        """Count one API request's usage exactly once, into the main-loop or
-        sidechain (subagent) bucket. Duplicate stream events for the same
-        message id (one per content block) are ignored; events without an id
-        (synthetic/test) count individually as before."""
+        """Fold one stream event's usage into the section totals. Events sharing
+        a message id are ONE API request: keep the MAX of each field for that id
+        (output_tokens grows across the per-content-block events, so max = the
+        final complete count; input/cache-read are stable). Id-less events
+        (synthetic/test) sum individually. Turns = number of distinct ids +
+        id-less events. Every call refreshes the atomic live snapshot."""
         if not isinstance(usage, dict):
             return
         if msg_id:
-            if msg_id in self._seen_msg_ids:
-                return
-            self._seen_msg_ids.add(msg_id)
-        bucket = self.sidechain_tokens if sidechain else self.tokens
-        if sidechain:
-            self.sidechain_turns += 1
+            store = self._side_msg if sidechain else self._main_msg
+            best = store.get(msg_id)
+            if best is None:
+                best = {}
+                store[msg_id] = best
+            for k in self.TOKEN_FIELDS:
+                v = usage.get(k)
+                if isinstance(v, int):
+                    best[k] = max(best.get(k, 0), v)
         else:
-            self.turns += 1
-        for k in self.TOKEN_FIELDS:
-            v = usage.get(k)
-            if isinstance(v, int):
-                bucket[k] += v
+            bucket = self.sidechain_tokens if sidechain else self.tokens
+            if sidechain:
+                self.sidechain_turns += 1
+            else:
+                self.turns += 1
+            for k in self.TOKEN_FIELDS:
+                v = usage.get(k)
+                if isinstance(v, int):
+                    bucket[k] += v
+        self.snapshot()
 
     def add_tool(self, name: str, inp=None, sidechain: bool = False) -> None:
         # Legacy aggregate counters (main + sidechain combined) kept for
@@ -310,17 +373,40 @@ class SectionMetrics:
         bucket = self.side_tools if sidechain else self.main_tools
         bucket[key] = bucket.get(key, 0) + 1
 
-    def flush(self, marker: str) -> None:
-        if not self.path:
-            return
-        rec = {
+    def _totals(self):
+        """(main_tokens, side_tokens, main_turns, side_turns), folding the
+        per-message-id maxima into the id-less sums."""
+        main = dict(self.tokens)
+        side = dict(self.sidechain_tokens)
+        for u in self._main_msg.values():
+            for k in self.TOKEN_FIELDS:
+                main[k] += u.get(k, 0)
+        for u in self._side_msg.values():
+            for k in self.TOKEN_FIELDS:
+                side[k] += u.get(k, 0)
+        return (main, side,
+                self.turns + len(self._main_msg),
+                self.sidechain_turns + len(self._side_msg))
+
+    def _pending(self) -> bool:
+        return bool(self.turns or self.sidechain_turns or self._main_msg
+                    or self._side_msg or self.main_tools or self.side_tools)
+
+    def _record(self, marker: str, end_sha) -> dict:
+        main, side, turns, side_turns = self._totals()
+        return {
+            "run_id": self.run_id,
             "section_index": self.index,
             "marker": marker,
             "timestamp": stamp(),
-            "turns": self.turns,
-            **self.tokens,
-            "sidechain_turns": self.sidechain_turns,
-            **{f"sidechain_{k}": v for k, v in self.sidechain_tokens.items()},
+            "todo": os.environ.get("OVERNIGHT_TODO") or None,
+            "section": os.environ.get("OVERNIGHT_SECTION") or None,
+            "start_sha": self._start_sha,
+            "end_sha": end_sha,
+            "turns": turns,
+            **main,
+            "sidechain_turns": side_turns,
+            **{f"sidechain_{k}": v for k, v in side.items()},
             "agent_dispatches": self.agent_dispatches,
             "grep_calls": self.grep_calls,
             "lsp_calls": self.lsp_calls,
@@ -329,9 +415,31 @@ class SectionMetrics:
             "model": self.model_seen,
             "effort": os.environ.get("OVERNIGHT_EFFORT") or None,
         }
+
+    def snapshot(self) -> None:
+        """Rewrite the live (unflushed) section snapshot atomically. Cheap:
+        reuses the last-known HEAD, no git call per turn."""
+        if not self.snapshot_path:
+            return
+        _atomic_write(self.snapshot_path,
+                      json.dumps(self._record("live", self._last_head)) + "\n")
+
+    def flush(self, marker: str) -> None:
+        if not self.path:
+            return
+        # An EOF/error flush must be a no-op when the prior boundary already
+        # drained the section (clean 'final' then reset); progress/final always
+        # write (explicit boundaries). This is what recovers a trailing section
+        # that ended with no progress/result marker instead of losing it.
+        if marker == "eof" and not self._pending():
+            return
+        end_sha = _git_head()
+        self._last_head = end_sha
+        rec = self._record(marker, end_sha)
         with open(self.path, "a", encoding="ascii") as fh:
             fh.write(json.dumps(rec) + "\n")
         self.index += 1
+        self._start_sha = end_sha
         self._reset()
 
 
@@ -404,18 +512,23 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
 
 def main() -> int:
     metrics = SectionMetrics(os.environ.get("OVERNIGHT_METRICS_FILE") or None)
-    for raw in sys.stdin:
-        line = raw.rstrip("\n")
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            sys.stdout.write(raw if raw.endswith("\n") else raw + "\n")
-            sys.stdout.flush()
-            continue
-        if isinstance(event, dict):
-            handle(event, metrics)
+    try:
+        for raw in sys.stdin:
+            line = raw.rstrip("\n")
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                sys.stdout.write(raw if raw.endswith("\n") else raw + "\n")
+                sys.stdout.flush()
+                continue
+            if isinstance(event, dict):
+                handle(event, metrics)
+    finally:
+        # Capture a trailing section that ended with no progress/result marker
+        # (stdin EOF, a kill, or an exception) instead of dropping its tail.
+        metrics.flush("eof")
     return 0
 
 
