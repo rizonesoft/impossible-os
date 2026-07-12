@@ -68,7 +68,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
 | 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [/]   |
-| 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
+| 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1, T12 §7 |  [/]   |
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [/]   |
 
@@ -512,6 +512,9 @@ Windows exposes per-process protection levels (`PROCESS_PROTECTION_LEVEL_INFORMA
 
 **Test checkpoint:** a None-protection process opening a WinTcb process for TERMINATE/VM_WRITE/DUP_HANDLE is denied (STATUS_ACCESS_DENIED); a higher-level process opening a lower one succeeds; the dominance matrix test exercises every (level, level) pair. `klog(LOG_WARN, "ob", "PPL: denied 0x%x from level %u to level %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
+> **Deferred:** 2026-07-12 | Codex design review (needs-attention; 4 High confirmed via receiving-code-review). Real PPL is a security boundary that CANNOT be delivered until the process-handle-rights model lands: process operations resolve targets by raw PID and never check handle `granted_access` (`task_from_handle` at `nt_process.c:29-38`; NtTerminateProcess/NtWriteVirtualMemory/NtSetInformationProcess all raw-PID), so stripping access at handle-open (OB callback or inline) enforces nothing -- shipping it would be non-enforcing security theatre. Blocked on -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7` (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects" at line 413). Signer-class-derived assignment additionally blocked -> XREF: `02-kernel-core/TODO-19-code-integrity-trust-policy.md §4` (item: "EIF sig-block ABI decision (prereq)" at line 139).
+> **Deferred (impl spec when unblocked):** 2026-07-12 | Build per the reviewed design: (a) pure dominance-matrix core mapping GENERIC_ALL/MAXIMUM_ALLOWED to concrete rights BEFORE filtering; deny TERMINATE/CREATE_THREAD/VM_OPERATION/VM_READ/VM_WRITE/DUP_HANDLE/SET_INFORMATION/SET_QUOTA/CREATE_PROCESS/SUSPEND_RESUME for non-dominating accessors, always preserve QUERY_LIMITED_INFORMATION + SYNCHRONIZE. (b) `ps_protection` set-once atomic field initialized with release semantics BEFORE slot publication, reset on slot reuse, fork-inherited by copy. (c) kernel-only CAS-from-None setter completed before `num_tasks++` (no ring-3 self-elevation; PID 0 = WinTcb). (d) pin the accessor task explicitly -- do NOT derive the principal from the global `current_task` cursor (single-CPU today at `task.c:65`/`1146`/`1390`). (e) consume via the ObpProcessType `ObRegisterCallbacks` filter once NtOpenProcess routes through the real `PROCESS_OBJECT`. Add SMP concurrent-open tests with distinct accessor levels.
+
 ---
 
 ## 17. Process Groups and Sessions
@@ -565,7 +568,7 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15/§18 deferred (needs TODO-06 §357 slot reuse) |
-| 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |
+| 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16 deferred (needs T12 §7 handle-rights model) |
 | 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
 | 💎   | Core-dump / dumpable policy   | ✅ WER / MiniDump              | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 deferred (needs §15 + TODO-27) |
 | 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
