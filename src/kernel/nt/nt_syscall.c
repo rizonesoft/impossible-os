@@ -18,6 +18,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"
+#include "kernel/nt/pledge.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/timer.h"
@@ -172,6 +173,22 @@ static NTSTATUS NtCreateFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_OBJECT_PATH_INVALID;
     path = resolved_path;
 
+    vfs_flags = disposition_to_vfs(disposition, access, options);
+
+    /* pledge/unveil gate (user-originated calls only), BEFORE any side effect.
+     * pledge_check_file returns STATUS_PLEDGE_VIOLATION -> the SSDT dispatcher
+     * terminates the process after this handler returns; unveil_check returns
+     * STATUS_ACCESS_DENIED (no termination). */
+    if (pledge_user_mode()) {
+        struct task *t = task_current();
+        NTSTATUS pr = pledge_check_file(t, vfs_flags);
+        if (pr != STATUS_SUCCESS)
+            return pr;
+        pr = unveil_check(t, path, unveil_perms_for_vfs(vfs_flags));
+        if (pr != STATUS_SUCCESS)
+            return pr;
+    }
+
     /* Check if file exists before open (for IOSB Information) */
     {
         struct vfs_node *probe = vfs_open(path, VFS_O_READ);
@@ -197,8 +214,6 @@ static NTSTATUS NtCreateFile_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         }
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
-
-    vfs_flags = disposition_to_vfs(disposition, access, options);
 
     /* Use ob_create_file_handle for the open+wrap+handle allocation */
     h = ob_create_file_handle(path, vfs_flags);
@@ -639,7 +654,14 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
         }
         dir_node = fo->vfs_node;
     } else {
-        /* Explicit no-handle legacy shape: C:\ root. */
+        /* Explicit no-handle legacy shape: C:\ root. This implicit open bypasses
+         * NtCreateFile's unveil check, so gate the root enumeration on unveil 'r'
+         * (a task unveiled to a child subtree must not enumerate the root). */
+        if (pledge_user_mode() &&
+            unveil_check(task_current(), "C:\\", UNVEIL_R) != STATUS_SUCCESS) {
+            if (iosb) { iosb->Status = STATUS_ACCESS_DENIED; iosb->Information = 0; }
+            return STATUS_ACCESS_DENIED;
+        }
         dir_node = vfs_get_drive_root('C');
         if (!dir_node) {
             if (iosb) { iosb->Status = STATUS_OBJECT_PATH_NOT_FOUND; iosb->Information = 0; }

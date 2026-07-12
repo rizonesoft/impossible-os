@@ -625,10 +625,16 @@
 #define SSDT_NtQueryCurrentDirectory          0x03DA
 
 /* ====================================================================
+ * 0x03DB-0x03DC: Process Model Extensions -- Restriction (TODO-21 s12)
+ * ==================================================================== */
+#define SSDT_NtPledge                         0x03DB
+#define SSDT_NtUnveil                         0x03DC
+
+/* ====================================================================
  * Total count and bounds
  *
- * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 473).
- * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03DA).
+ * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 475).
+ * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03DC).
  *
  * WARNING: When adding a new service number:
  *   1. Add the #define SSDT_NtXxx line in the correct functional range
@@ -650,10 +656,10 @@
  *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
  *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
  *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
- *   Diagnostics: 0x03DB  (0x03D9/0x03DA taken by Process Model Ext -- CWD)
+ *   Diagnostics: 0x03DD  (0x03D9/0x03DA CWD, 0x03DB/0x03DC pledge/unveil)
  * ==================================================================== */
-#define SSDT_MAIN_COUNT                       473
-#define SSDT_LAST_MAIN_INDEX                  0x03DA  /* SSDT_NtQueryCurrentDirectory */
+#define SSDT_MAIN_COUNT                       475
+#define SSDT_LAST_MAIN_INDEX                  0x03DC  /* SSDT_NtUnveil */
 
 /* Compile-time verification:
  * - Count must fit within the table capacity

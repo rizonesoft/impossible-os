@@ -94,6 +94,14 @@ HANDLE ob_create_file_handle(const char *path, uint32_t access)
     fo->offset   = 0;
     fo->pipe_id  = -1;
     fo->pipe_end = 0;
+    /* Retain the canonical open path for later unveil re-checks (node parent
+     * chains are unreliable on IXFS/FAT32). Bounded copy. */
+    {
+        uint32_t i = 0;
+        for (; i < sizeof(fo->path) - 1 && path[i]; i++)
+            fo->path[i] = path[i];
+        fo->path[i] = '\0';
+    }
 
     h = ObpAllocateHandle(&task_current()->handle_table, fo, access, 0);
     /* Drop the creation ref -- the handle holds its own */

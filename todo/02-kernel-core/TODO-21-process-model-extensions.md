@@ -64,7 +64,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [/]   |
 | 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [/]   |
 | 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [/]   |
-| ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [ ]   |
+| ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [ ]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
 | 💎   |  15   | Parenting, reaping, and wait4/waitid semantics            | §14            |  [ ]   |
@@ -366,16 +366,28 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > [!TIP]
 > Neither Windows nor Linux provides a simple, auditable process restriction API. Windows has `SetProcessMitigationPolicy` (limited to security flags) and restricted tokens (complex). Linux has seccomp-bpf (requires writing BPF programs) and Landlock (filesystem only). OpenBSD's `pledge()` and `unveil()` are widely admired for their simplicity: a single syscall restricts what a process can do, irreversibly. Impossible OS provides both, unified with the capability model.
 
-- [ ] `NtPledge(const char *promises)`: restrict the calling process to a set of named syscall categories. Categories: `"stdio"` (read/write/close), `"rpath"` (read-only file access), `"wpath"` (write file access), `"cpath"` (create/delete files), `"inet"` (network sockets), `"proc"` (fork/exec), `"exec"` (exec only), `"dns"` (DNS resolution), `"tty"` (terminal I/O). Once pledged, attempting a syscall outside the pledged set terminates the process with `STATUS_PLEDGE_VIOLATION`.
-- [ ] Add `uint64_t pledge_mask` to `struct task`; `0` = not pledged (all allowed); non-zero = bitmask of allowed categories
-- [ ] In SSDT dispatcher: if `task->pledge_mask != 0`, check if the invoked syscall's category bit is set; if not, terminate with `STATUS_PLEDGE_VIOLATION` and log the violation (→ XREF: `TODO-12-native-api-ssdt.md §25` -- per-index bitmap filter runs in the same dispatcher path; pledge category check runs AFTER the bitmap filter; both must pass for the syscall to proceed)
-- [ ] `NtUnveil(const char *path, const char *permissions)`: restrict filesystem visibility. After the first `NtUnveil` call, only unveiled paths are accessible. `permissions` is a subset of `"rwxc"` (read, write, execute, create). Calling `NtUnveil(NULL, NULL)` locks the unveil set -- no further calls allowed.
-- [ ] Add `unveil_entry_t *unveil_list` to `struct task`; VFS path resolution checks against this list if non-NULL
-- [ ] Both `NtPledge` and `NtUnveil` are irreversible -- once applied, restrictions can only be tightened, never loosened
-- [ ] Register both in SSDT (→ XREF TODO-12 §5)
-- [ ] Commit: `"kernel: task -- pledge/unveil process restriction (OpenBSD-inspired)"`
+- [x] `NtPledge(UNICODE_STRING *promises)` (SSDT `0x03DB`): tighten-only category pledge via `pledge_apply` CAS intersect -- a second pledge only narrows, never widens (design fix: an OR mask would expand privilege).
+- [x] `uint64_t pledge_mask` in `struct task`: bit 63 `PLEDGE_PLEDGED` sentinel + bits 0-8 allowed categories; zeroed on slot reuse, inherited across fork/create.
+- [x] Coarse `pledge_check_syscall` in `ssdt_dispatch` after `syscall_filter` (user-mode only): unclassified DENY, core allowed, file-open reaches the handler; terminate via `task_exit` after audit close (-> XREF TODO-12 §25).
+- [x] Fine file checks map ACCESS_MASK/info-class to `rpath`/`wpath`/`cpath`: `pledge_check_file` (NtCreateFile/NtDeleteFile) + `pledge_check_setinfo` (NtSetInformationFile) -- the dispatcher sees only the service number.
+- [x] Legacy INT 0x80 ABI gated too (`pledge_check_legacy` in `syscall_handler` + fine `unveil_check` in SYS_OPENFILE/READFILE/READDIR) -- SSDT-only enforcement was bypassable via INT 0x80 (adversarial fix).
+- [x] `NtUnveil(UNICODE_STRING *path, *permissions)` (SSDT `0x03DC`, subset of `rwxc`): `unveil_check` at the 4 path NT handlers (not pure `vfs_resolve_path`); `NtUnveil(NULL,NULL)` locks; deny = `STATUS_ACCESS_DENIED`.
+- [x] `unveil_entry_t *unveil_list` in `struct task` (leaf `unveil_lock`): folded (`vfs_path_fold`) prefixes matched on a component boundary, longest wins (design fix: `C:\AllowedEvil` matched under `C:\Allowed`); freed at reap.
+- [x] Irreversible: pledge intersects tighten-only, unveil set locks. Fork clones pledge_mask + unveil list before `num_tasks++` (OOM aborts fork); NtCreateProcess inherits into the child (design fix: else child escapes).
+- [x] `STATUS_PLEDGE_VIOLATION` = `0xE0000201` (customer NTSTATUS; no Windows equivalent; avoids the `0xE0000001` bugcheck). Registered via `pledge_register_ssdt` (-> XREF TODO-12 §5).
+- [x] Commit: `"kernel: task -- pledge/unveil process restriction (OpenBSD-inspired)"`
 
-**Test checkpoint:** After `NtPledge("stdio rpath")`, calling `NtCreateFile` for write returns `STATUS_PLEDGE_VIOLATION` and process terminates. After `NtUnveil("/C:\\Impossible\\System", "rx")`, reading from `C:\Impossible\System\shell.exe` succeeds; reading from `C:\Users\` returns `STATUS_ACCESS_DENIED`. Serial log shows `"task: pledge violation -- syscall <N> not in pledge set"`. `POST16(0xD0C0)` on entry, `POST16(0xD0C1)` after pledge_mask set, `POST16(0xD0C2)` after SSDT dispatcher check wired. Range `0xD0Cx` confirmed free. If crash at 0xD0C2: SSDT dispatcher modification broke -- revert the dispatch check and fall back to un-pledged execution. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** After `NtPledge("stdio rpath")`, `NtCreateFile` for write returns `STATUS_PLEDGE_VIOLATION` and the process terminates (`klog(LOG_WARN, "pledge", "pledge violation -- syscall 0x%X not in pledge set ...")`). After `NtUnveil("C:\\Impossible\\System", "rx")` then `NtUnveil(NULL, NULL)`, reading under `C:\Impossible\System` succeeds; reading `C:\Users\` returns `STATUS_ACCESS_DENIED`. No POST16 (post-Phase-3 syscall path; klog is the diagnostic surface). The pure decision core (parse, tighten intersection, classifier, file/unveil category mapping, folded component-boundary matching) is unit-tested (TEST_CAT_SCHED); the terminate-on-violation behavior is serial-validated on QEMU WHPX + TCG. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 14 ProcExt pledge/unveil suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/nt/pledge.c` + `pledge.h`: `NtPledge`/`NtUnveil` (SSDT `0x03DB`/`0x03DC`) with a pure unit-tested core (parse, tighten-intersect, classifier, folded boundary match) and a task-aware live API.
+> - Split enforcement: coarse category check in `ssdt_dispatch` (after the §25 bitmap filter, terminate after audit close); fine ACCESS_MASK/info-class + `unveil_check` in the 4 path-resolving NT file handlers, not in pure `vfs_resolve_path`.
+> - `struct task` gains `pledge_mask` (tighten-only CAS intersect) + a leaf-lock unveil list; zeroed on slot reuse, inherited fail-closed across fork and NtCreateProcess, freed at the reap barrier.
+> - Design review reshaped the model (intersect-not-OR, unclassified-deny, terminate-after-audit, fork/create inheritance, folded boundary match); adoptions in commit `<hash>`.
+> - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
+> - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 
 ---
 
@@ -412,6 +424,7 @@ Central cleanup point for all per-process resources when a process terminates. W
   - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
   - Remove from job object if assigned (-> XREF: §13)
 - [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
+- [ ] Unpublished-child construction API: inherit ALL security state (filter, token, pledge/unveil, mitigation) BEFORE `task_create`/`task_fork` publish the child READY, with full rollback on failure (-> XREF: §12).
 - [ ] Commit: `"kernel: task -- process exit cleanup (handles, locks, timer res, memory)"`
 
 **Test checkpoint:** Create a process that opens files with locks + timer resolution request. Kill the process. Verify: all locks released, timer resolution reverts to default, handles closed, no resource leak. Serial log shows cleanup counts. Test on QEMU WHPX, TCG.
@@ -488,7 +501,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
 | 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
 | ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease           |
-| ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ⬜ §12 -- OpenBSD-inspired            |
+| ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ✅ §12 pledge+unveil (SSDT dispatch)  |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.

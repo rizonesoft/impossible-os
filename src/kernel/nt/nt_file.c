@@ -24,6 +24,8 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/task.h"
+#include "kernel/nt/pledge.h"
+#include "kernel/nt/zw.h"           /* ssdt_previous_mode via pledge_user_mode */
 #include "kernel/mm/heap.h"
 #include "kernel/timer.h"
 
@@ -282,6 +284,42 @@ static NTSTATUS NtSetInformationFile_handler(
 
     node = fo->vfs_node;
 
+    /* Argument-dependent pledge check: rename/dispose require cpath,
+     * truncate/allocate/set-attributes require wpath (the coarse dispatcher
+     * classifies NtSetInformationFile as core because the category depends on
+     * info_class). A violation returns and the dispatcher terminates. */
+    if (pledge_user_mode()) {
+        NTSTATUS pr = pledge_check_setinfo(task_current(), info_class);
+        if (pr != STATUS_SUCCESS)
+            return pr;
+    }
+
+    /* unveil: mutating an ALREADY-OPEN file still requires the appropriate
+     * write/create permission on its path -- an r-only unveiled handle must not
+     * truncate, delete, rename, or alter metadata. Reconstruct the source path
+     * and check it fail-closed (rename also checks the destination in its case). */
+    if (pledge_user_mode() &&
+        __atomic_load_n(&task_current()->unveil_active, __ATOMIC_ACQUIRE)) {
+        uint8_t need_u = 0;
+        switch (info_class) {
+        case FileBasicInformation:
+        case FileEndOfFileInformation:
+        case FileAllocationInformation:
+            need_u = UNVEIL_W; break;
+        case FileDispositionInformation:
+        case FileRenameInformation:   /* removes the source name -> cpath on source */
+            need_u = UNVEIL_C; break;
+        default: break;
+        }
+        if (need_u) {
+            /* fo->path is the authoritative canonical open path (node parent
+             * chains are unreliable on IXFS/FAT32). Fail closed if absent. */
+            if (fo->path[0] == '\0' ||
+                unveil_check(task_current(), fo->path, need_u) != STATUS_SUCCESS)
+                return STATUS_ACCESS_DENIED;
+        }
+    }
+
     switch (info_class) {
     case FileBasicInformation: {
         FILE_BASIC_INFORMATION *bi;
@@ -368,9 +406,56 @@ static NTSTATUS NtSetInformationFile_handler(
                                 sizeof(ascii_name), (uint32_t *)0);
         if (rns != STATUS_SUCCESS)
             return rns;
+        /* Unveil the DESTINATION, not just the (already-open) source: a rename
+         * to a sibling name would otherwise escape a file-granularity unveil.
+         * Rename is same-parent-dir, so dest = dirname(source) + '\' + newname. */
+        if (pledge_user_mode() &&
+            __atomic_load_n(&task_current()->unveil_active, __ATOMIC_ACQUIRE)) {
+            const char *src_path = fo->path;   /* authoritative canonical path */
+            char dst_path[VFS_MAX_PATH];
+            uint32_t cut, j, k, namelen, plen;
+            /* Fail CLOSED: without the source path the destination cannot be
+             * verified against unveil -- deny. */
+            if (src_path[0] == '\0')
+                return STATUS_ACCESS_DENIED;
+            for (plen = 0; src_path[plen]; plen++)
+                ;
+            cut = plen;
+            while (cut > 0 && src_path[cut - 1] != '\\')
+                cut--;                         /* strip the source's last component */
+            for (namelen = 0; ascii_name[namelen]; namelen++)
+                ;
+            /* Deny on truncation: unveil must authorize the SAME complete path
+             * the rename will use, not a silently shortened prefix. */
+            if (cut + namelen >= VFS_MAX_PATH)
+                return STATUS_ACCESS_DENIED;
+            j = 0;
+            for (k = 0; k < cut; k++)
+                dst_path[j++] = src_path[k];
+            for (k = 0; k < namelen; k++)
+                dst_path[j++] = ascii_name[k];
+            dst_path[j] = '\0';
+            if (unveil_check(task_current(), dst_path, UNVEIL_C) != STATUS_SUCCESS)
+                return STATUS_ACCESS_DENIED;
+        }
         if (node->parent && node->parent->ops && node->parent->ops->rename) {
             if (node->parent->ops->rename(node->parent, node->name, ascii_name, 0) != 0)
                 return STATUS_UNSUCCESSFUL;
+        }
+        /* Keep this handle's authoritative path current: a later path-mutating
+         * setinfo (truncate/dispose/rename) must authorize against the NEW name,
+         * not the stale source. Rename is same-parent-dir, so replace the last
+         * component of fo->path with ascii_name. (Aliased handles to the same
+         * node are updated when node-shared canonical paths land -- see the
+         * FILE_OBJECT canonical-path follow-up.) */
+        {
+            uint32_t cut = 0, i;
+            for (i = 0; fo->path[i]; i++)
+                if (fo->path[i] == '\\')
+                    cut = i + 1;               /* one past the last separator */
+            for (i = 0; ascii_name[i] && cut + i < sizeof(fo->path) - 1; i++)
+                fo->path[cut + i] = ascii_name[i];
+            fo->path[cut + i] = '\0';
         }
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
@@ -434,6 +519,19 @@ static NTSTATUS NtDeleteFile_handler(
     /* Resolve relative paths against the caller's cwd before the VFS call. */
     if (task_resolve_path(path, resolved, sizeof(resolved)) != 0)
         return STATUS_OBJECT_PATH_INVALID;
+
+    /* Deleting a file is a cpath operation (pledge) and needs unveil 'c' on the
+     * path. VFS_O_DELETE_ON_CLOSE maps to both. A pledge violation returns and
+     * the dispatcher terminates; an unveil denial returns STATUS_ACCESS_DENIED. */
+    if (pledge_user_mode()) {
+        struct task *t = task_current();
+        NTSTATUS pr = pledge_check_file(t, VFS_O_DELETE_ON_CLOSE);
+        if (pr != STATUS_SUCCESS)
+            return pr;
+        pr = unveil_check(t, resolved, UNVEIL_C);
+        if (pr != STATUS_SUCCESS)
+            return pr;
+    }
 
     ret = vfs_unlink(resolved);
     return (ret == 0) ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -701,6 +799,12 @@ static NTSTATUS NtQueryAttributesFile_handler(
     /* Resolve relative paths against the caller's cwd before the VFS call. */
     if (task_resolve_path(path, resolved, sizeof(resolved)) != 0)
         return STATUS_OBJECT_PATH_INVALID;
+
+    /* Reading metadata by path needs unveil 'r' (the rpath pledge category is
+     * enforced coarsely at the dispatcher). Denied paths look nonexistent. */
+    if (pledge_user_mode() &&
+        unveil_check(task_current(), resolved, UNVEIL_R) != STATUS_SUCCESS)
+        return STATUS_ACCESS_DENIED;
 
     ret = vfs_stat(resolved, &st);
     if (ret != 0)

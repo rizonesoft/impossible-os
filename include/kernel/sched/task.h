@@ -109,6 +109,11 @@ struct thread {
     uint32_t    parent_task;    /* index into tasks[] (owning task) */
     int32_t     exit_status;    /* exit status (set on THREAD_DEAD) */
     int32_t     join_tid;       /* thread we're waiting on (-1 = none) */
+    uint8_t     pledge_pending; /* a fine handler-side pledge check on THIS thread
+                                 * flagged a violation; the dispatch tail terminates
+                                 * on this (not the NTSTATUS value, which an audit
+                                 * hook may also return). Per-thread so a sibling's
+                                 * tail cannot consume this thread's provenance. */
     /* --- Suspend / resume --- */
     uint32_t    suspend_count;  /* >0 = suspended (NtSuspendThread/NtResumeThread) */
     /* --- Priority (for priority-aware scheduler and PI) --- */
@@ -242,6 +247,25 @@ struct task {
      * parent at task_fork (a spawn via NtCreateProcess starts fresh). See
      * include/kernel/nt/mitigation_policy.h for the MIT_* bit definitions. */
     uint64_t mitigation_flags;
+    /* --- OpenBSD-style process restriction (pledge / unveil) ---
+     * pledge_mask holds ALLOWED syscall-category bits with a sentinel (bit 63)
+     * marking "has pledged"; 0 = never pledged (all allowed). Tighten-only via a
+     * CAS intersection (see pledge_apply) -- a plain |= would EXPAND privilege.
+     * unveil_list is a leaf-lock-guarded, append-only allowlist of folded path
+     * prefixes; NULL = full filesystem visible. Both are zeroed on slot
+     * (re)creation and inherited fail-closed at fork BEFORE the child is
+     * published. Freed at the reap barrier (pledge_unveil_teardown). See
+     * include/kernel/nt/pledge.h. */
+    uint64_t pledge_mask;
+    struct unveil_entry *unveil_list;
+    uint8_t  unveil_locked;
+    uint8_t  unveil_active;      /* set on the first unveil_add OR unveil_lock: the
+                                  * task is now filesystem-restricted, so an ACTIVE
+                                  * but EMPTY list (lock-before-add) denies all --
+                                  * enforcement gates on THIS, not unveil_list != NULL */
+    uint32_t unveil_gen;         /* bumped under unveil_lock on every add/replace;
+                                  * lets a lock-free clone detect concurrent mutation */
+    spinlock_t unveil_lock;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */

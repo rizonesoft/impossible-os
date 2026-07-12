@@ -124,6 +124,11 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 
 #define STATUS_PRIVILEGE_NOT_HELD           ((NTSTATUS)0xC0000061)  /* required privilege missing */
 #define STATUS_BAD_IMPERSONATION_LEVEL      ((NTSTATUS)0xC00000A5)  /* impersonation level too low */
+/* Customer-defined status (bit 29 set): OpenBSD pledge()/unveil() have no
+ * Windows NTSTATUS equivalent, so this is a vendor code, not a borrowed real
+ * one. Severity ERROR (bits 31-30) + customer (bit 29). 0xE0000001 is already a
+ * KeBugCheckEx code (panic.c), so use 0xE0000201 for log-diagnostic clarity. */
+#define STATUS_PLEDGE_VIOLATION             ((NTSTATUS)0xE0000201)  /* pledged syscall outside promise set */
 
 /* ---- Error codes -- registry --------------------------------------------- */
 

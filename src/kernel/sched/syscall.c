@@ -14,6 +14,7 @@
 #include "kernel/nt/zw.h"
 #include "kernel/security/privileges.h"  /* SeSinglePrivilegeCheck, SeShutdownPrivilege */
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on SYS_KILL */
+#include "kernel/nt/pledge.h"           /* pledge/unveil enforcement on the legacy ABI */
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
@@ -154,18 +155,38 @@ static NTSTATUS sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
     const char *name = (const char *)name_ptr;
     uint8_t *buf = (uint8_t *)buf_ptr;
     struct vfs_node *root = vfs_get_drive_root('C');
+    struct task *t = task_current();
     struct vfs_node *file;
+    char resolved[VFS_MAX_PATH];
     uint64_t to_read;
+    int opened = 0;
 
     if (!root || !name || !buf || buf_size == 0)
         return STATUS_INVALID_PARAMETER;
 
-    file = vfs_finddir(root, name);
+    /* Reading a file by name opens it for read: rpath pledge + unveil 'r'. */
+    if (pledge_check_file(t, VFS_O_READ) != STATUS_SUCCESS)
+        pledge_terminate((uint32_t)SYS_READFILE);   /* noreturn */
+
+    if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE)) {
+        /* Resolve root-relative (matching the C:\ read below), require unveil
+         * 'r' on the EXACT path, and read THAT canonical path -- never validate
+         * one path and read another, and deny on any resolution failure. */
+        if (vfs_resolve_path("C:\\", name, resolved, sizeof(resolved)) != 0 ||
+            unveil_check(t, resolved, UNVEIL_R) != STATUS_SUCCESS)
+            return STATUS_ACCESS_DENIED;
+        file = vfs_open(resolved, VFS_O_READ);
+        opened = 1;
+    } else {
+        file = vfs_finddir(root, name);
+    }
     if (!file)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
     to_read = file->size < buf_size ? file->size : buf_size;
     vfs_read(file, 0, (uint32_t)to_read, buf);
+    if (opened)
+        vfs_close(file);
     *bytes_out = to_read;
     return STATUS_SUCCESS;
 }
@@ -181,6 +202,15 @@ static NTSTATUS sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
 
     if (!root || !buf || buf_size == 0)
         return STATUS_INVALID_PARAMETER;
+
+    /* Listing the C:\ root reads directory metadata: rpath pledge + unveil 'r'. */
+    {
+        struct task *t = task_current();
+        if (pledge_check_file(t, VFS_O_READ) != STATUS_SUCCESS)
+            pledge_terminate((uint32_t)SYS_READDIR);   /* noreturn */
+        if (unveil_check(t, "C:\\", UNVEIL_R) != STATUS_SUCCESS)
+            return STATUS_ACCESS_DENIED;
+    }
 
     entry = vfs_readdir(root, (uint32_t)index);
     if (!entry)
@@ -379,6 +409,18 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     int64_t ret = -1;
     KIRQL entry_irql = syscall_lower_entry_irql();
 
+    /* pledge gate for the legacy INT 0x80 ABI. Without this, a pledged process
+     * could bypass pledge/unveil entirely by using this second ring-3 entry
+     * path instead of the SSDT. INT 0x80 is a user-only gate (DPL 3; the kernel
+     * never issues it), so no previous-mode check is needed. No audit session
+     * runs here, so a violation terminates immediately. */
+    {
+        struct task *pt = task_current();
+        if (pt && __atomic_load_n(&pt->pledge_mask, __ATOMIC_ACQUIRE) != 0 &&
+            pledge_check_legacy(pt, syscall_nr) != STATUS_SUCCESS)
+            pledge_terminate((uint32_t)syscall_nr);
+    }
+
     switch (syscall_nr) {
     case SYS_WRITE: {
         uint64_t bytes = 0;
@@ -405,11 +447,27 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_EXEC: {
         const char *filename = (const char *)arg1;
         struct vfs_node *root = vfs_get_drive_root('C');
+        struct task *t = task_current();
         struct vfs_node *file;
+        char resolved[VFS_MAX_PATH];
+        int opened = 0;
 
         if (!root || !filename) { ret = -1; break; }
 
-        file = vfs_finddir(root, filename);
+        /* A filesystem-restricted task must have unveil 'x' on the exact image
+         * path it executes (UNVEIL_X's only enforcement site). Resolve
+         * root-relative (matching the C:\ lookup), fail closed, and read THAT
+         * canonical path. */
+        if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE)) {
+            if (vfs_resolve_path("C:\\", filename, resolved, sizeof(resolved)) != 0 ||
+                unveil_check(t, resolved, UNVEIL_X) != STATUS_SUCCESS) {
+                ret = -1; break;
+            }
+            file = vfs_open(resolved, VFS_O_READ);
+            opened = 1;
+        } else {
+            file = vfs_finddir(root, filename);
+        }
         if (!file) {
             klog(LOG_DEBUG, "sys", "File not found: %s", filename);
             ret = -1;
@@ -418,9 +476,11 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
 
         {
             uint8_t *buf = (uint8_t *)kmalloc(file->size);
-            if (!buf) { ret = -1; break; }
-            vfs_read(file, 0, file->size, buf);
-            ret = (int64_t)task_exec(buf, file->size);
+            uint64_t fsz = file->size;
+            if (!buf) { if (opened) vfs_close(file); ret = -1; break; }
+            vfs_read(file, 0, (uint32_t)fsz, buf);
+            if (opened) vfs_close(file);
+            ret = (int64_t)task_exec(buf, fsz);
             if (ret < 0) kfree(buf);
         }
         break;
@@ -581,6 +641,25 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_OPENFILE: {
         const char *path = (const char *)arg1;
         uint32_t access = (uint32_t)arg2;
+        struct task *t = task_current();
+        /* Fine pledge (rpath/wpath/cpath) + unveil check, mirroring the NT
+         * NtCreateFile path (this legacy open bypasses that handler). */
+        if (pledge_check_file(t, access) != STATUS_SUCCESS)
+            pledge_terminate((uint32_t)SYS_OPENFILE);   /* noreturn */
+        /* A filesystem-restricted task must resolve to a canonical path, pass
+         * the unveil check, and open THAT path -- never fall through to the raw
+         * input on a resolution failure (the VFS may truncate an overlong path
+         * and reach a file outside the unveiled subtree). */
+        if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE)) {
+            char resolved[VFS_MAX_PATH];
+            if (!path || task_resolve_path(path, resolved, sizeof(resolved)) != 0 ||
+                unveil_check(t, resolved, unveil_perms_for_vfs(access)) != STATUS_SUCCESS) {
+                ret = -1;
+                break;
+            }
+            ret = (int64_t)ob_create_file_handle(resolved, access);
+            break;
+        }
         ret = (int64_t)ob_create_file_handle(path, access);
         break;
     }

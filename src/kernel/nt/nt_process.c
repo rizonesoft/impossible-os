@@ -17,6 +17,7 @@
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 #include "kernel/nt/syscall_filter.h"
+#include "kernel/nt/pledge.h"
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/zw.h"           /* ProbeForReadIfUser / ProbeForWrite / ssdt_previous_mode */
 #include "kernel/cpu_security.h"    /* copy_from_user / copy_to_user */
@@ -104,6 +105,28 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         if (inherited_filter)
             kfree(inherited_filter);
         return STATUS_NO_MEMORY;
+    }
+
+    /* pledge/unveil ALWAYS carry to a spawned child (unlike the opt-in syscall
+     * filter) -- a pledged parent must not escape by spawning an unrestricted
+     * child. A pledged-without-proc parent is already terminated at the
+     * dispatcher before reaching here. An unpledged parent clones nothing. */
+    {
+        struct task *child = task_get_by_pid((uint32_t)pid);
+        if (child && pledge_unveil_inherit(child, task_current()) != 0) {
+            /* OOM cloning the unveil set: refuse to run an under-restricted
+             * child. Mark it DEAD so find_next_task skips it and it is reaped;
+             * do NOT free it here -- task_create already published it READY, so
+             * another CPU could be mid-task_wrapper and freeing its stack would
+             * be a use-after-free. Closing the pre-exec entry==0 window and the
+             * general publish-before-inherit ordering is the unpublished-child-
+             * construction work in the process-exit-cleanup TODO. */
+            child->state = TASK_DEAD;
+            child->exit_status = (int32_t)STATUS_INSUFFICIENT_RESOURCES;
+            if (inherited_filter)
+                kfree(inherited_filter);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
     }
 
     /* Inherit handles from parent if requested. Best-effort: ob_handle_table_inherit
@@ -279,9 +302,29 @@ static NTSTATUS NtTerminateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3
     if (!t)
         return STATUS_INVALID_HANDLE;
 
-    if (t == task_current()) {
-        task_exit(exit_code);
-        return STATUS_SUCCESS;
+    /* pledge: self-termination is survival-core, but terminating ANOTHER process
+     * requires the `proc` category (matching the legacy SYS_KILL gate). The
+     * coarse dispatcher classifies NtTerminateProcess as core because the target
+     * is argument-dependent; enforce the distinction here. Snapshot the caller
+     * ONCE (the current-task cursor is a global read; per-CPU tracking is a
+     * separate hardening item) and use it for both the identity and the check.
+     * On violation the dispatcher terminates the caller after this returns. */
+    {
+        struct task *self = task_current();
+        if (t != self && pledge_user_mode()) {
+            uint64_t pm = self ? __atomic_load_n(&self->pledge_mask,
+                                                 __ATOMIC_ACQUIRE) : 0;
+            if ((pm & PLEDGE_PLEDGED) && !(pm & PLEDGE_PROC)) {
+                struct thread *th = thread_current();
+                if (th)
+                    th->pledge_pending = 1;
+                return STATUS_PLEDGE_VIOLATION;
+            }
+        }
+        if (t == self) {
+            task_exit(exit_code);
+            return STATUS_SUCCESS;
+        }
     }
 
     if (t->state == TASK_DEAD)
@@ -315,6 +358,23 @@ static NTSTATUS NtTerminateThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     thr = thread_from_handle(handle, &owner);
     if (!thr)
         return STATUS_INVALID_HANDLE;
+
+    /* pledge: terminating a thread in ANOTHER process requires `proc`, like
+     * NtTerminateProcess and SYS_KILL. Own-thread termination is core. Snapshot
+     * the caller once (global cursor read; see NtTerminateProcess). */
+    {
+        struct task *self = task_current();
+        if (owner && owner != self && pledge_user_mode()) {
+            uint64_t pm = self ? __atomic_load_n(&self->pledge_mask,
+                                                 __ATOMIC_ACQUIRE) : 0;
+            if ((pm & PLEDGE_PLEDGED) && !(pm & PLEDGE_PROC)) {
+                struct thread *th = thread_current();
+                if (th)
+                    th->pledge_pending = 1;
+                return STATUS_PLEDGE_VIOLATION;
+            }
+        }
+    }
 
     if (thr == thread_current()) {
         thread_exit(exit_code);
@@ -509,6 +569,23 @@ static NTSTATUS NtQueryInformationProcess_handler(uint64_t a1, uint64_t a2,
     t = task_from_handle(handle);
     if (!t || !buffer)
         return STATUS_INVALID_PARAMETER;
+
+    /* pledge: self-query is survival-core, but querying ANOTHER process's image
+     * name / PEB / parent / priority requires `proc` (task_from_handle resolves
+     * any numeric handle as a PID, bypassing NtOpenProcess). Snapshot self once. */
+    {
+        struct task *self = task_current();
+        if (t != self && pledge_user_mode()) {
+            uint64_t pm = self ? __atomic_load_n(&self->pledge_mask,
+                                                 __ATOMIC_ACQUIRE) : 0;
+            if ((pm & PLEDGE_PLEDGED) && !(pm & PLEDGE_PROC)) {
+                struct thread *th = thread_current();
+                if (th)
+                    th->pledge_pending = 1;
+                return STATUS_PLEDGE_VIOLATION;
+            }
+        }
+    }
 
     switch (info_class) {
     case ProcessBasicInformation: {
@@ -830,6 +907,14 @@ static NTSTATUS NtSetCurrentDirectory_handler(uint64_t a1, uint64_t a2,
     /* Canonicalize against the current cwd (handles ".", "..", relative). */
     if (task_resolve_path(in, resolved, sizeof(resolved)) != 0)
         return STATUS_NAME_TOO_LONG;
+
+    /* Entering a directory reads path metadata: rpath pledge + unveil 'r'. */
+    if (pledge_user_mode()) {
+        if (pledge_check_file(t, VFS_O_READ) != STATUS_SUCCESS)
+            return STATUS_PLEDGE_VIOLATION;   /* pending flag set; tail terminates */
+        if (unveil_check(t, resolved, UNVEIL_R) != STATUS_SUCCESS)
+            return STATUS_ACCESS_DENIED;
+    }
 
     /* Must exist AND be a directory. Release the probe ref on every path. */
     node = vfs_open(resolved, VFS_O_READ);

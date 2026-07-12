@@ -23,6 +23,9 @@ typedef struct file_object {
     int32_t          pipe_end;   /* PIPE_READ (0) or PIPE_WRITE (1) */
     uint32_t         dir_enum_index;  /* directory enumeration cursor (S27) */
     uint32_t         _dir_pad;
+    char             path[512];  /* canonical open path (VFS_MAX_PATH); authoritative
+                                  * for unveil re-checks on an open handle, since
+                                  * vfs_node parent chains are unreliable on IXFS/FAT32 */
 } FILE_OBJECT;
 
 /* --- API ----------------------------------------------------------------- */

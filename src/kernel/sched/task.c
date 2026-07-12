@@ -32,6 +32,7 @@
 #include "kernel/security/token.h"  /* SeCreateSystemToken, NtDuplicateToken, primary-token API */
 #include "kernel/nt/syscall_filter.h"
 #include "kernel/nt/mitigation_policy.h"
+#include "kernel/nt/pledge.h"       /* pledge_unveil_inherit / _teardown */
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -388,11 +389,18 @@ boot_result_t task_init(void)
             spinlock_t init = SPINLOCK_INIT;
             tasks[i].cwd_lock = init;
             tasks[i].rlimit_lock = init;
+            tasks[i].unveil_lock = init;
         }
+        tasks[i].pledge_mask = 0;
+        tasks[i].unveil_list = (struct unveil_entry *)0;
+        tasks[i].unveil_locked = 0;
+        tasks[i].unveil_active = 0;
+        tasks[i].unveil_gen = 0;
         tasks[i].num_threads = 0;
         for (j = 0; j < THREAD_MAX; j++) {
             tasks[i].threads[j].id = 0;
             tasks[i].threads[j].state = THREAD_DEAD;
+            tasks[i].threads[j].pledge_pending = 0;
             tasks[i].threads[j].rsp = 0;
             tasks[i].threads[j].stack_base = (uint8_t *)0;
             tasks[i].threads[j].stack_size = 0;
@@ -702,6 +710,12 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
+    tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
+    tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
+    tasks[pid].unveil_locked = 0;
+    tasks[pid].unveil_active = 0;
+    tasks[pid].unveil_gen = 0;
+    tasks[pid].threads[0].pledge_pending = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -869,6 +883,12 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
+    tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
+    tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
+    tasks[pid].unveil_locked = 0;
+    tasks[pid].unveil_active = 0;
+    tasks[pid].unveil_gen = 0;
+    tasks[pid].threads[0].pledge_pending = 0;
 
     /* Thread 0 = main thread (uses task's kernel stack) */
     tasks[pid].threads[0].id = 0;
@@ -1583,6 +1603,21 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
+    /* Inherit pledge_mask + a deep copy of the unveil set into the child BEFORE
+     * any stack allocation, so an OOM clone fails the fork CLOSED with only the
+     * token/filter to release (like the stack-alloc paths below) -- a fork child
+     * must never escape the parent's restrictions by starting unrestricted.
+     * Runs before num_tasks++ publishes the child. */
+    if (pledge_unveil_inherit(&tasks[child_pid], &tasks[parent_pid_val]) != 0) {
+        klog(LOG_ERROR, "sched",
+             "task_fork: pledge/unveil inheritance OOM; failing fork closed");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        if (inherited_filter)
+            kfree(inherited_filter);
+        return -1;
+    }
+
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
@@ -1591,6 +1626,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        pledge_unveil_teardown(&tasks[child_pid]);
         return -1;
     }
 
@@ -1603,6 +1639,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        pledge_unveil_teardown(&tasks[child_pid]);
         return -1;
     }
 
@@ -1706,6 +1743,7 @@ int task_fork(struct interrupt_frame *frame)
      * inherit a prior tenant's impersonation token. */
     tasks[child_pid].token = inherited_token;
     tasks[child_pid].threads[0].impersonation_token = (void *)0;
+    tasks[child_pid].threads[0].pledge_pending = 0;  /* no stale provenance into a fork child */
 
     /* Inherit the parent's mitigation policy from the single fork snapshot,
      * committed before num_tasks++ publishes the child so it can never run with
@@ -2696,6 +2734,9 @@ void task_cleanup(uint32_t pid)
      * DEAD, so no thread of it can be mid-dispatch reading a retired snapshot. */
     syscall_filter_task_teardown(&tasks[pid]);
 
+    /* Free the unveil list at the same reap barrier (no thread mid file-open). */
+    pledge_unveil_teardown(&tasks[pid]);
+
     /* Close all handles and free handle table */
     ob_handle_table_destroy(&tasks[pid].handle_table);
 
@@ -3223,6 +3264,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    t->threads[tid].pledge_pending = 0;
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
     t->threads[tid].kernel_stack_base = (uint8_t *)0;
     t->threads[tid].kernel_stack_pages = 0;
@@ -3439,6 +3481,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    t->threads[tid].pledge_pending = 0;
 
     /* Per-thread kernel stack ownership (for thread_free_stacks) */
     t->threads[tid].kernel_rsp = (uint64_t)(kstack + kstack_pages * 4096);

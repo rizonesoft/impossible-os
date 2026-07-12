@@ -18,6 +18,8 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/nt_file.h"
 #include "kernel/nt/mitigation_policy.h"
+#include "kernel/nt/pledge.h"
+#include "kernel/sched/syscall.h"
 #include "kernel/types.h"
 
 /* Local ASCII string compare (no dependency on live libc in the test TU). */
@@ -466,6 +468,198 @@ static void test_mit_child_set_clear_denied(void)
                 "a refused clear leaves MIT_NO_CHILD_PROCESS set");
 }
 
+/* ============================================================================
+ * Section 12: pledge / unveil pure decision core
+ * ============================================================================ */
+
+static void test_pledge_parse_valid(void)
+{
+    uint64_t m = 0;
+    TEST_ASSERT_EQ(pledge_parse("stdio rpath", &m), 0, "parse of known tokens ok");
+    TEST_ASSERT((m & PLEDGE_STDIO) != 0, "stdio bit set");
+    TEST_ASSERT((m & PLEDGE_RPATH) != 0, "rpath bit set");
+    TEST_ASSERT((m & PLEDGE_WPATH) == 0, "wpath bit not set");
+    TEST_ASSERT((m & PLEDGE_PLEDGED) == 0, "parse yields no sentinel (raw mask)");
+}
+
+static void test_pledge_parse_unknown_rejected(void)
+{
+    uint64_t m = 0;
+    TEST_ASSERT_EQ(pledge_parse("stdio bogus", &m), -1, "unknown token rejects the call");
+}
+
+static void test_pledge_parse_empty(void)
+{
+    uint64_t m = 0xFF;
+    TEST_ASSERT_EQ(pledge_parse("   ", &m), 0, "whitespace-only parses ok");
+    TEST_ASSERT_EQ(m, 0ull, "empty promise yields mask 0");
+}
+
+static void test_pledge_tighten_first(void)
+{
+    uint64_t m = pledge_tighten(0, PLEDGE_STDIO | PLEDGE_RPATH);
+    TEST_ASSERT((m & PLEDGE_PLEDGED) != 0, "first pledge sets the pledged sentinel");
+    TEST_ASSERT((m & PLEDGE_STDIO) != 0 && (m & PLEDGE_RPATH) != 0,
+                "first pledge adopts the requested categories");
+}
+
+static void test_pledge_tighten_intersect_narrows(void)
+{
+    uint64_t first = pledge_tighten(0, PLEDGE_STDIO | PLEDGE_RPATH | PLEDGE_WPATH);
+    uint64_t second = pledge_tighten(first, PLEDGE_STDIO);
+    TEST_ASSERT((second & PLEDGE_STDIO) != 0, "kept the intersected category");
+    TEST_ASSERT((second & PLEDGE_RPATH) == 0, "dropped rpath on tighten");
+    TEST_ASSERT((second & PLEDGE_WPATH) == 0, "dropped wpath on tighten");
+}
+
+static void test_pledge_tighten_cannot_widen(void)
+{
+    uint64_t first = pledge_tighten(0, PLEDGE_STDIO);
+    /* Re-pledging a category not currently held must NOT add it (tighten-only). */
+    uint64_t widened = pledge_tighten(first, PLEDGE_STDIO | PLEDGE_INET);
+    TEST_ASSERT((widened & PLEDGE_INET) == 0, "tighten cannot re-add a dropped category");
+    TEST_ASSERT((widened & PLEDGE_STDIO) != 0, "still holds the surviving category");
+}
+
+static void test_pledge_classify_core_and_deny(void)
+{
+    TEST_ASSERT_EQ(pledge_syscall_category(SSDT_NtClose), PLEDGE_REQ_CORE,
+                   "NtClose is survival-core (always allowed)");
+    TEST_ASSERT((pledge_syscall_category(SSDT_NtCreateProcess) & PLEDGE_PROC) != 0,
+                "NtCreateProcess requires proc");
+    TEST_ASSERT((pledge_syscall_category(SSDT_NtSetInformationThread) & PLEDGE_PROC) != 0,
+                "NtSetInformationThread requires proc (priority escalation gate)");
+    /* An unclassified/unused index defaults to deny (fail-closed allowlist). */
+    TEST_ASSERT((pledge_syscall_category(0x03FF) & PLEDGE_REQ_DENY) != 0,
+                "unclassified syscall defaults to deny");
+}
+
+static void test_pledge_file_categories(void)
+{
+    TEST_ASSERT_EQ(pledge_file_categories(VFS_O_READ), PLEDGE_RPATH, "read -> rpath");
+    TEST_ASSERT_EQ(pledge_file_categories(VFS_O_WRITE), PLEDGE_WPATH, "write -> wpath");
+    TEST_ASSERT_EQ(pledge_file_categories(VFS_O_CREATE), PLEDGE_CPATH, "create -> cpath");
+    TEST_ASSERT_EQ(pledge_file_categories(VFS_O_READ | VFS_O_WRITE | VFS_O_CREATE),
+                   PLEDGE_RPATH | PLEDGE_WPATH | PLEDGE_CPATH, "rw+create -> all three");
+}
+
+static void test_pledge_is_allowed(void)
+{
+    uint64_t mask = PLEDGE_PLEDGED | PLEDGE_STDIO | PLEDGE_RPATH;
+    TEST_ASSERT_EQ(pledge_is_allowed(mask, PLEDGE_REQ_CORE), 1, "core always allowed");
+    TEST_ASSERT_EQ(pledge_is_allowed(mask, PLEDGE_REQ_DENY), 0, "deny sentinel blocks");
+    TEST_ASSERT_EQ(pledge_is_allowed(mask, PLEDGE_RPATH), 1, "held category allowed");
+    TEST_ASSERT_EQ(pledge_is_allowed(mask, PLEDGE_WPATH), 0, "absent category denied");
+    TEST_ASSERT_EQ(pledge_is_allowed(mask, PLEDGE_RPATH | PLEDGE_WPATH), 0,
+                   "AND semantics: one absent category denies");
+}
+
+static void test_unveil_perms_for_vfs(void)
+{
+    TEST_ASSERT_EQ(unveil_perms_for_vfs(VFS_O_READ), UNVEIL_R, "read -> r");
+    TEST_ASSERT_EQ(unveil_perms_for_vfs(VFS_O_WRITE), UNVEIL_W, "write -> w");
+    TEST_ASSERT_EQ(unveil_perms_for_vfs(VFS_O_CREATE), UNVEIL_C, "create -> c");
+}
+
+/* Build a small stack-resident folded unveil list for the pure matcher. Paths
+ * must already be folded (uppercase, backslash-separated) as unveil_add stores. */
+static void test_unveil_covers_exact_and_boundary(void)
+{
+    unveil_entry_t e = { (unveil_entry_t *)0, UNVEIL_R, "C:\\ALLOWED" };
+    TEST_ASSERT_EQ(unveil_list_covers(&e, "C:\\ALLOWED", UNVEIL_R), 1, "exact match allowed");
+    TEST_ASSERT_EQ(unveil_list_covers(&e, "C:\\ALLOWED\\FILE.TXT", UNVEIL_R), 1,
+                   "child at a component boundary allowed");
+    /* Sibling sharing a textual prefix must NOT be treated as a descendant. */
+    TEST_ASSERT_EQ(unveil_list_covers(&e, "C:\\ALLOWEDEVIL", UNVEIL_R), 0,
+                   "sibling prefix is not a descendant");
+}
+
+static void test_unveil_covers_deny_and_perms(void)
+{
+    unveil_entry_t e = { (unveil_entry_t *)0, UNVEIL_R, "C:\\ALLOWED" };
+    TEST_ASSERT_EQ(unveil_list_covers(&e, "C:\\OTHER", UNVEIL_R), 0,
+                   "unmatched path denied");
+    TEST_ASSERT_EQ(unveil_list_covers(&e, "C:\\ALLOWED\\F", UNVEIL_W), 0,
+                   "insufficient perms denied");
+    TEST_ASSERT_EQ(unveil_list_covers((unveil_entry_t *)0, "C:\\ANY", UNVEIL_R), 1,
+                   "NULL list (never unveiled) allows all");
+}
+
+static void test_unveil_longest_match_wins(void)
+{
+    /* A more specific entry (deeper path) overrides a broader one's perms. */
+    unveil_entry_t deep = { (unveil_entry_t *)0, UNVEIL_R | UNVEIL_W, "C:\\A\\B" };
+    unveil_entry_t root = { &deep, UNVEIL_R, "C:\\A" };
+    TEST_ASSERT_EQ(unveil_list_covers(&root, "C:\\A\\B\\F", UNVEIL_W), 1,
+                   "deeper entry's write perm applies under it");
+    TEST_ASSERT_EQ(unveil_list_covers(&root, "C:\\A\\C", UNVEIL_W), 0,
+                   "broader entry (r only) denies write outside the deep subtree");
+}
+
+/* Legacy INT 0x80 ABI pledge gate (fixture task, no live dispatch). */
+static struct task s_pledge_fixture;
+
+static void test_pledge_legacy_gate(void)
+{
+    s_pledge_fixture.pledge_mask = PLEDGE_PLEDGED | PLEDGE_STDIO;  /* no proc */
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_FORK),
+                   STATUS_PLEDGE_VIOLATION, "legacy SYS_FORK without proc is a violation");
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_EXIT),
+                   STATUS_SUCCESS, "legacy SYS_EXIT is survival-core");
+    /* IPC / system-control ops are NOT core: fail-closed under an empty-ish pledge. */
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_SHMEM_CREATE),
+                   STATUS_PLEDGE_VIOLATION, "legacy SYS_SHMEM_CREATE fails closed (not core)");
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_REBOOT),
+                   STATUS_PLEDGE_VIOLATION, "legacy SYS_REBOOT fails closed (not core)");
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_WRITE),
+                   STATUS_SUCCESS, "legacy SYS_WRITE covered by stdio");
+    s_pledge_fixture.pledge_mask = PLEDGE_PLEDGED | PLEDGE_PROC;
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_FORK),
+                   STATUS_SUCCESS, "legacy SYS_FORK with proc is allowed");
+    s_pledge_fixture.pledge_mask = 0;   /* unpledged */
+    TEST_ASSERT_EQ(pledge_check_legacy(&s_pledge_fixture, SYS_FORK),
+                   STATUS_SUCCESS, "unpledged task: legacy path unrestricted");
+}
+
+/* Empty locked unveil set must deny all (fixture task, no boot infra). */
+static void test_unveil_lock_empty_denies(void)
+{
+    struct task fix;
+    spinlock_t init = SPINLOCK_INIT;
+    fix.unveil_lock = init;
+    fix.unveil_list = (struct unveil_entry *)0;
+    fix.unveil_locked = 0;
+    fix.unveil_active = 0;
+    TEST_ASSERT_EQ(unveil_check(&fix, "C:\\Any", UNVEIL_R), STATUS_SUCCESS,
+                   "never-unveiled task allows all paths");
+    unveil_lock(&fix);   /* lock with no entries -> active + empty */
+    TEST_ASSERT_EQ(unveil_check(&fix, "C:\\Any", UNVEIL_R), STATUS_ACCESS_DENIED,
+                   "active empty (lock-before-add) unveil set denies all");
+}
+
+/* Re-unveiling a path is tighten-only: a dropped bit cannot be restored. */
+static void test_unveil_perms_tighten_only(void)
+{
+    struct task fix;
+    spinlock_t init = SPINLOCK_INIT;
+    fix.unveil_lock = init;
+    fix.unveil_list = (struct unveil_entry *)0;
+    fix.unveil_locked = 0;
+    fix.unveil_active = 0;
+    fix.unveil_gen = 0;
+    fix.pledge_mask = 0;
+    unveil_add(&fix, "C:\\P", UNVEIL_R | UNVEIL_W | UNVEIL_C);
+    TEST_ASSERT_EQ(unveil_check(&fix, "C:\\P", UNVEIL_W), STATUS_SUCCESS,
+                   "initial rwc grants write");
+    unveil_add(&fix, "C:\\P", UNVEIL_R);   /* narrow to r */
+    TEST_ASSERT_EQ(unveil_check(&fix, "C:\\P", UNVEIL_W), STATUS_ACCESS_DENIED,
+                   "narrowing to r drops write");
+    unveil_add(&fix, "C:\\P", UNVEIL_R | UNVEIL_W | UNVEIL_C);   /* attempt widen */
+    TEST_ASSERT_EQ(unveil_check(&fix, "C:\\P", UNVEIL_W), STATUS_ACCESS_DENIED,
+                   "re-unveil cannot restore a dropped bit (tighten-only)");
+    pledge_unveil_teardown(&fix);   /* free the list */
+}
+
 void test_register_proc_ext(void)
 {
     test_suite_register_cat("ProcExt: resolve absolute passthrough",
@@ -532,6 +726,38 @@ void test_register_proc_ext(void)
                             test_mit_child_set_noop_when_unset, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: mitigation child-set clear denied",
                             test_mit_child_set_clear_denied, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge parse valid tokens",
+                            test_pledge_parse_valid, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge parse unknown rejected",
+                            test_pledge_parse_unknown_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge parse empty",
+                            test_pledge_parse_empty, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge tighten first adopts",
+                            test_pledge_tighten_first, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge tighten narrows",
+                            test_pledge_tighten_intersect_narrows, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge tighten cannot widen",
+                            test_pledge_tighten_cannot_widen, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge classify core/proc/deny",
+                            test_pledge_classify_core_and_deny, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge file categories",
+                            test_pledge_file_categories, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge is-allowed decision",
+                            test_pledge_is_allowed, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil perms for vfs flags",
+                            test_unveil_perms_for_vfs, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil exact + component boundary",
+                            test_unveil_covers_exact_and_boundary, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil deny + insufficient perms",
+                            test_unveil_covers_deny_and_perms, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil longest match wins",
+                            test_unveil_longest_match_wins, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: pledge legacy INT 0x80 gate",
+                            test_pledge_legacy_gate, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil empty-locked denies all",
+                            test_unveil_lock_empty_denies, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: unveil perms tighten-only",
+                            test_unveil_perms_tighten_only, TEST_CAT_SCHED);
 }
 
 #endif /* KERNEL_TESTS */

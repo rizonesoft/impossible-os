@@ -16,6 +16,7 @@
 #include "kernel/nt/zw.h"
 #include "kernel/nt/nt_audit.h"
 #include "kernel/nt/syscall_filter.h"
+#include "kernel/nt/pledge.h"   /* pledge_check_syscall / pledge_terminate */
 #include "kernel/sched/task.h"  /* thread_current() for per-thread previous_mode */
 #include "kernel/klog.h"
 
@@ -262,7 +263,19 @@ ssdt_dispatch_audited(SSDT_HANDLER handler, uint32_t service_number,
     if (pre != STATUS_SUCCESS)
         return pre;
     NTSTATUS handler_status = handler(a1, a2, a3, a4, a5, a6);
-    nt_audit_end(&sess, service_number, audit_args, handler_status);
+    /* Capture + clear this thread's pledge provenance BEFORE the POST hooks run.
+     * A POST hook may issue a nested Zw call whose dispatch tail would otherwise
+     * exchange this frame's flag and terminate mid-audit (stranding hook refs).
+     * Consuming it here makes provenance dispatch-frame-scoped; termination
+     * happens only AFTER nt_audit_end releases the session. */
+    {
+        struct thread *cth = thread_current();
+        int pending = cth ? __atomic_exchange_n(&cth->pledge_pending, 0,
+                                                 __ATOMIC_ACQ_REL) : 0;
+        nt_audit_end(&sess, service_number, audit_args, handler_status);
+        if (pending)
+            pledge_terminate(service_number);   /* noreturn */
+    }
     return handler_status;
 }
 
@@ -306,13 +319,40 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
             return filt;
     }
 
-    /* Fast path (no hook registered): a single inlined relaxed-atomic load +
-     * branch, then the handler. The audited path is out-of-line (cold). */
+    /* Coarse per-syscall pledge gate. Runs AFTER the bitmap filter and BEFORE
+     * the audit hooks, so a violation terminates the process with NO in-flight
+     * audit session to strand. Only user-originated calls are gated (a kernel
+     * Zw call is the kernel acting, not the pledged process). */
+    {
+        struct task *pt = task_current();
+        if (pt && __atomic_load_n(&pt->pledge_mask, __ATOMIC_ACQUIRE) != 0 &&
+            ssdt_previous_mode() == SSDT_USER_MODE) {
+            if (pledge_check_syscall(pt, table_id, index, service_number)
+                    != STATUS_SUCCESS)
+                pledge_terminate(service_number);   /* noreturn */
+        }
+    }
+
+    /* Audited path handles its own pledge-provenance consumption + termination
+     * inside ssdt_dispatch_audited (before POST hooks / after nt_audit_end). */
     if (nt_audit_hook_count() != 0)
         return ssdt_dispatch_audited(table->handlers[index], service_number,
                                      a1, a2, a3, a4, a5, a6);
 
-    return table->handlers[index](a1, a2, a3, a4, a5, a6);
+    /* Fast path (no audit hook): the handler returns directly here. Fine
+     * handler-side pledge checks set THIS thread's pledge_pending and return
+     * STATUS_PLEDGE_VIOLATION; terminate on the provenance FLAG (not the
+     * NTSTATUS value -- an audit path could also carry it). A fine check returns
+     * immediately on violation, so the handler makes no nested call after
+     * setting the flag; the tail consumes it in the same dispatch frame. */
+    {
+        NTSTATUS st = table->handlers[index](a1, a2, a3, a4, a5, a6);
+        struct thread *cth = thread_current();
+        if (cth && __atomic_exchange_n(&cth->pledge_pending, 0,
+                                       __ATOMIC_ACQ_REL))
+            pledge_terminate(service_number);   /* noreturn */
+        return st;
+    }
 }
 
 /* ---- Registration -------------------------------------------------------- */

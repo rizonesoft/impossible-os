@@ -297,6 +297,7 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtOpenThreadToken",           SSDT_NtOpenThreadToken },
     { "NtOpenThreadTokenEx",         SSDT_NtOpenThreadTokenEx },
     { "NtOpenTimer",                 SSDT_NtOpenTimer },
+    { "NtPledge",                    SSDT_NtPledge },
     { "NtPrivilegeCheck",            SSDT_NtPrivilegeCheck },
     { "NtQueryDirectoryObject",      SSDT_NtQueryDirectoryObject },
     { "NtQueryInformationToken",     SSDT_NtQueryInformationToken },
@@ -325,6 +326,7 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtUnloadKey",                 SSDT_NtUnloadKey },
     { "NtUnloadKeyEx",               SSDT_NtUnloadKeyEx },
     { "NtUnmapViewOfSection",        SSDT_NtUnmapViewOfSection },
+    { "NtUnveil",                    SSDT_NtUnveil },
     { "NtWriteFile",                 SSDT_NtWriteFile },
     { "NtWriteRequestData",          SSDT_NtWriteRequestData },
 };
