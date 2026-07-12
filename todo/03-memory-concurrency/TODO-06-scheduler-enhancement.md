@@ -362,4 +362,6 @@ Mirror of §12 applied to tasks (processes): the current `tasks[TASK_MAX]` stora
 - [ ] Add regression tests under TEST_CAT_SCHED: create + cleanup cycles beyond the old `TASK_MAX`, sparse PID reuse, repeated task-slot reuse, quota exhaustion, and cleanup correctness. Prior dead slots must be reclaimed; the `N+1`-th task creation on a TASK_MAX-sized table must succeed after N tasks exited.
 - [ ] Commit: `"sched: dynamic task table and reusable PID slot allocation"`
 
+> **Blocks:** TODO-21 §15/§18 (POSIX reaping / wait4 / ZOMBIE lifecycle). Reaping cannot return a `tasks[]` slot, and NT process-handle identity cannot stay stable across reuse, until stable-PID + slot-reuse (items above) land -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §15` (Deferred design spec). The `PROCESS_OBJECT` terminal-state ownership choice that pairs with reuse is operator-reserved -> `todo/answers.md` Q2.
+
 **Test checkpoint:** Running the user-mode test launcher (TODO-04 §4) with a 64-entry manifest (synthetic test binaries generated for this regression) succeeds end-to-end; every binary spawns, runs, exits, and its slot is reused by a later binary with no `task_create failed` log. The existing TASK_MAX ceiling no longer gates boot-time test runs. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.

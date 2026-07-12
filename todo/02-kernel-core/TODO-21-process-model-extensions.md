@@ -67,10 +67,10 @@ title: "TODO-21 -- Process Model Extensions"
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
 | 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
-| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [ ]   |
+| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [/]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
-| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [ ]   |
+| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [/]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -493,6 +493,10 @@ Exit cleanup (§14) frees resources but does not define WHEN exit status is obse
 
 **Test checkpoint:** `sys_wait4(-1, ...)` reaps any child; `WNOHANG` returns 0 when no child exited; a double-reap of the same zombie returns ECHILD to the second waiter; an orphan's parent-pid becomes 0 (or the subreaper) after its parent exits; an NT process-handle wait observes exit without reaping. `klog(LOG_DEBUG, "task", "reaped pid %u status %u")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
+> **Deferred:** 2026-07-12 | Codex design review (needs-attention, 4 [H]) established §15 cannot be safely/completely implemented on the current process-identity model. Blocked on: (1) stable-PID + slot-reuse -> XREF: `TODO-06-scheduler-enhancement.md` (item: "Separate stable PID from storage slot. Add monotonic PID allocation with reuse-after-drain" at line 357; regression item at line 362) -- `task_waitpid` is named there as a `pid==slot_index` consumer to fix, and without reuse "reaping" never returns a `tasks[]` slot (hard-cap `TASK_MAX`, `task.c:616`); (2) the SMP off-all-CPUs reap barrier (`task.c:3052`, "lands with the per-CPU run queues work / SMP phase 2") -- required before a deferred reaper can free an orphan zombie; (3) an operator decision on `PROCESS_OBJECT` terminal-state ownership (`ob_process.h:17` holds a raw `struct task*` into static `tasks[]`; under slot reuse an NT handle must observe generation-stable terminal state -- refcounted terminal-state vs task tombstone vs moving `exit_status` into `PROCESS_OBJECT`).
+>
+> **Design spec (implement when unblocked):** one atomic `task_publish_exit()` routed through ALL four death writers (`task_exit`, `task_wrapper` normal-return `task.c:118`, `task_terminate_remote` `task.c:2711`, fatal-signal `signal.c:76-100`) that publishes status/rusage with a release-store before marking terminal state, reparents children, and wakes waiters exactly once; a deferred PASSIVE_LEVEL reaper (NEVER inline `task_cleanup` from the raised-IRQL/log-free death-teardown path) gated on the off-CPU barrier; a task-lifecycle lock covering selector-scan + reap-claim + `parent_pid` change + `rusage_children` fold + waiter enrollment (closes the `task.c:2815` observe-live-child vs `task.c:2755` one-shot-wake lost-wakeup race); NT observers use acquire reads and never claim.
+
 ---
 
 ## 16. Protected Process Light (PS_PROTECTION)
@@ -540,6 +544,8 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 
 **Test checkpoint:** two `NtWaitForSingleObject` waiters on the same exited process handle BOTH wake; a POSIX `sys_wait4` reaps that process exactly once; `sys_waitid(WNOWAIT)` leaves the zombie reapable; a `dumpable=0` process produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable. `klog(LOG_DEBUG, "task", "proc %u signaled, %u NT waiters woken")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
+> **Deferred:** 2026-07-12 | Blocked on §15 -- these are the richer wait variants + NT multi-waiter wake that layer on §15's ZOMBIE + single-reaper + centralized `task_publish_exit()` foundation, which is itself deferred on the process-identity model -> XREF: §15 (item: "NT non-reap decouple (ZOMBIE safety)" and the §15 Deferred design spec). `PR_SET_DUMPABLE` + `RLIMIT_CORE` core-dump gate additionally needs the crash-dump generator -> XREF: `TODO-27-crash-dump-generation.md`.
+
 ---
 
 ## OS Comparison
@@ -558,10 +564,10 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 | 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred) |
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred |
 | 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
-| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15 core reap + §18 waitid/NT wake |
+| 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15/§18 deferred (needs TODO-06 §357 slot reuse) |
 | 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |
 | 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |
-| 💎   | Core-dump / dumpable policy   | ✅ WER / MiniDump              | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 (RLIMIT_CORE gate)             |
+| 💎   | Core-dump / dumpable policy   | ✅ WER / MiniDump              | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 deferred (needs §15 + TODO-27) |
 | 💎   | Per-process I/O priority      | ✅ ProcessIoPriority           | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)           |
 | ⭐   | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient  | ⬜ §7 -- monotonic decrease           |
 | ⭐   | Pledge/unveil restriction     | ❌ None                        | ❌ No simple equivalent    | ✅ §12 pledge+unveil (SSDT dispatch)  |
