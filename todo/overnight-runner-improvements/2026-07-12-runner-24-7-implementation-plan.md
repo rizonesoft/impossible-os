@@ -161,6 +161,17 @@ stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverab
   the owner-side sweep (P6.1) misses a satisfy-mapping, and it closes the "runner stops with
   recoverable cross-TODO work still parked" hole directly. Deterministic gate + test.
 
+- [ ] **[det] P6.4 One-time backfill sweep of the EXISTING stranded backlog (run P6.2, then act by stamp type).**
+  P6.1 is forward-only -- it fires only when a section ships from now on, so it never touches deferrals
+  already stranded by owners that shipped in PAST runs. After P6.2 lands, run it once against the
+  current tree and act per the stamp's SEMANTIC, not blanket re-open: a **`Deferred:`** item (in-scope,
+  was blocked on a now-shipped prerequisite) flips `[/]` -> `[ ]` so the loop implements it -- these are
+  the actual "unblock" cases; an **`Accepted:`** item (out-of-scope, work OWNED by the now-shipped XREF
+  target) is confirmed-done -- clean the stale stamp only, do NOT re-open (the owner did the work; the
+  dependent never does, and re-opening would spawn phantom duplicate work). Deterministic to enumerate +
+  decide; the re-opened items then flow through the normal (already-canaried) work loop, so no new
+  canary. Clears the debt immediately instead of waiting for P6.3's next fixpoint attempt.
+
 ## Acceptance spec -- the 9 runner invariants (the next canary asserts these pass/fail)
 
 1. Never start another section after a refused rollover.
