@@ -451,6 +451,16 @@ void task_exit(int32_t status);
  * separately). Safe to call at elevated IRQL (takes only irqsave locks). */
 void task_terminate_remote(struct task *t, int32_t exit_code);
 
+/* Release every resource reclaimable at a process's DEAD transition, shared by
+ * ALL death paths (explicit exit, normal entry return, remote kill, fatal
+ * signal): drop the syscall-filter count, mark the OB process object dead,
+ * detach any Job Object membership, and reap any leaked timer-resolution
+ * request. Idempotent per sub-call. The caller owns the TASK_DEAD state store;
+ * this only frees resources that do NOT need the off-CPU reap barrier (stacks,
+ * CR3, PEB/TEB are freed later in task_cleanup). Log-free by contract -- callers
+ * may run at raised IRQL where klog could block on a disk flush. */
+void task_death_teardown(struct task *t);
+
 /* Wait for a child task to exit. Returns exit status, or -1 on error. */
 int32_t task_waitpid(uint32_t child_pid);
 

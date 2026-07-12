@@ -199,6 +199,44 @@ NTSTATUS KeSetTimerResolution(uint32_t desired_100ns, int set,
     return exhausted ? STATUS_INSUFFICIENT_RESOURCES : STATUS_SUCCESS;
 }
 
+uint32_t timer_resolution_release_process(uint32_t pid)
+{
+    uint32_t i;
+    uint32_t released = 0;
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_res_lock, &irqf);
+
+    /* Clear EVERY active slot owned by this pid. The set path coalesces one slot
+     * per pid (see KeSetTimerResolution), so this is normally 0 or 1, but the
+     * full sweep is robust if that invariant ever changes. */
+    for (i = 0; i < MAX_REQUESTS; i++) {
+        if (s_requests[i].active && s_requests[i].pid == pid) {
+            s_requests[i].active = 0;
+            s_requests[i].pid = 0;
+            s_requests[i].resolution_100ns = 0;
+            released++;
+        }
+    }
+
+    /* Re-arbitrate toward the coarsest remaining request. Unlike the live-caller
+     * release path in KeSetTimerResolution, a refused transition is NOT rolled
+     * back: the owner is dead and will never call release again, so restoring the
+     * slot would strand a phantom fast-tick request permanently. A refused
+     * transition on release can only occur for (a) an AP caller -- tasks run
+     * BSP-only today, so process death always reaps on the BSP where a coarser
+     * transition succeeds; AP-side reconciliation lands with per-CPU scheduling
+     * (-> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md) -- or (b) a
+     * fixed-rate PIT backend, whose heartbeat is fixed regardless, so nothing is
+     * stranded. Log-free: callers may run at raised IRQL on the death path and
+     * klog can flush to disk (diagnostics belong to the reap-point caller). */
+    if (released)
+        (void)arbitrate();
+
+    spin_unlock_irqrestore(&s_res_lock, irqf);
+    return released;
+}
+
 void KeQueryTimerResolution(uint32_t *max_time, uint32_t *min_time,
                              uint32_t *current_time)
 {

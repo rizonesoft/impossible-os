@@ -510,6 +510,7 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 
 - [/] GNU IFUNC resolution: after RELATIVE/GLOB_DAT relocations, walk `R_X86_64_IRELATIVE` entries, call each resolver, write the result into the slot (IRELATIVE strictly last -- resolvers read already-relocated data)
 - [/] Constructor/destructor: call `DT_PREINIT_ARRAY` (main exe only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order after relocations; register `DT_FINI`/`DT_FINI_ARRAY` for teardown (-> XREF `TODO-21 §14`)
+- [ ] `exec_unregister_module()` + per-process `loaded_module_t` registry sweep at process exit (paired with the fini-array teardown above) (-> XREF `02-kernel-core/TODO-21-process-model-extensions.md §14`)
 - [/] ELF symbol versioning: parse `DT_VERSYM`/`DT_VERNEED`/`DT_VERDEF` and bind each undefined symbol to the requested version so glibc-versioned symbols resolve to the correct ABI rather than the first match
 - [/] Library search order: honour `DT_RUNPATH`/`DT_RPATH`, an `LD_LIBRARY_PATH`-equivalent, then the default system lib dir; filter environment paths in secure mode so untrusted paths cannot inject libraries
 - [/] `DT_FLAGS`/`DT_FLAGS_1` policy: honour `DF_BIND_NOW`/`DF_1_NOW` (eager binding, disable lazy PLT), `DF_1_NODELETE` (pin module across unload), and `DF_1_PIE`

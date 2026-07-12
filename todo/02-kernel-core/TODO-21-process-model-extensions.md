@@ -66,7 +66,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [/]   |
 | ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
 | 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
-| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [ ]   |
+| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
 | 💎   |  15   | Parenting, reaping, and wait4/waitid semantics            | §14            |  [ ]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1     |  [ ]   |
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [ ]   |
@@ -389,8 +389,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 428)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 433)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 392)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 393)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 655)
 > **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 657)
 > **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 659)
@@ -436,26 +436,36 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 
 ## 14. Process Exit Cleanup
 
-Central cleanup point for all per-process resources when a process terminates. Windows calls this from `PspExitProcess()` -- it walks every subsystem that holds per-process state and releases it. Without this, resources leak on process exit.
+Central cleanup point for all per-process resources when a process terminates. Windows calls this from `PspExitProcess()` -- it walks every subsystem that holds per-process state and releases it. Without this, resources leak on process exit. Impossible OS splits the walk across the DEAD transition (`task_death_teardown`, shared by every death path) and the off-CPU reap barrier (`task_cleanup`): resources reclaimable immediately go at death; stacks/CR3/page tables wait for the reap where the task is proven off-CPU.
 
-- [ ] In `task_exit()` (or a new `process_cleanup(struct task *t)` called from it):
-  - Release timer resolution requests held by this PID (-> XREF: TODO-17 §6 `KeSetTimerResolution`)
-  - Close all open handles in the process handle table (-> XREF: TODO-05 §2 OB handle table)
-  - Release all byte-range locks held by this process (-> XREF: 05-storage-filesystems/TODO-04 §10 `vfs_lock_file`)
-  - Release all share-mode handle entries for open files (-> XREF: 05-storage-filesystems/TODO-04 §8 `vfs_open_handle_t`)
-  - Trigger delete-on-close for files marked by this process (-> XREF: 05-storage-filesystems/TODO-04 §9)
-  - Release any oplock held by this process (-> XREF: 05-storage-filesystems/TODO-04 §14)
-  - Free per-process memory: PEB, TEB, user stack, address space (-> XREF: 02-kernel-core/TODO-26 §5)
-  - Invoke ELF `DT_FINI_ARRAY` / PE `DLL_PROCESS_DETACH` destructors, then deregister every module from the `loaded_module_t` registry before unmap (-> XREF: 02-kernel-core/TODO-17 §20 fini-array, §6 module registry)
-  - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
-  - Remove from job object if assigned (-> XREF: §13)
-- [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
-- [ ] Unpublished-child construction: inherit all security state AND revalidate the pledge/unveil generation just before `task_fork`/`task_create` publish the child (an early inherit misses a concurrent tighten), full rollback.
-- [ ] Coordinated SMP process termination: `task_exit` publishes TASK_DEAD with no sibling-stop barrier, so `task_cleanup` may free stacks/CR3 under a sibling mid-syscall. Rendezvous threads off-CPU before reap.
-- [ ] Job membership vs publication SMP: commit membership + `num_tasks++` under the job lock so `NtTerminateJobObject` cannot miss an inherited-but-unpublished child (needs a task-publication lock; blocked on the unlocked `num_tasks++`)
-- [ ] Commit: `"kernel: task -- process exit cleanup (handles, locks, timer res, memory)"`
+- [/] Per-process resource release via `task_death_teardown(struct task *)`, a shared DEAD-transition helper wired into all four death paths; reap-barrier memory (stacks/CR3/PML4) stays in `task_cleanup`:
+  - [x] Release timer-resolution requests held by this PID -- `timer_resolution_release_process()` bulk-clears the pid's slots and re-arbitrates (-> XREF: `TODO-08-time-filetime-management.md §8` `KeSetTimerResolution`, which accepted process-exit reaping to here)
+  - [x] Close all open handles in the process handle table -- `ob_handle_table_destroy` at the reap barrier + a cleanup-count log (-> XREF: `TODO-05-object-manager.md §3` OB handle table)
+  - [x] Release share-mode entries + trigger delete-on-close -- driven by `ObpFreeHandle -> file_on_close -> vfs_close` during the handle sweep (-> XREF: `05-storage-filesystems/TODO-04 §8` `vfs_open_handle_t`, `§9` delete-on-close)
+  - [x] Free per-process address space -- user stack, TLS expansion, secondary-thread stacks/TEBs, and the whole per-process PML4 via `vmm_destroy_user_pml4` at the reap barrier
+  - [x] Release security tokens (primary + per-thread impersonation) and detach from Job Object -- `ob_job_detach_task` now fires on ALL death paths via `task_death_teardown` (-> XREF: `§13`)
+  - [x] Per-process rlimits + accounting are plain `struct task` fields reclaimed with the slot -- no separate release call (-> XREF: `§8`, `§9`)
+  - [ ] Release all byte-range locks held by this process -- BLOCKED: `vfs_lock_file` is per-node with no per-process index; needs a per-task lock-ownership list populated at lock time and swept here (-> XREF: `05-storage-filesystems/TODO-04 §10` `vfs_lock_file`)
+  - [ ] Release oplocks held by this process -- deferred: `vfs_close` leaves oplock state untouched; a dead process's oplock breaks lazily on the next opener's `vfs_open`. Eager release needs the same per-task node index (-> XREF: `05-storage-filesystems/TODO-04 §14`)
+  - [ ] Invoke ELF `DT_FINI_ARRAY` / PE `DLL_PROCESS_DETACH` destructors and deregister modules -- BLOCKED: no `exec_unregister_module` exists and the fini-array runtime is unimplemented (-> XREF: `02-kernel-core/TODO-17 §6` module registry, `§20` fini-array)
+  - [ ] Free the PEB/TEB physical frames -- BLOCKED: mapped at fixed shared VAs in the kernel PML4; freeing needs per-task phys tracking + the per-process-private-frame refactor (-> XREF: `02-kernel-core/TODO-11 §24` PEB/TEB lifecycle)
+- [x] Log cleanup counts -- `task_cleanup` logs `"PID %u reap cleanup: %u handles closed"` at PASSIVE_LEVEL (`task_death_teardown` stays log-free for its raised-IRQL callers)
+- [ ] Unpublished-child pledge/unveil generation revalidate at publish -- DEFERRED, only racy under mid-`task_fork` preemption the single-cursor scheduler cannot expose (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
+- [ ] Coordinated SMP termination (sibling-stop reap barrier before CR3/stack free) -- DEFERRED, no cross-CPU rendezvous primitive (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §2` TLB-shootdown IPI, `§3`)
+- [ ] Job membership vs publication lock (`num_tasks++` committed atomically) -- DEFERRED, needs a tasks-publication lock; races only under true concurrency (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
+- [x] Self-directed `SYS_KILL` routes through the non-returning `task_exit` (never resumes in ring-3), so a self-killed task cannot issue further syscalls; `task_terminate_remote` stays remote-only
+- [x] Commit: `"kernel: task -- process exit cleanup (timer-res reap, shared death teardown, cleanup log)"`
 
-**Test checkpoint:** Create a process that opens files with locks + timer resolution request. Kill the process. Verify: all locks released, timer resolution reverts to default, handles closed, no resource leak. Serial log shows cleanup counts. Test on QEMU WHPX, TCG.
+**Test checkpoint:** A process that requests a fast timer resolution and exits (via any death path) has its request reaped and the tick re-arbitrated; handles/share-modes/delete-on-close/tokens/job-membership/address-space are released at exit; the serial log shows the reap handle count. Unit tests: 2 `time:` suites (TEST_CAT_SCHED) cover the timer-res reap no-op + round-trip. Byte-range-lock / oplock / PEB-TEB-frame / SMP-barrier release are tracked as concrete follow-ups above. Test on QEMU WHPX, TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 2 timer-res reap suites, 0 failures
+
+> **Notes:**
+> - Shipped `timer_resolution_release_process()` (bulk per-pid slot reap + re-arbitrate, no-restore-on-refuse for a dead owner) and `task_death_teardown(struct task *)`, a shared DEAD-transition helper wired into all four death paths.
+> - `task_death_teardown` replaces the copy-pasted teardown so no resource slips through remote-kill / normal-return / fatal-signal exits; `KeSetTimerResolution` gained a TASK_DEAD admission guard.
+> - Most per-process resources were already freed (handles, tokens, pledge/unveil, stacks, PML4); the real gaps were the timer-res leak + firing job-detach on every death path. Codex design + adversarial adoptions in the commit message.
+> - Canonical doc: `include/kernel/time/timer_resolution.h` + `include/kernel/sched/task.h` (`task_death_teardown`).
+> - Scope boundary: §14 owns the death-path release walk; byte-lock/oplock -> TODO-04, PEB/TEB frames -> TODO-11 §24, fini/module-deregister -> TODO-17, SMP barrier + tasks-lock -> TODO-07.
 
 ---
 
@@ -523,7 +533,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 | 💎   | Process CPU affinity          | ✅ SetProcessAffinityMask      | ✅ sched_setaffinity       | ⬜ §10                                |
 | 💎   | Per-process mitigation policy | ✅ SetProcessMitigationPolicy  | ⚠️ prctl + seccomp        | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred) |
 | 💎   | Job Objects / cgroups         | ✅ NtCreateJobObject           | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred |
-| 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | ⬜ §14                                |
+| 💎   | Process exit cleanup          | ✅ PspExitProcess              | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
 | 💎   | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15                                |
 | 💎   | Protected Process Light       | ✅ PS_PROTECTION               | ❌ No equivalent           | ⬜ §16                                |
 | 💎   | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | ⬜ §17                                |

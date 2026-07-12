@@ -1197,19 +1197,17 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * to force-kill. The existing signal_send() writes t->state
          * unlocked under the same assumption (ipc/signal.c:41).
          *
-         * Mirror task_exit()'s Object-Manager teardown by calling
-         * ob_process_mark_dead(pid) FIRST so the permanent Process
-         * object flag is cleared and task_cleanup() can reclaim the
-         * namespace entry. Without this the \\KernelObjects\\Process
-         * <PID> entry leaks across every timed-out run (Codex quality
-         * H1, 2026-04-20).
+         * Route through task_terminate_remote() so the child gets the
+         * SAME shared DEAD-transition teardown as every other death path
+         * (OB process object mark-dead, syscall-filter count, Job Object
+         * detach, timer-resolution reap). A direct `t->state = TASK_DEAD`
+         * would leak Job membership + strand a timer-resolution request
+         * into the next test suite.
          *
          * Defensive guard: refuse to force-kill ourselves; would
          * leave the running task DEAD and trip a cascading crash. */
-        if (t->state != TASK_DEAD && t != task_current()) {
-            ob_process_mark_dead(pid);
-            t->state = TASK_DEAD;
-        }
+        if (t->state != TASK_DEAD && t != task_current())
+            task_terminate_remote(t, UTEST_EXIT_TIMEOUT);
         /* Either way, surface TIMEOUT so the launcher log / TAP / bat
          * output names the actual reason rather than SIGKILL's -9. */
         t->exit_status = UTEST_EXIT_TIMEOUT;

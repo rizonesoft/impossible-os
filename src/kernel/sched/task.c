@@ -39,6 +39,7 @@
 #include "kernel/ob/teb.h"
 #include "kernel/acpi.h"
 #include "kernel/timer.h"
+#include "kernel/time/timer_resolution.h"  /* timer_resolution_release_process (death-path reap) */
 #include "kernel/time/wall_clock.h"  /* KeQuerySystemTime / wall_clock_time_sourced (accounting CreateTime) */
 #include "kernel/nt/filetime.h"      /* FILETIME_NOW_PLACEHOLDER (accounting CreateTime) */
 #include "kernel/vectors.h"
@@ -115,19 +116,12 @@ static void task_wrapper(void)
     /* Run RundownRoutine for any APCs still queued on the dead main thread. */
     apc_rundown_thread(&tasks[current_task].threads[0]);
     tasks[current_task].state = TASK_DEAD;
-    /* Drop the filter's count contribution at death so a dead-but-unreaped
-     * filtered task stops taxing the global dispatch fast path system-wide. The
-     * snapshot memory is freed later at the reap barrier (task_cleanup), not
-     * here -- consistent with stack/CR3 reclaim and safe once every thread is
-     * proven off-CPU. */
-    syscall_filter_task_dead(&tasks[current_task]);
     /* A task whose entry returns normally dies HERE (not via task_exit), so it
-     * must run the same OB teardown: mark the process object dead and detach any
-     * inherited Job Object membership. Omitting the detach leaked the membership
-     * (and its reference + active-process quota) for a job-inheriting task that
-     * simply returned. */
-    ob_process_mark_dead(tasks[current_task].pid);
-    ob_job_detach_task(&tasks[current_task]);
+     * runs the same shared DEAD-transition teardown: syscall-filter count, OB
+     * process object, Job Object membership, and any leaked timer-resolution
+     * request. Omitting any of these leaked the resource for a task that simply
+     * returned. The memory needing the reap barrier frees later in task_cleanup. */
+    task_death_teardown(&tasks[current_task]);
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
@@ -2687,6 +2681,27 @@ int task_exec(const uint8_t *data, uint64_t size)
     return 0;
 }
 
+/* Release the resources reclaimable at the DEAD-transition point, shared by
+ * every process death path (see task.h). The caller owns the TASK_DEAD state
+ * store; this only does resource release, and each sub-call is idempotent so a
+ * double death path never double-frees. Log-free by contract. */
+void task_death_teardown(struct task *t)
+{
+    if (!t)
+        return;
+    /* Drop the syscall-filter count so a dead-but-unreaped filtered task stops
+     * taxing the global dispatch fast path (snapshot memory frees at reap). */
+    syscall_filter_task_dead(t);
+    /* Mark the OB process object dead so it becomes reclaimable. */
+    ob_process_mark_dead(t->pid);
+    /* Leave any Job Object cleanly: removes the pid, decrements the active
+     * count, drops the membership Ob reference. No-op when unassigned. */
+    ob_job_detach_task(t);
+    /* Reap any leaked timer-resolution request so a fast tick this process
+     * asked for does not outlive it. No-op when the pid held none. */
+    timer_resolution_release_process(t->pid);
+}
+
 /* Centralized remote-death transition (see task.h). Idempotent: returns
  * immediately if the target is already dead, so concurrent kill paths and a
  * racing self-exit never double-teardown. Mirrors task_exit's TASK_DEAD-side
@@ -2697,9 +2712,7 @@ void task_terminate_remote(struct task *t, int32_t exit_code)
         return;
     t->state = TASK_DEAD;
     t->exit_status = exit_code;
-    syscall_filter_task_dead(t);
-    ob_process_mark_dead(t->pid);
-    ob_job_detach_task(t);
+    task_death_teardown(t);
 }
 
 void task_exit(int32_t status)
@@ -2721,19 +2734,13 @@ void task_exit(int32_t status)
     apc_rundown_thread(&tasks[pid].threads[0]);
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
-    /* Drop the filter's count contribution at death (stops taxing the global
-     * fast path); the memory free waits for the reap barrier in task_cleanup. */
-    syscall_filter_task_dead(&tasks[pid]);
-
-    /* Mark process object as temporary so it can be freed */
-    ob_process_mark_dead(pid);
-
-    /* Leave any Job Object cleanly: removes the pid, decrements the active
-     * count, and drops this membership's Ob reference. Placed alongside the
-     * other TASK_DEAD-transition teardown; ob_job_detach_task takes only its
-     * own irqsave lock, so it is safe at this elevated IRQL and nests under no
-     * caller-held lock. Safe (no-op) when the task is not in a job. */
-    ob_job_detach_task(&tasks[pid]);
+    /* Release every resource reclaimable at the DEAD transition (syscall-filter
+     * count, OB process object, Job Object membership, leaked timer-resolution
+     * request). Shared with the remote-kill, normal-return, and fatal-signal
+     * death paths. Safe at this elevated IRQL: each sub-call takes only its own
+     * irqsave lock and nests under no caller-held lock. The memory that needs
+     * the reap barrier (stacks, CR3, PEB/TEB) frees later in task_cleanup. */
+    task_death_teardown(&tasks[pid]);
 
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited with status %d",
            (uint64_t)pid,
@@ -2844,8 +2851,19 @@ void task_cleanup(uint32_t pid)
     /* Free the unveil list at the same reap barrier (no thread mid file-open). */
     pledge_unveil_teardown(&tasks[pid]);
 
-    /* Close all handles and free handle table */
-    ob_handle_table_destroy(&tasks[pid].handle_table);
+    /* Close all handles and free handle table. Snapshot the occupied-slot count
+     * first for the reap-cleanup log. Closing a file handle drives
+     * ObpFreeHandle -> file_on_close -> vfs_close, which also releases that
+     * file's share-mode entry and triggers delete-on-close, so those per-file
+     * resources are reclaimed here as a side effect of the handle sweep.
+     * (Byte-range locks and oplocks are NOT released by vfs_close and are
+     * tracked as concrete follow-ups -- see the process exit cleanup notes.) */
+    {
+        uint32_t handles_closed = tasks[pid].handle_table.count;
+        ob_handle_table_destroy(&tasks[pid].handle_table);
+        klog(LOG_DEBUG, "task", "PID %u reap cleanup: %u handles closed",
+             (uint64_t)pid, (uint64_t)handles_closed);
+    }
 
     /* Free kernel stack (task-level, thread 0).
      *

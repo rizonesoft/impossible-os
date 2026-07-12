@@ -102,16 +102,13 @@ static void signal_default_action(struct task *t, int sig)
         break;
     }
 
-    /* If this signal killed the task, run the remote-death teardown: drop its
-     * syscall-filter count (memory frees at the reap barrier), mark the OB
-     * process object dead (this path previously skipped that), and detach any
-     * Job Object membership. Guarded on the DEAD transition so the non-fatal
-     * branches (SIGCHLD) are unaffected; each call is idempotent. */
-    if (t->state == TASK_DEAD) {
-        syscall_filter_task_dead(t);
-        ob_process_mark_dead(t->pid);
-        ob_job_detach_task(t);
-    }
+    /* If this signal killed the task, run the shared DEAD-transition teardown:
+     * syscall-filter count (memory frees at the reap barrier), OB process object,
+     * Job Object membership, and any leaked timer-resolution request. Guarded on
+     * the DEAD transition so the non-fatal branches (SIGCHLD) are unaffected;
+     * each sub-call is idempotent. */
+    if (t->state == TASK_DEAD)
+        task_death_teardown(t);
 }
 
 void signal_check(void)

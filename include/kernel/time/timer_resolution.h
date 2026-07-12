@@ -28,6 +28,15 @@ void timer_resolution_init(void);
 NTSTATUS KeSetTimerResolution(uint32_t desired_100ns, int set,
                               uint32_t *actual_100ns);
 
+/* Release EVERY timer-resolution request held by a process, regardless of the
+ * requested value, and re-arbitrate. Called from the process death path so a
+ * process that requested a fast tick and exited without releasing does not
+ * strand the shortened heartbeat. Returns the number of slots released (0 if the
+ * pid held none). Allocation-free, non-blocking, log-free -- safe at raised IRQL.
+ * Owner: process exit cleanup (TODO-21 process-model-extensions), accepted from
+ * the timer-resolution management work (TODO-08 time-filetime-management). */
+uint32_t timer_resolution_release_process(uint32_t pid);
+
 /* Query current resolution state. */
 void KeQueryTimerResolution(uint32_t *max_time, uint32_t *min_time,
                              uint32_t *current_time);

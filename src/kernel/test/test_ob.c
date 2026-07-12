@@ -111,6 +111,36 @@ static void test_ob_handle_table(void)
     ob_handle_table_destroy(&ht);
 }
 
+/* ---- Handle table teardown force-closes OBJ_PROTECT_CLOSE handles ---- */
+
+static void test_ob_handle_table_destroy_forces_protected_close(void)
+{
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+
+    void *body = ob_alloc_object(&test_type);
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
+    /* OBJ_PROTECT_CLOSE: an explicit NtClose must be refused, but process
+     * rundown (ob_handle_table_destroy) must force-close it regardless. */
+    HANDLE h = ObpAllocateHandle(&ht, body, 0x1F01FF, OBJ_PROTECT_CLOSE);
+    TEST_ASSERT(h != INVALID_HANDLE_VALUE, "protected handle allocated");
+    TEST_ASSERT_EQ(hdr->handle_count, 1, "handle_count is 1 after alloc");
+
+    /* NtClose-style free is refused while the protect bit is set. */
+    TEST_ASSERT(ObpFreeHandle(&ht, h) != 0,
+                "ObpFreeHandle refuses OBJ_PROTECT_CLOSE (NtClose protection holds)");
+    TEST_ASSERT_EQ(hdr->handle_count, 1, "handle_count unchanged after refused free");
+
+    /* Teardown ignores OBJ_PROTECT_CLOSE and closes the handle: handle_count
+     * reaches 0, so on_close would fire (vfs_close's share-mode + delete-on-close
+     * release for a real file handle). */
+    ob_handle_table_destroy(&ht);
+    TEST_ASSERT_EQ(hdr->handle_count, 0,
+                   "process rundown force-closes the protected handle");
+
+    ObDereferenceObject(body);  /* drop creation ref */
+}
+
 /* ---- Named object: insert + lookup via ObLookupObjectByName ---- */
 
 static void test_ob_namespace_lookup(void)
@@ -2394,6 +2424,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: alloc+header roundtrip", test_ob_alloc_header_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: refcount lifecycle", test_ob_refcount_lifecycle, TEST_CAT_OB);
     test_suite_register_cat("OB: handle table", test_ob_handle_table, TEST_CAT_OB);
+    test_suite_register_cat("OB: handle table teardown force-closes protected handle",
+                            test_ob_handle_table_destroy_forces_protected_close, TEST_CAT_OB);
     test_suite_register_cat("OB: namespace lookup", test_ob_namespace_lookup, TEST_CAT_OB);
     test_suite_register_cat("OB: handle low-bits rejected", test_ob_handle_low_bits_rejected, TEST_CAT_OB);
     test_suite_register_cat("OB: duplicate handle", test_ob_duplicate_handle, TEST_CAT_OB);

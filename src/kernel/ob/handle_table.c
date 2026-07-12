@@ -71,10 +71,16 @@ void ob_handle_table_destroy(HANDLE_TABLE *table)
     if (!table->entries)
         return;
 
-    /* Close every open handle */
+    /* Close every open handle. Process rundown force-closes regardless of
+     * OBJ_PROTECT_CLOSE: that attribute only guards an explicit NtClose, never
+     * teardown of the owning process (Windows ObKillProcess semantics). Clear
+     * the protect bit before ObpFreeHandle so it does not reject the entry
+     * (leaving the object ref, handle count, and on_close -- e.g. vfs_close's
+     * share-mode + delete-on-close release -- unrun while the array is freed). */
     for (i = 0; i < table->capacity; i++) {
         if (table->entries[i].object) {
             HANDLE h = (HANDLE)(i * 4);
+            table->entries[i].attributes &= ~OBJ_PROTECT_CLOSE;
             ObpFreeHandle(table, h);
         }
     }

@@ -508,12 +508,21 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_KILL:
         if (arg1 > 0 && arg1 < task_count()) {
             struct task *t = task_get_by_pid((uint32_t)arg1);
-            if (t && t->state != TASK_DEAD) {
-                /* Centralized remote-death transition: TASK_DEAD + exit status,
-                 * drop the syscall-filter count (killed-but-unreaped filtered
-                 * task stops taxing the fast path), mark the OB process object
-                 * dead (this legacy path previously skipped that), and detach
-                 * any Job Object membership. */
+            if (t == task_current()) {
+                /* Self-kill is an exit: route through the NON-RETURNING
+                 * task_exit so the caller never resumes in ring 3. A returning
+                 * self-kill (marking the current task DEAD but returning) leaves
+                 * a logically dead task still issuing syscalls until the next
+                 * tick evicts it -- and TASK_DEAD is not terminal (task_waitpid
+                 * flips it to WAITING, then wake -> READY -> RUNNING), so no
+                 * DEAD-state syscall guard can contain it. task_exit does the
+                 * full teardown (incl. Job detach + timer-resolution reap) and
+                 * forever-yields. */
+                task_exit(-1);          /* does not return */
+            } else if (t && t->state != TASK_DEAD) {
+                /* Remote kill: centralized TASK_DEAD transition + teardown
+                 * (syscall-filter count, OB process object, Job Object detach,
+                 * timer-resolution reap). The target notices at its next entry. */
                 task_terminate_remote(t, -1);
                 klog(LOG_DEBUG, "sys", "Task %u killed", (uint64_t)arg1);
                 ret = 0;

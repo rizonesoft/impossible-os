@@ -12,6 +12,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/time/mono_clock.h"
+#include "kernel/time/timer_resolution.h"
+#include "kernel/sched/task.h"
 #include "kernel/time/wall_clock.h"
 #include "kernel/time/timezone.h"
 #include "kernel/time/ntp_adj.h"
@@ -498,6 +500,47 @@ static void test_wall_floor_clamp(void)
                    "gen mismatch: high cand also passes through (no poison)");
 }
 
+/* timer_resolution_release_process: the process-exit reap of leaked timer
+ * resolution requests (process exit cleanup, TODO-21). The common death-path
+ * case -- a task that never requested a resolution -- must be a safe no-op that
+ * returns 0 and does NOT touch the arbitrated hardware state (released==0
+ * short-circuits arbitrate()). This is hardware-independent and always runs. */
+static void test_timer_res_release_noop(void)
+{
+    TEST_ASSERT_EQ(timer_resolution_release_process(0xFFFFFFFFu), 0,
+                   "release for a pid holding no request returns 0");
+    TEST_ASSERT_EQ(timer_resolution_release_process(0xFFFFFFFFu), 0,
+                   "repeated no-op release stays 0 (idempotent)");
+}
+
+/* Round-trip: request a fast tick as the current task, then bulk-release by
+ * pid and confirm exactly one coalesced slot was reclaimed and the release is
+ * idempotent. Hardware-dependent: the tick-source transition is refused on a
+ * fixed-rate (PIT) backend or an AP caller, so the request never lands -- that
+ * path is validated on WHPX / bare metal per the section Test checkpoint, and
+ * this test SKIPs rather than widening the assertion. Self-restoring: releasing
+ * the request re-arbitrates back to the prior resolution. */
+static void test_timer_res_release_roundtrip(void)
+{
+    struct task *cur = task_current();
+    uint32_t actual = 0;
+
+    if (!cur) { TEST_SKIP("no task context"); return; }
+
+    if (KeSetTimerResolution(TIMER_RES_MINIMUM, 1, &actual) != STATUS_SUCCESS ||
+        actual != TIMER_RES_MINIMUM) {
+        /* Backend refused the transition; drop any partial slot and skip. */
+        (void)timer_resolution_release_process(cur->pid);
+        TEST_SKIP("timer backend not re-programmable in this environment");
+        return;
+    }
+
+    TEST_ASSERT_EQ(timer_resolution_release_process(cur->pid), 1,
+                   "release reclaims the process's one coalesced slot");
+    TEST_ASSERT_EQ(timer_resolution_release_process(cur->pid), 0,
+                   "second release is an idempotent no-op");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -536,4 +579,8 @@ void test_register_time(void)
                             test_wall_floor_clamp, TEST_CAT_SCHED);
     test_suite_register_cat("time: KeSetSystemTime rejects absurd anchor",
                             test_set_system_time_rejects_absurd, TEST_CAT_SCHED);
+    test_suite_register_cat("time: timer-res release-process no-op (exit cleanup)",
+                            test_timer_res_release_noop, TEST_CAT_SCHED);
+    test_suite_register_cat("time: timer-res release-process round-trip",
+                            test_timer_res_release_roundtrip, TEST_CAT_SCHED);
 }
