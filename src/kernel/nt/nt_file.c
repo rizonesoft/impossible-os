@@ -284,6 +284,25 @@ static NTSTATUS NtSetInformationFile_handler(
 
     node = fo->vfs_node;
 
+    /* Handle access boundary: a destructive info class must not be reachable
+     * through a read-only (or access-reduced) handle regardless of process
+     * pledge/unveil -- otherwise an inherited/duplicated read handle could
+     * truncate, delete, or rename. Require the handle to hold write access.
+     * (The finer NT DELETE-vs-WRITE ACCESS_MASK distinction needs granted-mask
+     * tracking on FILE_OBJECT -- filed in TODO-12 s13.) */
+    switch (info_class) {
+    case FileBasicInformation:
+    case FileEndOfFileInformation:
+    case FileAllocationInformation:
+    case FileDispositionInformation:
+    case FileRenameInformation:
+        if (!(fo->access & VFS_O_WRITE))
+            return STATUS_ACCESS_DENIED;
+        break;
+    default:
+        break;
+    }
+
     /* Argument-dependent pledge check: rename/dispose require cpath,
      * truncate/allocate/set-attributes require wpath (the coarse dispatcher
      * classifies NtSetInformationFile as core because the category depends on
@@ -313,8 +332,11 @@ static NTSTATUS NtSetInformationFile_handler(
         }
         if (need_u) {
             /* fo->path is the authoritative canonical open path (node parent
-             * chains are unreliable on IXFS/FAT32). Fail closed if absent. */
-            if (fo->path[0] == '\0' ||
+             * chains are unreliable on IXFS/FAT32). Fail closed if absent (NULL
+             * on a pipe / path-alloc failure) OR stale (a prior rename via this
+             * handle -- the path no longer names the file, so it cannot be
+             * authorized; the process must reopen at the new name to mutate). */
+            if (fo->path_stale || !fo->path || fo->path[0] == '\0' ||
                 unveil_check(task_current(), fo->path, need_u) != STATUS_SUCCESS)
                 return STATUS_ACCESS_DENIED;
         }
@@ -415,8 +437,8 @@ static NTSTATUS NtSetInformationFile_handler(
             char dst_path[VFS_MAX_PATH];
             uint32_t cut, j, k, namelen, plen;
             /* Fail CLOSED: without the source path the destination cannot be
-             * verified against unveil -- deny. */
-            if (src_path[0] == '\0')
+             * verified against unveil -- deny (NULL on a path-alloc failure). */
+            if (!src_path || src_path[0] == '\0')
                 return STATUS_ACCESS_DENIED;
             for (plen = 0; src_path[plen]; plen++)
                 ;
@@ -438,25 +460,21 @@ static NTSTATUS NtSetInformationFile_handler(
             if (unveil_check(task_current(), dst_path, UNVEIL_C) != STATUS_SUCCESS)
                 return STATUS_ACCESS_DENIED;
         }
-        if (node->parent && node->parent->ops && node->parent->ops->rename) {
-            if (node->parent->ops->rename(node->parent, node->name, ascii_name, 0) != 0)
-                return STATUS_UNSUCCESSFUL;
-        }
-        /* Keep this handle's authoritative path current: a later path-mutating
-         * setinfo (truncate/dispose/rename) must authorize against the NEW name,
-         * not the stale source. Rename is same-parent-dir, so replace the last
-         * component of fo->path with ascii_name. (Aliased handles to the same
-         * node are updated when node-shared canonical paths land -- see the
-         * FILE_OBJECT canonical-path follow-up.) */
-        {
-            uint32_t cut = 0, i;
-            for (i = 0; fo->path[i]; i++)
-                if (fo->path[i] == '\\')
-                    cut = i + 1;               /* one past the last separator */
-            for (i = 0; ascii_name[i] && cut + i < sizeof(fo->path) - 1; i++)
-                fo->path[cut + i] = ascii_name[i];
-            fo->path[cut + i] = '\0';
-        }
+        /* Rename must be supported by the FS; a node with no parent/rename op
+         * cannot be renamed -- report the failure instead of a false success
+         * that would also wrongly poison the handle's path below. */
+        if (!node->parent || !node->parent->ops || !node->parent->ops->rename)
+            return STATUS_NOT_SUPPORTED;
+        if (node->parent->ops->rename(node->parent, node->name, ascii_name, 0) != 0)
+            return STATUS_UNSUCCESSFUL;
+        /* fo->path is IMMUTABLE for this handle's life (allocated at open, freed
+         * once at file_on_delete): mutating it here would reintroduce a cross-
+         * handle UAF/double-free and a rename-OOM bypass. Instead, MARK the path
+         * stale (only after a REAL rename) so a later same-handle path-mutating
+         * setinfo fails closed under unveil (it would otherwise authorize against
+         * the old name). Node-shared canonical-path tracking (which would let it
+         * succeed correctly) is the filed TODO-12 s13 work. */
+        fo->path_stale = 1;
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
             iosb->Information = 0;

@@ -4,7 +4,7 @@
  * Canonical mapping of Nt* system service numbers to SSDT indices.
  * Derived from TODO-12-native-api-ssdt.md section 4 allocation table.
  *
- * 470 entries across 34 functional ranges -- full Windows 11 parity
+ * 475 entries across 34 functional ranges -- full Windows 11 parity
  * plus Impossible OS exclusive extensions.  Shadow SSDT (Win32k)
  * uses a separate index space starting at 0x1000.
  */

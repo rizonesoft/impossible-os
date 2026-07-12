@@ -11,7 +11,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 > **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); added 29 missing inter-section `---` separators
 > **Gap-audited:** 2026-06-28 | parity-research-analyst (sonnet, todo-plan) 35-feature inventory + 13 gaps; codex-gap-audit red-team (needs-attention, 4 valid). Filed: G4 GUI-thread conversion (§4, XREF D08 T15/T16), G9 RtlNtStatusToDosError broad coverage (§11 false-completeness, 12->classes), G12 NtGetNextProcess/Thread 0x0202/0x0203 (§7, XREF T21 §4), G13 ProcessMitigationPolicy classes (§7, hands SystemCallDisablePolicy to §25). Already-owned (Branch C, not filed): G5 Win32k-lockdown->§25 filter, G6 KUSD-time->D02 T08 §12 / T11 §9, G8 KPTI->D02 T10 KPTI/TODO-33, G12/G13 cross-owned T21. Rejected: G2 Win11-internal SSDT byte-format minutiae.
 
-> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
+> **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 475 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
 
 > [!IMPORTANT]
 > **Current state:** `syscall.c` dispatches via `INT 0x80` with Linux-style `SYS_WRITE=1`, `SYS_READ=2`, … `SYS_MUNMAP=38`. Return value is a plain `int64_t`. No `NTSTATUS`, no `NtXxx`/`ZwXxx` entry points, no `SYSCALL`/`SYSRET` MSR setup, no SSDT. The existing 22 syscalls are the migration starting point; none are deleted here.
@@ -51,7 +51,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 - All syscalls return `NTSTATUS`; `STATUS_SUCCESS = 0`, `STATUS_FAILURE` codes for errors.
 - `NtXxx` entry points are the user-mode callable names; `ZwXxx` are the kernel-mode aliases.
 - `SYSCALL`/`SYSRET` fast path replaces `INT 0x80`; `INT 0x2E` kept as compatibility fallback.
-- A numbered SSDT table with 470 entries maps service indices to kernel functions; `ntdll` stubs call by index.
+- A numbered SSDT table with 475 entries maps service indices to kernel functions; `ntdll` stubs call by index.
 - The existing 22 `SYS_*` calls are migrated to `Nt`-named equivalents at stable indices.
 - `NtCurrentTeb()` (`mov rax, gs:[0x30]`) and `NtCurrentPeb()` (`mov rax, gs:[0x60]`) return correct values per TODO-11.
 - All endpoint categories covered: file I/O, process/thread, memory, sync, registry, security/token, sections, timers, ALPC ports, debug, power, namespace, system info, atoms.
@@ -66,7 +66,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎   |   1   | NTSTATUS type and canonical status codes                       | --                 |  [x]   |
 | 💎   |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8      |  [x]   |
 | 💎   |   3   | INT 0x2E compatibility path                                    | §2                 |  [/]   |
-| 💎   |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                 |  [/]   |
+| 💎   |   4   | System Service Descriptor Table (SSDT) -- 475 entries          | §1                 |  [/]   |
 | 💎   |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4             |  [x]   |
 | 💎   |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2     |  [/]   |
 | 💎   |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2     |  [/]   |
@@ -99,7 +99,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
 
 > [!IMPORTANT]
-> **Self-contained execution model:** §1 through §5 (NTSTATUS, SYSCALL/SYSRET, INT 0x2E, SSDT, migration) are fully self-contained, no external blockers. §9 through §12, §24 through §28 are also unblocked. Sections §6 through §8, §13 through §23 wire domain-specific syscalls through the SSDT and depend on their respective domain TODOs (Object Manager, Registry, SRM, ALPC, etc.). This is by design: this TODO is the **master registry** for all NT syscall endpoints. Domain TODOs implement the logic; this TODO provides the SSDT wiring. The unblocked core (§1 through §5 + §9 through §12 + §24 through §28) delivers a fully functional SYSCALL/SYSRET fast path with 470 SSDT slots, NTSTATUS return values, and the audit/filter/integrity infrastructure. Domain-specific NtXxx wrappers activate as their domain TODOs complete.
+> **Self-contained execution model:** §1 through §5 (NTSTATUS, SYSCALL/SYSRET, INT 0x2E, SSDT, migration) are fully self-contained, no external blockers. §9 through §12, §24 through §28 are also unblocked. Sections §6 through §8, §13 through §23 wire domain-specific syscalls through the SSDT and depend on their respective domain TODOs (Object Manager, Registry, SRM, ALPC, etc.). This is by design: this TODO is the **master registry** for all NT syscall endpoints. Domain TODOs implement the logic; this TODO provides the SSDT wiring. The unblocked core (§1 through §5 + §9 through §12 + §24 through §28) delivers a fully functional SYSCALL/SYSRET fast path with 475 SSDT slots, NTSTATUS return values, and the audit/filter/integrity infrastructure. Domain-specific NtXxx wrappers activate as their domain TODOs complete.
 
 ---
 
@@ -267,16 +267,16 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 
 ## 4. System Service Descriptor Table (SSDT)
 
-The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs do `mov rax, <service_number>; syscall`. This section defines the complete service number allocation for all 470 NT API endpoints. Numbers are stable -- changing them is an ABI break.
+The SSDT is a flat array of function pointers indexed by the 12-bit service number in RAX. `ntdll` stubs do `mov rax, <service_number>; syscall`. This section defines the complete service number allocation for all 475 NT API endpoints. Numbers are stable -- changing them is an ABI break.
 
 - [x] Define `SSDT_HANDLER` and `SSDT_TABLE` in `include/kernel/nt/ssdt.h` -- handler takes 6 uint64_t args, returns NTSTATUS; table has handlers array + count + implemented count + name
 - [x] Shadow SSDT (table 1) allocated as empty placeholder -- indices 0x1000+, filled by Win32k later
-- [x] 470 service index assignments in `include/kernel/nt/service_numbers.h` -- `SSDT_NtXxx` defines for every entry, `SSDT_MAIN_COUNT = 470`
+- [x] 475 service index assignments in `include/kernel/nt/service_numbers.h` -- `SSDT_NtXxx` defines for every entry, `SSDT_MAIN_COUNT = 475`
 - [x] `ssdt_dispatch()` -- selects table from bits 13:12, index from bits 11:0, calls handler
 - [x] `ssdt_register()` -- replaces stub with real handler, tracks implemented count
 - [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
-- [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
+- [x] 4 unit tests: unimplemented stub, invalid table, `table->count >= SSDT_MAIN_COUNT` (lower bound, grows as handlers register), register+dispatch
 - [ ] GUI-thread conversion: when ssdt_dispatch selects Table 1 (shadow SSDT, RAX bits[13:12]=01) and the thread lacks GUI state, run a KiConvertGuiThread-equivalent init (expand kernel stack + wire GUI state) before the handler, after the audit/filter checks -> XREF: `D08 T15`, `D08 T16`
 - [x] Bound `ssdt_dispatch`/`ssdt_register` per-table via new `SSDT_TABLE.max` (capacity) field instead of hardcoded `SSDT_MAIN_MAX`; drops the dead `count` term. Closes the §2-review OOB-if-shadow-shrinks finding. (§4 review)
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
@@ -289,7 +289,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 > - SSDT is a flat function-pointer array; `ssdt_dispatch` (`ssdt.c`) splits table-id (bits 13:12) + index (bits 11:0), bounds-checks, indirect-calls; `ssdt_init` stub-fills all slots before Phase-3 syscall enable.
 > - Review hardened the dispatch + register bound to a per-table `SSDT_TABLE.max` capacity field instead of the hardcoded `SSDT_MAIN_MAX`, closing the §2-review OOB-if-shadow-shrinks finding (both tables 1024 today).
 > - Consistency fixes: bound the `SSDT_MAIN_COUNT`/`SSDT_LAST_MAIN_INDEX` static-asserts to the real `SSDT_MAIN_MAX` in `ssdt.c`; documented count(extent)/max(capacity)/implemented(live) as distinct fields.
-> - 471 main service numbers allocated in `service_numbers.h`; shadow (Win32k) table stays empty until filled by D08 T15.
+> - 475 main service numbers allocated in `service_numbers.h`; shadow (Win32k) table stays empty until filled by D08 T15.
 > - re-adversarial skipped: the only behavioral change (the `table->max` bound) was adversarial+perf-approved in round 1; the consistency fixes are compile-time asserts + a doc comment.
 
 > **Verified:** 2026-06-28 | 9/10 items | build OK | smoke PASS (TCG 2.50s), tests 346+16 PASS
@@ -654,6 +654,9 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"` (928051e4)
 - [ ] `FILE_OBJECT` canonical-path sync across ALIASED handles on rename: a node-shared current path so setinfo unveil re-checks use the current name for EVERY open handle, not just the renaming one (-> XREF: TODO-21 s12 unveil).
 - [ ] Serialize same-handle path-mutating `NtSetInformationFile` (FILE_OBJECT/node lock across unveil auth + rename/truncate + `fo->path` commit) so a racing rename cannot let a sibling thread authorize a stale path (-> XREF: TODO-21 s12).
+- [ ] Tail-pack `FILE_OBJECT.path` into the object-manager allocation (like the tail-packed SD) so a file open needs one heap node, not a second `kmalloc` on the open hot path (-> XREF: TODO-21 s12).
+- [ ] Variable-length `unveil_entry` (store the folded path inline-sized, not a fixed 512 B) so cloning a maximal 128-entry unveil set at fork copies far less than ~66 KiB through the heap (-> XREF: TODO-21 s12).
+- [ ] `NtSetInformationFile` NT ACCESS_MASK enforcement: track the granted mask on `FILE_OBJECT`, require DELETE for dispose/rename and FILE_WRITE_* for truncate/alloc/attrs (interim gate: any write access) (-> XREF: TODO-21 s12).
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
 
@@ -701,7 +704,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: STATUS_KEY_HAS_CHILDREN + ring-3 5+arg paths untested (direct-dispatch tests cover handler logic).
 > **Verified:** 2026-07-02 | commit `1d898565` | 10/13 items | build OK | abi 426/426 PASS
 > **Deferred:** [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args -> XREF: 02-kernel-core/TODO-12 §14 (item: "Registry syscalls with 5+ args" at line 687)
-> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 704)
+> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 707)
 > **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 291)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
@@ -1102,7 +1105,7 @@ Per-process syscall restrictions allow a process to lock down which system servi
 > **Verified:** 2026-07-03 | commit `269eccd9` | 8/8 items | build OK | tests 13686 kernel + 16 user PASS
 > **Accepted:** [H] KernelMode bypass + filtered-task resolution read the global current-thread cursor (not SMP-closed); on real SMP a filtered user syscall could be misclassified as KernelMode -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]` ... closes the cross-CPU probe-gating half of 02-kernel-core/TODO-12 §12 (`ssdt_previous_mode`)" at line 116)
 > **Accepted:** [H] snapshot free at the reap barrier has no cross-CPU reader grace period; safe on the single-cursor scheduler, a sibling reader on another CPU could race the free once per-CPU run queues land -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §6 (item: "`call_rcu(cb)` defers callbacks to a per-CPU list drained after each quiescent state" at line 157)
-> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects ... Use real OB objects + rights" at line 1105)
+> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects ... Use real OB objects + rights" at line 1108)
 > **Accepted:** [H] `NtCreateProcess` leaks the unstarted child task if `ObpAllocateHandle` fails after `task_create` (the inherited filter clone is freed, but the child TCB is not); the child is inert (no returned handle, never scheduled/exec'd) so it is not an unfiltered-runnable escape -> XREF: 02-kernel-core/TODO-05-object-manager.md (item: "Atomic CreateProcess teardown on failure ... add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown" at line 359)
 > **Accepted:** [M] the active-count drop at `TASK_DEAD` precedes a proven all-threads-off-CPU quiescence; correct on the single-cursor scheduler (a DEAD task's threads never run), but on real SMP a still-running sibling could see the count reach zero -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor ... proven-off-CPU-on-all-CPUs reap barrier" at line 116)
 > **Accepted:** [M] the audit-mode log throttle bumps one global `s_audit_log_seq` atomic on the blocked-audit branch; uncontended on the single-cursor scheduler but a shared cacheline under real per-CPU run queues (a multi-core audited loop would bounce it) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (per-CPU state; replace the global audit sample counter with a per-CPU cacheline-isolated one at line 116)
@@ -1147,7 +1150,7 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 > [!TIP]
 > **Impossible OS competitive edge.** Windows uses PatchGuard/KPP -- a complex, opaque system that periodically checksums kernel structures and BSODs on tampering. It's a cat-and-mouse arms race with rootkits. Linux has no SSDT integrity protection at all (`sys_call_table` is `const` but not hardware-enforced). Impossible OS uses hardware write-protection: mark the SSDT pages as read-only via PTE after initialization. Any write attempt triggers a #PF that the kernel catches and escalates to `KeBugCheck(CRITICAL_STRUCTURE_CORRUPTION)`. Zero runtime overhead, no periodic polling, no timing-based detection -- just hardware-enforced immutability.
 
-- [ ] After `ssdt_init()` completes and all 470 handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
+- [ ] After `ssdt_init()` completes and all 475 handlers are registered, mark SSDT pages as read-only via PTE manipulation (clear R/W bit, flush TLB for affected pages)
 
 > [!NOTE]
 > `vmm_protect()` is planned in `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` but does not yet exist. Until it lands, use direct PTE writes: `pte &= ~PTE_WRITE; invlpg(addr)`. This is self-contained -- no external dependency blocks §27.
@@ -1308,7 +1311,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ✅ §2 LSTAR + SYSRET enabled |
 | 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 66 codes   |
-| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
+| 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 475 + shadow stub |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ✅ §3 INT 0x2E + 0x80       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |
 | 💎 | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat    | ⬜ §13                      |
@@ -1341,7 +1344,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only            | ⬜ §26                      |
 | ⭐ | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection           | ⬜ §27 -- HW write-protect   |
 
-> **Target after §1–§23 completion:** Impossible OS reaches complete NT native API coverage across 470 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
+> **Target after §1–§23 completion:** Impossible OS reaches complete NT native API coverage across 475 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract -- Windows keeps it internal/undocumented and Linux has no equivalent.
 > **§24** provides first-class syscall auditing -- no ETW complexity, no BPF programs, just a kernel callback with near-zero idle overhead.
 > **§25** closes the per-process syscall filtering parity gap -- both Win11 and Linux restrict per-process syscall access; Impossible OS uses a fast bitmap with optional BPF programs.
@@ -1363,7 +1366,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
   - **SSDT dispatch (§4):**
     - Valid index calls handler; invalid index returns `STATUS_NOT_IMPLEMENTED`
     - Index beyond table size returns `STATUS_NOT_IMPLEMENTED`, not a crash
-    - SSDT has ≥ 470 registered entries
+    - SSDT has ≥ 475 registered entries
   - **Core handle ops (§6):**
     - `NtClose(INVALID_HANDLE_VALUE)` returns `STATUS_INVALID_HANDLE`
     - `NtCreateFile` on existing file returns `STATUS_SUCCESS` and a valid HANDLE
@@ -1415,7 +1418,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
 - [ ] Headless QEMU serial log: Phase 3 shows `"syscall: fast path (SYSCALL/SYSRET) enabled"`
-- [ ] Serial log: `"ssdt: registered 470 services"` (or more)
+- [ ] Serial log at init: `"SSDT initialized: %u main slots (last=0x%03X), shadow stub ready"`
 - [ ] `mov rax, 0x0000; syscall` from ring 3 reaches `NtClose` handler without a GPF
 - [ ] INT 0x2E from ring 3 reaches the same `syscall_dispatch` with correct register mapping
 - [ ] `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` and a valid HANDLE

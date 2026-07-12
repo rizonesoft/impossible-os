@@ -29,7 +29,7 @@ title: "TODO-31 -- Kernel Bulletproofing"
 - `user/user.ld` -- user ELF load address 0x800000
 - `src/kernel/mm/vmm.c` -- USER_PD_INDEX for user-mode pages
 - `src/kernel/mm/pmm.c` -- pmm_mark_region_used for user range
-- `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 470
+- `include/kernel/nt/service_numbers.h` -- SSDT_MAIN_COUNT = 475
 - → XREF: `TODO-02-kernel-configuration-policy.md §2, §10` -- `kernel_config_t` layout, versioning, and fixed-size field invariants must adopt the same 5-layer defense
 - -> XREF: `TODO-12-native-api-ssdt.md §1-§5` -- NTSTATUS, SSDT, GDT all depend on these invariants
 - -> XREF: `TODO-11-peb-teb-user-abi.md` §6--§5 -- PEB/TEB offsets are Windows ABI contracts (bulletproofing extends pattern to those structs when implemented)
@@ -196,12 +196,12 @@ Multiple subsystems claim IDT vectors: INT 0x80 (syscall), INT 0x81 (yield), INT
 
 **Files:** `include/kernel/nt/service_numbers.h`, `include/kernel/nt/ssdt.h`
 
-- [x] Added `SSDT_LAST_MAIN_INDEX` (0x03D7) + 3 static asserts: count 1-1024, last < 1024, last >= count-1
+- [x] Added `SSDT_LAST_MAIN_INDEX` (0x03DC) + 3 static asserts: count 1-1024, last < 1024, last >= count-1
 - [x] Runtime: `ssdt_init()` logs count + last index in serial output
-- [x] Unit test: 5 assertions -- count==470, last==0x03D7, last < MAX, table pointer valid, table->count matches
+- [x] Unit test (`test_ssdt_main_count`): last index < `SSDT_MAIN_MAX`, `ssdt_get_table(MAIN)` non-NULL, `table->count >= SSDT_MAIN_COUNT` (lower bound -- count grows as handlers register, so no exact-value assert to flake on order)
 - [x] Documentation: 20-line "next available indices per range" table in service_numbers.h + add/update instructions
 
-**Test checkpoint:** Add a service number without updating count -> static assert fires. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** The `_Static_assert`s bound `SSDT_MAIN_COUNT`/`SSDT_LAST_MAIN_INDEX` against capacity and each other (count 1-1024, last < 1024, last >= count-1) -- they do NOT count the `SSDT_Nt*` defines, and `gen-user-abi.py` hashes the macros (catching a renumber) but does not assert define-count == `SSDT_MAIN_COUNT`. Exact define-count drift is caught by the manual `grep -c '^#define SSDT_Nt' service_numbers.h` and `/audit-ssdt`, NOT an automated build gate (an automated count-vs-defines check is a tracked bulletproofing gap). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 - [x] Commit: `"bulletproof: SSDT service count -- last index assert + range table"`
 

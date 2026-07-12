@@ -642,25 +642,27 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         const char *path = (const char *)arg1;
         uint32_t access = (uint32_t)arg2;
         struct task *t = task_current();
-        /* Fine pledge (rpath/wpath/cpath) + unveil check, mirroring the NT
-         * NtCreateFile path (this legacy open bypasses that handler). */
+        char resolved[VFS_MAX_PATH];
+        /* Fine pledge (rpath/wpath/cpath), mirroring the NT NtCreateFile path
+         * (this legacy open bypasses that handler). */
         if (pledge_check_file(t, access) != STATUS_SUCCESS)
             pledge_terminate((uint32_t)SYS_OPENFILE);   /* noreturn */
-        /* A filesystem-restricted task must resolve to a canonical path, pass
-         * the unveil check, and open THAT path -- never fall through to the raw
-         * input on a resolution failure (the VFS may truncate an overlong path
-         * and reach a file outside the unveiled subtree). */
-        if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE)) {
-            char resolved[VFS_MAX_PATH];
-            if (!path || task_resolve_path(path, resolved, sizeof(resolved)) != 0 ||
-                unveil_check(t, resolved, unveil_perms_for_vfs(access)) != STATUS_SUCCESS) {
-                ret = -1;
-                break;
-            }
-            ret = (int64_t)ob_create_file_handle(resolved, access);
+        /* ALWAYS canonicalize (collapse "." / "..") before opening so the handle
+         * stores the same canonical path vfs_open resolves. Otherwise a lexical
+         * path like C:\Allowed\..\Secret would open Secret while fo->path retains
+         * a string that later folds under an unveiled C:\Allowed -- a traversal
+         * bypass of a same-handle path-mutating setinfo. Deny on resolve failure
+         * (never fall through to the raw, possibly-truncated input). */
+        if (!path || task_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+            ret = -1;
             break;
         }
-        ret = (int64_t)ob_create_file_handle(path, access);
+        if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE) &&
+            unveil_check(t, resolved, unveil_perms_for_vfs(access)) != STATUS_SUCCESS) {
+            ret = -1;
+            break;
+        }
+        ret = (int64_t)ob_create_file_handle(resolved, access);
         break;
     }
     case SYS_CLOSEHANDLE: {

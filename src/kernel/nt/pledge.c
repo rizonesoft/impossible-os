@@ -474,6 +474,23 @@ NTSTATUS unveil_add(struct task *t, const char *canon_path, uint8_t perms)
         kfree(e);
         return STATUS_ACCESS_DENIED;
     }
+    {
+        uint32_t count = 0;
+        for (x = t->unveil_list; x; x = x->next)
+            count++;
+        if (count >= UNVEIL_MAX_ENTRIES) {
+            /* Bound the IRQ-off unveil_check scan; a distinct new path past the
+             * cap is refused (existing paths can still be re-unveiled to tighten). */
+            uint8_t is_dup = 0;
+            for (x = t->unveil_list; x; x = x->next)
+                if (p_streq(x->path, folded)) { is_dup = 1; break; }
+            if (!is_dup) {
+                spin_unlock_irqrestore(&t->unveil_lock, irq);
+                kfree(e);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+        }
+    }
     for (x = t->unveil_list; x; x = x->next) {
         if (p_streq(x->path, folded)) {
             /* Tighten-only: re-unveiling an existing path can only narrow its

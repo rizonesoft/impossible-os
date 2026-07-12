@@ -10,6 +10,7 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
+#include "kernel/mm/heap.h"   /* kmalloc / kfree for FILE_OBJECT.path */
 
 /* --- Callbacks ----------------------------------------------------------- */
 
@@ -47,6 +48,10 @@ static void file_on_delete(void *body)
         vfs_close(fo->vfs_node);
         fo->vfs_node = NULL;
     }
+    if (fo->path) {
+        kfree(fo->path);
+        fo->path = NULL;
+    }
 }
 
 /* --- Type registration --------------------------------------------------- */
@@ -75,11 +80,29 @@ HANDLE ob_create_file_handle(const char *path, uint32_t access)
     struct vfs_node *node;
     FILE_OBJECT *fo;
     HANDLE h;
+    char kpath[VFS_MAX_PATH];
+    uint32_t plen = 0;
 
     if (!path)
         return INVALID_HANDLE_VALUE;
 
-    node = vfs_open(path, access);
+    /* Snapshot the path ONCE into a bounded kernel buffer and use that same
+     * snapshot for BOTH the VFS lookup and fo->path. A legacy SYS_OPENFILE
+     * caller passes a raw user pointer; reading it twice (vfs_open, then the
+     * fo->path copy) let a sibling thread mutate the buffer between reads so
+     * fo->path could name a different (allowed) file than fo->vfs_node actually
+     * opened -- an unveil provenance forge. The bound also caps the allocation
+     * (an unbounded user path could otherwise exhaust the heap). Overlong ->
+     * reject (VFS rejects overlong components anyway). */
+    while (path[plen]) {
+        if (plen >= VFS_MAX_PATH - 1)
+            return INVALID_HANDLE_VALUE;
+        kpath[plen] = path[plen];
+        plen++;
+    }
+    kpath[plen] = '\0';
+
+    node = vfs_open(kpath, access);
     if (!node)
         return INVALID_HANDLE_VALUE;
 
@@ -94,13 +117,21 @@ HANDLE ob_create_file_handle(const char *path, uint32_t access)
     fo->offset   = 0;
     fo->pipe_id  = -1;
     fo->pipe_end = 0;
-    /* Retain the canonical open path for later unveil re-checks (node parent
-     * chains are unreliable on IXFS/FAT32). Bounded copy. */
+    fo->path_stale = 0;
+    /* Retain the canonical open path (exact-length allocation, not an inline
+     * VFS_MAX_PATH array -- that would charge every file object + pipe endpoint
+     * 512 bytes on the shared kernel heap) for later unveil re-checks. NULL on
+     * alloc failure -> setinfo unveil re-checks fail closed for a restricted
+     * task, which is safe. The bounded snapshot above is the SAME bytes vfs_open
+     * saw. */
     {
-        uint32_t i = 0;
-        for (; i < sizeof(fo->path) - 1 && path[i]; i++)
-            fo->path[i] = path[i];
-        fo->path[i] = '\0';
+        fo->path = (char *)kmalloc(plen + 1);
+        if (fo->path) {
+            uint32_t i = 0;
+            for (; i < plen; i++)
+                fo->path[i] = kpath[i];
+            fo->path[i] = '\0';
+        }
     }
 
     h = ObpAllocateHandle(&task_current()->handle_table, fo, access, 0);
@@ -247,6 +278,8 @@ int ob_create_pipe_handles(HANDLE_TABLE *ht, HANDLE handles[2])
     fo_read->offset   = 0;
     fo_read->pipe_id  = pipe_fds[0];
     fo_read->pipe_end = PIPE_READ;
+    fo_read->path     = NULL;   /* pipes carry no path (ob_alloc does not zero) */
+    fo_read->path_stale = 0;
 
     /* Create write-end file object */
     fo_write = (FILE_OBJECT *)ob_alloc_object(ObpFileType);
@@ -260,6 +293,8 @@ int ob_create_pipe_handles(HANDLE_TABLE *ht, HANDLE handles[2])
     fo_write->offset   = 0;
     fo_write->pipe_id  = pipe_fds[1];
     fo_write->pipe_end = PIPE_WRITE;
+    fo_write->path     = NULL;   /* pipes carry no path (ob_alloc does not zero) */
+    fo_write->path_stale = 0;
 
     /* Allocate handles */
     handles[0] = ObpAllocateHandle(ht, fo_read, 0, 0);

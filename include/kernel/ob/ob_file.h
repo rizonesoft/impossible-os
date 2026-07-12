@@ -22,10 +22,16 @@ typedef struct file_object {
     int32_t          pipe_id;    /* pipe index (-1 if not a pipe) */
     int32_t          pipe_end;   /* PIPE_READ (0) or PIPE_WRITE (1) */
     uint32_t         dir_enum_index;  /* directory enumeration cursor (S27) */
-    uint32_t         _dir_pad;
-    char             path[512];  /* canonical open path (VFS_MAX_PATH); authoritative
-                                  * for unveil re-checks on an open handle, since
-                                  * vfs_node parent chains are unreliable on IXFS/FAT32 */
+    uint8_t          path_stale;   /* 1 after a rename via this handle: `path` no
+                                    * longer names the file, so path-mutating
+                                    * setinfo fails closed under unveil until the
+                                    * node-shared canonical path lands (TODO-12 s13) */
+    uint8_t          _stale_pad[3];
+    char            *path;       /* canonical open path (kmalloc'd, exact length),
+                                  * authoritative for unveil re-checks on an open
+                                  * handle (vfs_node parent chains are unreliable on
+                                  * IXFS/FAT32); NULL for pipes / on alloc failure.
+                                  * Freed in file_on_delete. */
 } FILE_OBJECT;
 
 /* --- API ----------------------------------------------------------------- */

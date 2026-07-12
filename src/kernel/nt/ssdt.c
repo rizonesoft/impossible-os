@@ -269,9 +269,18 @@ ssdt_dispatch_audited(SSDT_HANDLER handler, uint32_t service_number,
      * Consuming it here makes provenance dispatch-frame-scoped; termination
      * happens only AFTER nt_audit_end releases the session. */
     {
+        /* pledge_pending is thread-local (set + consumed on the same thread in
+         * the same syscall; migration carries the field and the context switch
+         * is the barrier), so a relaxed load + conditional plain clear replaces
+         * a locked atomic RMW on the universal syscall hot path -- the flag is
+         * set only on the rare violation. Capture BEFORE the POST hooks so a
+         * nested Zw from a hook cannot consume this frame's provenance. */
         struct thread *cth = thread_current();
-        int pending = cth ? __atomic_exchange_n(&cth->pledge_pending, 0,
-                                                 __ATOMIC_ACQ_REL) : 0;
+        int pending = 0;
+        if (cth && __atomic_load_n(&cth->pledge_pending, __ATOMIC_RELAXED)) {
+            cth->pledge_pending = 0;
+            pending = 1;
+        }
         nt_audit_end(&sess, service_number, audit_args, handler_status);
         if (pending)
             pledge_terminate(service_number);   /* noreturn */
@@ -347,10 +356,13 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
      * setting the flag; the tail consumes it in the same dispatch frame. */
     {
         NTSTATUS st = table->handlers[index](a1, a2, a3, a4, a5, a6);
+        /* Relaxed load + conditional plain clear (thread-local flag; see the
+         * audited path). No locked RMW on the common unpledged syscall. */
         struct thread *cth = thread_current();
-        if (cth && __atomic_exchange_n(&cth->pledge_pending, 0,
-                                       __ATOMIC_ACQ_REL))
+        if (cth && __atomic_load_n(&cth->pledge_pending, __ATOMIC_RELAXED)) {
+            cth->pledge_pending = 0;
             pledge_terminate(service_number);   /* noreturn */
+        }
         return st;
     }
 }

@@ -63,6 +63,11 @@ struct task;
 #define UNVEIL_C          0x8u
 #define UNVEIL_PERM_MASK  0xFu
 
+/* Cap the unveil list length: unveil_check walks it under a leaf spinlock with
+ * interrupts disabled, so an unbounded list is unbounded IRQ-off latency. A
+ * real program unveils a handful of paths; 128 is generous. */
+#define UNVEIL_MAX_ENTRIES  128
+
 /* One unveiled path prefix. `path` is stored FOLDED (vfs_path_fold), absolute,
  * separator-normalized, without a trailing '\' (except the "X:\" root). */
 typedef struct unveil_entry {

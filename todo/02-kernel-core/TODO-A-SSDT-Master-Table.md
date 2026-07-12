@@ -651,9 +651,13 @@ title: "SSDT Master Table"
 | 0x03D6 | NtQueryDriverList           | §10 | T12 (loaded drivers)   | [ ]  |
 | 0x03D7 | NtQueryTaskList             | §10 | T12 (sched tasks)      | [ ]  |
 | 0x03D8 | NtGetRandom                 | --  | T03 §5 kernel CSPRNG   | [x]  |
+| 0x03D9 | NtSetCurrentDirectory       | §1  | T21 (per-process cwd)  | [x]  |
+| 0x03DA | NtQueryCurrentDirectory     | §1  | T21 (per-process cwd)  | [x]  |
+| 0x03DB | NtPledge                    | §12 | T21 (pledge)           | [x]  |
+| 0x03DC | NtUnveil                    | §12 | T21 (unveil)           | [x]  |
 
-> **Total: 471 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
+> **Total: 475 service entries** across 30 functional ranges -- full Windows 11 parity plus Impossible OS exclusive extensions. Shadow SSDT (Win32k) has a separate index space starting at 0x1000.
 >
-> **Implementation progress: 140/471 wired** (29.7%) -- **120 complete `[x]`** (25.5%) + **20 partial/stub `[/]`** (4.2%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
+> **Implementation progress: 144/475 wired** (29.7%) -- **124 complete `[x]`** (26.1%) + **20 partial/stub `[/]`** (4.2%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
 
-**Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 471 services"` during init.
+**Test checkpoint:** `ssdt_dispatch(0x0FFF)` (unregistered MAIN slot) returns `STATUS_NOT_IMPLEMENTED`; `ssdt_dispatch(0x2000)` (invalid table id) returns `STATUS_INVALID_PARAMETER`; `ssdt_dispatch(valid_index)` calls the correct handler. Serial at init: `"SSDT initialized: %u main slots (last=...)"`.

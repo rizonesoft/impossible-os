@@ -388,6 +388,13 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Design review reshaped the model (intersect-not-OR, unclassified-deny, terminate-after-audit, fork/create inheritance, folded boundary match); adoptions in commit `<hash>`.
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
+> **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 428)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 433)
+> **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 655)
+> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 657)
+> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 659)
+> **Quality reviewed:** 2026-07-12 | Codex 22x (design, adversarial, re-adversarial, consistency, perf) | ~21H+6M fixed, 3H accepted-XREF, 3M deferred | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---
 
@@ -424,7 +431,8 @@ Central cleanup point for all per-process resources when a process terminates. W
   - Release per-process resource limits and accounting (-> XREF: §8, §9 of this TODO)
   - Remove from job object if assigned (-> XREF: §13)
 - [ ] Log: `klog(LOG_DEBUG, "task", "PID %u exit cleanup: %u handles, %u locks released", ...)`
-- [ ] Unpublished-child construction API: inherit ALL security state (filter, token, pledge/unveil, mitigation) BEFORE `task_create`/`task_fork` publish the child READY, with full rollback on failure (-> XREF: §12).
+- [ ] Unpublished-child construction: inherit all security state AND revalidate the pledge/unveil generation just before `task_fork`/`task_create` publish the child (an early inherit misses a concurrent tighten), full rollback.
+- [ ] Coordinated SMP process termination: `task_exit` publishes TASK_DEAD with no sibling-stop barrier, so `task_cleanup` may free stacks/CR3 under a sibling mid-syscall. Rendezvous threads off-CPU before reap.
 - [ ] Commit: `"kernel: task -- process exit cleanup (handles, locks, timer res, memory)"`
 
 **Test checkpoint:** Create a process that opens files with locks + timer resolution request. Kill the process. Verify: all locks released, timer resolution reverts to default, handles closed, no resource leak. Serial log shows cleanup counts. Test on QEMU WHPX, TCG.
