@@ -9,7 +9,9 @@ means the finding (or the content it targets) is genuinely new.
 
   finding-ledger.py id     <kind> <severity> <file:line> <title...>
   finding-ledger.py record <kind> <severity> <file:line> --decision fix|reject|accept
-                     [--class <defect-class>] --evidence "<text>" <title...>
+                     --todo PATH --evidence "<text>" [--class <defect-class>] <title...>
+                     (--todo + --evidence are REQUIRED: a disposition without the
+                     section it belongs to and its reason cannot be reused -- I4)
   finding-ledger.py lookup <kind> <severity> <file:line> <title...>
   finding-ledger.py list [--todo PATH]
   finding-ledger.py classes                 promotion report: per defect class,
@@ -130,6 +132,11 @@ def main(argv) -> int:
         i = rest.index("--class")
         dclass = rest[i + 1]
         rest = rest[:i] + rest[i + 2:]
+    todo = None
+    if "--todo" in rest:
+        i = rest.index("--todo")
+        todo = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
     title = " ".join(rest)
     fid = finding_id(root, kind, severity, loc, title)
 
@@ -140,14 +147,31 @@ def main(argv) -> int:
         if decision not in ("fix", "reject", "accept"):
             print("record needs --decision fix|reject|accept", file=sys.stderr)
             return 2
+        # I4: require --todo + --evidence. Of 56 prior records 43 had EMPTY
+        # evidence and NONE stored a todo, so `list --todo` never matched and the
+        # ledger was structurally unusable -- the review re-triaged settled
+        # systemic findings for ZERO source changes. A disposition without the
+        # section it belongs to and the reason for it cannot be reused, so it is
+        # rejected at record time rather than accrued as dead weight.
+        if not todo:
+            print("record needs --todo PATH (the section/TODO this finding "
+                  "belongs to) so a later session can look it up by section",
+                  file=sys.stderr)
+            return 2
+        if not (evidence or "").strip():
+            print("record needs --evidence \"<text>\" (the file:line reason for "
+                  "the fix/reject/accept) -- an empty disposition is not reusable",
+                  file=sys.stderr)
+            return 2
         entries = [e for e in entries if e.get("id") != fid]
         entries.append({"id": fid, "kind": kind, "severity": severity,
                         "loc": loc, "title": title[:300],
                         "decision": decision, "class": dclass,
+                        "todo": todo,
                         "evidence": (evidence or "")[:1000],
                         "epoch": int(time.time())})
         save(root, entries)
-        print(json.dumps({"id": fid, "recorded": decision}))
+        print(json.dumps({"id": fid, "recorded": decision, "todo": todo}))
         return 0
     if verb == "lookup":
         hit = next((e for e in reversed(entries) if e.get("id") == fid), None)

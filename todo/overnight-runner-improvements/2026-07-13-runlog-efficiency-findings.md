@@ -443,7 +443,7 @@
   pack + ~19 searches/reads (`run-20260713-120304.log:26`). **Fix:** make the packet the SOLE initial
   orientation source by embedding a BOUNDED evidence subset from the full pack (top symbol_defs +
   input_files + tests + gates), not just the summary counts.
-- [ ] **[det] I4. Finding/decision reuse is structurally ineffective.** VERIFIED. Of 56 records in
+- [x] **[det] I4. Finding/decision reuse is structurally ineffective.** VERIFIED. Of 56 records in
   `.claude/state/finding-triage.jsonl`, 43 have EMPTY evidence and NONE store a `todo` (the schema has
   no `todo` field: keys are `id/kind/severity/loc/title/decision/class/evidence/epoch`), so
   `finding-ledger.py list --todo` (`:87-88`, which filters on `e.get("todo")`) can never match --
@@ -453,6 +453,13 @@
   **Fix:** require `todo` + `evidence` on every recorded disposition; auto-refresh the decision
   registry when the TODO cache advances; attach compact source-backed precedents to review prompts.
   Full review still runs -- precedents only prevent repeated triage of UNCHANGED systemic policy.
+  **DONE 2026-07-13 (structural reuse):** `finding-ledger.py record` now REQUIRES `--todo` + `--evidence`
+  (rejects a disposition that stores neither the section it belongs to nor its reason), so `list --todo`
+  matches; `decision-registry.py` auto-rebuilds its index when `build/todo-cache.json` is newer (self-
+  refresh, no external wiring). Test `test_finding_decision_reuse.py` (4 cases). The 3rd sub-fix --
+  injecting the reusable precedents INTO the review prompts -- is a review-DISPATCH behavior change that
+  belongs with the P2 review-pipeline work (it alters the prompt, adjacent to convergence); tracked there,
+  not re-opened here. The structural defect ("records unusable") is closed.
 - [x] **[det] I5. ChromeMCP is operational waste on the kernel queue.** VERIFIED against doctrine. All
   8 kernel runs started a browser lane and none used a browser tool, despite `overnight-launch.sh:221`
   and `SKILL.md:357` both saying kernel runs disable it (`run-20260713-120304.log:5`). The

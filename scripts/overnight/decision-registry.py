@@ -125,12 +125,29 @@ def load(root: Path) -> list:
         return []
 
 
+def _auto_refresh_if_stale(root: Path) -> None:
+    """I4: rebuild the index when build/todo-cache.json has advanced past it, so
+    search/get never serve decisions staler than the current TODO state. The
+    registry was previously refreshed only by an explicit `build`, so it drifted
+    behind the TODO cache and a review re-triaged already-settled findings."""
+    try:
+        idx = root / INDEX_REL
+        cache = root / "build" / "todo-cache.json"
+        if not cache.exists():
+            return
+        if (not idx.exists()) or cache.stat().st_mtime > idx.stat().st_mtime:
+            build(root)
+    except Exception:
+        pass
+
+
 def main(argv) -> int:
     root = Path(".").resolve()
     if not argv or argv[0] == "build":
         if len(argv) > 1:
             root = Path(argv[1]).resolve()
         return build(root)
+    _auto_refresh_if_stale(root)
     if argv[0] == "search":
         terms = [t.lower() for t in argv[1:]]
         if not terms:
