@@ -125,6 +125,114 @@ def test_received_false_and_no_history_blocks():
         assert not ok and "was not" in why, why
 
 
+# ------------------------------------------------------------ B3 worktree bind
+def _repo_committed(d):
+    root = pathlib.Path(d)
+    (root / ".claude/state").mkdir(parents=True)
+    (root / "src/kernel").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
+    (root / "src/kernel/x.c").write_text("int x(void){return 1;}\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+    return root
+
+
+def test_b3_review_over_unstaged_binds_then_gate_accepts_when_staged():
+    # B3: reviews run over the UNSTAGED working tree (implement -> review ->
+    # stage+commit). The old staged-only capture left trigger_files empty and
+    # forced SKIP_REVIEW_HOOK. The working-tree capture binds the reviewed
+    # content; once the model stages that exact content, the gate accepts.
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo_committed(d)
+        (root / "src/kernel/x.c").write_text("int x(void){return 2;}\n")  # UNSTAGED
+        tf = crc._worktree_review_files(root)
+        assert "src/kernel/x.c" in tf, tf
+        tb = crc._worktree_source_blobs(root, tf)
+        assert tb.get("src/kernel/x.c"), tb
+        assert crc._staged_review_files(root) == [], "nothing staged yet"
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(review)", trigger_files=tf, trigger_blobs=tb, head_sha="h")
+        subprocess.run(["git", "-C", str(root), "add", "src/kernel/x.c"], check=True)
+        staged = scg._staged_source_files(root)
+        ok, why = scg._review_evidence(root, staged)
+        assert ok, why
+
+
+def test_b3_edit_after_review_still_blocks():
+    # Security property preserved: content committed must byte-match content
+    # reviewed. An edit AFTER the review must still block.
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo_committed(d)
+        (root / "src/kernel/x.c").write_text("int x(void){return 2;}\n")
+        tf = crc._worktree_review_files(root)
+        tb = crc._worktree_source_blobs(root, tf)
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(review)", trigger_files=tf, trigger_blobs=tb, head_sha="h")
+        (root / "src/kernel/x.c").write_text("int x(void){return 999;}\n")  # edit AFTER review
+        subprocess.run(["git", "-C", str(root), "add", "src/kernel/x.c"], check=True)
+        staged = scg._staged_source_files(root)
+        ok, why = scg._review_evidence(root, staged)
+        assert not ok, "post-review edit must still block (security property)"
+
+
+def test_b3_find_and_fix_re_review_supersedes():
+    # Find-and-fix: adversarial over A recorded, fix to A', re-adversarial over
+    # A' recorded (overwrites last-codex-review), stage A' -> accept. The 2nd
+    # canary SKIP was exactly this drift; the re-review's content must win.
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo_committed(d)
+        (root / "src/kernel/x.c").write_text("int x(void){return 2;}\n")  # A
+        tfa = crc._worktree_review_files(root)
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(adversarial)", trigger_files=tfa,
+               trigger_blobs=crc._worktree_source_blobs(root, tfa), head_sha="h")
+        (root / "src/kernel/x.c").write_text("int x(void){return 3;}\n")  # fix -> A'
+        tfb = crc._worktree_review_files(root)
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(re-adversarial)", trigger_files=tfb,
+               trigger_blobs=crc._worktree_source_blobs(root, tfb), head_sha="h")
+        subprocess.run(["git", "-C", str(root), "add", "src/kernel/x.c"], check=True)
+        staged = scg._staged_source_files(root)
+        ok, why = scg._review_evidence(root, staged)
+        assert ok, why
+
+
+# ------------------------------------------------------------ F1 attribution
+def test_f1_active_section_wins_over_first_staged():
+    # F1: with TODO-12 staged FIRST (reciprocal XREF) but TODO-22 the active
+    # section, attribution must pick TODO-22, not first-staged TODO-12.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        (root / ".claude/state/skill-progress.json").write_text(json.dumps(
+            {"review-todo-section": {"todo_path": "todo/02-kernel-core/TODO-22-x.md",
+                                     "compaction_orphaned": False}}))
+        staged = ["todo/02-kernel-core/TODO-12-y.md",
+                  "todo/02-kernel-core/TODO-22-x.md"]
+        assert scg._attribute_review_todo(root, staged) == \
+            "todo/02-kernel-core/TODO-22-x.md"
+
+
+def test_f1_falls_back_to_first_staged_without_active():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        assert scg._attribute_review_todo(
+            root, ["todo/a/TODO-5.md", "todo/a/TODO-6.md"]) == "todo/a/TODO-5.md"
+
+
+def test_f1_orphaned_active_falls_back():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        (root / ".claude/state/skill-progress.json").write_text(json.dumps(
+            {"review-todo-section": {"todo_path": "todo/a/TODO-22.md",
+                                     "compaction_orphaned": True}}))
+        assert scg._attribute_review_todo(root, ["todo/a/TODO-9.md"]) == "todo/a/TODO-9.md"
+
+
 if __name__ == "__main__":
     test_broker_is_background_and_stampable()
     test_foreground_wrapper_unaffected()
@@ -133,4 +241,10 @@ if __name__ == "__main__":
     test_non_intersecting_record_is_stale_rejected()
     test_received_false_but_history_covers_accepts()
     test_received_false_and_no_history_blocks()
-    print("PASS: review-gate P1.2/P1.3")
+    test_b3_review_over_unstaged_binds_then_gate_accepts_when_staged()
+    test_b3_edit_after_review_still_blocks()
+    test_b3_find_and_fix_re_review_supersedes()
+    test_f1_active_section_wins_over_first_staged()
+    test_f1_falls_back_to_first_staged_without_active()
+    test_f1_orphaned_active_falls_back()
+    print("PASS: review-gate P1.2/P1.3 + B3 + F1")

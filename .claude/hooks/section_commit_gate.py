@@ -1525,18 +1525,13 @@ def _staged_loc_delta(root: Path, paths: list[str]) -> int | None:
     return total
 
 
-def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
-    """Pick the TODO path to look up in last-review-stamps.json for
-    the re-adversarial check. Preference order:
-      1. A staged TODO file (typical impl-pipeline section commit).
-      2. The TODO path parsed from the active review-todo-section
-         skill entry's `args` field in skill-progress.json (covers
-         the pure-source fix-loop commit per Codex design H2).
-    Returns "" when neither source provides a path.
-    """
-    for tf in todo_files:
-        if tf and tf.endswith(".md") and "todo/" in tf.replace("\\", "/"):
-            return tf
+def _active_section_todo(root: Path) -> str:
+    """The TODO path of the in-flight implement/review-todo-section skill, or "".
+
+    Reads skill-progress.json, preferring the structured `todo_path` recorded by
+    skill_step_observer at skill-start (a single authoritative regex run) over a
+    loose parse of `args`. Checks review-todo-section first (the section-ship
+    context), then implement-todo-section (a fix-loop commit before review)."""
     state_path = root / ".claude" / "state" / "skill-progress.json"
     if not state_path.exists():
         return ""
@@ -1546,30 +1541,41 @@ def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
         return ""
     if not isinstance(state, dict):
         return ""
-    entry = state.get("review-todo-section")
-    if not isinstance(entry, dict):
-        return ""
-    if entry.get("compaction_orphaned") is True:
-        return ""
-    # TODO-08 §17 deferred-XREF M4 fix: prefer the structured `todo_path`
-    # field recorded by skill_step_observer at skill-start. Loose-regex
-    # parsing of `args` was a fallback that risked picking up incidental
-    # TODO mentions; the structured field comes from a single regex run
-    # at observer-time and is the authoritative attribution.
-    todo_path = entry.get("todo_path")
-    if isinstance(todo_path, str) and todo_path.endswith(".md") \
-       and "todo/" in todo_path.replace("\\", "/"):
-        return todo_path
-    args = entry.get("args", "")
-    if not isinstance(args, str) or not args:
-        return ""
-    # Fallback: the skill args carry the TODO path on first invocation,
-    # e.g. "todo/00-infrastructure/TODO-08-automation-hardening.md §17 ...".
-    # Used only when the observer entry predates the structured field.
-    m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args)
-    if not m:
-        return ""
-    return m.group(0)
+    for skill in ("review-todo-section", "implement-todo-section"):
+        entry = state.get(skill)
+        if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
+            continue
+        todo_path = entry.get("todo_path")
+        if isinstance(todo_path, str) and todo_path.endswith(".md") \
+           and "todo/" in todo_path.replace("\\", "/"):
+            return todo_path
+        args = entry.get("args", "")
+        if isinstance(args, str) and args:
+            m = re.search(r"todo/[\w./-]+TODO-\d[\w./-]*\.md", args)
+            if m:
+                return m.group(0)
+    return ""
+
+
+def _attribute_review_todo(root: Path, todo_files: list[str]) -> str:
+    """Pick the TODO path to look up in last-review-stamps.json for the
+    re-adversarial check.
+
+    F1: prefer the ACTIVE section's TODO (the implement/review-todo-section
+    context) over "first staged .md". When a section-ship commit stages the
+    section's own TODO alongside stale reciprocal-XREF edits in OTHER TODOs
+    (TODO-22 + TODO-12/TODO-07 on the 2026-07-13 run), first-staged picked the
+    wrong file, blocked the commit, and forced a `git restore --staged` dance.
+    The active-section context is the authoritative owner. Falls back to the
+    first staged TODO .md only when there is no active section context.
+    """
+    active = _active_section_todo(root)
+    if active:
+        return active
+    for tf in todo_files:
+        if tf and tf.endswith(".md") and "todo/" in tf.replace("\\", "/"):
+            return tf
+    return ""
 
 
 def _re_adversarial_trigger_check(

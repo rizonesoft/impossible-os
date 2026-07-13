@@ -283,6 +283,60 @@ def _staged_source_blobs(root: Path, paths: list[str]) -> dict:
     return blobs
 
 
+def _worktree_review_files(root: Path) -> list[str]:
+    """B3: review-scope source files that differ from HEAD in the WORKING TREE
+    (staged OR unstaged), restricted to files that still exist on disk.
+
+    Reviews are dispatched over the working tree BEFORE staging (the flow is
+    implement -> review -> stage+commit; a find-and-fix cycle re-reviews the
+    fixed working tree). The staged-only capture (_staged_review_files) left
+    trigger_files EMPTY for those reviews, which forced the SKIP_REVIEW_HOOK
+    bypasses seen in the 2026-07-13 canary. Binding to the working tree the
+    reviewer actually saw stays content-SAFE: the section-commit gate compares
+    the STAGED blob at commit against these blobs, so the committed content must
+    byte-match what was reviewed (an edit after the review still mismatches and
+    blocks). Empty on git error -- the gate treats empty as 'covers nothing'."""
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "HEAD", "--name-only", "-z"],
+            cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+    paths = [p for p in out.split("\x00") if p and _is_review_scope_path(p)]
+    # Only files that still exist can be content-hashed; a staged deletion has
+    # no reviewable content and is handled by the gate's own coverage logic.
+    return [p for p in paths if (root / p).exists()]
+
+
+def _worktree_source_blobs(root: Path, paths: list[str]) -> dict:
+    """{path: blob_sha} for the WORKING-TREE content of each path (via
+    `git hash-object`) -- the exact bytes the reviewer saw. Bare SHA (no mode
+    prefix); the gate's _source_binding_matches strips the mode from the staged
+    `mode:sha` at commit, so a bare-sha trigger binds against the staged blob.
+    Empty dict on git error or count mismatch (gate treats missing blobs as
+    evidence-missing -- fail-closed)."""
+    if not paths:
+        return {}
+    uniq = list(dict.fromkeys(paths))
+    blobs: dict = {}
+    for start in range(0, len(uniq), _GIT_BLOB_BATCH_SIZE):
+        batch = uniq[start:start + _GIT_BLOB_BATCH_SIZE]
+        try:
+            out = subprocess.check_output(
+                ["git", "hash-object", "--", *batch],
+                cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return {}
+        shas = [s.strip() for s in out.splitlines() if s.strip()]
+        if len(shas) != len(batch):
+            return {}  # alignment lost -> fail-closed
+        for p, sha in zip(batch, shas):
+            blobs[p] = sha
+    return blobs
+
+
 # Bash control operators that introduce a NEW command sequence.
 # `true && codex review prompt` was a bypass: the original code
 # treated the whole command as one argv with `true` at position 0.
@@ -1077,14 +1131,20 @@ def main() -> int:
                 f"`Skill(superpowers:receiving-code-review)`; only the new "
                 f"trigger is now tracked by the gate.\n"
             )
-        # Capture currently-staged source files at trigger time
-        # PLUS their blob SHAs. Path-binding alone is insufficient
-        # (Codex C1: `git diff --cached` covers foo.c at trigger,
-        # then agent edits foo.c, then commit -- gate would pass
-        # without this binding). The blob SHA captures the exact
-        # content the reviewer saw.
-        trigger_files = _staged_review_files(root)
-        trigger_blobs = _staged_source_blobs(root, trigger_files)
+        # Capture the source files the reviewer saw at trigger time PLUS their
+        # blob SHAs. Path-binding alone is insufficient (Codex C1: git diff
+        # covers foo.c at trigger, then agent edits foo.c, then commit -- gate
+        # would pass without this binding). B3: prefer the WORKING-TREE view
+        # (staged OR unstaged vs HEAD) because reviews are dispatched BEFORE
+        # staging; the staged-only capture left trigger_files empty and forced
+        # SKIP_REVIEW_HOOK. Fall back to the staged view when the working tree is
+        # clean vs HEAD (e.g. a review dispatched over already-committed code).
+        trigger_files = _worktree_review_files(root)
+        if trigger_files:
+            trigger_blobs = _worktree_source_blobs(root, trigger_files)
+        else:
+            trigger_files = _staged_review_files(root)
+            trigger_blobs = _staged_source_blobs(root, trigger_files)
         head_at_dispatch = _head_sha(root)
         state = {
             "timestamp_ns": now_ns,

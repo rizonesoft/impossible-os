@@ -106,7 +106,7 @@
   is the SEMANTICS of the signal; distinct from B1 (the 2-min-kill of the poll CALL itself, fixed).
   (This is the canary doing its job: a real watched run surfaced a signal-quality gap the deterministic
   tests could not.)
-- [ ] **[det] B3. The review-gate STILL forces `SKIP_REVIEW_HOOK` on broker-reviewed and find-and-fix
+- [x] **[det] B3. The review-gate STILL forces `SKIP_REVIEW_HOOK` on broker-reviewed and find-and-fix
   sections -- P1.2/P1.3 did not close it.** SURFACED LIVE in the same 2026-07-13 watched canary: landing
   TODO-22 §5 required TWO honest `SKIP_REVIEW_HOOK` opt-outs (each ALSO needing `SKIP_SKILL_STEP_BLOCK`),
   via TWO distinct content-binding/attribution mechanisms neither P1.2 nor P1.3 patched:
@@ -323,7 +323,7 @@
 
 ## F. Gate / commit-attribution flow
 
-- [ ] **[canary] F1. The section-commit gate attributes the commit to the FIRST staged `.md`, not
+- [x] **[canary] F1. The section-commit gate attributes the commit to the FIRST staged `.md`, not
   the active section's target file.** `run-20260713-025424.log:317-329`: with TODO-22 (valid stamp)
   and TODO-12/TODO-07 (stale stamps, touched only for reciprocal XREF edits) staged together,
   `_attribute_review_todo` picked a wrong file and blocked, forcing `git restore --staged` of the

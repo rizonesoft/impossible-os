@@ -400,10 +400,13 @@ def _segment_is_codex_invocation(seg_tokens):
     if head_base == "node" and "codex-companion.mjs" in second:
         return third in _COMPANION_REVIEW_SUBCOMMANDS
     if head_base in ("bash", "sh", "/bin/bash", "/bin/sh") and \
-            (second.endswith("codex-dispatch.sh") or second.endswith("codex-bg-dispatch.sh")):
+            (second.endswith("codex-dispatch.sh") or second.endswith("codex-bg-dispatch.sh")
+             or second.endswith("review-broker-codex-dispatch.sh")):
         return True
-    if head_base in ("codex-dispatch.sh", "codex-bg-dispatch.sh") or \
-            head_base.endswith("/codex-dispatch.sh") or head_base.endswith("/codex-bg-dispatch.sh"):
+    if head_base in ("codex-dispatch.sh", "codex-bg-dispatch.sh",
+                     "review-broker-codex-dispatch.sh") or \
+            head_base.endswith("/codex-dispatch.sh") or head_base.endswith("/codex-bg-dispatch.sh") \
+            or head_base.endswith("/review-broker-codex-dispatch.sh"):
         return True
     if head_base == "codex":
         idx = _walk_codex_global_options(out, start=1)
@@ -442,10 +445,13 @@ def _segment_extract_prompt(seg_tokens):
                 return _first_positional_after(out, i + 3)
             return ""
         if base in ("bash", "sh", "/bin/bash", "/bin/sh") and i + 1 < len(out) and \
-                (out[i + 1].endswith("codex-dispatch.sh") or out[i + 1].endswith("codex-bg-dispatch.sh")):
+                (out[i + 1].endswith("codex-dispatch.sh") or out[i + 1].endswith("codex-bg-dispatch.sh")
+                 or out[i + 1].endswith("review-broker-codex-dispatch.sh")):
             return _first_positional_after(out, i + 2)
-        if base in ("codex-dispatch.sh", "codex-bg-dispatch.sh") or \
-                base.endswith("/codex-dispatch.sh") or base.endswith("/codex-bg-dispatch.sh"):
+        if base in ("codex-dispatch.sh", "codex-bg-dispatch.sh",
+                    "review-broker-codex-dispatch.sh") or \
+                base.endswith("/codex-dispatch.sh") or base.endswith("/codex-bg-dispatch.sh") \
+                or base.endswith("/review-broker-codex-dispatch.sh"):
             return _first_positional_after(out, i + 1)
         if base == "codex":
             idx = _walk_codex_global_options(out, start=i + 1)
