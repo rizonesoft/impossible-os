@@ -139,9 +139,59 @@ def test_kill_switch_and_tiny_reports():
         assert r.returncode == 0
 
 
+def _load_hook():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("arc", HOOK)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_canonical_scope_key_hits_across_volatile_prompts():
+    # P2.3: two review-evidence-mapper rounds naming the same section+file over
+    # an UNCHANGED tree must produce the SAME cache key despite different prose
+    # (round number, findings) -- the 22-stores/0-hits fix.
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        p_r4 = ("Round 4: verify finding at src/kernel/a.c:10 for "
+                "todo/TODO-01.md section 3 -- possible UAF")
+        p_r5 = ("Round 5: re-verify src/kernel/a.c:42 in todo/TODO-01.md "
+                "section 3 after the lock fix; check finding #7")
+        k4 = arc._cache_key(fx, "review-evidence-mapper", p_r4)
+        k5 = arc._cache_key(fx, "review-evidence-mapper", p_r5)
+        assert k4 and k5 and k4 == k5, (k4, k5)
+
+
+def test_canonical_scope_key_distinguishes_sections():
+    # A different section (different files) must NOT collide -> no wrong hit.
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        ka = arc._cache_key(fx, "review-evidence-mapper",
+                            "verify todo/TODO-01.md section 3 src/kernel/a.c:1")
+        kb = arc._cache_key(fx, "review-evidence-mapper",
+                            "verify todo/TODO-01.md section 9 src/kernel/b.c:1")
+        assert ka and kb and ka != kb, (ka, kb)
+
+
+def test_researcher_prompt_still_load_bearing():
+    # parity-research-analyst is EXCLUDED from canonicalization: its prompt is
+    # the question, so different prompts must give different keys.
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        k1 = arc._cache_key(fx, "parity-research-analyst", "how does Win11 do X")
+        k2 = arc._cache_key(fx, "parity-research-analyst", "how does Linux do Y")
+        assert k1 and k2 and k1 != k2, (k1, k2)
+
+
 if __name__ == "__main__":
     test_cache_roundtrip_and_invalidation()
     test_non_cacheable_agent_passthrough()
     test_subagentstop_store_then_pre_hit()
     test_kill_switch_and_tiny_reports()
+    test_canonical_scope_key_hits_across_volatile_prompts()
+    test_canonical_scope_key_distinguishes_sections()
+    test_researcher_prompt_still_load_bearing()
     print("PASS: agent-result cache")

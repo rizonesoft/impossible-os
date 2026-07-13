@@ -241,6 +241,34 @@ def _segment_is_background(seg_tokens):
         return True
     if head_base == "codex-bg-dispatch.sh" or head_base.endswith("/codex-bg-dispatch.sh"):
         return True
+    # The review broker DETACHES its review (systemd-run/setsid) and returns a
+    # {logFile} immediately -- so it is a background dispatch, and its instant
+    # return must not read as a completed review (P1.3). NOTE: the broker is a
+    # real REVIEW wrapper, so the recorder keeps stamping it via the
+    # is_review_broker_dispatch() exception -- flagging it background here only
+    # makes last-codex-review.json's background_dispatch flag honest.
+    if head_base in ("bash", "sh", "/bin/bash", "/bin/sh") and \
+            second.endswith("review-broker-codex-dispatch.sh"):
+        return True
+    if head_base.endswith("review-broker-codex-dispatch.sh"):
+        return True
+    return False
+
+
+def is_review_broker_dispatch(cmd: str) -> bool:
+    """True when `cmd` invokes review-broker-codex-dispatch.sh. The broker is a
+    background REVIEW dispatch (see _segment_is_background); the recorder uses
+    this to KEEP stamping it even though it is flagged background, since a
+    completed broker leg is genuine review proof (a generic `task --background`
+    is not)."""
+    if not isinstance(cmd, str) or "review-broker-codex-dispatch.sh" not in cmd:
+        return False
+    toks = _tokenize(_harvest_heredoc_vars(cmd)[0])
+    for seg in _segment_by_separators(toks):
+        seg = _trim_heredoc_body(_strip_env_and_wrappers(list(seg)))
+        for tok in seg[:2]:
+            if tok.endswith("review-broker-codex-dispatch.sh"):
+                return True
     return False
 
 

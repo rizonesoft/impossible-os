@@ -1147,13 +1147,17 @@ def main() -> int:
         if isinstance(ti_for_bg, dict):
             raw_cmd = str(ti_for_bg.get("command") or "")
         state["background_dispatch"] = bool(raw_cmd and _cd.is_background_dispatch(raw_cmd))
+        # The review BROKER is a background dispatch (its instant {logFile}
+        # return is not a completed review -- P1.3), but it IS a real review
+        # wrapper, so it still earns a per-kind stamp. A generic background
+        # dispatch (companion `task --background`) proves only that a job
+        # started, so it stays excluded from the stamp PROOF surface.
+        is_broker = bool(raw_cmd and _cd.is_review_broker_dispatch(raw_cmd))
+        state["review_broker_dispatch"] = is_broker
         _write_atomic(state_path, state)
-        # background dispatches never populate last-review-stamps.json: the
-        # stamp file is the four-dispatch PROOF surface, and a background
-        # launch proves only that a job started (doctrine: bg-dispatch is not
-        # gate evidence)
         stamp_attempted = bool(
-            review_kind and todo_path and not state.get("background_dispatch")
+            review_kind and todo_path
+            and (not state.get("background_dispatch") or is_broker)
         )
         if stamp_attempted:
             stamp_ok, stamp_err = _record_stamp(
@@ -1162,7 +1166,7 @@ def main() -> int:
             )
         elif state.get("background_dispatch"):
             stamp_ok = False
-            stamp_err = "skipped (background dispatch is not review proof)"
+            stamp_err = "skipped (non-broker background dispatch is not review proof)"
         else:
             stamp_ok = False
             stamp_err = "skipped (missing review_kind or todo_path)"

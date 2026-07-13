@@ -109,7 +109,7 @@ def _fresh_section_pack(root: Path) -> bool:
     if cursor_file and todo != cursor_file:
         return False
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                               / "scripts/overnight"))
         from worktree_hash import worktree_key
     except Exception:

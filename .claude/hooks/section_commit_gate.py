@@ -1075,10 +1075,22 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
     if not isinstance(state, dict):
         return (False, "last-codex-review.json is not a JSON object")
     if state.get("received") is not True:
+        # P1.2 churn fix: `last-codex-review.json` holds only the SINGLE latest
+        # review, so the next kind's trigger in a multi-kind broker round resets
+        # received:false even though an EARLIER kind was genuinely received. That
+        # produced the false blocks that forced the SKIP_REVIEW_HOOK bypasses.
+        # Before blocking, consult the received-review ring buffer: if any prior
+        # RECEIVED review blob-covers the EXACT current staged content, the work
+        # is reviewed. Fail-safe: only a received review whose trigger_blobs match
+        # the current staged blobs counts (content-bound, never a bare timestamp).
+        cur_blobs = crc._staged_source_blobs(root, staged_src)
+        if cur_blobs and _history_covers(root, staged_src, cur_blobs):
+            return (True, "")
         trig = str(state.get("trigger", "(unknown)"))[:80]
         return (False, f"latest Codex review (trigger: {trig}) was not "
-                       f"processed through Skill(superpowers:receiving-code-review). "
-                       f"Run the receive skill, then retry the commit.")
+                       f"processed through Skill(superpowers:receiving-code-review), "
+                       f"and no prior received review in the history covers this "
+                       f"staged content. Run the receive skill, then retry the commit.")
     rts = state.get("received_timestamp_ns")
     if not isinstance(rts, int):
         return (False, "received_timestamp_ns missing or not an int")
@@ -1107,6 +1119,22 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
     current_blobs = crc._staged_source_blobs(root, staged_src)
     if not current_blobs:
         return (False, "could not read current staged blob SHAs via git ls-files")
+    # P1.2: a record whose bound paths do not INTERSECT the staged source AT ALL
+    # is a STALE record from a prior/unrelated review -- not partial coverage of
+    # THIS commit. Reject it with a precise message (a bare "uncovered source"
+    # reads as a coverage gap and historically sent runs down a re-stage rabbit
+    # hole / a SKIP_REVIEW_HOOK bypass). Corroborate with the head SHA when the
+    # review's HEAD has since moved.
+    if not (set(trigger_blobs) & set(staged_src)):
+        rec_head = str(state.get("head_sha") or "")
+        cur_head = crc._head_sha(root)
+        head_note = (f" -- review HEAD {rec_head[:12]} != current {cur_head[:12]}"
+                     if rec_head and cur_head and rec_head != cur_head else "")
+        return (False,
+                f"last-codex-review.json is a STALE/unrelated record: its reviewed "
+                f"files {sorted(trigger_blobs)[:3]} share NOTHING with this commit's "
+                f"staged source {staged_src[:3]}{head_note}. Re-run the review against "
+                f"the current staging, or SKIP_REVIEW_HOOK with a reason.")
     uncovered = [p for p in staged_src if p not in trigger_blobs]
     if uncovered:
         return (False, f"review covered paths {sorted(trigger_blobs.keys())[:3]}... but "

@@ -27,8 +27,11 @@ Modes (argv[1]):
                 report; a no-op for background (report absent). Kept as
                 belt-and-suspenders; subagentstop is the primary path.
 
-To force a fresh run, change the prompt (e.g. append "fresh run: <why>") --
-any prompt change changes the key. Operator kill-switch:
+To force a fresh run, edit the relevant tree (any content change alters the
+key). For a researcher, changing the prompt also works; for a MAPPER agent
+(P2.3) the key is keyed on the CANONICAL file/section scope, not the prose, so
+a bare wording tweak no longer busts it -- change the scope or the content.
+Operator kill-switch:
 AGENT_RESULT_CACHE_DISABLE=1. Only agents in CACHE_SCOPES participate; every
 other subagent_type passes through untouched. Fail-open everywhere.
 """
@@ -115,6 +118,40 @@ def _scope_key(root: Path, paths: list) -> str | None:
     return h.hexdigest()
 
 
+# Mapper agents whose ANSWER is a deterministic function of (file scope, tree
+# content), NOT of the prompt WORDING -- so the cache key must canonicalize the
+# prompt to its stable scope. Keying on the volatile verbatim prompt (round
+# number, the specific findings being verified, timestamps) is why P2.3's
+# review-evidence-mapper cache logged 22 stores and 0 hits: rounds 4/5/6 over an
+# UNCHANGED tree each had a different prompt -> a different key -> a needless
+# re-run. Researchers (parity-research-analyst) are EXCLUDED: their prompt IS the
+# question, so the wording is load-bearing.
+_CANONICAL_SCOPE_TYPES = frozenset(CACHE_SCOPES) - {"parity-research-analyst"}
+
+# Scope tokens extracted from a prompt: TODO paths, section refs, and source
+# file paths with any :line/:col stripped (a round that verifies task.c:100 and
+# a round that verifies task.c:200 map to the same {task.c} scope).
+_TODO_RE = re.compile(r"todo/[^\s\"'`)]+\.md")
+_SECTION_RE = re.compile(r"(?:section|§)\s*(\d+)", re.IGNORECASE)
+_SRCFILE_RE = re.compile(r"(?:src|include|user|tools)/[^\s\"'`:)]+\.[A-Za-z0-9]+")
+
+
+def _canonical_scope_from_prompt(prompt: str) -> str | None:
+    """Stable scope token for a content-deterministic mapper prompt: the sorted
+    set of TODO paths + section numbers + source file paths (line/col stripped).
+    Two rounds naming the same files/section over the same tree collapse to one
+    key. Returns None when nothing extractable, so the caller falls back to the
+    full-prompt key (conservative: never a WRONG cross-scope hit)."""
+    if not prompt:
+        return None
+    toks = set(_TODO_RE.findall(prompt))
+    toks |= {"s" + n for n in _SECTION_RE.findall(prompt)}
+    toks |= set(_SRCFILE_RE.findall(prompt))
+    if not toks:
+        return None
+    return "\n".join(sorted(toks))
+
+
 def _cache_key(root: Path, stype: str, prompt: str) -> str | None:
     scopes = CACHE_SCOPES.get(stype)
     if not scopes:
@@ -122,7 +159,11 @@ def _cache_key(root: Path, stype: str, prompt: str) -> str | None:
     h = hashlib.sha256()
     h.update(stype.encode())
     h.update(b"\0")
-    h.update(re.sub(r"\s+", " ", (prompt or "").strip()).encode())
+    scope_tok = (_canonical_scope_from_prompt(prompt)
+                 if stype in _CANONICAL_SCOPE_TYPES else None)
+    key_prose = scope_tok if scope_tok is not None else \
+        re.sub(r"\s+", " ", (prompt or "").strip())
+    h.update(key_prose.encode())
     for s in scopes:
         sk = _scope_key(root, SRC_PATHS if s == "src" else TODO_PATHS)
         if sk is None:
@@ -286,8 +327,9 @@ def main(mode: str) -> int:
         f"content-identical inputs ({age_min:.0f} min ago; every file that "
         f"agent reads is unchanged since). REUSE the report below instead of "
         f"re-dispatching -- verify load-bearing file:line claims yourself as "
-        f"usual. To force a fresh run, change the prompt (e.g. append "
-        f"'fresh run: <why>').\n\n--- cached {stype} report ---\n"
+        f"usual. To force a fresh run, edit the relevant tree (mapper keys "
+        f"ignore prose; researchers can also tweak the prompt).\n\n"
+        f"--- cached {stype} report ---\n"
         f"{rec.get('report', '')}\n--- end cached report ---\n")
     return 2
 

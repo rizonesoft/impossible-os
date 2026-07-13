@@ -146,7 +146,7 @@ def _fresh_diff_facts(root: Path, window_start: int) -> bool:
             and isinstance(files, list) and isinstance(digest, str)):
         return False
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                               / "scripts/overnight"))
         from worktree_hash import worktree_key
         return worktree_key(root, files) == digest

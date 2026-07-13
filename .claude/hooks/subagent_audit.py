@@ -82,6 +82,42 @@ def _walk_transcript_for_subagent(path: str, agent_id: str):
     return (sub_type, count)
 
 
+def _count_leaf_tool_uses(path: str):
+    """Count tool_use events in a subagent's OWN (leaf) transcript.
+
+    Unlike the parent transcript walk above, a leaf transcript
+    (`agent_transcript_path`) contains ONLY this subagent's turns, so every
+    tool_use in it belongs to the subagent -- the parent/child boundary
+    ambiguity that disabled parent-transcript counting (2026-04-28 Codex M2)
+    does NOT apply here, making the count reliable. The prior code read the
+    (often-absent) `transcript_path` and never consumed a count, so a real
+    36-tool dispatch recorded 0 (Codex audit 2026-07-13, verified). Returns an
+    int count, or None if the leaf path is absent/unreadable.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    count = 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                msg = ev.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "tool_use":
+                        count += 1
+    except Exception:
+        return None
+    return count
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
@@ -121,11 +157,19 @@ def main() -> int:
         sub_type = st or "unknown"
         type_fallback_used = True
     if tool_uses_total is None:
-        # No reliable count when the harness did not pass it. Record 0
-        # and disable count-based runaway detection rather than risk a
-        # false alarm from transcript-wide counting.
-        tool_uses_total = 0
-        count_untrusted = True
+        # The harness did not pass a payload count. Count from the subagent's
+        # OWN (leaf) transcript -- `agent_transcript_path` -- where every
+        # tool_use belongs to this subagent, so the boundary ambiguity that
+        # forbade parent-transcript counting (2026-04-28) does not apply. Only
+        # if that leaf is absent/unreadable do we record 0 and disable
+        # count-based runaway detection (Codex audit 2026-07-13, verified: the
+        # old code read the wrong field and always recorded 0).
+        leaf_count = _count_leaf_tool_uses(d.get("agent_transcript_path", ""))
+        if leaf_count is not None:
+            tool_uses_total = leaf_count
+        else:
+            tool_uses_total = 0
+            count_untrusted = True
 
     record = {
         "ts_ns": _ts_ns(),

@@ -91,6 +91,14 @@ def main() -> int:
     m = _SCRIPT_RE.search(cmd)
     if not m:
         return 0
+    # Exempt the SANCTIONED wrapped route: `run-artifact.sh <label> -- bash
+    # scripts/build.sh` legitimately contains the inner `bash scripts/build.sh`
+    # that _SCRIPT_RE matches. Firing on it would nag (and, once promoted to a
+    # BLOCK, would BLOCK) the very route this reminder recommends -- it fired 9x
+    # on one properly-wrapped sequence (Codex audit 2026-07-13, verified). If an
+    # outer run-artifact.sh wrapper is present, the command is already offloaded.
+    if re.search(r"\brun-artifact\.sh\b", cmd):
+        return 0
     root = _repo_root()
     if root is None or not _in_sections(root):
         return 0
