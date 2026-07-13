@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# wait-for-codex-verdict.sh [--max SECONDS] <logfile> [<logfile>...]
+# wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]
 #
 # Wait until EVERY given DETACHED Codex review log contains the "Turn completed"
 # sentinel (written by review-broker-codex-dispatch.sh / codex-bg-dispatch.sh
@@ -16,9 +16,22 @@
 # re-invokes if any review has not finished. No `timeout:` arg to remember, no
 # per-session re-learning, no wasted killed call.
 #
+# WHY THE STALE SIGNAL (B2): the completion sentinel is BINARY (present / absent),
+# so a slow-but-ALIVE review (Codex still streaming `rg`/analysis output) was
+# indistinguishable from a HUNG one. In the 2026-07-13 watched canary that gap
+# made the runner abandon + re-dispatch a genuinely-live 14-min review, wasting
+# it. Fix: on each still-running return, report per-log byte SIZE + how long since
+# it last GREW (activity), tracked across re-invocations in a sidecar. A log that
+# has not grown for --stale-secs (default 300s = 5 min) is flagged STALE (exit 4)
+# so the caller re-dispatches ONLY a genuinely-silent review and keeps WAITING on
+# one still producing output.
+#
 # Exit status:
 #   0  -- ALL logs show "Turn completed"; each verdict + the last tail printed.
-#   3  -- bounded wait elapsed, >=1 review still running; re-invoke to keep going.
+#   3  -- bounded wait elapsed, >=1 review still running AND producing output;
+#         re-invoke to keep going (nothing is lost, reviews run detached).
+#   4  -- bounded wait elapsed AND >=1 pending log has not grown for --stale-secs;
+#         that review is likely hung -- consider re-dispatching THAT log only.
 #   2  -- usage error.
 # Zero model tokens while it sleeps (one blocking Bash call, idle in `sleep`).
 #
@@ -29,19 +42,24 @@ set -u
 
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe
 POLL=10
+STALE=300        # no byte growth for this long => STALE (likely hung), exit 4
 LOGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --max)    MAX="${2:-}"; shift 2 ;;
-        --max=*)  MAX="${1#--max=}"; shift ;;
-        *)        LOGS+=("$1"); shift ;;
+        --max)          MAX="${2:-}"; shift 2 ;;
+        --max=*)        MAX="${1#--max=}"; shift ;;
+        --stale-secs)   STALE="${2:-}"; shift 2 ;;
+        --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
+        *)              LOGS+=("$1"); shift ;;
     esac
 done
-if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null; then
-    echo "usage: wait-for-codex-verdict.sh [--max SECONDS] <logfile> [<logfile>...]" >&2
+if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null \
+   || ! [ "$STALE" -gt 0 ] 2>/dev/null; then
+    echo "usage: wait-for-codex-verdict.sh [--max SECONDS] [--stale-secs SECONDS] <logfile> [<logfile>...]" >&2
     exit 2
 fi
 LAST="${LOGS[$(( ${#LOGS[@]} - 1 ))]}"
+ACT_DIR=".claude/state/waiter-activity"
 
 _all_done() {
     local f
@@ -67,10 +85,46 @@ while [ "$elapsed" -lt "$MAX" ]; do
     elapsed=$((elapsed + dur))
 done
 
+# B2 activity report: for each still-pending log, track byte size across
+# re-invocations in a sidecar and report how long since it last grew.
+mkdir -p "$ACT_DIR" 2>/dev/null || true
+now=$(date +%s)
+any_stale=0
 pending=()
 for f in "${LOGS[@]}"; do
-    { [ -f "$f" ] && grep -q "Turn completed" "$f" 2>/dev/null; } || pending+=("$f")
+    if { [ -f "$f" ] && grep -q "Turn completed" "$f" 2>/dev/null; }; then
+        continue
+    fi
+    pending+=("$f")
+    size=0
+    [ -f "$f" ] && size=$(wc -c < "$f" 2>/dev/null | tr -d ' ') || size=0
+    key=$(printf '%s' "$f" | md5sum 2>/dev/null | cut -c1-16)
+    side="$ACT_DIR/$key"
+    prev_size=-1
+    growth_ts="$now"
+    if [ -f "$side" ]; then
+        read -r prev_size growth_ts < "$side" 2>/dev/null || { prev_size=-1; growth_ts="$now"; }
+    fi
+    [ -n "${prev_size:-}" ] || prev_size=-1
+    [ -n "${growth_ts:-}" ] || growth_ts="$now"
+    if [ "$size" -gt "$prev_size" ] 2>/dev/null; then
+        growth_ts="$now"          # grew since last check -> reset the stall clock
+    fi
+    printf '%s %s\n' "$size" "$growth_ts" > "$side" 2>/dev/null || true
+    stalled=$(( now - growth_ts ))
+    if [ "$stalled" -ge "$STALE" ]; then
+        any_stale=1
+        printf '  STALE: %s (%s bytes, no growth for %ss >= %ss -- likely hung; re-dispatch THIS log, keep waiting on the rest)\n' \
+               "$f" "$size" "$stalled" "$STALE"
+    else
+        printf '  running: %s (%s bytes, last growth %ss ago)\n' "$f" "$size" "$stalled"
+    fi
 done
+
+if [ "$any_stale" -eq 1 ]; then
+    echo "STALE after ${elapsed}s -- >=1 pending review produced no new output for >= ${STALE}s (see above)."
+    exit 4
+fi
 echo "STILL RUNNING after ${elapsed}s -- pending: ${pending[*]} -- re-invoke to" \
      "keep waiting (reviews run detached; nothing is lost)."
 exit 3

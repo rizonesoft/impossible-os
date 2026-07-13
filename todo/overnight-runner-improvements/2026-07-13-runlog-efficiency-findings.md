@@ -90,7 +90,7 @@
   if unfinished), OR make the poll snippet in SKILL.md always pass `timeout: 300000` explicitly.
   Removes a guaranteed-per-session wasted call + recovery turn. Distinct from P1.3 (broker/receipt
   shape) -- this is the interactive Bash tool's own default ceiling, not the review dispatch.
-- [ ] **[det] B2. The waiter's BINARY still-running signal cannot distinguish a slow-but-ALIVE review
+- [x] **[det] B2. The waiter's BINARY still-running signal cannot distinguish a slow-but-ALIVE review
   from a hung one, so the runner abandons + re-dispatches a live review.** SURFACED LIVE in the
   2026-07-13 watched canary (branch `overnight-runner-improvements-2026-07-13`, run-20260713-205030):
   an adversarial review of `src/kernel/nt/nt_env.c` ran ~14 min and was genuinely ALIVE (the `.out`

@@ -106,7 +106,9 @@ bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <t
 bash scripts/overnight/wait-for-codex-verdict.sh <logFile>
 #    (watches <logFile> for the "Turn completed" sentinel; each call is bounded
 #     ~100s so it is NEVER killed at the 2m default) exit 0 = DONE (prints the
-#     verdict tail); exit 3 = STILL RUNNING.
+#     verdict tail); exit 3 = STILL RUNNING (reports bytes + last-growth age);
+#     exit 4 = STALE (no growth for --stale-secs, ~hung -- re-dispatch THAT log
+#     only, keep waiting on the rest; B2).
 # 3. On exit 3, just call it AGAIN (the review runs detached; nothing is lost) --
 #    a 16-min review is a handful of clean re-invokes, not a killed 2m call + a
 #    recovery turn. For a single long wait in ONE turn, pass a larger bound WITH

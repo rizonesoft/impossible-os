@@ -3,22 +3,32 @@
 ~120s default so a bare poll is never killed, and returns a clear status the
 caller re-invokes on. Verifies: sentinel -> exit 0 + DONE; no sentinel -> exit 3
 + STILL RUNNING; missing log -> still running; and the bounded wait never
-overshoots max (so the default 100s stays under the 120s ceiling)."""
+overshoots max (so the default 100s stays under the 120s ceiling).
+
+B2: on a still-running return the waiter reports per-log byte size + how long
+since the log last GREW, and flags a log that has not grown for --stale-secs as
+STALE (exit 4) so a genuinely-hung review is re-dispatched while a slow-but-alive
+one keeps being waited on."""
 import pathlib
 import subprocess
-import sys
-import tempfile
 import time
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent
 TOOL = REPO / "scripts/overnight/wait-for-codex-verdict.sh"
 
 
-def _run(*logs, maxw=5):
-    return subprocess.run(
-        ["bash", str(TOOL), "--max", str(maxw), *[str(x) for x in logs]],
-        capture_output=True, text=True)
+def _run(*logs, maxw=5, stale=None, cwd=None):
+    args = ["bash", str(TOOL), "--max", str(maxw)]
+    if stale is not None:
+        args += ["--stale-secs", str(stale)]
+    args += [str(x) for x in logs]
+    # Default the CWD to the first log's dir so the B2 activity sidecar
+    # (.claude/state/waiter-activity/) lands in the test's tempdir, not the repo.
+    if cwd is None and logs:
+        cwd = str(pathlib.Path(logs[0]).parent)
+    return subprocess.run(args, capture_output=True, text=True, cwd=cwd)
 
 
 def test_sentinel_present_returns_done():
@@ -78,6 +88,43 @@ def test_usage_error_without_logfile():
     assert r.returncode == 2
 
 
+def test_stale_flagged_after_no_growth():
+    # B2: a log that does not grow across re-invocations past --stale-secs -> exit 4.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("streaming...\n")             # content, no sentinel
+        r1 = _run(log, maxw=1, stale=1, cwd=d)       # first sighting -> running
+        assert r1.returncode == 3, (r1.returncode, r1.stdout)
+        time.sleep(2)                                 # exceed stale window, no growth
+        r2 = _run(log, maxw=1, stale=1, cwd=d)
+        assert r2.returncode == 4, (r2.returncode, r2.stdout)
+        assert "STALE" in r2.stdout and "no growth" in r2.stdout
+
+
+def test_growth_resets_stall_clock():
+    # B2: a log that GREW between checks is NOT stale (slow-but-alive, keep waiting).
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("chunk1\n")
+        r1 = _run(log, maxw=1, stale=1, cwd=d)
+        assert r1.returncode == 3
+        time.sleep(2)
+        log.write_text("chunk1\nchunk2 more streamed output\n")   # GREW
+        r2 = _run(log, maxw=1, stale=1, cwd=d)
+        assert r2.returncode == 3, (r2.returncode, r2.stdout)     # not stale
+        assert "running:" in r2.stdout
+
+
+def test_still_running_reports_activity():
+    # B2: the still-running return reports bytes + last-growth age for the operator.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("x" * 50)
+        r = _run(log, maxw=1, stale=100, cwd=d)
+        assert r.returncode == 3
+        assert "bytes" in r.stdout and "last growth" in r.stdout
+
+
 if __name__ == "__main__":
     test_sentinel_present_returns_done()
     test_no_sentinel_returns_still_running()
@@ -85,4 +132,7 @@ if __name__ == "__main__":
     test_multi_log_waits_for_all()
     test_bounded_wait_does_not_overshoot_max()
     test_usage_error_without_logfile()
-    print("PASS: wait-for-codex-verdict (B1)")
+    test_stale_flagged_after_no_growth()
+    test_growth_resets_stall_clock()
+    test_still_running_reports_activity()
+    print("PASS: wait-for-codex-verdict (B1 + B2)")
