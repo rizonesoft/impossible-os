@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-13T01:57:18+02:00",
-  "total_suites": 1969,
-  "total_assertions": 7184,
+  "timestamp": "2026-07-13T03:53:12+02:00",
+  "total_suites": 1984,
+  "total_assertions": 7228,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -35,6 +35,7 @@
     {"file": "test_desktop.c", "suites": 48, "assertions": 211},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
     {"file": "test_entropy.c", "suites": 15, "assertions": 172},
+    {"file": "test_env.c", "suites": 15, "assertions": 44},
     {"file": "test_ex.c", "suites": 42, "assertions": 246},
     {"file": "test_exec.c", "suites": 60, "assertions": 111},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},

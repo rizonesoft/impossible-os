@@ -380,7 +380,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §2).
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
-- [ ] When `TODO-22-environment-variables.md §1` lands: deep-copy parent `task->environ` and `task->argv` into the child via `env_copy()` / argv helpers (→ XREF `TODO-22-environment-variables.md §1`)
+- [ ] TODO-22 §1 has landed: wire `env_copy()` into every child-creation path (`task_fork`, `task_create_user`/NtCreateProcess) before publish; fail creation on copy OOM (→ XREF `TODO-22-environment-variables.md §1`)
 - [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-21)
 - [ ] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-21)
 - [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
