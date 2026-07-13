@@ -245,7 +245,31 @@ never re-opens the now-unblocked dependent work. Net: cross-TODO work that has B
 stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverable-park and plain
 `[ ]` blocker-noted items do NOT have this gap -- only terminal-park `[/]` deferrals do.)
 
-- [ ] **[canary] P6.1 Owner-side sweep re-opens unblocked dependents (not just tidies the stamp).**
+> **PHASE 6 CLOSED 2026-07-13.** Delivered: P6.2, a deterministic READ-ONLY stranded-deferral audit
+> (`scripts/overnight/stranded_deferrals.py`), wired as a non-blocking advisory at `run_phase_guard.py
+> fixpoint` + documented in `.claude/hooks/MANIFEST.md` and `todo/TODO-Claude-Overnight-Runner.md`. The
+> auto-action items (P6.1 forward flip / P6.3 blocking fixpoint gate / P6.4 backfill) are RESOLVED as
+> won't-build / done-by-triage: the audit's own triage supplied the "accuracy proof" they were gated on,
+> and the proof's verdict is that auto-action is unsafe AND has no actionable instances. `flip=0` on the
+> tree (current audit: **34 candidates -- flip=0 / clean=0 / blocked=23 / review=11**), and the
+> flip-vs-blocked-vs-review decision is an irreducible code-and-design read that a heuristic classifier
+> cannot make safely -- so the correct terminal automation is a human-reviewed advisory, not an auto-editor.
+> **Re-trigger condition:** if a future audit ever shows a STABLE non-zero `flip` set (a real Deferred item
+> blocked only on a now-shipped prerequisite that the human confirms), re-open this phase to build the
+> gated `--apply` flow; until then the standing workflow is `python3 scripts/overnight/stranded_deferrals.py`
+> + hand-act on any non-empty `flip`/`clean` set.
+
+- [x] **[canary] P6.1 Owner-side sweep re-opens unblocked dependents (not just tidies the stamp).**
+  RESOLVED (won't-build, 2026-07-13): the P6.2 audit + full triage delivered the accuracy proof this item
+  was gated on, and the proof's answer is "do NOT auto-flip." `flip=0` on the current tree (34 candidates:
+  flip=0 / clean=0 / blocked=23 / review=11) and the flip-vs-blocked-vs-review call is an irreducible
+  code-and-design read -- the triage had to verify code + design history per item (e.g. the TODO-03
+  canary-seed candidate was design-OBSOLETED, not stranded: TODO-10 sec 12 shipped an RDRAND seed and
+  DECLINED csprng-seeding by design review, so re-opening it would implement rejected work). A forward
+  auto-flip keyed on the "owner shipped" signal alone reintroduces the exact phantom-work risk the audit
+  was deliberately made read-only to avoid; owner-shipped is necessary but NOT sufficient. Terminal
+  design: the non-blocking advisory (P6.2, wired into `fixpoint`) surfaces the set and a human reviews it
+  when non-empty. Superseded-by: P6.2. Original deferral note + scope retained below for the record.
   DEFERRED 2026-07-13 (pending P6.2 accuracy proof). P6.2 shipped as a READ-ONLY audit precisely because its
   first-proposed signal over-matched ~6x (see P6.2 stamp); auto-re-opening dependents mid-run is exactly the
   phantom-work risk that over-match would realize, so P6.1 waits until the audit's 34 candidates are
@@ -298,7 +322,15 @@ stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverab
   boot-mount, one pending deep-copy setters). The 1 genuine `clean` (TODO-22 sec 2 "recovery boots via
   kind=recovery", code-verified: `BOOT_ENTRY_KIND_RECOVERY`/`BOOT_PATH_RECOVERY` shipped by TODO-07 sec 4)
   was marked `[x]`. Final tree: flip=0, clean=1, blocked=23, review=10.
-- [ ] **[det] P6.3 Fixpoint DONE-check consults the stranded-deferral audit.**
+- [x] **[det] P6.3 Fixpoint DONE-check consults the stranded-deferral audit.**
+  RESOLVED (won't-build, 2026-07-13): a BLOCKING fixpoint gate is net-negative. `fixpoint` is the runner's
+  ONLY clean-stop path, so gating it on the audit trades a hard stop against a heuristic classifier -- and
+  with `flip=0` there is nothing for the gate to act on today, while a single mis-classified `blocked`->
+  `flip` would WEDGE the runner's only way to finish. Risk >> benefit. The safe version of this idea already
+  shipped in P6.2: a NON-BLOCKING advisory printed at `run_phase_guard.py fixpoint` (fail-open, never changes
+  the verdict) that surfaces the flip/clean/blocked/review summary for a human. That advisory IS the fixpoint
+  integration; a blocking gate is explicitly declined. Superseded-by: P6.2 (advisory). Original deferral note
+  + scope retained below for the record.
   DEFERRED 2026-07-13 (pending P6.2 accuracy proof). Gating fixpoint on the audit is only safe once the audit
   yields ~zero false positives: fixpoint is the runner's ONLY clean-stop path, so blocking it on today's 34
   advisory (heuristic-classified) candidates would WEDGE the runner. Build after the 34 are human-triaged and
@@ -309,7 +341,16 @@ stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverab
   the owner-side sweep (P6.1) misses a satisfy-mapping, and it closes the "runner stops with
   recoverable cross-TODO work still parked" hole directly. Deterministic gate + test.
 
-- [ ] **[det] P6.4 One-time backfill sweep of the EXISTING stranded backlog (run P6.2, then act by stamp type).**
+- [x] **[det] P6.4 One-time backfill sweep of the EXISTING stranded backlog (run P6.2, then act by stamp type).**
+  RESOLVED (done-by-triage, 2026-07-13): the human triage this item required WAS the one-time backfill. All
+  34 candidates were read + code-verified; the actionable result was a single `clean` item (TODO-22 sec 2
+  "recovery boots via kind=recovery", verified against shipped `BOOT_ENTRY_KIND_RECOVERY`/`BOOT_PATH_RECOVERY`)
+  which was flipped `[x]`, and ZERO `reopen`/`flip` cases. The current re-run confirms the backfill is drained:
+  34 candidates, flip=0 / clean=0 / blocked=23 / review=11 -- no `Deferred:` item is blocked-only-on-a-shipped-
+  prerequisite, and every `review` item is a correctly-partial `[/]`. There is nothing to auto-edit; a
+  standing `--apply` mode would be an idle high-blast-radius tool. The permanent workflow is: run
+  `python3 scripts/overnight/stranded_deferrals.py` and hand-act on any future non-empty `flip`/`clean` set.
+  Superseded-by: P6.2 (the audit is the standing backfill tool). Original deferral note + scope retained below.
   DEFERRED 2026-07-13 (pending human triage of P6.2's 34 candidates). The audit is READ-ONLY by design; a
   one-time auto-editor that flips `[/]` -> `[ ]` and strips stamps across the tree is the highest-blast-radius
   action in Phase 6. Next step is operator-driven: run `python3 scripts/overnight/stranded_deferrals.py`,
