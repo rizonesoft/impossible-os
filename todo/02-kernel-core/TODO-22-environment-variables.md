@@ -69,9 +69,9 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
 | 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
 | 💎   |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
-| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [ ]   |
-| 💎   |   8   | `.profile` startup script                          | §7                         |  [ ]   |
-| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [ ]   |
+| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
+| 💎   |   8   | `.profile` startup script                          | §7                         |  [/]   |
+| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
 | 💎   |  10   | Environment block sorting & size limits            | §1                         |  [ ]   |
 | 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [ ]   |
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [ ]   |
@@ -339,6 +339,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 - [ ] Commit: `"shell: PATH lookup, SET command, %VAR% expansion in all commands"`
 
+> **Deferred:** [blocked] §7 shell PATH lookup + SET/ECHO -- the shell is user-mode (`user/cmd.c` cmd.exe), so these builtins need §6 user-mode env wrappers (deferred) or env-syscall stubs; the spec's kernel-side `env_get(current_task)`/`env_expand(current_task)` assume a kernel shell that does not exist (`src/shell/` is empty). -> XREF: §6 (Win32 env wrappers, deferred) + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8 (item: "`set`/`echo`/`env`/`where` commands").
+
 **Test checkpoint:** `shell_find_command` finds binary on PATH; `SET` lists sorted vars. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
@@ -369,6 +371,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 - [ ] Commit: `"shell: .profile startup script, source command, default profile in image"`
 
+> **Deferred:** [blocked] §8 `.profile` startup depends on §7 shell integration (deferred) plus the user-mode shell startup hook and a `make install-userfiles` copy of `resources/defaults/.profile` into the IXFS root. -> XREF: §7 (shell integration, deferred) + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8 (item: "`set`/`echo`/`env`/`where` commands" -- same user-mode shell surface).
+
 **Test checkpoint:** `.profile` lines run at shell start; `source` reloads. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
@@ -386,6 +390,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] **`setx` value length (Win11 parity):** Microsoft documents a **1024-character** cap on the value assigned by `setx`; excess is truncated and can corrupt an existing variable; implement the same cap (or emit a hard error instead of silent truncate) and mention it in `setx /?` (see Microsoft Learn `setx` Remarks).
 
 - [ ] Commit: `"kernel/env: WM_SETTINGCHANGE broadcast, sysdm.cpl env tab, setx command"`
+
+> **Deferred:** [blocked] §9 env-change notifications + `sysdm.cpl` tab need §6 (deferred), Registry env persistence (`setx`), the window manager for the `WM_SETTINGCHANGE` `HWND_BROADCAST`, and a System Properties control-panel applet (desktop-shell domain). -> XREF: §6 (Win32 env wrappers, deferred) + §8 (`.profile`, deferred) + `09-desktop-shell` (System Properties / control panel applet).
 
 **Test checkpoint:** Registry write-back + `WM_SETTINGCHANGE` when WM up; `setx` persists. QEMU WHPX, QEMU TCG (headless may skip WM); VirtualBox; bare metal.
 
