@@ -165,6 +165,10 @@ int         env_expand_path(struct task *t, const char *templ,
 - [ ] User-mode `SetEnvironmentVariableA(name, value)` → calls `NtSetEnvironmentVariable`; `value == NULL` → unset
 - [ ] `ExpandEnvironmentStringsA(src, dst, size)` → calls `RtlExpandEnvironmentStrings_U` → `env_expand`
 - [ ] All three `SYS_*` variants validate the user-mode buffer pointer is within process address space before dereferencing
+- [ ] POSIX libc env surface (Linux-compat; → XREF `02-kernel-core/TODO-22-environment-variables.md §1`):
+  - `extern char **environ` global synced to `task->environ` (read directly by `env` / `printenv` / coreutils)
+  - `clearenv(3)` -- wraps an `env_unset` sweep
+  - `putenv(3)` NON-copy aliasing vs `setenv(3)` copy semantics: document the divergence or provide a no-copy path (TODO-22 §1 `env_set` always `kstrdup`s)
 
 ---
 

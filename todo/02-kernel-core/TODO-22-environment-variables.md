@@ -10,6 +10,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 > **Validated:** 2026-07-13 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed cross-file XREF section-number drift (TODO-11 §2/§7 swap + §9->§5, TODO-12 §2->§7, TODO-14 §5->§4, TODO-15 §3->§9, D12 T04->T02 label)
 
+> **Gap-audited:** 2026-07-13 | gap-audit + codex-gap-audit (needs-attention, 6 findings, all confirmed via receiving-code-review). Filed §18 (cmd dynamic pseudo-vars + delayed `!VAR!`), §19 (ntdll Rtl env layer); hardened §1 (environ_lock + UAF-safe `env_get_copy` lifetime), §4 (bounded/atomic argv+envp ingestion, E2BIG cap + argv->CommandLine encode), §9 (SetEnvironmentVariable process-local, no Registry write-back), §3 (single-pass expansion), §15 (empty-cmdline argv[0]=module path). Branch C: POSIX environ/clearenv/putenv -> D12 T02; Branch D noted: batch FOR/IF/setlocal interpreter, /proc/PID/environ.
+
 > **Goal:** Implement per-process environment variable storage, `%VAR%` expansion, `PATH`-based command lookup, `argv`/`argc` kernel preparation, the Win32 `GetEnvironmentVariable`/`SetEnvironmentVariable` API surface, and the `.profile` shell startup script. No env API exists at all today: there is no `env_get`, no `SYS_GETENV`, no `PATH` lookup, and no argv array in `struct task`. Without this, every user-mode program launches with no arguments, no environment, and no way to find executables on disk.
 
 > [!IMPORTANT]
@@ -78,6 +80,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [ ]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [ ]   |
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [ ]   |
+| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
+| 💎   |  19   | ntdll Rtl environment layer                        | §5, §6                     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -92,6 +96,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   uint32_t environ_count;
   char   **argv;         /* NULL-terminated argument array */
   int      argc;
+  spinlock_t environ_lock; /* serializes environ/argv read+mutate across sibling threads */
   ```
 - [ ] `environ` and `argv` are `NULL` initially; populated by `env_init_defaults(task)` and the exec path respectively
 - [ ] Memory: each `"KEY=VALUE"` string ≤ 32 KiB → `kmalloc`; the pointer arrays themselves: ≤ 4 KiB → `kmalloc`; large `REG_EXPAND_SZ` values may exceed 4 KiB → `pmm_alloc_contiguous`
@@ -106,9 +111,13 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] `env_get`: linear scan of `t->environ[]` for `"name="` prefix match (case-insensitive on Windows-style names); return pointer to value portion or `NULL`
 - [ ] `env_set`: search for existing entry; if found, replace string in-place (kfree old, kmalloc new); if not found, `krealloc` the pointer array to add one slot + NULL terminator
 - [ ] `env_unset`: find entry, `kfree` its string, shift remaining pointers left, update `environ_count`
-- [ ] `env_copy`: `kmalloc` a new pointer array of `src->environ_count + 1` entries; `kstrdup` each string; called from `NtCreateProcess` (→ XREF `TODO-12-native-api-ssdt.md §2`) to give child its own private copy
+- [ ] `env_copy`: `kmalloc` a new pointer array of `src->environ_count + 1` entries; `kstrdup` each string; called from `NtCreateProcess` (→ XREF `TODO-12-native-api-ssdt.md §7`) to give child its own private copy
+- [ ] SMP + lifetime (mandatory per CLAUDE.md SMP gate; parallels `TODO-21 §1` `cwd_lock`):
+  - env_get/set/unset/copy/free all take `t->environ_lock`; `env_copy` snapshots the source under the lock before the child is published
+  - `env_get`'s raw `const char *` is a BORROWED reference valid ONLY while the lock is held; env_set/env_unset kfree/krealloc entries, so returning it across an unlock is a use-after-free
+  - `env_get_copy(t, name, out, out_size)` snapshots the value into a caller buffer under the lock; the Nt syscall + Win32 paths (§5/§6) MUST use this, never borrowed `env_get`
 
-- [ ] Commit: `"kernel/env: per-process environ array, env_get/set/unset/copy"`
+- [ ] Commit: `"kernel/env: per-process environ array + lock, env_get/set/unset/copy"`
 
 **Test checkpoint:** `env_set`/`env_get`/`env_unset`/`env_copy` on test task; `env_free` leaves no dangling pointers. QEMU WHPX + TCG; VirtualBox; bare metal.
 
@@ -156,7 +165,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - On `%`: record start; scan forward for closing `%`; if found, extract name (`%NAME%`); call `env_get(task, name)`; if found, append value to output; if not found, append the literal `%NAME%` unchanged
   - On `%%`: emit a single literal `%` (Windows escape)
   - All other chars: copy verbatim
-  - Depth limit: track nesting depth; if result contains `%VAR%` references, re-expand up to 4 levels deep; abort and return partial result at depth 5 to prevent infinite expansion loops
+  - Single-pass substitution (matches cmd.exe and Win32 `ExpandEnvironmentStrings`): each `%VAR%` is replaced exactly once; a value that itself contains `%OTHER%` is NOT recursively re-expanded (no depth limit, no infinite-loop risk). cmd's delayed `!VAR!` re-expansion is a distinct mode owned by §18
   - Return number of bytes written (not including null terminator); if output would overflow `max_len`, write truncated result + null and return `max_len`
 - [ ] `env_expand` uses the caller's `task->environ`; for kernel-internal calls pass `PsInitialSystemProcess` as the task
 
@@ -196,10 +205,15 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] `SYS_EXEC(path, argv[], envp[])` syscall (extends existing exec syscall):
   - Validate `argv[]` pointer array with `ProbeForRead` (→ XREF `TODO-23-exception-dispatch-seh.md §13`)
   - Validate each `argv[i]` string pointer
-  - Call `task_set_argv(new_task, argc, argv)` -- deep copy into kernel
-  - Call `env_copy(new_task, ...)` from `envp[]` -- deep copy env
+  - Bounded ingestion (reject with `STATUS_QUOTA_EXCEEDED` = Linux `E2BIG` BEFORE allocating): cap `argc` (~4096), each string (`ARG_STRING_MAX` 32 KiB), and the AGGREGATE argv+envp byte budget (`ARG_MAX` ~256 KiB incl. NULs)
+  - Single fault-safe snapshot (no TOCTOU): copy the pointer vectors and strings through usercopy EXACTLY ONCE so a sibling thread cannot swap pointers or unmap strings between probe and copy; unwind partial allocations on any failure
+  - Call `task_set_argv(new_task, argc, argv)` -- deep copy into kernel (from the snapshot, never re-reading raw user pointers)
+  - Call `env_copy(new_task, ...)` from `envp[]` -- deep copy env (from the same snapshot)
   - Proceed to binary loader → `TODO-11-peb-teb-user-abi.md §7` reads `task->argv` and `task->environ` to build the stack frame
 - [ ] `GetCommandLineW()` Win32 wrapper (§6): returns `PEB->ProcessParameters->CommandLine`, which TODO-11 §7 builds from `task->argv[0]` + the joined argv string
+- [ ] `task->argv` -> `CommandLine` **encode** = exact inverse of §15 decode (so `GetCommandLineW()` then `CommandLineToArgvW()` round-trips):
+  - quote any arg with space/tab/quote or an empty arg; emit `2n` backslashes before an interior quote and `2n+1` for a literal `"`; special-case `argv[0]`
+  - owned jointly with `TODO-11-peb-teb-user-abi.md §7` (allocates the `CommandLine` UNICODE_STRING); add encode/decode round-trip tests
 
 - [ ] Commit: `"kernel/env: argv array in task, shell tokenizer, exec argument handoff"`
 
@@ -322,8 +336,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 9. Environment Change Notifications
 
-- [ ] When `SetEnvironmentVariableW` modifies a variable that originated from `HKCU\Environment` or `HKLM\...\Session Manager\Environment`, also write the change back to the Registry key
-- [ ] After writing to Registry, post `WM_SETTINGCHANGE` (Win32 message `0x001A`) with `lParam = (LPARAM)L"Environment"` to `HWND_BROADCAST` (all top-level windows); this matches Windows 11 behaviour so that applications receive the standard notification and call `SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, NULL)`
+- [ ] **`SetEnvironmentVariable` is process-local:** modifies ONLY the caller's own block (§5/§6); never writes Registry, never broadcasts -- persistence + notification are exclusive to `setx` / `sysdm.cpl` (MS Learn).
+- [ ] After a Registry write via `setx` / `sysdm.cpl` (not `SetEnvironmentVariable`), post `WM_SETTINGCHANGE` (`0x001A`, `lParam=L"Environment"`) to `HWND_BROADCAST`; apps refresh via `SendMessageTimeout` with `SMTO_ABORTIFHUNG`.
 - [ ] WM delivery requires the window manager to be running; if WM is not yet started (early boot), skip silently
 - [ ] Add "Environment Variables" button to `sysdm.cpl` (System Properties): dialog with System (admin) and User list-views; Edit/New/Delete writes Registry + `WM_SETTINGCHANGE`
 - [ ] Dialog layout matches Windows 11's Environment Variables dialog for user familiarity
@@ -449,7 +463,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Inside quotes: whitespace is part of the argument
   - `argv[0]` has special parsing: if it starts with `"`, everything up to the closing `"` is argv[0]; otherwise, everything up to the first whitespace
   - Return: pointer to `LPWSTR *` array, with `*pNumArgs` set to the count; the array and all strings are allocated as a single `LocalAlloc` block; caller must `LocalFree` the returned pointer
-- [ ] Edge case: empty string input → `*pNumArgs = 1`, `argv[0] = ""` (Windows behavior)
+- [ ] Edge case: empty string input → `*pNumArgs = 1`, `argv[0]` = path to the CURRENT EXECUTABLE (module path), NOT `""` (MS Learn `CommandLineToArgvW`)
 - [ ] Edge case: `NULL` input → return `NULL` (Windows behavior)
 
 - [ ] Commit: `"kernel/env: CommandLineToArgvW Win32 API (shell32)"`
@@ -504,42 +518,78 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ---
 
+## 18. cmd.exe Dynamic Pseudo-Variables & Delayed Expansion
+
+cmd exposes computed-at-expansion pseudo-variables (never stored in `environ[]`) plus an opt-in delayed `!VAR!` mode; both are cmd-parser concerns distinct from §3's generic single-pass `%VAR%`.
+
+- [ ] Dynamic pseudo-vars resolved at expansion time by the shell (§7), never stored, real stored vars take precedence: `%CD%`, `%DATE%`, `%TIME%`, `%RANDOM%` (0-32767), `%ERRORLEVEL%`, `%CMDCMDLINE%`, `%CMDEXTVERSION%`
+- [ ] `%ERRORLEVEL%` tracks the last command's exit code; the shell updates it after each command
+- [ ] Delayed expansion: `setlocal enabledelayedexpansion` / `cmd /V:ON` enables `!VAR!` re-read at execution time (needed inside `FOR`/`IF` blocks where `%VAR%` is fixed at parse time per §3)
+- [ ] `SET` enforces cmd's tighter documented per-var / total caps (fidelity beyond §10's Win32 API-level limits)
+- [ ] Batch `%~` modifiers (`%~dp0`, `%~nx1`) extend D12 T02's `%1..%9` (→ XREF `12-user-platform-sdk/TODO-02-env-vars-process-abi.md`); `FOR`/`IF`/`setlocal` batch semantics need a batch-processor TODO
+- [ ] Commit: `"shell: cmd.exe dynamic pseudo-variables + delayed !VAR! expansion"`
+
+**Test checkpoint:** `echo %RANDOM%` varies across calls; `%ERRORLEVEL%` reflects the last exit code; `!VAR!` re-reads a var set earlier in the same `enabledelayedexpansion` block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+
+---
+
+## 19. ntdll Rtl Environment Layer
+
+Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*` over the PEB-resident block (no syscall). Impossible OS stores env in the kernel (`task->environ`, §1), so these Rtl functions are thin ntdll wrappers over the §5 Nt syscalls -- provide them so ntdll-importing apps and the CRT resolve.
+
+> [!NOTE]
+> Architecture divergence: env lives in the kernel here vs the PEB in Windows; the syscall-backed Rtl layer is the compat bridge. The kernel-vs-PEB storage choice is operator-reserved (security/ABI) -- flag for review, do not silently redesign §1/§5.
+
+- [ ] `RtlQueryEnvironmentVariable_U(Environment, Name, Value)` -- ntdll export routing to §5 `NtQueryEnvironmentVariable` under the process-env lock
+- [ ] `RtlSetEnvironmentVariable(Environment, Name, Value)` -- routes to §5 `NtSetEnvironmentVariable`; NULL value deletes
+- [ ] `RtlCreateEnvironment` / `RtlDestroyEnvironment` -- allocate/free a standalone UTF-16 env block (for `CreateProcess lpEnvironment`, §10/§13)
+- [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these Rtl exports so ntdll imports resolve; `RtlExpandEnvironmentStrings_U` already lives in §3
+- [ ] Commit: `"ntdll: Rtl environment layer over the Nt env syscalls"`
+
+**Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment` builds a sorted block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+
+---
+
 ## OS Comparison
 
-| ⭐   | Feature                    | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS |
-| --- | -------------------------- | -------------------- | -------------------- | --------------- |
-| 💎   | Per-process env storage    | ✅ PEB UTF-16         | ✅ POSIX environ      | ⬜ §1            |
-| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`        | ✅ bash `$VAR`        | ⬜ §3 Win `%`    |
-| 💎   | System defaults            | ✅ Session Manager    | ✅ `/etc/environment` | ⬜ §2 Registry   |
-| 💎   | argv to child              | ✅ CRT cmdline        | ✅ execve argv        | ⬜ §4 + T11 §7   |
-| 💎   | Nt env syscalls            | ✅ Native             | ⚠️ libc only         | ⬜ §5            |
-| 💎   | Get/Set env Win32          | ✅ kernel32 A/W       | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | Expand env strings         | ✅ A/W                | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | GetCommandLine             | ✅ A/W                | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | PATH lookup                | ✅ PATHEXT            | ✅ POSIX PATH         | ⬜ §7            |
-| 💎   | SET shell cmd              | ✅ cmd built-in       | ✅ export/env         | ⬜ §7            |
-| 💎   | Shell startup              | ✅ HKCU at logon      | ✅ profile files      | ⬜ §8            |
-| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE   | ⚠️ inotify etc       | ⬜ §9            |
-| 💎   | Persistent set             | ✅ setx.exe           | ⚠️ edit dotfiles     | ⬜ §9            |
-| ⭐   | sysdm env tab              | ✅ sysdm.cpl          | ❌ no GNOME equiv     | ⬜ §9            |
-| ⭐   | SET /A arith               | ✅ cmd only           | ✅ bash arith         | ⬜ §7            |
-| ⭐   | source / `.`               | ❌ not cmd            | ✅ POSIX              | ⬜ §8            |
-| 💎   | Sorted env block           | ✅ Unicode sort       | ❌ unsorted           | ⬜ §10           |
-| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs | ❌ Win32-only         | ⬜ §10, T12 §7   |
-| 💎   | Env size limits            | ✅ 32K/var            | ⚠️ ARG_MAX           | ⬜ §10           |
-| 💎   | PATHEXT                    | ✅ long default       | ❌ N/A                | ⬜ §11           |
-| 💎   | Hidden `=C:` cwd           | ✅ per drive          | ❌ single cwd         | ⬜ §12           |
-| 💎   | CreateEnvBlock             | ✅ userenv            | ❌ none               | ⬜ §13           |
-| 💎   | ExpandForUser              | ✅ userenv            | ❌ none               | ⬜ §13           |
-| 💎   | SearchPathW                | ✅ kernel32           | ⚠️ execvp libc       | ⬜ §14           |
-| 💎   | SetSearchPathMode          | ✅ kernel32           | ❌ N/A                | ⬜ §14           |
-| 💎   | CmdLineToArgvW             | ✅ shell32            | ❌ wordexp diff       | ⬜ §15           |
-| 💎   | Elevated env strip         | ✅ restricted         | ✅ AT_SECURE          | ⬜ §16           |
-| ⭐   | App Paths                  | ✅ HKLM App Paths     | ❌ none               | ⬜ §17           |
+| ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS |
+| --- | -------------------------- | --------------------- | -------------------- | --------------- |
+| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ⬜ §1            |
+| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ⬜ §3 Win `%`    |
+| 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ⬜ §2 Registry   |
+| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7   |
+| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19      |
+| 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6            |
+| 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6            |
+| 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6            |
+| 💎   | PATH lookup                | ✅ PATHEXT             | ✅ POSIX PATH         | ⬜ §7            |
+| 💎   | SET shell cmd              | ✅ cmd built-in        | ✅ export/env         | ⬜ §7            |
+| 💎   | Shell startup              | ✅ HKCU at logon       | ✅ profile files      | ⬜ §8            |
+| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE    | ⚠️ inotify etc       | ⬜ §9            |
+| 💎   | Persistent set             | ✅ setx.exe            | ⚠️ edit dotfiles     | ⬜ §9            |
+| ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9            |
+| ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7            |
+| ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8            |
+| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ⬜ §10           |
+| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⬜ §10, T12 §7   |
+| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ⬜ §10           |
+| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⬜ §11           |
+| 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12           |
+| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13           |
+| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13           |
+| 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14           |
+| 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14           |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15           |
+| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16           |
+| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17           |
+| 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18           |
+| 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18           |
+| 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19           |
+| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ⬜ §4            |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
 
-§10 through §17 close the remaining competitive gaps: sorted environment blocks (a hard Windows contract), `PATHEXT` extension search order, hidden drive-letter CWD variables, `CreateEnvironmentBlock` for service-launched processes, `SearchPathW` / `CommandLineToArgvW` formal Win32 APIs, security sanitization for elevated processes (matching both Windows restricted tokens and Linux `AT_SECURE`), and App Paths registry-based executable discovery (an Impossible OS differentiator: avoids `PATH` pollution).
+§10 through §17 close the remaining competitive gaps: sorted environment blocks (a hard Windows contract), `PATHEXT` extension search order, hidden drive-letter CWD variables, `CreateEnvironmentBlock` for service-launched processes, `SearchPathW` / `CommandLineToArgvW` formal Win32 APIs, security sanitization for elevated processes (matching both Windows restricted tokens and Linux `AT_SECURE`), and App Paths registry-based executable discovery (an Impossible OS differentiator: avoids `PATH` pollution). §18 adds cmd.exe dynamic pseudo-variables (`%CD%`, `%ERRORLEVEL%`, `%RANDOM%`) and delayed `!VAR!` expansion; §19 provides the ntdll Rtl environment layer real Win32 apps and the CRT import over the §5 syscalls.
 
 The `source` / `.` command (section 8 above) remains a differentiator over Windows cmd.exe.
 
@@ -568,6 +618,14 @@ The `source` / `.` command (section 8 above) remains a differentiator over Windo
   - Security: elevated task with `env_sanitize_for_elevation` strips `LD_PRELOAD` from environ
   - `CREATE_UNICODE_ENVIRONMENT`: spawn with custom UTF-16 env block succeeds only when the flag is set; rejected or mis-decoded when omitted (parity with Microsoft Learn examples)
   - `SetSearchPathMode`: toggling documented `BASE_SEARCH_PATH_*` mode changes whether `SearchPathW` consults the current directory for a probe name
+  - Lifetime (§1): `env_get_copy(t, "PATH", buf, n)` returns the value in `buf`; after `env_unset(t, "PATH")` a prior `env_get` borrowed pointer is NOT dereferenced (copy-out path is UAF-safe)
+  - Single-pass (§3): `env_set(t, "A", "%B%")`, `env_set(t, "B", "x")`, `env_expand(t, "%A%")` -> `"%B%"` literal, NOT `"x"` (no recursive re-expansion)
+  - Exec size cap (§4): a `SYS_EXEC` with aggregate argv+envp over `ARG_MAX` returns `STATUS_QUOTA_EXCEEDED`; per-string over 32 KiB rejected before allocation
+  - Round-trip (§4/§15): encode `argv = {"a b", "c\"d", ""}` to a CommandLine, then `CommandLineToArgvW` returns the same three args
+  - Empty cmdline (§15): `CommandLineToArgvW(L"", &n)` -> `n==1`, `argv[0]` = module path (not `""`)
+  - Pseudo-vars (§18): `%RANDOM%` in 0-32767 and varies; `%ERRORLEVEL%` equals the last command's exit code
+  - Delayed expansion (§18): under `enabledelayedexpansion`, `!VAR!` reflects a value set earlier in the same block; `%VAR%` does not
+  - Rtl layer (§19): `RtlQueryEnvironmentVariable_U` returns the same value as `NtQueryEnvironmentVariable` for `"PATH"`
 - [ ] Register in `test_runner_init()`: `test_register_env()`
 - [ ] Commit: `"test: add environment variables test suite"`
 
