@@ -90,6 +90,48 @@
   if unfinished), OR make the poll snippet in SKILL.md always pass `timeout: 300000` explicitly.
   Removes a guaranteed-per-session wasted call + recovery turn. Distinct from P1.3 (broker/receipt
   shape) -- this is the interactive Bash tool's own default ceiling, not the review dispatch.
+- [ ] **[det] B2. The waiter's BINARY still-running signal cannot distinguish a slow-but-ALIVE review
+  from a hung one, so the runner abandons + re-dispatches a live review.** SURFACED LIVE in the
+  2026-07-13 watched canary (branch `overnight-runner-improvements-2026-07-13`, run-20260713-205030):
+  an adversarial review of `src/kernel/nt/nt_env.c` ran ~14 min and was genuinely ALIVE (the `.out`
+  showed Codex still running `rg` + "collaboration tool: wait", 0 `Turn completed`, NO crash marker).
+  `wait-for-codex-verdict.sh` (B1) correctly returned STILL RUNNING every ~100s cycle, but because its
+  only signal is "sentinel present vs not" the runner could not tell "still writing -> keep waiting"
+  from "hung -> re-dispatch"; at ~14 min it manually grepped for crash markers (found none) then
+  RE-DISPATCHED a fresh adversarial leg (`20260713-210842`), abandoning the in-flight one. Not a wedge
+  (clean recovery), but wasted a ~14-min review + its tokens. **Fix:** on each STILL-RUNNING return
+  have the waiter print elapsed wait + the `.out`'s last-mtime / byte-growth (last activity), and add
+  an explicit STALE verdict (exit 4?) when the `.out` has not grown for M minutes -- so the caller
+  re-dispatches ONLY a genuinely-silent review and keeps waiting on one still producing output. This
+  is the SEMANTICS of the signal; distinct from B1 (the 2-min-kill of the poll CALL itself, fixed).
+  (This is the canary doing its job: a real watched run surfaced a signal-quality gap the deterministic
+  tests could not.)
+- [ ] **[det] B3. The review-gate STILL forces `SKIP_REVIEW_HOOK` on broker-reviewed and find-and-fix
+  sections -- P1.2/P1.3 did not close it.** SURFACED LIVE in the same 2026-07-13 watched canary: landing
+  TODO-22 §5 required TWO honest `SKIP_REVIEW_HOOK` opt-outs (each ALSO needing `SKIP_SKILL_STEP_BLOCK`),
+  via TWO distinct content-binding/attribution mechanisms neither P1.2 nor P1.3 patched:
+  1. **Broker-attribution gap (section commit, ~21:39).** Step-5 adversarial + step-8 consistency/perf
+     were dispatched through the overnight review-broker (doctrine-mandated for unattended runs). P1.3
+     taught the RECORDER (`codex_review_completed.py`) to recognize the broker, but the ATTRIBUTION
+     tagger `skill_step_observer.py` was NOT updated -- so the four verdicts land on disk under
+     `.claude/overnight/reviews` but the section-commit four-dispatch gate cannot attribute them
+     (`trigger_files` stays empty) -> BLOCK -> forced opt-out. **Fix:** teach `skill_step_observer.py`
+     the broker dispatch shape (mirror the `is_review_broker_dispatch()` recognition P1.3 added to
+     `_codex_dispatch.py`) so broker legs populate the dispatch attribution + `trigger_files`.
+  2. **Post-fix source-drift gap (review-stamp commit, ~22:23).** When the adversarial review
+     finds+fixes a bug (here a real NULL-deref in the empty-value query path), the committed source
+     drifts from the ORIGINALLY-reviewed blob. The gate binds to the FIRST review's `trigger_blobs`;
+     even though the post-fix re-adversarial re-reviewed the fix diff and approved (`Verdict: approve`,
+     no material findings), the gate still binds to the first review, sees drift, and blocks -> forced
+     opt-out. **Fix:** on a find-and-fix cycle, re-bind the gate's content anchor to the re-adversarial's
+     approved diff (record the re-adversarial's covered blobs as the authoritative `trigger_blobs`), so
+     an approved re-review supersedes the stale first-review binding.
+  Net: the honest-opt-out escape valve worked both times (accurate, detailed reasons; run NOT wedged),
+  but the review-gate did not hit its design goal of eliminating SKIP churn -- it forced two bypasses in
+  one section. This is the exact churn the P1.2/P1.3 work targeted, via two facets it did not cover.
+  Distinct from B2 (waiter signal quality) and from the original field observation (single-record
+  `received` reset, which P1.2's history-fallback DOES rescue -- these two do not, because `received`
+  is True but the binding/attribution is empty or stale).
 
 ## C. Hook-block ergonomics + edit-retry churn
 

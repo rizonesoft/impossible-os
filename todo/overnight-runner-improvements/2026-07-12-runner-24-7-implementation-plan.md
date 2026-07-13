@@ -338,6 +338,48 @@ stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverab
 8. Rotate context after every shipped section.
 9. Re-open (never strand) a terminal-park deferral once its XREF owner section ships.
 
+## Canary run log (2026-07-13 watched run)
+
+First watched attended canary of this batch, armed with `--force` on branch
+`overnight-runner-improvements-2026-07-13` (run-20260713-205030), completing TODO-22's env work
+(the pre-disarm cursor) naturally. Live validations observed:
+
+- **Phase machine intact** -- PREFLIGHT -> TRIAGE proceeded cleanly; the run picked TODO-22 and
+  dispatched a real adversarial Codex review within ~4 min.
+- **B1 waiter adopted + working** -- the run used `wait-for-codex-verdict.sh` (not the old `sleep 60`
+  loop); ~6 re-invoke cycles at ~100-118s each with NO `Exit code 143 / timed out after 2m` kill.
+  The re-invoke pattern is exactly the intended behavior.
+- **NEW finding -> B2 (see 2026-07-13 findings file).** A ~14-min-but-ALIVE adversarial review of
+  `nt_env.c` (Codex still running `rg` + wait tools, no crash marker) could not be distinguished from
+  a hung one by the waiter's binary signal; the runner manually crash-checked (found none) then
+  re-dispatched a fresh leg, abandoning the live one. Clean recovery, but wasted ~14 min. Fix: waiter
+  should emit elapsed + last-activity (`.out` mtime/growth) so the caller re-dispatches only a
+  genuinely-silent review. This is the canary surfacing a signal-quality gap the deterministic suite
+  could not -- exactly its purpose.
+- **§5 shipped + full review pipeline validated.** The post-commit `review-todo-section` ran all four
+  Codex legs + the Opus `kernel-quality-auditor`; the adversarial leg found a REAL bug (NULL-deref in
+  the empty-value query path), the runner fixed it (6-line NULL guard + regression test), rebuilt green
+  (ABI 1343 kernel + 16 user-mode, smoke OK), and the post-fix re-adversarial returned `Verdict: approve`
+  / no material findings. The pipeline did exactly its job: caught + closed a genuine defect.
+- **KEY finding -> B3 (see 2026-07-13 findings file).** The review-gate STILL forced TWO honest
+  `SKIP_REVIEW_HOOK` opt-outs to land §5 (section commit + review-stamp commit), each also needing
+  `SKIP_SKILL_STEP_BLOCK`, via two content-binding/attribution gaps P1.2/P1.3 did not cover:
+  (1) `skill_step_observer.py` does not recognize the review-broker (P1.3 only fixed the recorder), so
+  broker legs are not attributed -> empty `trigger_files` -> BLOCK; (2) the gate binds to the FIRST
+  review's blobs, so a find-and-fix section drifts out of binding even after the re-adversarial approves
+  the fix diff. Honest opt-outs, run NOT wedged -- but the SKIP churn the whole review-gate effort
+  targeted was NOT eliminated. Two concrete fixes filed in B3.
+- **Rollover gate is fail-safe (observed).** At ~22:26 the runner attempted a verified session rollover
+  (`run_phase_guard.py rollover`); it REFUSED on a dirty tree ("operator files + stale receipts +
+  SKIP_REVIEW_HOOK reset residue") and, per doctrine, continued in-session instead of rolling a fresh
+  worker over uncommitted state. So the rollover mechanism was exercised and correctly declined -- a
+  SUCCESSFUL rollover needs a clean tree (the operator's own in-progress backlog docs -- these files --
+  were part of what it saw dirty; the runner correctly declined to commit content it did not author).
+- **Coordination note.** Recording live canary findings into repo docs makes the tree dirty, which
+  blocks the runner's clean-tree rollover gate; an interactive operator + the autonomous runner sharing
+  one tree is inherently at odds at rollover boundaries. Operator committed these findings docs
+  separately (doc-only, this branch) to clear the gate.
+
 ## Recorded decisions (do NOT re-litigate)
 
 - **Rejected: conditional rollover smoke.** `run_phase_guard.py:442` runs `check_smoke` unconditionally at rollover; keep it -- smoke is ~3s + deterministic (zero model tokens), so weakening it trades a real boot safety net for a negligible saving. The win is not re-running smoke mid-loop (P3.3), not dropping the boundary check.
