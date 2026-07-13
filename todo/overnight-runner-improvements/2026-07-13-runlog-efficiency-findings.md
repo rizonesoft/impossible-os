@@ -414,7 +414,7 @@
   explicitly makes an edit stale). **Fix:** bind a once-accepted pack to the CURRENT implement pass
   (retain its pre-edit digest for audit, but do not re-block on intra-pass content drift); add a
   multi-edit regression test. Ship together with A1 so the import fix does not just move the block.
-- [ ] **[det] I1. Artifact FAILURES are masked by caller pipelines -- a real compile failure did not
+- [x] **[det] I1. Artifact FAILURES are masked by caller pipelines -- a real compile failure did not
   surface as a Bash tool error.** VERIFIED. `run-artifact.sh:24` preserves the child exit status in
   its JSON envelope, but callers pipe it into `tail`/`python3` or follow it with a passing command, so
   the Bash-tool-visible exit code is the LAST pipeline stage's, not the build's

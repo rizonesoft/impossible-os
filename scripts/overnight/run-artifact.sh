@@ -20,6 +20,7 @@ shift
 ART_DIR=".claude/overnight/artifacts"
 mkdir -p "$ART_DIR"
 ART="$ART_DIR/$(date +%Y%m%d-%H%M%S)-${LABEL//[^a-zA-Z0-9_-]/_}.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$@" > "$ART" 2>&1
 RC=$?
@@ -29,7 +30,7 @@ ls -1t "$ART_DIR"/*.log 2>/dev/null | tail -n +41 | while IFS= read -r old; do
 done
 
 python3 - "$LABEL" "$RC" "$ART" <<'PY'
-import hashlib, json, re, sys
+import hashlib, json, os, re, sys
 label, rc, art = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 data = open(art, "rb").read()
 text = data.decode("utf-8", "replace")
@@ -37,11 +38,30 @@ ansi = re.compile(r"\x1b\[[0-9;]*m")
 lines = [ansi.sub("", ln) for ln in text.splitlines()]
 err_re = re.compile(r"(?i)\b(error|fail(ed|ure)?|fatal|panic|assert)\b")
 errors = [ln.strip()[:300] for ln in lines if err_re.search(ln)][:40]
-print(json.dumps({
+env = {
     "label": label, "exit": rc, "artifact": art,
     "sha256": hashlib.sha256(data).hexdigest(),
     "lines": len(lines), "errors": errors,
     "tail": [ln[:300] for ln in lines[-8:]],
-}, indent=1))
+}
+print(json.dumps(env, indent=1))
+# I1: authoritative, un-maskable envelope sink. A caller that pipes this script
+# into `| tail`/`| head` loses the real exit from the Bash tool's view; a
+# receipt / verification step reads THIS file's `exit` field instead of trusting
+# the pipeline's last-stage status.
+try:
+    os.makedirs(".claude/state", exist_ok=True)
+    with open(".claude/state/last-artifact.json", "w") as fh:
+        fh.write(json.dumps(env))
+except Exception:
+    pass
 PY
+
+# I1: seed the failure ledger on a nonzero result so recurring build/test/smoke
+# failures are detected instead of re-derived (the ledger was never written into
+# the flow before). Best-effort; absolute path so it works regardless of CWD.
+if [ "$RC" -ne 0 ] && [ -f "$SCRIPT_DIR/failure-ledger.py" ]; then
+  python3 "$SCRIPT_DIR/failure-ledger.py" record "$LABEL" < "$ART" >/dev/null 2>&1 || true
+fi
+
 exit "$RC"
