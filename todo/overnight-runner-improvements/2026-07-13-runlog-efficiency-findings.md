@@ -132,6 +132,19 @@
   Distinct from B2 (waiter signal quality) and from the original field observation (single-record
   `received` reset, which P1.2's history-fallback DOES rescue -- these two do not, because `received`
   is True but the binding/attribution is empty or stale).
+- [ ] **[det] B4. Runner-generated `coverage.*` dirties the tree at rollover, and the dirty-tree
+  diagnostic mis-attributes ownership.** SURFACED LIVE in the 2026-07-13 canary: two `run_phase_guard.py
+  rollover` attempts refused because the full-suite run regenerated `coverage.json`/`coverage.md`
+  (20671->20680 tests from §5), which dirties the tree and invalidates the content-bound rollover
+  receipts -- so a routine test run blocks the rollover until those auto-gen artifacts are committed. On
+  the second refusal the runner MIS-ATTRIBUTED them to "the operator live-editing the canary-log files"
+  (the operator's findings commit had already landed ~15 min earlier; no operator edit was in flight),
+  self-correcting in ~30s after diffing the actual paths. **Fix:** (a) commit (or receipt-scope) runner-
+  generated `coverage.*` in the rollover receipt step BEFORE the clean-tree check, so a test run does not
+  block rollover; (b) make the dirty-tree diagnostic name the actual paths + probable owner (auto-gen vs
+  tracked-source vs untracked) instead of guessing "operator." Low severity, self-corrected; filed so the
+  recurring coverage-dirties-tree friction + the operator/runner file-ownership ambiguity is owned.
+  Distinct from B3 (review-gate binding) -- this is the rollover clean-tree gate + its diagnostics.
 
 ## C. Hook-block ergonomics + edit-retry churn
 

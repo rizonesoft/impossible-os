@@ -379,6 +379,30 @@ First watched attended canary of this batch, armed with `--force` on branch
   blocks the runner's clean-tree rollover gate; an interactive operator + the autonomous runner sharing
   one tree is inherently at odds at rollover boundaries. Operator committed these findings docs
   separately (doc-only, this branch) to clear the gate.
+- **SUCCESSFUL rollover observed (~22:45).** After the operator committed the findings docs and the
+  runner committed its own auto-generated `coverage.json`/`coverage.md` (from the full-suite run,
+  20671->20680 tests), the tree went clean, all three receipts were re-recorded (build + suite-all +
+  smoke, content hash `9e4c3e07d976`, smoke passed), and `run_phase_guard.py rollover` fired
+  (`run outcome: {"checkpoint_kind": "rollover"}`). A FRESH worker resumed at phase SECTIONS, cursor
+  TODO-22, via the durable cursor -- validating the rollover path end to end: fail-safe dirty-tree
+  refusal -> clean tree + content-bound receipts -> successful handoff -> correct-cursor resume.
+- **NEW minor friction (B4 candidate -- coverage-artifact + operator-file misattribution at rollover).**
+  Two rollover attempts refused on a dirty tree that was NOT operator files: the runner's OWN full-suite
+  run regenerates `coverage.json`/`coverage.md`, which dirties the tree and invalidates the content-bound
+  receipts, so the rollover cannot pass until those auto-gen artifacts are committed. On the second such
+  refusal the runner initially MIS-ATTRIBUTED them to "the operator live-editing the canary-log files"
+  (the operator was NOT editing then -- the findings commit had already landed at 22:29), self-correcting
+  in ~30s once it diffed the actual paths. **Fix candidates:** (a) have the rollover receipt step commit
+  (or `.gitignore`-scope) runner-generated `coverage.*` before the clean-tree check, so a routine test run
+  does not block rollover; (b) make the dirty-tree diagnostic name the actual paths + their probable owner
+  (auto-gen vs source vs untracked) instead of guessing "operator." Low severity; self-corrected; filed so
+  the recurring coverage-dirties-tree friction is owned.
+- **Canary complete; runner disarmed (~22:46).** `arm-sequencer.sh --disarm` removed timers + watchdog +
+  launch.lock + run state; the post-rollover worker halted at its next arm check. §6/§7/§8/§9 were
+  deferred (blocked on user-mode runtime / shell / desktop -- legitimate), everything pushed, tree clean.
+  Net canary verdict: phase machine, B1 waiter, review pipeline (real bug caught), and the rollover path
+  all validated; B3 (review-gate SKIP churn) is the one must-fix before an unattended arm; B2 + B4 are
+  signal-quality/ergonomic follow-ups.
 
 ## Recorded decisions (do NOT re-litigate)
 
