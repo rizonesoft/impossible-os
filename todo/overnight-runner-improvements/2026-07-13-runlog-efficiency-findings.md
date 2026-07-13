@@ -406,7 +406,7 @@
 > plan's P0.1 / P2.3 and the P3.4 prerequisite were folded into that sibling doc; the items here are
 > the NEW infra findings plus the A1 follow-on.
 
-- [ ] **[det] I0. A1 FOLLOW-ON: fixing the `worktree_hash` import exposes a second section-pack
+- [x] **[det] I0. A1 FOLLOW-ON: fixing the `worktree_hash` import exposes a second section-pack
   receipt defect.** VERIFIED. Once A1's import resolves, a fresh section-pack authorizes the FIRST
   edit, but that edit changes the pack's content digest, so the SECOND edit in the same section goes
   stale and re-blocks -- even though a real agent dispatch remains valid for the whole implement pass
@@ -425,7 +425,7 @@
   `| tail`/`| python` shapes), have receipts validate the JSON `exit` field, and wire a nonzero result
   into the currently-unused failure ledger. Highest-risk of this cluster -- a broken build can pass
   silently.
-- [ ] **[det] I2. Subagent-runaway telemetry is DEAD -- wrong payload field name.** VERIFIED.
+- [x] **[det] I2. Subagent-runaway telemetry is DEAD -- wrong payload field name.** VERIFIED.
   `subagent_audit.py:120` reads `d.get("transcript_path", "")`, but the SubagentStop payload provides
   `agent_transcript_path` (correct-field precedent: `agent_result_cache.py:238`). Result: a
   kernel-explorer that used 36 tools (over the threshold of 30) recorded ZERO tools and no duration

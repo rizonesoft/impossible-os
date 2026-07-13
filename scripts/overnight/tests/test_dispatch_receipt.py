@@ -69,6 +69,45 @@ def test_receipt_fail_closed_and_fresh_accept():
         assert adr._fresh_section_pack(root) is False
 
 
+def test_pack_pass_binding_survives_intra_pass_edits():
+    # I0: a pack accepted during a live implement pass must stay valid for the
+    # WHOLE pass -- the first edit changes the worktree digest, but re-blocking
+    # the 2nd edit of the same section on that expected drift was the bug.
+    with tempfile.TemporaryDirectory() as d:
+        root = _fixture(d)
+        key_inputs = ["todo/TODO-42.md", "src/kernel/x.c"]
+
+        def _progress(started_ts, orphaned=False):
+            (root / ".claude/state/skill-progress.json").write_text(json.dumps(
+                {"implement-todo-section": {"started_ts": started_ts,
+                                            "compaction_orphaned": orphaned}}))
+
+        def _receipt(ts_ns, digest):
+            (root / ".claude/state/last-section-pack.json").write_text(json.dumps(
+                {"todo": "todo/TODO-42.md", "section": 1, "digest": digest,
+                 "key_inputs": key_inputs, "ts_ns": ts_ns, "pack_path": "x"}))
+
+        # Live pass started at ts=1000; pack recorded during it (ts=2000), fresh.
+        _progress(1000)
+        _receipt(2000, worktree_key(root, key_inputs))
+        assert adr._fresh_section_pack(root) is True
+        # First edit -> digest drifts, but the pack was accepted THIS pass.
+        (root / "src/kernel/x.c").write_text("int x(void){return 2;}\n")
+        assert adr._fresh_section_pack(root) is True
+        # Second edit -> still valid within the same pass (the actual bug).
+        (root / "src/kernel/x.c").write_text("int x(void){return 3;}\n")
+        assert adr._fresh_section_pack(root) is True
+        # Control: pack from a PRIOR pass (ts=500 < pass start) + drift -> refused.
+        _receipt(500, worktree_key(root, key_inputs))
+        (root / "src/kernel/x.c").write_text("int x(void){return 4;}\n")
+        assert adr._fresh_section_pack(root) is False
+        # Control: compaction-orphaned pass -> no pass binding -> strict check.
+        _progress(1000, orphaned=True)
+        _receipt(2000, worktree_key(root, key_inputs))
+        (root / "src/kernel/x.c").write_text("int x(void){return 5;}\n")
+        assert adr._fresh_section_pack(root) is False
+
+
 def test_malformed_receipt_refused():
     with tempfile.TemporaryDirectory() as d:
         root = _fixture(d)
@@ -104,6 +143,7 @@ def test_diff_facts_receipt_fail_closed_and_window():
 
 if __name__ == "__main__":
     test_receipt_fail_closed_and_fresh_accept()
+    test_pack_pass_binding_survives_intra_pass_edits()
     test_malformed_receipt_refused()
     test_diff_facts_receipt_fail_closed_and_window()
     print("PASS: dispatch-receipt (WS2)")

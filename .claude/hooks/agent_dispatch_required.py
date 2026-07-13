@@ -113,6 +113,20 @@ def _fresh_section_pack(root: Path) -> bool:
         cursor_file = ""
     if cursor_file and todo != cursor_file:
         return False
+    # I0: pass-binding. A pack accepted at the top of the section (step 3) must
+    # stay valid for the WHOLE implement pass. The FIRST edit changes the
+    # worktree digest, so re-blocking the 2nd edit of the same section on that
+    # EXPECTED intra-pass drift was the section-pack analogue of the dispatch-TTL
+    # bug (_recent_dispatch already pass-binds; this path did not). A pack
+    # recorded at/after the live pass start, covering the cursor TODO (checked
+    # above), is accepted regardless of content drift; the pre-edit digest stays
+    # in the receipt for audit. No active pass (interactive) or a pack from a
+    # PRIOR pass falls through to the strict content-bound check below -- there,
+    # ANY edit since the pack still invalidates it (fail-closed preserved).
+    recorded_ts = rc.get("ts_ns")
+    pass_start = _pass_started_ts(root)
+    if isinstance(recorded_ts, int) and pass_start > 0 and recorded_ts >= pass_start:
+        return True
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
                               / "scripts/overnight"))
