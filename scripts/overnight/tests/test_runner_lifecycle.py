@@ -131,10 +131,12 @@ def test_skill_prescribes_in_session_poll():
     src = SKILL.read_text()
     assert "Turn completed" in src, \
         "SKILL.md lost the in-session poll sentinel ('Turn completed')"
-    assert re.search(r"sleep\s+60", src), \
-        "SKILL.md lost the 60s blocking-poll cadence"
-    assert re.search(r"seq\s+1\s+9", src), \
-        "SKILL.md lost the bounded blocking-poll loop (seq 1 9)"
+    # B1: the in-session poll is the canonical waiter (bounded so a bare call is
+    # never killed at the 2m default), not a hand-rolled sleep loop.
+    assert "wait-for-codex-verdict.sh" in src, \
+        "SKILL.md lost the canonical in-session waiter (wait-for-codex-verdict.sh)"
+    assert re.search(r"NEVER exits to wait", src, re.IGNORECASE), \
+        "SKILL.md lost the never-exit-to-wait doctrine (the anti-deadlock rule)"
 
 
 def test_launcher_flock_is_sole_concurrency_guard():

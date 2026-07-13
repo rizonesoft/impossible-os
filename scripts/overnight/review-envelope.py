@@ -9,9 +9,17 @@ names the artifact for any finding that needs its full surrounding context
 (slice-read the artifact at need).
 
 Usage: review-envelope.py [PROJECT_DIR] [--kinds adversarial,consistency,perf]
+                          [--todo <todo-path>] [--since <epoch>]
 Reads the newest manifest entry PER KIND from
 .claude/overnight/reviews/manifest.jsonl; exits 1 if any requested leg is
 missing or incomplete (envelope still printed, with the gap named).
+
+E3 SCOPING: the manifest ACCUMULATES across sections and runs (append-only), so
+"newest per kind" would otherwise pull a PRIOR section's stale review (measured:
+a TODO-22 self-check aggregated stale TODO-12 morning reviews). Pass `--todo
+<path>` to restrict to the section under review (manifest carries `todo` per
+entry) and/or `--since <epoch>` to restrict to this dispatch round. Both default
+off for back-compat, but the sequencer/skills SHOULD pass `--todo`.
 """
 from __future__ import annotations
 
@@ -76,15 +84,33 @@ def main(argv) -> int:
     kinds = ["adversarial", "consistency", "perf"]
     if "--kinds" in argv:
         kinds = [k.strip() for k in argv[argv.index("--kinds") + 1].split(",")]
+    # E3: scope filters so "newest per kind" cannot pull a prior section's review.
+    want_todo = None
+    if "--todo" in argv:
+        want_todo = str(argv[argv.index("--todo") + 1]).replace("\\", "/").lstrip("./")
+    since = None
+    if "--since" in argv:
+        try:
+            since = int(argv[argv.index("--since") + 1])
+        except (ValueError, IndexError):
+            since = None
     manifest = project / ".claude/overnight/reviews/manifest.jsonl"
     latest: dict = {}
     try:
         for ln in manifest.read_text(encoding="utf-8").splitlines():
             try:
                 e = json.loads(ln)
-                latest[e.get("kind")] = e  # later lines win (append order)
             except ValueError:
                 continue
+            if want_todo is not None:
+                etodo = str(e.get("todo") or "").replace("\\", "/").lstrip("./")
+                if etodo != want_todo:
+                    continue  # a different section's review -- not ours
+            if since is not None:
+                ets = e.get("ts")
+                if not isinstance(ets, int) or ets < since:
+                    continue
+            latest[e.get("kind")] = e  # later lines win (append order)
     except OSError:
         print(json.dumps({"error": "no broker manifest", "kinds": {}}))
         return 1

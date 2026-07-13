@@ -668,6 +668,22 @@ def cli(argv):
             ARMED_MARKER.unlink()
         except FileNotFoundError:
             pass
+        # Advisory (P6.2, NON-BLOCKING): surface any stranded-deferral candidates
+        # at the run's end so the operator can triage them. This is NOT a gate --
+        # P6.3 (blocking fixpoint on the audit) stays deferred until the audit is
+        # proven ~zero-false-positive; here it only REPORTS. Fail-open: any error
+        # or timeout is swallowed so it can never affect the verified completion.
+        try:
+            aud = subprocess.run(
+                [sys.executable,
+                 str(repo_root() / "scripts/overnight/stranded_deferrals.py")],
+                cwd=str(repo_root()), capture_output=True, text=True, timeout=60)
+            head = [ln for ln in (aud.stdout or "").splitlines() if ln.strip()][:2]
+            for ln in head:
+                sys.stderr.write("[sequencer] stranded-deferral audit (advisory): "
+                                 + ln.strip() + "\n")
+        except Exception:
+            pass
         print("[sequencer] FIXPOINT verified by oracle (no remaining work) -- "
               "run complete; sentinel written, armed marker removed",
               file=sys.stderr)

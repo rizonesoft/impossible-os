@@ -838,7 +838,19 @@ for root in ROOTS:
                 # Prose mention, not an actual invocation. Skip.
                 continue
             if stripped[0] == "'":
-                # Single-quoted body: bash never evaluates, safe.
+                # Single-quoted body: bash never EXPANDS it, but a literal INNER
+                # apostrophe (e.g. "exec'd", "wrapper's") closes the quote EARLY
+                # and exposes the rest of the line to the parser (E1: a following
+                # ( or ` then syntax-errors). Flag the premature-close shape --
+                # an apostrophe immediately followed by an alnum -- after removing
+                # the VALID escape sequence '\''. Conservative: legitimate string
+                # concatenation ('a' 'b') and trailing comments are not alnum.
+                probe = stripped.replace("'\\''", "")
+                first = probe.find("'")
+                second = probe.find("'", first + 1)
+                if (second != -1 and second + 1 < len(probe)
+                        and probe[second + 1].isalnum()):
+                    warnings.append(f"{rel}:{ln_no}: Codex prompt single-quoted body has an INNER apostrophe (e.g. \"exec'd\") that closes the quote early -- bash then parses the rest and can syntax-error on a following ( or backtick. Use the heredoc form (PROMPT=$(cat <<'EOF' ... EOF); codex-dispatch.sh \"$PROMPT\") or escape as '\\''. (E1)")
                 continue
             if stripped[0] == "<":
                 # Unquoted placeholder body. Real invocation would

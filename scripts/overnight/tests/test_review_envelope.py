@@ -80,8 +80,58 @@ def test_missing_leg_needs_redispatch():
         assert "consistency" in env["needs_redispatch"]
 
 
+def _run_args(root, *extra):
+    r = subprocess.run([sys.executable, str(SCRIPT), str(root), *extra],
+                       text=True, capture_output=True)
+    return r.returncode, json.loads(r.stdout)
+
+
+def test_todo_scope_excludes_other_sections():
+    # E3: the manifest accumulates; --todo must NOT pull a different section's
+    # (newer) review when scoped to this one.
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        rev.mkdir(parents=True)
+        old = rev / "old.out"
+        new = rev / "new.out"
+        old.write_text("[CRITICAL] stale TODO-12\nTurn completed (rc=0)\n")
+        new.write_text("[HIGH] fresh TODO-22\nTurn completed (rc=0)\n")
+        (rev / "manifest.jsonl").write_text(
+            json.dumps({"ts": 100, "kind": "adversarial", "todo": "todo/TODO-12.md",
+                        "logFile": str(old)}) + "\n"
+            + json.dumps({"ts": 200, "kind": "adversarial", "todo": "todo/TODO-22.md",
+                          "logFile": str(new)}) + "\n")
+        # Unscoped: newest (TODO-22) wins.
+        _, env = _run_args(root, "--kinds", "adversarial")
+        assert env["kinds"]["adversarial"]["artifact"].endswith("new.out")
+        # Scoped to TODO-12: must pull the OLD one, not the newest.
+        _, env = _run_args(root, "--kinds", "adversarial", "--todo", "todo/TODO-12.md")
+        assert env["kinds"]["adversarial"]["artifact"].endswith("old.out"), env
+        # Scoped to TODO-22: current section only.
+        _, env = _run_args(root, "--kinds", "adversarial", "--todo", "todo/TODO-22.md")
+        assert env["kinds"]["adversarial"]["artifact"].endswith("new.out"), env
+
+
+def test_since_window_excludes_prior_round():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        rev = root / ".claude/overnight/reviews"
+        rev.mkdir(parents=True)
+        (rev / "a.out").write_text("[HIGH] x\nTurn completed (rc=0)\n")
+        (rev / "manifest.jsonl").write_text(
+            json.dumps({"ts": 100, "kind": "adversarial", "todo": "todo/x.md",
+                        "logFile": str(rev / "a.out")}) + "\n")
+        _, env = _run_args(root, "--kinds", "adversarial", "--since", "150")
+        assert "adversarial" in env["missing"], env  # ts=100 < 150 -> scoped out
+
+
 if __name__ == "__main__":
     test_crashed_leg_flagged_and_isolated()
     test_all_clean_exits_zero()
     test_missing_leg_needs_redispatch()
+    test_todo_scope_excludes_other_sections()
+    test_since_window_excludes_prior_round()
     print("PASS: review-envelope")
