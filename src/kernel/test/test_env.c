@@ -377,13 +377,13 @@ static void test_env_defaults_derived(void)
     env_fixture_reset();
     env_init_defaults(&s_env_fixture);
     TEST_ASSERT(env_get_copy(&s_env_fixture, "USERPROFILE", out, sizeof(out)) > 0 &&
-                env_streq(out, "C:\\Users\\Default\\"),
-                "USERPROFILE derived from USERNAME");
+                env_streq(out, "C:\\Users\\Default"),
+                "USERPROFILE derived from USERNAME (no trailing separator)");
     TEST_ASSERT(env_get_copy(&s_env_fixture, "APPDATA", out, sizeof(out)) > 0 &&
-                env_streq(out, "C:\\Users\\Default\\AppData\\Roaming\\"),
+                env_streq(out, "C:\\Users\\Default\\AppData\\Roaming"),
                 "APPDATA derived from USERNAME");
     TEST_ASSERT(env_get_copy(&s_env_fixture, "LOCALAPPDATA", out, sizeof(out)) > 0 &&
-                env_streq(out, "C:\\Users\\Default\\AppData\\Local\\"),
+                env_streq(out, "C:\\Users\\Default\\AppData\\Local"),
                 "LOCALAPPDATA derived from USERNAME");
     TEST_ASSERT(env_get_copy(&s_env_fixture, "OS", out, sizeof(out)) > 0 &&
                 env_streq(out, "Impossible_OS"), "OS default");
@@ -503,6 +503,40 @@ static void test_env_defaults_skips_non_string(void)
     env_free(&s_env_fixture);
 }
 
+static void test_env_defaults_unterminated_value(void)
+{
+    char out[64];
+    HKEY hk;
+    uint32_t disp = 0;
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- unterminated-value read exercised post-Phase-2");
+        return;
+    }
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                       "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+                       0, (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hk, &disp) != ERROR_SUCCESS) {
+        TEST_SKIP("cannot open Session Manager\\Environment");
+        return;
+    }
+    /* Store "AB" as REG_SZ WITHOUT a trailing NUL (cbData = 2). The key already
+     * holds longer values (ComSpec), so the read buffer's tail past index 2 is
+     * uninitialized -- a capacity-terminator would leak that tail. The read must
+     * stop at the returned length (2) and yield exactly "AB". */
+    RegSetValueEx(hk, "EnvUnterm", 0, REG_SZ, (const uint8_t *)"AB", 2);
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    {
+        int r = env_get_copy(&s_env_fixture, "EnvUnterm", out, sizeof(out));
+        RegDeleteValue(hk, "EnvUnterm");
+        RegCloseKey(hk);
+        TEST_ASSERT_EQ(r, 2, "unterminated REG_SZ read stops at the returned length");
+        TEST_ASSERT(env_streq(out, "AB"),
+                    "no uninitialized buffer tail leaks into the value");
+    }
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: set/get roundtrip",
@@ -547,6 +581,8 @@ void test_register_env(void)
                             test_env_defaults_user_override, TEST_CAT_ABI);
     test_suite_register_cat("Env: init_defaults skips non-string values",
                             test_env_defaults_skips_non_string, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults unterminated REG_SZ",
+                            test_env_defaults_unterminated_value, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

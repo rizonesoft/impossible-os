@@ -161,16 +161,18 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Test checkpoint:** After boot Phase 2+3 the `env_init_defaults` unit tests confirm `PATH`/`SYSTEMROOT`/`TEMP`/`USERNAME`/`COMPUTERNAME` land, the `Session Manager\Environment` overlay applies (`ComSpec`) while non-string values are skipped, a user `HKCU\Environment\PATH` appends, and a user `TEMP` overrides. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 env-default suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 7 env-default suites, 0 failures
 > **Notes:**
 > - **What shipped** -- `env_init_defaults`/`env_init_kernel_task` in `src/kernel/env.c`: 3-layer (synth base -> HKLM system overlay -> HKCU user overlay, PATH appended) default environment seed; heap/PMM-sized enumeration buffers.
 > - **How it integrates** -- `env_init_kernel_task()` seeds PID 0 in `boot_phase3` after `task_init()`; registry reads are best-effort (synth base always lands); descendants inherit via `env_copy`.
 > - **Downstream effects** -- adds `HARDWARE\CPU\Count` + `ComputerName` + `Session Manager\Environment` Registry defaults; unblocks env-block builders and shell PATH lookup; Codex design adoptions in the commit message.
 > - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) `env_init_defaults` contract.
 > - **Scope boundary** -- §2 owns the default seed + Registry read; per-child env inheritance is `TODO-12 §7` (`env_copy`); token-derived `USERNAME` is SRM account-name work; `%VAR%` expansion is §3.
+> **Verified:** 2026-07-13 | commit `91f1e2ec` | 4/4 items | build OK | tests 1214/1214 PASS, smoke PASS (env: 15 vars for PID 0)
 > **Accepted:** [design] child processes receive env via `env_copy`, not `env_init_defaults` -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
 > **Accepted:** [M] token UserSid -> account-name lookup for `USERNAME` (defaults to "Default" until then) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §10 (item: "LookupAccountSidW / LookupAccountNameW")
 > **Accepted:** [design] `boot_phase3` Registry read is unlocked (BSP-only, post-readiness; only a concurrent AP-panic write could race) -> XREF: 02-kernel-core/TODO-14-registry-completion.md §14 (item: "read-path entry points RegQueryValueEx, RegEnumValue, RegQueryInfoKey under the lock")
+> **Quality reviewed:** 2026-07-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 1H+1L fixed, 3 accepted-XREF | scope: kernel-code-quality
 
 ---
 

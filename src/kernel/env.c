@@ -495,7 +495,13 @@ static int env_reg_read_sz(HKEY hkey, const char *valname,
         return 0;
     if (type != REG_SZ && type != REG_EXPAND_SZ)
         return 0;
-    out[out_size - 1u] = '\0';   /* force termination whatever the stored form */
+    /* Terminate at the RETURNED byte count, not the buffer end: a REG_SZ value
+     * stored without a trailing NUL must not leave env_strlen scanning the
+     * uninitialized tail of `out` (kernel-memory disclosure). On ERROR_SUCCESS
+     * RegQueryValueEx guarantees size <= out_size; clamp the exact-fit edge. */
+    if (size >= out_size)
+        size = out_size - 1u;
+    out[size] = '\0';
     return out[0] ? 1 : 0;
 }
 
@@ -538,21 +544,22 @@ static void env_synth_base(struct task *t, int *err)
      * account-name work; until then every process runs as the default account. */
     env_seed(t, "USERNAME", ENV_DEF_USERNAME, err);
 
-    /* USERPROFILE / APPDATA / LOCALAPPDATA derived from USERNAME. */
+    /* USERPROFILE / APPDATA / LOCALAPPDATA derived from USERNAME. Windows stores
+     * these with NO trailing separator ("C:\Users\Default", not "...\Default\"),
+     * so consumers that do %USERPROFILE%\file get one backslash, not two. */
     p = 0;
     env_str_append(path, sizeof(path), &p, "C:\\Users\\");
     env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
-    env_str_append(path, sizeof(path), &p, "\\");
     env_seed(t, "USERPROFILE", path, err);
     p = 0;
     env_str_append(path, sizeof(path), &p, "C:\\Users\\");
     env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
-    env_str_append(path, sizeof(path), &p, "\\AppData\\Roaming\\");
+    env_str_append(path, sizeof(path), &p, "\\AppData\\Roaming");
     env_seed(t, "APPDATA", path, err);
     p = 0;
     env_str_append(path, sizeof(path), &p, "C:\\Users\\");
     env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
-    env_str_append(path, sizeof(path), &p, "\\AppData\\Local\\");
+    env_str_append(path, sizeof(path), &p, "\\AppData\\Local");
     env_seed(t, "LOCALAPPDATA", path, err);
 
     /* Fixed literals. */
@@ -681,8 +688,15 @@ static void env_overlay_key(struct task *t, HKEY root, const char *subkey,
             break;
         if (type != REG_SZ && type != REG_EXPAND_SZ)
             continue;
-        namebuf[namecap - 1u] = '\0';
-        valbuf[valcap - 1u] = '\0';
+        /* Terminate at the RETURNED length, never at buffer capacity: env_str_alloc
+         * buffers are uninitialized, and a REG_SZ value stored without a trailing
+         * NUL would otherwise make env_set scan (and persist) the allocator bytes
+         * between the value end and a capacity-terminator -- a kernel-memory
+         * disclosure into the environment. */
+        if (nlen >= namecap) nlen = namecap - 1u;
+        if (vlen >= valcap)  vlen = valcap - 1u;
+        namebuf[nlen] = '\0';
+        valbuf[vlen] = '\0';
         if (!namebuf[0])
             continue;                             /* skip the unnamed default value */
         if (path_append && env_name_ci_eq(namebuf, "PATH")) {
