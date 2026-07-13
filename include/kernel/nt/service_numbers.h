@@ -631,6 +631,16 @@
 #define SSDT_NtUnveil                         0x03DC
 
 /* ====================================================================
+ * 0x03DD-0x03DE: Environment Variables -- per-process env syscalls (TODO-22 s5)
+ *
+ * Distinct from the FIRMWARE env slots 0x00D2-0x00D6
+ * (NtQuerySystemEnvironmentValue*): those read UEFI/SMBIOS variables, these
+ * read/write the calling process's own task->environ (kernel-authoritative).
+ * ==================================================================== */
+#define SSDT_NtQueryEnvironmentVariable       0x03DD
+#define SSDT_NtSetEnvironmentVariable         0x03DE
+
+/* ====================================================================
  * Total count and bounds
  *
  * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 475).
@@ -656,10 +666,11 @@
  *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
  *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
  *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
- *   Diagnostics: 0x03DD  (0x03D9/0x03DA CWD, 0x03DB/0x03DC pledge/unveil)
+ *   Diagnostics: 0x03DF  (0x03D9/0x03DA CWD, 0x03DB/0x03DC pledge/unveil,
+ *                         0x03DD/0x03DE env vars)
  * ==================================================================== */
-#define SSDT_MAIN_COUNT                       475
-#define SSDT_LAST_MAIN_INDEX                  0x03DC  /* SSDT_NtUnveil */
+#define SSDT_MAIN_COUNT                       477
+#define SSDT_LAST_MAIN_INDEX                  0x03DE  /* SSDT_NtSetEnvironmentVariable */
 
 /* Compile-time verification:
  * - Count must fit within the table capacity

@@ -248,6 +248,7 @@ void boot_phase3(void)
         extern int  nt_alpc_register_ssdt(void);
         extern int  nt_audit_register_ssdt(void);
         extern int  csprng_register_ssdt(void);
+        extern int  nt_env_register_ssdt(void);
         extern void pledge_register_ssdt(void);
         extern void nt_job_register_ssdt(void);
         int reg_failures;
@@ -267,6 +268,7 @@ void boot_phase3(void)
         reg_failures += nt_alpc_register_ssdt();
         reg_failures += nt_audit_register_ssdt();
         reg_failures += csprng_register_ssdt();
+        reg_failures += nt_env_register_ssdt();
         if (reg_failures != 0) {
             klog(LOG_ERROR, "boot",
                  "SSDT registration failures: %d -- aborting boot",

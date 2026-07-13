@@ -12,6 +12,8 @@
 #include "kernel/test/test.h"
 #include "kernel/env.h"
 #include "kernel/nt/nt_rtlenv.h" /* RtlExpandEnvironmentStrings_U (UTF-16 path) */
+#include "kernel/nt/ssdt.h"      /* ssdt_dispatch (s5 syscall route) */
+#include "kernel/nt/service_numbers.h" /* SSDT_Nt{Query,Set}EnvironmentVariable */
 #include "kernel/ob/peb.h"       /* UNICODE_STRING */
 #include "kernel/nt/ntstatus.h"  /* STATUS_* */
 #include "kernel/sched/task.h"
@@ -1229,6 +1231,259 @@ static void test_env_adopt_block(void)
     env_free(&s_env_fixture);
 }
 
+/* ==== s5: NtQueryEnvironmentVariable / NtSetEnvironmentVariable ============
+ * Exercised through ssdt_dispatch (kernel-mode previous mode: no user probing),
+ * which ALSO proves nt_env_register_ssdt() ran during boot. All cases operate
+ * on the running thread's own task_current() environ with uniquely-named keys,
+ * cleaned up via env_unset so no state leaks between suites. */
+
+/* Build a UNICODE_STRING over `buf` from an ASCII literal (UTF-16 = zero-extend
+ * each byte; test names/values are ASCII). */
+static void env_mk_us(UNICODE_STRING *us, uint16_t *buf, uint32_t cap_wchars,
+                      const char *ascii)
+{
+    uint32_t n = 0;
+    while (ascii[n] && n < cap_wchars) {
+        buf[n] = (uint16_t)(uint8_t)ascii[n];
+        n++;
+    }
+    us->Length = (uint16_t)(n * 2u);
+    us->MaximumLength = (uint16_t)(cap_wchars * 2u);
+    us->_pad = 0u;
+    us->Buffer = buf;
+}
+
+static NTSTATUS env_nt_set(UNICODE_STRING *name, UNICODE_STRING *val)
+{
+    return ssdt_dispatch(SSDT_NtSetEnvironmentVariable,
+                         (uint64_t)(uintptr_t)name, (uint64_t)(uintptr_t)val,
+                         0, 0, 0, 0);
+}
+
+static NTSTATUS env_nt_query(UNICODE_STRING *name, UNICODE_STRING *out,
+                             uint32_t *vlen)
+{
+    return ssdt_dispatch(SSDT_NtQueryEnvironmentVariable,
+                         (uint64_t)(uintptr_t)name, (uint64_t)(uintptr_t)out,
+                         (uint64_t)(uintptr_t)vlen, 0, 0, 0);
+}
+
+static void test_ntenv_set_query_roundtrip(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[16], obuf[32];
+    UNICODE_STRING name, val, out;
+    uint32_t vlen = 0;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_A");
+    env_mk_us(&val, vbuf, 16, "hello");
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "NtSetEnvironmentVariable stores a value");
+
+    out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);
+    out._pad = 0; out.Buffer = obuf;
+    obuf[5] = 0x1234;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, &vlen),
+                   (uint32_t)STATUS_SUCCESS, "NtQueryEnvironmentVariable succeeds");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 10u,
+                   "returned Length is 5 wchars = 10 bytes (excl NUL)");
+    TEST_ASSERT_EQ(vlen, 10u, "ValueLength reports required bytes excl NUL");
+    TEST_ASSERT_EQ((uint32_t)obuf[0], (uint32_t)'h', "buffer[0] == 'h'");
+    TEST_ASSERT_EQ((uint32_t)obuf[4], (uint32_t)'o', "buffer[4] == 'o'");
+    TEST_ASSERT_EQ((uint32_t)obuf[5], 0u, "buffer NUL-terminated (room available)");
+
+    env_unset(t, "NTENV_A");
+}
+
+static void test_ntenv_query_not_found(void)
+{
+    uint16_t nbuf[32], obuf[8];
+    UNICODE_STRING name, out;
+
+    env_mk_us(&name, nbuf, 32, "NTENV_DEFINITELY_ABSENT");
+    out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);
+    out._pad = 0; out.Buffer = obuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_VARIABLE_NOT_FOUND,
+                   "absent variable -> STATUS_VARIABLE_NOT_FOUND");
+}
+
+static void test_ntenv_delete(void)
+{
+    uint16_t nbuf[16], vbuf[16], obuf[16];
+    UNICODE_STRING name, val, out;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_C");
+    env_mk_us(&val, vbuf, 16, "x");
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "seed NTENV_C");
+    /* Value == NULL -> delete. */
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, (UNICODE_STRING *)0),
+                   (uint32_t)STATUS_SUCCESS,
+                   "NtSetEnvironmentVariable(NULL) deletes");
+    out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);
+    out._pad = 0; out.Buffer = obuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_VARIABLE_NOT_FOUND, "deleted var is absent");
+    /* Deleting an absent var reports VARIABLE_NOT_FOUND. */
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, (UNICODE_STRING *)0),
+                   (uint32_t)STATUS_VARIABLE_NOT_FOUND,
+                   "delete of absent var -> VARIABLE_NOT_FOUND");
+}
+
+static void test_ntenv_buffer_too_small(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[16], obuf[2];
+    UNICODE_STRING name, val, out;
+    uint32_t vlen = 0;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_B");
+    env_mk_us(&val, vbuf, 16, "abcdef");        /* 6 wchars = 12 bytes */
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "seed NTENV_B");
+    out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);  /* 4 bytes */
+    out._pad = 0; out.Buffer = obuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, &vlen),
+                   (uint32_t)STATUS_BUFFER_TOO_SMALL, "too-small buffer rejected");
+    TEST_ASSERT_EQ(vlen, 12u, "required size reported (12 bytes) on overflow");
+    env_unset(t, "NTENV_B");
+}
+
+static void test_ntenv_exact_fit(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[16], obuf[3];       /* 3 wchars = 6 bytes exactly */
+    UNICODE_STRING name, val, out;
+    uint32_t vlen = 0;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_F");
+    env_mk_us(&val, vbuf, 16, "abc");
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "seed NTENV_F");
+    out.Length = 0; out.MaximumLength = 6u;     /* exactly the value, no NUL room */
+    out._pad = 0; out.Buffer = obuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, &vlen),
+                   (uint32_t)STATUS_SUCCESS, "exact-fit buffer succeeds");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 6u, "Length = 6 bytes (excl NUL)");
+    TEST_ASSERT_EQ((uint32_t)obuf[2], (uint32_t)'c', "third wchar written");
+    env_unset(t, "NTENV_F");
+}
+
+static void test_ntenv_embedded_nul_rejected(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[16], obuf[16];
+    UNICODE_STRING name, val, out;
+
+    out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);
+    out._pad = 0; out.Buffer = obuf;
+
+    /* Name "PA\0TH": embedded NUL must be rejected, not truncated to "PA". */
+    nbuf[0] = 'P'; nbuf[1] = 'A'; nbuf[2] = 0; nbuf[3] = 'T'; nbuf[4] = 'H';
+    name.Length = 10; name.MaximumLength = 32; name._pad = 0; name.Buffer = nbuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "embedded NUL in Name rejected");
+
+    /* Empty name. */
+    name.Length = 0; name.MaximumLength = 32; name._pad = 0; name.Buffer = nbuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "empty Name rejected");
+
+    /* Value "a\0b" on set: embedded NUL rejected (would store only "a"). */
+    env_mk_us(&name, nbuf, 16, "NTENV_D");
+    vbuf[0] = 'a'; vbuf[1] = 0; vbuf[2] = 'b';
+    val.Length = 6; val.MaximumLength = 32; val._pad = 0; val.Buffer = vbuf;
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "embedded NUL in Value rejected");
+    /* Ensure the rejected set did not create the variable. */
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_VARIABLE_NOT_FOUND,
+                   "rejected set created nothing");
+    env_unset(t, "NTENV_D");
+}
+
+static void test_ntenv_overlap_and_null(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[16], obuf[8];
+    uint8_t blob[sizeof(UNICODE_STRING)];
+    UNICODE_STRING name, val, *aliased;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_E");
+    env_mk_us(&val, vbuf, 16, "zz");
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "seed NTENV_E");
+
+    /* Value.Buffer aliasing the Value descriptor -> overlap rejected. */
+    aliased = (UNICODE_STRING *)blob;
+    aliased->Length = 0; aliased->MaximumLength = (uint16_t)sizeof(blob);
+    aliased->_pad = 0; aliased->Buffer = (uint16_t *)blob;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, aliased, (uint32_t *)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "Value.Buffer overlapping its descriptor rejected");
+
+    /* NULL Name on query and on set. */
+    {
+        UNICODE_STRING out;
+        out.Length = 0; out.MaximumLength = (uint16_t)sizeof(obuf);
+        out._pad = 0; out.Buffer = obuf;
+        TEST_ASSERT_EQ((uint32_t)env_nt_query((UNICODE_STRING *)0, &out,
+                                              (uint32_t *)0),
+                       (uint32_t)STATUS_INVALID_PARAMETER, "NULL Name query rejected");
+    }
+    TEST_ASSERT_EQ((uint32_t)env_nt_set((UNICODE_STRING *)0, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL Name set rejected");
+    env_unset(t, "NTENV_E");
+}
+
+/* s5 regression: a stored EMPTY value still owes a WCHAR
+ * terminator when the caller buffer has room, so the need_bytes NULL guard is
+ * bypassed for it. A KernelMode/Zw query (ssdt_dispatch runs as KernelMode, the
+ * raw-memcpy path) with Buffer == NULL and MaximumLength >= 2 must be rejected,
+ * not written through NULL. MaximumLength 0/1 (no terminator room) stays a clean
+ * SUCCESS with Length 0. */
+static void test_ntenv_empty_value_null_buffer(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[16], vbuf[4], obuf[4];
+    UNICODE_STRING name, val, out;
+    uint32_t vlen = 0xFFFFu;
+
+    env_mk_us(&name, nbuf, 16, "NTENV_EMPTY");
+    env_mk_us(&val, vbuf, 4, "");            /* empty value, non-NULL Buffer */
+    TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
+                   "empty value stores successfully");
+
+    /* NULL Buffer + room for a terminator: reject, do not fault (the fix). */
+    out.Length = 0xAAu; out.MaximumLength = 2u; out._pad = 0; out.Buffer = (uint16_t *)0;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, &vlen),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "empty value + NULL Buffer + room-for-NUL rejected");
+    TEST_ASSERT_EQ(vlen, 0u, "required length reported as 0 bytes");
+
+    /* NULL Buffer, no terminator room (MaximumLength 0 then 1): clean SUCCESS. */
+    out.Length = 0xAAu; out.MaximumLength = 0u; out._pad = 0; out.Buffer = (uint16_t *)0;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_SUCCESS, "empty value + NULL Buffer + no room OK");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 0u, "Length reported 0 (empty value)");
+    out.Length = 0xAAu; out.MaximumLength = 1u; out._pad = 0; out.Buffer = (uint16_t *)0;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, (uint32_t *)0),
+                   (uint32_t)STATUS_SUCCESS, "empty value + NULL Buffer + 1 byte OK");
+
+    /* Valid buffer with room: writes just the terminator, Length 0. */
+    out.Length = 0xAAu; out.MaximumLength = (uint16_t)sizeof(obuf); out._pad = 0;
+    out.Buffer = obuf; obuf[0] = 0x1234;
+    TEST_ASSERT_EQ((uint32_t)env_nt_query(&name, &out, &vlen),
+                   (uint32_t)STATUS_SUCCESS, "empty value + real buffer succeeds");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 0u, "Length 0 for empty value");
+    TEST_ASSERT_EQ((uint32_t)obuf[0], 0u, "terminator written to buffer");
+
+    env_unset(t, "NTENV_EMPTY");
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: argv set + free",
@@ -1339,6 +1594,23 @@ void test_register_env(void)
                             test_rtl_expand_empty_block_second_nul, TEST_CAT_ABI);
     test_suite_register_cat("Env: expand overlap preserves source",
                             test_env_expand_overlap_preserves_source, TEST_CAT_ABI);
+    /* s5: Nt/Zw environment-variable syscalls (via ssdt_dispatch). */
+    test_suite_register_cat("Env: NtSet/NtQuery roundtrip",
+                            test_ntenv_set_query_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: NtQuery variable not found",
+                            test_ntenv_query_not_found, TEST_CAT_ABI);
+    test_suite_register_cat("Env: NtSet(NULL) deletes",
+                            test_ntenv_delete, TEST_CAT_ABI);
+    test_suite_register_cat("Env: NtQuery buffer too small",
+                            test_ntenv_buffer_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: NtQuery exact-fit buffer",
+                            test_ntenv_exact_fit, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Nt embedded-NUL / empty name rejected",
+                            test_ntenv_embedded_nul_rejected, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Nt overlap + NULL param rejected",
+                            test_ntenv_overlap_and_null, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Nt empty value + NULL buffer rejected",
+                            test_ntenv_empty_value_null_buffer, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

@@ -67,7 +67,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
 | 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
-| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [ ]   |
+| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
 | 💎   |   6   | Win32 API wrappers                                 | §5                         |  [ ]   |
 | 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [ ]   |
 | 💎   |   8   | `.profile` startup script                          | §7                         |  [ ]   |
@@ -255,28 +255,25 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 5. Nt/Zw Environment Variable Syscalls
 
-- [ ] `NtQueryEnvironmentVariable(Name, Value, ValueLength)`:
-  - `Name`: `UNICODE_STRING` (UTF-16 variable name, case-insensitive)
-  - `Value`: `UNICODE_STRING` output buffer
-  - `ValueLength`: `PULONG` receiving required size if buffer too small
-  - Implementation: `ProbeForRead(Name->Buffer, Name->Length, 2)`; `ProbeForWrite(Value->Buffer, Value->MaximumLength, 2)`; convert `Name` to UTF-8 (`RtlUnicodeToUTF8`); call `env_get(current_task, name_utf8)`; convert result back to UTF-16 into `Value->Buffer`
-  - Return `STATUS_VARIABLE_NOT_FOUND` if not found; `STATUS_BUFFER_TOO_SMALL` if value too long
+- [x] `NtQueryEnvironmentVariable(Name, Value, ValueLength)` -- `nt_env.c` (SSDT `0x03DD`): reads `task->environ` via one locked `env_get_copy`; `STATUS_VARIABLE_NOT_FOUND` / `STATUS_BUFFER_TOO_SMALL`; sizes in bytes excl NUL (see Notes).
+- [x] `NtSetEnvironmentVariable(Name, Value)` -- `nt_env.c` (SSDT `0x03DE`): `Value==NULL` deletes; updates only the kernel-authoritative `task->environ`. Optional PEB-block raw re-sync deferred to §6 (no post-startup reader).
+- [x] SSDT wiring -- `0x03DD`/`0x03DE` in `service_numbers.h` (not firmware `0x00D2`..`0x00D6`); `nt_env_register_ssdt()` in the boot-halt gate; `PLEDGE_REQ_CORE`; ABI regenerated. No `Zw*` alias (mode via `ssdt_previous_mode()`).
 
-- [ ] `NtSetEnvironmentVariable(Name, Value)`:
-  - `Value` may be `NULL` → delete the variable (calls `env_unset`)
-  - Validate both `UNICODE_STRING` buffers with `ProbeForRead`
-  - Convert name and value to UTF-8; call `env_set(current_task, ...)` or `env_unset(current_task, ...)`
-  - Also update the UTF-16 env block in `PEB->ProcessParameters->Environment` (→ XREF `TODO-11-peb-teb-user-abi.md §7`):
-    1. `ProbeForWrite(PEB->ProcessParameters->Environment, block_size, 2)`
-    2. Scan the null-terminated UTF-16 block for `name=` prefix
-    3. If found: replace the value portion by moving the tail of the block and inserting the new value; if the new value is longer, reallocate the block with `NtAllocateVirtualMemory` and update the pointer in `RTL_USER_PROCESS_PARAMETERS`
-    4. If not found: extend the block (realloc) and append `name=value\0` before the final `\0`
-  - Concurrency note: only the owning process can call this for its own block; no cross-process env modification is supported without `NtWriteVirtualMemory` + `SeDebugPrivilege`
-- [ ] Add `NtQueryEnvironmentVariable` and `NtSetEnvironmentVariable` to the SSDT (→ XREF `TODO-12-native-api-ssdt.md §5`); add corresponding `ZwXxx` aliases; assign **new** service numbers in `include/kernel/nt/service_numbers.h` (never reuse `0x00D2`..`0x00D6` firmware env slots)
+- [x] Commit: `"kernel/env: NtQueryEnvironmentVariable, NtSetEnvironmentVariable SSDT wiring"`
 
-- [ ] Commit: `"kernel/env: NtQueryEnvironmentVariable, NtSetEnvironmentVariable SSDT wiring"`
+**Test checkpoint:** `bash scripts/test.sh SUITE=abi` reports every `Env: Nt*` case PASS (roundtrip, not-found, delete, buffer-too-small, exact-fit, embedded-NUL/empty-name reject, overlap+NULL reject, empty-value NULL-buffer reject) via `ssdt_dispatch` (also proves boot-time registration); SSDT uses new indices `0x03DD`/`0x03DE`, not `0xD2`..`0xD6`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test checkpoint:** `NtQueryEnvironmentVariable`/`NtSetEnvironmentVariable` from ring-3 test; SSDT uses new indices not 0xD2..0xD6. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1343 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `src/kernel/nt/nt_env.c` (~410 lines) + `include/kernel/nt/nt_env.h`: `NtQueryEnvironmentVariable` (0x03DD) + `NtSetEnvironmentVariable` (0x03DE) over the kernel-authoritative `task->environ`, plus `nt_env_register_ssdt()`.
+> - **How it integrates** -- registered through the `boot_desktop.c` failure-counted boot-halt gate; pledge-classified `PLEDGE_REQ_CORE`; ABI numbers/hash regenerated by `scripts/gen-user-abi.py`.
+> - **Boundary hardening** -- embedded-U+0000 reject (Name+Value), single-acquire `env_get_copy` (no size-then-copy race), output-region overlap reject, UTF-8 byte limits, `Length` excl NUL with NUL only when the buffer has spare room, and a NULL output `Buffer` rejected whenever a terminator is still owed (empty stored value: no memcpy-through-NULL on the KernelMode/Zw path -- Codex adversarial fix).
+> - **Downstream effects** -- unblocks §6 Win32 wrappers and §19 `RtlQueryEnvironmentVariable_U`; design-review adoptions in the section commit message.
+> - **Scope boundary** -- §5 owns the NT-boundary syscalls over `task->environ`; §6 owns the Win32 wrappers + the optional PEB-block raw re-sync; firmware env vars (0x00D2-0x00D6) stay with `uefi_runtime.c`.
+
+> **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
+> **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
 
 ---
 
@@ -289,6 +286,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] `SetEnvironmentVariableA/W(lpName, lpValue)`:
   - `lpValue == NULL` → delete the variable
   - Call `NtSetEnvironmentVariable`; map `STATUS_*` to `ERROR_*` via `RtlNtStatusToDosError`; return `TRUE` / `FALSE`
+- [ ] Optional PEB-block re-sync (← XREF §5 `NtSetEnvironmentVariable`): rebuild `PEB->ProcessParameters->Environment` from `task->environ` after a set/delete for raw-block readers. Compat nicety -- in-tree readers use `task->environ`.
 
 - [ ] `ExpandEnvironmentStringsA(lpSrc, lpDst, nSize)`:
   - Convert `lpSrc` to UTF-16; call `RtlExpandEnvironmentStrings_U` (same section, RTL helper above); convert UTF-16 result to UTF-8 into `lpDst`
@@ -400,6 +398,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] `env_parse_block(task, block, len, is_unicode)` -- parse a contiguous env block (from `lpEnvironment`) into the `task->environ[]` array; validate: no name contains `=` (except hidden `=X:` drive vars), no empty names, sorted order
 - [ ] Maximum single variable value length: 32,767 characters; `env_set` returns `STATUS_NAME_TOO_LONG` if exceeded
 - [ ] Maximum variable name length: 256 characters (practical Windows limit); reject names > 256 chars
+- [ ] Reconcile UTF-16 char limits vs UTF-8 byte caps (← XREF §5): `ENV_NAME_MAX`/`ENV_VALUE_MAX` are byte caps, so a UTF-16 input within the char limit but over the byte cap is rejected. Raise caps or document the contract.
 - [ ] Variable name validation: name must not contain `=` (the separator); names starting with `=` are reserved for hidden drive-letter variables (§12); reject all other `=`-prefixed names
 - [ ] No technical limit on environment block size (Windows Vista+); however, enforce a sanity cap of 1 MiB per process to prevent DoS; log warning at 256 KiB
 - [ ] `REG_EXPAND_SZ` values from Registry: expand `%VAR%` references at read time using `env_expand` before storing; raw unexpanded values are never stored in `task->environ[]`
@@ -594,7 +593,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ✅ §3 `env_expand`   |
 | 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth |
 | 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ✅ §4 crt0->main     |
-| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19          |
+| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⚠️ §5 Nt✅, §19 Rtl  |
 | 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6                |
 | 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
 | 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |

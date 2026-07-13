@@ -145,6 +145,10 @@ uint64_t pledge_syscall_category(uint32_t service_number)
     case SSDT_NtQueryCurrentDirectory:
     case SSDT_NtPledge:
     case SSDT_NtUnveil:
+    /* Environment variables are process-local state (own task->environ),
+     * comparable to the CWD syscalls above -- survival-core, not a promise. */
+    case SSDT_NtQueryEnvironmentVariable:
+    case SSDT_NtSetEnvironmentVariable:
     /* File OPEN/CREATE/DELETE + SetInformationFile reach the handler; their
      * rpath/wpath/cpath split needs the ACCESS_MASK / info class, enforced by
      * pledge_check_file / pledge_check_setinfo inside the handler. */

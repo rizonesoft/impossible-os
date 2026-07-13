@@ -105,5 +105,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0xDA542906ED8AC9D8ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x5A874792697ED3C7ULL
 #define EX_ABI_MISMATCH          0x42

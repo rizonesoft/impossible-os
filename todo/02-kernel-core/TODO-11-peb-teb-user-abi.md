@@ -33,7 +33,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 - → XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §6` -- §12 kernel TLS expansion allocator consumed by user-mode TlsAlloc/TlsFree wrappers
 - → XREF: `TODO-21-process-model-extensions.md §1` -- §1 adds `cwd[MAX_PATH]` to `struct task`; `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` in the PEB should be populated from `task->cwd` at `task_exec()` time
 - → XREF: `TODO-31-kernel-bulletproofing.md` §1,§3,§5,§9 -- same 5-layer invariant pattern for gs:/frame/swapgs contracts that PEB/TEB and syscall paths rely on
-- → XREF: `TODO-22-environment-variables.md` §5, §6, §10 -- `NtSetEnvironmentVariable` keeps `PEB->ProcessParameters->Environment` in sync with `task->environ`; `CREATE_UNICODE_ENVIRONMENT` when passing custom UTF-16 env blocks to process creation; sorted UTF-16 env block contract (gap-analysis 2026-04-15)
+- → XREF: `TODO-22-environment-variables.md` §5, §6, §10 -- `NtSetEnvironmentVariable` (§5) updates the kernel-authoritative `task->environ`; the optional `PEB->ProcessParameters->Environment` raw-block re-sync is a §6 follow-up (in-tree readers already use `task->environ`); `CREATE_UNICODE_ENVIRONMENT` when passing custom UTF-16 env blocks to process creation; sorted UTF-16 env block contract (gap-analysis 2026-04-15)
 
 ## Outcome
 

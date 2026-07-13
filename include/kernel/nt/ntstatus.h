@@ -102,6 +102,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_RANGE_NOT_LOCKED             ((NTSTATUS)0xC000007E)  /* unlock on non-locked range */
 #define STATUS_FILE_IS_A_DIRECTORY          ((NTSTATUS)0xC00000BA)  /* file op on a directory */
 #define STATUS_DIRECTORY_NOT_EMPTY          ((NTSTATUS)0xC0000101)  /* rmdir on non-empty dir */
+#define STATUS_VARIABLE_NOT_FOUND           ((NTSTATUS)0xC0000100)  /* env variable does not exist */
 #define STATUS_NOT_A_DIRECTORY              ((NTSTATUS)0xC0000103)  /* path component is not a dir */
 #define STATUS_CANNOT_DELETE                ((NTSTATUS)0xC0000121)  /* file cannot be deleted */
 
