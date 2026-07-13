@@ -1763,6 +1763,18 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
+    /* NOTE: fork does NOT copy the parent environment into the child here. A
+     * naive env_copy in this window blocks on the parent's environ_lock (a
+     * sleeping mutex) BETWEEN ob_job_fork_inherit (child joined the job) and
+     * num_tasks++ (child published); a concurrent job termination during that
+     * yield snapshots child_pid, finds it not-yet-published, skips it, and the
+     * fork then publishes a live child in a terminated job. Race-safe fork env
+     * inheritance needs the job-membership/publication window made atomic w.r.t.
+     * termination -- owned by the process-model fork work
+     * (02-kernel-core/TODO-21). SYS_EXEC with envp==NULL still inherits whatever
+     * environ the task holds (execv semantics); that path is correct
+     * independent of this gap. */
+
     /* Copy parent's user stack to child */
     if (tasks[parent_pid_val].user_stack_base) {
         task_memcpy(ustack, tasks[parent_pid_val].user_stack_base,
@@ -2250,6 +2262,38 @@ static TEB *teb_alloc_for_task(uint32_t pid, uint32_t tid,
     return teb;
 }
 
+/* SINGLE SOURCE OF TRUTH for the task_exec initial-stack auxv vector. `X(type,
+ * value)` -- the value expressions reference frame-builder locals and are only
+ * evaluated where the list is expanded for emission (EXEC_AUXV_ENTRIES(AUXV_EMIT)
+ * in task_exec). EXEC_AUXV_PAIRS is derived by counting this SAME list, so adding
+ * or removing an entry changes both the emitted frame AND the pair count -- they
+ * cannot drift. The _Static_assert then ties ARGV_FRAME_RESERVE (the builder's
+ * fixed overhead: AT_RANDOM 16 + auxv EXEC_AUXV_PAIRS*16 + envp NULL 8) to that
+ * count, so touching the auxv list without reconciling the argv fit-check reserve
+ * fails the BUILD. */
+#define EXEC_AUXV_ENTRIES(X) \
+    X(AT_PHDR,   phdr_vaddr)     \
+    X(AT_PHENT,  phent)          \
+    X(AT_PHNUM,  phnum)          \
+    X(AT_PAGESZ, 4096)           \
+    X(AT_BASE,   0)              \
+    X(AT_FLAGS,  0)              \
+    X(AT_ENTRY,  entry)          \
+    X(AT_UID,    0)              \
+    X(AT_EUID,   0)              \
+    X(AT_GID,    0)              \
+    X(AT_EGID,   0)              \
+    X(AT_SECURE, 0)              \
+    X(AT_RANDOM, at_random_addr) \
+    X(AT_HWCAP,  hwcap)          \
+    X(AT_HWCAP2, 0)              \
+    X(AT_NULL,   0)
+#define EXEC_AUXV_COUNT_ONE(t, v) + 1u
+#define EXEC_AUXV_PAIRS (0u EXEC_AUXV_ENTRIES(EXEC_AUXV_COUNT_ONE))
+_Static_assert(EXEC_AUXV_PAIRS * 16u + 24u == ARGV_FRAME_RESERVE,
+               "ARGV_FRAME_RESERVE must equal the exec auxv fixed overhead "
+               "(AT_RANDOM 16 + auxv EXEC_AUXV_PAIRS*16 + envp NULL 8)");
+
 int task_exec(const uint8_t *data, uint64_t size)
 {
     uint64_t entry;
@@ -2654,45 +2698,21 @@ int task_exec(const uint8_t *data, uint64_t size)
             hwcap = edx;
         }
 
-        /* Emit auxv pairs into a local array, then bulk-copy onto the
-         * stack. Pair count is computed at emission time -- no hard-coded
-         * stack subtraction count to drift out of sync. */
-        uint64_t auxv[64];  /* 32 pairs max; we use 16 */
+        /* Emit auxv pairs from the single-source-of-truth EXEC_AUXV_ENTRIES list
+         * into a compile-time-sized local array. naux is derived from the SAME
+         * list (EXEC_AUXV_PAIRS), so the count, the emission, and the array size
+         * can never drift; the file-scope _Static_assert ties ARGV_FRAME_RESERVE
+         * to that same count. Adding/removing an entry cannot compile without
+         * reconciling the argv stack budget. */
+        uint64_t auxv[EXEC_AUXV_PAIRS * 2];
         uint32_t naux = 0;
         #define AUXV_EMIT(t, v) do { \
                 auxv[naux*2]   = (uint64_t)(t); \
                 auxv[naux*2+1] = (uint64_t)(v); \
                 naux++; \
-            } while (0)
-
-        AUXV_EMIT(AT_PHDR,   phdr_vaddr);
-        AUXV_EMIT(AT_PHENT,  phent);
-        AUXV_EMIT(AT_PHNUM,  phnum);
-        AUXV_EMIT(AT_PAGESZ, 4096);
-        AUXV_EMIT(AT_BASE,   0);          /* no dynamic linker (static ELF) */
-        AUXV_EMIT(AT_FLAGS,  0);
-        AUXV_EMIT(AT_ENTRY,  entry);
-        AUXV_EMIT(AT_UID,    0);          /* root until user model lands */
-        AUXV_EMIT(AT_EUID,   0);
-        AUXV_EMIT(AT_GID,    0);
-        AUXV_EMIT(AT_EGID,   0);
-        AUXV_EMIT(AT_SECURE, 0);          /* no setuid */
-        AUXV_EMIT(AT_RANDOM, at_random_addr);
-        AUXV_EMIT(AT_HWCAP,  hwcap);
-        AUXV_EMIT(AT_HWCAP2, 0);
-        AUXV_EMIT(AT_NULL,   0);          /* terminator (must be last) */
-
+            } while (0);
+        EXEC_AUXV_ENTRIES(AUXV_EMIT)
         #undef AUXV_EMIT
-
-        /* ARGV_FRAME_RESERVE must equal the builder's fixed overhead:
-         * AT_RANDOM (16 B) + auxv (naux * 16 B) + envp NULL (8 B). If the auxv
-         * pair count ever changes, the SYS_EXEC / task_exec argv fit check drifts
-         * (a too-small reserve would risk a stack overwrite). Warn on drift so the
-         * mismatch is caught the first time an argv-bearing exec runs. */
-        if (use_argv && (24u + naux * 16u) != ARGV_FRAME_RESERVE)
-            klog(LOG_WARN, "sched",
-                 "ARGV_FRAME_RESERVE drift: builder fixed overhead=%u, reserve=%u",
-                 (uint64_t)(24u + naux * 16u), (uint64_t)ARGV_FRAME_RESERVE);
 
         /* Bulk-copy auxv block onto stack. Each pair = 2 qwords. */
         ustk -= naux * 2;

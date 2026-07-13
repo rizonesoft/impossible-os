@@ -502,7 +502,13 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
     if (!t)
         return ENV_ERR_INVAL;
 
-    /* Empty block -> clear environ to empty. */
+    /* Over-cap is a hard error, checked BEFORE the clear path so a malformed
+     * (entries==NULL, count>cap) call is rejected uniformly rather than silently
+     * clearing (SYS_EXEC already caps envc at this bound). */
+    if (count > ENV_MAX_ENTRIES)
+        return ENV_ERR_NOSPACE;
+
+    /* Empty block (NULL entries or count 0) -> clear environ to empty. */
     if (!entries || count == 0) {
         mutex_lock(&t->environ_lock);
         old_env = t->environ;
@@ -518,9 +524,6 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
         }
         return ENV_OK;
     }
-
-    if (count > ENV_MAX_ENTRIES)
-        count = ENV_MAX_ENTRIES;   /* honor the process env array cap */
 
     arr = (char **)kmalloc((count + 1u) * sizeof(char *));
     if (!arr)

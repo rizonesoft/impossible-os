@@ -83,6 +83,7 @@ title: "TODO-21 -- Process Model Extensions"
 
 - [x] Add `char cwd[TASK_CWD_MAX]` (512, `_Static_assert`-pinned to `VFS_MAX_PATH`) + `spinlock_t cwd_lock` to `struct task`; init `"C:\\"` at `task_init`/`task_create`/`task_create_user`
 - [x] Inherit CWD from parent at `task_fork()` (and `task_create_user`) -- snapshot parent under its lock, commit to child
+- [ ] Inherit parent environ into the child at `task_fork()` via `env_copy` (TODO-22 §4 exec inherit needs it), race-safe: env_copy yields on `environ_lock` mid-fork -- needs the atomic slot publication owned by TODO-06 §13
 - [x] `task_exec()` preserves CWD (mutates in place, never touches cwd); PEB `CurrentDirectory` re-synced from `task->cwd` in `peb_alloc_for_task`
 - [x] `vfs_resolve_path(cwd, in, out, size)` canonicalizer: join relative onto cwd, `/`->`\`, collapse `.`/empty, apply `..` without escaping the drive root, reject overflow (no truncation)
 - [x] `task_get_cwd`/`task_set_cwd`/`task_resolve_path` -- lock-guarded snapshot/commit so a concurrent set is never observed half-written
@@ -390,8 +391,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 393)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 394)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 394)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 395)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 655)
 > **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 657)
 > **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 659)
@@ -545,7 +546,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 548)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 549)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

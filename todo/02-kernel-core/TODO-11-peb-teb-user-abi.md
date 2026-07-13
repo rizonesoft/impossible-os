@@ -193,6 +193,7 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [x] All three pages: PMM alloc → VMM map (VMM_USER_RW) → zero-fill
 - [x] PEB fields: ImageBaseAddress, ProcessParameters, OSMajorVersion=10, OSBuildNumber=22621, NumberOfProcessors via `acpi_get_cpu_count()`
 - [x] RTL_USER_PROCESS_PARAMETERS: ImagePathName + CommandLine as UNICODE_STRING (ASCII→UTF-16), CurrentDirectory = `C:\`
+- [ ] `CommandLine` fidelity: the 4 KiB RTLPP page truncates a full-argv `CommandLine` (TODO-22 §4) and `peb_build_ustr` widens bytes 1:1 so UTF-8 mojibakes -- map enough ProcessParameters pages + UTF-8->UTF-16, or reject oversize
 - [x] Std handles: UHANDLE_INVALID (console wiring in future)
 - [x] Environment block: `PATH=C:\Impossible\System32\` + `SystemRoot=C:\Impossible` (UTF-16, double-NUL terminated)
 - [x] `tasks[pid].peb` and `tasks[pid].teb` fields added to `struct task`

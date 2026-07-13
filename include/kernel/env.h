@@ -103,7 +103,8 @@ int task_set_argv(struct task *t, int argc, const char *const *argv);
  * never raw user pointers). Serializes on t->environ_lock; builds the whole new
  * array before freeing the old one (unwind on failure leaves the prior environ
  * intact). Malformed entries (no '=', over-long, empty name) are skipped.
- * Returns ENV_OK or a negative code. */
+ * `count` above ENV_MAX_ENTRIES is a hard error (ENV_ERR_NOSPACE), never a silent
+ * truncation. Returns ENV_OK or a negative code. */
 int env_adopt_block(struct task *t, const char *const *entries, uint32_t count);
 
 /* Encode an argv vector into a Windows command-line string in `out` (CommandLine

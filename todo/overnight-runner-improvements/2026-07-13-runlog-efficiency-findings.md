@@ -1,0 +1,270 @@
+# Overnight Runner -- 2026-07-13 Runlog Efficiency + Fix Findings
+
+> **New findings** from the 2026-07-12 evening through 2026-07-13 midday run family (7 substantive
+> runlogs, ~740 KB: `run-20260712-223931` .. `run-20260713-082218`), digested by three parallel
+> `overnight-log-explorer` passes. This file is the **de-duplicated complement** to
+> [`2026-07-12-runner-24-7-implementation-plan.md`](./2026-07-12-runner-24-7-implementation-plan.md)
+> (the P0-P6 cost plan) and the parent backlog
+> [`../overnight-runner-improvements.md`](../overnight-runner-improvements.md). Every item here was
+> checked against the P0-P6 list and is a NEW pattern or a distinct facet -- none re-proposes a
+> P-item. Same naming discipline as the sibling plan (not `TODO-*.md`, not in a `todo/NN-domain/`
+> dir) so the sequencer and todo-graph never parse it.
+
+## Relationship to the 2026-07-12 plan (read first -- these are additive, not contradictory)
+
+- The 07-12 plan's cost thesis (cost = context-size x turn-count; churn from review-receipt
+  content-binding P1.2/P1.3 and review convergence P2.1/P2.2) stands. Nothing here revisits it.
+- These findings are the **mechanical papercuts and concrete bugs layered ON TOP of** that known
+  root cause -- they shrink per-section wall-clock and tool-call count independent of any
+  Codex-convergence fix. The 07-13 §-1 section (TODO-22 env storage) spent ~108 min; ~50 duplicated
+  exploration calls + ~15-30 line-length recount calls sit on top of the known review-round churn.
+- Where an item is adjacent to a P-item, the adjacency is called out inline (e.g. A1 vs the
+  codex_review_completed mis-fire; E3/F1 vs P1.2; D1-D3 vs P3.4 offload enforcement). No item
+  weakens or reverses a P-item.
+- **Gate legend reused from the sibling plan:** `[det]` ships on a green deterministic suite
+  (`scripts/overnight/tests/run-all.sh`) + its own new test, no watched canary; `[canary]` alters
+  live model-driven flow and needs one watched attended run before an unattended arm.
+
+## Confidence tiering
+
+- **Confirmed at file:line THIS session** (main-session verification, trust contract): A1, C1.
+- **Corroborated across all three independent digests** (very high signal): B1, C2 (line-length +
+  bare-section-ref edit-retry cascade), the agent-offload-discipline cluster (D-cluster).
+- **Single-digest, evidence-anchored** (verify at the cited log line before implementing): the rest.
+
+---
+
+## A. Confirmed code bugs -- ship a fix + regression test
+
+- [ ] **[det] A1. `worktree_hash` import path is broken in BOTH review hooks -- the deterministic
+  diff-facts fast-path silently never runs.** VERIFIED this session.
+  `review_dispatch_gate.py:149-151` and `agent_dispatch_required.py:112-114` both build the import
+  path as `Path(__file__).resolve().parent.parent / "scripts/overnight"`. For a hook at
+  `.claude/hooks/<name>.py`, `.parent.parent` is `.claude/`, so the path resolves to
+  `.claude/scripts/overnight` -- **which does not exist** (real file:
+  `scripts/overnight/worktree_hash.py`). The `from worktree_hash import worktree_key` therefore
+  raises, is swallowed by `except Exception: return False`, and the deterministic
+  `_fresh_diff_facts` / diff-facts check ALWAYS reports "not fresh." Net cost: every stamp/kernel
+  edit that has a valid fresh diff-facts receipt STILL gets forced through a full
+  `review-evidence-mapper` agent dispatch (observed live at `run-20260713-044429.log:494-517`,
+  where the runner hand-diagnosed it and wrote a live-gotcha note but did NOT fix the code).
+  **Fix:** change `.parent.parent` -> `.parent.parent.parent` (repo root) in BOTH hooks; add a unit
+  test that imports `worktree_key` through each hook's path-construction and asserts it resolves.
+  This is a different script and a literal wrong-directory bug -- distinct from the known
+  `codex_review_completed.py` recorder mis-fire (P1.2/P1.3 field note). Recurs on every gated edit
+  until fixed. **Highest value / lowest risk item in this file.**
+
+## B. Poll / wait mechanics
+
+- [ ] **[det] B1. The taught Codex-verdict poll loop out-runs the Bash tool's own 2-minute default
+  timeout, so the FIRST review poll of nearly every session dies at 2m and is re-learned from
+  scratch.** Corroborated across all three digests: ~9 `Exit code 143 / timed out after 2m 0s`
+  kills (e.g. `run-20260712-223931.log:220`, `run-20260712-231031.log:240`,
+  `run-20260713-020113.log:62`, `run-20260713-025424.log:188`, `run-20260713-044429.log:62`,
+  `run-20260713-055754.log:175/179`, `run-20260713-082218.log:89/638`). The SKILL.md pattern
+  `for i in $(seq 1 9); do grep -q "Turn completed" <log> && break; sleep 60; done` is 9x60 = 540s
+  but is issued WITHOUT an explicit `timeout:` arg, so the Bash tool's ~120s default kills it,
+  losing the elapsed wait; the lesson does not persist across the rollover/session boundary.
+  **Fix:** ship a canonical `scripts/overnight/wait-for-codex-verdict.sh <logfile>` that internally
+  chunks its sleep so each Bash invocation finishes inside ~110s (loop-and-return, caller re-invokes
+  if unfinished), OR make the poll snippet in SKILL.md always pass `timeout: 300000` explicitly.
+  Removes a guaranteed-per-session wasted call + recovery turn. Distinct from P1.3 (broker/receipt
+  shape) -- this is the interactive Bash tool's own default ceiling, not the review dispatch.
+
+## C. Hook-block ergonomics + edit-retry churn
+
+- [ ] **[det] C1. The 250-char line-length hook actively RECOMMENDS the wasteful manual recount
+  loop.** VERIFIED: `todo_item_line_length.py:65-66` already reports the exact overage ("over by
+  N"), but `:78-79` then instructs the model to `python3 -c 'print(len("<the exact line>"))'` before
+  every retry. The model obeys literally -- ~30 dedicated recount Bash calls in
+  `run-20260713-082218.log` alone (e.g. `:791-802`, `:851-855`) against only ~9 actual BLOCKs.
+  **Fix:** add a deterministic companion query mode `python3 .claude/hooks/todo_item_line_length.py
+  --check "<candidate line>"` returning `{len, overage, cap}` in one call, and REPLACE the
+  hand-`len()` advice in the block text with a pointer to it. One call confirms fit instead of a
+  3-6-round blind trim. (The cap mechanism itself is known/shipped -- this is the retry ERGONOMICS.)
+- [ ] **[det] C2. PreToolUse Edit BLOCKs cascade into "String to replace not found" because the
+  retry assumes the blocked edit partially landed.** Corroborated: ~9 `String to replace not found`
+  errors across the 07-13 pair (`run-20260713-055754.log:147,153,168,388`;
+  `run-20260713-082218.log:122,152,558,577,611`) and matching pairs in the 07-12 pair. A blocked
+  Edit (line-length / `bare_section_refs` / `citation_block`) leaves the file unchanged, but the
+  next Edit's `old_string` is built against the never-applied text (or drifted multi-line
+  C-comment content), so it misses -> forces a fresh Read+Grep+reconstructed Edit. One case
+  (`082218.log:577`) was the Edit tool's own `\uXXXX` normalization on an emoji table cell.
+  **Fix:** on a hook-blocked Edit, the retry MUST re-read current on-disk state before constructing
+  the replacement; and have `bare_section_refs` / `todo_item_line_length` return the exact
+  character span of the offending region so the retry patches just that span.
+- [ ] **[det] C3. The first Write of a new kernel/boot file walks a 5-hook sequential gauntlet, each
+  hook revealing the next only after the prior is fixed.** `run-20260713-025424.log:93-157`
+  (~9 min for one header): `step5_quality_gate` -> `receiving_review_required` ->
+  `agent_dispatch_required` -> `bare_section_refs` -> `citation_block` -> success. Each hook is
+  individually correct; the waste is six block-then-retry cycles instead of one.
+  **Fix:** a single pre-flight lint pass (bare-section-refs + citation-attribution +
+  skill-prerequisite check) run once before the first Write on a new kernel/boot file, returning ALL
+  violations at once.
+
+## D. Agent-offload discipline (complements P3.4, which promotes offload reminders WARN -> BLOCK)
+
+> P3.4 makes existing offload reminders BITE. This cluster is about THREE different offload failures
+> P3.4 does not address: racing an in-flight dispatch, never dispatching at all, and narrating a
+> dispatch that never fired.
+
+- [ ] **[det] D1. Inline exploration races/duplicates an in-flight `kernel-explorer` dispatch,
+  producing ~50-55 net-zero tool calls.** Twice a kernel-explorer was dispatched for an
+  integration-surface question, then the main session ran 20-30 of its OWN Grep/Read calls over the
+  identical surface while "waiting," so the agent's report only reconfirmed already-covered ground
+  (`run-20260713-025424.log:113-143`, `run-20260713-044429.log:48-106`; the correct contrast is
+  `044429.log:353-358` -- 2 targeted spot-checks while legs run in parallel). Also the
+  split-then-re-split rework at `run-20260712-223931.log:125-202`, where §15's item list was edited,
+  then re-cut, because mutating edits proceeded before the in-flight explorer's findings arrived.
+  **Fix:** after dispatching an exploratory agent, restrict main-session calls before it returns to
+  NON-overlapping work (unrelated design/scaffolding), or simply block on the dispatch instead of
+  racing it. A reminder/gate keyed on "an Agent dispatch is in flight AND the main session is
+  issuing Grep/Read on the same file set."
+- [ ] **[det] D2. Step-3 kernel exploration is dispatched only REACTIVELY (from an
+  `agent_dispatch_required` BLOCK), never proactively -- so the runner does 5-10 rounds of manual
+  grep/Read before ever reaching it.** `run-20260713-055754.log` + `082218.log`: 0 proactive
+  `kernel-explorer`/`section-context-mapper` dispatches despite both sections being pure kernel
+  surface; `055754.log:39-46` and `082218.log:43-155` are exactly the 3+-round inline shape the
+  routing table assigns to that agent. Also the 6-round inline string-helper hunt at
+  `run-20260713-025424.log:46-56` (same session that correctly offloaded 10 min later).
+  **Fix:** enforce/hint the step-3 exploration-agent dispatch for ABI-impacting kernel sections
+  BEFORE `implement-todo-section` step 3 hand-explores; extend `interactive_offload_router.py` to
+  trigger on "where do existing X helpers live" queries, not just "map the integration surface."
+- [ ] **[det] D3. An announced parallel dispatch silently never fired.**
+  `run-20260712-231031.log:771` narrates "kick off kernel-quality-auditor + concurrency-evidence-
+  mapper in parallel" but only `kernel-quality-auditor` is dispatched (`:772`);
+  `concurrency-evidence-mapper` never appears. §17 was exactly the SMP-heavy section that routes to
+  that mapper, and it went on to suffer the live lock-semantics regression (G1) a standing lock/
+  atomic inventory might have pre-flagged. **Fix:** when a skill step narrates "dispatching X and Y
+  in parallel," a mechanical post-check asserts both Agent-dispatch lines fired before proceeding,
+  or the narration is dropped rather than left descriptive.
+
+## E. Codex dispatch / artifact robustness
+
+- [ ] **[det] E1. A single-quoted Codex dispatch prompt is broken by a literal apostrophe in
+  natural-English prose.** `run-20260712-231031.log:437-439`: a prompt body containing "exec'd"
+  produces `/bin/bash: eval: line 41: syntax error near unexpected token '('`, forcing a full
+  redispatch with the contraction removed. This is a DIFFERENT failure mode from the documented
+  double-quote/`$()` escaping doctrine (that guards expansion in double quotes) -- here the
+  single-quote wrapper itself cannot contain a literal `'`. **Fix:** pre-scan dispatch prompt bodies
+  for a bare `'` in `codex-dispatch.sh` / `review-broker-codex-dispatch.sh` and reject/normalize
+  before shelling out, or switch apostrophe-bearing prompts to `$'...'` with `\'` escaping.
+- [ ] **[det] E2. The full Codex review body is not reliably persisted to the per-dispatch `.out`
+  artifact, forcing a glob over `~/.codex/sessions/**/*.jsonl` that twice returned an unrelated,
+  stale session.** `run-20260713-044429.log:190-196` (design) and `:285-288` (adversarial, pulled an
+  unrelated Conclave run) -- only the truncated "Next steps" summary reached the `.out` path, so the
+  runner globbed the raw session store and risked misreading a foreign session as the real verdict.
+  **Fix:** the dispatch wrapper always persists the FULL review body to the same deterministic
+  per-dispatch `.out` path the runner already polls, so `~/.codex/sessions/` is never globbed.
+- [ ] **[det] E3. `review-envelope.py` returns cross-session STALE content for the in-session
+  self-check, so the runner reads it, distrusts it, and falls back to a raw `.out` read every time.**
+  `run-20260712-223931.log:226-228`, `run-20260712-231031.log:244-246`, `:808` -- three wasted
+  envelope reads, each aggregating a prior run's reviews (e.g. "stale morning reviews TODO-12 §13").
+  This is a DIFFERENT consumer than P1.2 (which binds the commit gate's `last-codex-review.json` to
+  the staged diff) -- this is the in-session self-check aggregator scoping too wide. **Fix:** scope
+  `review-envelope.py` to the current section's `.claude/overnight/reviews/<timestamp>-*.out` files
+  only (or stop calling it during synchronous single-review polls and read the `.out` directly).
+
+## F. Gate / commit-attribution flow
+
+- [ ] **[canary] F1. The section-commit gate attributes the commit to the FIRST staged `.md`, not
+  the active section's target file.** `run-20260713-025424.log:317-329`: with TODO-22 (valid stamp)
+  and TODO-12/TODO-07 (stale stamps, touched only for reciprocal XREF edits) staged together,
+  `_attribute_review_todo` picked a wrong file and blocked, forcing `git restore --staged` of the
+  XREF files, a solo TODO-22 commit, then a separate `todo:` XREF commit. Distinct from P1.2
+  (content binding) -- this is FILE-SELECTION logic. **Fix:** prefer the file named in the active
+  section-commit context (the TODO path passed to `implement-todo-section`) over "first staged .md,"
+  falling back to first-staged only when there is no active section context. Live-flow -- canary.
+- [ ] **[det] F2. Rollover receipt re-record churn caused by the suite's own coverage-doc
+  auto-refresh.** `run-20260713-055754.log:503-519`: rollover records rebuild+suite+smoke receipts;
+  running the suite auto-dirties `docs/test-coverage/coverage.md`; that forces a separate docs-only
+  commit+push; which forces re-recording all three receipts against the new HEAD even though no
+  source changed. **Fix:** make the rollover receipt check tolerant of a coverage-doc-only tree
+  delta, or auto-fold the coverage-doc commit into the same commit the receipts bind to.
+- [ ] **[det] F3. `SKIP_AGENT_DISPATCH_HOOK` cannot gate a subsequent Edit-tool call, but the runner
+  tried to use it that way.** `run-20260713-055754.log:198-206`: the runner ran
+  `SKIP_AGENT_DISPATCH_HOOK=1 true # reason: ...` as a standalone Bash command hoping the env var
+  would carry to the NEXT Edit's PreToolUse hook -- it can't (separate process, no shared env),
+  costing ~71s + a section-pack-refresh dead end before a real Agent dispatch cleared the gate.
+  Distinct from the memory-noted env-prefix ORDERING quirk (`skill-step-block-env-prefix`) -- this is
+  cross-tool-call env NON-propagation. **Fix:** document that `SKIP_AGENT_DISPATCH_HOOK` only works
+  when prefixed on the gated command itself and cannot pre-clear a later Edit; route the
+  `agent_dispatch_required` gate to a documented, working satisfier.
+- [ ] **[det] F4. `review_round_guard.py` fails on bare invocation, rediscovered per session.**
+  `run-20260713-025424.log:270-271` ("Round-guard needs python3 invocation"). Low severity.
+  **Fix:** add a shebang + `chmod +x`, or document the required `python3` prefix once in the skill.
+- [ ] **[doctrine] F5. `SKIP_REVIEW_HOOK` was used outside its documented "revert / stamp-only"
+  scope for a post-review fix implementing the reviewer's OWN recommendation.**
+  `run-20260713-082218.log:667-672`: gated a substantive one-line `ARGV_FRAME_RESERVE` fix after the
+  review-diff-binding gate blocked twice (P1.2 root cause). The runner's "honest opt-out
+  convergence" rationale is reasonable, but the opt-out's documented scope doesn't literally cover
+  it. **Fix (doctrine wording only):** re-scope the CLAUDE.md wording to explicitly cover "a
+  post-review fix implementing the reviewer's exact recommendation, re-verified by full suite+smoke."
+  Distinct from the P1.2 mechanism fix.
+
+## G. Review discipline / self-inflicted-regression prevention (live behavior -- canary/doctrine)
+
+- [ ] **[canary] G1. A reviewer-suggested primitive swap was implemented repo-wide BEFORE reading
+  the primitive's own contract, self-inflicting a CRITICAL.** `run-20260712-231031.log:1003-1046`:
+  the perf reviewer suggested `spin_lock_irqsave` -> plain `spin_lock`; the runner applied it to 5
+  functions + header + callers before checking semantics. The next round flagged CRITICAL --
+  `spinlock.h:52-53` shows plain `spin_unlock` does UNCONDITIONAL cli/sti, re-enabling interrupts
+  inside the IF=0 INT 0x80 fork path (schedulable-incomplete-child hazard). ~10 min implement ->
+  build -> test -> dispatch -> revert, net-zero. `superpowers:receiving-code-review` fired, but the
+  "verify at file:line before acting" step covered the finding's SYMPTOM, not the swapped
+  primitive's CONTRACT. **Fix (receiving-code-review discipline):** before implementing a
+  reviewer-suggested primitive swap (lock type, atomic ordering, allocator, memory-order), read the
+  primitive's own header/contract FIRST, not just the finding text.
+- [ ] **[canary] G2. Unbounded perf-suggestion chase with no stopping heuristic.**
+  `run-20260712-231031.log:966-1063`: §17 chased perf findings across ~8 sequential dispatches, each
+  surfacing a NEW marginal issue rather than confirming convergence, netting zero on the lock type
+  (irqsave in, irqsave out) after ~30 min and self-inflicting G1's bug. DISTINCT from P2.1
+  (convergence on UNCHANGED inputs) -- here every round's input genuinely changed; the gap is no
+  stopping rule for MARGINAL non-Critical perf. **Fix:** cap live-implementation of perf-only
+  (non-Critical/High) suggestions at ~1-2 rounds inside a section's gate loop; beyond that, file the
+  remaining perf suggestions as an XREF'd follow-up item rather than iterating in-section.
+- [ ] **[det] G3. Cross-TODO prerequisite unreadiness is only caught by spending a full Codex
+  design-review round per section.** Three consecutive TODO-21 sections (§15, §16, §18) were all
+  deferred at design review because the headline feature is unenforceable/unsafe without a
+  prerequisite owned in a DIFFERENT TODO (TODO-06 stable-PID + SMP reap barrier; TODO-12 §7
+  handle-rights-model). Correct completion-first behavior -- but each cost a full design-review
+  round to discover. **Fix:** a `section-manifest.py` / `sequencer_triage.py`-level pre-check that
+  asks "does this section's headline mechanism have a live enforcement path (its enforcing subsystem
+  shipped)?" before entering the design-review dispatch; a NO defers cheaply without a Codex round.
+
+## H. Kernel-debug ergonomics
+
+- [ ] **[det] H1. Ad-hoc `klog` instrumentation churn dominates exec/fork bisection debugging.**
+  `run-20260713-082218.log:330-428` + `:500-553`: two ~28.5-min bisection arcs (~29% of that run's
+  wall clock, ~28 of 113 Edits / ~25%) spent inserting and reverting temporary
+  `DBGEXEC`/`DBGFRAME`/`DBGHS` klog lines by direct source Edit -- one Edit+rebuild+retest+revert
+  round-trip per hypothesis. **Fix:** a compile-time debug-trace toggle (`DEBUG_EXEC_TRACE=1 bash
+  scripts/build.sh`) gating pre-placed `klog` call sites at the exec/fork hot spots via a macro, so
+  bisection flips a build flag instead of editing+reverting source each hypothesis.
+
+## Recorded observations (measured, NOT filed as actionable)
+
+- **Malformed-JSON Read-tool call after a dense parallel-Agent report** appeared identically in two
+  independent sessions (`run-20260712-223931.log:71`, `run-20260712-231031.log:323`),
+  self-recovered next call. Possibly a systematic tool-call-construction trigger after a large
+  preceding text block, but not clearly repo-fixable from the logs alone -- flagged for a
+  main-session correlation check, not a repo change.
+- **Two/three sections deferred with zero code** (§15/§16/§18, TODO-22 partials) were correct
+  completion-first behavior, not defects -- the only actionable angle is G3 (make the discovery
+  cheaper), already filed above.
+- **No refused-rollover / un-rotated-advance / split-override / deadlock anomalies** were found in
+  any of the seven runs. Every initially-refused rollover was refused for legitimate
+  receipt-freshness reasons (P1.2 territory) and succeeded within the same session. The P3.2/P4.x
+  flow invariants held in this run family.
+
+## Suggested first slice (safe-first, matches the sibling plan's ordering principle)
+
+1. **A1** (confirmed bug, both hooks, ~2-line fix + test) -- pure correctness, highest value.
+2. **B1 + C1** (poll-timeout wrapper + line-length `--check` mode) -- guaranteed-per-session wins,
+   `[det]`, batchable under one green deterministic run.
+3. **C2 + C3 + F4** (edit-retry re-read, consolidated new-file pre-flight, round-guard shebang) --
+   `[det]` ergonomics batch.
+4. **E1/E2/E3 + F2/F3** (dispatch/artifact robustness + receipt churn) -- `[det]`, next batch.
+5. **D1/D2/D3** (offload discipline) -- coordinate with P3.4 so the reminders and these BITE together.
+6. **F1 + G1/G2/G3** (`[canary]`/doctrine) -- fold into the next watched attended canary alongside
+   the sibling plan's `[canary]` cluster.

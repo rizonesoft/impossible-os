@@ -243,6 +243,13 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Adjacent fork bug fixed: `task_fork` never set `threads[0].base_priority`, so the first `mutex_unlock` a forked-then-exec'd task did (`task_set_argv`) reset priority to 0 and starved it (exec hung); now mirrors `task_create_*`.
 > - Canonical doc: [include/kernel/env.h](../../include/kernel/env.h) (argv/env API) + the `task.c` frame builder.
 > - Scope boundary: §6 owns `GetCommandLineW/A`; §15 owns `CommandLineToArgvW` decode + round-trip; envp -> PEB Environment PAGE owned by TODO-11 §21; the non-recoverable `copy_from_user` gap by TODO-02 §4.
+> **Verified:** 2026-07-13 | commit `bda8324f` | 8/9 items | build OK | 20644 kernel + 16 user tests PASS, smoke PASS
+> **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 632)
+> **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-21 §1 (item: "Inherit parent environ into the child at `task_fork()`" at line 86)
+> **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 196)
+> **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 126)
+> **Deferred:** [M] full exec-commit transactionality (roll back / terminate on a task_exec failure after the argv/env commit) -> XREF: 02-kernel-core/TODO-22 §4 (item: "Follow-up: make SYS_EXEC argv/env commit transactional" at line 233)
+> **Quality reviewed:** 2026-07-13 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 1H+1L fixed, 2H+2M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
 
