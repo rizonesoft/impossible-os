@@ -228,11 +228,21 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
 
 ### Phase 5 -- Budget-aware pacing (backstop; LAST; depends on P0.1 + P1.4 + a reduced baseline)
 
-- [ ] **[det] P5.1 Track cumulative 7-day token burn** in the arm/launch layer (rolling window from run reports; needs P0.1 metrics).
-- [ ] **[det] P5.2 Project 7-day burn** and surface it in the status brief / monitor.
-- [ ] **[det] P5.3 Self-snooze until reset** via the existing snooze/backoff plumbing when projected burn would exceed 100% of the weekly budget (needs the P1.4 snooze fix).
-- [ ] **[det] P5.4 Activation floor** so the backstop can't dominate; gate it behind Phases 1-4 landing (a runner that mostly sleeps ships nothing).
-- [ ] **[det] P5.5 Test the project -> snooze -> resume transition** at the ceiling.
+> **PHASE 5 CLOSED 2026-07-13 -- WON'T-BUILD (operator decision).** Automated weekly-budget projection +
+> self-snooze is a LAST-priority backstop layered on P0.1 + P1.4 + a reduced baseline, and the guardrails
+> that already exist bound spend without it: manual `arm-sequencer.sh` arm/disarm, the per-run circuit
+> breaker + backoff, and the operator watching burn (P0.1 metrics now report accurately after the
+> transcript-reconciliation fix). A projected-burn auto-snooze also carries its own "mostly sleeps ships
+> nothing" failure mode (P5.4's own caveat) -- adding a self-throttling control loop to save tokens can
+> cost more shipped work than it saves. Net: not worth the build for a backstop. **Re-trigger condition:**
+> revisit only if the runner moves to genuinely unattended 24/7 operation AND manual arm/disarm + the
+> breaker prove insufficient to keep weekly burn under budget. Items retained below `[x]` for the record.
+
+- [x] **[det] P5.1 Track cumulative 7-day token burn** in the arm/launch layer (rolling window from run reports; needs P0.1 metrics). -- WON'T-BUILD (see Phase 5 close).
+- [x] **[det] P5.2 Project 7-day burn** and surface it in the status brief / monitor. -- WON'T-BUILD (see Phase 5 close).
+- [x] **[det] P5.3 Self-snooze until reset** via the existing snooze/backoff plumbing when projected burn would exceed 100% of the weekly budget (needs the P1.4 snooze fix). -- WON'T-BUILD (see Phase 5 close).
+- [x] **[det] P5.4 Activation floor** so the backstop can't dominate; gate it behind Phases 1-4 landing (a runner that mostly sleeps ships nothing). -- WON'T-BUILD (see Phase 5 close).
+- [x] **[det] P5.5 Test the project -> snooze -> resume transition** at the ceiling. -- WON'T-BUILD (see Phase 5 close).
 
 ### Phase 6 -- Blocked-item recovery completeness (correctness gap; surfaced 2026-07-12 canary)
 
