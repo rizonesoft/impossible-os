@@ -433,7 +433,7 @@
   **Fix:** read `agent_transcript_path` (fall back to `transcript_path`), count tool uses + timestamps
   from the bounded leaf transcript, add a real SubagentStop fixture. (One-line field fix started
   2026-07-13 as a quick win.)
-- [ ] **[det] I3. The deterministic orientation packet does NOT eliminate orientation work.** VERIFIED.
+- [x] **[det] I3. The deterministic orientation packet does NOT eliminate orientation work.** VERIFIED.
   `advance-work.py:99` stores only `section-pack.py`'s stdout SUMMARY (`section-pack.py:421-435` =
   counts + `pack_path` + digest), while the rich evidence it computed -- `input_files`,
   `relevant_tests`, `required_gates`, `symbol_defs`, `xrefs` -- is written to `pack.json` on disk

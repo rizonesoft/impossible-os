@@ -431,6 +431,21 @@ def main(argv) -> int:
         "abi_impact": abi,
         "bundle_dir": bundle_path,
         "complexity_verdict": pack["complexity"].get("verdict"),
+        # I3: bounded evidence subset so the orientation packet is the SOLE
+        # initial source. advance-work.py stores this summary verbatim; the
+        # worker re-oriented from COUNTS alone and then re-ran the whole pack
+        # (~25 repeated calls across 8 launches). These are the actual file:line
+        # facts (definitions, inputs, tests, gates, xrefs, item texts), each
+        # capped so the packet stays small.
+        "evidence": {
+            "input_files": pack["input_files"][:20],
+            "relevant_tests": pack["relevant_tests"][:12],
+            "required_gates": pack["required_gates"],
+            "xrefs": pack["xrefs"][:10],
+            "open_items": pack["open_items"][:15],
+            "symbol_defs": dict(list(defined.items())[:10]),
+            "unresolved_symbols": unresolved[:10],
+        },
     }
     print(json.dumps(summary, indent=1))
     return 0

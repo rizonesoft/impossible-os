@@ -102,7 +102,11 @@ def main(argv) -> int:
                         str(nxt_sec["n"]), "--project", str(root)], root,
                        timeout=120)
         if pk:
-            packet["section_pack"] = pk  # already a bounded summary
+            # Bounded summary INCLUDING the I3 `evidence` subset (input_files,
+            # relevant_tests, required_gates, xrefs, open_items, symbol_defs) so
+            # the packet is the SOLE initial orientation source -- the worker no
+            # longer re-runs the pack to recover the file:line facts.
+            packet["section_pack"] = pk
 
     # 4. durable checkpoint from the prior session (if still valid)
     cp = _json_out(["python3", str(HERE / "section-checkpoint.py"), "show",

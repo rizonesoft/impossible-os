@@ -70,6 +70,18 @@ def test_pack_resolves_symbols_and_writes_artifact():
         assert pack["abi_impact"] is True
         assert summ["resolver"] == "rg"
         assert summ["bundle_dir"], "bundle not produced"
+        # I3: the stdout summary carries a bounded evidence subset so the
+        # orientation packet is the SOLE initial source (no re-run of the pack).
+        ev = summ.get("evidence") or {}
+        assert ev.get("symbol_defs", {}).get("frob_init", "").startswith(
+            "src/kernel/frob.c:"), ev
+        assert "src/kernel/frob.c" in (ev.get("input_files", []) +
+                                       pack["likely_files"])
+        for k in ("input_files", "relevant_tests", "required_gates", "xrefs",
+                  "open_items", "symbol_defs", "unresolved_symbols"):
+            assert k in ev, f"evidence missing {k}"
+        # bounded caps hold
+        assert len(ev["symbol_defs"]) <= 10 and len(ev["input_files"]) <= 20
 
 
 def test_pack_digest_is_worktree_bound():
