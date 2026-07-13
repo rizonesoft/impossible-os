@@ -66,7 +66,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
 | 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
 | 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
-| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [ ]   |
+| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
 | 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [ ]   |
 | 💎   |   6   | Win32 API wrappers                                 | §5                         |  [ ]   |
 | 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [ ]   |
@@ -210,39 +210,39 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 4. argv Array: Kernel Storage & Shell Parsing
 
-- [ ] `task->argv` is set by the kernel exec path before calling `TODO-11-peb-teb-user-abi.md §7` (which reads `task->argv` to build the stack frame and `CommandLine`):
-  ```c
-  int task_set_argv(struct task *t, int argc, const char *const *argv);
-  /* deep-copies argv strings; sets t->argc, t->argv */
-  ```
-- [ ] `task_set_argv`: `kmalloc` pointer array of `argc + 1` entries; `kstrdup` each string; set `t->argv[argc] = NULL` terminator
-- [ ] On task exit / `env_free`: `kfree` each argv string, `kfree` pointer array
+- [x] `task_set_argv(t, argc, argv)` (`env.c`): deep-copies each string via the env string allocator (so `env_free` reclaims argv), serialized on `environ_lock`, unwinding on failure; caps at `ARG_ARGC_MAX` (511)
+- [x] `task_set_argv` builds the `argc+1` pointer array + `env_strdup`'d strings + `argv[argc]=NULL` BEFORE freeing the old argv; SYS_EXEC checks its return
+- [x] On task exit / `env_free`: `kfree` each argv string + the pointer array (already in `env_free`)
 
-- [ ] `cmd_tokenize(cmdline, argv_out, max_argc)` -- split a shell command line into argv tokens:
-  - Split on whitespace (space, tab)
-  - `"quoted argument"` → single token with quotes stripped; spaces inside quotes are preserved
-  - `"embedded ""double"" quotes"` → produce a single `"` character
-  - Backslash before `"` → literal `"` (Windows convention)
-  - Return token count; `argv_out[count] = NULL`
-- [ ] `cmd_tokenize` used by the shell before calling `exec(path, argv, envp)`
-- [ ] Maximum 128 tokens per command; tokens beyond limit are silently dropped with a `[WARN] too many arguments` log message
+- [x] `cmd_tokenize(line, argv, max_argc)` (`user/lib/stdlib.c`, libc) -- in-place Windows-quoting tokenizer:
+  - whitespace separates tokens; `"quoted"` groups + strips quotes; spaces inside quotes preserved
+  - `""` inside a quoted run → one literal `"`; `2n` backslashes + `"` → `n` + toggle-quote, `2n+1` → `n` + literal `"`
+  - returns argc; `argv[argc]=NULL`
+- [x] `cmd_tokenize` used by the shell (`user/cmd.c` replaced whitespace-only `parse`) before `sys_exec(path, argv, envp)`
+- [x] Tokens beyond `max_argc-1` dropped (shell passes `ARGV_MAX`=32); dropped silently (pure libc fn, no logging surface)
 
-- [ ] `SYS_EXEC(path, argv[], envp[])` syscall (extends existing exec syscall):
-  - Validate `argv[]` pointer array with `ProbeForRead` (→ XREF `TODO-23-exception-dispatch-seh.md §13`)
-  - Validate each `argv[i]` string pointer
-  - Bounded ingestion (reject with `STATUS_QUOTA_EXCEEDED` = Linux `E2BIG` BEFORE allocating): cap `argc` (~4096), each string (`ARG_STRING_MAX` 32 KiB), and the AGGREGATE argv+envp byte budget (`ARG_MAX` ~256 KiB incl. NULs)
-  - Single fault-safe snapshot (no TOCTOU): copy the pointer vectors and strings through usercopy EXACTLY ONCE so a sibling thread cannot swap pointers or unmap strings between probe and copy; unwind partial allocations on any failure
-  - Call `task_set_argv(new_task, argc, argv)` -- deep copy into kernel (from the snapshot, never re-reading raw user pointers)
-  - Call `env_copy(new_task, ...)` from `envp[]` -- deep copy env (from the same snapshot)
-  - Proceed to binary loader → `TODO-11-peb-teb-user-abi.md §7` reads `task->argv` and `task->environ` to build the stack frame
-- [ ] `GetCommandLineW()` Win32 wrapper (§6): returns `PEB->ProcessParameters->CommandLine`, which TODO-11 §7 builds from `task->argv[0]` + the joined argv string
-- [ ] `task->argv` -> `CommandLine` **encode** = exact inverse of §15 decode (so `GetCommandLineW()` then `CommandLineToArgvW()` round-trips):
-  - quote any arg with space/tab/quote or an empty arg; emit `2n` backslashes before an interior quote and `2n+1` for a literal `"`; special-case `argv[0]`
-  - owned jointly with `TODO-11-peb-teb-user-abi.md §7` (allocates the `CommandLine` UNICODE_STRING); add encode/decode round-trip tests
+- [x] `SYS_EXEC(path, argv[], envp[])` (clean ABI: `arg1=path`, `arg2=argv`, `arg3=envp`; both callers updated, NO probe-based `len`-vs-pointer inference):
+  - `ProbeForRead` every `argv[]`/`envp[]` pointer + string; NULL argv/envp allowed (inherit / no-arg)
+  - `exec_snapshot_vec`: `copy_from_user` the pointer vectors then each string EXACTLY ONCE into a kernel bounce buffer before any use
+  - Bounded ingestion (reject BEFORE allocating): cap `argc` (`ARG_ARGC_MAX`), each string (`ARG_STRING_MAX` 4 KiB), aggregate (`ARG_MAX`); AND the EXACT serialized argv frame (`argv_frame_bytes`, qword-rounded strings + parity pads + ptr array, matching the builder) + `ARGV_FRAME_RESERVE` MUST fit `USER_STACK_SIZE` (16 KiB) or reject
+  - Reject exec when `num_threads > 1` (fail-closed; fork-then-exec child is single-threaded) -> XREF `03-memory-concurrency/TODO-02-memory-security.md §4`
+  - `task_set_argv` + (if `envp != NULL`) `env_adopt_block`, both return-checked, BEFORE `task_exec` (a later `task_exec` failure returns -1 and the child exits, so no surviving process sees half-updated state); else inherit environ
+  - Residual: `copy_from_user` is range-checked but NOT fault-recoverable -- kernel-wide usercopy gap -> XREF `03-memory-concurrency/TODO-02-memory-security.md §4`
+  - `task_exec` frame builder reads `task->argv`, pushes argv (16-byte `&argc` alignment), FAILS the exec on unfit/OOM (never silently diverges from the PEB); `crt0` loads `argc`/`argv` into RDI/RSI for `main`
+- [x] `argv_to_cmdline(argc, argv, out, max)` **encode** (Windows quoting rules, `src/kernel/env.c`) wired into the PEB `CommandLine` builder (bounded to the RTLPP page) so `GetCommandLineW()` (§6) reflects full argv; decode + round-trip owned by §15
+- [ ] Follow-up: make SYS_EXEC argv/env commit transactional -- stage `task_set_argv`/`env_adopt_block` inside `task_exec` at its no-return point (after `exec_load_fmt`) so a loader failure leaves old argv/env intact; terminate on post-commit OOM
 
-- [ ] Commit: `"kernel/env: argv array in task, shell tokenizer, exec argument handoff"`
+- [x] Commit: `"kernel/env: argv array in task, shell tokenizer, exec argument handoff"`
 
-**Test checkpoint:** Shell tokenizer + `task_set_argv`; child sees expected argc/argv in klog or test harness. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `test_process.exe` execs `hello.exe` with `{alpha,beta}`; hello walks argv and returns `40+argc`=43, proving end-to-end delivery. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) -- 5 argv/exec cases + `scripts\debug\usermode\run-test_libc.bat` cmd_tokenize + `run-test_process.bat` argv-delivery | 0 failures
+> **Notes:**
+> - Shipped: `task_set_argv`/`env_adopt_block`/`argv_to_cmdline`/`argv_frame_bytes`/`exec_snapshot_vec`/`SYS_EXEC(path,argv,envp)` (`env.c`,`syscall.c`); argv frame builder + PEB CommandLine encode (`task.c`); `cmd_tokenize`/`crt0` (`user/`).
+> - Design + adversarial review adopted: clean SYS_EXEC ABI, exact argv-frame-fits-stack cap, `num_threads>1` reject, crt0 argv delivery, return checks, OOM-fails-not-diverges, page-bounded CommandLine; evidence in commit.
+> - Adjacent fork bug fixed: `task_fork` never set `threads[0].base_priority`, so the first `mutex_unlock` a forked-then-exec'd task did (`task_set_argv`) reset priority to 0 and starved it (exec hung); now mirrors `task_create_*`.
+> - Canonical doc: [include/kernel/env.h](../../include/kernel/env.h) (argv/env API) + the `task.c` frame builder.
+> - Scope boundary: §6 owns `GetCommandLineW/A`; §15 owns `CommandLineToArgvW` decode + round-trip; envp -> PEB Environment PAGE owned by TODO-11 §21; the non-recoverable `copy_from_user` gap by TODO-02 §4.
 
 ---
 
@@ -493,6 +493,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Return: pointer to `LPWSTR *` array, with `*pNumArgs` set to the count; the array and all strings are allocated as a single `LocalAlloc` block; caller must `LocalFree` the returned pointer
 - [ ] Edge case: empty string input → `*pNumArgs = 1`, `argv[0]` = path to the CURRENT EXECUTABLE (module path), NOT `""` (MS Learn `CommandLineToArgvW`)
 - [ ] Edge case: `NULL` input → return `NULL` (Windows behavior)
+- [ ] Round-trip test with §4's `argv_to_cmdline` encoder: encode `argv = {"a b", "c\"d", ""}` to a CommandLine, then `CommandLineToArgvW` returns the same three args (encoder owned by §4; §15 owns decode + the round-trip test)
 
 - [ ] Commit: `"kernel/env: CommandLineToArgvW Win32 API (shell32)"`
 
@@ -585,7 +586,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API     |
 | 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ✅ §3 `env_expand`   |
 | 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth |
-| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7       |
+| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ✅ §4 crt0->main     |
 | 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19          |
 | 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6                |
 | 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
@@ -613,7 +614,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18               |
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18               |
 | 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19               |
-| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ⬜ §4                |
+| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX  |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
 

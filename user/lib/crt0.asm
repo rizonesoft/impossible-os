@@ -24,9 +24,17 @@ _start:
 
     ; -18 ABI handshake + any future early init (crt_init never
     ; returns on mismatch; otherwise falls through to main).
+    ; crt_init is call/ret balanced and only writes below RSP, so the
+    ; SysV initial stack (argc at [rsp], argv[] at rsp+8) is preserved.
     call crt_init
 
-    ; Call main()
+    ; SysV entry hands main(argc, argv): argc = [rsp], argv = &argv[0] = rsp+8.
+    ; crt_init clobbered the arg registers (caller-saved), so (re)load them
+    ; from the preserved entry stack right before the call.
+    mov rdi, [rsp]          ; arg1 = argc
+    lea rsi, [rsp + 8]      ; arg2 = argv (pointer to argv[0])
+
+    ; Call main(argc, argv)
     call main
 
     ; main() returned in RAX -- pass it as exit code to sys_exit()

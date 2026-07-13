@@ -409,6 +409,270 @@ void env_free(struct task *t)
 }
 
 /* ===========================================================================
+ * argv array + exec argument handoff
+ *
+ * task_set_argv / env_adopt_block replace the process-wide argv / environ under
+ * t->environ_lock, mirroring env_copy's "build the whole new array before
+ * freeing the old one, unwind on failure" discipline so a partial allocation
+ * never publishes and a failure leaves the prior value intact. Argv strings use
+ * the SAME env string allocator as environ, so env_free reclaims them with
+ * env_str_free(str, env_strlen(str)+1). Callers pass KERNEL-side arrays only;
+ * the SYS_EXEC path copies the untrusted user vectors into a kernel snapshot
+ * first, so nothing here ever dereferences a raw user pointer.
+ * =========================================================================== */
+
+int task_set_argv(struct task *t, int argc, const char *const *argv)
+{
+    char **arr;
+    char **old_argv;
+    int old_argc;
+    int i;
+
+    if (!t)
+        return ENV_ERR_INVAL;
+
+    /* Empty argv -> clear to the "no argv" state (frame builder falls back to
+     * argc=1/name). Free any prior argv under the lock. */
+    if (argc <= 0 || !argv) {
+        mutex_lock(&t->environ_lock);
+        old_argv = t->argv;
+        old_argc = t->argc;
+        t->argv = NULL;
+        t->argc = 0;
+        mutex_unlock(&t->environ_lock);
+        if (old_argv) {
+            for (i = 0; i < old_argc; i++)
+                if (old_argv[i])
+                    env_str_free(old_argv[i], env_strlen(old_argv[i]) + 1);
+            kfree(old_argv);
+        }
+        return ENV_OK;
+    }
+
+    if ((uint32_t)argc > ARG_ARGC_MAX)
+        return ENV_ERR_NOSPACE;
+
+    /* Build the new (argc+1)-entry array with strings duplicated via the env
+     * allocator. Pre-null (incl terminator) so a mid-loop failure unwinds
+     * cleanly. Allocation under the mutex is legal (env.h: mutex, not spinlock). */
+    arr = (char **)kmalloc(((uint32_t)argc + 1u) * sizeof(char *));
+    if (!arr)
+        return ENV_ERR_NOMEM;
+    for (i = 0; i <= argc; i++)
+        arr[i] = NULL;
+    for (i = 0; i < argc; i++) {
+        const char *s = argv[i] ? argv[i] : "";
+        arr[i] = env_strdup(s);
+        if (!arr[i]) {
+            int j;
+            for (j = 0; j < i; j++)
+                if (arr[j])
+                    env_str_free(arr[j], env_strlen(arr[j]) + 1);
+            kfree(arr);
+            return ENV_ERR_NOMEM;
+        }
+    }
+
+    mutex_lock(&t->environ_lock);
+    old_argv = t->argv;
+    old_argc = t->argc;
+    t->argv = NULL;          /* publish empty briefly, then the full array */
+    t->argc = argc;
+    t->argv = arr;
+    mutex_unlock(&t->environ_lock);
+
+    /* Free the prior argv outside the lock (we hold the only reference). */
+    if (old_argv) {
+        for (i = 0; i < old_argc; i++)
+            if (old_argv[i])
+                env_str_free(old_argv[i], env_strlen(old_argv[i]) + 1);
+        kfree(old_argv);
+    }
+    return ENV_OK;
+}
+
+int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
+{
+    char **arr;
+    char **old_env;
+    uint32_t old_count;
+    uint32_t n = 0;          /* count of accepted (well-formed) entries */
+    uint32_t i;
+
+    if (!t)
+        return ENV_ERR_INVAL;
+
+    /* Empty block -> clear environ to empty. */
+    if (!entries || count == 0) {
+        mutex_lock(&t->environ_lock);
+        old_env = t->environ;
+        old_count = t->environ_count;
+        t->environ = NULL;
+        t->environ_count = 0;
+        mutex_unlock(&t->environ_lock);
+        if (old_env) {
+            for (i = 0; i < old_count; i++)
+                if (old_env[i])
+                    env_str_free(old_env[i], env_strlen(old_env[i]) + 1);
+            kfree(old_env);
+        }
+        return ENV_OK;
+    }
+
+    if (count > ENV_MAX_ENTRIES)
+        count = ENV_MAX_ENTRIES;   /* honor the process env array cap */
+
+    arr = (char **)kmalloc((count + 1u) * sizeof(char *));
+    if (!arr)
+        return ENV_ERR_NOMEM;
+    for (i = 0; i <= count; i++)
+        arr[i] = NULL;
+
+    /* Deep-copy each well-formed "KEY=VALUE" entry (must contain '=', a non-empty
+     * key, and fit ENV_NAME_MAX+ENV_VALUE_MAX). Malformed entries are skipped so
+     * a bad envp cannot poison the whole exec. */
+    for (i = 0; i < count; i++) {
+        const char *e = entries[i];
+        uint32_t elen, eq;
+        if (!e)
+            continue;
+        elen = env_strnlen(e, ENV_NAME_MAX + 1u + ENV_VALUE_MAX + 1u);
+        if (elen == 0 || elen > ENV_NAME_MAX + 1u + ENV_VALUE_MAX)
+            continue;                       /* over-long or missing terminator */
+        for (eq = 0; eq < elen && e[eq] != '='; eq++)
+            ;
+        if (eq == 0 || eq >= elen)
+            continue;                       /* empty key or no '=' */
+        arr[n] = env_strdup(e);
+        if (!arr[n]) {
+            uint32_t j;
+            for (j = 0; j < n; j++)
+                if (arr[j])
+                    env_str_free(arr[j], env_strlen(arr[j]) + 1);
+            kfree(arr);
+            return ENV_ERR_NOMEM;
+        }
+        n++;
+    }
+
+    mutex_lock(&t->environ_lock);
+    old_env = t->environ;
+    old_count = t->environ_count;
+    t->environ = NULL;
+    t->environ_count = n;
+    t->environ = arr;
+    mutex_unlock(&t->environ_lock);
+
+    if (old_env) {
+        for (i = 0; i < old_count; i++)
+            if (old_env[i])
+                env_str_free(old_env[i], env_strlen(old_env[i]) + 1);
+        kfree(old_env);
+    }
+    return ENV_OK;
+}
+
+/* Does an argument need quoting? Windows quotes an arg that is empty or contains
+ * a space, tab, or double-quote. */
+static int argv_arg_needs_quote(const char *a)
+{
+    uint32_t i;
+    if (!a || !a[0])
+        return 1;                           /* empty arg -> "" */
+    for (i = 0; a[i]; i++)
+        if (a[i] == ' ' || a[i] == '\t' || a[i] == '"')
+            return 1;
+    return 0;
+}
+
+uint32_t argv_to_cmdline(int argc, const char *const *argv, char *out, uint32_t max)
+{
+    uint32_t w = 0;                         /* bytes written (excl NUL) */
+    int i;
+    int trunc = 0;
+
+    /* Append one byte, reserving the final slot for NUL; sets trunc on overflow. */
+    #define CMDL_PUT(ch) do { \
+            if (w + 1u < max) out[w++] = (char)(ch); else trunc = 1; \
+        } while (0)
+
+    if (max == 0)
+        return 0;
+    out[0] = '\0';
+    if (argc <= 0 || !argv) {
+        return 0;
+    }
+
+    /* Canonical Windows encode (exact inverse of CommandLineToArgvW): inside a
+     * quoted arg a backslash run is doubled before the closing '"' and before an
+     * interior '"' (with one extra to escape the quote); elsewhere it is
+     * verbatim. An unquoted arg (no space/tab/quote by construction) emits its
+     * backslashes verbatim. */
+    for (i = 0; i < argc && !trunc; i++) {
+        const char *a = argv[i] ? argv[i] : "";
+        int quote = argv_arg_needs_quote(a);
+        uint32_t j = 0;
+
+        if (i > 0)
+            CMDL_PUT(' ');
+        if (quote)
+            CMDL_PUT('"');
+
+        for (;;) {
+            uint32_t nbs = 0;
+            uint32_t k;
+            while (a[j] == '\\') { j++; nbs++; }
+            if (a[j] == '\0') {
+                uint32_t reps = quote ? nbs * 2u : nbs;
+                for (k = 0; k < reps; k++) CMDL_PUT('\\');
+                break;
+            } else if (a[j] == '"') {
+                for (k = 0; k < nbs * 2u + 1u; k++) CMDL_PUT('\\');
+                CMDL_PUT('"');
+                j++;
+            } else {
+                for (k = 0; k < nbs; k++) CMDL_PUT('\\');
+                CMDL_PUT(a[j]);
+                j++;
+            }
+        }
+        if (quote)
+            CMDL_PUT('"');
+    }
+
+    #undef CMDL_PUT
+    out[w] = '\0';
+    return trunc ? max : w;
+}
+
+uint32_t argv_frame_bytes(int argc, const char *const *argv)
+{
+    uint32_t str_qwords = 0;
+    uint32_t qwords;
+    int i;
+
+    if (argc <= 0 || !argv)
+        return 0;
+
+    /* Match the task_exec frame builder EXACTLY (an undercount here permits a
+     * user-stack overwrite): every string is qword-rounded on the stack, the
+     * string area is padded to an even qword count, and one more qword pads the
+     * pointer block when argc is even -- both keep &argc 16-byte aligned. */
+    for (i = 0; i < argc; i++) {
+        const char *s = argv[i] ? argv[i] : "";
+        str_qwords += (env_strlen(s) + 1u + 7u) / 8u;   /* qword-rounded string */
+    }
+    qwords = str_qwords;
+    if (str_qwords & 1u)
+        qwords += 1u;                       /* string-area parity pad */
+    if (((uint32_t)argc & 1u) == 0u)
+        qwords += 1u;                       /* argc parity pad (argc even) */
+    qwords += (uint32_t)argc + 1u;          /* argv pointer array (argc + NULL) */
+    qwords += 1u;                           /* argc slot */
+    return qwords * 8u;
+}
+
+/* ===========================================================================
  * %VAR% expansion (single-pass; cmd.exe / Win32 ExpandEnvironmentStrings)
  *
  * env_expand walks `input` once and substitutes each `%NAME%` with its value.

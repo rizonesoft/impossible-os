@@ -583,7 +583,7 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 `task_exec` emits one SysV ELF process-init stack (argc/argv/envp/auxv) for EVERY loaded format, only zeroing PHDR metadata for non-ELF, then also sets the Win64 RCX=PEB. The ELF stack is correct for ELF (the §7 adversarial pass found no overflow/alignment/overlap bug), but a real PE32+ CRT/ntdll needs a format-specific Win64 startup frame and EIF its own; the current single frame works only for the bare-asm PE smoke test that ignores CRT startup. -> XREF: §7 (ELF stack), `D02 T17` (PE loader / ntdll startup), §5 (PEB env).
 
 - [ ] [HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/envp/auxv for ELF; add an explicit PE32+ Win64 startup frame (shadow/home space, no argc-at-rsp) for ntdll/CRT; give EIF a documented native startup contract
-- [ ] [MEDIUM] ELF `envp[]` is empty (only the NULL terminator, task.c:1927) while `PEB->ProcessParameters->Environment` holds PATH/SystemRoot; `getenv` and the Win32 env block diverge. Populate envp from the same source, or format-gate the env model
+- [ ] [MEDIUM] PEB `Environment` is hard-coded and ELF `envp[]` empty, but `task->environ` is authoritative (SYS_EXEC envp adoption lands there, TODO-22 §4); build the PEB env block + ELF envp from it (`env_build_block_utf16`)
 - [ ] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
 
 **Test checkpoint:** an ELF binary still starts with the SysV stack; a PE32+ fixture enters its Win64 startup contract (RCX=PEB + home space, no argc-at-rsp dependency); `getenv("PATH")` and the Win32 environment block agree. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.

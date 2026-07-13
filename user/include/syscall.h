@@ -158,9 +158,14 @@ static inline void sys_exit(int code)
 static inline void sys_yield(void) { syscall0(SYS_YIELD); }
 static inline long sys_fork(void)  { return syscall0(SYS_FORK); }
 
-static inline long sys_exec(const char *path, size_t len)
+/* Replace the current process image with `path`, passing argv/envp. argv/envp
+ * are NULL-terminated arrays of NUL-terminated strings; either may be NULL
+ * (NULL argv -> argc=1/program name; NULL envp -> inherit the current env). On
+ * success exec does not return; on failure returns < 0. */
+static inline long sys_exec(const char *path, char *const argv[],
+                            char *const envp[])
 {
-    return syscall2(SYS_EXEC, (long)path, (long)len);
+    return syscall3(SYS_EXEC, (long)path, (long)argv, (long)envp);
 }
 
 static inline long sys_waitpid(int pid)

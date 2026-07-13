@@ -1078,8 +1078,169 @@ static void test_env_expand_overlap_preserves_source(void)
     env_free(&s_env_fixture);
 }
 
+/* --- argv array + exec argument handoff --- */
+
+/* task_set_argv deep-copies each string; the array is independent of the
+ * caller's and NUL-terminated; env_free reclaims it. */
+static void test_argv_set_and_free(void)
+{
+    const char *src[] = { "echo", "hello", "world" };
+    int rc;
+
+    env_fixture_reset();
+    rc = task_set_argv(&s_env_fixture, 3, src);
+    TEST_ASSERT_EQ(rc, ENV_OK, "task_set_argv returns ENV_OK");
+    TEST_ASSERT_EQ(s_env_fixture.argc, 3, "argc == 3");
+    TEST_ASSERT(s_env_fixture.argv != NULL, "argv array allocated");
+    TEST_ASSERT(env_streq(s_env_fixture.argv[0], "echo"), "argv[0] == echo");
+    TEST_ASSERT(env_streq(s_env_fixture.argv[1], "hello"), "argv[1] == hello");
+    TEST_ASSERT(env_streq(s_env_fixture.argv[2], "world"), "argv[2] == world");
+    TEST_ASSERT(s_env_fixture.argv[3] == NULL, "argv[3] == NULL terminator");
+    /* Deep copy: mutating the source does not change the stored copy. */
+    TEST_ASSERT(s_env_fixture.argv[0] != src[0], "argv[0] is a distinct copy");
+
+    env_free(&s_env_fixture);
+    TEST_ASSERT(s_env_fixture.argv == NULL, "env_free NULLs argv");
+    TEST_ASSERT_EQ(s_env_fixture.argc, 0, "env_free zeroes argc");
+}
+
+/* A second task_set_argv fully replaces the first (no leak, correct contents);
+ * an empty argv clears back to the no-argv state. */
+static void test_argv_set_replace_and_clear(void)
+{
+    const char *a[] = { "first", "arg" };
+    const char *b[] = { "second" };
+
+    env_fixture_reset();
+    TEST_ASSERT_EQ(task_set_argv(&s_env_fixture, 2, a), ENV_OK, "set argv a");
+    TEST_ASSERT_EQ(task_set_argv(&s_env_fixture, 1, b), ENV_OK, "set argv b");
+    TEST_ASSERT_EQ(s_env_fixture.argc, 1, "replaced argc == 1");
+    TEST_ASSERT(env_streq(s_env_fixture.argv[0], "second"), "argv[0] == second");
+
+    TEST_ASSERT_EQ(task_set_argv(&s_env_fixture, 0, NULL), ENV_OK, "clear argv");
+    TEST_ASSERT(s_env_fixture.argv == NULL, "cleared argv is NULL");
+    TEST_ASSERT_EQ(s_env_fixture.argc, 0, "cleared argc == 0");
+    env_free(&s_env_fixture);
+}
+
+/* argv_to_cmdline encodes Windows quoting: plain args join with spaces; args
+ * with spaces or empty args are quoted; interior quotes are backslash-escaped. */
+static void test_argv_to_cmdline_quoting(void)
+{
+    char out[128];
+    const char *plain[] = { "echo", "hello", "world" };
+    const char *spaced[] = { "a b" };
+    const char *empty[] = { "" };
+    const char *quoted[] = { "a\"b" };
+    const char *rt[] = { "a b", "c\"d", "" };
+    const char *bs[] = { "c:\\path" };
+
+    argv_to_cmdline(3, plain, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "echo hello world"), "plain args join with spaces");
+
+    argv_to_cmdline(1, spaced, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "\"a b\""), "arg with space is quoted");
+
+    argv_to_cmdline(1, empty, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "\"\""), "empty arg encodes as \"\"");
+
+    argv_to_cmdline(1, quoted, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "\"a\\\"b\""), "interior quote is backslash-escaped");
+
+    argv_to_cmdline(3, rt, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "\"a b\" \"c\\\"d\" \"\""), "mixed round-trip encode");
+
+    argv_to_cmdline(1, bs, out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "c:\\path"), "backslash w/o quote stays verbatim");
+}
+
+/* argv_frame_bytes returns the exact stack footprint, and the SYS_EXEC frame-fit
+ * predicate rejects an argv whose frame would overflow the 16 KiB user stack. */
+static void test_argv_frame_bytes_and_cap(void)
+{
+    const char *two[] = { "ab", "cde" };
+    static char big[20000];
+    const char *huge[1];
+    uint32_t i;
+
+    /* Exact builder match: "ab"->1 qw, "cde"->1 qw (str_qwords=2, even, no pad);
+     * argc=2 is even -> +1 parity qword; ptr array (2+1)=3 qw; argc slot 1 qw.
+     * total = (2 + 1 + 3 + 1) * 8 = 56 bytes. */
+    TEST_ASSERT_EQ(argv_frame_bytes(2, two), 56u, "argv_frame_bytes exact size");
+    TEST_ASSERT_EQ(argv_frame_bytes(0, NULL), 0u, "empty argv frame is 0 bytes");
+
+    /* A single ~16 KB argument overflows the 16 KiB user stack budget. */
+    for (i = 0; i < sizeof(big) - 1; i++) big[i] = 'x';
+    big[sizeof(big) - 1] = '\0';
+    huge[0] = big;
+    TEST_ASSERT((uint64_t)argv_frame_bytes(1, huge) + ARGV_FRAME_RESERVE >
+                    USER_STACK_SIZE,
+                "oversized argv frame exceeds user stack (rejected)");
+    TEST_ASSERT((uint64_t)argv_frame_bytes(2, two) + ARGV_FRAME_RESERVE <=
+                    USER_STACK_SIZE,
+                "small argv frame fits user stack (accepted)");
+
+    /* Boundary: four 3999-byte args -- each qword-rounds to 500 qw (str=2000),
+     * argc=4 even -> +1 pad, ptr array 5 qw, argc 1 qw = 2007 qw = 16056 B. With
+     * the exact 280-byte reserve the actual 16336-byte frame fits the 16384-byte
+     * stack and MUST be accepted (a conservative reserve wrongly rejected it). */
+    {
+        static char b3999[4000];
+        const char *four[4];
+        uint32_t k;
+        for (k = 0; k < 3999u; k++) b3999[k] = 'y';
+        b3999[3999] = '\0';
+        four[0] = four[1] = four[2] = four[3] = b3999;
+        TEST_ASSERT_EQ(argv_frame_bytes(4, four), 16056u,
+                       "4x3999 argv frame is exactly 16056 bytes");
+        TEST_ASSERT((uint64_t)argv_frame_bytes(4, four) + ARGV_FRAME_RESERVE <=
+                        USER_STACK_SIZE,
+                    "boundary argv frame (16336 B) fits the 16 KiB stack");
+    }
+}
+
+/* env_adopt_block replaces environ from a "KEY=VALUE" block, skipping malformed
+ * entries (no '=', empty key). */
+static void test_env_adopt_block(void)
+{
+    const char *block[] = {
+        "FOO=bar", "BAZ=qux", "malformed", "=noname", "EMPTY="
+    };
+    char buf[64];
+    int rc;
+
+    env_fixture_reset();
+    rc = env_adopt_block(&s_env_fixture, block, 5);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_adopt_block returns ENV_OK");
+    /* FOO, BAZ, EMPTY accepted; "malformed" (no '=') and "=noname" (empty key)
+     * skipped. */
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 3u, "3 well-formed entries kept");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "FOO", buf, sizeof(buf)) >= 0 &&
+                env_streq(buf, "bar"), "FOO=bar adopted");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "BAZ", buf, sizeof(buf)) >= 0 &&
+                env_streq(buf, "qux"), "BAZ=qux adopted");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "malformed", buf, sizeof(buf)),
+                   ENV_ERR_NOTFOUND, "malformed entry skipped");
+
+    /* Empty block clears environ. */
+    rc = env_adopt_block(&s_env_fixture, NULL, 0);
+    TEST_ASSERT_EQ(rc, ENV_OK, "empty block clears");
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 0u, "environ cleared");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
+    test_suite_register_cat("Env: argv set + free",
+                            test_argv_set_and_free, TEST_CAT_ABI);
+    test_suite_register_cat("Env: argv replace + clear",
+                            test_argv_set_replace_and_clear, TEST_CAT_ABI);
+    test_suite_register_cat("Env: argv_to_cmdline quoting",
+                            test_argv_to_cmdline_quoting, TEST_CAT_ABI);
+    test_suite_register_cat("Env: argv frame bytes + stack cap",
+                            test_argv_frame_bytes_and_cap, TEST_CAT_ABI);
+    test_suite_register_cat("Env: adopt envp block",
+                            test_env_adopt_block, TEST_CAT_ABI);
     test_suite_register_cat("Env: set/get roundtrip",
                             test_env_set_get_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("Env: replace in place",

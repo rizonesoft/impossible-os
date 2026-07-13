@@ -50,6 +50,32 @@
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
 #define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
 
+/* Exec argument (argv/envp) ingestion caps for the exec argument-handoff
+ * feature. These are EARLY sanity bounds; the BINDING limit is that the exact
+ * serialized argv frame must fit USER_STACK_SIZE (enforced by argv_frame_bytes()
+ * in the SYS_EXEC path) -- a single ARG_STRING_MAX string cannot actually fit a
+ * 16 KiB stack and is rejected there. ARG_ARGC_MAX is bounded so the kernel-side
+ * temporary argv-address array (kmalloc'd, argc*8 bytes) stays <= 4 KiB. */
+#define ARG_ARGC_MAX     511u        /* max argv entries: (n+1)*sizeof(char*) stays
+                                      * <= 4 KiB so the pointer array + the SYS_EXEC
+                                      * snapshot array are single kmalloc slots (same
+                                      * bound + rationale as ENV_MAX_ENTRIES). */
+#define ARG_STRING_MAX   4096u       /* max single argv/envp string bytes incl NUL (one
+                                      * kmalloc snapshot slot; also caps a runaway scan
+                                      * for a missing NUL. A single exec arg this large is
+                                      * already beyond any realistic use, and the exact
+                                      * argv frame must fit the 16 KiB user stack anyway). */
+#define ARG_MAX          262144u     /* max aggregate argv+envp bytes (Linux-parity ceiling;
+                                      * the binding argv limit is the 16 KiB frame check). */
+/* Fixed user-stack overhead the argv frame needs beyond argv_frame_bytes() (which
+ * already accounts for the string-area + argc parity pads). This is EXACTLY the
+ * builder's fixed block: AT_RANDOM (16 B) + auxv (16 pairs * 16 B = 256 B) + the
+ * envp NULL terminator (8 B) = 280 B. It must equal that exactly: a larger value
+ * wrongly rejects a maximal argv frame that fits USER_STACK_SIZE; a smaller one
+ * risks a stack overwrite. Keep in lockstep with the auxv pair count in the
+ * task_exec frame builder. SYS_EXEC and the builder both add it to argv_frame_bytes. */
+#define ARGV_FRAME_RESERVE 280u
+
 /* Per-thread user stack layout for secondary threads (created by uthread_create).
  * The MAIN thread's user stack is at USER_ELF_END - USER_STACK_SIZE (0x8FC000).
  * Secondary thread stacks are placed below the TEB region, striding downward

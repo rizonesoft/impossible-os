@@ -85,6 +85,46 @@ int env_copy(struct task *dst, const struct task *src);
  * runs), so no lock is taken. Safe to call on an already-empty task. */
 void env_free(struct task *t);
 
+/* --- Argument (argv) array + exec argument handoff ------------------------- */
+
+/* Deep-copy an argv vector into t->argv/t->argc, serializing on t->environ_lock.
+ * Strings are allocated via the SAME env string allocator as environ, so
+ * env_free() reclaims them with env_str_free(str, env_strlen(str)+1). Allocates
+ * the whole new array BEFORE freeing any prior argv, unwinding on any failure so
+ * a partial allocation never publishes. `argv` is a NULL-terminated-or-argc-
+ * bounded kernel-side array of NUL-terminated strings (SYS_EXEC copies the
+ * user vector into a kernel snapshot first -- task_set_argv never touches raw
+ * user pointers). argc<=0 or argv==NULL clears argv to empty. Caps at
+ * ARG_ARGC_MAX. Returns ENV_OK or a negative code. */
+int task_set_argv(struct task *t, int argc, const char *const *argv);
+
+/* Replace t->environ from a kernel-side array of `count` "KEY=VALUE" UTF-8
+ * strings (used for SYS_EXEC envp adoption; entries come from a kernel snapshot,
+ * never raw user pointers). Serializes on t->environ_lock; builds the whole new
+ * array before freeing the old one (unwind on failure leaves the prior environ
+ * intact). Malformed entries (no '=', over-long, empty name) are skipped.
+ * Returns ENV_OK or a negative code. */
+int env_adopt_block(struct task *t, const char *const *entries, uint32_t count);
+
+/* Encode an argv vector into a Windows command-line string in `out` (CommandLine
+ * / GetCommandLineW format; exact inverse of CommandLineToArgvW decode): quote
+ * any arg containing space/tab/quote or an empty arg; emit 2n backslashes before
+ * an interior quote and 2n+1 for a literal '"'; args separated by a single
+ * space. Returns the length written (excluding NUL); if the result would exceed
+ * `max`, `out` gets the truncated result + NUL and the return value is `max`
+ * (truncation sentinel). `out` is always NUL-terminated when max>0. */
+uint32_t argv_to_cmdline(int argc, const char *const *argv, char *out, uint32_t max);
+
+/* Pure sizing helper: EXACT number of user-stack bytes the initial argv frame
+ * consumes, matching the task_exec builder byte-for-byte -- qword-rounded string
+ * bytes + string-area parity pad + argc parity pad + the argv[] pointer array
+ * (argc + NULL) + the argc slot; it does NOT count the fixed auxv/AT_RANDOM/envp
+ * block (that is ARGV_FRAME_RESERVE). The SYS_EXEC path and the builder both add
+ * ARGV_FRAME_RESERVE and reject when the total would exceed USER_STACK_SIZE, so
+ * an undercount here (which would permit a stack overwrite) must never happen.
+ * Returns 0 for argc<=0/argv==NULL. */
+uint32_t argv_frame_bytes(int argc, const char *const *argv);
+
 /* --- %VAR% expansion (single-pass, Win32 ExpandEnvironmentStrings) --------- */
 
 /* Expand `%VAR%` references in `input` into `output` using `t`'s environment.

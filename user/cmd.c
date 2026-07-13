@@ -136,22 +136,8 @@ static int readline(char *buf, int max)
     return pos;
 }
 
-/* --- Command parsing --- */
-static int parse(char *line, char **argv, int max_args)
-{
-    int argc = 0;
-    while (*line && argc < max_args - 1) {
-        while (*line && isspace(*line))
-            *line++ = '\0';
-        if (*line == '\0')
-            break;
-        argv[argc++] = line;
-        while (*line && !isspace(*line))
-            line++;
-    }
-    argv[argc] = NULL;
-    return argc;
-}
+/* Command parsing uses the libc cmd_tokenize (Windows quoting rules) so quoted
+ * arguments with embedded spaces survive into argv. */
 
 /* --- Built-in commands --- */
 
@@ -407,7 +393,7 @@ static void cmd_ifconfig(void)
 /* fork+exec a child .exe and wait for completion.  Returns the child's exit
  * status, or -1 on fork/exec failure.  Output goes straight to the same
  * stdout/serial as cmd.exe -- the child inherits the console handles. */
-static int run_external(const char *path)
+static int run_external(const char *path, char *const argv[])
 {
     long pid = sys_fork();
     if (pid < 0) {
@@ -415,10 +401,11 @@ static int run_external(const char *path)
         return -1;
     }
     if (pid == 0) {
-        /* Child: exec replaces the cmd.exe image with the child .exe.
+        /* Child: exec replaces the cmd.exe image with the child .exe, passing
+         * the tokenized argv (envp NULL -> the child inherits our environment).
          * On success, exec never returns; on failure, fall through to
          * sys_exit(127) so the parent's waitpid sees a distinct code. */
-        sys_exec(path, strlen(path));
+        sys_exec(path, argv, (char *const *)0);
         sys_exit(127);
     }
     /* Parent: wait for the child to finish.  sys_waitpid returns the child's
@@ -428,17 +415,13 @@ static int run_external(const char *path)
 
 static void cmd_sysinfo(int argc, char **argv)
 {
-    /* The sysinfo binary owns subcommand parsing.  We just exec it with
-     * the same argv tail.  No subcommand -> sysinfo prints its own usage. */
+    /* The sysinfo binary owns subcommand parsing. Forward the full argv tail
+     * (argv[0]="sysinfo" + any subcommand) through fork+exec; no subcommand ->
+     * sysinfo prints its own usage. */
     (void)argc;
-    (void)argv;
-    /* For simplicity, the cmd.exe builtin re-spawns sysinfo with its
-     * canonical default subcommand "firmware-updates" when no argument
-     * is given; arg-passing through fork+exec is a wider syscall ABI
-     * change than this section needs.  Power users can call sys_exec
-     * directly via test_process.exe; cmd.exe gets the one common case. */
-    /* SYS_EXEC resolves under C:\ root; pass the bare filename. */
-    int rc = run_external("sysinfo.exe");
+    /* SYS_EXEC resolves the image under C:\ root; pass the bare filename as the
+     * path and the shell's argv as the child argument vector. */
+    int rc = run_external("sysinfo.exe", argv);
     if (rc < 0)
         printf("sysinfo: external exec failed (sysinfo.exe missing or kernel exec disabled)\n");
 }
@@ -514,7 +497,7 @@ int main(void)
         /* Add to history before parsing (parse modifies the string) */
         history_add(line);
 
-        argc = parse(line, argv, ARGV_MAX);
+        argc = cmd_tokenize(line, argv, ARGV_MAX);
         result = dispatch(argc, argv);
 
         if (result < 0)

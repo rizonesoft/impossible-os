@@ -34,12 +34,8 @@
 
 UTEST_DEFINE_STATE();
 
-/* Literal file name for sys_exec. The kernel SYS_EXEC handler today
- * ignores the length argument (see src/kernel/sched/syscall.c -- it
- * calls vfs_finddir with the raw pointer and reads until NUL) so the
- * length here is wrapper-ABI filler, not a semantic boundary. */
+/* Literal file name for sys_exec (resolved under C:\ by the kernel). */
 #define HELLO_EXE_NAME    "hello.exe"
-#define HELLO_EXE_NAMELEN 9
 
 int main(void)
 {
@@ -80,8 +76,14 @@ int main(void)
                  "sys_fork before exec returns >= 0");
 
     if (pid2 == 0) {
-        /* Child path -- replace our image with hello.exe. */
-        long exec_rc = sys_exec(HELLO_EXE_NAME, HELLO_EXE_NAMELEN);
+        /* Child path -- replace our image with hello.exe, passing a known argv
+         * so the child can prove the vector reached main() (hello returns 42
+         * only for exactly {"hello.exe","alpha","beta"}). envp NULL inherits
+         * our environment. */
+        char *const child_argv[] = {
+            (char *)HELLO_EXE_NAME, (char *)"alpha", (char *)"beta", (char *)0
+        };
+        long exec_rc = sys_exec(HELLO_EXE_NAME, child_argv, (char *const *)0);
         /* Only reached when exec FAILS (returns -1) -- successful
          * exec replaces the whole task image and never returns. */
         (void)exec_rc;
@@ -92,8 +94,10 @@ int main(void)
     UTEST_ASSERT(pid2 > 0,
                  "parent's fork-before-exec returns positive PID");
     long wait2 = sys_waitpid((int)pid2);
-    UTEST_ASSERT(wait2 == 42,
-                 "sys_exec(hello.exe) completed, waitpid returns hello's 42");
+    /* hello returns 40+argc; with 3 args it returns 43 -- proves argc AND the
+     * argv[] vector (walked via strlen) reached main() end-to-end. */
+    UTEST_ASSERT(wait2 == 43,
+                 "exec(hello.exe, argv) delivers argc/argv to main (returns 43)");
 
     /* ---- Sub-test 3: fork + kill --------------------------------- *
      * Child spins forever (bounded by the launcher's 10s watchdog as

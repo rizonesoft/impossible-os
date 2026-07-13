@@ -166,6 +166,90 @@ void free(void *ptr)
     (void)ptr;
 }
 
+/* --- Command-line tokenizer (Windows quoting) --- */
+
+int cmd_tokenize(char *line, char **argv, int max_argc)
+{
+    int argc = 0;
+    char *r = line;   /* read cursor */
+
+    if (!line || !argv || max_argc < 1) {
+        if (argv && max_argc >= 1)
+            argv[0] = (char *)0;
+        return 0;
+    }
+
+    for (;;) {
+        char *w;      /* write cursor for the compacted token */
+        int in_quotes = 0;
+
+        /* Skip inter-token whitespace. */
+        while (*r == ' ' || *r == '\t')
+            r++;
+        if (*r == '\0')
+            break;
+
+        /* Cap: leave room for the NULL terminator. Tokens beyond the cap are
+         * dropped; the caller warns. */
+        if (argc >= max_argc - 1)
+            break;
+
+        w = r;
+        argv[argc++] = w;
+
+        while (*r) {
+            if ((*r == ' ' || *r == '\t') && !in_quotes)
+                break;
+
+            if (*r == '\\') {
+                /* Count the backslash run and peek at what follows it. */
+                int nbs = 0;
+                while (*r == '\\') { nbs++; r++; }
+                if (*r == '"') {
+                    int k;
+                    for (k = 0; k < nbs / 2; k++) *w++ = '\\';
+                    if (nbs & 1) {
+                        *w++ = '"';          /* 2n+1: escaped literal quote */
+                        r++;
+                    } else {
+                        in_quotes = !in_quotes;  /* 2n: quote toggles */
+                        r++;
+                    }
+                } else {
+                    int k;
+                    for (k = 0; k < nbs; k++) *w++ = '\\';
+                }
+                continue;
+            }
+
+            if (*r == '"') {
+                if (in_quotes && r[1] == '"') {
+                    *w++ = '"';              /* "" inside quotes -> literal quote */
+                    r += 2;
+                } else {
+                    in_quotes = !in_quotes;
+                    r++;
+                }
+                continue;
+            }
+
+            *w++ = *r++;
+        }
+
+        /* NUL-terminate the compacted token. If the token ended on whitespace,
+         * advance past it; if on end-of-string, leave r at the NUL. */
+        if (*r) {
+            r++;         /* consume the separating whitespace */
+            *w = '\0';
+        } else {
+            *w = '\0';
+        }
+    }
+
+    argv[argc] = (char *)0;
+    return argc;
+}
+
 /* --- Process control --- */
 
 void exit(int status)

@@ -20,6 +20,7 @@
 
 #include "test.h"
 #include "stdio.h"   /* snprintf */
+#include "stdlib.h"  /* cmd_tokenize */
 
 UTEST_DEFINE_STATE();
 
@@ -75,6 +76,48 @@ int main(void)
                  "snprintf(\"%d\", 42) returns 2");
     UTEST_ASSERT(strcmp(sbuf, "42") == 0,
                  "snprintf(\"%d\", 42) writes \"42\\0\"");
+
+    /* ---- cmd_tokenize: Windows quoting rules --------------------- *
+     * Splits a command line in place into argv tokens. Verify plain
+     * whitespace splitting, quoted args with embedded spaces, adjacent
+     * quoted/unquoted runs, backslash-escaped quotes, and empty "". */
+    {
+        char *targv[8];
+        int tac;
+
+        char t1[] = "echo hello world";
+        tac = cmd_tokenize(t1, targv, 8);
+        UTEST_ASSERT(tac == 3 && strcmp(targv[0], "echo") == 0 &&
+                     strcmp(targv[1], "hello") == 0 &&
+                     strcmp(targv[2], "world") == 0 && targv[3] == 0,
+                     "cmd_tokenize splits plain args on whitespace");
+
+        char t2[] = "\"a b\" c";
+        tac = cmd_tokenize(t2, targv, 8);
+        UTEST_ASSERT(tac == 2 && strcmp(targv[0], "a b") == 0 &&
+                     strcmp(targv[1], "c") == 0,
+                     "cmd_tokenize keeps spaces inside quotes");
+
+        char t3[] = "a\"b\"c";
+        tac = cmd_tokenize(t3, targv, 8);
+        UTEST_ASSERT(tac == 1 && strcmp(targv[0], "abc") == 0,
+                     "cmd_tokenize joins adjacent quoted/unquoted runs");
+
+        char t4[] = "a\\\"b";        /* a \ " b -> a"b (2n+1 escaped quote) */
+        tac = cmd_tokenize(t4, targv, 8);
+        UTEST_ASSERT(tac == 1 && strcmp(targv[0], "a\"b") == 0,
+                     "cmd_tokenize backslash-escapes a literal quote");
+
+        char t5[] = "\"\"";          /* empty quoted string -> one empty token */
+        tac = cmd_tokenize(t5, targv, 8);
+        UTEST_ASSERT(tac == 1 && targv[0][0] == '\0',
+                     "cmd_tokenize yields one empty token for \"\"");
+
+        char t6[] = "   ";           /* whitespace-only -> zero tokens */
+        tac = cmd_tokenize(t6, targv, 8);
+        UTEST_ASSERT(tac == 0 && targv[0] == 0,
+                     "cmd_tokenize returns 0 for whitespace-only input");
+    }
 
     UTEST_END();
     return g_fail;

@@ -16,6 +16,7 @@
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on SYS_KILL */
 #include "kernel/nt/pledge.h"           /* pledge/unveil enforcement on the legacy ABI */
 #include "kernel/sched/task.h"
+#include "kernel/env.h"                 /* task_set_argv / env_adopt_block / argv_frame_bytes */
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
@@ -401,6 +402,103 @@ static void syscall_restore_entry_irql(KIRQL entry_irql, uint64_t syscall_nr)
     pc->current_irql = entry_irql;
 }
 
+/* ---- SYS_EXEC argv/envp ingestion ---------------------------------------- */
+
+/* Snapshot a NULL-terminated user char** vector (argv or envp) into a freshly
+ * kmalloc'd kernel array of kmalloc'd NUL-terminated strings, so the exec path
+ * never dereferences a raw user pointer. Bounds: at most `max_entries` entries,
+ * each string < ARG_STRING_MAX bytes, and the running aggregate <= *budget
+ * (decremented as strings are accepted). ProbeForRead gates every user access
+ * (range check only); the in-range-unmapped page fault is the kernel-wide
+ * non-recoverable copy_from_user gap owned by the memory-security syscall-handler
+ * retrofit, not this feature. On success *out is a NULL-terminated kernel array
+ * and *out_count is set; the caller frees via exec_free_vec. Returns 0, or:
+ *   EXEC_VEC_FAULT (-1) probe/copy failure, EXEC_VEC_NOMEM (-2) allocation,
+ *   EXEC_VEC_QUOTA (-3) too many entries / string too long / over budget. */
+#define EXEC_VEC_FAULT (-1)
+#define EXEC_VEC_NOMEM (-2)
+#define EXEC_VEC_QUOTA (-3)
+
+static void exec_free_vec(char **arr, uint32_t count)
+{
+    uint32_t i;
+    if (!arr)
+        return;
+    for (i = 0; i < count; i++)
+        if (arr[i])
+            kfree(arr[i]);
+    kfree(arr);
+}
+
+static int exec_snapshot_vec(const char *const *user_vec, uint32_t max_entries,
+                             uint64_t *budget, char ***out, uint32_t *out_count)
+{
+    char **arr;
+    uint32_t n = 0;
+    uint32_t i;
+
+    *out = (char **)0;
+    *out_count = 0;
+    if (!user_vec)
+        return 0;                       /* NULL vector -> empty (inherit / no-arg) */
+
+    arr = (char **)kmalloc((max_entries + 1u) * sizeof(char *));
+    if (!arr)
+        return EXEC_VEC_NOMEM;
+    for (i = 0; i <= max_entries; i++)
+        arr[i] = (char *)0;
+
+    for (;;) {
+        const char *uptr = (const char *)0;
+        uint32_t len = 0;
+        char *ks;
+
+        /* Next slot pointer. */
+        if (ProbeForRead(&user_vec[n], sizeof(char *), 8) != STATUS_SUCCESS)
+            { exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+        if (copy_from_user(&uptr, &user_vec[n], sizeof(char *)) != 0)
+            { exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+        if (!uptr)
+            break;                      /* NULL terminator */
+        if (n >= max_entries)
+            { exec_free_vec(arr, n); return EXEC_VEC_QUOTA; }
+
+        /* Length: bounded probe+copy per byte, reject if no NUL within cap. */
+        for (;;) {
+            char c;
+            if (len >= ARG_STRING_MAX)
+                { exec_free_vec(arr, n); return EXEC_VEC_QUOTA; }
+            if (ProbeForRead(uptr + len, 1, 1) != STATUS_SUCCESS)
+                { exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+            if (copy_from_user(&c, uptr + len, 1) != 0)
+                { exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+            if (c == '\0')
+                break;
+            len++;
+        }
+        if ((uint64_t)len + 1u > *budget)
+            { exec_free_vec(arr, n); return EXEC_VEC_QUOTA; }
+
+        ks = (char *)kmalloc(len + 1u);
+        if (!ks)
+            { exec_free_vec(arr, n); return EXEC_VEC_NOMEM; }
+        /* Single bulk copy of the validated [uptr, uptr+len] range; force NUL so
+         * a concurrent length change cannot leave the kernel string unterminated. */
+        if (ProbeForRead(uptr, len + 1u, 1) != STATUS_SUCCESS)
+            { kfree(ks); exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+        if (copy_from_user(ks, uptr, len + 1u) != 0)
+            { kfree(ks); exec_free_vec(arr, n); return EXEC_VEC_FAULT; }
+        ks[len] = '\0';
+        arr[n] = ks;
+        *budget -= (uint64_t)len + 1u;
+        n++;
+    }
+
+    *out = arr;
+    *out_count = n;
+    return 0;
+}
+
 static uint64_t syscall_handler(struct interrupt_frame *frame)
 {
     uint64_t syscall_nr = frame->rax;
@@ -446,14 +544,60 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = (int64_t)task_fork(frame);
         break;
     case SYS_EXEC: {
+        /* SYS_EXEC(path, argv, envp): arg1=path (NUL-terminated user string,
+         * resolved under C:\), arg2=user argv[] (char**, NULL-terminated, may be
+         * NULL), arg3=user envp[] (char**, NULL-terminated, NULL = inherit). */
         const char *filename = (const char *)arg1;
+        const char *const *user_argv = (const char *const *)arg2;
+        const char *const *user_envp = (const char *const *)arg3;
         struct vfs_node *root = vfs_get_drive_root('C');
         struct task *t = task_current();
         struct vfs_node *file;
         char resolved[VFS_MAX_PATH];
         int opened = 0;
+        char **kargv = (char **)0; uint32_t kargc = 0;
+        char **kenvp = (char **)0; uint32_t kenvc = 0;
+        uint64_t arg_budget = ARG_MAX;
+        int snap_rc;
 
         if (!root || !filename) { ret = -1; break; }
+
+        /* Fail closed: exec replaces the process image + rebuilds the main
+         * stack/PEB and (below) argv/environ, but there is no sibling-thread
+         * exec barrier yet -- a running sibling could execute overwritten
+         * old-image code or observe torn process-wide state. Reject exec while
+         * any thread other than the main thread is live (fork-then-exec runs in
+         * a single-threaded child, so the common path is unaffected).
+         * XREF 03-memory-concurrency/TODO-02-memory-security (exec barrier). */
+        if (t && t->num_threads > 1) {
+            klog(LOG_WARN, "sys",
+                 "exec rejected: %u live threads (no sibling-exec barrier)",
+                 (uint64_t)t->num_threads);
+            ret = -1; break;
+        }
+
+        /* Snapshot argv/envp out of user space into kernel storage BEFORE any
+         * image mutation, so a failure here leaves the caller unchanged and the
+         * loader never dereferences raw user pointers. */
+        snap_rc = exec_snapshot_vec(user_argv, ARG_ARGC_MAX, &arg_budget,
+                                    &kargv, &kargc);
+        if (snap_rc == 0)
+            snap_rc = exec_snapshot_vec(user_envp, ENV_MAX_ENTRIES, &arg_budget,
+                                        &kenvp, &kenvc);
+        if (snap_rc != 0) {
+            exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+            ret = -1; break;                /* STATUS_QUOTA_EXCEEDED / fault / OOM */
+        }
+
+        /* Exact argv frame must fit the fixed 16 KiB user stack (argv strings +
+         * pointer array + fixed auxv/AT_RANDOM/terminator reserve). */
+        if (kargc > 0 &&
+            (uint64_t)argv_frame_bytes((int)kargc, (const char *const *)kargv) +
+                ARGV_FRAME_RESERVE > USER_STACK_SIZE) {
+            exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+            klog(LOG_WARN, "sys", "exec rejected: argv frame exceeds user stack");
+            ret = -1; break;
+        }
 
         /* A filesystem-restricted task must have unveil 'x' on the exact image
          * path it executes (UNVEIL_X's only enforcement site). Resolve
@@ -462,6 +606,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         if (t && __atomic_load_n(&t->unveil_active, __ATOMIC_ACQUIRE)) {
             if (vfs_resolve_path("C:\\", filename, resolved, sizeof(resolved)) != 0 ||
                 unveil_check(t, resolved, UNVEIL_X) != STATUS_SUCCESS) {
+                exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
                 ret = -1; break;
             }
             file = vfs_open(resolved, VFS_O_READ);
@@ -471,6 +616,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         }
         if (!file) {
             klog(LOG_DEBUG, "sys", "File not found: %s", filename);
+            exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
             ret = -1;
             break;
         }
@@ -478,9 +624,42 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         {
             uint8_t *buf = (uint8_t *)kmalloc(file->size);
             uint64_t fsz = file->size;
-            if (!buf) { if (opened) vfs_close(file); ret = -1; break; }
+            if (!buf) {
+                if (opened) vfs_close(file);
+                exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+                ret = -1; break;
+            }
             vfs_read(file, 0, (uint32_t)fsz, buf);
             if (opened) vfs_close(file);
+
+            /* Commit argv (always resets it: empty argv -> frame builder falls
+             * back to argc=1/name), then -- ONLY if argv succeeded -- replace
+             * environ from envp (NULL envp inherits, execv semantics). Ordering
+             * argv-before-env means an argv failure never leaves a new env with
+             * an old argv; both deep-copy the snapshot (freed right after) and
+             * unwind on failure leaving the prior value intact. An install
+             * failure fails the exec BEFORE task_exec so the loader never runs
+             * against a half-updated argv/env. Full transactionality across the
+             * whole exec (roll back / terminate on a task_exec failure after
+             * commit, and stage the commit at task_exec's no-return point) is
+             * tracked as a follow-up in the argv-array-handoff TODO -- today
+             * every exec caller returns -1 to a child that sys_exit()s, so no
+             * surviving process observes the transient state. */
+            {
+                int as = task_set_argv(t, (int)kargc, (const char *const *)kargv);
+                int es = (as == ENV_OK && user_envp)
+                    ? env_adopt_block(t, (const char *const *)kenvp, kenvc)
+                    : ENV_OK;
+                exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+                if (as != ENV_OK || es != ENV_OK) {
+                    kfree(buf);
+                    klog(LOG_WARN, "sys",
+                         "exec: argv/env install failed (argv=%d env=%d)",
+                         (uint64_t)as, (uint64_t)es);
+                    ret = -1; break;
+                }
+            }
+
             ret = (int64_t)task_exec(buf, fsz);
             if (ret < 0) kfree(buf);
         }

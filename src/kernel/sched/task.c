@@ -1811,6 +1811,13 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].parent_task = child_pid;
     tasks[child_pid].threads[0].join_tid = -1;
     tasks[child_pid].threads[0].priority = THREAD_PRIO_NORMAL;
+    /* base_priority MUST be set alongside priority: it is the value
+     * thread_restore_priority() reverts to after any mutex priority-inheritance
+     * boost. A forked child left with base_priority=0 (zero-init slot) gets its
+     * priority silently reset to 0 -- and thus starved -- by the first
+     * mutex_unlock it performs (e.g. task_set_argv on the exec path). Mirror the
+     * task_create_* init. */
+    tasks[child_pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].threads[0].rsp = (uint64_t)sp;
@@ -2062,9 +2069,41 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
         if (name && name[0])
             peb_build_ustr(&pp->ImagePathName, &buf, name);
 
-        /* CommandLine (same as image path for now) */
-        if (name && name[0])
-            peb_build_ustr(&pp->CommandLine, &buf, name);
+        /* CommandLine: encode from task->argv so GetCommandLineW reflects the
+         * full argument vector; fall back to the image name when argv is unset.
+         * peb_build_ustr does NOT bound-check, so the encode buffer is sized to
+         * the RTLPP page's FULL remaining space (reserving room for
+         * CurrentDirectory, built next) -- kmalloc'd, not a fixed kernel-stack
+         * array (a large stack array risks the task-stack guard during boot).
+         * argv_to_cmdline writes 1 ASCII byte per output wchar, so the byte cap
+         * equals the wchar budget; the page budget is <= 2 KiB so kmalloc fits.
+         * A command line exceeding the whole page still truncates cleanly + stays
+         * NUL-terminated (best-effort GetCommandLineW; the stack argv/task->argv
+         * are authoritative). */
+        {
+            const char *cl = name;
+            char *cmdline = (char *)0;
+            uint16_t *page_end = (uint16_t *)((uint8_t *)pp + 4096);
+            uint32_t cwd_len = 0;
+            uint32_t avail;                 /* wchars available for CommandLine */
+            while (cwd_snap[cwd_len]) cwd_len++;
+            avail = (page_end > buf) ? (uint32_t)(page_end - buf) : 0;
+            avail = (avail > cwd_len + 2u) ? avail - (cwd_len + 2u) : 0;
+            if (avail > 0 && pid < TASK_MAX &&
+                tasks[pid].argv && tasks[pid].argc > 0) {
+                cmdline = (char *)kmalloc(avail);   /* avail <= ~2 KiB */
+                if (cmdline) {
+                    argv_to_cmdline(tasks[pid].argc,
+                                    (const char *const *)tasks[pid].argv,
+                                    cmdline, avail);
+                    cl = cmdline;
+                }
+            }
+            if (cl && cl[0])
+                peb_build_ustr(&pp->CommandLine, &buf, cl);
+            if (cmdline)
+                kfree(cmdline);
+        }
 
         /* CurrentDirectory -- synced from task->cwd, not hardcoded */
         peb_build_ustr(&pp->CurrentDirectoryDosPath, &buf, cwd_snap);
@@ -2218,6 +2257,14 @@ int task_exec(const uint8_t *data, uint64_t size)
     uint64_t *sp;
     uint32_t pid = current_task;
     uint8_t *new_kstack;
+    /* argv-frame resources are acquired BEFORE the guarded kernel stack (below)
+     * so an argv OOM / over-budget rejection returns before any further
+     * allocation and never leaks the guard stack. Populated only when the task
+     * carries an argv (SYS_EXEC handoff); NULL for kernel-launched binaries. */
+    char    **t_argv = (char **)0;
+    int       t_argc = 0;
+    uint64_t *argv_addrs = (uint64_t *)0;
+    int       use_argv = 0;
 
     /* Exec must be called from the main thread (tid 0).  A secondary user
      * thread calling exec would leave stale threads[N].kernel_rsp in the
@@ -2345,6 +2392,32 @@ int task_exec(const uint8_t *data, uint64_t size)
         }
     }
 
+    /* Acquire the argv-address table BEFORE the guard stack below, and validate
+     * the exact argv frame fits the fixed 16 KiB user stack, so a failure here
+     * returns without leaking the guard stack. When the task carries an argv it
+     * MUST be used or the exec fails -- a name-path fallback would leave the
+     * stack argv disagreeing with the PEB CommandLine (built from the full
+     * argv). Name path (argc=1) applies only when argv is unset. */
+    t_argv = tasks[pid].argv;
+    t_argc = tasks[pid].argc;
+    if (t_argv && t_argc > 0) {
+        uint32_t need = argv_frame_bytes(t_argc, (const char *const *)t_argv);
+        if ((uint32_t)t_argc > ARG_ARGC_MAX ||
+            (uint64_t)need + ARGV_FRAME_RESERVE > USER_STACK_SIZE) {
+            klog(LOG_ERROR, "sched",
+                 "task_exec: argv frame (%u B, argc %d) exceeds user stack",
+                 need, t_argc);
+            return -1;
+        }
+        argv_addrs = (uint64_t *)kmalloc((uint32_t)t_argc * sizeof(uint64_t));
+        if (!argv_addrs) {
+            klog(LOG_ERROR, "sched",
+                 "task_exec: OOM allocating argv address table (argc %d)", t_argc);
+            return -1;
+        }
+        use_argv = 1;
+    }
+
     /* Allocate a FRESH kernel stack with guard page - we cannot reuse the
      * current one because the calling function (exec_loader_func) is still on it. */
     {
@@ -2352,6 +2425,7 @@ int task_exec(const uint8_t *data, uint64_t size)
         uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
         if (!stack_base) {
             klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
+            if (argv_addrs) kfree(argv_addrs);
             return -1;
         }
         vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
@@ -2505,16 +2579,49 @@ int task_exec(const uint8_t *data, uint64_t size)
         /* Count name length */
         { const char *p = name; while (*p++) name_len++; }
 
-        /* String data at very top of stack */
-        ustk -= 2;  /* room for string (up to 16 bytes aligned) */
-        {
-            char *str = (char *)ustk;
-            uint32_t i;
-            for (i = 0; i <= name_len && i < 15; i++)
-                str[i] = name[i];
-            str[i > 0 ? i : 0] = '\0';
+        /* Argument strings at the very top of the user stack. use_argv / argv_addrs
+         * were resolved above (before the guard stack) so any argv failure could
+         * not leak it. When argv is present it MUST be used (a name-path fallback
+         * would disagree with the PEB CommandLine built from the full argv); the
+         * name path (argc=1) applies only when argv is unset. argv is read here on
+         * thread 0 with no concurrent task_set_argv, so no environ_lock is needed. */
+        uint64_t argv0_addr;
+
+        if (use_argv) {
+            int ai;
+            uint32_t str_qwords = 0;
+            /* Push each argv string top-down, recording its user address. */
+            for (ai = t_argc - 1; ai >= 0; ai--) {
+                const char *s = t_argv[ai] ? t_argv[ai] : "";
+                uint32_t slen = 0; while (s[slen]) slen++;
+                uint32_t qw = (slen + 1u + 7u) / 8u;
+                ustk -= qw;
+                { char *dst = (char *)ustk; uint32_t k; for (k = 0; k <= slen; k++) dst[k] = s[k]; }
+                argv_addrs[ai] = (uint64_t)ustk;
+                str_qwords += qw;
+            }
+            /* Keep the string area an even qword count so ustk stays 16-aligned
+             * (the name path below pushes exactly 2 qwords). */
+            if (str_qwords & 1u) { ustk--; *ustk = 0; }
+            argv0_addr = argv_addrs[0];
+        } else {
+            /* String data at very top of stack */
+            ustk -= 2;  /* room for string (up to 16 bytes aligned) */
+            {
+                char *str = (char *)ustk;
+                uint32_t i;
+                for (i = 0; i <= name_len && i < 15; i++)
+                    str[i] = name[i];
+                str[i > 0 ? i : 0] = '\0';
+            }
+            argv0_addr = (uint64_t)ustk;
         }
-        uint64_t argv0_addr = (uint64_t)ustk;
+
+        /* SysV entry requires &argc 16-byte aligned. Every push below is an even
+         * qword count (AT_RANDOM=2, auxv=2*naux) EXCEPT the (argc+3)-qword
+         * pointer block, which is odd when argc is even. Pad one qword here
+         * (above auxv, an ABI-unspecified region) so argc lands aligned. */
+        if (use_argv && !((uint32_t)t_argc & 1u)) { ustk--; *ustk = 0; }
 
         /*: push 16 random bytes for AT_RANDOM. glibc/musl read exactly
          * 16 bytes from the address pushed in AT_RANDOM as the seed for
@@ -2577,6 +2684,16 @@ int task_exec(const uint8_t *data, uint64_t size)
 
         #undef AUXV_EMIT
 
+        /* ARGV_FRAME_RESERVE must equal the builder's fixed overhead:
+         * AT_RANDOM (16 B) + auxv (naux * 16 B) + envp NULL (8 B). If the auxv
+         * pair count ever changes, the SYS_EXEC / task_exec argv fit check drifts
+         * (a too-small reserve would risk a stack overwrite). Warn on drift so the
+         * mismatch is caught the first time an argv-bearing exec runs. */
+        if (use_argv && (24u + naux * 16u) != ARGV_FRAME_RESERVE)
+            klog(LOG_WARN, "sched",
+                 "ARGV_FRAME_RESERVE drift: builder fixed overhead=%u, reserve=%u",
+                 (uint64_t)(24u + naux * 16u), (uint64_t)ARGV_FRAME_RESERVE);
+
         /* Bulk-copy auxv block onto stack. Each pair = 2 qwords. */
         ustk -= naux * 2;
         {
@@ -2597,23 +2714,36 @@ int task_exec(const uint8_t *data, uint64_t size)
          * so they're reclaimed with it. */
         tasks[pid].next_section_view_va = 0;
 
-        /* envp NULL terminator */
+        /* envp NULL terminator (no env on the ELF stack; env is via the PEB). */
         ustk--;
         *ustk = 0;
 
-        /* argv[1] = NULL (terminator) */
-        ustk--;
-        *ustk = 0;
+        if (use_argv) {
+            int ai;
+            /* argv[] NULL terminator, then argv[argc-1..0] so argc lands lowest
+             * ([rsp]=argc, [rsp+8]=argv[0], ...). */
+            ustk--; *ustk = 0;
+            for (ai = t_argc - 1; ai >= 0; ai--) {
+                ustk--; *ustk = argv_addrs[ai];
+            }
+            ustk--; *ustk = (uint64_t)t_argc;   /* argc */
+            kfree(argv_addrs);
+        } else {
+            /* argv[1] = NULL (terminator) */
+            ustk--;
+            *ustk = 0;
 
-        /* argv[0] = program name */
-        ustk--;
-        *ustk = argv0_addr;
+            /* argv[0] = program name */
+            ustk--;
+            *ustk = argv0_addr;
 
-        /* argc = 1 */
-        ustk--;
-        *ustk = 1;
+            /* argc = 1 */
+            ustk--;
+            *ustk = 1;
+        }
 
-        /* Ensure 16-byte alignment */
+        /* &argc is 16-byte aligned by construction (pads emitted above auxv);
+         * the mask is a defensive no-op. */
         user_rsp = (uint64_t)ustk & ~0xFULL;
 
         klog(LOG_INFO, "sched",
