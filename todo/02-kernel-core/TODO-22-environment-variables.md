@@ -68,7 +68,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
 | 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
-| 💎   |   6   | Win32 API wrappers                                 | §5                         |  [ ]   |
+| 💎   |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
 | 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [ ]   |
 | 💎   |   8   | `.profile` startup script                          | §7                         |  [ ]   |
 | ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [ ]   |
@@ -284,32 +284,34 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 6. Win32 API Wrappers
 
-- [ ] `GetEnvironmentVariableA(lpName, lpBuffer, nSize)`:
+- [/] `GetEnvironmentVariableA(lpName, lpBuffer, nSize)`:
   - Convert `lpName` to UTF-16; call `NtQueryEnvironmentVariable`; convert UTF-16 result back to UTF-8 into `lpBuffer`
   - Return character count on success; if `nSize` too small, return required size and `SetLastError(ERROR_INSUFFICIENT_BUFFER)`
-- [ ] `GetEnvironmentVariableW(lpName, lpBuffer, nSize)` -- calls `NtQueryEnvironmentVariable` directly with UTF-16 `lpBuffer`
-- [ ] `SetEnvironmentVariableA/W(lpName, lpValue)`:
+- [/] `GetEnvironmentVariableW(lpName, lpBuffer, nSize)` -- calls `NtQueryEnvironmentVariable` directly with UTF-16 `lpBuffer`
+- [/] `SetEnvironmentVariableA/W(lpName, lpValue)`:
   - `lpValue == NULL` → delete the variable
   - Call `NtSetEnvironmentVariable`; map `STATUS_*` to `ERROR_*` via `RtlNtStatusToDosError`; return `TRUE` / `FALSE`
-- [ ] Optional PEB-block re-sync (← XREF §5 `NtSetEnvironmentVariable`): rebuild `PEB->ProcessParameters->Environment` from `task->environ` after a set/delete for raw-block readers. Compat nicety -- in-tree readers use `task->environ`.
+- [/] Optional PEB-block re-sync (← XREF §5 `NtSetEnvironmentVariable`): rebuild `PEB->ProcessParameters->Environment` from `task->environ` after a set/delete for raw-block readers. Compat nicety -- in-tree readers use `task->environ`.
 
-- [ ] `ExpandEnvironmentStringsA(lpSrc, lpDst, nSize)`:
+- [/] `ExpandEnvironmentStringsA(lpSrc, lpDst, nSize)`:
   - Convert `lpSrc` to UTF-16; call `RtlExpandEnvironmentStrings_U` (same section, RTL helper above); convert UTF-16 result to UTF-8 into `lpDst`
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
-- [ ] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
-- [ ] For a user-supplied UTF-16 `Environment` block, `ProbeForRead` + copy into a kernel snapshot and verify its double-NUL terminator is within the copied length before the Rtl call (`nt/nt_rtlenv.h`). NULL needs no probe
-- [ ] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: two passes linear-scan the block per %VAR% (~1.4e9 WCHARs worst case). Add a one-time block index, or cap Source at the ExpandEnvironmentStrings boundary
+- [/] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
+- [/] For a user-supplied UTF-16 `Environment` block, `ProbeForRead` + copy into a kernel snapshot and verify its double-NUL terminator is within the copied length before the Rtl call (`nt/nt_rtlenv.h`). NULL needs no probe
+- [/] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: two passes linear-scan the block per %VAR% (~1.4e9 WCHARs worst case). Add a one-time block index, or cap Source at the ExpandEnvironmentStrings boundary
 
-- [ ] `GetEnvironmentStringsW()`:
+- [/] `GetEnvironmentStringsW()`:
   - Walk `current_task->environ[]`; convert each `"KEY=VALUE"` to UTF-16; pack into a contiguous buffer as null-separated entries with a double-null at the end (matches the Win32 format); allocate with `LocalAlloc`
   - Return pointer; caller must call `FreeEnvironmentStringsW` when done
-- [ ] `GetEnvironmentStringsA()` -- UTF-8 variant; same format in ANSI
-- [ ] `FreeEnvironmentStringsW(pEnvBlock)` → `LocalFree(pEnvBlock)`
+- [/] `GetEnvironmentStringsA()` -- UTF-8 variant; same format in ANSI
+- [/] `FreeEnvironmentStringsW(pEnvBlock)` → `LocalFree(pEnvBlock)`
 
-- [ ] `GetCommandLineW()` → returns `PEB->ProcessParameters->CommandLine.Buffer` (UTF-16 command line string, built by `TODO-11-peb-teb-user-abi.md §7` from `task->argv`)
-- [ ] `GetCommandLineA()` → convert `CommandLine.Buffer` UTF-16 → UTF-8 and cache in a static per-process buffer (allocated on first call)
+- [/] `GetCommandLineW()` → returns `PEB->ProcessParameters->CommandLine.Buffer` (UTF-16 command line string, built by `TODO-11-peb-teb-user-abi.md §7` from `task->argv`)
+- [/] `GetCommandLineA()` → convert `CommandLine.Buffer` UTF-16 → UTF-8 and cache in a static per-process buffer (allocated on first call)
 
-- [ ] Commit: `"kernel/env: GetEnvironmentVariable, SetEnvironmentVariable, ExpandEnvironmentStrings, GetCommandLine Win32 wrappers"`
+- [/] Commit: `"kernel/env: GetEnvironmentVariable, SetEnvironmentVariable, ExpandEnvironmentStrings, GetCommandLine Win32 wrappers"`
+
+> **Deferred:** [blocked] §6 Win32 env/command-line wrappers need user-mode kernel32/ntdll runtime primitives that do not exist yet -- `LocalAlloc`/`LocalFree`, `SetLastError`/`GetLastError`, and UTF-8<->UTF-16 conversion (`MultiByteToWideChar`/`WideCharToMultiByte`); `GetCommandLineW` also needs the PEB CommandLine. The syscall layer (§5) is shipped; these are user-platform runtime prereqs owned elsewhere. -> XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md` §7 (item: "kernel32 conversion + last-error shims") + §2 (item: "RtlHeap Process Heap Allocator" at line 169); `02-kernel-core/TODO-11-peb-teb-user-abi.md` §7 for the PEB CommandLine.
 
 **Test checkpoint:** `GetEnvironmentVariableW` returns `SYSTEMROOT`; `ExpandEnvironmentStringsW` expands. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
