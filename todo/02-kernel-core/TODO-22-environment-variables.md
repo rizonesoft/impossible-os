@@ -8,13 +8,15 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 # TODO-22 -- Environment Variables & Process Arguments
 
+> **Validated:** 2026-07-13 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed cross-file XREF section-number drift (TODO-11 §2/§7 swap + §9->§5, TODO-12 §2->§7, TODO-14 §5->§4, TODO-15 §3->§9, D12 T04->T02 label)
+
 > **Goal:** Implement per-process environment variable storage, `%VAR%` expansion, `PATH`-based command lookup, `argv`/`argc` kernel preparation, the Win32 `GetEnvironmentVariable`/`SetEnvironmentVariable` API surface, and the `.profile` shell startup script. No env API exists at all today: there is no `env_get`, no `SYS_GETENV`, no `PATH` lookup, and no argv array in `struct task`. Without this, every user-mode program launches with no arguments, no environment, and no way to find executables on disk.
 
 > [!IMPORTANT]
 > **Current state:** Confirmed absent in tree: no `src/kernel/env.c`; `include/kernel/sched/task.h` has no `environ` / `argv` / `argc` fields; kernel `*.c` / `*.h` contain no `env_get`, `GetEnvironmentVariable`, or `CreateEnvironmentBlock` definitions.
 > **Scope boundary with adjacent TODOs:**
-> - `TODO-11-peb-teb-user-abi.md §7` defines `RTL_USER_PROCESS_PARAMETERS.Environment` (type/layout); `TODO-11-peb-teb-user-abi.md §9` allocates PEB/process parameters and the initial env block pointer target.
-> - `TODO-11-peb-teb-user-abi.md §2` defines the initial user stack frame. Today ELF uses `envp NULL`; Win32 reads `PEB->ProcessParameters`. When TODO-22 adds `task->argv` / `task->environ`, extend §7 (or the exec path) so the ring-3 frame and `CommandLine` consume those fields; do not assume §7 already pushes a full `envp[]` from `struct task`.
+> - `TODO-11-peb-teb-user-abi.md §2` defines `RTL_USER_PROCESS_PARAMETERS.Environment` (type/layout); `TODO-11-peb-teb-user-abi.md §5` allocates PEB/process parameters and the initial env block pointer target.
+> - `TODO-11-peb-teb-user-abi.md §7` defines the initial user stack frame. Today ELF uses `envp NULL`; Win32 reads `PEB->ProcessParameters`. When TODO-22 adds `task->argv` / `task->environ`, extend §7 (or the exec path) so the ring-3 frame and `CommandLine` consume those fields; do not assume §7 already pushes a full `envp[]` from `struct task`.
 > - **This TODO** owns: the kernel-side `char **environ` storage in `struct task`, `env_get/set/unset/expand`, population of default variables from Registry, `argv[]` preparation in the kernel and shell, `NtSetEnvironmentVariable` / `NtQueryEnvironmentVariable` syscalls, Win32 `GetEnvironmentVariable`/`ExpandEnvironmentStrings` wrappers, PATH lookup, `SET` shell command, and `.profile` startup.
 
 ---
@@ -24,16 +26,16 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - `src/kernel/sched/task.c` -- `struct task` (environ and argv fields must be added)
 - `include/kernel/sched/task.h` -- task struct header
 - `src/kernel/sched/syscall.c` -- syscall dispatch table
-- `src/kernel/registry.c` / `include/registry.h` -- `RegQueryValueEx`, `NtQueryValueKey` / `NtEnumerateValueKey` path (TODO-14 §5) for default env vars at boot
+- `src/kernel/registry.c` / `include/registry.h` -- `RegQueryValueEx`, `NtQueryValueKey` / `NtEnumerateValueKey` path (TODO-14 §4) for default env vars at boot
 - `src/desktop/terminal.c` -- terminal/shell command dispatch
-- → XREF: `TODO-11-peb-teb-user-abi.md §7` -- `RTL_USER_PROCESS_PARAMETERS.Environment` field (layout)
-- → XREF: `TODO-11-peb-teb-user-abi.md §9` -- PEB / process-parameters allocation; `Environment` pointer and block backing store
-- → XREF: `TODO-11-peb-teb-user-abi.md §2` -- initial user stack; must be updated to consume `task->argv` / `task->environ` when populated (see IMPORTANT above)
+- → XREF: `TODO-11-peb-teb-user-abi.md §2` -- `RTL_USER_PROCESS_PARAMETERS.Environment` field (layout)
+- → XREF: `TODO-11-peb-teb-user-abi.md §5` -- PEB / process-parameters allocation; `Environment` pointer and block backing store
+- → XREF: `TODO-11-peb-teb-user-abi.md §7` -- initial user stack; must be updated to consume `task->argv` / `task->environ` when populated (see IMPORTANT above)
 - → XREF: `TODO-12-native-api-ssdt.md §5` -- reserve **new** SSDT indices for `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable` (do not use `0x00D2`..`0x00D6`; those are `NtQuerySystemEnvironmentValue*` UEFI firmware APIs in `service_numbers.h`)
-- → XREF: `TODO-12-native-api-ssdt.md §2` -- `NtCreateProcess` path must call `env_copy()` / argv inheritance when TODO-22 §1 lands (child private copies)
+- → XREF: `TODO-12-native-api-ssdt.md §7` -- `NtCreateProcess` path must call `env_copy()` / argv inheritance when TODO-22 §1 lands (child private copies)
 - → XREF: `TODO-15-security-reference-monitor.md §7` -- `ACCESS_TOKEN` for `CreateEnvironmentBlock` hToken parameter and env sanitization for elevated processes (TODO-22 §13, §16)
-- → XREF: `TODO-14-registry-completion.md §5` -- `NtQueryValueKey` / `NtEnumerateValueKey` (and related) for `Session Manager\Environment`, `HKCU\Environment`, App Paths (§17)
-- → XREF: `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` (D12 T04) -- SDK/user-mode contracts, `env_expand_path` (`%1`..`%9`), optional `SYS_GETENV` shims (COMPLEMENT; kernel storage stays in this TODO)
+- → XREF: `TODO-14-registry-completion.md §4` -- `NtQueryValueKey` / `NtEnumerateValueKey` (and related) for `Session Manager\Environment`, `HKCU\Environment`, App Paths (§17)
+- → XREF: `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` (D12 T02) -- SDK/user-mode contracts, `env_expand_path` (`%1`..`%9`), optional `SYS_GETENV` shims (COMPLEMENT; kernel storage stays in this TODO)
 - → XREF: `TODO-01-kernel-init-sequencing.md §4` -- Phase 2 timing for Registry-backed defaults vs bootstrap env (§2)
 - → XREF: `TODO-23-exception-dispatch-seh.md §13` -- `ProbeForRead` / `ProbeForWrite` for syscall buffers (§4, §5)
 
@@ -115,7 +117,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 ## 2. System Default Variables from Registry
 
 - [ ] `env_init_defaults(task)` -- called once for every newly created process:
-  1. Read system env vars from Registry key `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-14-registry-completion.md §5`); enumerate all values; call `env_set` for each
+  1. Read system env vars from Registry key `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-14-registry-completion.md §4`); enumerate all values; call `env_set` for each
   2. Read user env vars from `HKCU\Environment`; set for each (user vars override system vars with the same name)
   3. Synthesise computed variables that cannot come from Registry:
      - `COMPUTERNAME` ← `HKLM\SYSTEM\ComputerName\ActiveComputerName\ComputerName` (default `"IMPOSSIBLE-PC"`)
@@ -174,7 +176,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 4. argv Array: Kernel Storage & Shell Parsing
 
-- [ ] `task->argv` is set by the kernel exec path before calling `TODO-11-peb-teb-user-abi.md §2` (which reads `task->argv` to build the stack frame and `CommandLine`):
+- [ ] `task->argv` is set by the kernel exec path before calling `TODO-11-peb-teb-user-abi.md §7` (which reads `task->argv` to build the stack frame and `CommandLine`):
   ```c
   int task_set_argv(struct task *t, int argc, const char *const *argv);
   /* deep-copies argv strings; sets t->argc, t->argv */
@@ -196,8 +198,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Validate each `argv[i]` string pointer
   - Call `task_set_argv(new_task, argc, argv)` -- deep copy into kernel
   - Call `env_copy(new_task, ...)` from `envp[]` -- deep copy env
-  - Proceed to binary loader → `TODO-11-peb-teb-user-abi.md §2` reads `task->argv` and `task->environ` to build the stack frame
-- [ ] `GetCommandLineW()` Win32 wrapper (§6): returns `PEB->ProcessParameters->CommandLine`, which TODO-11 §2 builds from `task->argv[0]` + the joined argv string
+  - Proceed to binary loader → `TODO-11-peb-teb-user-abi.md §7` reads `task->argv` and `task->environ` to build the stack frame
+- [ ] `GetCommandLineW()` Win32 wrapper (§6): returns `PEB->ProcessParameters->CommandLine`, which TODO-11 §7 builds from `task->argv[0]` + the joined argv string
 
 - [ ] Commit: `"kernel/env: argv array in task, shell tokenizer, exec argument handoff"`
 
@@ -253,7 +255,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] `GetEnvironmentStringsA()` -- UTF-8 variant; same format in ANSI
 - [ ] `FreeEnvironmentStringsW(pEnvBlock)` → `LocalFree(pEnvBlock)`
 
-- [ ] `GetCommandLineW()` → returns `PEB->ProcessParameters->CommandLine.Buffer` (UTF-16 command line string, built by `TODO-11-peb-teb-user-abi.md §2` from `task->argv`)
+- [ ] `GetCommandLineW()` → returns `PEB->ProcessParameters->CommandLine.Buffer` (UTF-16 command line string, built by `TODO-11-peb-teb-user-abi.md §7` from `task->argv`)
 - [ ] `GetCommandLineA()` → convert `CommandLine.Buffer` UTF-16 → UTF-8 and cache in a static per-process buffer (allocated on first call)
 
 - [ ] Commit: `"kernel/env: GetEnvironmentVariable, SetEnvironmentVariable, ExpandEnvironmentStrings, GetCommandLine Win32 wrappers"`
@@ -326,7 +328,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] Add "Environment Variables" button to `sysdm.cpl` (System Properties): dialog with System (admin) and User list-views; Edit/New/Delete writes Registry + `WM_SETTINGCHANGE`
 - [ ] Dialog layout matches Windows 11's Environment Variables dialog for user familiarity
 - [ ] `setx VAR VALUE` -- set an environment variable **persistently** (writes to `HKCU\Environment` via Registry API + triggers `WM_SETTINGCHANGE`); current session not affected (matches Windows `setx.exe` behaviour)
-- [ ] `setx VAR VALUE /M` -- write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-15-security-reference-monitor.md §3`)
+- [ ] `setx VAR VALUE /M` -- write to system-wide `HKLM\...\Session Manager\Environment`; requires admin token (→ XREF `TODO-15-security-reference-monitor.md §9`)
 - [ ] `setx /?` -- print usage
 - [ ] **`setx` value length (Win11 parity):** Microsoft documents a **1024-character** cap on the value assigned by `setx`; excess is truncated and can corrupt an existing variable; implement the same cap (or emit a hard error instead of silent truncate) and mention it in `setx /?` (see Microsoft Learn `setx` Remarks).
 
@@ -345,7 +347,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Block terminated by extra `\0` (ANSI) or `\0\0` (Unicode / 4 zero bytes)
   - Entries must be in sorted order
   - Return total block size in bytes; return `STATUS_BUFFER_TOO_SMALL` if `max_len` exceeded
-  - **CREATE_UNICODE_ENVIRONMENT:** When `NtCreateProcess` / Win32 `CreateProcess*` receives a non-NULL caller-built UTF-16 `lpEnvironment`, set `CREATE_UNICODE_ENVIRONMENT` in creation flags; omit for inherited default env or ANSI blocks (Microsoft Learn: "Changing Environment Variables"; `CreateEnvironmentBlock` remarks). Wire via → XREF `TODO-12-native-api-ssdt.md §2` and `TODO-21-process-model-extensions.md §2`.
+  - **CREATE_UNICODE_ENVIRONMENT:** When `NtCreateProcess` / Win32 `CreateProcess*` receives a non-NULL caller-built UTF-16 `lpEnvironment`, set `CREATE_UNICODE_ENVIRONMENT` in creation flags; omit for inherited default env or ANSI blocks (Microsoft Learn: "Changing Environment Variables"; `CreateEnvironmentBlock` remarks). Wire via → XREF `TODO-12-native-api-ssdt.md §7` and `TODO-21-process-model-extensions.md §2`.
 - [ ] `env_parse_block(task, block, len, is_unicode)` -- parse a contiguous env block (from `lpEnvironment`) into the `task->environ[]` array; validate: no name contains `=` (except hidden `=X:` drive vars), no empty names, sorted order
 - [ ] Maximum single variable value length: 32,767 characters; `env_set` returns `STATUS_NAME_TOO_LONG` if exceeded
 - [ ] Maximum variable name length: 256 characters (practical Windows limit); reject names > 256 chars
