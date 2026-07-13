@@ -182,7 +182,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - On `%`: scan forward for closing `%`; extract `%NAME%`; look it up via `env_peek_locked` (case-insensitive ASCII fold, one `env_lock` held for the whole walk); found -> append value; not found (or name over `ENV_NAME_MAX`) -> append the literal `%NAME%` unchanged
   - `%%`: preserved VERBATIM (empty name = unresolved var), matching Win32/ntdll `ExpandEnvironmentStrings`; cmd.exe's `%%`->`%` batch escape is a distinct shell mode owned by §18. Unmatched trailing `%` copied verbatim; all other chars verbatim
   - Single-pass (matches Win32 `ExpandEnvironmentStrings`): each `%VAR%` replaced exactly once; a value containing `%OTHER%` is NOT re-expanded (no depth limit, no infinite-loop risk). Delayed `!VAR!` re-expansion is a distinct mode owned by §18
-  - Returns bytes written excluding NUL; on overflow writes the truncated result + NUL and returns `max_len` (a sentinel); `output` always NUL-terminated when `max_len > 0`
+  - Returns bytes written excluding NUL; on overflow writes the truncated result + NUL and returns `max_len` (a sentinel); `output` always NUL-terminated when `max_len > 0` EXCEPT the overlap-rejection path (input/output overlap -> returns 0, both buffers left unchanged)
 - [x] `env_expand` uses the caller's `task->environ`; kernel-internal calls pass the initial system process (`task_get_by_pid(0)`) as `t`. Caller must NOT already hold `t->environ_lock`
 
 - [x] `RtlExpandEnvironmentStrings_U(Environment, Source, Destination, ReturnedLength)` (`nt/nt_rtlenv.c`, header `nt/nt_rtlenv.h`):
@@ -195,12 +195,16 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] Commit: `"kernel/env: env_expand %VAR% substitution, RtlExpandEnvironmentStrings_U"`
 
 **Test checkpoint:** `env_expand` replaces `%VAR%`; `%%` preserved verbatim (Win32, not a cmd escape); `%A%`=`%B%`, `%B%`=`x`, `env_expand("%A%")` -> literal `%B%` (single-pass, no recursion); `RtlExpandEnvironmentStrings_U` expands over an explicit block and returns `STATUS_BUFFER_TOO_SMALL` + required length on an undersized `Destination`. QEMU WHPX + TCG; VirtualBox; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 30 env_expand/Rtl suites added, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 27 env_expand/Rtl suites added, 0 failures
 > **Notes:**
 > - **What shipped:** `env_expand` (UTF-8 single-pass `%VAR%`, Win32 `%%`-verbatim, bounded) in `env.c`; `RtlExpandEnvironmentStrings_U` (UTF-16) in new `nt/nt_rtlenv.c`; `env_build_block_utf16` (nls UTF-8->UTF-16) in `env.c`.
 > - **How it integrates:** `env_expand` holds one `env_lock` across the walk; the Rtl core is a bounded kernel-resident two-pass transformer (count then write, no partial output, pass counts verified against between-pass mutation).
 > - **Downstream:** §6 `ExpandEnvironmentStrings{W,A}` call `RtlExpandEnvironmentStrings_U`; §6 owns probing+copying a user Environment block into a kernel snapshot first (design + adversarial adoptions in the commit message).
 > - **Scope boundary:** §3 owns the two primitives; §5/§6 own the syscall/Win32 boundary; cmd `%%`/`!VAR!` is §18; full Unicode name folding + the PMM allocator SMP lock are tracked elsewhere.
+> **Verified:** 2026-07-13 | commit `c89eb4c8` | 3/3 items | build OK | tests 1271/1271 PASS
+> **Accepted:** [H] large synth env block (>4 KiB) routes through the unlocked `pmm_alloc_contiguous` (pre-existing kernel-wide gap; env is one of many callers) -> XREF: 03-memory-concurrency/TODO-03-advanced-allocator.md §1 (item: "PMM bitmap SMP locking" at line 103)
+> **Deferred:** [H] two-pass linear block scan per `%VAR%` (~1.4e9 WCHARs worst case) is a DoS once user-exposed -> XREF: 02-kernel-core/TODO-22 §6 (item: "Bound RtlExpandEnvironmentStrings_U scan cost before user exposure" at line 287)
+> **Quality reviewed:** 2026-07-13 | Codex 12x (design + adversarial + re-adversarial + consistency + perf) | 7H+9M+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
 
@@ -284,6 +288,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
 - [ ] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
 - [ ] For a user-supplied UTF-16 `Environment` block, `ProbeForRead` + copy into a kernel snapshot and verify its double-NUL terminator is within the copied length before the Rtl call (`nt/nt_rtlenv.h`). NULL needs no probe
+- [ ] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: two passes linear-scan the block per %VAR% (~1.4e9 WCHARs worst case). Add a one-time block index, or cap Source at the ExpandEnvironmentStrings boundary
 
 - [ ] `GetEnvironmentStringsW()`:
   - Walk `current_task->environ[]`; convert each `"KEY=VALUE"` to UTF-16; pack into a contiguous buffer as null-separated entries with a double-null at the end (matches the Win32 format); allocate with `LocalAlloc`

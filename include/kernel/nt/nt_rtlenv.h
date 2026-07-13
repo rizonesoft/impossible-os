@@ -54,14 +54,28 @@
  *                  the WCHAR NUL (both on success and on STATUS_BUFFER_TOO_SMALL).
  *
  * Semantics match env_expand: single-pass, `%%` PRESERVED verbatim (empty name =
- * unresolved var, Win32/ntdll behavior -- not cmd.exe's `%%`->`%` escape), unknown
- * `%NAME%` and an unmatched trailing `%` copied verbatim, case-insensitive ASCII-fold name match
- * (consistent with the UTF-8 storage layer; full Unicode case folding for env
- * names is a unified NLS concern). On STATUS_BUFFER_TOO_SMALL no partial output
- * is written and Destination->Length is left unchanged. On success
- * Destination->Buffer is NUL-terminated and Destination->Length is the result
- * length in bytes excluding the NUL. Returns STATUS_SUCCESS,
- * STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, or STATUS_NO_MEMORY. */
+ * unresolved var, Win32/ntdll behavior -- not cmd.exe's `%%`->`%` escape), a
+ * `%NAME%` whose name is empty, over ENV_NAME_MAX WCHARs, or absent from the
+ * block is copied verbatim, and an unmatched trailing `%` is copied verbatim.
+ * Name match is case-insensitive ASCII fold (consistent with the UTF-8 storage
+ * layer; full Unicode case folding for env names is a unified NLS concern).
+ *
+ * NO-ALIAS + IMMUTABLE-INPUT CONTRACT: the output range [Destination->Buffer,
+ * +MaximumLength) MUST NOT overlap the Source data, the Environment block, the
+ * Source or Destination UNICODE_STRING descriptors, or the ReturnedLength cell;
+ * ReturnedLength MUST NOT overlap the Source data, Environment, or either
+ * descriptor. Any such overlap returns STATUS_INVALID_PARAMETER (in-place use is
+ * NOT supported). Source and the Environment block MUST remain unmodified for the
+ * duration of the call: the function expands in two passes over the SAME inputs
+ * and rejects (STATUS_INVALID_PARAMETER) if the two passes disagree, but an
+ * equal-length concurrent mutation cannot be detected -- callers pass a private
+ * per-call snapshot.
+ *
+ * On STATUS_BUFFER_TOO_SMALL no partial output is written and Destination->Length
+ * is left unchanged. On success Destination->Buffer is NUL-terminated and
+ * Destination->Length is the result length in bytes excluding the NUL. Returns
+ * STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, or
+ * STATUS_NO_MEMORY. */
 NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
                                        UNICODE_STRING *Destination,
                                        uint32_t *ReturnedLength);

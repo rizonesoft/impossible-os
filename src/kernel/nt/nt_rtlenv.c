@@ -141,7 +141,12 @@ static uint32_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
                 uint32_t namelen = j - (i + 1u);
                 const uint16_t *val = NULL;
                 uint32_t vlen = 0;
-                if (namelen >= 1u &&
+                /* Same name-length limit as env_expand (env.c): a reference whose
+                 * name exceeds ENV_NAME_MAX cannot name a storable variable, so it
+                 * is left literal rather than looked up -- keeps the UTF-8 and
+                 * UTF-16 expansion paths consistent (ENV_NAME_MAX counted in WCHARs
+                 * here vs UTF-8 bytes there; env names are ASCII, so they agree). */
+                if (namelen >= 1u && namelen <= ENV_NAME_MAX &&
                     rtl_env_block_lookup(block, block_wchars, &src[i + 1u],
                                          namelen, &val, &vlen)) {
                     uint32_t k;

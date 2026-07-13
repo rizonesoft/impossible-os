@@ -937,6 +937,40 @@ static void test_rtl_expand_overlap_empty_block(void)
                    "Destination aliasing an empty block rejected");
 }
 
+/* RtlExpandEnvironmentStrings_U: a name longer than ENV_NAME_MAX is left literal
+ * (same limit as env_expand), even when an over-limit entry exists in the block. */
+static void test_rtl_expand_name_over_limit(void)
+{
+    /* Block "<257 A's>=x\0\0" and Source "%<257 A's>%". */
+    static uint16_t block[ENV_NAME_MAX + 8];
+    static uint16_t srcbuf[ENV_NAME_MAX + 8];
+    static uint16_t dstbuf[ENV_NAME_MAX + 16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    uint32_t n = ENV_NAME_MAX + 1u;              /* 257: one over the limit */
+    uint32_t w = 0, k;
+    for (k = 0; k < n; k++) block[w++] = (uint16_t)'A';
+    block[w++] = (uint16_t)'=';
+    block[w++] = (uint16_t)'x';
+    block[w++] = 0; block[w++] = 0;              /* entry NUL + block terminator */
+    w = 0;
+    srcbuf[w++] = (uint16_t)'%';
+    for (k = 0; k < n; k++) srcbuf[w++] = (uint16_t)'A';
+    srcbuf[w++] = (uint16_t)'%';
+    src.Length = (uint16_t)(w * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "over-limit-name expansion succeeds");
+    /* Result is the literal "%<257 A's>%" (n+2 wchars), NOT "x". */
+    TEST_ASSERT_EQ((int)dst.Length, (int)((n + 2u) * 2u),
+                   "over-ENV_NAME_MAX name left literal, not expanded");
+    TEST_ASSERT_EQ((int)dstbuf[0], (int)(uint16_t)'%', "leading % preserved");
+}
+
 /* RtlExpandEnvironmentStrings_U: a Destination->Buffer pointing into its own
  * descriptor is rejected (would corrupt the write pointer mid-flight). */
 static void test_rtl_expand_self_referential_dest(void)
@@ -1132,6 +1166,8 @@ void test_register_env(void)
                             test_rtl_expand_overlap_block_terminator, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl expand empty-block overlap",
                             test_rtl_expand_overlap_empty_block, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand name over ENV_NAME_MAX literal",
+                            test_rtl_expand_name_over_limit, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl expand self-referential dest",
                             test_rtl_expand_self_referential_dest, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl expand ReturnedLength alias",

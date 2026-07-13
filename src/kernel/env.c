@@ -566,6 +566,13 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
             }
             total += (uint32_t)need + 1u;         /* entry WCHARs + its NUL */
             nentries++;
+            /* Bail the instant the block exceeds the cap rather than sizing every
+             * remaining entry under the lock (a pathological environ could be
+             * tens of MiB); sibling env ops should not wait on a doomed build. */
+            if (total > max_wchars) {
+                mutex_unlock(&t->environ_lock);
+                return ENV_ERR_NOSPACE;
+            }
         }
     }
     /* A non-empty block already ends "...\0\0" (last entry's NUL + the trailing
