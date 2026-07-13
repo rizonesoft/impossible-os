@@ -26,6 +26,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/env.h"
 #include "kernel/tunables.h"
 #include "kernel/policy_lock.h"
 #include "kernel/boot_status.h"
@@ -103,6 +104,11 @@ void boot_phase3(void)
      * precede any later task creation (DPC worker, kworker pool) so descendants
      * inherit a non-NULL primary token at fork/create time. */
     task_assign_initial_token();
+
+    /* Seed PID 0's environment block from the Registry (or a hardcoded fallback
+     * if registry population failed). Registry is up (Phase 2) by now, so the
+     * full default set lands; descendants inherit it via env_copy at creation. */
+    env_init_kernel_task();
 
     ahci_enable_events();  /* safe now: yield handler registered */
 

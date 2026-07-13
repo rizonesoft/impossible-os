@@ -15,6 +15,10 @@
 #include "kernel/sched/mutex.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/smp.h"          /* smp_cpu_count() */
+#include "kernel/boot_init.h"    /* kernel_subsystem_ready(), SUBSYS_REGISTRY */
+#include "kernel/klog.h"         /* klog() */
+#include "registry.h"            /* RegOpenKeyEx / RegEnumValue / RegGet* */
 
 #define ENV_PAGE_SIZE 4096u
 
@@ -401,4 +405,345 @@ void env_free(struct task *t)
         t->argv = NULL;
     }
     t->argc = 0;
+}
+
+/* ===========================================================================
+ * System default environment (system-default-variables feature)
+ *
+ * env_init_defaults() seeds a task with the machine's default variables in
+ * three precedence layers, applied via env_set so the LAST write wins:
+ *   1. synthesised base defaults (computed / hardcoded);
+ *   2. the machine-wide Registry Environment key (overrides synth);
+ *   3. the per-user Registry Environment key (overrides system), with PATH
+ *      concatenated to the base rather than replaced.
+ * Registry reads are best-effort: a missing/failed key leaves the synth base in
+ * place, so this is safe even if registry_populate_defaults() partially failed.
+ * env_init_kernel_task() applies this (or a hardcoded fallback) to PID 0 at boot.
+ * Boot-context only (BSP, single-threaded when seeding PID 0): the Registry has
+ * no SMP lock yet, so a concurrent AP mutation would race -- a pre-existing repo-
+ * wide exposure owned by the registry SMP-locking work, not introduced here.
+ * =========================================================================== */
+
+/* Registry sources for the two Environment layers + the computed-var lookups. */
+#define ENV_REG_SYSTEM_ENV \
+    "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"
+#define ENV_REG_USER_ENV     "Environment"                        /* under HKCU */
+#define ENV_REG_COMPUTERNAME "SYSTEM\\ComputerName\\ActiveComputerName"
+#define ENV_REG_CPU          "HARDWARE\\CPU"
+
+/* Synth default values (freestanding string literals; see the TODO OS table). */
+#define ENV_DEF_COMPUTERNAME "IMPOSSIBLE-PC"
+#define ENV_DEF_USERNAME     "Default"
+#define ENV_DEF_SYSTEMDRIVE  "C:"
+#define ENV_DEF_SYSTEMROOT   "C:\\Impossible"
+#define ENV_DEF_TEMP         "C:\\Temp"
+#define ENV_DEF_PROC_ARCH    "AMD64"
+#define ENV_DEF_OS           "Impossible_OS"
+#define ENV_DEF_PATH_BASE    "C:\\Impossible\\Bin;C:\\Impossible\\System32;C:\\Programs"
+
+/* Case-insensitive compare of two NUL-terminated names (env_lc folds ASCII). */
+static int env_name_ci_eq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    for (; a[i] && b[i]; i++)
+        if (env_lc(a[i]) != env_lc(b[i]))
+            return 0;
+    return a[i] == b[i];   /* equal length and all chars matched */
+}
+
+/* Format an unsigned decimal into out[] (always NUL-terminated). */
+static void env_u32_to_str(uint32_t v, char *out, uint32_t out_size)
+{
+    char tmp[11];              /* 2^32-1 == 4294967295 -> 10 digits */
+    uint32_t n = 0, i;
+    if (out_size == 0)
+        return;
+    do {
+        tmp[n++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    } while (v && n < sizeof(tmp));
+    for (i = 0; i < n && i < out_size - 1u; i++)
+        out[i] = tmp[n - 1u - i];
+    out[i] = '\0';
+}
+
+/* Append src to dst[] at *pos, bounded by dst_size (keeps dst NUL-terminated). */
+static void env_str_append(char *dst, uint32_t dst_size, uint32_t *pos,
+                           const char *src)
+{
+    uint32_t p = *pos;
+    while (*src && p + 1u < dst_size)
+        dst[p++] = *src++;
+    dst[p] = '\0';
+    *pos = p;
+}
+
+/* Read a single REG_SZ/REG_EXPAND_SZ value into out[] (always NUL-terminated).
+ * Returns 1 on a non-empty string result, 0 if absent / wrong type / empty /
+ * larger than out[] (RegQueryValueEx returns ERROR_MORE_DATA -> treated absent).
+ * Used only for the SMALL single-value computed-var reads (ComputerName). */
+static int env_reg_read_sz(HKEY hkey, const char *valname,
+                           char *out, uint32_t out_size)
+{
+    uint32_t type = 0;
+    uint32_t size = out_size;
+    if (out_size == 0)
+        return 0;
+    out[0] = '\0';
+    if (RegQueryValueEx(hkey, valname, (uint32_t *)0, &type,
+                        (uint8_t *)out, &size) != ERROR_SUCCESS)
+        return 0;
+    if (type != REG_SZ && type != REG_EXPAND_SZ)
+        return 0;
+    out[out_size - 1u] = '\0';   /* force termination whatever the stored form */
+    return out[0] ? 1 : 0;
+}
+
+/* Record the first negative env_set result into *err (best-effort accumulator). */
+static void env_seed(struct task *t, const char *name, const char *value,
+                     int *err)
+{
+    int rc = env_set(t, name, value);
+    if (rc != ENV_OK && *err == ENV_OK)
+        *err = rc;
+}
+
+/* Layer 1: synthesised base defaults. Computed vars (COMPUTERNAME, CPU count)
+ * read the Registry with a hardcoded fallback; the rest are fixed literals. */
+static void env_synth_base(struct task *t, int *err)
+{
+    char cn[ENV_NAME_MAX];       /* ComputerName (short) */
+    char path[512];              /* derived C:\Users\... paths */
+    char nproc[12];
+    uint32_t ncpu = 0;
+    uint32_t p;
+
+    /* COMPUTERNAME: ActiveComputerName\ComputerName, else the hardcoded default. */
+    cn[0] = '\0';
+    {
+        HKEY hk;
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ENV_REG_COMPUTERNAME, 0,
+                         KEY_READ, &hk) == ERROR_SUCCESS) {
+            env_reg_read_sz(hk, "ComputerName", cn, sizeof(cn));
+            RegCloseKey(hk);
+        }
+    }
+    if (!cn[0]) {
+        p = 0;
+        env_str_append(cn, sizeof(cn), &p, ENV_DEF_COMPUTERNAME);
+    }
+    env_seed(t, "COMPUTERNAME", cn, err);
+
+    /* USERNAME: the token UserSid -> account-name lookup is owned by the SRM
+     * account-name work; until then every process runs as the default account. */
+    env_seed(t, "USERNAME", ENV_DEF_USERNAME, err);
+
+    /* USERPROFILE / APPDATA / LOCALAPPDATA derived from USERNAME. */
+    p = 0;
+    env_str_append(path, sizeof(path), &p, "C:\\Users\\");
+    env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
+    env_str_append(path, sizeof(path), &p, "\\");
+    env_seed(t, "USERPROFILE", path, err);
+    p = 0;
+    env_str_append(path, sizeof(path), &p, "C:\\Users\\");
+    env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
+    env_str_append(path, sizeof(path), &p, "\\AppData\\Roaming\\");
+    env_seed(t, "APPDATA", path, err);
+    p = 0;
+    env_str_append(path, sizeof(path), &p, "C:\\Users\\");
+    env_str_append(path, sizeof(path), &p, ENV_DEF_USERNAME);
+    env_str_append(path, sizeof(path), &p, "\\AppData\\Local\\");
+    env_seed(t, "LOCALAPPDATA", path, err);
+
+    /* Fixed literals. */
+    env_seed(t, "TEMP", ENV_DEF_TEMP, err);
+    env_seed(t, "TMP", ENV_DEF_TEMP, err);
+    env_seed(t, "PROCESSOR_ARCHITECTURE", ENV_DEF_PROC_ARCH, err);
+    env_seed(t, "OS", ENV_DEF_OS, err);
+    env_seed(t, "WINDIR", ENV_DEF_SYSTEMROOT, err);
+    env_seed(t, "SYSTEMROOT", ENV_DEF_SYSTEMROOT, err);
+    env_seed(t, "SYSTEMDRIVE", ENV_DEF_SYSTEMDRIVE, err);
+    env_seed(t, "PATH", ENV_DEF_PATH_BASE, err);
+
+    /* NUMBER_OF_PROCESSORS: HARDWARE\CPU\Count (DWORD), else the live CPU count. */
+    {
+        HKEY hk;
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, ENV_REG_CPU, 0,
+                         KEY_READ, &hk) == ERROR_SUCCESS) {
+            RegGetDword(hk, "Count", &ncpu);
+            RegCloseKey(hk);
+        }
+    }
+    if (ncpu == 0)
+        ncpu = smp_cpu_count();
+    if (ncpu == 0)
+        ncpu = 1;
+    env_u32_to_str(ncpu, nproc, sizeof(nproc));
+    env_seed(t, "NUMBER_OF_PROCESSORS", nproc, err);
+}
+
+/* PATH overlay from a user key: append user PATH to the existing base with ';'.
+ * env_set enforces ENV_VALUE_MAX; an over-long join is rejected there, keeping
+ * the base PATH intact. */
+static void env_path_append(struct task *t, const char *user_path, int *err)
+{
+    char probe[1];
+    int plen;
+    uint32_t base_len, ulen, need, p, i;
+    char *joined;
+
+    ulen = env_strlen(user_path);
+    if (ulen == 0)
+        return;                                   /* empty user PATH -> keep base */
+
+    plen = env_get_copy(t, "PATH", probe, sizeof(probe));   /* returns full len */
+    base_len = (plen > 0) ? (uint32_t)plen : 0u;
+
+    need = base_len + 1u + ulen + 1u;             /* base + ';' + user + NUL */
+    joined = env_str_alloc(need);
+    if (!joined) {
+        if (*err == ENV_OK)
+            *err = ENV_ERR_NOMEM;
+        return;
+    }
+    if (base_len)
+        env_get_copy(t, "PATH", joined, base_len + 1u);       /* fills [0..base_len] */
+    else
+        joined[0] = '\0';
+    p = base_len;
+    if (base_len)
+        joined[p++] = ';';
+    for (i = 0; i < ulen; i++)
+        joined[p++] = user_path[i];
+    joined[p] = '\0';
+
+    {
+        int rc = env_set(t, "PATH", joined);
+        if (rc != ENV_OK && *err == ENV_OK)
+            *err = rc;
+    }
+    env_str_free(joined, need);
+}
+
+/* Layers 2/3: overlay every REG_SZ/REG_EXPAND_SZ value under root\subkey via
+ * env_set. When path_append is set, a "PATH" value is appended to the base
+ * instead of replacing it. Buffers are heap/PMM-sized from the key metadata
+ * (never a 32 KiB stack buffer). A missing key is a silent no-op. */
+static void env_overlay_key(struct task *t, HKEY root, const char *subkey,
+                            int path_append, int *err)
+{
+    HKEY hk;
+    uint32_t nvals = 0, max_name = 0, max_val = 0;
+    uint32_t namecap, valcap, idx;
+    char *namebuf, *valbuf;
+
+    if (RegOpenKeyEx(root, subkey, 0, KEY_READ, &hk) != ERROR_SUCCESS)
+        return;                                   /* key absent -> nothing to overlay */
+
+    if (RegQueryInfoKey(hk, (char *)0, (uint32_t *)0, (uint32_t *)0,
+                        (uint32_t *)0, (uint32_t *)0, (uint32_t *)0,
+                        &nvals, &max_name, &max_val,
+                        (uint32_t *)0, (uint64_t *)0) != ERROR_SUCCESS ||
+        nvals == 0) {
+        RegCloseKey(hk);
+        return;
+    }
+
+    /* RegEnumValue name/data lengths exclude the NUL; add room and cap at the
+     * env limits (a longer value cannot be stored anyway and is skipped). */
+    namecap = max_name + 2u;
+    if (namecap > ENV_NAME_MAX + 1u)  namecap = ENV_NAME_MAX + 1u;
+    if (namecap < 2u)                 namecap = 2u;
+    valcap = max_val + 2u;
+    if (valcap > ENV_VALUE_MAX + 1u)  valcap = ENV_VALUE_MAX + 1u;
+    if (valcap < 2u)                  valcap = 2u;
+
+    namebuf = env_str_alloc(namecap);
+    valbuf = env_str_alloc(valcap);
+    if (!namebuf || !valbuf) {
+        if (namebuf) env_str_free(namebuf, namecap);
+        if (valbuf)  env_str_free(valbuf, valcap);
+        RegCloseKey(hk);
+        if (*err == ENV_OK)
+            *err = ENV_ERR_NOMEM;
+        return;
+    }
+
+    for (idx = 0; ; idx++) {
+        uint32_t nlen = namecap, vlen = valcap, type = 0;
+        long rc = RegEnumValue(hk, idx, namebuf, &nlen, (uint32_t *)0, &type,
+                               (uint8_t *)valbuf, &vlen);
+        if (rc == ERROR_NO_MORE_ITEMS)
+            break;
+        if (rc == ERROR_MORE_DATA)
+            continue;                             /* value over cap -> skip, keep going */
+        if (rc != ERROR_SUCCESS)
+            break;
+        if (type != REG_SZ && type != REG_EXPAND_SZ)
+            continue;
+        namebuf[namecap - 1u] = '\0';
+        valbuf[valcap - 1u] = '\0';
+        if (!namebuf[0])
+            continue;                             /* skip the unnamed default value */
+        if (path_append && env_name_ci_eq(namebuf, "PATH")) {
+            env_path_append(t, valbuf, err);
+        } else {
+            int rc2 = env_set(t, namebuf, valbuf);
+            if (rc2 != ENV_OK && *err == ENV_OK)
+                *err = rc2;
+        }
+    }
+
+    env_str_free(namebuf, namecap);
+    env_str_free(valbuf, valcap);
+    RegCloseKey(hk);
+}
+
+int env_init_defaults(struct task *t)
+{
+    int err = ENV_OK;
+    if (!t)
+        return ENV_ERR_INVAL;
+    env_synth_base(t, &err);                                            /* layer 1 */
+    env_overlay_key(t, HKEY_LOCAL_MACHINE, ENV_REG_SYSTEM_ENV, 0, &err); /* layer 2 */
+    env_overlay_key(t, HKEY_CURRENT_USER, ENV_REG_USER_ENV, 1, &err);    /* layer 3 */
+    return err;
+}
+
+int env_init_kernel_task(void)
+{
+    struct task *sys = task_get_by_pid(0);
+
+    if (!sys)
+        return ENV_OK;                            /* PID 0 not created yet -> no-op */
+
+    if (kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        int rc = env_init_defaults(sys);
+        if (rc != ENV_OK)
+            klog(LOG_WARN, "env",
+                 "env_init_kernel_task: defaults incomplete (rc=%d)",
+                 (uint64_t)(int64_t)rc);
+        else
+            klog(LOG_INFO, "env",
+                 "System environment initialized for PID 0 (%u vars)",
+                 (uint64_t)sys->environ_count);
+        return rc;
+    }
+
+    /* Registry unavailable (population failed): minimal hardcoded fallback so a
+     * shell still has PATH/SYSTEMROOT/TEMP. `static const` -> no lock needed. */
+    {
+        static const struct { const char *name, *value; } bootstrap_env[] = {
+            { "PATH",       "C:\\Impossible\\Bin" },
+            { "SYSTEMROOT", ENV_DEF_SYSTEMROOT },
+            { "TEMP",       ENV_DEF_TEMP },
+        };
+        int err = ENV_OK;
+        uint32_t i;
+        for (i = 0; i < sizeof(bootstrap_env) / sizeof(bootstrap_env[0]); i++)
+            env_seed(sys, bootstrap_env[i].name, bootstrap_env[i].value, &err);
+        klog(LOG_WARN, "env",
+             "Registry unavailable; PID 0 seeded with bootstrap env fallback");
+        return err;
+    }
 }

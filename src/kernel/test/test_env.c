@@ -14,6 +14,8 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
+#include "kernel/boot_init.h" /* kernel_subsystem_ready() for the overlay test */
+#include "registry.h"         /* HKCU PATH-append test injects a user value */
 #include "kernel/types.h"
 
 /* Local ASCII string compare (no live libc dependency in the test TU). */
@@ -321,6 +323,186 @@ static void test_env_set_oom_preserves_old(void)
     env_free(&s_env_fixture);
 }
 
+/* --- system default environment: env_init_defaults -------------------------
+ * env_init_defaults() reads the (read-only) Registry and env_sets onto the
+ * fixture task -- no live boot infrastructure is touched. env_init_kernel_task()
+ * mutates the real PID 0, so it is validated via the boot serial line rather
+ * than a unit test. */
+
+static int env_starts_with(const char *s, const char *prefix)
+{
+    while (*prefix) {
+        if (*s != *prefix)
+            return 0;
+        s++;
+        prefix++;
+    }
+    return 1;
+}
+
+static int env_ends_with(const char *s, const char *suffix)
+{
+    uint32_t sl = env_test_strlen(s), pl = env_test_strlen(suffix);
+    if (pl > sl)
+        return 0;
+    return env_streq(s + (sl - pl), suffix);
+}
+
+static void test_env_defaults_synth_base(void)
+{
+    char out[600];
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_init_defaults(&s_env_fixture), ENV_OK,
+                   "env_init_defaults populates the fixture");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "SYSTEMROOT", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Impossible"), "SYSTEMROOT default lands");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "SYSTEMDRIVE", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:"), "SYSTEMDRIVE default lands");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "TEMP", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Temp"), "TEMP default lands");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "TMP", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Temp"), "TMP mirrors TEMP");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "USERNAME", out, sizeof(out)) > 0 &&
+                env_streq(out, "Default"), "USERNAME default account");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "COMPUTERNAME", out, sizeof(out)) > 0 &&
+                env_streq(out, "IMPOSSIBLE-PC"), "COMPUTERNAME default/registry");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "PATH", out, sizeof(out)) > 0 &&
+                env_starts_with(out, "C:\\Impossible\\Bin"), "PATH base present");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_defaults_derived(void)
+{
+    char out[600];
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "USERPROFILE", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Users\\Default\\"),
+                "USERPROFILE derived from USERNAME");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "APPDATA", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Users\\Default\\AppData\\Roaming\\"),
+                "APPDATA derived from USERNAME");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "LOCALAPPDATA", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\Users\\Default\\AppData\\Local\\"),
+                "LOCALAPPDATA derived from USERNAME");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "OS", out, sizeof(out)) > 0 &&
+                env_streq(out, "Impossible_OS"), "OS default");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "PROCESSOR_ARCHITECTURE", out,
+                             sizeof(out)) > 0 && env_streq(out, "AMD64"),
+                "PROCESSOR_ARCHITECTURE default");
+    {
+        int r = env_get_copy(&s_env_fixture, "NUMBER_OF_PROCESSORS", out,
+                             sizeof(out));
+        TEST_ASSERT(r > 0 && out[0] >= '1' && out[0] <= '9',
+                    "NUMBER_OF_PROCESSORS is a positive decimal");
+    }
+    env_free(&s_env_fixture);
+}
+
+static void test_env_defaults_registry_overlay(void)
+{
+    char out[600];
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- system-env overlay exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    /* ComSpec lives ONLY in HKLM Session Manager\Environment (it is not
+     * synthesised), so its presence proves the system-registry overlay ran. */
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "ComSpec", out, sizeof(out)) > 0 &&
+                env_streq(out, "C:\\cmd.exe"),
+                "ComSpec overlaid from Session Manager Environment key");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_defaults_user_path_append(void)
+{
+    char out[700];
+    HKEY hk;
+    uint32_t disp = 0;
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- HKCU PATH-append exercised post-Phase-2");
+        return;
+    }
+    /* Inject a user PATH into HKCU\Environment; env_init_defaults must APPEND it
+     * to the base PATH with ';' rather than replacing. Value is deleted after
+     * the read so the live user environment is not polluted. */
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, "Environment", 0, (const char *)0, 0,
+                       KEY_ALL_ACCESS, (void *)0, &hk, &disp) != ERROR_SUCCESS) {
+        TEST_SKIP("cannot open HKCU\\Environment");
+        return;
+    }
+    RegSetString(hk, "PATH", "C:\\Users\\Default\\bin");
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    env_get_copy(&s_env_fixture, "PATH", out, sizeof(out));
+    RegDeleteValue(hk, "PATH");
+    RegCloseKey(hk);
+    TEST_ASSERT(env_starts_with(out, "C:\\Impossible\\Bin"),
+                "PATH retains the base after user append");
+    TEST_ASSERT(env_ends_with(out, ";C:\\Users\\Default\\bin"),
+                "user HKCU PATH is appended with ';'");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_defaults_user_override(void)
+{
+    char out[64];
+    HKEY hk;
+    uint32_t disp = 0;
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- HKCU override exercised post-Phase-2");
+        return;
+    }
+    /* A user TEMP in HKCU\Environment must OVERRIDE the synth default C:\Temp. */
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, "Environment", 0, (const char *)0, 0,
+                       KEY_ALL_ACCESS, (void *)0, &hk, &disp) != ERROR_SUCCESS) {
+        TEST_SKIP("cannot open HKCU\\Environment");
+        return;
+    }
+    RegSetString(hk, "TEMP", "D:\\UserTemp");
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    env_get_copy(&s_env_fixture, "TEMP", out, sizeof(out));
+    RegDeleteValue(hk, "TEMP");
+    RegCloseKey(hk);
+    TEST_ASSERT(env_streq(out, "D:\\UserTemp"),
+                "HKCU\\Environment TEMP overrides the synth default");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_defaults_skips_non_string(void)
+{
+    char out[64];
+    HKEY hk;
+    uint32_t disp = 0;
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- non-string skip exercised post-Phase-2");
+        return;
+    }
+    /* A REG_DWORD value under the system Environment key must be IGNORED by the
+     * overlay (only REG_SZ/REG_EXPAND_SZ are applied). */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                       "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+                       0, (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hk, &disp) != ERROR_SUCCESS) {
+        TEST_SKIP("cannot open Session Manager\\Environment");
+        return;
+    }
+    RegSetDword(hk, "EnvTestDword", 42);
+    env_fixture_reset();
+    env_init_defaults(&s_env_fixture);
+    {
+        int r = env_get_copy(&s_env_fixture, "EnvTestDword", out, sizeof(out));
+        RegDeleteValue(hk, "EnvTestDword");
+        RegCloseKey(hk);
+        TEST_ASSERT_EQ(r, ENV_ERR_NOTFOUND,
+                       "REG_DWORD value is not applied to the environment");
+    }
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: set/get roundtrip",
@@ -353,6 +535,18 @@ void test_register_env(void)
                             test_env_large_value_pmm_path, TEST_CAT_ABI);
     test_suite_register_cat("Env: OOM replace preserves old value",
                             test_env_set_oom_preserves_old, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults synth base",
+                            test_env_defaults_synth_base, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults derived vars",
+                            test_env_defaults_derived, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults registry overlay",
+                            test_env_defaults_registry_overlay, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults user PATH append",
+                            test_env_defaults_user_path_append, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults user override precedence",
+                            test_env_defaults_user_override, TEST_CAT_ABI);
+    test_suite_register_cat("Env: init_defaults skips non-string values",
+                            test_env_defaults_skips_non_string, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

@@ -64,7 +64,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | ⭐   | Order | Deliverable                                        | Depends On                 | Status |
 | --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
-| 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [ ]   |
+| 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
 | 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [ ]   |
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [ ]   |
 | 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [ ]   |
@@ -140,37 +140,37 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 2. System Default Variables from Registry
 
-- [ ] `env_init_defaults(task)` -- called once for every newly created process:
-  1. Read system env vars from Registry key `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-14-registry-completion.md §4`); enumerate all values; call `env_set` for each
-  2. Read user env vars from `HKCU\Environment`; set for each (user vars override system vars with the same name)
-  3. Synthesise computed variables that cannot come from Registry:
-     - `COMPUTERNAME` ← `HKLM\SYSTEM\ComputerName\ActiveComputerName\ComputerName` (default `"IMPOSSIBLE-PC"`)
-     - `USERNAME` ← from the process's primary token UserSid → account name lookup (→ XREF `TODO-15-security-reference-monitor.md §7`); default `"Default"`
-     - `USERPROFILE` ← `C:\Users\{USERNAME}\`
-     - `APPDATA` ← `C:\Users\{USERNAME}\AppData\Roaming\`
-     - `LOCALAPPDATA` ← `C:\Users\{USERNAME}\AppData\Local\`
-     - `TEMP` / `TMP` ← `C:\Temp\` (also readable from Registry)
-     - `PROCESSOR_ARCHITECTURE` ← `"AMD64"`
-     - `NUMBER_OF_PROCESSORS` ← `HKLM\HARDWARE\CPU\Count` (default `"1"`)
-     - `OS` ← `"Impossible_OS"`
-     - `WINDIR` / `SYSTEMROOT` ← `C:\Impossible\`
-     - `SYSTEMDRIVE` ← `C:\`
-     - `PATH` ← `C:\Impossible\Bin;C:\Impossible\System32;C:\Programs\` (base; user's `HKCU\Environment\PATH` is appended with `;`)
-
-- [ ] A minimal hardcoded fallback is used during kernel init before `registry_init()` completes (Phase 1); replace with Registry values during Phase 2 (→ XREF `TODO-01-kernel-init-sequencing.md §4`):
+- [x] `env_init_defaults(task)` (`src/kernel/env.c`) -- seeds a task's environment in three precedence layers applied via `env_set` (last write wins):
+  1. **Synth base** (`env_synth_base`): `COMPUTERNAME` (← `HKLM\SYSTEM\ComputerName\ActiveComputerName\ComputerName`, default `IMPOSSIBLE-PC`); `USERNAME`=`Default`; `USERPROFILE`/`APPDATA`/`LOCALAPPDATA` derived from `USERNAME`; `TEMP`/`TMP`=`C:\Temp`; `PROCESSOR_ARCHITECTURE`=`AMD64`; `NUMBER_OF_PROCESSORS` (← `HKLM\HARDWARE\CPU\Count`, else `smp_cpu_count()`); `OS`=`Impossible_OS`; `WINDIR`/`SYSTEMROOT`=`C:\Impossible`; `SYSTEMDRIVE`=`C:`; `PATH`=`C:\Impossible\Bin;C:\Impossible\System32;C:\Programs`.
+  2. **System overlay**: enumerate `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-14-registry-completion.md §4`) via `RegEnumValue`; `env_set` each REG_SZ/REG_EXPAND_SZ value (overrides synth; non-string types skipped).
+  3. **User overlay**: enumerate `HKCU\Environment`; `env_set` each (overrides system). `PATH` is APPENDED to the base with `;`, not replaced.
+  Value buffers are heap/PMM-sized from `RegQueryInfoKey`, never a 32 KiB stack buffer (design-review adoption). Missing/unreadable keys are skipped so the synth base always lands.
+- [x] Lifecycle: `env_init_defaults` seeds the initial system process only; children inherit via `env_copy` (→ XREF `TODO-12-native-api-ssdt.md §7`), not by re-reading the Registry per spawn (design-review adoption).
+- [x] `env_init_kernel_task()` seeds PID 0 (`task_get_by_pid(0)`) from `boot_phase3` after `task_init()`; applies a hardcoded bootstrap fallback table when `SUBSYS_REGISTRY` is not ready:
   ```c
-  static const char *bootstrap_env[] = {
-      "PATH=C:\\Impossible\\Bin",
-      "SYSTEMROOT=C:\\Impossible",
-      "TEMP=C:\\Temp",
-      NULL
+  static const struct { const char *name, *value; } bootstrap_env[] = {
+      { "PATH",       "C:\\Impossible\\Bin" },
+      { "SYSTEMROOT", "C:\\Impossible" },
+      { "TEMP",       "C:\\Temp" },
   };
   ```
-- [ ] `env_init_kernel_task()` applies bootstrap env to `PsInitialSystemProcess`
+  Boot order: `registry_init()` (Phase 2) precedes `task_init()` (Phase 3), so the Registry is normally up by the time PID 0 exists; the bootstrap table is the Registry-FAILURE fallback, not a phase-ordering gap (corrects the draft "Phase 1 before registry_init" note → XREF `TODO-01-kernel-init-sequencing.md §4`).
+- [x] `registry_populate_defaults()` (`src/kernel/registry.c`) creates the three keys the read path consumes: `HARDWARE\CPU\Count`, `ComputerName\ActiveComputerName`, `Session Manager\Environment` (so the overlay is real, not dead).
 
-- [ ] Commit: `"kernel/env: system default variables from Registry, bootstrap env"`
+- [x] Commit: `"kernel/env: system default variables from Registry, bootstrap env"`
 
-**Test checkpoint:** After boot Phase 2, `SET` shows `PATH`, `SYSTEMROOT`, `TEMP`. Bootstrap Phase 1 uses fallback table only. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** After boot Phase 2+3 the `env_init_defaults` unit tests confirm `PATH`/`SYSTEMROOT`/`TEMP`/`USERNAME`/`COMPUTERNAME` land, the `Session Manager\Environment` overlay applies (`ComSpec`) while non-string values are skipped, a user `HKCU\Environment\PATH` appends, and a user `TEMP` overrides. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 env-default suites, 0 failures
+> **Notes:**
+> - **What shipped** -- `env_init_defaults`/`env_init_kernel_task` in `src/kernel/env.c`: 3-layer (synth base -> HKLM system overlay -> HKCU user overlay, PATH appended) default environment seed; heap/PMM-sized enumeration buffers.
+> - **How it integrates** -- `env_init_kernel_task()` seeds PID 0 in `boot_phase3` after `task_init()`; registry reads are best-effort (synth base always lands); descendants inherit via `env_copy`.
+> - **Downstream effects** -- adds `HARDWARE\CPU\Count` + `ComputerName` + `Session Manager\Environment` Registry defaults; unblocks env-block builders and shell PATH lookup; Codex design adoptions in the commit message.
+> - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) `env_init_defaults` contract.
+> - **Scope boundary** -- §2 owns the default seed + Registry read; per-child env inheritance is `TODO-12 §7` (`env_copy`); token-derived `USERNAME` is SRM account-name work; `%VAR%` expansion is §3.
+> **Accepted:** [design] child processes receive env via `env_copy`, not `env_init_defaults` -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
+> **Accepted:** [M] token UserSid -> account-name lookup for `USERNAME` (defaults to "Default" until then) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §10 (item: "LookupAccountSidW / LookupAccountNameW")
+> **Accepted:** [design] `boot_phase3` Registry read is unlocked (BSP-only, post-readiness; only a concurrent AP-panic write could race) -> XREF: 02-kernel-core/TODO-14-registry-completion.md §14 (item: "read-path entry points RegQueryValueEx, RegEnumValue, RegQueryInfoKey under the lock")
 
 ---
 
@@ -568,40 +568,40 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 
 ## OS Comparison
 
-| ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS |
-| --- | -------------------------- | --------------------- | -------------------- | --------------- |
-| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API |
-| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ⬜ §3 Win `%`    |
-| 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ⬜ §2 Registry   |
-| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7   |
-| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19      |
-| 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6            |
-| 💎   | PATH lookup                | ✅ PATHEXT             | ✅ POSIX PATH         | ⬜ §7            |
-| 💎   | SET shell cmd              | ✅ cmd built-in        | ✅ export/env         | ⬜ §7            |
-| 💎   | Shell startup              | ✅ HKCU at logon       | ✅ profile files      | ⬜ §8            |
-| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE    | ⚠️ inotify etc       | ⬜ §9            |
-| 💎   | Persistent set             | ✅ setx.exe            | ⚠️ edit dotfiles     | ⬜ §9            |
-| ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9            |
-| ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7            |
-| ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8            |
-| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ⬜ §10           |
-| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⬜ §10, T12 §7   |
-| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ⬜ §10           |
-| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⬜ §11           |
-| 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12           |
-| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13           |
-| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13           |
-| 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14           |
-| 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14           |
-| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15           |
-| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16           |
-| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17           |
-| 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18           |
-| 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18           |
-| 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19           |
-| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ⬜ §4            |
+| ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS     |
+| --- | -------------------------- | --------------------- | -------------------- | ------------------- |
+| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API     |
+| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ⬜ §3 Win `%`        |
+| 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth |
+| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7       |
+| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19          |
+| 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6                |
+| 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
+| 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
+| 💎   | PATH lookup                | ✅ PATHEXT             | ✅ POSIX PATH         | ⬜ §7                |
+| 💎   | SET shell cmd              | ✅ cmd built-in        | ✅ export/env         | ⬜ §7                |
+| 💎   | Shell startup              | ✅ HKCU at logon       | ✅ profile files      | ⬜ §8                |
+| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE    | ⚠️ inotify etc       | ⬜ §9                |
+| 💎   | Persistent set             | ✅ setx.exe            | ⚠️ edit dotfiles     | ⬜ §9                |
+| ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9                |
+| ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7                |
+| ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8                |
+| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ⬜ §10               |
+| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⬜ §10, T12 §7       |
+| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ⬜ §10               |
+| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⬜ §11               |
+| 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12               |
+| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13               |
+| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13               |
+| 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14               |
+| 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14               |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15               |
+| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16               |
+| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17               |
+| 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18               |
+| 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18               |
+| 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19               |
+| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ⬜ §4                |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
 

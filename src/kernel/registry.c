@@ -2972,8 +2972,14 @@ void registry_populate_defaults(void)
                 RegSetString(hKey, "Model", p);
             }
         }
+        /* Count feeds NUMBER_OF_PROCESSORS in the default environment block. */
+        {
+            extern uint32_t smp_cpu_count(void);
+            uint32_t ncpu = smp_cpu_count();
+            RegSetDword(hKey, "Count", ncpu ? ncpu : 1u);
+        }
         RegCloseKey(hKey);
-        count += 2;
+        count += 3;
     }
 
     /* --- HKLM\HARDWARE\Memory --- */
@@ -3012,6 +3018,33 @@ void registry_populate_defaults(void)
         RegSetString(hKey, "Wallpaper", "C:\\Impossible\\Web\\Wallpaper\\default.jpg");
         RegCloseKey(hKey);
         count += 1;
+    }
+
+    /* --- HKLM\SYSTEM\ComputerName\ActiveComputerName ---
+     * Source for the COMPUTERNAME environment variable (env_init_defaults). */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                       "SYSTEM\\ComputerName\\ActiveComputerName", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "ComputerName", "IMPOSSIBLE-PC");
+        RegCloseKey(hKey);
+        count += 1;
+    }
+
+    /* --- HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment ---
+     * Machine-wide system environment variables. env_init_defaults() enumerates
+     * this key and overlays each value onto the synthesised base. ComSpec is the
+     * canonical example of a system var not synthesised elsewhere. */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                       "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+                       0, (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "ComSpec",                "C:\\cmd.exe");
+        RegSetString(hKey, "OS",                     "Impossible_OS");
+        RegSetString(hKey, "PROCESSOR_ARCHITECTURE", "AMD64");
+        RegSetString(hKey, "windir",                 "C:\\Impossible");
+        RegCloseKey(hKey);
+        count += 4;
     }
 
     klog(LOG_DEBUG, "registry", "Registry defaults populated (%u values)",

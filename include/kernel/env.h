@@ -84,3 +84,32 @@ int env_copy(struct task *dst, const struct task *src);
  * ONLY at the task_cleanup reap barrier (task is TASK_DEAD, no thread of it
  * runs), so no lock is taken. Safe to call on an already-empty task. */
 void env_free(struct task *t);
+
+/* --- System default environment (system-default-variables feature) -------- */
+
+/* Populate `t`'s environment with the system default variable set: a synthesised
+ * base layer (COMPUTERNAME, USERNAME, USERPROFILE, APPDATA, TEMP, PATH, ...) that
+ * is then OVERLAID by the machine-wide Registry key
+ * `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` and finally
+ * by the per-user key `HKCU\Environment` (user overrides system overrides synth).
+ * PATH is special-cased: a user `HKCU\Environment\PATH` is APPENDED to the base
+ * PATH with ';', not replaced. Missing/unreadable Registry keys are skipped
+ * (the synth base still lands), so this is safe to call before the Registry is
+ * fully populated. Registry values that are not REG_SZ/REG_EXPAND_SZ are ignored.
+ *
+ * This is the seed used for the initial system process (PID 0) via
+ * env_init_kernel_task(); ordinary child processes inherit their parent's block
+ * through env_copy() (child-creation wiring owned by the native-API process/
+ * thread lifecycle work), NOT by re-deriving Registry defaults. Callable only
+ * from thread/boot context (takes the env mutex + reads the Registry); never
+ * from an ISR. Returns ENV_OK, or the first negative env_set error code
+ * encountered (best-effort: earlier successful sets are retained). */
+int env_init_defaults(struct task *t);
+
+/* Seed the initial system process (PID 0, task_get_by_pid(0)) with the boot
+ * environment. When the Registry subsystem is ready it applies the full
+ * env_init_defaults() set; otherwise (Registry-population failure) it falls back
+ * to a minimal hardcoded bootstrap table (PATH/SYSTEMROOT/TEMP). Idempotent
+ * enough to be called once from boot_phase3 right after task_init(). No-op if
+ * PID 0 does not yet exist. Returns ENV_OK or a negative env_set error. */
+int env_init_kernel_task(void);
