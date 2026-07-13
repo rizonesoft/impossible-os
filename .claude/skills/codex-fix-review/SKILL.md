@@ -37,6 +37,15 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
 5. **For each "fix now" finding:**
    - Read the relevant source file at the cited line numbers.
    - Understand the root cause (not just the symptom).
+   - **G1 -- read a swapped primitive's OWN contract before applying it repo-wide.**
+     When a finding suggests swapping a primitive (lock type, atomic ordering,
+     allocator, memory-order, e.g. `spin_lock_irqsave` -> `spin_lock`), read that
+     primitive's header/contract FIRST -- not just the finding text -- before
+     changing any call site. A 2026-07-12 run applied a perf reviewer's lock swap
+     to 5 functions + header + callers, then the next round flagged a CRITICAL:
+     plain `spin_unlock` does an UNCONDITIONAL `sti`, re-enabling interrupts inside
+     an IF=0 path. `receiving-code-review`'s "verify at file:line" covered the
+     finding's symptom, not the swapped primitive's semantics -- verify BOTH.
    - Apply the fix following the `kernel-code-quality` skill gates.
    - Build **via `bash scripts/overnight/run-artifact.sh fixloop -- bash
      scripts/build.sh` (deterministic, NO model): the iterative fix loop is
@@ -59,6 +68,16 @@ Every dispatch from this skill MUST open its prompt with the marker `[review-kin
    ```
 
 ### Phase 3 -- Re-Review
+
+> **G2 -- cap the perf-only chase.** Perf-only (non-Critical/High) suggestions have
+> no natural stopping point: each round tends to surface a NEW marginal issue rather
+> than confirm convergence. A 2026-07-12 section chased perf findings across ~8
+> sequential dispatches (~30 min), netted zero on the lock type (irqsave in, irqsave
+> out), and self-inflicted the G1 bug along the way. Cap live-implementation of
+> perf-only suggestions at ~1-2 in-section rounds; beyond that, spin the remaining
+> perf suggestions into an XREF'd follow-up item and stop -- do NOT keep iterating
+> in-section. (Distinct from P2.1 convergence, which is about UNCHANGED inputs; here
+> every round's input genuinely changed but the marginal value did not justify it.)
 
 8b. **Pre-dispatch self-diff gate (before the re-review dispatch).** Read the fix diff against this round's + every prior round's findings and self-check the fix-then-regress shapes (canonical rule: review-todo-section step 6): scope creep, an operation reordered before its precondition, `==` where a bit-flag/mask test is required, sentinel/boundary handling (INVALID_HANDLE_VALUE / -1 / caps), and whether this fix re-opens a prior finding. This gate is what keeps the fix->re-review loop from becoming a fix-then-regress marathon (TODO-12 section 28: 15 dispatches, 67 min). A localized fix that passes the gate can be self-verified without a fresh round.
 8c. **Convergence gate + round counter + standing evidence map (P2.1/P2.2/P2.3, canonical rule: review-todo-section step 6).** BEFORE re-dispatching kind K, `bash .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>` -- exit 1 = CONVERGED (skip K; its inputs did not move since its last verdict), exit 0 = redispatch; after K resolves, `... record '<todo>#<section>' <K>`. Per-kind scope: adversarial/perf source-only, consistency/design source+TODO (a docs/TODO-only fix skips the source-only kinds). After each re-dispatch, `bash .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress <new|none>`; exit 2 = CAPPED (stall, not a fixed cap) -> stop, spin unresolved findings to a follow-up. For rounds >= 4 (REQUIRED), verify at file:line via one `review-evidence-mapper` dispatch (the agent cache, now keyed on the scoped evidence set, reuses the map when the tree is unchanged), not inline re-reads of the same hot files.

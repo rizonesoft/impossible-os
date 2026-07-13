@@ -20,6 +20,11 @@ HOOK = HERE.parent.parent.parent / ".claude/hooks/build_offload_reminder.py"
 
 
 def _load():
+    # Production runs `python3 .claude/hooks/build_offload_reminder.py`, so the
+    # hook dir is on sys.path and `import _offload_log` (used by the dedup log)
+    # resolves. importlib.spec_from_file_location does not add it -- do so here.
+    if str(HOOK.parent) not in sys.path:
+        sys.path.insert(0, str(HOOK.parent))
     spec = importlib.util.spec_from_file_location("build_offload_reminder", HOOK)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -78,8 +83,31 @@ def test_wrapped_test_and_smoke_also_exempt():
             assert out.strip() == "", f"{inner!r} wrapped must not fire: {out!r}"
 
 
+def test_dedup_suppresses_repeat_within_window():
+    # P3.4 prereq 3: it fired 9x on one wrapped sequence; a repeat for the SAME
+    # script within the window must be suppressed, a different script still fires.
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        _, out1 = _run_main(mod, "bash scripts/build.sh", root)
+        assert "build-offload" in out1, out1
+        _, out2 = _run_main(mod, "bash scripts/build.sh", root)
+        assert out2.strip() == "", "repeat within window must dedup: " + repr(out2)
+        _, out3 = _run_main(mod, "bash scripts/test.sh SUITE=mm", root)
+        assert "build-offload" in out3, "a different script still fires: " + repr(out3)
+
+
+def test_message_has_no_checks_runner_text():
+    # P3.4 prereq 2: the deprecated checks-runner routing text is removed.
+    mod = _load()
+    assert "checks-runner" not in mod._MSG, mod._MSG
+
+
 if __name__ == "__main__":
     test_wrapped_command_is_exempt()
     test_bare_command_still_fires()
     test_wrapped_test_and_smoke_also_exempt()
-    print("PASS: build_offload_reminder run-artifact.sh exemption")
+    test_dedup_suppresses_repeat_within_window()
+    test_message_has_no_checks_runner_text()
+    print("PASS: build_offload_reminder exemption + dedup + msg-cleanup")

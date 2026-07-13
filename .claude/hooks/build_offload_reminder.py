@@ -44,10 +44,40 @@ _MSG = (
     "{script}` returns a compact JSON envelope (verdict + error lines + "
     "artifact path) and tees full output to disk; you quote the tail "
     "yourself. A green run spends ZERO Sonnet -- dispatch diagnostic-digester "
-    "ONLY on a FAIL envelope. (checks-runner is deprecated for green "
-    "mechanics, 2026-07-11.) Measured cost of the bare path: 91 in-context "
+    "ONLY on a FAIL envelope. Measured cost of the bare path: 91 in-context "
     "build/test runs floods the 2026-07-02 overnight context."
 )
+
+# P3.4 prereq 3: suppress a repeat reminder for the SAME script within this
+# window -- the reminder fired 9x on one properly-wrapped build/test sequence
+# before the exemption, and duplicate nags add churn without new signal.
+_DEDUP_WINDOW_S = 300
+
+
+def _recently_fired(root: Path, script: str) -> bool:
+    """True if build_offload_reminder already fired for `script` within
+    _DEDUP_WINDOW_S. Reads the shared offload-events.jsonl (newest first)."""
+    try:
+        p = root / ".claude" / "state" / "offload-events.jsonl"
+        if not p.exists():
+            return False
+        now = time.time()
+        for line in reversed(p.read_text(encoding="utf-8").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if (rec.get("hook") == "build_offload_reminder"
+                    and rec.get("kind") == "fire"
+                    and rec.get("detail") == script):
+                ts = rec.get("ts")
+                return isinstance(ts, (int, float)) and (now - ts) <= _DEDUP_WINDOW_S
+        return False
+    except Exception:
+        return False
 
 
 def _repo_root() -> Path | None:
@@ -103,6 +133,9 @@ def main() -> int:
     if root is None or not _in_sections(root):
         return 0
     if _recent_checks_runner_dispatch(root):
+        return 0
+    # P3.4 prereq 3: dedup a repeat reminder for the same script in the window.
+    if _recently_fired(root, m.group(0)):
         return 0
     try:
         import _offload_log

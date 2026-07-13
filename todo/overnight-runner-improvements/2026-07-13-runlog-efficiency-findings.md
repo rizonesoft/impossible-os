@@ -360,7 +360,7 @@
 
 ## G. Review discipline / self-inflicted-regression prevention (live behavior -- canary/doctrine)
 
-- [ ] **[canary] G1. A reviewer-suggested primitive swap was implemented repo-wide BEFORE reading
+- [x] **[canary] G1. A reviewer-suggested primitive swap was implemented repo-wide BEFORE reading
   the primitive's own contract, self-inflicting a CRITICAL.** `run-20260712-231031.log:1003-1046`:
   the perf reviewer suggested `spin_lock_irqsave` -> plain `spin_lock`; the runner applied it to 5
   functions + header + callers before checking semantics. The next round flagged CRITICAL --
@@ -371,7 +371,7 @@
   primitive's CONTRACT. **Fix (receiving-code-review discipline):** before implementing a
   reviewer-suggested primitive swap (lock type, atomic ordering, allocator, memory-order), read the
   primitive's own header/contract FIRST, not just the finding text.
-- [ ] **[canary] G2. Unbounded perf-suggestion chase with no stopping heuristic.**
+- [x] **[canary] G2. Unbounded perf-suggestion chase with no stopping heuristic.**
   `run-20260712-231031.log:966-1063`: §17 chased perf findings across ~8 sequential dispatches, each
   surfacing a NEW marginal issue rather than confirming convergence, netting zero on the lock type
   (irqsave in, irqsave out) after ~30 min and self-inflicting G1's bug. DISTINCT from P2.1

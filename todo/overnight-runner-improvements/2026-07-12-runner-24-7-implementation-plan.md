@@ -200,6 +200,12 @@ green deterministic run rather than a watched canary each.
   wrapper (match only when the bare script is the outermost command); (2) remove the deprecated `checks-runner`
   routing text from the reminder; (3) deduplicate reminders (it fired 9x for one sequence); (4) unit-test the
   compliant wrapped shape vs the bare shape before flipping the hook. Fold into the same `[canary]` bless.
+  **PREREQS 1-4 DONE 2026-07-14 (Stage 2):** (1) outer `run-artifact.sh` exemption already shipped;
+  (2) the deprecated `checks-runner` routing text removed from `build_offload_reminder.py`'s message;
+  (3) reminder DEDUP added (`_recently_fired`, 300s window keyed on the matched script -- it fired 9x on
+  one wrapped sequence); (4) `test_build_offload_reminder.py` extended with the wrapped-vs-bare + dedup +
+  no-checks-runner-text cases. The WARN -> BLOCK promotion ITSELF stays for Stage 3 / Canary #1 (a bad
+  BLOCK can wedge a live run), but its four prerequisites are now cleared.
 - [ ] **[canary] P3.5 Give a reviewed [/]-partial section a clean ship+stamp path (retire the gate deadlock + opt-out reliance).**
   Recognize a partial ship carrying fresh review evidence (scoped delta receipt + a valid cross-session record for unchanged bytes) as satisfying the stamp gate, so a reviewed partial ships without a full re-run or a `SKIP_*` bypass. (Direct fix for the deadlock hit landing §13.) Commit-gate flow change -- canary.
 
