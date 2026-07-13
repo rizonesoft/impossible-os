@@ -20,6 +20,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/sched/apc.h"     /* KAPC_STATE per-thread APC queues */
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/mutex.h"   /* mutex_t environ_lock (env is thread-context only) */
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 #include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
@@ -191,6 +192,19 @@ struct task {
      * another (the whole struct is shared across threads[]). */
     char        cwd[TASK_CWD_MAX];
     spinlock_t  cwd_lock;
+    /* --- Per-process environment + arguments (env.h API) ---
+     * environ: NULL-terminated "KEY=VALUE" UTF-8 array; argv: NULL-terminated
+     * argument array. Both are process-wide (shared by all threads[]) and are
+     * mutated/read ONLY via the env.h API (env_get_copy/env_set/env_unset/
+     * env_copy/env_free) or task_set_argv, which serialize on environ_lock.
+     * environ_lock is a MUTEX, not a spinlock: env mutation allocates/frees
+     * heap+PMM (forbidden under a spinlock) and env is thread-context-only
+     * (never touched from an ISR). Freed at the task_cleanup reap barrier. */
+    char      **environ;        /* "KEY=VALUE" strings, or NULL */
+    uint32_t    environ_count;  /* live entries (excludes NULL terminator) */
+    char      **argv;           /* argument strings, or NULL until argv setup */
+    int         argc;
+    mutex_t     environ_lock;
     /* exec_pending state machine (bulletproofing):
      *   task_exec():  exec_pending = 1, exec_pending_tick = uptime()
      *   schedule():   exec_pending = 0 on switch-in (frame consumed)

@@ -432,6 +432,7 @@ extern void test_register_ob(void);
 extern void test_register_security(void);
 extern void test_register_ci(void);
 extern void test_register_peb_teb(void);
+extern void test_register_env(void);
 extern void test_register_nt_types(void);
 extern void test_register_nt_sync(void);
 extern void test_register_nt_misc(void);
@@ -561,6 +562,7 @@ void test_runner_init(void)
 
     /* ABI */
     test_register_peb_teb();
+    test_register_env();
     test_register_nt_types();
     test_register_nt_sync();
     test_register_nt_misc();

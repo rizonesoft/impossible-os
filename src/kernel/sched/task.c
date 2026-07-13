@@ -22,6 +22,7 @@
 #include "kernel/cpu_security.h"  /* cr0_write_safe (CR0 pin preservation) */
 #include "kernel/klog.h"
 #include "kernel/exec.h"
+#include "kernel/env.h"
 #include "kernel/eif.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ipc/pgroup.h"       /* pgroup_note_exec, pgroup_jobctl_lock/unlock */
@@ -397,6 +398,14 @@ boot_result_t task_init(void)
             tasks[i].rlimit_lock = init;
             tasks[i].unveil_lock = init;
         }
+        /* Per-process environment + argv: NULL until env_init_defaults /
+         * task_set_argv populate them. environ_lock is a mutex (init once here;
+         * slots are never reused without a task_cleanup env_free in between). */
+        tasks[i].environ = NULL;
+        tasks[i].environ_count = 0;
+        tasks[i].argv = NULL;
+        tasks[i].argc = 0;
+        mutex_init(&tasks[i].environ_lock, "environ");
         tasks[i].pledge_mask = 0;
         tasks[i].unveil_list = (struct unveil_entry *)0;
         tasks[i].unveil_locked = 0;
@@ -2900,6 +2909,10 @@ void task_cleanup(uint32_t pid)
 
     /* Free the unveil list at the same reap barrier (no thread mid file-open). */
     pledge_unveil_teardown(&tasks[pid]);
+
+    /* Free the per-process environment + argv arrays at the same barrier (task
+     * is DEAD, no thread of it reads environ; env_free takes no lock). */
+    env_free(&tasks[pid]);
 
     /* Close all handles and free handle table. Snapshot the occupied-slot count
      * first for the reap-cleanup log. Closing a file handle drives

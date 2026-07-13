@@ -63,7 +63,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 | ⭐   | Order | Deliverable                                        | Depends On                 | Status |
 | --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [ ]   |
+| 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
 | 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [ ]   |
 | 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [ ]   |
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [ ]   |
@@ -90,36 +90,45 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 1. Per-Process Environ Storage & Kernel API
 
-- [ ] Add to `struct task` in `include/kernel/sched/task.h`:
+- [x] Added to `struct task` in `include/kernel/sched/task.h` (after `cwd_lock`):
   ```c
-  char   **environ;      /* NULL-terminated array of "KEY=VALUE" UTF-8 strings */
-  uint32_t environ_count;
-  char   **argv;         /* NULL-terminated argument array */
-  int      argc;
-  spinlock_t environ_lock; /* serializes environ/argv read+mutate across sibling threads */
+  char      **environ;        /* NULL-terminated "KEY=VALUE" UTF-8 array, or NULL */
+  uint32_t    environ_count;  /* live entries (excludes NULL terminator) */
+  char      **argv;           /* NULL-terminated argument array, or NULL */
+  int         argc;
+  mutex_t     environ_lock;   /* serializes environ/argv mutate+read across sibling threads */
   ```
-- [ ] `environ` and `argv` are `NULL` initially; populated by `env_init_defaults(task)` and the exec path respectively
-- [ ] Memory: each `"KEY=VALUE"` string ≤ 32 KiB → `kmalloc`; the pointer arrays themselves: ≤ 4 KiB → `kmalloc`; large `REG_EXPAND_SZ` values may exceed 4 KiB → `pmm_alloc_contiguous`
-- [ ] Implement in `src/kernel/env.c`, declare in `include/kernel/env.h`:
+- [x] `environ_lock` is a **mutex, not a spinlock** (design-review adoption): env mutation calls kmalloc/kfree/pmm and copies up to 32 KiB, forbidden under a spinlock; env is thread-context-only. task.h includes `kernel/sched/mutex.h`.
+- [x] `environ`/`argv` NULL + counts 0 initially; fields + `mutex_init(&environ_lock,"environ")` inited once in the `task_init` all-slots loop (`src/kernel/sched/task.c`).
+- [x] Value strings ≤ `ENV_STR_KMALLOC_MAX` (4096) → `kmalloc`, larger → `pmm_alloc_contiguous` (freed per-frame); allocator kind recovered from `strlen+1`. Array capped at `ENV_MAX_ENTRIES` (511) to stay ≤ 4 KiB.
+- [x] Implemented in `src/kernel/env.c`, declared in `include/kernel/env.h`:
   ```c
-  const char *env_get(struct task *t, const char *name);
-  int         env_set(struct task *t, const char *name, const char *value);
-  int         env_unset(struct task *t, const char *name);
-  int         env_copy(struct task *dst, const struct task *src); /* deep copy */
-  void        env_free(struct task *t);                           /* on task exit */
+  int  env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size);
+  void env_lock(struct task *t); void env_unlock(struct task *t);
+  const char *env_peek_locked(struct task *t, const char *name); /* borrowed, lock-held */
+  int  env_set(struct task *t, const char *name, const char *value);
+  int  env_unset(struct task *t, const char *name);
+  int  env_copy(struct task *dst, const struct task *src);       /* deep copy */
+  void env_free(struct task *t);                                 /* at reap barrier */
   ```
-- [ ] `env_get`: linear scan of `t->environ[]` for `"name="` prefix match (case-insensitive on Windows-style names); return pointer to value portion or `NULL`
-- [ ] `env_set`: search for existing entry; if found, replace string in-place (kfree old, kmalloc new); if not found, `krealloc` the pointer array to add one slot + NULL terminator
-- [ ] `env_unset`: find entry, `kfree` its string, shift remaining pointers left, update `environ_count`
-- [ ] `env_copy`: `kmalloc` a new pointer array of `src->environ_count + 1` entries; `kstrdup` each string; called from `NtCreateProcess` (→ XREF `TODO-12-native-api-ssdt.md §7`) to give child its own private copy
-- [ ] SMP + lifetime (mandatory per CLAUDE.md SMP gate; parallels `TODO-21 §1` `cwd_lock`):
-  - env_get/set/unset/copy/free all take `t->environ_lock`; `env_copy` snapshots the source under the lock before the child is published
-  - `env_get`'s raw `const char *` is a BORROWED reference valid ONLY while the lock is held; env_set/env_unset kfree/krealloc entries, so returning it across an unlock is a use-after-free
-  - `env_get_copy(t, name, out, out_size)` snapshots the value into a caller buffer under the lock; the Nt syscall + Win32 paths (§5/§6) MUST use this, never borrowed `env_get`
+- [x] Read API is copy-out (design-review UAF fix): `env_get_copy` copies under the lock (returns full length even when truncated); `env_peek_locked` borrows only between `env_lock`/`env_unlock`. No unlocked `env_get`.
+- [x] `env_set`: builds the `"name=value"` entry BEFORE freeing the old (OOM-safe); replaces or `krealloc`s the array +1 slot. Case-insensitive; bounded validation of name (≤256, no `=`) + value (≤ `ENV_VALUE_MAX` 32767).
+- [x] `env_unset`: bounded ci name scan, `env_str_free` the string, shift pointers left, re-terminate, decrement count.
+- [x] `env_copy`: snapshots src under `src->environ_lock` only (dst unpublished, no dst lock); fresh array + `env_strdup`, unwinds on OOM. Child-creation wiring owned by → XREF `TODO-12-native-api-ssdt.md §7`.
+- [x] SMP + lifetime (CLAUDE.md SMP gate; parallels `TODO-21 §1` `cwd_lock`): readers/mutators serialize on `environ_lock`; `env_free` runs lock-free at the `task_cleanup` reap barrier, freeing both arrays.
+  - All-CPU reap-barrier re-proof + mutex waiter-queue SMP backfill are single-CPU-scheduler follow-ups (→ XREF `03-memory-concurrency/TODO-07-smp-phase2.md` reap-barrier item; `03-memory-concurrency/TODO-08-advanced-sync.md §11`).
 
-- [ ] Commit: `"kernel/env: per-process environ array + lock, env_get/set/unset/copy"`
+- [x] Commit: `"kernel/env: per-process environ array + lock, env_get_copy/set/unset/copy"`
 
-**Test checkpoint:** `env_set`/`env_get`/`env_unset`/`env_copy` on test task; `env_free` leaves no dangling pointers. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** `env_set`/`env_get_copy`/`env_unset`/`env_copy` on a test task; case-insensitivity; validation; truncating get returns full length; OOM-during-replace preserves the old value; >4 KiB value round-trips via PMM; `env_free` leaves no dangling pointers. `bash scripts/test.sh SUITE=abi` green (1188 passed, 0 failed, 0 leaked); `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX + TCG; VirtualBox; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 14 env suites, 0 failures
+> **Notes:**
+> - **What shipped** -- `src/kernel/env.c` + `include/kernel/env.h`: per-task `environ`/`argv` storage + `env_get_copy`/`env_set`/`env_unset`/`env_copy`/`env_free`/`env_lock`/`env_peek_locked`; 14 tests in `src/kernel/test/test_env.c` (TEST_CAT_ABI).
+> - **How it integrates** -- fields + `mutex_init` land once in the `task_init` all-slots loop; `env_free` wired at the `task_cleanup` reap barrier; build auto-discovers `env.c`.
+> - **Downstream effects** -- unblocks env-copy wiring for `TODO-12-native-api-ssdt.md §7` (child env); storage base for later TODO-22 sections; Codex adoptions in the commit message.
+> - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) header contract (lock + reader-lifetime rules).
+> - **Scope boundary** -- §1 owns kernel storage + the C API only; `%VAR%` expansion is §3, Nt syscalls §5, Win32 wrappers §6, argv/exec handoff §4, sorting/size-block §10.
 
 ---
 
@@ -554,7 +563,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 
 | ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS |
 | --- | -------------------------- | --------------------- | -------------------- | --------------- |
-| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ⬜ §1            |
+| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API |
 | 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ⬜ §3 Win `%`    |
 | 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ⬜ §2 Registry   |
 | 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7   |
