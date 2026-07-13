@@ -18,6 +18,7 @@
 #include "kernel/smp.h"          /* smp_cpu_count() */
 #include "kernel/boot_init.h"    /* kernel_subsystem_ready(), SUBSYS_REGISTRY */
 #include "kernel/klog.h"         /* klog() */
+#include "kernel/nt/nls_cp.h"    /* nls_cp_utf8_to_utf16 (env block build) */
 #include "registry.h"            /* RegOpenKeyEx / RegEnumValue / RegGet* */
 
 #define ENV_PAGE_SIZE 4096u
@@ -405,6 +406,218 @@ void env_free(struct task *t)
         t->argv = NULL;
     }
     t->argc = 0;
+}
+
+/* ===========================================================================
+ * %VAR% expansion (single-pass; cmd.exe / Win32 ExpandEnvironmentStrings)
+ *
+ * env_expand walks `input` once and substitutes each `%NAME%` with its value.
+ * Substitution is single-pass by design: an expanded value that itself contains
+ * `%OTHER%` is NOT recursively re-expanded, so there is no depth limit and no
+ * infinite-loop risk (delayed `!VAR!` re-expansion is a separate cmd.exe mode).
+ * =========================================================================== */
+
+/* Append one byte to `out`, reserving the final slot for the NUL terminator.
+ * Sets *trunc when the byte does not fit (out stays NUL-terminatable). */
+static void env_exp_put(char *out, uint32_t max_len, uint32_t *pos, int *trunc,
+                        char c)
+{
+    if (*pos + 1u < max_len)
+        out[(*pos)++] = c;
+    else
+        *trunc = 1;
+}
+
+int env_expand(struct task *t, const char *input, char *output, uint32_t max_len)
+{
+    uint32_t in = 0, out = 0;
+    int trunc = 0;
+
+    if (!output || max_len == 0)
+        return 0;
+    if (!t || !input) {
+        output[0] = '\0';
+        return 0;
+    }
+    /* `input` and `output` must not overlap (Win32 ExpandEnvironmentStrings has
+     * the same contract). Reject an alias and return 0 WITHOUT touching either
+     * buffer -- writing output[0] here would corrupt the source (exact alias
+     * erases input[0]; a partial overlap inserts a NUL into the source). This is
+     * the one exception to the "output always NUL-terminated" guarantee. Measure
+     * input (kernel-resident, NUL-terminated by contract) then compare ranges. */
+    {
+        uint32_t inlen = env_strlen(input);
+        uintptr_t i0 = (uintptr_t)input, i1 = i0 + inlen + 1u;
+        uintptr_t o0 = (uintptr_t)output, o1 = o0 + max_len;
+        if (i0 < o1 && o0 < i1)
+            return 0;                            /* overlap: leave both buffers intact */
+    }
+    output[0] = '\0';
+
+    /* One lock for the whole walk: env_peek_locked returns a borrowed pointer
+     * valid only under the lock, and we copy its bytes into `output` before any
+     * unlock. No allocation happens under the lock (append is a plain byte
+     * copy), so holding the env mutex across the walk is safe and gives a
+     * coherent snapshot. Caller contract: must NOT already hold environ_lock. */
+    env_lock(t);
+    while (input[in]) {
+        char c = input[in];
+        if (c != '%') {
+            env_exp_put(output, max_len, &out, &trunc, c);   /* verbatim */
+            in++;
+            continue;
+        }
+        /* Win32/ntdll ExpandEnvironmentStrings semantics: `%%` is NOT an escape.
+         * An empty name (`%%`) is an unresolved variable, so both percent signs
+         * are preserved verbatim by the empty-name -> literal branch below.
+         * cmd.exe's `%%` -> `%` batch escape is a distinct shell mode (owned by
+         * the pseudo-variable / delayed-expansion section), not this primitive. */
+        /* Scan for the closing '%'. */
+        {
+            uint32_t j = in + 1;
+            while (input[j] && input[j] != '%')
+                j++;
+            if (input[j] != '%') {
+                /* No closing '%': copy the remainder verbatim and stop. */
+                while (input[in]) {
+                    env_exp_put(output, max_len, &out, &trunc, input[in]);
+                    in++;
+                }
+                break;
+            }
+            {
+                uint32_t namelen = j - (in + 1);
+                const char *val = NULL;
+                if (namelen >= 1 && namelen <= ENV_NAME_MAX) {
+                    char nb[ENV_NAME_MAX + 1];
+                    uint32_t k;
+                    for (k = 0; k < namelen; k++)
+                        nb[k] = input[in + 1 + k];
+                    nb[namelen] = '\0';
+                    val = env_peek_locked(t, nb);            /* borrowed, under lock */
+                }
+                if (val) {
+                    uint32_t v = 0;
+                    while (val[v]) {
+                        env_exp_put(output, max_len, &out, &trunc, val[v]);
+                        v++;
+                    }
+                } else {
+                    /* Unknown or over-long name: copy the literal `%NAME%`. */
+                    uint32_t p;
+                    for (p = in; p <= j; p++)
+                        env_exp_put(output, max_len, &out, &trunc, input[p]);
+                }
+                in = j + 1;
+            }
+        }
+    }
+    env_unlock(t);
+
+    output[out] = '\0';
+    return trunc ? (int)max_len : (int)out;
+}
+
+/* ===========================================================================
+ * UTF-16 environment-block builder (for RtlExpandEnvironmentStrings_U's
+ * NULL-Environment "calling process's own block" path)
+ * =========================================================================== */
+
+int env_build_block_utf16(struct task *t, uint16_t **out_block,
+                          uint32_t *out_wchars, uint32_t max_wchars)
+{
+    uint32_t total, i, w, nentries;
+    char *raw;
+    uint16_t *blk;
+
+    if (!t || !out_block || !out_wchars)
+        return ENV_ERR_INVAL;
+    *out_block = NULL;
+    *out_wchars = 0;
+
+    /* Snapshot under the env mutex: size, allocate, and convert all while holding
+     * the lock so a sibling env_set/env_unset cannot change the block between the
+     * sizing and conversion passes (both feed nls_cp_utf8_to_utf16 the same
+     * bytes). Allocation under a MUTEX is permitted (env is a sleeping lock, not
+     * a spinlock). NOTE: for a block above ENV_STR_KMALLOC_MAX, env_str_alloc
+     * routes to pmm_alloc_contiguous, whose bitmap/accounting is NOT yet
+     * SMP-locked (a pre-existing kernel-wide gap; kmalloc's s_heap_lock covers
+     * the small-block path). Tracked for a real physical-allocator lock. */
+    mutex_lock(&t->environ_lock);
+
+    /* Sizing pass: UTF-8 entries convert to a variable number of WCHARs (a
+     * multibyte UTF-8 char is one BMP WCHAR or a surrogate pair, never one WCHAR
+     * per byte), so measure the real UTF-16 length via nls_cp_utf8_to_utf16 with
+     * a NULL destination. NLS_CP_REPLACE keeps a malformed stored value building
+     * (U+FFFD) instead of failing the whole block. */
+    nentries = 0u;
+    total = 1u;                                   /* trailing block terminator NUL */
+    if (t->environ) {
+        for (i = 0; i < t->environ_count; i++) {
+            const char *e = t->environ[i];
+            int need;
+            if (!e)
+                continue;
+            need = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
+                                        (uint16_t *)0, 0u, NLS_CP_REPLACE);
+            if (need < 0) {
+                mutex_unlock(&t->environ_lock);
+                return ENV_ERR_INVAL;             /* only on a bad mode/NULL -- guarded */
+            }
+            total += (uint32_t)need + 1u;         /* entry WCHARs + its NUL */
+            nentries++;
+        }
+    }
+    /* A non-empty block already ends "...\0\0" (last entry's NUL + the trailing
+     * NUL). An empty environment would otherwise be a single NUL, violating the
+     * NT double-NUL block contract -- emit two NULs so it is "\0\0". */
+    if (nentries == 0u)
+        total = 2u;
+    if (total > max_wchars) {
+        mutex_unlock(&t->environ_lock);
+        return ENV_ERR_NOSPACE;
+    }
+
+    raw = env_str_alloc(total * 2u);              /* wchars -> bytes */
+    if (!raw) {
+        mutex_unlock(&t->environ_lock);
+        return ENV_ERR_NOMEM;
+    }
+    blk = (uint16_t *)raw;
+
+    w = 0;
+    if (t->environ) {
+        for (i = 0; i < t->environ_count; i++) {
+            const char *e = t->environ[i];
+            int got;
+            if (!e)
+                continue;
+            got = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
+                                       &blk[w], total - w, NLS_CP_REPLACE);
+            if (got < 0) {                        /* sizing guaranteed room; defensive */
+                mutex_unlock(&t->environ_lock);
+                env_str_free(raw, total * 2u);
+                return ENV_ERR_INVAL;
+            }
+            w += (uint32_t)got;
+            blk[w++] = 0;                         /* terminate this entry */
+        }
+    }
+    blk[w++] = 0;                                 /* empty entry: block terminator */
+    if (nentries == 0u)
+        blk[w++] = 0;                             /* second NUL for the empty block */
+
+    mutex_unlock(&t->environ_lock);
+
+    *out_block = blk;
+    *out_wchars = w;                              /* == total */
+    return ENV_OK;
+}
+
+void env_free_block_utf16(uint16_t *block, uint32_t wchars)
+{
+    if (block)
+        env_str_free((char *)block, wchars * 2u);
 }
 
 /* ===========================================================================

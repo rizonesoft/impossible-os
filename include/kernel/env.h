@@ -85,6 +85,48 @@ int env_copy(struct task *dst, const struct task *src);
  * runs), so no lock is taken. Safe to call on an already-empty task. */
 void env_free(struct task *t);
 
+/* --- %VAR% expansion (single-pass, Win32 ExpandEnvironmentStrings) --------- */
+
+/* Expand `%VAR%` references in `input` into `output` using `t`'s environment.
+ * Single-pass substitution (Win32 ExpandEnvironmentStrings semantics): each
+ * `%NAME%` is replaced exactly once with env_get(t,NAME); a value that itself
+ * contains `%OTHER%` is NOT re-expanded (delayed `!VAR!` re-expansion is a
+ * distinct cmd.exe mode owned by the pseudo-variable section). `%%` is NOT a
+ * cmd-style escape: it is an empty (unresolved) variable name, so both percent
+ * signs are PRESERVED verbatim -- matching Win32/ntdll, where cmd.exe's `%%`->`%`
+ * is a distinct shell mode. An unknown `%NAME%` and an unmatched trailing `%`
+ * are likewise copied verbatim. Name matching is case-insensitive (ASCII fold,
+ * matching the storage layer). Returns the number of bytes written (excluding
+ * the NUL). If
+ * the result would overflow `max_len`, `output` gets the truncated result + NUL
+ * and the return value is `max_len` (a truncation sentinel). `output` is always
+ * NUL-terminated when `max_len > 0`, EXCEPT the overlap-rejection case below.
+ * `input` and `output` MUST NOT overlap (as with Win32 ExpandEnvironmentStrings);
+ * an overlapping alias returns 0 and leaves BOTH buffers unchanged (it does not
+ * even write output[0], since output may alias input). Caller contract: must NOT
+ * already hold t->environ_lock (env_expand takes it for the whole walk). For
+ * kernel-internal expansion pass the initial system process (task_get_by_pid(0))
+ * as `t`. */
+int env_expand(struct task *t, const char *input, char *output, uint32_t max_len);
+
+/* Build a UTF-16 NT environment block ("NAME=VALUE\0"... double-NUL terminated)
+ * from `t`'s UTF-8 environ, snapshotting under t->environ_lock. Entries are
+ * converted UTF-8 -> UTF-16 via nls_cp_utf8_to_utf16 (NLS_CP_REPLACE, so a
+ * malformed stored value becomes U+FFFD rather than failing the block). On
+ * success `*out_block` is an allocated block and `*out_wchars` its total wchar
+ * length (including the inter-entry NULs and the final terminator); free it with
+ * env_free_block_utf16(*out_block, *out_wchars). Returns ENV_ERR_NOSPACE if the
+ * block would exceed `max_wchars`, ENV_ERR_NOMEM on allocation failure,
+ * ENV_ERR_INVAL on bad args. Used by RtlExpandEnvironmentStrings_U to honor the
+ * NULL-Environment "calling process's own block" contract from kernel-resident
+ * memory (the authoritative store), not the stale user-mapped PEB block. */
+int env_build_block_utf16(struct task *t, uint16_t **out_block,
+                          uint32_t *out_wchars, uint32_t max_wchars);
+
+/* Free a block returned by env_build_block_utf16. `wchars` MUST be the same
+ * `*out_wchars` that build returned. */
+void env_free_block_utf16(uint16_t *block, uint32_t wchars);
+
 /* --- System default environment (system-default-variables feature) -------- */
 
 /* Populate `t`'s environment with the system default variable set: a synthesised

@@ -11,6 +11,9 @@
 
 #include "kernel/test/test.h"
 #include "kernel/env.h"
+#include "kernel/nt/nt_rtlenv.h" /* RtlExpandEnvironmentStrings_U (UTF-16 path) */
+#include "kernel/ob/peb.h"       /* UNICODE_STRING */
+#include "kernel/nt/ntstatus.h"  /* STATUS_* */
 #include "kernel/sched/task.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
@@ -537,6 +540,510 @@ static void test_env_defaults_unterminated_value(void)
     env_free(&s_env_fixture);
 }
 
+/* ============================ %VAR% expansion (section 3) ================== */
+
+/* Fill `buf` with the UTF-16 (Latin-1-direct) transcription of ASCII `s` and
+ * return the WCHAR count (excluding NUL). */
+static uint32_t env_test_wfill(const char *s, uint16_t *buf)
+{
+    uint32_t n = 0;
+    while (s[n]) {
+        buf[n] = (uint16_t)(uint8_t)s[n];
+        n++;
+    }
+    return n;
+}
+
+/* True if the WCHAR run `w`[0..wlen) equals ASCII `ascii` exactly. */
+static int env_test_weq_ascii(const uint16_t *w, uint32_t wlen, const char *ascii)
+{
+    uint32_t i;
+    for (i = 0; i < wlen; i++) {
+        if (ascii[i] == '\0' || w[i] != (uint16_t)(uint8_t)ascii[i])
+            return 0;
+    }
+    return ascii[wlen] == '\0';
+}
+
+/* env_expand: %VAR% substituted; verbatim prefix/suffix preserved. */
+static void test_env_expand_basic(void)
+{
+    char out[64];
+    int r;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "PLACE", "world");
+    r = env_expand(&s_env_fixture, "hello %PLACE%!", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "hello world!"), "env_expand substitutes %VAR%");
+    TEST_ASSERT_EQ(r, (int)env_test_strlen("hello world!"),
+                   "env_expand returns bytes written excluding NUL");
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: %% is NOT a cmd-style escape -- Win32/ntdll ExpandEnvironmentStrings
+ * treats it as an empty (unresolved) variable and preserves both percent signs. */
+static void test_env_expand_double_percent(void)
+{
+    char out[32];
+    env_fixture_reset();
+    env_expand(&s_env_fixture, "100%% done", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "100%% done"),
+                "%% preserved verbatim (empty var, not a cmd escape)");
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: an unknown %NAME% is copied through verbatim. */
+static void test_env_expand_unknown_literal(void)
+{
+    char out[32];
+    env_fixture_reset();
+    env_expand(&s_env_fixture, "a %NOPE% b", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "a %NOPE% b"), "unknown %NAME% stays literal");
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: an unmatched trailing % is copied verbatim (no closing %). */
+static void test_env_expand_unmatched_percent(void)
+{
+    char out[32];
+    env_fixture_reset();
+    env_expand(&s_env_fixture, "tail %OPEN here", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "tail %OPEN here"),
+                "unmatched % copied verbatim to end");
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: single-pass -- an expanded value containing %OTHER% is NOT
+ * re-expanded (Unit Tests section 3 checkpoint). */
+static void test_env_expand_single_pass(void)
+{
+    char out[32];
+    env_fixture_reset();
+    env_set(&s_env_fixture, "A", "%B%");
+    env_set(&s_env_fixture, "B", "x");
+    env_expand(&s_env_fixture, "%A%", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "%B%"),
+                "single-pass: %A% -> literal %B%, never recursively -> x");
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: overflow truncates + NUL-terminates and returns the max_len
+ * sentinel. */
+static void test_env_expand_truncation(void)
+{
+    char out[5];
+    int r;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "V", "123456789");
+    r = env_expand(&s_env_fixture, "%V%", out, sizeof(out));
+    TEST_ASSERT_EQ(r, (int)sizeof(out), "truncation returns max_len sentinel");
+    TEST_ASSERT(env_streq(out, "1234"), "truncated output is NUL-terminated at max_len-1");
+    env_free(&s_env_fixture);
+}
+
+/* env_build_block_utf16: produces a NAME=VALUE\0 ... \0 block from environ. */
+static void test_env_build_block_utf16(void)
+{
+    uint16_t *blk = NULL;
+    uint32_t w = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "V");
+    rc = env_build_block_utf16(&s_env_fixture, &blk, &w, RTL_ENV_BLOCK_MAX_WCHARS);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_build_block_utf16 succeeds");
+    /* "K=V\0\0" -> 5 wchars total (entry 'K','=','V',NUL + terminating NUL). */
+    TEST_ASSERT_EQ((int)w, 5, "block wchar count includes entry NUL + terminator");
+    TEST_ASSERT(blk && env_test_weq_ascii(blk, 3, "K=V"),
+                "block holds the KEY=VALUE entry");
+    TEST_ASSERT(blk && blk[3] == 0 && blk[4] == 0, "double-NUL terminates the block");
+    env_free_block_utf16(blk, w);
+    env_free(&s_env_fixture);
+}
+
+/* RtlExpandEnvironmentStrings_U: explicit block, %VAR% expansion, lengths. */
+static void test_rtl_expand_basic(void)
+{
+    /* Block "PATH=C:\X\0\0". */
+    uint16_t block[] = { 'P','A','T','H','=','C',':','\\','X', 0, 0 };
+    uint16_t srcbuf[16], dstbuf[64];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%PATH%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "explicit-block expansion succeeds");
+    TEST_ASSERT_EQ((int)dst.Length, (int)(env_test_strlen("C:\\X") * 2u),
+                   "Destination->Length is result bytes excluding NUL");
+    TEST_ASSERT_EQ((int)rl, (int)((env_test_strlen("C:\\X") + 1u) * 2u),
+                   "ReturnedLength is required bytes including NUL");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("C:\\X"), "C:\\X"),
+                "expanded value matches %PATH%");
+    TEST_ASSERT_EQ((int)dstbuf[env_test_strlen("C:\\X")], 0,
+                   "Destination is NUL-terminated");
+}
+
+/* RtlExpandEnvironmentStrings_U: undersized Destination -> STATUS_BUFFER_TOO_SMALL,
+ * ReturnedLength set to the requirement, no partial output, Length unchanged. */
+static void test_rtl_expand_buffer_too_small(void)
+{
+    uint16_t block[] = { 'V','=','a','b','c','d','e', 0, 0 };   /* V=abcde */
+    uint16_t srcbuf[16], dstbuf[4];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);   /* 4 bytes = 2 wchars: too small */
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_BUFFER_TOO_SMALL, "small buffer rejected");
+    TEST_ASSERT_EQ((int)rl, (int)((env_test_strlen("abcde") + 1u) * 2u),
+                   "ReturnedLength reports required bytes including NUL");
+    TEST_ASSERT_EQ((int)dst.Length, 0, "Length unchanged on BUFFER_TOO_SMALL");
+}
+
+/* RtlExpandEnvironmentStrings_U: %% preserved verbatim + case-insensitive ASCII name match. */
+static void test_rtl_expand_escape_and_case(void)
+{
+    uint16_t block[] = { 'P','a','t','h','=','Q', 0, 0 };   /* Path=Q */
+    uint16_t srcbuf[16], dstbuf[32];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    /* "50%% %PATH%" -> "50%% Q": %% is preserved (empty var, Win32 semantics),
+     * and Path/PATH matches case-insensitively. */
+    src.Length = (uint16_t)(env_test_wfill("50%% %PATH%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "%% + case expansion succeeds");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("50%% Q"), "50%% Q"),
+                "%% preserved verbatim + case-insensitive name match");
+}
+
+/* RtlExpandEnvironmentStrings_U: an unterminated block (no double-NUL within the
+ * cap is impractical to build, but a block whose only content lacks a terminator
+ * within a tiny synthetic cap is rejected) and NULL args are rejected. */
+static void test_rtl_expand_invalid_args(void)
+{
+    uint16_t block[] = { 'A','=','b', 0, 0 };
+    uint16_t dstbuf[8];
+    UNICODE_STRING dst;
+    NTSTATUS st;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, (UNICODE_STRING *)0, &dst,
+                                       (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "NULL Source rejected with STATUS_INVALID_PARAMETER");
+}
+
+/* RtlExpandEnvironmentStrings_U: empty Source expands to an empty string. */
+static void test_rtl_expand_empty_source(void)
+{
+    uint16_t block[] = { 'A','=','b', 0, 0 };
+    uint16_t dstbuf[8];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0;
+    NTSTATUS st;
+    src.Length = 0;
+    src.MaximumLength = 0;
+    src.Buffer = (uint16_t *)0;              /* empty string: NULL Buffer is valid */
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "empty Source expands successfully");
+    TEST_ASSERT_EQ((int)dst.Length, 0, "empty Source yields empty result");
+    TEST_ASSERT_EQ((int)rl, 2, "ReturnedLength is the lone NUL (2 bytes)");
+    TEST_ASSERT_EQ((int)dstbuf[0], 0, "result NUL-terminated");
+}
+
+/* RtlExpandEnvironmentStrings_U: a later entry in a multi-entry block resolves. */
+static void test_rtl_expand_multi_entry(void)
+{
+    /* "AAA=1\0BBB=22\0\0" */
+    uint16_t block[] = { 'A','A','A','=','1', 0, 'B','B','B','=','2','2', 0, 0 };
+    uint16_t srcbuf[16], dstbuf[32];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = (uint16_t)(env_test_wfill("%BBB%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "multi-entry block expands");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, 2, "22"),
+                "second block entry resolves correctly");
+}
+
+/* env_build_block_utf16: an environ larger than max_wchars returns NOSPACE. */
+static void test_env_build_block_over_cap(void)
+{
+    uint16_t *blk = (uint16_t *)0;
+    uint32_t w = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "value");        /* "K=value\0" + term = 9 wchars */
+    rc = env_build_block_utf16(&s_env_fixture, &blk, &w, 4u);   /* cap below need */
+    TEST_ASSERT_EQ(rc, ENV_ERR_NOSPACE, "over-cap block build returns NOSPACE");
+    TEST_ASSERT(blk == (uint16_t *)0, "no block allocated on over-cap");
+    env_free(&s_env_fixture);
+}
+
+/* RtlExpandEnvironmentStrings_U: a fitting result with a NULL Destination buffer
+ * is a caller error -> STATUS_INVALID_PARAMETER, never a NULL write. */
+static void test_rtl_expand_null_dest_buffer(void)
+{
+    uint16_t block[] = { 'A','=','b', 0, 0 };
+    uint16_t srcbuf[8];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = 0;                              /* empty source: result fits trivially */
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = 16;                       /* room for the result... */
+    dst.Buffer = (uint16_t *)0;                  /* ...but NULL buffer */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "fitting result + NULL Destination buffer rejected, not written");
+}
+
+/* RtlExpandEnvironmentStrings_U: a Destination that aliases Source is rejected
+ * (the two-pass count/write would tear on an in-place overwrite). */
+static void test_rtl_expand_overlap_rejected(void)
+{
+    uint16_t block[] = { 'A','=','b', 0, 0 };
+    uint16_t shared[32];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    (void)env_test_wfill("%A%", shared);
+    src.Length = (uint16_t)(env_test_strlen("%A%") * 2u);
+    src.MaximumLength = (uint16_t)sizeof(shared);
+    src.Buffer = shared;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(shared);
+    dst.Buffer = shared;                         /* aliases Source */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "Destination aliasing Source rejected");
+}
+
+/* env_build_block_utf16: a multibyte UTF-8 value converts to a single BMP WCHAR
+ * (U+00E9), not two Latin-1 code units. */
+static void test_env_build_block_utf8(void)
+{
+    uint16_t *blk = (uint16_t *)0;
+    uint32_t w = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "\xC3\xA9");     /* value "e-acute" (U+00E9) in UTF-8 */
+    rc = env_build_block_utf16(&s_env_fixture, &blk, &w, RTL_ENV_BLOCK_MAX_WCHARS);
+    TEST_ASSERT_EQ(rc, ENV_OK, "UTF-8 block build succeeds");
+    /* "K=<U+00E9>\0\0" -> 5 wchars: 'K','=',0x00E9, entry NUL, block NUL. */
+    TEST_ASSERT_EQ((int)w, 5, "multibyte value is one WCHAR, not two");
+    TEST_ASSERT(blk && blk[0] == (uint16_t)'K' && blk[1] == (uint16_t)'=',
+                "key converts unchanged");
+    TEST_ASSERT(blk && blk[2] == 0x00E9u, "UTF-8 C3 A9 -> single WCHAR U+00E9");
+    TEST_ASSERT(blk && blk[3] == 0 && blk[4] == 0, "double-NUL terminated");
+    env_free_block_utf16(blk, w);
+    env_free(&s_env_fixture);
+}
+
+/* env_build_block_utf16: an empty environment yields a double-NUL block. */
+static void test_env_build_block_empty(void)
+{
+    uint16_t *blk = (uint16_t *)0;
+    uint32_t w = 0;
+    int rc;
+    env_fixture_reset();                          /* no variables set */
+    rc = env_build_block_utf16(&s_env_fixture, &blk, &w, RTL_ENV_BLOCK_MAX_WCHARS);
+    TEST_ASSERT_EQ(rc, ENV_OK, "empty-environment block build succeeds");
+    TEST_ASSERT_EQ((int)w, 2, "empty block is two wchars (double-NUL)");
+    TEST_ASSERT(blk && blk[0] == 0 && blk[1] == 0,
+                "empty block is a proper double-NUL terminator");
+    env_free_block_utf16(blk, w);
+    env_free(&s_env_fixture);
+}
+
+/* env_expand: input aliasing output is rejected (empty result, no corruption). */
+static void test_env_expand_overlap_rejected(void)
+{
+    char buf[32];
+    int r;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "V", "x");
+    /* buf holds the template AND is the output -> exact alias. */
+    buf[0] = '%'; buf[1] = 'V'; buf[2] = '%'; buf[3] = '\0';
+    r = env_expand(&s_env_fixture, buf, buf, sizeof(buf));
+    TEST_ASSERT_EQ(r, 0, "aliased input/output rejected with empty result");
+    env_free(&s_env_fixture);
+}
+
+/* RtlExpandEnvironmentStrings_U: a Destination at a non-empty block's terminating
+ * NUL overlaps the block extent and is rejected. */
+static void test_rtl_expand_overlap_block_terminator(void)
+{
+    uint16_t block[] = { 'A','=','b', 0, 0 };     /* terminator index is 4 */
+    uint16_t srcbuf[8];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = (uint16_t)(env_test_wfill("%A%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = 2;                          /* 1 wchar */
+    dst.Buffer = &block[4];                         /* the terminating NUL */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "Destination at the block terminator rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: a Destination aliasing an empty block ("\0\0")
+ * is rejected (the extent covers the terminator even when block_wchars == 0). */
+static void test_rtl_expand_overlap_empty_block(void)
+{
+    uint16_t block[8];
+    uint16_t srcbuf[8];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    block[0] = 0; block[1] = 0;                     /* empty double-NUL block */
+    src.Length = (uint16_t)(env_test_wfill("%X%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = 8;
+    dst.Buffer = &block[0];                         /* aliases the empty block */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "Destination aliasing an empty block rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: a Destination->Buffer pointing into its own
+ * descriptor is rejected (would corrupt the write pointer mid-flight). */
+static void test_rtl_expand_self_referential_dest(void)
+{
+    uint16_t block[] = { 'V','=','1', 0, 0 };
+    uint16_t srcbuf[8];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = 64;
+    dst.Buffer = (uint16_t *)&dst;                 /* aliases the descriptor */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "self-referential Destination buffer rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: a ReturnedLength aliasing the output range is
+ * rejected (the *ReturnedLength store would corrupt the output). */
+static void test_rtl_expand_returnedlength_alias(void)
+{
+    uint16_t block[] = { 'V','=','1', 0, 0 };
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)&dstbuf[0]);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "ReturnedLength aliasing the output range rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: a ReturnedLength aliasing Source data is
+ * rejected (the between-passes store would mutate the input). */
+static void test_rtl_expand_returnedlength_aliases_source(void)
+{
+    uint16_t block[] = { 'V','=','1', 0, 0 };
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)&srcbuf[0]);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "ReturnedLength aliasing Source data rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: Destination at block[1] of an empty "\0\0"
+ * block is rejected (the extent covers both terminators). */
+static void test_rtl_expand_empty_block_second_nul(void)
+{
+    uint16_t block[8];
+    uint16_t srcbuf[8];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    block[0] = 0; block[1] = 0;
+    src.Length = (uint16_t)(env_test_wfill("%X%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = 8;
+    dst.Buffer = &block[1];                        /* the second terminator */
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "Destination at an empty block's second NUL rejected");
+}
+
+/* env_expand: a rejected overlap leaves the SOURCE bytes untouched (exact and
+ * both partial-overlap directions). */
+static void test_env_expand_overlap_preserves_source(void)
+{
+    char buf[32];
+    int r;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "V", "x");
+
+    /* Exact alias: input == output. */
+    buf[0] = '%'; buf[1] = 'V'; buf[2] = '%'; buf[3] = '\0';
+    r = env_expand(&s_env_fixture, buf, buf, sizeof(buf));
+    TEST_ASSERT_EQ(r, 0, "exact alias rejected");
+    TEST_ASSERT(env_streq(buf, "%V%"), "exact alias leaves source intact");
+
+    /* Forward partial: output starts inside input. */
+    buf[0] = '%'; buf[1] = 'V'; buf[2] = '%'; buf[3] = '\0';
+    r = env_expand(&s_env_fixture, buf, buf + 1, sizeof(buf) - 1);
+    TEST_ASSERT_EQ(r, 0, "forward partial overlap rejected");
+    TEST_ASSERT(env_streq(buf, "%V%"), "forward partial leaves source intact");
+
+    /* Backward partial: input starts inside output. */
+    buf[0] = 'A'; buf[1] = '%'; buf[2] = 'V'; buf[3] = '%'; buf[4] = '\0';
+    r = env_expand(&s_env_fixture, buf + 1, buf, sizeof(buf));
+    TEST_ASSERT_EQ(r, 0, "backward partial overlap rejected");
+    TEST_ASSERT(env_streq(buf + 1, "%V%"), "backward partial leaves source intact");
+
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: set/get roundtrip",
@@ -583,6 +1090,58 @@ void test_register_env(void)
                             test_env_defaults_skips_non_string, TEST_CAT_ABI);
     test_suite_register_cat("Env: init_defaults unterminated REG_SZ",
                             test_env_defaults_unterminated_value, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand %VAR% substitution",
+                            test_env_expand_basic, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand %% preserved (Win32, not cmd escape)",
+                            test_env_expand_double_percent, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand unknown var literal",
+                            test_env_expand_unknown_literal, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand unmatched percent",
+                            test_env_expand_unmatched_percent, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand single-pass (no recursion)",
+                            test_env_expand_single_pass, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand truncation sentinel",
+                            test_env_expand_truncation, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build UTF-16 block",
+                            test_env_build_block_utf16, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U basic",
+                            test_rtl_expand_basic, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U buffer too small",
+                            test_rtl_expand_buffer_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U escape+case",
+                            test_rtl_expand_escape_and_case, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U invalid args",
+                            test_rtl_expand_invalid_args, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U empty source",
+                            test_rtl_expand_empty_source, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U multi-entry",
+                            test_rtl_expand_multi_entry, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build UTF-16 block over cap",
+                            test_env_build_block_over_cap, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U NULL dest buffer",
+                            test_rtl_expand_null_dest_buffer, TEST_CAT_ABI);
+    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U overlap rejected",
+                            test_rtl_expand_overlap_rejected, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build UTF-16 empty block double-NUL",
+                            test_env_build_block_empty, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build UTF-16 block UTF-8 conversion",
+                            test_env_build_block_utf8, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand input/output overlap rejected",
+                            test_env_expand_overlap_rejected, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand block-terminator overlap",
+                            test_rtl_expand_overlap_block_terminator, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand empty-block overlap",
+                            test_rtl_expand_overlap_empty_block, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand self-referential dest",
+                            test_rtl_expand_self_referential_dest, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand ReturnedLength alias",
+                            test_rtl_expand_returnedlength_alias, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand ReturnedLength aliases source",
+                            test_rtl_expand_returnedlength_aliases_source, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl expand empty-block second NUL",
+                            test_rtl_expand_empty_block_second_nul, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand overlap preserves source",
+                            test_env_expand_overlap_preserves_source, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

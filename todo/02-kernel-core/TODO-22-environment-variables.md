@@ -65,7 +65,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
 | 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
-| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [ ]   |
+| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
 | 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [ ]   |
 | 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [ ]   |
 | 💎   |   6   | Win32 API wrappers                                 | §5                         |  [ ]   |
@@ -178,25 +178,29 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 3. `%VAR%` Expansion
 
-- [ ] `env_expand(task, input, output, max_len)` -- walk `input` byte by byte:
-  - On `%`: record start; scan forward for closing `%`; if found, extract name (`%NAME%`); call `env_get(task, name)`; if found, append value to output; if not found, append the literal `%NAME%` unchanged
-  - On `%%`: emit a single literal `%` (Windows escape)
-  - All other chars: copy verbatim
-  - Single-pass substitution (matches cmd.exe and Win32 `ExpandEnvironmentStrings`): each `%VAR%` is replaced exactly once; a value that itself contains `%OTHER%` is NOT recursively re-expanded (no depth limit, no infinite-loop risk). cmd's delayed `!VAR!` re-expansion is a distinct mode owned by §18
-  - Return number of bytes written (not including null terminator); if output would overflow `max_len`, write truncated result + null and return `max_len`
-- [ ] `env_expand` uses the caller's `task->environ`; for kernel-internal calls pass `PsInitialSystemProcess` as the task
+- [x] `env_expand(t, input, output, max_len)` (`env.c`) -- single-pass byte walk:
+  - On `%`: scan forward for closing `%`; extract `%NAME%`; look it up via `env_peek_locked` (case-insensitive ASCII fold, one `env_lock` held for the whole walk); found -> append value; not found (or name over `ENV_NAME_MAX`) -> append the literal `%NAME%` unchanged
+  - `%%`: preserved VERBATIM (empty name = unresolved var), matching Win32/ntdll `ExpandEnvironmentStrings`; cmd.exe's `%%`->`%` batch escape is a distinct shell mode owned by §18. Unmatched trailing `%` copied verbatim; all other chars verbatim
+  - Single-pass (matches Win32 `ExpandEnvironmentStrings`): each `%VAR%` replaced exactly once; a value containing `%OTHER%` is NOT re-expanded (no depth limit, no infinite-loop risk). Delayed `!VAR!` re-expansion is a distinct mode owned by §18
+  - Returns bytes written excluding NUL; on overflow writes the truncated result + NUL and returns `max_len` (a sentinel); `output` always NUL-terminated when `max_len > 0`
+- [x] `env_expand` uses the caller's `task->environ`; kernel-internal calls pass the initial system process (`task_get_by_pid(0)`) as `t`. Caller must NOT already hold `t->environ_lock`
 
-- [ ] `RtlExpandEnvironmentStrings_U(Environment, Source, Destination, ReturnedLength)`:
-  - `Environment`: pointer to the UTF-16 env block (from `PEB->ProcessParameters->Environment`); if NULL, use calling process's own block
-  - `Source`: `UNICODE_STRING` with `%VAR%` references
-  - `Destination`: `UNICODE_STRING` output buffer
-  - Parse the UTF-16 env block for each `%VAR%` match (UTF-16 `%` = `0x0025`); substitute in-place
-  - `ReturnedLength`: set to required buffer length if `Destination` too small; return `STATUS_BUFFER_TOO_SMALL`
+- [x] `RtlExpandEnvironmentStrings_U(Environment, Source, Destination, ReturnedLength)` (`nt/nt_rtlenv.c`, header `nt/nt_rtlenv.h`):
+  - `Environment`: kernel-resident UTF-16 block; if NULL, synthesized from `task_current()`'s UTF-8 environ (authoritative store) via `env_build_block_utf16` -- NOT the stale user-mapped PEB block, honoring the documented NULL "calling process's own block" form from kernel-resident memory
+  - Kernel-resident-input contract: the double-NUL scan is HARD-BOUNDED by `RTL_ENV_BLOCK_MAX_WCHARS` (non-terminating block -> `STATUS_INVALID_PARAMETER`); a raw user block must be probed+copied into a kernel snapshot by the Win32 boundary first (owned by §6 `ExpandEnvironmentStringsW`)
+  - `Source`/`Destination`: `UNICODE_STRING` (validated: even byte Length, Length <= MaximumLength, Buffer for non-empty); same single-pass `%VAR%`/`%%` semantics as `env_expand`; case-insensitive ASCII-fold name match (consistent with the UTF-8 store)
+  - `ReturnedLength`: required buffer size in bytes including the WCHAR NUL; `STATUS_BUFFER_TOO_SMALL` when too small, with NO partial output and `Destination->Length` unchanged; on success `Destination->Length` = result bytes excluding NUL (required length in a wide accumulator)
   - Used by `ExpandEnvironmentStringsW` (§6) and by the shell for Win32-mode argument expansion
 
-- [ ] Commit: `"kernel/env: env_expand %VAR% substitution, RtlExpandEnvironmentStrings_U"`
+- [x] Commit: `"kernel/env: env_expand %VAR% substitution, RtlExpandEnvironmentStrings_U"`
 
-**Test checkpoint:** `env_expand` replaces `%VAR%`; `%%` -> `%`; depth limit stops at 5. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** `env_expand` replaces `%VAR%`; `%%` preserved verbatim (Win32, not a cmd escape); `%A%`=`%B%`, `%B%`=`x`, `env_expand("%A%")` -> literal `%B%` (single-pass, no recursion); `RtlExpandEnvironmentStrings_U` expands over an explicit block and returns `STATUS_BUFFER_TOO_SMALL` + required length on an undersized `Destination`. QEMU WHPX + TCG; VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 30 env_expand/Rtl suites added, 0 failures
+> **Notes:**
+> - **What shipped:** `env_expand` (UTF-8 single-pass `%VAR%`, Win32 `%%`-verbatim, bounded) in `env.c`; `RtlExpandEnvironmentStrings_U` (UTF-16) in new `nt/nt_rtlenv.c`; `env_build_block_utf16` (nls UTF-8->UTF-16) in `env.c`.
+> - **How it integrates:** `env_expand` holds one `env_lock` across the walk; the Rtl core is a bounded kernel-resident two-pass transformer (count then write, no partial output, pass counts verified against between-pass mutation).
+> - **Downstream:** §6 `ExpandEnvironmentStrings{W,A}` call `RtlExpandEnvironmentStrings_U`; §6 owns probing+copying a user Environment block into a kernel snapshot first (design + adversarial adoptions in the commit message).
+> - **Scope boundary:** §3 owns the two primitives; §5/§6 own the syscall/Win32 boundary; cmd `%%`/`!VAR!` is §18; full Unicode name folding + the PMM allocator SMP lock are tracked elsewhere.
 
 ---
 
@@ -279,6 +283,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Convert `lpSrc` to UTF-16; call `RtlExpandEnvironmentStrings_U` (same section, RTL helper above); convert UTF-16 result to UTF-8 into `lpDst`
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
 - [ ] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
+- [ ] For a user-supplied UTF-16 `Environment` block, `ProbeForRead` + copy into a kernel snapshot and verify its double-NUL terminator is within the copied length before the Rtl call (`nt/nt_rtlenv.h`). NULL needs no probe
 
 - [ ] `GetEnvironmentStringsW()`:
   - Walk `current_task->environ[]`; convert each `"KEY=VALUE"` to UTF-16; pack into a contiguous buffer as null-separated entries with a double-null at the end (matches the Win32 format); allocate with `LocalAlloc`
@@ -573,7 +578,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS     |
 | --- | -------------------------- | --------------------- | -------------------- | ------------------- |
 | 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API     |
-| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ⬜ §3 Win `%`        |
+| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ✅ §3 `env_expand`   |
 | 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth |
 | 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ⬜ §4 + T11 §7       |
 | 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⬜ §5 + §19          |
@@ -654,7 +659,7 @@ The `source` / `.` command (section 8 above) remains a differentiator over Windo
 ## Verification
 
 - [ ] **env_get/set**: kernel unit test: create a task with empty environ; `env_set(t, "GREETING", "hello")`; `env_get(t, "GREETING")` → `"hello"`; `env_unset(t, "GREETING")`; `env_get(t, "GREETING")` → `NULL`.
-- [ ] **env_expand**: `env_set(t, "NAME", "World")`; `env_expand(t, "Hello %NAME%!", buf, ...)` → `"Hello World!"`; `env_expand(t, "%%", buf, ...)` → `"%"`.
+- [ ] **env_expand**: `env_set(t, "NAME", "World")`; `env_expand(t, "Hello %NAME%!", buf, ...)` → `"Hello World!"`; `env_expand(t, "%%", buf, ...)` → `"%%"` (Win32: empty var preserved, NOT a cmd escape).
 - [ ] **Default vars**: boot to shell; run `SET` with no args; output must include `PATH=`, `SYSTEMROOT=`, `TEMP=`, `USERNAME=`, `COMPUTERNAME=`.
 - [ ] **PATH lookup**: place a test binary in `C:\Impossible\Bin\`; type just its name without path in the shell; it must launch.
 - [ ] **argv round-trip**: run `echo hello world`; child process must receive `argc=3`, `argv=["echo","hello","world"]`; verify via a debug print in the program's `main()`.
