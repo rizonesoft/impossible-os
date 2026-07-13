@@ -453,7 +453,7 @@
   **Fix:** require `todo` + `evidence` on every recorded disposition; auto-refresh the decision
   registry when the TODO cache advances; attach compact source-backed precedents to review prompts.
   Full review still runs -- precedents only prevent repeated triage of UNCHANGED systemic policy.
-- [ ] **[det] I5. ChromeMCP is operational waste on the kernel queue.** VERIFIED against doctrine. All
+- [x] **[det] I5. ChromeMCP is operational waste on the kernel queue.** VERIFIED against doctrine. All
   8 kernel runs started a browser lane and none used a browser tool, despite `overnight-launch.sh:221`
   and `SKILL.md:357` both saying kernel runs disable it (`run-20260713-120304.log:5`). The
   `OVERNIGHT_NO_CHROMEMCP` env drop-in is not taking effect at launch. **Fix:** guard `--with-browser`

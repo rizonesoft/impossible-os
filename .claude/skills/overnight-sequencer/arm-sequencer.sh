@@ -168,6 +168,7 @@ if [ "${1:-}" = "--disarm" ]; then
   python3 .claude/hooks/run_phase_guard.py clear "disarmed via arm-sequencer.sh" >/dev/null 2>&1 || true
   bash "$LOCAL_ARM" "$DOCTRINE" --disarm || true
   remove_chromemcp_dropin
+  rm -f .claude/state/overnight-with-browser  # I5: clear the browser-lane positive signal
   remove_sequencer_env_dropin
   remove_sequencer_model_dropin
   reap_overnight_state
@@ -193,11 +194,14 @@ if [ "${1:-}" = "--record-canary" ]; then
 fi
 
 # ChromeMCP policy for THIS repo: impossible-os is kernel/OS work for the vast
-# majority of runs, which never touch a browser -- so default ChromeMCP OFF via
-# the OVERNIGHT_NO_CHROMEMCP env drop-in, which the vendored launcher reads to
-# skip the lane logic entirely (no lane churn, no spurious CDP errors). The ONLY
+# majority of runs, which never touch a browser -- so ChromeMCP is FAIL-SAFE OFF
+# (I5): the launcher's browser-lane-enabled.sh acquires a lane ONLY on an explicit
+# positive signal, so a kernel run skips the lane even if the env drop-in fails to
+# propagate (the I5 bug: 8 kernel runs claimed an unused lane). The ONLY
 # impossible-os work that needs ChromeMCP is the gh-pages landing site; arm those
-# runs with --with-browser to leave the env unset and let the lane logic run.
+# runs with --with-browser, which writes the .claude/state/overnight-with-browser
+# sentinel the launcher reads. (The OVERNIGHT_NO_CHROMEMCP drop-in is retained as
+# a redundant hard override.)
 WITH_BROWSER=0
 ARM_PRIMARY="opus"         # runner default: Opus primary (see policy block above)
 ARM_FALLBACK="sonnet"      # transient overload fallback; primary re-tried each turn
@@ -325,10 +329,12 @@ write_sequencer_env_dropin
 write_sequencer_model_dropin
 if [ "$WITH_BROWSER" = "1" ]; then
   remove_chromemcp_dropin
+  : > .claude/state/overnight-with-browser   # I5: file-based positive signal the launcher reads
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP ON (gh-pages run)"
 else
   write_chromemcp_dropin
+  rm -f .claude/state/overnight-with-browser  # I5: no positive signal -> launcher skips the lane (fail-safe OFF)
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run)"
 fi

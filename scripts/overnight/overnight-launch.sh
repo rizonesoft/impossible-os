@@ -218,13 +218,17 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" = "1" ]; then
   exit 0
 fi
 
-# ChromeMCP lane isolation is OFF for kernel runs (OVERNIGHT_NO_CHROMEMCP=1, set
-# by arm-sequencer.sh's per-unit env drop-in). impossible-os kernel work never
-# drives a browser, and the lane-claim churn produced noise + spurious CDP
-# errors in the report. A --with-browser (gh-pages) arm leaves OVERNIGHT_NO_-
-# CHROMEMCP unset, so the lane logic below runs as before.
+# ChromeMCP lane isolation (I5): FAIL-SAFE OFF. The lane is acquired ONLY on an
+# explicit positive browser signal (OVERNIGHT_WITH_BROWSER=1 or the sentinel file
+# .claude/state/overnight-with-browser, written by arm-sequencer.sh
+# --with-browser) -- delegated to browser-lane-enabled.sh so it is unit-testable.
+# A kernel run gets NO lane even if the old OVERNIGHT_NO_CHROMEMCP env drop-in
+# failed to propagate through the systemd/watchdog chain (the I5 bug: all 8
+# kernel runs claimed an unused lane + emitted CDP noise). OVERNIGHT_NO_CHROMEMCP=1
+# stays a hard override that always skips.
+_HERE_LAUNCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MCP_CONFIG_ARGS=()
-if [ -z "${OVERNIGHT_NO_CHROMEMCP:-}" ]; then
+if bash "$_HERE_LAUNCH/browser-lane-enabled.sh"; then
   CHROMEMCP_BIN="$(command -v chromemcp || true)"
   [ -z "$CHROMEMCP_BIN" ] && [ -x "$HOME/ChromeMCP/chromemcp" ] && CHROMEMCP_BIN="$HOME/ChromeMCP/chromemcp"
   LANE=""
