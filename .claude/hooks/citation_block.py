@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""PreToolUse hook -- block edits that introduce review/task citations.
+"""PreToolUse hook -- block review/task citations in source comments.
 
-Mirrors scripts/lint.sh Check 13.  C / asm / header comments must not
-carry review-archaeology like "(Codex H1 ...)", "Codex M3 fix:",
-"incident YYYY-MM-DD", "see commit <hash>", or "per Codex review".
-Per CLAUDE.md "Don't reference the current task, fix, or callers ...
-those belong in the PR description and rot as the codebase evolves."
+Mirrors scripts/lint.sh Check 13. C / asm / header comments must not carry
+review-archaeology like "(Codex H1 ...)", "Codex M3 fix:", "incident
+YYYY-MM-DD", "see commit <hash>", or "per Codex review". Detection + path
+applicability live in the shared `_content_lint` module (kept in sync with the
+bare-section gate; they cross-report each other's findings -- C3).
 
-Opt-out: SKIP_CITATION_BLOCK=1 on the same call AND state in your
-next message what code-evidence quote justifies skipping.
+Opt-out: SKIP_CITATION_BLOCK=1 on the same call AND state in your next message
+what code-evidence quote justifies skipping.
 """
-import json, os, re, sys
+import json
+import os
+import sys
+
+import _content_lint as cl
 
 if os.environ.get('SKIP_CITATION_BLOCK') == '1':
     sys.exit(0)
@@ -22,23 +26,6 @@ path = ti.get('file_path', '')
 if not path:
     sys.exit(0)
 
-p = path.replace('\\', '/')
-# Only police source code.  Markdown / TODO / .claude / hook code may
-# legitimately reference review history (the hooks themselves talk
-# about Codex review reception, etc.).
-if not p.endswith(('.c', '.h', '.cc', '.cpp', '.hpp', '.asm', '.S', '.s')):
-    sys.exit(0)
-
-# Vendored / third-party paths we don't own.
-norm = p
-for prefix in ('/home/derickpayne/impossible-os/', './'):
-    if norm.startswith(prefix):
-        norm = norm[len(prefix):]
-        break
-if norm == 'include/stb_truetype.h' or norm.startswith('src/libs/'):
-    sys.exit(0)
-
-# Collect the new-text payload from the edit.
 texts = []
 if tn == 'Write':
     texts.append(ti.get('content', ''))
@@ -50,48 +37,15 @@ elif tn == 'MultiEdit':
 if not any(texts):
     sys.exit(0)
 
-# "Codex" alone is too loose -- it matches the OpenAI product name in
-# legitimate API/SDK references.  Require a citation cue word within
-# ~40 chars of the bare token to count as a real citation.
-cite_re = re.compile(
-    r'(\bCodex\b[^A-Za-z0-9_]{1,40}([HMFCS]\d|fix|review|finding|round|adversarial|consistency)'
-    r'|review caught'
-    r'|adversarial review'
-    r'|consistency review'
-    r'|design review'
-    r'|post-impl review'
-    r'|incident 20\d{2}-\d{2}-\d{2}'
-    r'|see commit [0-9a-f]{7,}'
-    r'|per Codex review)'
-)
-
-# Only flag lines that look like comments. Don't trigger on identifiers.
-def line_is_comment(line: str) -> bool:
-    s = line.lstrip()
-    if s.startswith('*') or s.startswith('//') or s.startswith('/*') or s.startswith(';'):
-        return True
-    # Inline trailing // comment: anything after // is a comment.
-    if '//' in line:
-        # Citation must appear after the // marker.
-        idx = line.find('//')
-        return cite_re.search(line[idx:]) is not None
-    return False
-
-allow_re = re.compile(r'CITATION-OK:\s*[A-Za-z]')
-
-hits = []
-for txt in texts:
-    for line in txt.splitlines():
-        if not cite_re.search(line):
-            continue
-        if not line_is_comment(line):
-            continue
-        if allow_re.search(line):
-            continue
-        hits.append(line.strip()[:100])
-
+hits = cl.citation_hits(texts, path)
 if not hits:
     sys.exit(0)
+
+# C3 cross-report: if the same payload also trips the bare-section gate, name
+# those lines HERE so both classes are fixed in one edit, not a gauntlet.
+bare_also = cl.bare_section_hits(texts, path)
+cross = ('ALSO (bare section-ref gate, fix in the SAME edit): '
+         + ' | '.join(bare_also[:3]) + '. ') if bare_also else ''
 
 sys.stderr.write(
     '[citation BLOCK -- scripts/lint.sh Check 13] '
@@ -104,6 +58,10 @@ sys.stderr.write(
     '... those belong in the PR description and rot as the codebase '
     'evolves." Keep the WHY (the invariant the code enforces) and '
     'delete the attribution. '
+    + cross +
+    'NOTE: this Edit did NOT apply -- the file is UNCHANGED; retry with the '
+    'SAME old_string and only fix new_string (re-Reading and reconstructing '
+    'old_string is what causes the "String to replace not found" cascade). '
     'Opt-out for legitimate uses (rare): SKIP_CITATION_BLOCK=1 on the '
     'same call AND state in chat what code evidence justifies skipping. '
     'Same pattern scripts/lint.sh Check 13 enforces at CI time; this '

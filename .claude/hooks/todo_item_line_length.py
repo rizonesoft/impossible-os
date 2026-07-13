@@ -18,6 +18,26 @@ import re
 import sys
 
 ITEM_CHAR_CAP = 250
+# Match top-level checklist items only; nested bullets under a parent
+# `- [ ]` are detail and don't get a length cap.
+ITEM_RE = re.compile(r'^- \[[ x/]\] ')
+
+
+def _check(line):
+    """C1: deterministic fit query. `--check "<line>"` -> one JSON line
+    {len, cap, overage, is_checklist_item, whitelisted, ok} so a rewrite is
+    confirmed in ONE call instead of a blind manual `len()` recount loop."""
+    is_item = bool(ITEM_RE.match(line))
+    whitelisted = 'Commit:' in line[:30]
+    n = len(line)
+    ok = (not is_item) or whitelisted or n <= ITEM_CHAR_CAP
+    return {'len': n, 'cap': ITEM_CHAR_CAP, 'overage': max(0, n - ITEM_CHAR_CAP),
+            'is_checklist_item': is_item, 'whitelisted': whitelisted, 'ok': ok}
+
+
+if len(sys.argv) >= 2 and sys.argv[1] == '--check':
+    print(json.dumps(_check(sys.argv[2] if len(sys.argv) > 2 else '')))
+    sys.exit(0)
 
 d = json.load(sys.stdin)
 ti = d.get('tool_input', {})
@@ -39,10 +59,6 @@ elif tn == 'MultiEdit':
         texts.append(e.get('new_string', ''))
 if not texts:
     sys.exit(0)
-
-# Match top-level checklist items only; nested bullets under a parent
-# `- [ ]` are detail and don't get a length cap.
-ITEM_RE = re.compile(r'^- \[[ x/]\] ')
 
 findings = []  # list of (line_no, length, preview)
 for txt in texts:
@@ -75,10 +91,13 @@ sys.stderr.write(
     'investigation logs belong in COMMIT MESSAGES, not the bullet. '
     'Compress to one sentence naming what shipped + the canonical doc/file '
     'where details live. '
-    'BEFORE RETRYING: count the rewritten line -- '
-    "python3 -c 'print(len(\"<the exact line>\"))' -- and aim for <= "
-    + str(ITEM_CHAR_CAP - 20) + ' so margin survives small tweaks; '
-    'roughly a third of retries were STILL over the cap because the trim '
-    'was done by feel. See feedback_terse_comments_and_notes memory.'
+    'NOTE: this Edit did NOT apply -- the file is UNCHANGED. Retry with the '
+    'SAME old_string and only shorten new_string (do NOT re-Read and '
+    'reconstruct old_string -- that is what causes the "String to replace not '
+    'found" cascade). CONFIRM THE FIT IN ONE CALL: '
+    'python3 .claude/hooks/todo_item_line_length.py --check "<the rewritten '
+    'line>" returns {len, overage, cap, ok}; aim for len <= '
+    + str(ITEM_CHAR_CAP - 20) + ' so margin survives small tweaks. No blind '
+    'manual len() recount loop. See feedback_terse_comments_and_notes memory.'
 )
 sys.exit(2)

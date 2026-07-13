@@ -1,49 +1,22 @@
 #!/usr/bin/env python3
-import json, sys, re
+"""PreToolUse hook -- block bare `section-sign` + digit refs in source comments.
+
+Mirrors scripts/lint.sh Check 5. Detection + path applicability live in the
+shared `_content_lint` module so this gate and the citation gate stay in sync and
+can cross-report each other's findings (C3: one block surfaces both classes).
+"""
+import json
+import sys
+
+import _content_lint as cl
+
 d = json.load(sys.stdin)
 ti = d.get('tool_input', {})
 tn = d.get('tool_name', '')
 path = ti.get('file_path', '')
 if not path:
     sys.exit(0)
-p = path.replace('\\', '/')
-# Markdown gets anchor-link enforcement via Check 4, not this hook.
-if p.endswith('.md'):
-    sys.exit(0)
-# Deliberate shorthand zones.
-if '/todo/' in p or p.startswith('todo/') or '.claude/' in p:
-    sys.exit(0)
-# Path-based spec-code exemption (whole-file implements an external standard).
-# Mirrors scripts/lint.sh is_bare_section_spec_code. Extend when adding a new
-# spec-code directory.
-spec_code_prefixes = (
-    'src/kernel/fs/ntfs/',   # NTFS on-disk format spec.
-)
-spec_code_exact = (
-    'include/kernel/fs/ntfs.h',
-)
-# Normalize: strip leading slash + repo-root-ish prefixes so matching works
-# whether the path is absolute or relative.
-norm = p
-for prefix in ('/home/derickpayne/impossible-os/', './'):
-    if norm.startswith(prefix):
-        norm = norm[len(prefix):]
-        break
-if any(norm.startswith(pp) for pp in spec_code_prefixes):
-    sys.exit(0)
-if norm in spec_code_exact:
-    sys.exit(0)
-# Path exemptions mirroring scripts/lint.sh Check 5 (files that legitimately
-# carry internal section refs by design). Keep in sync with lint's case block.
-if norm == 'scripts/test-ai-system.sh' or norm.startswith('scripts/todo-graph/'):
-    sys.exit(0)
-# Enforce only on code-ish files. Suffix set + Makefile basename mirror the
-# scripts/lint.sh Check 5 --include list (keep in sync).
-basename = norm.rsplit('/', 1)[-1]
-if basename != 'Makefile' and not p.endswith(
-        ('.c', '.h', '.asm', '.S', '.py', '.sh', '.bat', '.ps1',
-         '.yml', '.yaml', '.mk', '.ld', '.lds', '.inc')):
-    sys.exit(0)
+
 texts = []
 if tn == 'Write':
     texts.append(ti.get('content', ''))
@@ -54,18 +27,17 @@ elif tn == 'MultiEdit':
         texts.append(e.get('new_string', ''))
 if not texts:
     sys.exit(0)
-all_text = '\n'.join(texts)
-bare_re = re.compile('§ ?[0-9]')
-spec_re = re.compile(r'UEFI|Intel|SDM|AMD|APM|RFC [0-9]|ACPI [0-9]|NTFS|FAT[0-9]|NVMe|PCIe?|PE/COFF|PE32|COFF|USB [0-9]|xHCI|EHCI|OHCI|UHCI|VirtIO|SMBIOS|IEEE|NIST|TCG|WHEA|HPET|MP Spec|spec |specification')
-hits = []
-for line in all_text.splitlines():
-    if not bare_re.search(line):
-        continue
-    if spec_re.search(line):
-        continue
-    hits.append(line.strip()[:80])
+
+hits = cl.bare_section_hits(texts, path)
 if not hits:
     sys.exit(0)
+
+# C3 cross-report: if the same payload also trips the citation gate, name those
+# lines HERE so both classes are fixed in one edit, not a sequential gauntlet.
+cite_also = cl.citation_hits(texts, path)
+cross = ('ALSO (citation gate, fix in the SAME edit): '
+         + ' | '.join(cite_also[:3]) + '. ') if cite_also else ''
+
 sys.stderr.write(
     '[bare section ref BLOCK -- scripts/lint.sh Check 5] ' +
     'Detected bare section-sign reference in code file ' + path + ': ' +
@@ -74,6 +46,8 @@ sys.stderr.write(
     'Section numbers drift silently on TODO renumber and carry no TODO/domain context. ' +
     'External-spec citations stay legal when the line also carries a qualifier (UEFI, Intel, SDM, AMD, RFC <n>, ACPI <n>, NTFS, FAT<n>, NVMe, PCI/PCIe, PE/COFF, PE32, USB <n>, xHCI/EHCI/OHCI/UHCI, VirtIO, SMBIOS, IEEE, NIST, TCG, WHEA, HPET, MP Spec, "spec ", "specification"), and whole-file spec-code dirs (src/kernel/fs/ntfs/) are path-exempted. ' +
     'Fix: rewrite the comment to name the feature; OR prefix with an external-spec qualifier (e.g. "UEFI 2.10 section 4.6"); OR replace with a markdown-doc link. ' +
+    cross +
+    'NOTE: this Edit did NOT apply -- the file is UNCHANGED; retry with the SAME old_string and only fix new_string (re-Reading and reconstructing old_string is what causes the "String to replace not found" cascade). ' +
     'Same pattern scripts/lint.sh Check 5 enforces at CI time; this hook catches it at edit time so CI never rejects. ' +
     'See feedback_no_bare_section_refs_in_code memory and CLAUDE.md "Comments -- No Bare Section Refs in Code".'
 )

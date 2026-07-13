@@ -45,6 +45,15 @@ _ROUTES = [
     (r"\b(?:test )?coverage\b.{0,30}\b(?:gap|missing|map|check)|\bwhat(?:'s| is) untested\b",
      "test-coverage-mapper",
      "coverage brief: spec status, signatures, wiring points"),
+    # D2: "where do the X helpers live / is there a Y primitive" hunts. These
+    # otherwise run as 3-6 inline greps before any dispatch (measured: the 6-round
+    # kstrdup/kstrndup/memcpy hunt). A location/existence question over a code
+    # surface is a mapper dispatch, not a grep chain.
+    (r"\b(?:where (?:do|does|are|is)|is there|do we have|does .{0,20} have|which)\b"
+     r".{0,50}\b(?:helper|function|primitive|api|symbol|struct|macro|routine|"
+     r"wrapper|allocator|lock|intrinsic)s?\b",
+     "kernel-explorer",
+     "locate/inventory the helpers+symbols in one map, not N inline greps"),
     (r"\b(?:explore|trace|how does|walk (?:me )?through|call path|who calls)\b.{0,60}\b(?:kernel|boot|driver|src/|scheduler|vmm|pmm|vfs|irq|apic)",
      "kernel-explorer",
      "execution-path trace + integration surface"),
