@@ -98,12 +98,20 @@ re-polls). The fix is one blocking call, no narration:
 #    multi-kind envelope). Reviews are READ-ONLY (adversarial-review sandbox).
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
 #    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
-# 2. Poll it IN ONE blocking Bash call at 60s cadence (reviews always exceed a
-#    minute, so 60s never wastes a cycle). ~9 min ceiling stays under the Bash
-#    10-min wall; this is ONE model turn, idle while it sleeps:
-for i in $(seq 1 9); do grep -q "Turn completed" <logFile> && break; sleep 60; done
-# 3. If it didn't finish, issue ONE more blocking poll (a 16-min review = 2
-#    turns, not 500). Then read the verdict and continue -- SAME session.
+# 2. Poll it with the CANONICAL waiter (B1). It bounds ITSELF to finish under
+#    the Bash tool's ~120s default, so a bare call is NEVER killed at 2m and you
+#    never need to remember a `timeout:` arg (the old hand-rolled `for i in $(seq
+#    1 9); do ... sleep 60; done` was 540s and died at the 120s default every
+#    session). This is ONE model turn, idle while it sleeps:
+bash scripts/overnight/wait-for-codex-verdict.sh <logFile>
+#    (watches <logFile> for the "Turn completed" sentinel; each call is bounded
+#     ~100s so it is NEVER killed at the 2m default) exit 0 = DONE (prints the
+#     verdict tail); exit 3 = STILL RUNNING.
+# 3. On exit 3, just call it AGAIN (the review runs detached; nothing is lost) --
+#    a 16-min review is a handful of clean re-invokes, not a killed 2m call + a
+#    recovery turn. For a single long wait in ONE turn, pass a larger bound WITH
+#    an explicit Bash `timeout:`, e.g. `... <logFile> 540` + tool `timeout: 600000`.
+#    Then read the verdict and continue -- SAME session.
 ```
 
 - **The session NEVER exits to wait on a review.** There is no `wait`/`wake`
@@ -120,12 +128,18 @@ for i in $(seq 1 9); do grep -q "Turn completed" <logFile> && break; sleep 60; d
   '[review-kind: X] <todo> <body>'` call (one Bash call per kind, in one
   parallel message -- the per-kind gate receipts attribute off the command
   line, so NEVER bundle several dispatches behind one opaque shell command).
-  Poll all their logFiles in ONE blocking Bash call
-  (`grep -q A f1 && grep -q B f2 && grep -q C f3`), then read ONE combined
-  envelope: `python3 scripts/overnight/review-envelope.py .` -- per-kind
-  status, every severity-marked finding, artifact path + sha256. Slice-read an
-  artifact only for findings needing full context; never pull whole
-  transcripts into the session.
+  Poll all their logFiles with the canonical waiter (B1)
+  `bash scripts/overnight/wait-for-codex-verdict.sh f1 f2 f3`, then read ONE
+  combined envelope SCOPED to this section (E3): `python3
+  scripts/overnight/review-envelope.py . --todo <this-section's-todo-path>` --
+  the `--todo` filter is REQUIRED because the broker manifest accumulates across
+  sections and runs, so an unscoped read pulls a PRIOR section's stale review.
+  The envelope gives per-kind status, every severity-marked finding, artifact
+  path + sha256; slice-read an artifact only for findings needing full context.
+  The `.out` artifact (+ this envelope) IS the authoritative review body -- NEVER
+  glob `~/.codex/sessions/**/*.jsonl` for the "full" review (E2): the thread-id
+  does not map to a session filename, so that glob returns an unrelated foreign
+  session (measured: a Conclave run misread as the verdict).
 - **On a crashed leg, re-dispatch ONLY that leg -- NEVER the whole bundle.**
   Codex `app-server exited unexpectedly, rc=1` crashes are common and produce
   no verdict. The envelope now reports this: `crashed` lists completed-but-
@@ -137,16 +151,27 @@ for i in $(seq 1 9); do grep -q "Turn completed" <logFile> && break; sleep 60; d
   re-dispatches in one section, 2026-07-12).
 - Receive every findings set through `superpowers:receiving-code-review`
   before acting; then continue the pipeline in the same session.
+- **Convergence gate (P2.1/P2.2) -- the primary churn mechanism.** BEFORE
+  re-dispatching a review kind K in a fix loop, `bash
+  .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`:
+  exit 1 = CONVERGED -> SKIP K (its reviewed files did not move since its last
+  verdict, so a redispatch only re-derives it); exit 0 = redispatch. After K's
+  round resolves, `... record '<todo>#<section>' <K>`. Per-kind scope:
+  adversarial / perf / re-adversarial fingerprint SOURCE only, consistency /
+  design SOURCE + TODO -- so a docs/TODO-only fix converges the source-only
+  kinds and one changed file never re-triggers ALL kinds. Fail-open (unknown
+  kind / git error -> redispatch): it can only skip a redundant review.
 - **Round counter + standing evidence map (P2.3).** After each Codex re-dispatch
   in a fix loop, `bash .claude/hooks/review_round_guard.py --bump
   '<todo>#<section>' --progress <new|none>`. Exit 2 = CAPPED (K consecutive
   no-new rounds or the 30-round infinite-loop ceiling) -> stop the loop, spin
   unresolved findings to a concrete follow-up `[ ]` + XREF, advance. This is
   STALL detection, never a fixed round cap -- a productive review runs as long
-  as it keeps finding new Critical/High. For rounds >= 4 (`--status`), verify at
-  file:line through ONE `review-evidence-mapper` dispatch (the `agent_result_cache`
-  serves an unchanged-content map from cache) instead of inline re-reading the
-  same hot files -- the 2026-07-12 run re-read task.c ~31x across rounds.
+  as it keeps finding new Critical/High. For rounds >= 4 (REQUIRED, `--status`),
+  verify at file:line through ONE `review-evidence-mapper` dispatch (the
+  `agent_result_cache`, now keyed on the scoped evidence set rather than the
+  volatile round prompt, serves an unchanged-content map from cache) instead of
+  inline re-reading the same hot files -- the 2026-07-12 run re-read task.c ~31x.
 
 **Non-gating background watches** (a CI run you monitor while doing unrelated
 forward work) follow the same rule: ONE wait mechanism, no per-poll narration.

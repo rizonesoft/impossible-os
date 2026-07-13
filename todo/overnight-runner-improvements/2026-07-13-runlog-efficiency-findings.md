@@ -36,8 +36,15 @@
 
 ## A. Confirmed code bugs -- ship a fix + regression test
 
-- [ ] **[det] A1. `worktree_hash` import path is broken in BOTH review hooks -- the deterministic
-  diff-facts fast-path silently never runs.** VERIFIED this session.
+- [x] **[det] A1. `worktree_hash` import path is broken in BOTH review hooks -- the deterministic
+  diff-facts fast-path silently never runs.** FIXED 2026-07-13: `.parent.parent` -> `.parent.parent.parent`
+  (repo root) in `review_dispatch_gate.py:149` AND `agent_dispatch_required.py:112` (both instances -- the
+  only two in the tree). Regression test `test_hook_worktree_import.py` EXTRACTS each hook's actual `.parent`
+  chain from source and asserts it resolves to a real `scripts/overnight` containing `worktree_hash.py` + that
+  `worktree_key` imports -- so a regression back to `.parent.parent` is caught here, not silently on a live
+  run (verified: the old depth resolves to the nonexistent `.claude/scripts/overnight`). Suite 28/28. Original
+  finding follows:
+  VERIFIED this session.
   `review_dispatch_gate.py:149-151` and `agent_dispatch_required.py:112-114` both build the import
   path as `Path(__file__).resolve().parent.parent / "scripts/overnight"`. For a hook at
   `.claude/hooks/<name>.py`, `.parent.parent` is `.claude/`, so the path resolves to
@@ -56,9 +63,22 @@
 
 ## B. Poll / wait mechanics
 
-- [ ] **[det] B1. The taught Codex-verdict poll loop out-runs the Bash tool's own 2-minute default
+- [x] **[det] B1. The taught Codex-verdict poll loop out-runs the Bash tool's own 2-minute default
   timeout, so the FIRST review poll of nearly every session dies at 2m and is re-learned from
-  scratch.** Corroborated across all three digests: ~9 `Exit code 143 / timed out after 2m 0s`
+  scratch.** FIXED 2026-07-13: shipped `scripts/overnight/wait-for-codex-verdict.sh [--max SECONDS]
+  <logfile>...` -- it bounds EACH invocation to ~100s (default), safely under the Bash tool's ~120s
+  default, so a BARE call is never killed and no `timeout:` arg must be remembered (exit 0 = DONE +
+  verdict tail; exit 3 = STILL RUNNING -> re-invoke; accepts multiple logs to wait a whole multi-kind
+  round in one call). Replaced the hand-rolled `for i in $(seq 1 N); do ... sleep S; done` snippet in
+  the canonical wait-discipline (`codex-design-review` SKILL, referenced by every codex-* skill), the
+  `overnight-sequencer` SKILL poll block, and the runner doctrine (`TODO-Claude-Overnight-Runner.md`).
+  Tests: `test_wait_for_codex_verdict.py` (sentinel->DONE, no-sentinel->STILL-RUNNING, missing-log,
+  multi-log-waits-for-all, bounded-wait-never-overshoots-max, usage) + updated `test_runner_lifecycle.py`
+  to pin the new waiter (was pinning the deprecated `seq 1 9`/`sleep 60` loop). Suite 29/29. Chose the
+  self-bounding SCRIPT over "just pass timeout: 300000 in SKILL.md" because the `timeout:` is a Bash-TOOL
+  arg (not part of the command string), which is exactly what the model kept forgetting session to
+  session -- the script needs no such memory. Distinct from P1.3. Original finding follows:
+  Corroborated across all three digests: ~9 `Exit code 143 / timed out after 2m 0s`
   kills (e.g. `run-20260712-223931.log:220`, `run-20260712-231031.log:240`,
   `run-20260713-020113.log:62`, `run-20260713-025424.log:188`, `run-20260713-044429.log:62`,
   `run-20260713-055754.log:175/179`, `run-20260713-082218.log:89/638`). The SKILL.md pattern
@@ -73,8 +93,13 @@
 
 ## C. Hook-block ergonomics + edit-retry churn
 
-- [ ] **[det] C1. The 250-char line-length hook actively RECOMMENDS the wasteful manual recount
-  loop.** VERIFIED: `todo_item_line_length.py:65-66` already reports the exact overage ("over by
+- [x] **[det] C1. The 250-char line-length hook actively RECOMMENDS the wasteful manual recount
+  loop.** FIXED 2026-07-13: added `python3 .claude/hooks/todo_item_line_length.py --check "<line>"` ->
+  one JSON line `{len, cap, overage, is_checklist_item, whitelisted, ok}` (Commit-whitelist aware), and
+  REPLACED the block message's `python3 -c 'print(len(...))'` advice with a pointer to `--check` (one call
+  confirms fit, no blind recount loop). Test `test_todo_item_line_check.py` (fit query, Commit-whitelist,
+  non-item, and block-message asserts `--check` present + the old `print(len(` advice gone). Original finding:
+  VERIFIED: `todo_item_line_length.py:65-66` already reports the exact overage ("over by
   N"), but `:78-79` then instructs the model to `python3 -c 'print(len("<the exact line>"))'` before
   every retry. The model obeys literally -- ~30 dedicated recount Bash calls in
   `run-20260713-082218.log` alone (e.g. `:791-802`, `:851-855`) against only ~9 actual BLOCKs.
@@ -82,8 +107,15 @@
   --check "<candidate line>"` returning `{len, overage, cap}` in one call, and REPLACE the
   hand-`len()` advice in the block text with a pointer to it. One call confirms fit instead of a
   3-6-round blind trim. (The cap mechanism itself is known/shipped -- this is the retry ERGONOMICS.)
-- [ ] **[det] C2. PreToolUse Edit BLOCKs cascade into "String to replace not found" because the
-  retry assumes the blocked edit partially landed.** Corroborated: ~9 `String to replace not found`
+- [x] **[det] C2. PreToolUse Edit BLOCKs cascade into "String to replace not found" because the
+  retry assumes the blocked edit partially landed.** FIXED 2026-07-13 (message half): all three
+  content gates -- `todo_item_line_length.py`, `bare_section_refs.py`, `citation_block.py` -- now state in
+  their BLOCK message "this Edit did NOT apply; the file is UNCHANGED -> retry with the SAME old_string, only
+  fix new_string (re-Reading and reconstructing old_string is what causes the cascade)." Each gate already
+  names the exact offending line(s) (the span). The "retry re-reads on-disk state" behavior is a
+  model-discipline consequence of that message, not a separate mechanical gate. Covered by the block-message
+  assertions in `test_todo_item_line_check.py` + `test_content_lint.py`. Original finding:
+  Corroborated: ~9 `String to replace not found`
   errors across the 07-13 pair (`run-20260713-055754.log:147,153,168,388`;
   `run-20260713-082218.log:122,152,558,577,611`) and matching pairs in the 07-12 pair. A blocked
   Edit (line-length / `bare_section_refs` / `citation_block`) leaves the file unchanged, but the
@@ -93,8 +125,19 @@
   **Fix:** on a hook-blocked Edit, the retry MUST re-read current on-disk state before constructing
   the replacement; and have `bare_section_refs` / `todo_item_line_length` return the exact
   character span of the offending region so the retry patches just that span.
-- [ ] **[det] C3. The first Write of a new kernel/boot file walks a 5-hook sequential gauntlet, each
-  hook revealing the next only after the prior is fixed.** `run-20260713-025424.log:93-157`
+- [x] **[det] C3. The first Write of a new kernel/boot file walks a 5-hook sequential gauntlet, each
+  hook revealing the next only after the prior is fixed.** FIXED 2026-07-13 (the CONTENT half): extracted
+  the two source-comment detectors into a shared `.claude/hooks/_content_lint.py` (single source of truth,
+  applicability-aware; mirrors lint Check 5/13), refactored `bare_section_refs.py` + `citation_block.py` to
+  use it, and each gate now CROSS-REPORTS the other's findings in its block ("ALSO (citation gate / bare
+  section-ref gate, fix in the SAME edit): ..."), so one Write surfaces BOTH content classes at once instead
+  of two sequential block-then-fix cycles. Scope note: the 3 SKILL/workflow-prerequisite gates in the gauntlet
+  (`step5_quality_gate` -> `receiving_review_required` -> `agent_dispatch_required`) genuinely require
+  sequential resolution (they gate on workflow state, not editable content) and cannot be content-preflighted;
+  the content collapse is the addressable half. `test_content_lint.py` (detector applicability, both gates
+  block/exempt/opt-out, both cross-reports). Gate behavior verified identical to pre-refactor via the tests +
+  `scripts/lint.sh` (0 errors; Check 5/13 pass). Original finding:
+  `run-20260713-025424.log:93-157`
   (~9 min for one header): `step5_quality_gate` -> `receiving_review_required` ->
   `agent_dispatch_required` -> `bare_section_refs` -> `citation_block` -> success. Each hook is
   individually correct; the waste is six block-then-retry cycles instead of one.
@@ -108,8 +151,17 @@
 > P3.4 does not address: racing an in-flight dispatch, never dispatching at all, and narrating a
 > dispatch that never fired.
 
-- [ ] **[det] D1. Inline exploration races/duplicates an in-flight `kernel-explorer` dispatch,
-  producing ~50-55 net-zero tool calls.** Twice a kernel-explorer was dispatched for an
+- [x] **[det] D1. Inline exploration races/duplicates an in-flight `kernel-explorer` dispatch,
+  producing ~50-55 net-zero tool calls.** FIXED 2026-07-13: new `inflight_race_guard.py` records the
+  source-file set an in-flight EXPLORATORY agent was dispatched to map (record on PreToolUse Task/Agent, clear
+  on SubagentStop, 15-min TTL backstop), and on the FIRST Grep/Read whose path/pattern overlaps a mapped file
+  BASENAME injects a one-line "you are racing the in-flight <agent>" reminder (block on it, or do
+  NON-overlapping work). Overlap-by-basename keeps false positives low: it stays SILENT on non-overlapping
+  work (the correct parallel pattern -- a couple of spot-checks while legs run) and on non-exploratory
+  dispatches; warns ONCE per dispatch. Wired PreToolUse(Task|Agent) / PostToolUse(Grep|Read) / SubagentStop;
+  MANIFEST row added. Test `test_inflight_race_guard.py` (overlap-warns-once, non-overlap-silent,
+  non-exploratory-no-arm, SubagentStop-clears). Complements P3.4 (which makes reminders BITE). Original:
+  Twice a kernel-explorer was dispatched for an
   integration-surface question, then the main session ran 20-30 of its OWN Grep/Read calls over the
   identical surface while "waiting," so the agent's report only reconfirmed already-covered ground
   (`run-20260713-025424.log:113-143`, `run-20260713-044429.log:48-106`; the correct contrast is
@@ -120,9 +172,18 @@
   NON-overlapping work (unrelated design/scaffolding), or simply block on the dispatch instead of
   racing it. A reminder/gate keyed on "an Agent dispatch is in flight AND the main session is
   issuing Grep/Read on the same file set."
-- [ ] **[det] D2. Step-3 kernel exploration is dispatched only REACTIVELY (from an
+- [x] **[det] D2. Step-3 kernel exploration is dispatched only REACTIVELY (from an
   `agent_dispatch_required` BLOCK), never proactively -- so the runner does 5-10 rounds of manual
-  grep/Read before ever reaching it.** `run-20260713-055754.log` + `082218.log`: 0 proactive
+  grep/Read before ever reaching it.** FIXED 2026-07-13, two levers: (1) extended
+  `interactive_offload_router.py` with a helper/symbol-LOCATION route -- "where do the X helpers live / is
+  there a Y primitive / do we have a Z allocator" now routes to `kernel-explorer` at prompt time (was only
+  "map the integration surface" / "trace"); (2) sharpened `implement-todo-section` step 3 with the D2
+  discipline: do NOT hand-grep to orient BEFORE the pack/explorer -- a helper-location question is answered by
+  the pack's symbol DEFINITION resolution or ONE explorer dispatch, never a 3-6-round inline grep hunt; run
+  the pack (and explorer if the surface is ambiguous) FIRST for ABI-impacting kernel/boot sections, and drift
+  into inline fan-out trips `inline_churn_monitor` + `inflight_race_guard`. Test `test_offload_router.py`
+  (helper-hunt -> explorer, ordinary prompt no false-fire, existing routes intact). Original:
+  `run-20260713-055754.log` + `082218.log`: 0 proactive
   `kernel-explorer`/`section-context-mapper` dispatches despite both sections being pure kernel
   surface; `055754.log:39-46` and `082218.log:43-155` are exactly the 3+-round inline shape the
   routing table assigns to that agent. Also the 6-round inline string-helper hunt at
@@ -130,7 +191,17 @@
   **Fix:** enforce/hint the step-3 exploration-agent dispatch for ABI-impacting kernel sections
   BEFORE `implement-todo-section` step 3 hand-explores; extend `interactive_offload_router.py` to
   trigger on "where do existing X helpers live" queries, not just "map the integration surface."
-- [ ] **[det] D3. An announced parallel dispatch silently never fired.**
+- [x] **[det] D3. An announced parallel dispatch silently never fired.**
+  FIXED 2026-07-13 as DOCTRINE (the honest scope): hooks see tool calls + the USER prompt, NOT the model's
+  own narration mid-turn, so a purely mechanical "you said X and Y but issued only X" check is not cleanly
+  implementable with the available hook surface. Instead, `review-todo-section` step 7 (the exact site of the
+  miss) now carries the D3 rule: when dispatching the SMP auditor + concurrency-evidence-mapper in parallel,
+  issue BOTH `Agent` calls in ONE message (multiple tool_use blocks, per `superpowers:dispatching-parallel-
+  agents`), NEVER narrate "kick off X and Y" then issue only one, and BEFORE triaging confirm you hold BOTH
+  results -- with the §17 lock-semantics-regression consequence spelled out so the cost is concrete. A hard
+  mechanical gate would also need a reliable "SMP-heavy section" trigger (a judgment call), which is why the
+  doctrine + the D1 `inflight_race_guard` (catches the racing that the missing mapper's absence enabled) are
+  the pragmatic net. Original:
   `run-20260712-231031.log:771` narrates "kick off kernel-quality-auditor + concurrency-evidence-
   mapper in parallel" but only `kernel-quality-auditor` is dispatched (`:772`);
   `concurrency-evidence-mapper` never appears. §17 was exactly the SMP-heavy section that routes to
@@ -141,23 +212,53 @@
 
 ## E. Codex dispatch / artifact robustness
 
-- [ ] **[det] E1. A single-quoted Codex dispatch prompt is broken by a literal apostrophe in
-  natural-English prose.** `run-20260712-231031.log:437-439`: a prompt body containing "exec'd"
+- [x] **[det] E1. A single-quoted Codex dispatch prompt is broken by a literal apostrophe in
+  natural-English prose.** FIXED 2026-07-13. Root scope: the break happens in the CALLER's shell BEFORE
+  `codex-dispatch.sh` runs, so the wrapper cannot pre-scan it (and advising on a RECEIVED apostrophe would
+  false-fire on the safe heredoc form, which legitimately contains apostrophes); a `--file`/stdin mode would
+  break hook attribution (the `[review-kind:]` marker must stay on the command line for `_review_kind` /
+  `codex_review_completed`). So the mechanical net is at the SOURCE (mirroring the existing escaping doctrine):
+  extended `scripts/lint.sh` Check 12 to flag a single-quoted dispatch body with an INNER apostrophe that
+  closes the quote early (the `exec'd` shape -- apostrophe immediately followed by an alnum, after removing the
+  valid `'\''` escape). Conservative: string concatenation, comments, and escaped apostrophes do NOT trip it
+  (unit-verified). The wrapper + CLAUDE.md already document the heredoc form as the apostrophe-safe shape; this
+  makes a documented single-quoted-with-apostrophe example fail lint instead of a live dispatch. Full lint
+  clean on the tree (0 new warnings). Original finding:
+  `run-20260712-231031.log:437-439`: a prompt body containing "exec'd"
   produces `/bin/bash: eval: line 41: syntax error near unexpected token '('`, forcing a full
   redispatch with the contraction removed. This is a DIFFERENT failure mode from the documented
   double-quote/`$()` escaping doctrine (that guards expansion in double quotes) -- here the
   single-quote wrapper itself cannot contain a literal `'`. **Fix:** pre-scan dispatch prompt bodies
   for a bare `'` in `codex-dispatch.sh` / `review-broker-codex-dispatch.sh` and reject/normalize
   before shelling out, or switch apostrophe-bearing prompts to `$'...'` with `\'` escaping.
-- [ ] **[det] E2. The full Codex review body is not reliably persisted to the per-dispatch `.out`
+- [x] **[det] E2. The full Codex review body is not reliably persisted to the per-dispatch `.out`
   artifact, forcing a glob over `~/.codex/sessions/**/*.jsonl` that twice returned an unrelated,
-  stale session.** `run-20260713-044429.log:190-196` (design) and `:285-288` (adversarial, pulled an
+  stale session.** FIXED 2026-07-13 (doctrine, the in-our-control fix). Investigated the premise:
+  `codex-companion.mjs` is a VENDORED marketplace plugin (do not modify) that DOES write the final review to
+  stdout, so the `.out` already carries the verdict + severity findings + Next-steps (verified on a real
+  adversarial `.out`); the only truncation is intermediate reasoning log lines, not the verdict. And the
+  Codex thread-id printed in the `.out` does NOT map to a session filename (verified: `find` by thread-id
+  returns nothing), which is exactly why the glob returned a FOREIGN session (a Conclave run). So the correct
+  fix is NOT to parse the non-deterministic session store: the `.out` (+ `review-envelope.py`) IS the
+  authoritative review body, and the glob is banned. Wired into the canonical wait-discipline
+  (`codex-design-review` SKILL, referenced by every codex-* skill) and the `overnight-sequencer` SKILL: "NEVER
+  glob `~/.codex/sessions/**/*.jsonl`; slice-read the `.out` for detail." Original finding:
+  `run-20260713-044429.log:190-196` (design) and `:285-288` (adversarial, pulled an
   unrelated Conclave run) -- only the truncated "Next steps" summary reached the `.out` path, so the
   runner globbed the raw session store and risked misreading a foreign session as the real verdict.
   **Fix:** the dispatch wrapper always persists the FULL review body to the same deterministic
   per-dispatch `.out` path the runner already polls, so `~/.codex/sessions/` is never globbed.
-- [ ] **[det] E3. `review-envelope.py` returns cross-session STALE content for the in-session
+- [x] **[det] E3. `review-envelope.py` returns cross-session STALE content for the in-session
   self-check, so the runner reads it, distrusts it, and falls back to a raw `.out` read every time.**
+  FIXED 2026-07-13 (real code fix). Added `--todo <path>` and `--since <epoch>` scope filters to
+  `review-envelope.py`: the broker manifest is append-only across sections AND runs, so unscoped
+  "newest-per-kind" pulls a PRIOR section's review (measured: a TODO-22 self-check aggregating stale TODO-12
+  reviews). `--todo` restricts to the manifest entries whose `todo` matches the section under review; `--since`
+  restricts to this dispatch round. Both default off (back-compat). Wired `--todo` into the `overnight-
+  sequencer` SKILL invocation as REQUIRED, and the doctrine into the canonical wait-discipline. Tests: 2 new
+  cases in `test_review_envelope.py` (todo-scope pulls the CORRECT section not the newest; --since window
+  excludes a prior round). Distinct from P1.2 (that binds the COMMIT-gate's `last-codex-review.json` to the
+  staged diff; this scopes the in-session envelope AGGREGATOR). Original finding:
   `run-20260712-223931.log:226-228`, `run-20260712-231031.log:244-246`, `:808` -- three wasted
   envelope reads, each aggregating a prior run's reviews (e.g. "stale morning reviews TODO-12 §13").
   This is a DIFFERENT consumer than P1.2 (which binds the commit gate's `last-codex-review.json` to
@@ -241,6 +342,71 @@
   round-trip per hypothesis. **Fix:** a compile-time debug-trace toggle (`DEBUG_EXEC_TRACE=1 bash
   scripts/build.sh`) gating pre-placed `klog` call sites at the exec/fork hot spots via a macro, so
   bisection flips a build flag instead of editing+reverting source each hypothesis.
+
+## I. Codex follow-on audit (2026-07-13) -- verified infra findings
+
+> Source: a Codex read-only follow-up audit over the same 8-run family (deliberately non-duplicative
+> of both plan docs). Every item below was **re-verified at file:line by the main session this
+> session** (trust contract) before folding in -- all held. The Codex-proposed reopens of the 07-12
+> plan's P0.1 / P2.3 and the P3.4 prerequisite were folded into that sibling doc; the items here are
+> the NEW infra findings plus the A1 follow-on.
+
+- [ ] **[det] I0. A1 FOLLOW-ON: fixing the `worktree_hash` import exposes a second section-pack
+  receipt defect.** VERIFIED. Once A1's import resolves, a fresh section-pack authorizes the FIRST
+  edit, but that edit changes the pack's content digest, so the SECOND edit in the same section goes
+  stale and re-blocks -- even though a real agent dispatch remains valid for the whole implement pass
+  (`agent_dispatch_required.py:68` receipt-lifetime logic; `scripts/overnight/tests/test_dispatch_receipt.py:51`
+  explicitly makes an edit stale). **Fix:** bind a once-accepted pack to the CURRENT implement pass
+  (retain its pre-edit digest for audit, but do not re-block on intra-pass content drift); add a
+  multi-edit regression test. Ship together with A1 so the import fix does not just move the block.
+- [ ] **[det] I1. Artifact FAILURES are masked by caller pipelines -- a real compile failure did not
+  surface as a Bash tool error.** VERIFIED. `run-artifact.sh:24` preserves the child exit status in
+  its JSON envelope, but callers pipe it into `tail`/`python3` or follow it with a passing command, so
+  the Bash-tool-visible exit code is the LAST pipeline stage's, not the build's
+  (`run-20260713-120304.log:185`: `... run-artifact.sh build1 -- bash scripts/build.sh 2>&1 | tail -20`;
+  the actual compile failure at `.claude/overnight/artifacts/20260713-123043-build1.log:90` never raised
+  a tool error). The `failure-ledger.py` (`:2` contract) is referenced only in doctrine/manifest, never
+  wired into the flow. **Fix:** require STANDALONE `run-artifact.sh` invocation (guard unsafe
+  `| tail`/`| python` shapes), have receipts validate the JSON `exit` field, and wire a nonzero result
+  into the currently-unused failure ledger. Highest-risk of this cluster -- a broken build can pass
+  silently.
+- [ ] **[det] I2. Subagent-runaway telemetry is DEAD -- wrong payload field name.** VERIFIED.
+  `subagent_audit.py:120` reads `d.get("transcript_path", "")`, but the SubagentStop payload provides
+  `agent_transcript_path` (correct-field precedent: `agent_result_cache.py:238`). Result: a
+  kernel-explorer that used 36 tools (over the threshold of 30) recorded ZERO tools and no duration
+  (`.claude/state/subagent-log.jsonl:1034`; the 36-call dispatch at `run-20260713-120304.log:119`).
+  **Fix:** read `agent_transcript_path` (fall back to `transcript_path`), count tool uses + timestamps
+  from the bounded leaf transcript, add a real SubagentStop fixture. (One-line field fix started
+  2026-07-13 as a quick win.)
+- [ ] **[det] I3. The deterministic orientation packet does NOT eliminate orientation work.** VERIFIED.
+  `advance-work.py:99` stores only `section-pack.py`'s stdout SUMMARY (`section-pack.py:421-435` =
+  counts + `pack_path` + digest), while the rich evidence it computed -- `input_files`,
+  `relevant_tests`, `required_gates`, `symbol_defs`, `xrefs` -- is written to `pack.json` on disk
+  (`section-pack.py:370-390`) and NOT surfaced in the packet. So the worker re-runs the pack anyway:
+  across 8 launches at least ~25 calls directly repeated checkpoint/triage/manifest/pack work
+  already done by `advance-work.py` (~9.4M cache-read-token proxy), and the latest worker reran the
+  pack + ~19 searches/reads (`run-20260713-120304.log:26`). **Fix:** make the packet the SOLE initial
+  orientation source by embedding a BOUNDED evidence subset from the full pack (top symbol_defs +
+  input_files + tests + gates), not just the summary counts.
+- [ ] **[det] I4. Finding/decision reuse is structurally ineffective.** VERIFIED. Of 56 records in
+  `.claude/state/finding-triage.jsonl`, 43 have EMPTY evidence and NONE store a `todo` (the schema has
+  no `todo` field: keys are `id/kind/severity/loc/title/decision/class/evidence/epoch`), so
+  `finding-ledger.py list --todo` (`:87-88`, which filters on `e.get("todo")`) can never match --
+  and no retained run calls `lookup`. The decision registry was also staler than the TODO cache
+  (`decision-registry.py:100` manual lifecycle). Net: the latest review spent minutes re-triaging
+  settled systemic usercopy/SMP findings for ZERO source changes (`run-20260713-120304.log:268`).
+  **Fix:** require `todo` + `evidence` on every recorded disposition; auto-refresh the decision
+  registry when the TODO cache advances; attach compact source-backed precedents to review prompts.
+  Full review still runs -- precedents only prevent repeated triage of UNCHANGED systemic policy.
+- [ ] **[det] I5. ChromeMCP is operational waste on the kernel queue.** VERIFIED against doctrine. All
+  8 kernel runs started a browser lane and none used a browser tool, despite `overnight-launch.sh:221`
+  and `SKILL.md:357` both saying kernel runs disable it (`run-20260713-120304.log:5`). The
+  `OVERNIGHT_NO_CHROMEMCP` env drop-in is not taking effect at launch. **Fix:** guard `--with-browser`
+  to browser-owned (gh-pages) work only, and verify the drop-in is actually effective at launch (assert
+  the lane is skipped when the env is set).
+- [ ] **[det] I6. Housekeeping: P0.0's status says "attended bless pending" but a canary stamp already
+  records a verified attended rollover** (`.claude/state/sequencer-canary-ok:1`). Update the P0.0
+  status in the sibling plan to avoid an unnecessary repeat canary.
 
 ## Recorded observations (measured, NOT filed as actionable)
 

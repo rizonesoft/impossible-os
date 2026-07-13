@@ -173,11 +173,16 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
   nothing.
 - **Reviews are polled IN-SESSION; the runner never exits to wait
   (2026-07-11).** A Codex/agent verdict that gates the next action is polled
-  in ONE blocking Bash call at 60s cadence (`for i in $(seq 1 9); do grep -q
-  "Turn completed" <logFile> && break; sleep 60; done`) -- a sleeping shell
-  costs ~0 model tokens (the model is idle while it sleeps), so holding the
-  session open is free. Past the Bash 10-min wall, issue ONE more blocking
-  poll (a 16-min review = 2 turns). Do NOT narrate between polls. The
+  with the canonical waiter `bash scripts/overnight/wait-for-codex-verdict.sh
+  <logFile>` (B1) -- a sleeping shell costs ~0 model tokens (the model is idle
+  while it sleeps), so holding the session open is free. The waiter bounds
+  ITSELF under the Bash tool's ~120s default, so a bare call is NEVER killed at
+  2m (the old hand-rolled `for i in $(seq 1 9); do ... sleep 60; done` was 540s
+  and died at the 120s default unless you remembered a `timeout:` arg -- a
+  wasted killed call + recovery turn every session). Exit 0 = DONE; exit 3 =
+  STILL RUNNING -> just call it again (a 16-min review is a few clean
+  re-invokes). Pass several logs to wait on a whole multi-kind round in one
+  call. Do NOT narrate between polls. The
   structural-wait apparatus (a `wait`/`wake` verb + a background watcher that
   relaunched a fresh session) was REMOVED after it deadlocked the runner
   2026-07-11: it existed only to shave ~10 min of latency off the watchdog and
@@ -354,6 +359,18 @@ This doctrine is not just guidance: it is hard-enforced. Architecture is
   REFUSES unless `sequencer_triage.py --next` returns DONE (zero remaining work).
   Until then `Stop` is blocked, so the run cannot finish early; a false fixpoint
   is impossible. Only a verified fixpoint auto-disarms the watchdog.
+- **Stranded-deferral advisory at fixpoint (P6.2, non-blocking).** After a
+  verified fixpoint, `run_phase_guard.py fixpoint` prints a summary from
+  `scripts/overnight/stranded_deferrals.py` -- cross-TODO `[/]` items whose XREF
+  owner section has shipped (V+Q) yet remain parked, classified flip / clean /
+  blocked / review. It is ADVISORY only (fail-open; never changes the completion
+  verdict): the fixpoint DONE-gate does NOT block on it, because the audit is not
+  yet proven zero-false-positive (owner-shipped is necessary but not sufficient --
+  most parked items stay blocked on a further dependency). An operator triages the
+  `flip` set by hand; run the audit anytime with `python3
+  scripts/overnight/stranded_deferrals.py`. The blocking form (fixpoint refuses on
+  a non-empty stranded set) is deliberately deferred until the audit's precision is
+  proven on real triage.
 
 ### Guardrails against re-breaking the runner (2026-07-11)
 

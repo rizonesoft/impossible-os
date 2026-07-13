@@ -53,6 +53,40 @@ green deterministic run rather than a watched canary each.
   SHIPPED 2026-07-12 (impl + test + docs; one-time attended bless still pending before it governs a live arm). Added `scripts/overnight/control-plane-deterministic.txt` (strict allowlist of ~21 test-backed metrics/receipts/reporting files + `tests/`), a `--flow-critical` mode on `control-plane-match.sh` that subtracts it (default path byte-unchanged), and wired both `arm-sequencer.sh` canary-gate call sites to it; `test_control_plane_tiering.py` (5 cases) + suite 20/20 green; manifest header + CLAUDE.md updated. End-to-end verified: a `review-envelope.py`-only change no longer trips the canary, while `arm-sequencer.sh` / phase-guard / split changes still do. Original scope:
   Split `control-plane-manifest.txt` (and the `arm-sequencer.sh` canary gate) into FLOW-CRITICAL paths (arm/launch/watchdog, phase machine, rollover gate, split-override, context rotation -- emergent/live failure mode) vs DETERMINISTICALLY-COVERED paths (metrics, receipts, snooze, review-envelope, offload reminders -- fully caught by `run-all.sh` + `test-launch.sh` dry-run + `runner-doctor`). A flow-critical edit re-arms the watched canary; a deterministically-covered edit is gated by a green deterministic suite (and MUST ship a test), NOT a live run. This is the fix for the "every runner change needs a canary" bottleneck -- it unblocks the ~18 `[det]` items below. Bless the tiering itself with ONE attended canary. Optional follow-on: extend `test-launch.sh`'s dry-run to simulate a section-ship + rollover so more flow becomes deterministically provable, shrinking the `[canary]` set further.
 - [x] **[det] P0.1 Fix the metrics pipeline: full-run capture, correct output accounting, per-commit token attribution.**
+  **IMPLEMENTED 2026-07-13 (root cause found + fixed + proven on real data).** The undercount was
+  ROOT-CAUSED, not guessed: replayed `run-20260713-044429`'s real session transcript through
+  `stream-report.py` and the logic reproduced the true 285,961 output exactly -- so the parser was
+  never the bug. The LIVE feed is lossy: `input`/`cache-read` are known when a request is dispatched
+  (the streamed events carry them correctly -- live cache-read was a real 45M), but the COMPLETED
+  `output_tokens` never arrives in the streamed assistant events; it lands only in the session
+  transcript the CLI writes AFTER each message finishes. Live 044429 recorded 2,019 output vs a real
+  285,961 (~142x). Fixes shipped:
+  (1) **Transcript-authoritative reconciliation** -- `stream-report.py` latches `session_id`/`cwd`
+  from the stream, records each section's message-id set as it streams (no wall-clock/timezone
+  bucketing), and at a clean finish rewrites every record's `output_tokens`/`sidechain_output_tokens`
+  from the authoritative transcript (`_resolve_session_transcript` + `_transcript_output_maps` +
+  `reconcile_from_transcript`), stamping `output_source: transcript|stream-approx`. Fail-open (no
+  transcript -> keep stream values). END-TO-END PROVEN: a lossy stream (output forced to 1) + the real
+  transcript reconciled back to exactly 285,961 with correct per-section split (277,408 + 8,553).
+  (2) **`todo`/`section` from the live sequencer cursor** (`.claude/state/sequencer-run.json`) when the
+  launcher does not export `OVERNIGHT_TODO`/`OVERNIGHT_SECTION` (`_seq_cursor`).
+  (3) **`.live` cleanup at clean finish** (`cleanup_snapshot`, skipped on a crash so the orphan
+  survives) -- kills the 7 stale duplicate snapshots.
+  (4) **Orphan ingestion in the aggregator** -- `metrics-report.py load()` = finalized record ELSE the
+  orphan `.live` (marker `orphan-live`), preserving the "missing file + no orphan -> exit 2" contract.
+  Tests: +8 cases in `test_stream_report_metrics.py` (reconcile main/sidechain/per-section/fail-open +
+  `.live` write + cleanup + cursor attribution) and +2 in `test_metrics_report.py` (orphan ingest +
+  missing-and-no-live-still-exits-2); full runner suite 24/24 green.
+  **Capture decision:** did NOT add a raw-stream tee to the launcher -- the session transcript IS the
+  retained authoritative capture (it already carries complete per-message usage), so reconciling from
+  it is strictly better than re-capturing the lossy stream, and it avoids a flow-critical launcher
+  edit + multi-MB-per-run disk cost. "Test against a captured real stream" is honored by the
+  transcript-derived fixtures + the real-transcript end-to-end validation above.
+  **P5 gate:** implementation + tests + real-data validation are DONE; P5 still wants one confirming
+  MULTI-SECTION LIVE run (runner is disarmed) to watch reconciliation fire in situ before budget
+  pacing keys off these numbers -- that is a validation checkpoint, not remaining code. Original notes
+  follow:
+  REOPENED 2026-07-13 (Codex audit, verified at file:line) -- superseded by IMPLEMENTED above:
   SHIPPED 2026-07-12. `stream-report.py`: (1) EOF/error flush via try/finally in `main()` -- a trailing section with no progress/result marker is now captured (marker `eof`) instead of vanishing; (2) output accounting fixed -- `add_usage` now keeps the MAX per message-id per field instead of first-seen, because output_tokens GROWS across the per-content-block events (input/cache-read are stable, which is why only output was wrong); (3) atomic live snapshot (`<metrics>.live`, temp+os.replace) rewritten each turn so a crash mid-section keeps the partial; (4) every record + snapshot now carries `run_id` / `todo` / `section` / `start_sha` / `end_sha`. Tests: +4 cases in `test_stream_report_metrics.py` (13 total), suite 20/20 green. NOTE: the ~588,840 figure could NOT be re-confirmed against that past run -- the raw stream-json feeds `stream-report` directly (`overnight-launch.sh:344-351`) and is not retained, only the formatted log is; the fix's correctness is proven instead by `test_growing_output_uses_max_per_msg` (max 500 vs first-seen 2), and the NEXT run's metrics will be trustworthy. Original scope:
   `stream-report.py` flushes only at `progress`/`final`, so the §13 tail (08:22-10:35) is absent from the jsonl. Fix: flush at EOF/error, atomic live snapshot, record final/max usage per message, stamp run/TODO/section/start+end SHA. Re-confirm the ~588,840 output figure vs raw API records. Prerequisite for measuring every fix below and for the Phase-5 governor.
 
@@ -61,10 +95,36 @@ green deterministic run rather than a watched canary each.
 - [x] **[det] P1.1 Crashed-leg re-dispatch: on `rc=1`, re-run ONLY the crashed leg(s), never the full bundle.**
   SHIPPED 2026-07-12. Complete across all review paths: the crash-aware envelope (`review-envelope.py` `needs_redispatch`/`all_clean`) + `test_review_envelope.py` (this session); the broker (`review-broker-codex-dispatch.sh`) is already per-kind so the runner re-invokes it per crashed kind (no `--legs` arg needed); doctrine wired into the two broker-using skills (review-todo-section, overnight-sequencer) + a "crash != verdict" note in the two single-dispatch skills (codex-adversarial-review-section, codex-fix-review). Suite 21/21. Original scope:
   The crash-aware envelope (`review-envelope.py` `needs_redispatch`/`all_clean`) + tests shipped this session. Remaining (parent 2a-2e): broker `--legs` arg, per-leg verdict persistence, reuse-clean-verdicts, wire into the review skills, test single-leg-crash. Pure waste removal, zero quality cost.
-- [ ] **[det] P1.2 Bind `last-codex-review.json` to the actual staged diff (paths + head SHA); reject non-intersecting records.**
-  Quality-POSITIVE: removes the false blocks that forced the 2 `SKIP_REVIEW_HOOK` bypasses. Sub-steps 3a-3e in parent. Do alongside P1.1 -- both attack the review-receipt churn.
-- [ ] **[det] P1.3 Make Codex receipts completion-bound, not dispatch-bound (transactional broker state).**
-  Teach `is_background_dispatch` (`_codex_dispatch.py:223`) the `review-broker-codex-dispatch.sh` shape so its immediate return is not mistaken for a completed review. Model the receipt as `running -> completed (rc=0) -> received -> content-valid`; only `content-valid` satisfies the commit gate. Root of the commit-gate disagreement; complements P1.1 + P1.2.
+- [x] **[det] P1.2 Bind `last-codex-review.json` to the actual staged diff (paths + head SHA); reject non-intersecting records.**
+  IMPLEMENTED 2026-07-13 (surgical, fail-safe -- every change can only make the gate stricter or clearer,
+  never looser). `section_commit_gate.py _review_evidence`: (a) **the churn fix** -- when the single latest
+  record's `received:false` was reset by a NEWER multi-kind trigger (the exact cause of the 2
+  `SKIP_REVIEW_HOOK` bypasses: `last-codex-review.json` holds only ONE review, so dispatching the next kind
+  clobbers an already-received earlier kind), fall back to the received-review ring buffer and accept ONLY if
+  a genuinely-received review blob-covers the EXACT current staged content (content-bound via
+  `_history_covers`, never a bare timestamp); (b) reject a **non-intersecting STALE record** (its
+  `trigger_blobs` share nothing with the staged source) with a precise message + head-SHA corroboration,
+  instead of the confusing "uncovered source" that historically sent runs into a re-stage / SKIP loop.
+  Tests: `test_review_gate.py` (received-true+covered accepts, non-intersecting rejected as STALE,
+  received-false+history-covers accepts, received-false+no-history blocks). The existing blob-content binding
+  + coverage were already present; this closes the multi-kind reset hole on top. Suite 25/25 green.
+- [x] **[det] P1.3 Make Codex receipts completion-bound, not dispatch-bound (transactional broker state).**
+  IMPLEMENTED 2026-07-13 (surgical scope, per the fail-safe decision). ROOT-CAUSED: the broker DETACHES its
+  review (`systemd-run`/`setsid`) and returns a `{logFile}` instantly, yet `is_background_dispatch` returned
+  FALSE for it (empirically confirmed) -- so the recorder treated the broker's instant return as a completed
+  foreground review. Shipped: `_codex_dispatch.py` `_segment_is_background` now recognizes
+  `review-broker-codex-dispatch.sh` (its immediate return no longer reads as a completed review), and a new
+  `is_review_broker_dispatch()` lets the recorder KEEP stamping the broker (a completed broker leg is real
+  review proof) while a generic `task --background` stays excluded -- so `background_dispatch` becomes honest
+  with ZERO change to stamping behavior (fail-safe). `codex_review_completed.py` gates the stamp on
+  `not background_dispatch OR is_broker`. Tests in `test_review_gate.py` (broker=background+broker,
+  fg-wrapper unaffected, generic bg-task not broker); receipt-state firewall selftest still green.
+  **DEFERRED (Option B, explicitly out of surgical scope):** the full receipt STATE MACHINE
+  `running -> completed(rc=0) -> received -> content-valid` with per-leg completion tracking (poll each broker
+  leg's logFile for `Turn completed (rc=0)` before its stamp counts). Flipping the detector to SUPPRESS the
+  broker stamp -- the literal "only content-valid satisfies the gate" -- would wedge every broker review
+  without that machinery, so it needs a watched attended canary and is filed as the P1.3 follow-on. What
+  shipped closes the telemetry-honesty half; the completion-gate half is the deferred canary piece.
 - [x] **[det] P1.4 Fix the broken usage-limit snooze parser.**
   SHIPPED 2026-07-12. Extracted the parser into a standalone, test-backed `scripts/overnight/parse-usage-limit.py` that reads the report FILE by path (killing the heredoc/stdin collision); `overnight-launch.sh` now calls it in one line. `test_usage_limit_snooze.py` (8 cases: session/weekly/no-minutes/fallback/8-day-cap + end-to-end file-not-stdin). Suite 21/21. (NOTE: the deterministic parser is canary-free, but the one-line `overnight-launch.sh` call is a flow-critical wiring edit -> rides on the batch's canary.) Original scope:
   `overnight-launch.sh:366` -- the heredoc clobbers the piped report so `sys.stdin.read()` gets EOF and the limit banner never parses; the runner cannot snooze on a real limit. Fix: pass the report by argv/path, end-to-end test with a captured banner. Correctness fix now; hard prerequisite for Phase 5.
@@ -79,11 +139,45 @@ green deterministic run rather than a watched canary each.
 
 ### Phase 2 -- Convergence + churn reduction (low-medium risk; big turn savings, no depth loss)
 
-- [ ] **[det] P2.1 Convergence-based review: never redispatch an UNCHANGED review kind on UNCHANGED relevant inputs.**
-  Primary mechanism. Continue a kind while it yields a NEW Critical/High; stop when neither its file set nor content moved since its last verdict; disposition Medium/Low via Fix/Reject/Accept. NO round cap (see Rejected). Absorbs parent 4a-4e; the round-8/12 spiral alarm becomes a secondary signal. Implement as a deterministic redispatch-decision gate + test.
-- [ ] **[det] P2.2 Per-kind x per-file review invalidation: one changed file must not re-trigger ALL kinds.**
-  Docs/TODO-only fix reruns nothing (or consistency); kernel-path change reruns adversarial + affected consistency, NOT perf; hot-path change reruns perf. Mechanical half of P2.1.
+- [x] **[det] P2.1 Convergence-based review: never redispatch an UNCHANGED review kind on UNCHANGED relevant inputs.**
+  IMPLEMENTED 2026-07-13. New deterministic decision CLI `.claude/hooks/review_convergence.py`:
+  `should-redispatch <slice> <kind>` fingerprints the kind's relevant inputs and returns CONVERGED (exit 1,
+  skip) when they are unchanged since that kind's last recorded verdict, else REDISPATCH (exit 0); `record
+  <slice> <kind>` stores the verdict fingerprint. NO round cap (stall detection stays in
+  `review_round_guard.py`, a complementary signal). Fingerprint = HEAD tree + worktree diff + untracked
+  CONTENTS over the kind's scope (mirrors the receipts/agent-cache content-addressing). Fail-open EVERYWHERE
+  (unknown kind / git error -> REDISPATCH), so it can only skip a redundant review, never suppress a needed
+  one. Wired as a REQUIRED pre-redispatch consult into review-todo-section (step 6), codex-fix-review (8c),
+  and overnight-sequencer. Tests: hook `--selftest` (7 assertions) + `test_review_convergence.py` (CLI
+  exit-code contract). Suite 26/26.
+- [x] **[det] P2.2 Per-kind x per-file review invalidation: one changed file must not re-trigger ALL kinds.**
+  IMPLEMENTED 2026-07-13 as the per-kind scope of P2.1's `review_convergence.py`: `adversarial` / `perf` /
+  `re-adversarial` fingerprint SOURCE only; `consistency` / `design` fingerprint SOURCE + TODO. So a
+  docs/TODO-only fix leaves the source-only kinds' fingerprints unchanged (they CONVERGE -> skip) and re-runs
+  only the TODO-aware kinds; a source edit re-runs the source kinds. **Deviation (documented):** `perf` stays
+  scoped to ALL source rather than a guessed "hot-path" subset -- narrowing it further risks SKIPPING a real
+  perf review (the unsafe direction for a review-quality gate), so "kernel-path change does NOT rerun perf" is
+  intentionally left conservative (perf reruns on any source change). Hot-path narrowing is filed as a later,
+  separate optimization. Covered by the P2.1 selftest (docs-only-edit and source-edit per-kind cases).
 - [x] **[det] P2.3 Standing evidence map across review rounds (route round-N verification through `review-evidence-mapper` for rounds >= ~4).**
+  **RE-CLOSED 2026-07-13 (both reopened gaps fixed).** (1) Cache-key volatility fixed: `agent_result_cache.py`
+  now canonicalizes a mapper dispatch's prompt to its STABLE scope (todo path + section + source file paths
+  with `:line/:col` stripped) via `_canonical_scope_from_prompt`, keyed per content-deterministic mapper type
+  (researchers excluded -- their prompt IS the question). So rounds 4/5/6 naming the same section/files over an
+  UNCHANGED tree collapse to ONE key -> a real cache hit, killing the 22-stores/0-hits volatility; a different
+  section keeps a distinct key (no wrong cross-scope hit). Tests: 3 new cases in `test_agent_cache.py`
+  (hits-across-volatile-prompts, distinguishes-sections, researcher-prompt-still-load-bearing). (2) Round-4
+  routing upgraded from a REMINDER to a REQUIREMENT in review-todo-section step 6, codex-fix-review 8c, and
+  overnight-sequencer (the "verify at file:line" step MUST go through one mapper dispatch, not inline
+  re-reads). MANIFEST updated for the new key semantics. Suite 26/26. Prior REOPENED note follows:
+  **REOPENED 2026-07-13 (Codex audit, verified at file:line):** shipped NARRATIVELY only -- the wiring exists
+  but never actually fired in the live runs. Confirmed this session: `.claude/state/offload-events.jsonl` holds
+  `cache-store: 22` and **0 `cache-hit` events** (the `agent_result_cache` for `review-evidence-mapper` is
+  written but never reused), and round 4 of `run-20260712-231031.log:738` still performed inline verification
+  rather than a mapper dispatch. **Remaining fix:** add a round-4 mapper-receipt REQUIREMENT (not just a
+  reminder) and canonicalize the cache key around the SCOPED evidence set (src/todo content digest) rather than
+  the volatile prompt text -- volatile keys are why 22 stores produced 0 hits. Preserves convergence-based
+  review with no fixed round cap. Original SHIPPED note follows:
   SHIPPED 2026-07-12. The pieces already existed but were dormant/unwired: `review_round_guard.py` (per-section round counter + STALL-based convergence cap -- K no-new rounds + a 30-round ceiling, NOT a fixed cap) and `agent_result_cache` (already caches `review-evidence-mapper` by src/todo content, so an unchanged-tree map is reused for free). Wired both into the fix-loop doctrine of review-todo-section (step 6), codex-fix-review (8c), and overnight-sequencer: bump the round guard each re-dispatch + honor CAP; for rounds >= 4, verify at file:line via one mapper dispatch instead of inline re-reads (task.c was re-read ~31x). Added `test_review_round_guard.py` (4 cases: selftest + productive-never-caps + stall-caps + new-resets); suite 22/22. Note: this also activates the safe, receipt-INDEPENDENT half of convergence (stall detection); the receipt-dependent per-kind x per-file invalidation (P2.1/P2.2) stays with the P1.2/P1.3 pass. Original scope:
   Kills the ~31x `task.c` re-read churn. Reuse the map when the hot-file set is unchanged.
 
@@ -97,6 +191,15 @@ green deterministic run rather than a watched canary each.
   Not 40 builds / 17 smoke mid-loop. Frequency discipline (a reminder/gate; can't hang the run). Smoke stays unconditional AT the boundary (see Rejected).
 - [ ] **[canary] P3.4 Make offload bite: promote `build_offload_reminder` / `inline_churn_monitor` from WARN to enforced routing.**
   Block-with-reroute the expensive shapes: full-log greps, single reads > ~50 KB, 3+-search-round exploration, and inline exploration run beside a concurrent Agent dispatch. Keep the deterministic `run-artifact.sh` path for build/test. A bad BLOCK can wedge a live run -- canary.
+  **PREREQUISITE before WARN -> BLOCK (Codex audit 2026-07-13, verified at file:line):** the current
+  `build_offload_reminder.py:37` matcher `\bbash\s+scripts/(build|test|...)\.sh\b` fires on the INNER
+  `bash scripts/build.sh` EVEN WHEN it is correctly wrapped as
+  `bash scripts/overnight/run-artifact.sh <label> -- bash scripts/build.sh` -- it fired 9x on the latest
+  properly-wrapped build/test sequence (`.claude/state/offload-events.jsonl:472`). Promoting the matcher to
+  BLOCK as-is would BLOCK THE SANCTIONED ROUTE. Before enforcing: (1) exempt an OUTER `run-artifact.sh`
+  wrapper (match only when the bare script is the outermost command); (2) remove the deprecated `checks-runner`
+  routing text from the reminder; (3) deduplicate reminders (it fired 9x for one sequence); (4) unit-test the
+  compliant wrapped shape vs the bare shape before flipping the hook. Fold into the same `[canary]` bless.
 - [ ] **[canary] P3.5 Give a reviewed [/]-partial section a clean ship+stamp path (retire the gate deadlock + opt-out reliance).**
   Recognize a partial ship carrying fresh review evidence (scoped delta receipt + a valid cross-session record for unchanged bytes) as satisfying the stamp gate, so a reviewed partial ships without a full re-run or a `SKIP_*` bypass. (Direct fix for the deadlock hit landing §13.) Commit-gate flow change -- canary.
 
@@ -143,25 +246,76 @@ stranded until a human flips it back to `[ ]`. (The `awaiting-<token>` recoverab
 `[ ]` blocker-noted items do NOT have this gap -- only terminal-park `[/]` deferrals do.)
 
 - [ ] **[canary] P6.1 Owner-side sweep re-opens unblocked dependents (not just tidies the stamp).**
+  DEFERRED 2026-07-13 (pending P6.2 accuracy proof). P6.2 shipped as a READ-ONLY audit precisely because its
+  first-proposed signal over-matched ~6x (see P6.2 stamp); auto-re-opening dependents mid-run is exactly the
+  phantom-work risk that over-match would realize, so P6.1 waits until the audit's 34 candidates are
+  human-validated as truly stranded and the flip-vs-clean classifier is proven. When built, it reuses
+  `stranded_deferrals.py`'s per-item classification and stays `[canary]` (live-flow: re-opens work mid-run).
+  Original scope:
   When a section ships and its step-18 inbound sweep finds an Accepted/Deferred stamp whose concern
   this section just FULLY satisfied, flip the dependent item from `[/]` back to `[ ]` -- re-classifying
   its file NEEDS_WORK for the next fixpoint pass -- instead of only deleting the stale line. Gate the
   flip on the sweep's existing fully-vs-partially-resolved decision: only a fully-resolved concern
   flips; a partially-resolved one keeps its remaining XREFs untouched. Live-flow behavior (re-opens
   work mid-run, changes what the runner picks next pass) -- canary.
-- [ ] **[det] P6.2 Deterministic stranded-deferral audit.**
-  A `todo-graph` / `sequencer_triage` verb that enumerates every terminal-park `[/]` deferral whose
-  XREF owner section is now DONE (both stamps present) but which is still parked -- the
-  stranded-unblocked backlog. Reuse `query.py deferred-by` + the stamp resolver + the section DONE
-  oracle. Surfaces the gap on the CURRENT tree today, validates P6.1, and feeds P6.3. Deterministic +
-  unit-testable, no live run needed.
+- [x] **[det] P6.2 Deterministic stranded-deferral audit.**
+  IMPLEMENTED 2026-07-13 as `scripts/overnight/stranded_deferrals.py` -- READ-ONLY diagnostic only (it
+  prints a human-reviewable list; never edits a TODO, never gates fixpoint). **Signal corrected during
+  implementation:** the plan's first-proposed signal (section-level `stamps_xrefs` whose owner shipped)
+  OVER-MATCHED ~6x on the live tree -- 171 "deferred" + 73 "accepted" hits, 143 of the 171 self-XREFs to
+  concerns already tracked as OPEN `[ ]` items the loop picks up normally (spot-verified: TODO-22 sec 3's
+  "Large-volume scalability" is a live `[ ]`, not a stranded `[/]`). Auto-acting on that set would wedge
+  fixpoint or spawn ~150 phantom items. The shipped audit is item-level + conservative instead: only `- [/]`
+  items, CROSS-TODO only (self-XREF excluded), `awaiting-<token>` excluded (recoverable-park), owner-shipped
+  = target section carries BOTH Verified AND Quality-reviewed (a terminal-Deferred owner punted too), and it
+  emits only on an unambiguously-resolved (target_file, target_section) pair. Suggests clean / reopen /
+  review per item. **Refined classifier (2026-07-13, after a full triage):** clean (owner-completed, do not
+  re-open) / blocked (a LIVE dependency beyond the shipped owner remains -- "until the hive I/O bodies exist",
+  "DEFERRED (dual-log)", "needs C:", "not implemented") / flip (gated ONLY on the now-shipped owner, safe to
+  re-open) / review (none matched -- usually a correctly-partial [/]). **Triage result on the current 34:
+  flip=0, clean=3, blocked=21, review=10 -- ZERO genuinely ready to auto-flip.** Owner-shipped is necessary
+  but NOT sufficient: every candidate read + code-verified was blocked on another dependency, owner-completed,
+  correctly-partial, or design-obsoleted (the one mechanical flip candidate -- TODO-03 "canary seed sharing" --
+  turned out obsolete: TODO-10 sec 12 shipped the canary with an RDRAND seed and DECLINED csprng-seeding by
+  design review, so re-opening it would implement work the owner rejected). Net finding: the Phase-6 gap is
+  real in principle but has no genuinely-actionable instances on the current tree -- leaving these parked is
+  correct in every examined case, which is itself why P6.3/P6.4 auto-action stays deferred. Each candidate also
+  carries a
+  `stranded` flag = its OWN section is DONE-parked (V+Q or terminal-Deferred), so the fixpoint loop never
+  re-visits it and it will NOT flip naturally on an overnight run: 33 of the 34 are stranded, 1 sits in a
+  still-worked section. (Stranded != lost work: only the `reopen`-classified subset is genuinely un-done
+  in-scope work; `clean` items are owner-completed and just cosmetically stale.) Uses
+  `sequencer_triage.section_stamps` as the DONE oracle. Tests: hook `--selftest` + `test_stranded_deferrals.py`
+  (schema + read-only-invariant via git-porcelain diff). Suite 27/27.
+  **WIRED IN (permanent, 2026-07-13):** the audit stays a deterministic SCRIPT (the engine); it is surfaced
+  as a NON-BLOCKING advisory at `run_phase_guard.py fixpoint` (prints the flip/clean/blocked/review summary
+  when the run completes; fail-open, never changes the verdict) -- NOT a skill (overkill for a read-only
+  query) and NOT a blocking gate (that is the deferred P6.3). Documented in `.claude/hooks/MANIFEST.md`
+  (run_phase_guard row) and `todo/TODO-Claude-Overnight-Runner.md` (fixpoint section). Operator entry point:
+  `python3 scripts/overnight/stranded_deferrals.py`. **Classifier hardened + hygiene applied (2026-07-13):**
+  blocker-check now precedes clean/flip (a live dependency overrides incidental "wired in"/"tracked in"
+  prose), so `clean` dropped from 3 to 1 real (the other two were false positives -- one blocked on
+  boot-mount, one pending deep-copy setters). The 1 genuine `clean` (TODO-22 sec 2 "recovery boots via
+  kind=recovery", code-verified: `BOOT_ENTRY_KIND_RECOVERY`/`BOOT_PATH_RECOVERY` shipped by TODO-07 sec 4)
+  was marked `[x]`. Final tree: flip=0, clean=1, blocked=23, review=10.
 - [ ] **[det] P6.3 Fixpoint DONE-check consults the stranded-deferral audit.**
+  DEFERRED 2026-07-13 (pending P6.2 accuracy proof). Gating fixpoint on the audit is only safe once the audit
+  yields ~zero false positives: fixpoint is the runner's ONLY clean-stop path, so blocking it on today's 34
+  advisory (heuristic-classified) candidates would WEDGE the runner. Build after the 34 are human-triaged and
+  P6.4's backfill has cleared the true stranded set to a small, stable residue -- then block fixpoint only on
+  the high-confidence `reopen` subset. Original scope:
   Before `run_phase_guard.py fixpoint` declares true DONE, run the P6.2 audit; a non-empty stranded
   set is NOT-fixpoint (re-open the dependents + `next-pass`), not a false finish. Safety net for when
   the owner-side sweep (P6.1) misses a satisfy-mapping, and it closes the "runner stops with
   recoverable cross-TODO work still parked" hole directly. Deterministic gate + test.
 
 - [ ] **[det] P6.4 One-time backfill sweep of the EXISTING stranded backlog (run P6.2, then act by stamp type).**
+  DEFERRED 2026-07-13 (pending human triage of P6.2's 34 candidates). The audit is READ-ONLY by design; a
+  one-time auto-editor that flips `[/]` -> `[ ]` and strips stamps across the tree is the highest-blast-radius
+  action in Phase 6. Next step is operator-driven: run `python3 scripts/overnight/stranded_deferrals.py`,
+  review the 34 candidates (2 reopen / 2 clean / 30 review), then apply the confirmed decisions (Deferred ->
+  flip, Accepted -> stamp-clean) by hand or via a follow-up `--apply` mode gated on a reviewed allowlist.
+  Original scope:
   P6.1 is forward-only -- it fires only when a section ships from now on, so it never touches deferrals
   already stranded by owners that shipped in PAST runs. After P6.2 lands, run it once against the
   current tree and act per the stamp's SEMANTIC, not blanket re-open: a **`Deferred:`** item (in-scope,
