@@ -91,7 +91,7 @@ Add a read-only recovery partition to the GPT disk layout.
 
 **Design-locked + deferred [/] 2026-06-16 (Codex design review, 3 HIGH + cross-TODO reconciliation).** The original "standalone `recovery.efi` at the `\EFI\BOOT\BOOTX64.EFI` fallback path loading `kernel.bak`" is architecturally rejected -- recovery boots through the existing bootloader + TODO-07 boot-entry store, NOT a forked binary. See NOTE for the three HIGH findings and the blocker chain.
 
-- [/] Recovery boots via a `kind=recovery` entry through the existing `bootx64.c` producer (flips `boot_path=BOOT_PATH_RECOVERY`); ALREADY SHIPPED by TODO-07 §4. -> XREF: [`01-boot-platform/TODO-07 §4`](TODO-07-boot-entry-store-menu-policy.md)
+- [x] Recovery boots via a `kind=recovery` entry through the existing `bootx64.c` producer (flips `boot_path=BOOT_PATH_RECOVERY`); ALREADY SHIPPED by TODO-07 §4. -> XREF: [`01-boot-platform/TODO-07 §4`](TODO-07-boot-entry-store-menu-policy.md)
 - [ ] Kernel recovery-mode entry point: Phase-3 routes `boot_path==BOOT_PATH_RECOVERY` into the recovery flow (§3-§7) instead of normal desktop init. §2's real deliverable; non-hollow only once §3-§7 land.
 - [ ] Recovery-load-path contract: define `BOOT_ENTRY_KIND_RECOVERY` + the `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD` sentinel TODO-07 §9 consumes. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
 - [ ] Recovery entry REGISTRATION owned by TODO-07 §9 (integration) + §16 (first-install seeding); §2 provides the load path they register against. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
