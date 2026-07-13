@@ -132,7 +132,7 @@
   Distinct from B2 (waiter signal quality) and from the original field observation (single-record
   `received` reset, which P1.2's history-fallback DOES rescue -- these two do not, because `received`
   is True but the binding/attribution is empty or stale).
-- [ ] **[det] B4. Runner-generated `coverage.*` dirties the tree at rollover, and the dirty-tree
+- [x] **[det] B4. Runner-generated `coverage.*` dirties the tree at rollover, and the dirty-tree
   diagnostic mis-attributes ownership.** SURFACED LIVE in the 2026-07-13 canary: two `run_phase_guard.py
   rollover` attempts refused because the full-suite run regenerated `coverage.json`/`coverage.md`
   (20671->20680 tests from §5), which dirties the tree and invalidates the content-bound rollover
@@ -331,7 +331,7 @@
   (content binding) -- this is FILE-SELECTION logic. **Fix:** prefer the file named in the active
   section-commit context (the TODO path passed to `implement-todo-section`) over "first staged .md,"
   falling back to first-staged only when there is no active section context. Live-flow -- canary.
-- [ ] **[det] F2. Rollover receipt re-record churn caused by the suite's own coverage-doc
+- [x] **[det] F2. Rollover receipt re-record churn caused by the suite's own coverage-doc
   auto-refresh.** `run-20260713-055754.log:503-519`: rollover records rebuild+suite+smoke receipts;
   running the suite auto-dirties `docs/test-coverage/coverage.md`; that forces a separate docs-only
   commit+push; which forces re-recording all three receipts against the new HEAD even though no

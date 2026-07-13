@@ -378,6 +378,37 @@ def handle_pretool():
 ROLLOVER_PENDING_FRESH_S = 1800  # stale pending flags stop permitting stops
 
 
+# B4/F2: deterministically-regenerated auto-gen docs. The runner's own
+# full-suite / graph runs rewrite these, dirtying the tree; blocking the rollover
+# on them forced a separate commit + receipt re-record every time (F2), and the
+# bare "N change(s)" message mis-attributed them to the operator (B4). They carry
+# no uncommitted WORK a fresh worker must not inherit -- the next run regenerates
+# them identically -- so a delta consisting ONLY of these does not block rollover.
+_ROLLOVER_AUTOGEN = frozenset({
+    "docs/test-coverage/coverage.json",
+    "docs/test-coverage/coverage.md",
+    "COUNT.md",
+    "docs/infrastructure/todo-graph.md",
+})
+
+
+def _dirty_path(porcelain_line: str) -> str:
+    """Path from a `git status --porcelain` line ('XY <path>' / '?? <path>',
+    rename 'XY old -> new')."""
+    p = porcelain_line[3:].strip() if len(porcelain_line) > 3 else porcelain_line
+    return p.split(" -> ")[-1].strip().strip('"')
+
+
+def _dirty_owner(porcelain_line: str) -> str:
+    """Classify a dirty file: 'auto-gen' (regenerated docs), 'untracked', or
+    'tracked-source' -- so the diagnostic names the probable owner (B4)."""
+    if _dirty_path(porcelain_line) in _ROLLOVER_AUTOGEN:
+        return "auto-gen"
+    if porcelain_line.startswith("??"):
+        return "untracked"
+    return "tracked-source"
+
+
 def _rollover_failures(root: Path, state: dict) -> list:
     """Machine gates for a verified rollover checkpoint. Every failure is a
     reason the worker context may NOT rotate yet."""
@@ -393,9 +424,20 @@ def _rollover_failures(root: Path, state: dict) -> list:
             fails.append("git status unavailable")
         elif out.stdout.strip():
             dirty = [ln for ln in out.stdout.splitlines() if ln.strip()]
-            untracked = sum(1 for ln in dirty if ln.startswith("??"))
-            fails.append(f"tree not clean ({len(dirty)} change(s), "
-                         f"{untracked} untracked)")
+            # B4/F2: tolerate a delta that is ONLY auto-gen docs; block on any
+            # real change and NAME the paths + probable owner so the diagnostic
+            # never mis-attributes the runner's own coverage.* to the operator.
+            blocking = [ln for ln in dirty if _dirty_owner(ln) != "auto-gen"]
+            if blocking:
+                named = ", ".join(f"{_dirty_path(ln)} [{_dirty_owner(ln)}]"
+                                  for ln in blocking[:6])
+                more = f" (+{len(blocking) - 6} more)" if len(blocking) > 6 else ""
+                tolerated = len(dirty) - len(blocking)
+                autogen_note = (f"; tolerating {tolerated} auto-gen doc delta(s)"
+                                if tolerated else "")
+                fails.append(f"tree not clean ({len(blocking)} blocking "
+                             f"change(s): {named}{more}{autogen_note})")
+            # else: only auto-gen docs dirty -> tolerated, rollover may proceed.
     except Exception:
         fails.append("git status unavailable")
     try:
