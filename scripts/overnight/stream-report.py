@@ -110,6 +110,85 @@ def _task(inp: dict) -> str:
     return label.strip(": ").strip()
 
 
+def _seq_cursor():
+    """Live sequencer cursor (TODO file + section index) for metrics
+    attribution. The headless launcher does not export OVERNIGHT_TODO /
+    OVERNIGHT_SECTION, which left every metrics record's todo/section null
+    (Codex audit 2026-07-13, verified). Read the authoritative cursor from
+    `.claude/state/sequencer-run.json` fresh at each flush (flushes are a
+    handful per run, so re-reading is cheap). Fail-open to (None, None)."""
+    base = os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    for root in (base, "."):
+        try:
+            with open(os.path.join(root, ".claude/state/sequencer-run.json"),
+                      encoding="utf-8") as f:
+                d = json.load(f)
+            todo = d.get("file") or None
+            sec = d.get("section_idx")
+            return (todo, sec if isinstance(sec, int) else None)
+        except Exception:
+            continue
+    return (None, None)
+
+
+def _resolve_session_transcript(session_id, cwd):
+    """Locate the CLI session transcript for output reconciliation.
+
+    The LIVE stream undercounts output_tokens ~140x (Codex audit 2026-07-13,
+    root-caused this session against run-20260713-044429: recorded 2,019 vs a
+    real 285,961). Reason: input/cache-read are known when the request is
+    dispatched (so the streamed events carry them correctly), but the COMPLETED
+    output_tokens never arrives in the streamed assistant events -- it lands
+    only in the session transcript the CLI writes AFTER each message finishes.
+    That transcript (one per session id, always persisted) is authoritative.
+
+    Honors `OVERNIGHT_SESSION_TRANSCRIPT` (tests / non-standard homes). Returns
+    an existing path or None (fail-open: no transcript -> keep stream values).
+    """
+    override = os.environ.get("OVERNIGHT_SESSION_TRANSCRIPT")
+    if override:
+        return override if os.path.exists(override) else None
+    if not session_id:
+        return None
+    base = cwd or os.getcwd()
+    slug = re.sub(r"[/.]", "-", base)
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    p = os.path.join(home, ".claude", "projects", slug, str(session_id) + ".jsonl")
+    return p if os.path.exists(p) else None
+
+
+def _transcript_output_maps(path):
+    """message-id -> COMPLETE output_tokens from a session transcript, split
+    into (main, sidechain). Each assistant message id is unique and its usage
+    is final here, so max-per-id is exact. Returns (main, side) or None on a
+    read error."""
+    main: dict = {}
+    side: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if d.get("type") != "assistant":
+                    continue
+                m = d.get("message") or {}
+                mid = m.get("id")
+                if not mid:
+                    continue
+                out = (m.get("usage") or {}).get("output_tokens")
+                out = out if isinstance(out, int) else 0
+                store = side if d.get("isSidechain") else main
+                store[mid] = max(store.get(mid, 0), out)
+    except OSError:
+        return None
+    return (main, side)
+
+
 def _todos(inp: dict) -> str:
     todos = inp.get("todos")
     if not isinstance(todos, list):
@@ -258,6 +337,15 @@ class SectionMetrics:
         self.run_id = os.environ.get("OVERNIGHT_RUN_ID") or _run_id_from_path(path)
         self.index = 0
         self.model_seen: str | None = None  # run-level, NOT reset per section
+        # Session identity (from the stream) so finalization can reconcile the
+        # undercounted stream output against the authoritative session transcript.
+        self.session_id: str | None = os.environ.get("OVERNIGHT_SESSION_ID") or None
+        self.cwd: str | None = None
+        # Run-level record of which message ids landed in which section, so the
+        # transcript reconciliation attributes each id's true output back to its
+        # section WITHOUT any wall-clock/timezone bucketing. List of
+        # (section_index, main_id_set, side_id_set).
+        self._section_ids: list = []
         # Section boundary SHAs: a section starts at the prior flush's HEAD and
         # ends at the HEAD read when it flushes.
         self._start_sha: str | None = _git_head()
@@ -286,6 +374,14 @@ class SectionMetrics:
         # read, grep, glob, bash, bash_search, lsp, agent, edit, other.
         self.main_tools: dict = {}
         self.side_tools: dict = {}
+
+    def note_session(self, session_id, cwd) -> None:
+        """Latch the session id + cwd from the stream (system/result/assistant
+        events all carry session_id) so finalization can find the transcript."""
+        if session_id and not self.session_id:
+            self.session_id = str(session_id)
+        if cwd and not self.cwd:
+            self.cwd = str(cwd)
 
     def note_model(self, model) -> None:
         """Log the ACTUAL model id from each MAIN-LOOP assistant turn's API
@@ -394,13 +490,16 @@ class SectionMetrics:
 
     def _record(self, marker: str, end_sha) -> dict:
         main, side, turns, side_turns = self._totals()
+        _seq_todo, _seq_section = _seq_cursor()
         return {
             "run_id": self.run_id,
             "section_index": self.index,
             "marker": marker,
             "timestamp": stamp(),
-            "todo": os.environ.get("OVERNIGHT_TODO") or None,
-            "section": os.environ.get("OVERNIGHT_SECTION") or None,
+            "todo": os.environ.get("OVERNIGHT_TODO") or _seq_todo or None,
+            "section": (os.environ.get("OVERNIGHT_SECTION")
+                        if os.environ.get("OVERNIGHT_SECTION")
+                        else _seq_section),
             "start_sha": self._start_sha,
             "end_sha": end_sha,
             "turns": turns,
@@ -438,13 +537,73 @@ class SectionMetrics:
         rec = self._record(marker, end_sha)
         with open(self.path, "a", encoding="ascii") as fh:
             fh.write(json.dumps(rec) + "\n")
+        # Remember this section's message ids (keyed to the index just written)
+        # for transcript reconciliation at finalization -- captured BEFORE the
+        # reset clears the per-id stores.
+        self._section_ids.append(
+            (self.index, set(self._main_msg), set(self._side_msg)))
         self.index += 1
         self._start_sha = end_sha
         self._reset()
 
+    def reconcile_from_transcript(self) -> None:
+        """Rewrite each flushed record's output_tokens (main + sidechain) from
+        the authoritative session transcript, attributing every message id to
+        the section that streamed it. input/cache-read stay as the stream
+        reported them (they are correct mid-flight); only output was undercounted.
+        Fail-open: no transcript, no matching ids, or any error -> leave stream
+        values untouched. Stamps `output_source` so a consumer can tell which
+        records are transcript-exact vs stream-approx."""
+        if not self.path:
+            return
+        tpath = _resolve_session_transcript(self.session_id, self.cwd)
+        if not tpath:
+            return
+        maps = _transcript_output_maps(tpath)
+        if not maps:
+            return
+        main_map, side_map = maps
+        if not main_map and not side_map:
+            return
+        ids_by_index = {i: (mi, si) for (i, mi, si) in self._section_ids}
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                recs = [json.loads(l) for l in fh if l.strip()]
+        except OSError:
+            return
+        changed = False
+        for r in recs:
+            mi, si = ids_by_index.get(r.get("section_index"), (set(), set()))
+            main_hit = bool(mi) and any(x in main_map for x in mi)
+            if main_hit:
+                r["output_tokens"] = sum(main_map.get(x, 0) for x in mi)
+                changed = True
+            if si and any(x in side_map for x in si):
+                r["sidechain_output_tokens"] = sum(side_map.get(x, 0) for x in si)
+                changed = True
+            r["output_source"] = "transcript" if main_hit else "stream-approx"
+        if changed:
+            _atomic_write(self.path,
+                          "".join(json.dumps(r) + "\n" for r in recs))
+
+    def cleanup_snapshot(self) -> None:
+        """Remove the `.live` snapshot once the run has finalized cleanly, so a
+        finished run does not leave a stale orphan (7 such duplicates were found
+        2026-07-13). A crash path deliberately SKIPS this so the aggregator can
+        still ingest the orphan .live."""
+        if self.snapshot_path:
+            try:
+                os.remove(self.snapshot_path)
+            except OSError:
+                pass
+
 
 def handle(event: dict, metrics: "SectionMetrics") -> None:
     kind = event.get("type")
+    # Every stream-json event (system/init, assistant, user, result) carries
+    # session_id + cwd; latch them for transcript reconciliation at finalization.
+    if event.get("session_id"):
+        metrics.note_session(event.get("session_id"), event.get("cwd"))
     if kind == "assistant":
         message = event.get("message") or {}
         # parent_tool_use_id marks a subagent sidechain event; those carry the
@@ -512,6 +671,7 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
 
 def main() -> int:
     metrics = SectionMetrics(os.environ.get("OVERNIGHT_METRICS_FILE") or None)
+    ok = False
     try:
         for raw in sys.stdin:
             line = raw.rstrip("\n")
@@ -525,10 +685,21 @@ def main() -> int:
                 continue
             if isinstance(event, dict):
                 handle(event, metrics)
+        ok = True
     finally:
         # Capture a trailing section that ended with no progress/result marker
         # (stdin EOF, a kill, or an exception) instead of dropping its tail.
         metrics.flush("eof")
+        # On a CLEAN finish only: reconcile the undercounted stream output
+        # against the authoritative session transcript, then drop the now-stale
+        # `.live` orphan. A crash (ok=False) skips both so the orphan survives
+        # for the aggregator to ingest.
+        if ok:
+            try:
+                metrics.reconcile_from_transcript()
+            except Exception:
+                pass
+            metrics.cleanup_snapshot()
     return 0
 
 

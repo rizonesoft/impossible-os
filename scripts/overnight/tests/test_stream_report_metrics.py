@@ -218,8 +218,10 @@ def test_eof_flush_captures_trailing_section():
 
 
 def test_attribution_and_live_snapshot():
-    # P0.1: every record carries run/TODO/section + start/end SHA, and a live
-    # snapshot is written atomically alongside the jsonl each turn.
+    # P0.1: every record carries run/TODO/section + start/end SHA. (The live
+    # snapshot is written each turn -- covered by test_live_snapshot_content --
+    # and removed on a clean finish, covered by
+    # test_live_snapshot_removed_on_clean_finish.)
     with tempfile.TemporaryDirectory() as d:
         mp = pathlib.Path(d) / "m.jsonl"
         events = [
@@ -232,10 +234,27 @@ def test_attribution_and_live_snapshot():
         assert rec["run_id"] == "run-TEST"
         assert rec["todo"] == "todo/x.md" and rec["section"] == "7"
         assert "start_sha" in rec and "end_sha" in rec   # present (None outside git ok)
+
+
+def test_live_snapshot_content():
+    # Directly exercise the writer (bypassing main()'s finalization cleanup):
+    # each usage turn rewrites the atomic .live snapshot with a "live" marker.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stream_report", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "m.jsonl"
+        os.environ["OVERNIGHT_RUN_ID"] = "run-SNAP"
+        try:
+            m = mod.SectionMetrics(str(mp))
+            m.add_usage({"output_tokens": 5}, msg_id="m1")
+        finally:
+            os.environ.pop("OVERNIGHT_RUN_ID", None)
         live = pathlib.Path(str(mp) + ".live")
-        assert live.exists(), "live snapshot must be written"
+        assert live.exists(), "live snapshot must be written each turn"
         snap = json.loads(live.read_text().strip().splitlines()[-1])
-        assert snap["marker"] == "live" and snap["run_id"] == "run-TEST"
+        assert snap["marker"] == "live" and snap["run_id"] == "run-SNAP", snap
 
 
 def test_run_id_derived_from_metrics_path():
@@ -244,6 +263,126 @@ def test_run_id_derived_from_metrics_path():
         _run([_assistant(_usage(o=1), msg_id="m1"), {"type": "result", "result": "x"}], mp)
         rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
         assert rec["run_id"] == "run-20260712-021311", rec
+
+
+def test_todo_section_from_sequencer_cursor_when_env_unset():
+    # Codex audit 2026-07-13: the launcher does not export OVERNIGHT_TODO/
+    # OVERNIGHT_SECTION, which left todo/section null. They must now fall back
+    # to the live sequencer cursor (.claude/state/sequencer-run.json).
+    with tempfile.TemporaryDirectory() as d:
+        proj = pathlib.Path(d)
+        (proj / ".claude/state").mkdir(parents=True)
+        (proj / ".claude/state/sequencer-run.json").write_text(json.dumps(
+            {"file": "todo/02-kernel-core/TODO-22-environment-variables.md",
+             "section_idx": 2}))
+        mp = proj / "run-20260713-000000.jsonl"
+        _run([_assistant(_usage(o=1), msg_id="m1"), {"type": "result", "result": "x"}],
+             mp, extra_env={"CLAUDE_PROJECT_DIR": str(proj),
+                            "OVERNIGHT_TODO": "", "OVERNIGHT_SECTION": ""})
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["todo"] == "todo/02-kernel-core/TODO-22-environment-variables.md", rec
+        assert rec["section"] == 2, rec
+
+
+def test_env_todo_section_override_sequencer_cursor():
+    # Explicit env vars still win over the cursor fallback.
+    with tempfile.TemporaryDirectory() as d:
+        proj = pathlib.Path(d)
+        (proj / ".claude/state").mkdir(parents=True)
+        (proj / ".claude/state/sequencer-run.json").write_text(json.dumps(
+            {"file": "todo/x.md", "section_idx": 9}))
+        mp = proj / "run-20260713-000001.jsonl"
+        _run([_assistant(_usage(o=1), msg_id="m1"), {"type": "result", "result": "x"}],
+             mp, extra_env={"CLAUDE_PROJECT_DIR": str(proj),
+                            "OVERNIGHT_TODO": "todo/explicit.md",
+                            "OVERNIGHT_SECTION": "7"})
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["todo"] == "todo/explicit.md", rec
+        assert rec["section"] == "7", rec
+
+
+def _transcript(path, main_out, side_out=None):
+    """Authoritative session transcript: each id carries its COMPLETE output."""
+    lines = [json.dumps({"type": "assistant",
+                         "message": {"id": mid, "usage": {"output_tokens": o}}})
+             for mid, o in main_out.items()]
+    for mid, o in (side_out or {}).items():
+        lines.append(json.dumps({"type": "assistant", "isSidechain": True,
+                                 "message": {"id": mid, "usage": {"output_tokens": o}}}))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_reconcile_output_from_transcript():
+    # The live stream undercounts output (only input/cache are known mid-flight);
+    # finalization must restore output from the session transcript by id.
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d)
+        tr = p / "session.jsonl"
+        _transcript(tr, {"m1": 5000, "m2": 3000})
+        mp = p / "run-20260713-000010.jsonl"
+        # lossy stream: same ids, output forced to 1 each
+        _run([_assistant(_usage(o=1), msg_id="m1"),
+              _assistant(_usage(o=1), msg_id="m2"),
+              {"type": "result", "result": "x"}],
+             mp, extra_env={"OVERNIGHT_SESSION_TRANSCRIPT": str(tr)})
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        assert sum(r["output_tokens"] for r in recs) == 8000, recs
+        assert all(r.get("output_source") == "transcript" for r in recs), recs
+
+
+def test_reconcile_sidechain_output_from_transcript():
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d)
+        tr = p / "session.jsonl"
+        _transcript(tr, {"m1": 5000}, side_out={"s1": 900})
+        mp = p / "run-20260713-000011.jsonl"
+        _run([_assistant(_usage(o=1), msg_id="m1"),
+              _assistant(_usage(o=1), msg_id="s1", parent="agent-1"),
+              {"type": "result", "result": "x"}],
+             mp, extra_env={"OVERNIGHT_SESSION_TRANSCRIPT": str(tr)})
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["output_tokens"] == 5000, rec
+        assert rec["sidechain_output_tokens"] == 900, rec
+
+
+def test_reconcile_per_section_attribution():
+    # ids stream in section 0 (before progress) vs section 1 (after); each
+    # section's output must come from ONLY its own ids.
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d)
+        tr = p / "session.jsonl"
+        _transcript(tr, {"a1": 100, "a2": 200, "b1": 4000})
+        mp = p / "run-20260713-000012.jsonl"
+        progress = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash",
+             "input": {"command": "python3 .claude/hooks/run_phase_guard.py progress"}}]}}
+        _run([_assistant(_usage(o=1), msg_id="a1"),
+              _assistant(_usage(o=1), msg_id="a2"),
+              progress,
+              _assistant(_usage(o=1), msg_id="b1"),
+              {"type": "result", "result": "x"}],
+             mp, extra_env={"OVERNIGHT_SESSION_TRANSCRIPT": str(tr)})
+        recs = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()]
+        assert recs[0]["output_tokens"] == 300, recs   # a1 + a2
+        assert recs[1]["output_tokens"] == 4000, recs  # b1
+
+
+def test_reconcile_fail_open_without_transcript():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "run-20260713-000013.jsonl"
+        _run([_assistant(_usage(o=7), msg_id="m1"), {"type": "result", "result": "x"}],
+             mp, extra_env={"OVERNIGHT_SESSION_TRANSCRIPT": str(pathlib.Path(d) / "nope.jsonl")})
+        rec = [json.loads(l) for l in mp.read_text().splitlines() if l.strip()][-1]
+        assert rec["output_tokens"] == 7, rec          # stream value kept
+        assert "output_source" not in rec, rec         # not reconciled
+
+
+def test_live_snapshot_removed_on_clean_finish():
+    with tempfile.TemporaryDirectory() as d:
+        mp = pathlib.Path(d) / "run-20260713-000014.jsonl"
+        _run([_assistant(_usage(o=1), msg_id="m1"), {"type": "result", "result": "x"}], mp)
+        assert mp.exists()
+        assert not pathlib.Path(str(mp) + ".live").exists(), "orphan .live not cleaned"
 
 
 if __name__ == "__main__":
@@ -259,5 +398,13 @@ if __name__ == "__main__":
     test_growing_output_uses_max_per_msg()
     test_eof_flush_captures_trailing_section()
     test_attribution_and_live_snapshot()
+    test_live_snapshot_content()
     test_run_id_derived_from_metrics_path()
+    test_todo_section_from_sequencer_cursor_when_env_unset()
+    test_env_todo_section_override_sequencer_cursor()
+    test_reconcile_output_from_transcript()
+    test_reconcile_sidechain_output_from_transcript()
+    test_reconcile_per_section_attribution()
+    test_reconcile_fail_open_without_transcript()
+    test_live_snapshot_removed_on_clean_finish()
     print("PASS: stream-report metrics")

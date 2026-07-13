@@ -33,7 +33,30 @@ def test_missing_file_exits_2():
     assert out.returncode == 2, out.stdout
 
 
+def test_orphan_live_ingested_when_no_finalized():
+    # A run that crashed before its first flush leaves an empty/absent
+    # finalized jsonl but a surviving .live snapshot; its tokens must count.
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "run.jsonl"          # finalized file absent
+        live = pathlib.Path(str(p) + ".live")
+        live.write_text(json.dumps(_rec(0, 4242)) + "\n", encoding="ascii")
+        out = subprocess.run([sys.executable, str(SCRIPT), str(p)],
+                             text=True, capture_output=True)
+        assert out.returncode == 0, out.stderr
+        assert "4242" in out.stdout, out.stdout    # orphan tokens surfaced
+
+
+def test_missing_file_and_no_live_still_exits_2():
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "gone.jsonl"         # neither file nor .live
+        out = subprocess.run([sys.executable, str(SCRIPT), str(p)],
+                             text=True, capture_output=True)
+        assert out.returncode == 2, out.stdout
+
+
 if __name__ == "__main__":
     test_single_file_total()
     test_missing_file_exits_2()
+    test_orphan_live_ingested_when_no_finalized()
+    test_missing_file_and_no_live_still_exits_2()
     print("PASS: metrics-report")

@@ -16,12 +16,37 @@ TOKEN_FIELDS = (
 
 
 def load(path: str) -> list[dict]:
+    """Finalized records ELSE the orphan `.live` snapshot. A run that crashed
+    before its first flush leaves an empty/absent finalized jsonl but a
+    surviving `<path>.live` holding the partial section (Codex audit
+    2026-07-13: an orphan .live held ~28.34M cache-read tokens that
+    finalized-only accounting discarded). Ingest it so its tokens are counted;
+    a clean run deletes its .live at finalization, so this fires only on a
+    genuine orphan."""
     recs = []
-    with open(path, encoding="ascii") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                recs.append(json.loads(line))
+    missing = False
+    try:
+        with open(path, encoding="ascii") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    recs.append(json.loads(line))
+    except FileNotFoundError:
+        missing = True
+    if not recs:
+        try:
+            with open(path + ".live", encoding="ascii") as fh:
+                obj = json.loads(fh.read() or "null")
+            if isinstance(obj, dict):
+                obj = dict(obj)
+                obj["marker"] = "orphan-live"
+                recs = [obj]
+        except (OSError, ValueError):
+            pass
+    # Preserve the "no data at all" contract (main() maps this to exit 2): a
+    # missing finalized file with no usable orphan still raises.
+    if not recs and missing:
+        raise FileNotFoundError(path)
     return recs
 
 

@@ -15,10 +15,10 @@
 
 |                       |    Files |      Lines |
 | --------------------- | -------: | ---------: |
-| **C sources** (`.c`)  |      559 |     415146 |
-| **Headers** (`.h`)    |      474 |     136184 |
+| **C sources** (`.c`)  |      560 |     415780 |
+| **Headers** (`.h`)    |      475 |     136227 |
 | **Assembly** (`.asm`) |        9 |        875 |
-| **Subtotal**          | **1042** | **552205** |
+| **Subtotal**          | **1044** | **552882** |
 
 ## SDK Tools
 
@@ -32,35 +32,35 @@
 
 |                                   |   Files |     Lines |
 | --------------------------------- | ------: | --------: |
-| **Shell scripts** (`.sh`)         |      82 |     33538 |
+| **Shell scripts** (`.sh`)         |      83 |     33626 |
 | **Batch scripts** (`.bat`)        |      70 |      1008 |
 | **PowerShell** (`.ps1`)           |      11 |      3334 |
-| **Python** (`.py`)                |     158 |     46393 |
+| **Python** (`.py`)                |     158 |     47017 |
 | **JavaScript** (`.js`)            |       1 |       524 |
 | **Include fragments** (`.inc`)    |       7 |      3241 |
 | **Makefile**                      |       4 |      2126 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |       199 |
-| **Subtotal**                      | **336** | **90363** |
+| **Subtotal**                      | **337** | **91075** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     426 |     115998 |
-| **JSON** (`.json`)          |      14 |       1097 |
+| **Markdown** (`.md`)        |     426 |     116392 |
+| **JSON** (`.json`)          |      14 |       1117 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1465 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **476** | **194763** |
+| **Subtotal**                | **476** | **195177** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1385** | **644287** |
-| **Supporting text + metadata** |  **476** | **194763** |
-| **All counted text files**     | **1861** | **839050** |
+| **Core code + tooling**        | **1388** | **645676** |
+| **Supporting text + metadata** |  **476** | **195177** |
+| **All counted text files**     | **1864** | **840853** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |        Impossible OS |
 | ----------------------------- | ------------: | ----------: | -------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              644,287 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              645,676 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                    1 |
-| **Time span**                 |      33 years |    40 years | 4 month(s), 8 day(s) |
+| **Time span**                 |      33 years |    40 years | 4 month(s), 9 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 644,287
-> lines of core code and tooling would take **183 developers** working for **4 month(s), 8 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 645,676
+> lines of core code and tooling would take **182 developers** working for **4 month(s), 9 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-13 12:02 · commit `3701d030`*
+*Last updated: 2026-07-13 20:23 · commit `94ec0f6a`*
