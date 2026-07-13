@@ -15,7 +15,7 @@ Host bootstrap (deps, supported distros, required-tool sentinels, idempotence): 
 
 ## Testing -- Category-Based Test Infrastructure
 
-> **TCG works in WSL2** (~10s for build + 1493 tests). A post-commit hook runs the full suite after every kernel/source commit. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.
+> **TCG works in WSL2** (~10s for build + the full test suite; live counts in [docs/test-coverage/coverage.md](docs/test-coverage/coverage.md)). A post-commit hook runs the full suite after every kernel/source commit. SMEP is disabled globally (boot PML4 has User bit on all pages). WHPX, VirtualBox, and bare metal remain the primary validation platforms.
 
 ```bash
 bash scripts/test.sh              # all suites (WSL2 TCG, native Windows, bare metal)
