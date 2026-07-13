@@ -61,7 +61,54 @@ def section_block(text: str, n: int) -> str:
     return "\n".join(lines[start:end])
 
 
+_WAIVER_FIELDS = {
+    "est_files": int,       # files the section will actually touch
+    "subsystems": list,     # top-2-dir subsystems it spans
+    "est_tests": int,       # unit tests it will add/modify
+    "context_budget": str,  # e.g. "150K" -- estimated context it fits in
+    "rationale": str,       # why it is cohesive despite the SPLIT flag
+}
+
+
+def validate_split_waiver(waiver: object) -> tuple:
+    """P3.1: a SPLIT-RECOMMENDED verdict may be overridden ONLY by a STRUCTURED
+    waiver, never a free-form "cohesive". Requires a concrete ESTIMATE for each
+    dimension the split predictor scores, so overriding the split is an
+    accountable prediction rather than an assertion. Returns (ok, missing)."""
+    if not isinstance(waiver, dict):
+        return (False, ["<waiver must be a JSON object with "
+                        + ", ".join(_WAIVER_FIELDS) + ">"])
+    missing = []
+    for key, typ in _WAIVER_FIELDS.items():
+        val = waiver.get(key)
+        ok = isinstance(val, typ) and not isinstance(val, bool)
+        if ok and isinstance(val, str) and not val.strip():
+            ok = False
+        if ok and isinstance(val, list) and not val:
+            ok = False
+        if not ok:
+            missing.append(key)
+    return (not missing, missing)
+
+
 def main(argv) -> int:
+    if len(argv) >= 1 and argv[0] == "waiver-check":
+        # section-manifest.py waiver-check <waiver.json>  -- exit 0 iff structured.
+        if len(argv) < 2:
+            print("usage: section-manifest.py waiver-check <waiver.json>",
+                  file=sys.stderr)
+            return 2
+        try:
+            waiver = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"unreadable waiver: {exc}"}))
+            return 1
+        ok, missing = validate_split_waiver(waiver)
+        print(json.dumps({"ok": ok, "missing": missing,
+                          "note": ("structured waiver accepted" if ok else
+                                   "SPLIT-RECOMMENDED override needs a structured "
+                                   "waiver; a free-form 'cohesive' is not enough")}))
+        return 0 if ok else 1
     if len(argv) < 2:
         print("usage: section-manifest.py <todo-path> <section-n> [--project DIR]",
               file=sys.stderr)
@@ -147,8 +194,11 @@ def main(argv) -> int:
         split_reasons.append(f"{len(open_items)} open items")
     if len(subsystems) > 3:
         split_reasons.append(f"{len(subsystems)} subsystems")
-    if abi_impact and len(open_items) > 8:
-        split_reasons.append("ABI impact + wide item list")
+    # P3.1: ABI/SSDT sections are heavier per item (each item touches syscall
+    # tables, ABI hashes, tests), so an exactly-8-item ABI section slipped past
+    # the old `> 8` gate. Lower the ABI-weighted threshold to `>= 6`.
+    if abi_impact and len(open_items) >= 6:
+        split_reasons.append(f"ABI impact + {len(open_items)} items (>=6 ABI gate)")
     complexity = {
         "files": len(likely_files) + len(input_files),
         "subsystems": subsystems,
@@ -156,6 +206,11 @@ def main(argv) -> int:
         "abi_impact": abi_impact,
         "verdict": ("SPLIT-RECOMMENDED (" + "; ".join(split_reasons) + ")")
         if split_reasons else "fits-one-context",
+        # P3.1: overriding a SPLIT-RECOMMENDED verdict requires a STRUCTURED
+        # preflight waiver (see validate_split_waiver), not a free-form
+        # "cohesive" -- an over-large section that skips the split is the
+        # upstream half of the context-cap.
+        "waiver_required": bool(split_reasons),
     }
 
     manifest = {
