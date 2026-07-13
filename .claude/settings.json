@@ -320,6 +320,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/inline_churn_monitor.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/verify_cadence_reminder.py\"",
+            "timeout": 5
           }
         ]
       },

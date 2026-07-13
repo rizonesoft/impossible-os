@@ -187,7 +187,7 @@ green deterministic run rather than a watched canary each.
   `section-manifest.py` verdict is advisory -- §13 overrode it. Make override require a STRUCTURED preflight waiver (estimated files/subsystems/tests/context budget), not a free-form "cohesive". Fix the `> 8` boundary + ABI weighting (`abi_impact and open_items > 8` at line 150 misses exactly-8-item ABI/SSDT sections; lower to `>= ~6` when `abi_impact`). Upstream half of the context-cap. The gate is unit-testable, but the split BEHAVIOR is live-flow -- canary.
 - [ ] **[canary] P3.2 A REFUSED rollover must BLOCK starting the next section, not "continue in-session" into it.**
   Flow invariant (`SKILL.md:314`, log:1480 -- §12->§13 advanced un-rotated). A refused rollover may repair ONLY the current checkpoint; it must not orient or begin the next section. Boundary-side complement to the context-cap. Pure live-flow control -- canary.
-- [ ] **[det] P3.3 Verify cadence: targeted suites DURING the fix loop; ONE full suite + smoke at the section boundary.**
+- [x] **[det] P3.3 Verify cadence: targeted suites DURING the fix loop; ONE full suite + smoke at the section boundary.**
   Not 40 builds / 17 smoke mid-loop. Frequency discipline (a reminder/gate; can't hang the run). Smoke stays unconditional AT the boundary (see Rejected).
 - [ ] **[canary] P3.4 Make offload bite: promote `build_offload_reminder` / `inline_churn_monitor` from WARN to enforced routing.**
   Block-with-reroute the expensive shapes: full-log greps, single reads > ~50 KB, 3+-search-round exploration, and inline exploration run beside a concurrent Agent dispatch. Keep the deterministic `run-artifact.sh` path for build/test. A bad BLOCK can wedge a live run -- canary.
