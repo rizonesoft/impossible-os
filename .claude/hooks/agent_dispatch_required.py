@@ -5,7 +5,12 @@ source edits. With no recent read-only agent dispatch: BLOCK (exit 2) for
 kernel/boot source (.c/.h/.asm/.S under src/ or include/), WARN for other
 source. Invisible in interactive sessions; fail-open on any error. BLOCK
 promotion authorized 2026-07-02 (operator instruction; was WARN-first WS1b).
-Escape: SKIP_AGENT_DISPATCH_HOOK=1 for genuinely tiny mechanical edits.
+Escape: SKIP_AGENT_DISPATCH_HOOK=1 for genuinely tiny mechanical edits. This env
+escape is read from the SESSION environment -- a standalone `SKIP_...=1 true` Bash
+call does NOT carry to a later Edit's PreToolUse (separate process, no shared env;
+same class as the env-prefix ordering rule). The reliable per-section satisfier for
+a source Edit is a fresh `section-pack.py` run or a read-only Agent dispatch, either
+of which clears this gate for the whole implement pass.
 """
 from __future__ import annotations
 
@@ -175,15 +180,18 @@ def main() -> int:
             "explorer/auditor the skill names (kernel-explorer, ssdt-auditor, "
             "test-coverage-mapper, ...) FIRST -- they keep the main context lean "
             "at no quality cost (you verify their findings at file:line). For a "
-            "genuinely tiny mechanical edit set SKIP_AGENT_DISPATCH_HOOK=1 and "
-            "state the reason in your message.\n"
+            "genuinely tiny mechanical edit, a fresh section-pack or read-only "
+            "Agent dispatch clears this gate for the whole pass (SKIP_AGENT_"
+            "DISPATCH_HOOK=1 only works exported in the session env, NOT via a "
+            "prior standalone Bash call).\n"
         )
         return 2
     sys.stderr.write(
         "[agent-dispatch reminder] a source edit in the SECTIONS phase with "
         "no read-only explorer/auditor dispatch in the last 30 min. Default-on "
-        "agents keep the main context lean. Dispatch one, or set "
-        "SKIP_AGENT_DISPATCH_HOOK=1 with a logged reason if this section is tiny.\n"
+        "agents keep the main context lean. Dispatch one (or run a fresh section-"
+        "pack); SKIP_AGENT_DISPATCH_HOOK=1 only clears this from the session env, "
+        "not a standalone prior Bash call.\n"
     )
     return 0  # WARN for non-kernel source
 

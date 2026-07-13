@@ -337,7 +337,7 @@
   commit+push; which forces re-recording all three receipts against the new HEAD even though no
   source changed. **Fix:** make the rollover receipt check tolerant of a coverage-doc-only tree
   delta, or auto-fold the coverage-doc commit into the same commit the receipts bind to.
-- [ ] **[det] F3. `SKIP_AGENT_DISPATCH_HOOK` cannot gate a subsequent Edit-tool call, but the runner
+- [x] **[det] F3. `SKIP_AGENT_DISPATCH_HOOK` cannot gate a subsequent Edit-tool call, but the runner
   tried to use it that way.** `run-20260713-055754.log:198-206`: the runner ran
   `SKIP_AGENT_DISPATCH_HOOK=1 true # reason: ...` as a standalone Bash command hoping the env var
   would carry to the NEXT Edit's PreToolUse hook -- it can't (separate process, no shared env),
@@ -346,10 +346,10 @@
   cross-tool-call env NON-propagation. **Fix:** document that `SKIP_AGENT_DISPATCH_HOOK` only works
   when prefixed on the gated command itself and cannot pre-clear a later Edit; route the
   `agent_dispatch_required` gate to a documented, working satisfier.
-- [ ] **[det] F4. `review_round_guard.py` fails on bare invocation, rediscovered per session.**
+- [x] **[det] F4. `review_round_guard.py` fails on bare invocation, rediscovered per session.**
   `run-20260713-025424.log:270-271` ("Round-guard needs python3 invocation"). Low severity.
   **Fix:** add a shebang + `chmod +x`, or document the required `python3` prefix once in the skill.
-- [ ] **[doctrine] F5. `SKIP_REVIEW_HOOK` was used outside its documented "revert / stamp-only"
+- [x] **[doctrine] F5. `SKIP_REVIEW_HOOK` was used outside its documented "revert / stamp-only"
   scope for a post-review fix implementing the reviewer's OWN recommendation.**
   `run-20260713-082218.log:667-672`: gated a substantive one-line `ARGV_FRAME_RESERVE` fix after the
   review-diff-binding gate blocked twice (P1.2 root cause). The runner's "honest opt-out
@@ -459,7 +459,7 @@
   `OVERNIGHT_NO_CHROMEMCP` env drop-in is not taking effect at launch. **Fix:** guard `--with-browser`
   to browser-owned (gh-pages) work only, and verify the drop-in is actually effective at launch (assert
   the lane is skipped when the env is set).
-- [ ] **[det] I6. Housekeeping: P0.0's status says "attended bless pending" but a canary stamp already
+- [x] **[det] I6. Housekeeping: P0.0's status says "attended bless pending" but a canary stamp already
   records a verified attended rollover** (`.claude/state/sequencer-canary-ok:1`). Update the P0.0
   status in the sibling plan to avoid an unnecessary repeat canary.
 
