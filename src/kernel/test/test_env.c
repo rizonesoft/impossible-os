@@ -137,6 +137,15 @@ static void test_env_invalid_name(void)
                    "NULL name is rejected");
     TEST_ASSERT_EQ(s_env_fixture.environ_count, 0u,
                    "no invalid variable was stored");
+    /* Lookups of a syntactically invalid name are rejected as INVAL, not
+     * silently treated as an ordinary miss (consistent with env_set). */
+    {
+        char out[8];
+        TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "A=B", out, sizeof(out)),
+                       ENV_ERR_INVAL, "get of a '='-name returns INVAL, not NOTFOUND");
+        TEST_ASSERT_EQ(env_unset(&s_env_fixture, "A=B"), ENV_ERR_INVAL,
+                       "unset of a '='-name returns INVAL");
+    }
 }
 
 static void test_env_value_too_long(void)
@@ -149,6 +158,33 @@ static void test_env_value_too_long(void)
     big[sizeof(big) - 1] = '\0';
     TEST_ASSERT_EQ(env_set(&s_env_fixture, "HUGE", big), ENV_ERR_TOOLONG,
                    "value exceeding ENV_VALUE_MAX is rejected");
+}
+
+/* Name-length boundary: exactly ENV_NAME_MAX is storable; one over is TOOLONG
+ * (distinct from ENV_ERR_INVAL, which is reserved for NULL/empty/'='). */
+static void test_env_name_length_boundary(void)
+{
+    static char name_max[ENV_NAME_MAX + 1];   /* 256 chars + NUL */
+    static char name_over[ENV_NAME_MAX + 2];  /* 257 chars + NUL */
+    uint32_t i;
+    env_fixture_reset();
+    for (i = 0; i < ENV_NAME_MAX; i++)
+        name_max[i] = 'N';
+    name_max[ENV_NAME_MAX] = '\0';
+    for (i = 0; i < ENV_NAME_MAX + 1; i++)
+        name_over[i] = 'N';
+    name_over[ENV_NAME_MAX + 1] = '\0';
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, name_max, "v"), ENV_OK,
+                   "a 256-byte name is accepted");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, name_over, "v"), ENV_ERR_TOOLONG,
+                   "a 257-byte name returns TOOLONG (not INVAL)");
+    /* Lookups classify names identically to env_set: overlength -> TOOLONG. */
+    {
+        char out[8];
+        TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, name_over, out, sizeof(out)),
+                       ENV_ERR_TOOLONG, "get of an overlength name returns TOOLONG");
+    }
+    env_free(&s_env_fixture);
 }
 
 /* --- truncating get returns full required length --- */
@@ -301,6 +337,8 @@ void test_register_env(void)
                             test_env_invalid_name, TEST_CAT_ABI);
     test_suite_register_cat("Env: value too long rejected",
                             test_env_value_too_long, TEST_CAT_ABI);
+    test_suite_register_cat("Env: name length boundary (256/257)",
+                            test_env_name_length_boundary, TEST_CAT_ABI);
     test_suite_register_cat("Env: truncating get returns full length",
                             test_env_get_truncation, TEST_CAT_ABI);
     test_suite_register_cat("Env: deep copy is independent",

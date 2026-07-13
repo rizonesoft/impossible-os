@@ -43,20 +43,9 @@ static uint32_t env_strnlen(const char *s, uint32_t maxlen)
     return n;
 }
 
-/* Bounded lookup-name length: returns the name length (<= ENV_NAME_MAX) or 0 if
- * the name is empty, unterminated within ENV_NAME_MAX, or longer than any
- * storable key (so it cannot match and the caller reports not-found). */
-static uint32_t env_lookup_name_len(const char *name)
-{
-    uint32_t n;
-    if (!name)
-        return 0;
-    n = env_strnlen(name, ENV_NAME_MAX + 1u);
-    if (n == 0 || n > ENV_NAME_MAX)
-        return 0;
-    return n;
-}
-
+/* ASCII case fold. Environment names are case-insensitive; this folds A-Z only.
+ * Locale-aware Unicode case folding for non-ASCII names is an NLS concern (see
+ * the NLS/locale TODO), out of scope for this base storage layer. */
 static char env_lc(char c)
 {
     return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
@@ -77,23 +66,30 @@ static int env_entry_key_eq(const char *entry, const char *name, uint32_t namele
     return entry[namelen] == '=';
 }
 
-/* Validate a variable name: non-empty, <= ENV_NAME_MAX, contains no '='.
- * (Hidden "=X:" drive vars are the hidden-drive-variable feature's concern;
- * this base API rejects '=' in names.) Returns the name length, or 0 if
- * invalid. */
-static uint32_t env_name_len_valid(const char *name)
+/* Classify a to-be-set variable name and return its length via `*out_len`.
+ * Distinguishes ENV_ERR_TOOLONG (length > ENV_NAME_MAX) from ENV_ERR_INVAL
+ * (NULL, empty, or contains '=' -- the separator; hidden "=X:" drive vars are
+ * a later feature). Returns ENV_OK when the name is storable. */
+static int env_name_classify(const char *name, uint32_t *out_len)
 {
-    uint32_t n = 0;
+    uint32_t n;
     if (!name || !name[0])
-        return 0;
-    while (name[n]) {
-        if (name[n] == '=')
-            return 0;
-        n++;
-        if (n > ENV_NAME_MAX)
-            return 0;
+        return ENV_ERR_INVAL;
+    /* Bounded scan: reading ENV_NAME_MAX + 1 bytes is enough to prove a name is
+     * over-limit -- a full scan of the first 257 bytes with no NUL means the
+     * name is at least 257 chars (> ENV_NAME_MAX), so cap the read there and do
+     * not touch a 258th byte on a missing-terminator name. */
+    n = env_strnlen(name, ENV_NAME_MAX + 1u);
+    if (n > ENV_NAME_MAX)
+        return ENV_ERR_TOOLONG;
+    {
+        uint32_t k;
+        for (k = 0; k < n; k++)
+            if (name[k] == '=')
+                return ENV_ERR_INVAL;
     }
-    return n;
+    *out_len = n;
+    return ENV_OK;
 }
 
 /* --- String allocation: heap up to 4 KiB, page-backed PMM above ----------- */
@@ -191,10 +187,9 @@ const char *env_peek_locked(struct task *t, const char *name)
 {
     uint32_t namelen;
     int idx;
-    if (!t || !name)
+    if (!t)
         return NULL;
-    namelen = env_lookup_name_len(name);   /* bounded: rejects unterminated/oversized */
-    if (namelen == 0)
+    if (env_name_classify(name, &namelen) != ENV_OK)   /* same validation as env_set */
         return NULL;
     idx = env_find_index(t, name, namelen);
     if (idx < 0)
@@ -208,12 +203,14 @@ int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size)
     int idx;
     int ret;
 
-    if (!t || !name || !out || out_size == 0)
+    if (!t || !out || out_size == 0)
         return ENV_ERR_INVAL;
     out[0] = '\0';
-    namelen = env_lookup_name_len(name);   /* bounded scan of the untrusted name */
-    if (namelen == 0)
-        return ENV_ERR_INVAL;
+    {
+        int nrc = env_name_classify(name, &namelen);   /* INVAL vs TOOLONG, same as env_set */
+        if (nrc != ENV_OK)
+            return nrc;
+    }
 
     mutex_lock(&t->environ_lock);
     idx = env_find_index(t, name, namelen);
@@ -243,9 +240,11 @@ int env_set(struct task *t, const char *name, const char *value)
 
     if (!t || !value)
         return ENV_ERR_INVAL;
-    namelen = env_name_len_valid(name);
-    if (namelen == 0)
-        return ENV_ERR_INVAL;
+    {
+        int nrc = env_name_classify(name, &namelen);   /* INVAL vs TOOLONG */
+        if (nrc != ENV_OK)
+            return nrc;
+    }
     vallen = env_strnlen(value, ENV_VALUE_MAX + 1u);   /* bounded: caps the untrusted read */
     if (vallen > ENV_VALUE_MAX)
         return ENV_ERR_TOOLONG;
@@ -297,11 +296,13 @@ int env_unset(struct task *t, const char *name)
     char *victim;
     uint32_t vn;
 
-    if (!t || !name)
+    if (!t)
         return ENV_ERR_INVAL;
-    namelen = env_lookup_name_len(name);   /* bounded scan of the untrusted name */
-    if (namelen == 0)
-        return ENV_ERR_INVAL;
+    {
+        int nrc = env_name_classify(name, &namelen);   /* INVAL vs TOOLONG, same as env_set */
+        if (nrc != ENV_OK)
+            return nrc;
+    }
 
     mutex_lock(&t->environ_lock);
     idx = env_find_index(t, name, namelen);

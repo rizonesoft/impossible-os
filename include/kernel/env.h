@@ -49,8 +49,10 @@ struct task;
  * Case-insensitive name match (Windows semantics). Returns the value length in
  * bytes (excluding NUL) on success. If `out` is too small the value is
  * truncated to fit + NUL and the FULL required length (>= out_size) is still
- * returned, so callers can detect truncation and resize. Returns ENV_ERR_INVAL
- * on bad args, ENV_ERR_NOTFOUND if the variable is absent. */
+ * returned, so callers can detect truncation and resize. The name is validated
+ * exactly as env_set validates it: returns ENV_ERR_INVAL on bad args (NULL/
+ * empty/'='-containing name), ENV_ERR_TOOLONG when the name exceeds
+ * ENV_NAME_MAX, ENV_ERR_NOTFOUND if the variable is absent. */
 int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size);
 
 /* --- Borrowed-read batch fast path (pointer valid only while locked) --- */
@@ -67,7 +69,8 @@ const char *env_peek_locked(struct task *t, const char *name);
  * failure leaves the prior value intact. Returns ENV_OK or a negative code. */
 int env_set(struct task *t, const char *name, const char *value);
 
-/* Remove `name`. Returns ENV_OK, ENV_ERR_NOTFOUND, or ENV_ERR_INVAL. */
+/* Remove `name` (validated as in env_set). Returns ENV_OK, ENV_ERR_NOTFOUND,
+ * ENV_ERR_INVAL (NULL/empty/'='-containing), or ENV_ERR_TOOLONG. */
 int env_unset(struct task *t, const char *name);
 
 /* Deep-copy src's environ into dst (dst must be an unpublished child: its lock

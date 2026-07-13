@@ -120,15 +120,21 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 - [x] Commit: `"kernel/env: per-process environ array + lock, env_get_copy/set/unset/copy"`
 
-**Test checkpoint:** `env_set`/`env_get_copy`/`env_unset`/`env_copy` on a test task; case-insensitivity; validation; truncating get returns full length; OOM-during-replace preserves the old value; >4 KiB value round-trips via PMM; `env_free` leaves no dangling pointers. `bash scripts/test.sh SUITE=abi` green (1188 passed, 0 failed, 0 leaked); `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** `env_set`/`env_get_copy`/`env_unset`/`env_copy` on a test task; case-insensitivity; validation; truncating get returns full length; OOM-during-replace preserves the old value; name-length boundary (256 OK / 257 TOOLONG); >4 KiB value round-trips via PMM; `env_free` leaves no dangling pointers. `bash scripts/test.sh SUITE=abi` green (1193 passed, 0 failed, 0 leaked); `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX + TCG; VirtualBox; bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 14 env suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 15 env suites, 0 failures
 > **Notes:**
-> - **What shipped** -- `src/kernel/env.c` + `include/kernel/env.h`: per-task `environ`/`argv` storage + `env_get_copy`/`env_set`/`env_unset`/`env_copy`/`env_free`/`env_lock`/`env_peek_locked`; 14 tests in `src/kernel/test/test_env.c` (TEST_CAT_ABI).
+> - **What shipped** -- `src/kernel/env.c` + `include/kernel/env.h`: per-task `environ`/`argv` storage + `env_get_copy`/`env_set`/`env_unset`/`env_copy`/`env_free`/`env_lock`/`env_peek_locked`; 15 tests in `src/kernel/test/test_env.c` (TEST_CAT_ABI).
 > - **How it integrates** -- fields + `mutex_init` land once in the `task_init` all-slots loop; `env_free` wired at the `task_cleanup` reap barrier; build auto-discovers `env.c`.
 > - **Downstream effects** -- unblocks env-copy wiring for `TODO-12-native-api-ssdt.md §7` (child env); storage base for later TODO-22 sections; Codex adoptions in the commit message.
 > - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) header contract (lock + reader-lifetime rules).
 > - **Scope boundary** -- §1 owns kernel storage + the C API only; `%VAR%` expansion is §3, Nt syscalls §5, Win32 wrappers §6, argv/exec handoff §4, sorting/size-block §10.
+> **Verified:** 2026-07-13 | commit `49335ede` | 10/10 items | build OK | tests 1193/1193 PASS
+> **Accepted:** [H] task_cleanup reap barrier lacks all-CPU quiescence for env_free (single-CPU scheduler today) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "task_cleanup reap barrier" at line 122)
+> **Accepted:** [M] environ_lock inherits the mutex_t waiter-queue SMP race (unreachable on single-CPU) -> XREF: 03-memory-concurrency/TODO-08-advanced-sync.md §11 (item: "Wait-queue protection" at line 275)
+> **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 370)
+> **Accepted:** [L] env_copy has no live caller yet (§1 is storage+API only) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
+> **Quality reviewed:** 2026-07-13 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3M+2L fixed, 1H+2M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -364,6 +370,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 ## 10. Environment Block Sorting & Size Limits
 
 - [ ] Windows requires all strings in the environment block to be **sorted alphabetically by name** (case-insensitive, Unicode order, locale-independent); `CreateProcess` and `GetEnvironmentStrings` both depend on this invariant
+- [ ] Upgrade env name case-folding from ASCII-only (`env_lc` in `src/kernel/env.c`) to NLS Unicode upcasing so `env_entry_key_eq` matches non-ASCII names case-insensitively (-> XREF `TODO-13-atom-nls-locale-subsystem.md`)
 - [ ] `env_set` must maintain sorted order: on insert, binary-search the `environ[]` array for the correct position and shift entries to keep alphabetical order; on replace, check whether the new name changes sort position
 - [ ] `env_build_block(task, out_buf, max_len, is_unicode)` -- build a contiguous env block suitable for `CreateProcess` `lpEnvironment`:
   - Each entry: `name=value\0` (or UTF-16 equivalent)
