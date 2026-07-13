@@ -272,8 +272,13 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Downstream effects** -- unblocks §6 Win32 wrappers and §19 `RtlQueryEnvironmentVariable_U`; design-review adoptions in the section commit message.
 > - **Scope boundary** -- §5 owns the NT-boundary syscalls over `task->environ`; §6 owns the Win32 wrappers + the optional PEB-block raw re-sync; firmware env vars (0x00D2-0x00D6) stay with `uefi_runtime.c`.
 
+> **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 403)
+> **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
+> **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
+> **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -400,7 +405,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [ ] Maximum variable name length: 256 characters (practical Windows limit); reject names > 256 chars
 - [ ] Reconcile UTF-16 char limits vs UTF-8 byte caps (← XREF §5): `ENV_NAME_MAX`/`ENV_VALUE_MAX` are byte caps, so a UTF-16 input within the char limit but over the byte cap is rejected. Raise caps or document the contract.
 - [ ] Variable name validation: name must not contain `=` (the separator); names starting with `=` are reserved for hidden drive-letter variables (§12); reject all other `=`-prefixed names
-- [ ] No technical limit on environment block size (Windows Vista+); however, enforce a sanity cap of 1 MiB per process to prevent DoS; log warning at 256 KiB
+- [ ] No technical limit on environment block size (Windows Vista+); however, enforce a 1 MiB per-process sanity cap (`env_set` enforcement point) to prevent DoS -- now user-reachable via §5 `NtSetEnvironmentVariable`; log warning at 256 KiB
 - [ ] `REG_EXPAND_SZ` values from Registry: expand `%VAR%` references at read time using `env_expand` before storing; raw unexpanded values are never stored in `task->environ[]`
 - [ ] Commit: `"kernel/env: sorted environment block, size limits, name validation"`
 

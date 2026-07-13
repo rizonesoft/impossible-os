@@ -1243,7 +1243,7 @@ static void env_mk_us(UNICODE_STRING *us, uint16_t *buf, uint32_t cap_wchars,
                       const char *ascii)
 {
     uint32_t n = 0;
-    while (ascii[n] && n < cap_wchars) {
+    while (n < cap_wchars && ascii[n]) {
         buf[n] = (uint16_t)(uint8_t)ascii[n];
         n++;
     }

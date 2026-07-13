@@ -264,11 +264,15 @@ void boot_phase3(void)
         nt_misc_register_ssdt();
         pledge_register_ssdt();
         nt_job_register_ssdt();
-        reg_failures  = nt_lpc_register_ssdt();
-        reg_failures += nt_alpc_register_ssdt();
-        reg_failures += nt_audit_register_ssdt();
-        reg_failures += csprng_register_ssdt();
-        reg_failures += nt_env_register_ssdt();
+        /* Normalize every registrar to a 0/1 failure flag before summing: some
+         * return raw ssdt_register() results (-1 on failure) while others return
+         * nonnegative failure counts, so a mixed-sign sum could otherwise cancel
+         * to zero and let boot continue with missing SSDT handlers. */
+        reg_failures  = (nt_lpc_register_ssdt()   != 0);
+        reg_failures += (nt_alpc_register_ssdt()  != 0);
+        reg_failures += (nt_audit_register_ssdt() != 0);
+        reg_failures += (csprng_register_ssdt()   != 0);
+        reg_failures += (nt_env_register_ssdt()   != 0);
         if (reg_failures != 0) {
             klog(LOG_ERROR, "boot",
                  "SSDT registration failures: %d -- aborting boot",
