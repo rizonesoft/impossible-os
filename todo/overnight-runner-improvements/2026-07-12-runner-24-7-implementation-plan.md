@@ -206,6 +206,15 @@ green deterministic run rather than a watched canary each.
   one wrapped sequence); (4) `test_build_offload_reminder.py` extended with the wrapped-vs-bare + dedup +
   no-checks-runner-text cases. The WARN -> BLOCK promotion ITSELF stays for Stage 3 / Canary #1 (a bad
   BLOCK can wedge a live run), but its four prerequisites are now cleared.
+  **FLIP -- BUILD/TEST HALF DONE 2026-07-14 (Stage 3):** `build_offload_reminder.py` promoted WARN -> BLOCK
+  (exit 2 + reroute) for a BARE build/test/smoke/lint in the SECTIONS phase; the outer-`run-artifact.sh`
+  wrapper stays exempt so the sanctioned path never deadlocks, and the dedup now gates only the
+  offload-events log (a repeat bare attempt keeps blocking). Test `test_build_offload_reminder.py` updated
+  to the BLOCK semantics. **EXPENSIVE-EXPLORATION HALF STILL OPEN:** `inline_churn_monitor.py` is a
+  PostToolUse hook and structurally CANNOT block the current op (it fires after the op ran); a true
+  BLOCK-with-reroute for full-log greps / >50 KB single reads / 3+-round inline exploration needs a
+  SECTIONS-scoped PreToolUse gate (convert/extend `interactive_offload_router.py` or a new gate) -- the
+  higher-wedge-risk piece, deferred to its own careful pass. Both halves ride Canary #1.
 - [ ] **[canary] P3.5 Give a reviewed [/]-partial section a clean ship+stamp path (retire the gate deadlock + opt-out reliance).**
   Recognize a partial ship carrying fresh review evidence (scoped delta receipt + a valid cross-session record for unchanged bytes) as satisfying the stamp gate, so a reviewed partial ships without a full re-run or a `SKIP_*` bypass. (Direct fix for the deadlock hit landing §13.) Commit-gate flow change -- canary.
 
