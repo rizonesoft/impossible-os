@@ -652,6 +652,25 @@ def cli(argv):
     if cmd == "cursor":
         # cursor <domain> <file> [section_idx]
         if len(argv) >= 3:
+            # P3.2: a REFUSED rollover may repair ONLY the current checkpoint; it
+            # must NOT advance into the next section un-rotated (the un-rotated
+            # section-to-section advance the flow invariant forbids). Block a
+            # cursor move to a DIFFERENT section while a rollover is refused --
+            # until a `rollover` VERIFIES (which clears the flag) or the operator
+            # `clear`s. Safe because B4/F2 stop benign coverage.* from refusing
+            # the rollover forever.
+            rr = state.get("rollover_refused")
+            if isinstance(rr, dict) and state.get("active"):
+                new_file = argv[2]
+                new_idx = int(argv[3]) if len(argv) >= 4 else state.get("section_idx")
+                if new_file != rr.get("file") or new_idx != rr.get("section_idx"):
+                    print("[sequencer] cursor BLOCKED (P3.2): a rollover was "
+                          f"REFUSED at {rr.get('file')} section "
+                          f"{rr.get('section_idx')}. Repair that checkpoint "
+                          "(commit/clean/push + receipts) and re-run `rollover` -- "
+                          "do NOT start the next section un-rotated. Operator "
+                          "override: `run_phase_guard.py clear`.", file=sys.stderr)
+                    return 1
             state["domain"], state["file"] = argv[1], argv[2]
             if len(argv) >= 4:
                 state["section_idx"] = int(argv[3])
@@ -755,14 +774,25 @@ def cli(argv):
             return 1
         fails = _rollover_failures(repo_root(), state)
         if fails:
+            # P3.2: record the refusal + the section it happened at, so `cursor`
+            # blocks an un-rotated advance into the next section until a rollover
+            # verifies. Repair the current checkpoint and retry -- do not proceed.
+            state["rollover_refused"] = {
+                "file": state.get("file"),
+                "section_idx": state.get("section_idx"),
+                "epoch": int(time.time()),
+            }
+            save_state(state)
             print("[sequencer] rollover REFUSED (checkpoint not verified):\n"
                   + "\n".join(f"  - {f}" for f in fails)
-                  + "\nFinish/clean these first, or continue in-session.",
+                  + "\nRepair these on the CURRENT section and RE-RUN `rollover` "
+                    "-- do NOT start the next section un-rotated (P3.2).",
                   file=sys.stderr)
             return 1
         # Atomic pending flag; the Stop hook permits ONE exit and the *:0/10
         # watchdog relaunches a fresh session. No custom watcher.
         state["rollover"] = {"pending": True, "epoch": int(time.time())}
+        state.pop("rollover_refused", None)  # P3.2: a verified rollover clears it
         save_state(state)
         # Durable checkpoint so the relaunched session loads settled facts
         # (section-pack digest, receipts, review status) instead of
