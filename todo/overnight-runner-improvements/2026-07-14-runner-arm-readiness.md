@@ -66,6 +66,32 @@
   redundant inner import. `_write_section_checkpoint` (the WIP-rollover helper) is module-scope and was
   unaffected, so P4.2/P4.5 were OK; only the FULL rollover's inline write was hit.
 
+## Unattended-arm gates from the A4/A5 review (round 3, 20260714-103035) -- fix before UNATTENDED
+
+> All three verified valid; NONE is critically broken for an ATTENDED canary (the gates work for the normal
+> flow; each bypass needs a specific sequence that will not arise in a watched run). Deferred to the next
+> unattended pass by operator decision 2026-07-14.
+
+- [ ] **[unattended-gate] A7. `_head_adds_ship_stamp` only examines HEAD + fails open (HIGH).**
+  A stamp commit followed by an unpushed FIXUP leaves `unpushed>0` but HEAD no longer shows the stamp, so the
+  weaker WIP path proceeds (`run_phase_guard.py:561-576`; the follow-up-commit-returns-False behavior is
+  codified at `test_p45_wip_rollover.py:242-246`). It also fails OPEN on git error/timeout/nonzero exit. Fix:
+  scan the cumulative `@{u}..HEAD` range for the stamp (or persist a durable section-shipped marker), and
+  return an unknown/error state that `rollover-wip` REFUSES (fail-closed).
+
+- [ ] **[unattended-gate] A8. `review-resolved` does not prove findings were resolved (HIGH).**
+  It writes a resolution receipt for a received-but-UNFIXED findings-bearing review when the unchanged blobs
+  still match HEAD and existing build/test receipts are green; and with an absent/`{}` review record it skips
+  both review checks and writes a receipt with an EMPTY run ID (`run_phase_guard.py:1069-1106`). Fix: require
+  a present, well-formed current review with a nonempty `review_run_id` + machine-verifiable resolution
+  evidence (a clean post-fix review, or complete finding dispositions bound to that run + HEAD).
+
+- [ ] **[unattended-gate] A9. Resolution receipt ignores `review_run_id` (HIGH).**
+  `_review_resolution_valid` checks only `receipt.head`, so a resolved receipt for review A at HEAD H stays
+  valid after a newer findings-bearing review B is received at the SAME H -- the WIP gate then rotates before
+  B is resolved (`run_phase_guard.py:608-631`). Fix: require `receipt.review_run_id` == the latest review
+  state's `run_id` (nonempty), and invalidate the receipt whenever a new review is dispatched.
+
 ## Deferred backlog (closed "not now" 2026-07-14; re-open if the need resurfaces)
 
 - **P3.5** -- reviewed-`[/]`-partial clean ship path. Largely SUBSUMED by B3 + C-RECV (the SKIP-deadlock it
