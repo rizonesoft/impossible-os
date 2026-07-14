@@ -470,6 +470,49 @@ First watched attended canary of this batch, armed with `--force` on branch
   all validated; B3 (review-gate SKIP churn) is the one must-fix before an unattended arm; B2 + B4 are
   signal-quality/ergonomic follow-ups.
 
+## Canary #1 (2026-07-14 watched run) -- Stage 2/3 gate-flow cluster
+
+Second watched attended canary (armed `--force`, branch `overnight-runner-improvements-2026-07-13`),
+validating the Stage 2/3 changes on a real section ship (TODO-22 §10 "env block sorting & size limits")
++ a rollover. **VALIDATED (all live):**
+
+- **P3.1 (structured waiver)** -- §10 was flagged SPLIT-RECOMMENDED; the runner could NOT shortcut with a
+  free-form "cohesive", made an accountable call (real code in one file; several of the 12 "items" are
+  non-code entries inflating the count), wrote a STRUCTURED waiver, and `waiver-check` ACCEPTED it before
+  `implement-todo-section` proceeded. Exactly the intended upstream context-cap discipline.
+- **B3 capture (parts 1+2)** -- the broker adversarial/re-adversarial were RECOGNIZED and `trigger_files` +
+  `trigger_blobs` came back FULLY POPULATED over the working tree (env.c/env.h/nt_env.c/test_env.c/TODO-22).
+  The previous canary's EMPTY-`trigger_files` bug is FIXED.
+- **F1 (attribution)** -- the right section's files were bound; no wrong-first-staged-.md misattribution.
+- **B1 waiter** -- many ~100s cycles across five long reviews, ZERO 2-min kills.
+- **B2 (slow-but-alive)** -- a ~33-min adversarial (a deep, PRODUCTIVE security dive that found 2 real HIGH
+  bugs in §10) was NOT abandoned; last canary the runner killed a live review here.
+- **P3.4 BLOCK (build/test half)** -- bare `build.sh`/`test.sh`/`lint.sh`/`test-smoke.sh` were BLOCKED
+  (exit 2) and the runner rerouted through `run-artifact.sh` cleanly -- NO wedge.
+- **B4/F2 (rollover coverage tolerance)** -- the rollover refused on a legitimate stale receipt, NOT on
+  coverage.* (tree reported clean); B4/F2 held.
+- **P3.2 (refused-rollover discipline)** -- refused rollovers set `rollover_refused` + emitted the P3.2
+  message; the runner REPAIRED the current checkpoint (receipts) and re-ran rollover rather than advancing
+  un-rotated. Rollover ultimately **VERIFIED** (clean tree, pushed, all receipts valid). Section ship +
+  rollover BOTH achieved, no wedge.
+
+**Success criterion NOT fully met -- ONE `SKIP_REVIEW_HOOK` (down from 2 last canary):** the §10 IMPL commit
+still needed one honest opt-out. Root cause is PRECISE and is the headline finding -> **new item C-RECV
+below**: B3 fixed the trigger_files/blobs CAPTURE, but a broker review's `received: true` COMPLETION flag is
+never set, so a find-and-fix re-adversarial's approve/zero-findings verdict cannot be USED as gate evidence;
+the gate falls back to the stale step-13 (pre-fix) record and blocks. The STAMP commit (docs-only TODO
+stamps, no staged source) landed CLEAN with no SKIP -- confirming the gap is specifically source-review
+evidence binding on completion. This is the TODO-10 §7 / P1.3-completion "background completion -> trusted
+receipt binding" work; it is the one MUST-FIX before an unattended arm.
+
+**Minor findings surfaced (all recovered, no wedge):** (a) rollover receipt recording is ORDER-SENSITIVE --
+smoke binds to the built image, but running the full suite after smoke rebuilds the image and re-staled the
+smoke receipt; the runner burned ~3 rollover attempts discovering "record smoke LAST" (a record-all-in-order
+helper would remove the churn); (b) a Bash guard false-matched a benign grep for "waiver"/"split"; (c) the
+waiter accepts a bare number as a phantom log path (`... .out 300` intending `--max 300`); (d) `lint.sh` is
+in the P3.4 BLOCK matcher (cheap, mild over-reach -- consider exempting); (e) Codex reviews ran long tonight
+(~13-33 min each) and §10's find-and-fix cycle spanned ~2h -- a cost concern, not a regression.
+
 ## Recorded decisions (do NOT re-litigate)
 
 - **Rejected: conditional rollover smoke.** `run_phase_guard.py:442` runs `check_smoke` unconditionally at rollover; keep it -- smoke is ~3s + deterministic (zero model tokens), so weakening it trades a real boot safety net for a negligible saving. The win is not re-running smoke mid-loop (P3.3), not dropping the boundary check.

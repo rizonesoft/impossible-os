@@ -470,6 +470,45 @@
   records a verified attended rollover** (`.claude/state/sequencer-canary-ok:1`). Update the P0.0
   status in the sibling plan to avoid an unnecessary repeat canary.
 
+## J. Canary #1 findings (2026-07-14 watched run)
+
+> Surfaced by the second watched canary validating the Stage 2/3 gate-flow cluster on TODO-22 §10. The
+> cluster VALIDATED (P3.1 waiver, B3 trigger_files capture, F1, B1, B2, P3.4 BLOCK, B4/F2, P3.2, rollover
+> VERIFIED); one `SKIP_REVIEW_HOOK` remained (down from 2), root-caused below. Full run scorecard in the
+> sibling plan's "Canary #1" section.
+
+- [ ] **[det] C-RECV. (MUST-FIX before unattended arm) A broker review's `received: true` completion flag
+  is never set, so a find-and-fix re-adversarial's approve verdict cannot be USED as gate evidence.**
+  SURFACED LIVE in Canary #1: B3 fixed the CAPTURE (trigger_files/trigger_blobs came back fully populated
+  over the working tree -- the previous empty-trigger_files bug is gone), but the §10 impl commit STILL
+  forced one honest `SKIP_REVIEW_HOOK`. `last-codex-review.json` showed `received: False` on the
+  re-adversarial even though it ran, approved, and was recorded; `_review_evidence` then fell back to the
+  step-13 adversarial (received:true but PRE-FIX blobs -> stale) and blocked. The runner's own reason:
+  "content-valid re-adversarial returned approve/zero-findings; only step-13 blob-binding is stale across
+  the fix boundary." The STAMP commit (docs-only, no staged source) landed CLEAN, confirming the gap is
+  specifically SOURCE-review completion binding. **Fix:** when a broker/background review COMPLETES (the
+  `Turn completed` sentinel lands in its `.out`), set `received: true` + append the receipt (with its
+  working-tree `trigger_blobs`) to `codex-review-history.jsonl`, so a completed re-adversarial's approval
+  is usable evidence and the find-and-fix cycle needs NO opt-out. This is the deferred TODO-10 §7 /
+  P1.3-completion "background completion -> trusted receipt binding" work; it is the last hole keeping
+  Canary #1 from zero-SKIP. Distinct from B3 (capture, DONE): this is the RECEIVED/completion half.
+- [ ] **[det] J1. Rollover receipt recording is ORDER-SENSITIVE and the runner discovers it via a
+  refuse-fix-refuse loop.** SURFACED LIVE in Canary #1: the smoke receipt binds to the built IMAGE, but
+  running the full `all` suite AFTER smoke rebuilds the image and re-stales the smoke receipt
+  ("built image changed since the receipted smoke"), so the runner burned ~3 rollover attempts +
+  extra test/smoke runs before deducing "record smoke LAST". **Fix:** a single `receipts.py
+  record-rollover .` (or a doc + phase-guard hint) that records build -> suite-all -> smoke IN ORDER over
+  one final tree, so the rollover receipt set is produced once instead of cascading. Cost/cadence papercut,
+  not a wedge (the runner recovered); B4/F2 (coverage tolerance) is a DIFFERENT rollover facet and worked.
+- [ ] **[det] J2. Minor Canary #1 papercuts (batch).** (a) A Bash guard false-matched a benign grep for
+  "waiver"/"split" (recovered by simplifying the grep) -- find which guard over-matches an alternation.
+  (b) `wait-for-codex-verdict.sh` silently accepts a bare number as a phantom LOG path (`... .out 300`
+  intending `--max 300`) -- reject a non-existent log arg or warn. (c) `lint.sh` is in the P3.4 BLOCK
+  matcher; lint is cheap (does not flood context like a full suite) -- consider exempting it from the
+  BLOCK. (d) Codex reviews ran ~13-33 min each tonight and §10's find-and-fix cycle spanned ~2h -- a real
+  cost concern (relates to P2 convergence + a possible max-review-wall B2 refinement for growing-but-
+  wandering reviews), not a regression.
+
 ## Recorded observations (measured, NOT filed as actionable)
 
 - **Malformed-JSON Read-tool call after a dense parallel-Agent report** appeared identically in two
