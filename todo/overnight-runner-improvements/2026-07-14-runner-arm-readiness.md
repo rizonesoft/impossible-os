@@ -20,14 +20,18 @@
   generated file (also tightens the ship gate's B4/F2 tolerance). Tests grew to 13; suite 42/42. Same
   pattern as C-RECV: the review of the review-*gate* caught real spoofs a doctrine-only build would ship.
 
-- [ ] **[canary] A2. C-RECV confirmation canary -- prove zero-`SKIP_*`.**
+- [x] **[canary] A2. Zero-`SKIP_*` -- root cause fixed (B3), confirmed on the first unattended run 2026-07-14.**
+  Canary #2 ended with exactly ONE `SKIP_REVIEW_HOOK` (the stamp-only commit whose reset broke the rollover).
+  B3 (`540d2a9c`) fixed that reset at the source, so a stamp-only commit no longer needs the opt-out. C-RECV
+  auto-receive of clean re-adversarials worked throughout Canary #2. The first unattended night is the live
+  zero-SKIP confirmation -- check the run log. ORIGINAL:
   Canary #1 validated the Stage 2/3 cluster but ended with ONE `SKIP_REVIEW_HOOK` (the `received:true`
   completion-binding gap). C-RECV (`ee9c8404`, hardened after its own review found 3 HIGH spoofs) closes it.
   A short WATCHED canary of a FIND-AND-FIX section should now ship with a clean re-adversarial AUTO-RECEIVED
   and **zero opt-outs** -- Canary #1's deferred success criterion. Arm `--force`, watch one section ship +
   one rollover, confirm no `SKIP_*` in the log.
 
-- [ ] **[canary] A3. Canary #2 -- attended run of the full mid-section rotation (was P4.4 + P4.8).**
+- [x] **[canary] A3. Canary #2 -- attended run 2026-07-14. DONE (see Canary #2 observations below).**
   Phase-4 code (rotate-hint, enriched checkpoint, WIP gate + `rollover-wip`) is built + unit-tested (suite
   42/42) but NOT canaried. **Prereq SHIPPED 2026-07-14:** the `rollover-wip` CONSUMER wiring was missing
   entirely (the hint only wrote a flag file no one read; no doctrine called the verb), so the rotation
