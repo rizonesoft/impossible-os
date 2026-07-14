@@ -319,11 +319,11 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 7. Shell Integration: PATH Lookup & SET/ECHO
 
-- [ ] `shell_find_command(name, out_path, max)`:
-  1. If `name` contains `\` or `/`: treat as an explicit path; try verbatim, then with `.exe` appended; return first match
+- [ ] `shell_find_command(name, out_path, max)` -- one shared extension rule (matches SDK `TODO-02 §5`): a `name` WITH an explicit extension is probed verbatim only; an extensionless `name` iterates `PATHEXT` in order (§11):
+  1. If `name` contains `\` or `/`: explicit path; probe verbatim if it has an extension, else iterate `PATHEXT` against it; return first match
   2. Otherwise: retrieve `PATH` value via `env_get(current_task, "PATH")`
-  3. Split `PATH` on `;` into directory list
-  4. For each directory: try `dir\name` (exact), then `dir\name{ext}` for each ext in `PATHEXT` order (§11; `env_get`, split `;`; default `.EXE`); `vfs_stat` each; return first hit
+  3. Split `PATH` on `;` into directory list; get `PATHEXT` via `env_get(current_task, "PATHEXT")` (split `;`; empty/unset -> `.EXE`)
+  4. For each directory: if `name` has an extension probe `dir\name` verbatim, else `dir\name{ext}` for each `PATHEXT` ext in order; `vfs_stat` each; return first hit
   5. If no match: return `SHELL_COMMAND_NOT_FOUND`
 - [ ] Shell uses `shell_find_command` before any `exec` call; replaces current ad-hoc path construction
 
@@ -433,7 +433,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 ## 11. PATHEXT Variable & Extension Search Order
 
 - [x] Add `PATHEXT` to system default variables (§2): seeded `.EXE` only (`ENV_DEF_PATHEXT` in `env.c`); design review trimmed `.EXE;.CMD;.BAT` since `exec.c` runs only PE/ELF/EIF (see commit msg)
-- [/] Modify `shell_find_command` (§7) to use `PATHEXT`. Deferred: §7 deferred (`src/shell/` empty). -> XREF: §7 + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §5 (item: "Extension precedence")
+- [/] Modify `shell_find_command` (§7) to use `PATHEXT`. Deferred: §7 deferred (`src/shell/` empty). -> XREF: §7 + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §5 (item: "Extension precedence" at line 183)
 - [/] Current search order (before PATHEXT): tries only `.exe`; too restrictive. Deferred with the §7 consumer above (no shell lookup exists to widen yet).
 - [/] `PATHEXT` with empty value: fall back to `.EXE` only (Windows behavior). Deferred: empty-value semantics belong to the §7 lookup consumer; the seeded default is already `.EXE`.
 
@@ -441,13 +441,17 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Test checkpoint:** `env_init_defaults` seeds `PATHEXT=.EXE`; the `.cmd`-before-`.exe` ordering test lands with the §7 shell consumer. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1654 suites, 0 failures (PATHEXT default assertion in `test_env_defaults_derived`)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1656 suites, 0 failures, 0 leaked (PATHEXT default assertion in `test_env_defaults_derived` + `test_ntenv_live_env_hwm` prewarm)
 
 > **Notes:**
-> - **What shipped:** `ENV_DEF_PATHEXT` (`.EXE`) seeded in `env.c` `env_synth_base`; one `test_env_defaults_derived` assertion; a `TEST_EXPECT_LEAK` note on `test_ntenv_set_query_roundtrip`.
+> - **What shipped:** `ENV_DEF_PATHEXT` (`.EXE`) seeded in `env.c` `env_synth_base`; one `test_env_defaults_derived` assertion; a `test_ntenv_live_env_hwm` prewarm suite absorbing the live-task `environ[]` high-water-mark grow.
 > - **How it integrates:** the default lands in every task's env via the existing default-seed layer; `env_get(t, "PATHEXT")` returns `.EXE` until the §7 shell consumer iterates it.
 > - **Design review:** trimmed value to `.EXE` (Codex, adoptions in commit msg) because `exec.c` has no `.CMD`/`.BAT` loader; fuller Windows default waits on a batch processor.
 > - **Scope boundary:** §11 owns only the default var; the `shell_find_command` PATHEXT consumer is owned by §7 (deferred) + `12-user-platform-sdk/TODO-02` §5 (Extension precedence).
+
+> **Verified:** 2026-07-14 | commit `7a8842a8` | 1/4 items | build OK | tests abi 1656/1656 PASS
+> **Accepted:** [M] session-cache CWD + VFS-generation coherency + `where` cache-free enumeration (reason: pre-existing SDK cache design, surfaced reviewing PATHEXT invalidation) -> XREF: 12-user-platform-sdk/TODO-02 §5 (item: "Cache coherency" at line 180)
+> **Quality reviewed:** 2026-07-14 | Codex 8x (design + adversarial + consistency + perf + re-adversarial) | 7M fixed, 1M accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---
 

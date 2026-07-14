@@ -176,10 +176,11 @@ int         env_expand_path(struct task *t, const char *templ,
 
 > Core PATH iteration: `02-kernel-core/TODO-22 §7`. This section adds the **session cache**.
 
-- [ ] **Session cache**: `cmd_cache[8]` in `shell.c` -- cache a hit ONLY if the resolved path is drive-qualified (CWD-independent; skip explicit/relative names + relative/empty PATH entries); LRU evict; invalidate on `PATH`/`PATHEXT`
+- [ ] **Session cache**: `cmd_cache[8]` in `shell.c` -- cache a hit ONLY if `name` is bare AND every searched PATH entry is drive-qualified (fully CWD-independent); LRU evict; invalidate on `PATH`/`PATHEXT`
+- [ ] **Cache coherency**: a bare-name hit can still go stale via VFS mutation (create/delete/rename an earlier PATH candidate); bind entries to a PATH/PATHEXT/VFS generation counter or bypass. `where` stays cache-free (enumerates ALL matches)
 - [ ] **`where <command>` command**: iterate all PATH directories (no cache shortcut); print every matching path (multiple hits possible); format: one `full_path\n` per match; no match → print `"INFO: Could not find files for the given pattern(s)."` (Windows `where.exe` phrasing)
 - [ ] **Executable check**: when probing `dir\name.exe`, use `vfs_stat(path)` -- only report match if file exists and has nonzero size; never execute a 0-byte file
-- [ ] **Extension precedence**: no-extension `name` iterates `PATHEXT` (`env_get`, split `;`, in order) not hardcoded `.exe`; empty/unset -> `.EXE`; default `.EXE` (-> XREF `TODO-22 §11`) until a batch processor adds `.CMD`/`.BAT`
+- [ ] **Extension precedence**: no-extension `name` iterates `PATHEXT` (`env_get`, split `;`, in order) not hardcoded `.exe`; empty/unset -> `.EXE`; default `.EXE` (-> XREF `02-kernel-core/TODO-22 §11`) until a batch processor adds `.CMD`/`.BAT`
 
 ---
 
