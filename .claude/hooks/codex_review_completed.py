@@ -1092,16 +1092,45 @@ def _out_kind_from_name(name: str) -> str:
     return m.group(1) if m else ""
 
 
+_VERDICT_RE = re.compile(r'"verdict"\s*:\s*"([^"]+)"')
+# Approve-class structured verdicts. An explicit needs-attention / reject /
+# request-changes is NOT clean, no matter what clean-sounding prose surrounds it.
+_APPROVE_VERDICTS = frozenset({"approve", "approved", "lgtm", "ship", "clean",
+                               "pass", "no-findings", "no_findings"})
+
+
 def _out_is_clean(root: Path, out_path: Path) -> bool:
-    """C-RECV: a review .out is CLEAN iff the CANONICAL leg parser
-    (review-envelope.leg_summary -- the same one the pipeline uses to decide
-    all_clean / needs_redispatch) says it completed, did not crash (rc==0), and
-    carries ZERO severity-marked findings, AND its tail carries an explicit
-    approve signal with no severity token. FAIL-SAFE in every direction: a parse
-    failure, a missing rc, any finding line, or any severity word in the tail all
-    return False -> no auto-receive, and the model must still triage the review
-    through receiving-code-review. Reusing the pipeline parser means this can
-    never call 'clean' a leg the pipeline would re-dispatch."""
+    """C-RECV: a review .out is CLEAN iff ALL hold. Hardened after the C-RECV
+    adversarial review (2026-07-14) found three spoofs in the first cut:
+
+      (F2) The broker's FINAL non-empty line is exactly `Turn completed (rc=0)`.
+           Anchoring to the last line -- not any `Turn completed` the review BODY
+           may quote (a meta-review of review infra does exactly that) -- means an
+           embedded marker can never shadow a real terminal rc!=0 (crash).
+      (F3) The AUTHORITATIVE structured verdict (the LAST `{"verdict":"..."}`
+           Codex emits) is approve-class. A clean-sounding substring is NOT enough
+           -- `Verdict: needs-attention` + `No material findings.` must NOT pass.
+      (--) The canonical pipeline parser (review-envelope.leg_summary) ALSO sees
+           no crash + zero findings, and no severity token appears in the tail.
+
+    FAIL-SAFE in every direction: a parse failure, a non-rc0 final line, a missing
+    or non-approve verdict, any finding, or a severity word all return False, and
+    the model must still triage the review through receiving-code-review."""
+    try:
+        text = out_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    # (F2) broker terminal sentinel must be the LAST line and rc==0.
+    if not re.match(r"^Turn completed \(rc=0\)$", lines[-1].strip()):
+        return False
+    # (F3) authoritative structured verdict must be approve-class.
+    verdicts = _VERDICT_RE.findall(text)
+    if not verdicts or verdicts[-1].strip().lower() not in _APPROVE_VERDICTS:
+        return False
+    # canonical parser cross-check: no crash, zero findings.
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
@@ -1111,19 +1140,12 @@ def _out_is_clean(root: Path, out_path: Path) -> bool:
         leg = env.leg_summary({"logFile": str(out_path)})
     except Exception:
         return False
-    if not (leg.get("complete") and not leg.get("crashed")
-            and leg.get("rc") == 0 and not leg.get("findings")):
+    if leg.get("crashed") or leg.get("findings"):
         return False
     tail = " ".join(leg.get("tail") or []).lower()
-    # Extra fail-safe: never call clean when the FINAL verdict still names a
-    # severity (covers finding formats the line-anchored FINDING_RE may miss,
-    # e.g. `**F1 [high]`), so an unaddressed finding can never auto-receive.
     if re.search(r"\b(critical|high|medium|low)\b", tail):
         return False
-    return any(s in tail for s in (
-        '"verdict":"approve"', '"verdict": "approve"', "verdict: approve",
-        "no material findings", "no findings", "zero findings",
-        "no material issues", "ship: yes"))
+    return True
 
 
 def _maybe_auto_receive_clean(payload: dict, root) -> None:
@@ -1152,12 +1174,26 @@ def _maybe_auto_receive_clean(payload: dict, root) -> None:
     if not isinstance(state, dict) or state.get("received") is True:
         return
     rec_kind = str(state.get("review_kind") or "")
+    # (C-RECV review F1) NEVER auto-receive when the record has no kind -- an
+    # empty kind must not act as a wildcard that matches any .out.
+    if not rec_kind:
+        return
+    rec_ts = state.get("timestamp_ns")
     for out_rel in outs:
         p = Path(out_rel) if os.path.isabs(out_rel) else (root / out_rel)
         out_kind = _out_kind_from_name(p.name)
-        # Only auto-receive the record's OWN kind (a multi-log wait may list
-        # several .out paths; the current record tracks exactly one review).
-        if rec_kind and out_kind and out_kind != rec_kind:
+        # (F1) Require an EXACT, non-empty kind match. A multi-log wait may list
+        # several .out paths; the current record tracks exactly ONE review.
+        if not out_kind or out_kind != rec_kind:
+            continue
+        # (F1) Reject a STALE same-kind artifact from a PRIOR round: the .out the
+        # current record tracks was created at/after this record's dispatch, so an
+        # older clean same-kind .out (earlier mtime) must not complete the current
+        # (possibly finding-bearing) state.
+        try:
+            if isinstance(rec_ts, int) and p.stat().st_mtime < (rec_ts / 1e9) - 5:
+                continue
+        except Exception:
             continue
         if _out_is_clean(root, p):
             state["received"] = True

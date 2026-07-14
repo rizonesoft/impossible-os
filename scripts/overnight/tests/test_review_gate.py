@@ -214,10 +214,14 @@ def _crecv_repo(d):
     return root
 
 
-def _rec(root, kind="re-adversarial", received=False):
+def _rec(root, kind="re-adversarial", received=False, ts=None):
+    import time as _t
+    if ts is None:
+        ts = _t.time_ns()
     (root / ".claude/state/last-codex-review.json").write_text(json.dumps({
-        "received": received, "review_kind": kind, "trigger_files": ["src/x.c"],
-        "trigger_blobs": {"src/x.c": "abc"}, "received_timestamp_ns": None}))
+        "received": received, "review_kind": kind, "timestamp_ns": ts,
+        "trigger_files": ["src/x.c"], "trigger_blobs": {"src/x.c": "abc"},
+        "received_timestamp_ns": None}))
 
 
 def _out_file(root, kind, body):
@@ -233,52 +237,90 @@ def _poll(root, out_path):
     return json.loads((root / ".claude/state/last-codex-review.json").read_text())
 
 
+# A realistic CLEAN broker .out: structured approve verdict + zero findings, with
+# the broker terminal sentinel as the FINAL line.
+_CLEAN = ('{"verdict":"approve","summary":"no issues"}\n'
+          'No material findings.\nTurn completed (rc=0)\n')
+
+
 def test_crecv_clean_completion_auto_receives():
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "re-adversarial")
-        out = _out_file(root, "re-adversarial",
-                        "Verdict: approve\nNo material findings.\nTurn completed (rc=0)\n")
-        assert _poll(root, out)["received"] is True
+        assert _poll(root, _out_file(root, "re-adversarial", _CLEAN))["received"] is True
 
 
 def test_crecv_findings_not_received():
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "re-adversarial")
         out = _out_file(root, "re-adversarial",
-                        "[HIGH] real bug at x.c:5\nTurn completed (rc=0)\n")
+                        '{"verdict":"approve"}\n[HIGH] real bug at x.c:5\nTurn completed (rc=0)\n')
         assert _poll(root, out)["received"] is False
 
 
 def test_crecv_crashed_not_received():
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "re-adversarial")
-        out = _out_file(root, "re-adversarial", "approve\nTurn completed (rc=1)\n")
+        out = _out_file(root, "re-adversarial",
+                        '{"verdict":"approve"}\nno material findings\nTurn completed (rc=1)\n')
         assert _poll(root, out)["received"] is False
 
 
-def test_crecv_severity_in_tail_not_received():
-    # A clean-ish verdict that still NAMES a severity in the tail -> fail-safe.
+def test_crecv_needs_attention_verdict_not_received():
+    # F3: an explicit needs-attention structured verdict must NOT auto-receive
+    # even with a clean-sounding "No material findings." line + rc0 sentinel.
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "re-adversarial")
         out = _out_file(root, "re-adversarial",
-                        "verdict: approve; the earlier HIGH is fixed\nTurn completed (rc=0)\n")
+                        '{"verdict":"approve"}\n{"verdict":"needs-attention"}\n'
+                        'No material findings.\nTurn completed (rc=0)\n')
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_embedded_sentinel_does_not_shadow_crash():
+    # F2: the review BODY quotes "Turn completed (rc=0)" but the real terminal
+    # line is a crash (rc=1) -> not clean (anchored to the FINAL line).
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial",
+                        '{"verdict":"approve"}\nreviewer quotes Turn completed (rc=0) here\n'
+                        'Turn completed (rc=1)\n')
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_no_structured_verdict_not_received():
+    # Free-text "Verdict: approve" with NO structured {"verdict"} -> not clean.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial",
+                        "Verdict: approve\nno material findings\nTurn completed (rc=0)\n")
         assert _poll(root, out)["received"] is False
 
 
 def test_crecv_kind_mismatch_not_received():
     with tempfile.TemporaryDirectory() as d:
         root = _crecv_repo(d); _rec(root, "adversarial")   # record kind != out kind
-        out = _out_file(root, "perf",
-                        "approve\nno material findings\nTurn completed (rc=0)\n")
-        assert _poll(root, out)["received"] is False
+        assert _poll(root, _out_file(root, "perf", _CLEAN))["received"] is False
 
 
-def test_crecv_no_approve_signal_not_received():
-    # Completed + no findings but NO explicit approve signal -> stay unreceived.
+def test_crecv_stale_same_kind_artifact_not_received():
+    # F1: an OLD clean same-kind .out (mtime well before the record's dispatch)
+    # must not complete the current (possibly finding-bearing) state.
+    import os as _os, time as _t
     with tempfile.TemporaryDirectory() as d:
-        root = _crecv_repo(d); _rec(root, "re-adversarial")
-        out = _out_file(root, "re-adversarial", "done reviewing.\nTurn completed (rc=0)\n")
+        root = _crecv_repo(d)
+        now = _t.time_ns()
+        _rec(root, "perf", ts=now)
+        out = _out_file(root, "perf", _CLEAN)
+        old = (now / 1e9) - 3600
+        _os.utime(out, (old, old))
         assert _poll(root, out)["received"] is False
+
+
+def test_crecv_empty_record_kind_not_received():
+    # F1: an empty recorded kind must not act as a wildcard.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "")
+        assert _poll(root, _out_file(root, "perf", _CLEAN))["received"] is False
 
 
 # ------------------------------------------------------------ F1 attribution
@@ -329,9 +371,12 @@ if __name__ == "__main__":
     test_crecv_clean_completion_auto_receives()
     test_crecv_findings_not_received()
     test_crecv_crashed_not_received()
-    test_crecv_severity_in_tail_not_received()
+    test_crecv_needs_attention_verdict_not_received()
+    test_crecv_embedded_sentinel_does_not_shadow_crash()
+    test_crecv_no_structured_verdict_not_received()
     test_crecv_kind_mismatch_not_received()
-    test_crecv_no_approve_signal_not_received()
+    test_crecv_stale_same_kind_artifact_not_received()
+    test_crecv_empty_record_kind_not_received()
     test_f1_active_section_wins_over_first_staged()
     test_f1_falls_back_to_first_staged_without_active()
     test_f1_orphaned_active_falls_back()
