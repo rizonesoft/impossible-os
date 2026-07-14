@@ -1,5 +1,14 @@
 # Overnight Runner -- 24/7 Sustainability Implementation Plan (2026-07-12)
 
+> **CLOSED "not now" 2026-07-14.** The remaining unchecked items below are closed as deferred. The
+> bulk of this file SHIPPED (Stages 0-4). The items that must precede an unattended arm -- the
+> C-RECV confirmation canary, the in-flight P4.5/P4.6 WIP-gate review, and Canary #2 (mid-section
+> rotation) -- are carried forward in
+> [`2026-07-14-runner-arm-readiness.md`](./2026-07-14-runner-arm-readiness.md). The rest (P3.5,
+> P3.4 expensive half, G3, H1, J2c/d, J3) is backlog. Items were flipped `[x]` to clear them from
+> the open set; the arm-readiness file holds the go-forward disposition.
+
+
 > **Ordered, safe-first worklist** consolidated from the 2026-07-12 cost pass, two Codex
 > efficiency/flow-cadence reviews, and the overnight-log-explorer digest. Full rationale +
 > file:line evidence lives in [`../overnight-runner-improvements.md`](../overnight-runner-improvements.md)
@@ -183,13 +192,13 @@ green deterministic run rather than a watched canary each.
 
 ### Phase 3 -- Structural flow / cadence (the `[canary]` cluster: these change live flow)
 
-- [ ] **[canary] P3.1 Hard-enforce SPLIT-RECOMMENDED + fix the split-predictor boundary.**
+- [x] **[canary] P3.1 Hard-enforce SPLIT-RECOMMENDED + fix the split-predictor boundary.**
   `section-manifest.py` verdict is advisory -- §13 overrode it. Make override require a STRUCTURED preflight waiver (estimated files/subsystems/tests/context budget), not a free-form "cohesive". Fix the `> 8` boundary + ABI weighting (`abi_impact and open_items > 8` at line 150 misses exactly-8-item ABI/SSDT sections; lower to `>= ~6` when `abi_impact`). Upstream half of the context-cap. The gate is unit-testable, but the split BEHAVIOR is live-flow -- canary.
-- [ ] **[canary] P3.2 A REFUSED rollover must BLOCK starting the next section, not "continue in-session" into it.**
+- [x] **[canary] P3.2 A REFUSED rollover must BLOCK starting the next section, not "continue in-session" into it.**
   Flow invariant (`SKILL.md:314`, log:1480 -- §12->§13 advanced un-rotated). A refused rollover may repair ONLY the current checkpoint; it must not orient or begin the next section. Boundary-side complement to the context-cap. Pure live-flow control -- canary.
 - [x] **[det] P3.3 Verify cadence: targeted suites DURING the fix loop; ONE full suite + smoke at the section boundary.**
   Not 40 builds / 17 smoke mid-loop. Frequency discipline (a reminder/gate; can't hang the run). Smoke stays unconditional AT the boundary (see Rejected).
-- [ ] **[canary] P3.4 Make offload bite: promote `build_offload_reminder` / `inline_churn_monitor` from WARN to enforced routing.**
+- [x] **[canary] P3.4 Make offload bite: promote `build_offload_reminder` / `inline_churn_monitor` from WARN to enforced routing.**
   Block-with-reroute the expensive shapes: full-log greps, single reads > ~50 KB, 3+-search-round exploration, and inline exploration run beside a concurrent Agent dispatch. Keep the deterministic `run-artifact.sh` path for build/test. A bad BLOCK can wedge a live run -- canary.
   **PREREQUISITE before WARN -> BLOCK (Codex audit 2026-07-13, verified at file:line):** the current
   `build_offload_reminder.py:37` matcher `\bbash\s+scripts/(build|test|...)\.sh\b` fires on the INNER
@@ -215,7 +224,7 @@ green deterministic run rather than a watched canary each.
   BLOCK-with-reroute for full-log greps / >50 KB single reads / 3+-round inline exploration needs a
   SECTIONS-scoped PreToolUse gate (convert/extend `interactive_offload_router.py` or a new gate) -- the
   higher-wedge-risk piece, deferred to its own careful pass. Both halves ride Canary #1.
-- [ ] **[canary] P3.5 Give a reviewed [/]-partial section a clean ship+stamp path (retire the gate deadlock + opt-out reliance).**
+- [x] **[canary] P3.5 Give a reviewed [/]-partial section a clean ship+stamp path (retire the gate deadlock + opt-out reliance).**
   Recognize a partial ship carrying fresh review evidence (scoped delta receipt + a valid cross-session record for unchanged bytes) as satisfying the stamp gate, so a reviewed partial ships without a full re-run or a `SKIP_*` bypass. (Direct fix for the deadlock hit landing §13.) Commit-gate flow change -- canary.
 
 ### Phase 4 -- Context-cap rollover / Path B (highest structural; strictly phased)
@@ -230,7 +239,7 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
   Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, next intended action. Additive, fail-open per field.
 - [x] **[det] P4.3 Surface + act on the enriched checkpoint on resume.**
   CORRECTION to the old "1c": the resume path ALREADY calls `section-checkpoint.py show` (`SKILL.md:162`), so P4.2 is NOT dead weight. Real work: ensure the enriched fields appear in the `show` output AND the resuming session re-orients from them without re-deriving; optionally also auto-inject via `session_brief_inject.py` for reliability.
-- [ ] **[canary] P4.4 Attended canary of the enriched re-orient.**
+- [x] **[canary] P4.4 Attended canary of the enriched re-orient.**
   Prove a resumed session re-orients without re-deriving the same file:line facts. Gates whether P4.1-P4.3 pay off before any gate work is built. (This one IS a canary by nature.)
 - [x] **[canary] P4.5 Parallel `_rollover_failures_wip()` gate (HIGH-RISK).**
   Accepts a WIP-commit-clean (committed, unpushed, unstamped) tree but KEEPS the review-received + no-background-jobs checks. Do NOT weaken the shipped `_rollover_failures()` -- it governs the ship rollover too.
@@ -238,7 +247,7 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
   Rotate ONLY at a WIP-commit-clean tree / between Codex rounds / after a green fix-loop round. Hard-forbid rotation during a review wait, an uncommitted edit, or mid-fix-loop (the fix-then-regress guard the 2026-07-03 self-diff gate protects).
 - [x] **[det] P4.7 Tests for the WIP gate + boundary guard.**
   Rejects open review / active bg job / dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
-- [ ] **[canary] P4.8 Mandatory attended canary of full mid-section rotation before ANY unattended arm.**
+- [x] **[canary] P4.8 Mandatory attended canary of full mid-section rotation before ANY unattended arm.**
   The control-plane-manifest change mandates the green attended canary.
 
 ### Phase 5 -- Budget-aware pacing (backstop; LAST; depends on P0.1 + P1.4 + a reduced baseline)

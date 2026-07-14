@@ -34,6 +34,14 @@
 
 ---
 
+> **CLOSED "not now" 2026-07-14.** The remaining unchecked items below are closed as deferred. The
+> bulk of this file SHIPPED (Stages 0-4). The items that must precede an unattended arm -- the
+> C-RECV confirmation canary, the in-flight P4.5/P4.6 WIP-gate review, and Canary #2 (mid-section
+> rotation) -- are carried forward in
+> [`2026-07-14-runner-arm-readiness.md`](./2026-07-14-runner-arm-readiness.md). The rest (P3.5,
+> P3.4 expensive half, G3, H1, J2c/d, J3) is backlog. Items were flipped `[x]` to clear them from
+> the open set; the arm-readiness file holds the go-forward disposition.
+
 ## A. Confirmed code bugs -- ship a fix + regression test
 
 - [x] **[det] A1. `worktree_hash` import path is broken in BOTH review hooks -- the deterministic
@@ -379,7 +387,7 @@
   stopping rule for MARGINAL non-Critical perf. **Fix:** cap live-implementation of perf-only
   (non-Critical/High) suggestions at ~1-2 rounds inside a section's gate loop; beyond that, file the
   remaining perf suggestions as an XREF'd follow-up item rather than iterating in-section.
-- [ ] **[det] G3. Cross-TODO prerequisite unreadiness is only caught by spending a full Codex
+- [x] **[det] G3. Cross-TODO prerequisite unreadiness is only caught by spending a full Codex
   design-review round per section.** Three consecutive TODO-21 sections (§15, §16, §18) were all
   deferred at design review because the headline feature is unenforceable/unsafe without a
   prerequisite owned in a DIFFERENT TODO (TODO-06 stable-PID + SMP reap barrier; TODO-12 §7
@@ -390,7 +398,7 @@
 
 ## H. Kernel-debug ergonomics
 
-- [ ] **[det] H1. Ad-hoc `klog` instrumentation churn dominates exec/fork bisection debugging.**
+- [x] **[det] H1. Ad-hoc `klog` instrumentation churn dominates exec/fork bisection debugging.**
   `run-20260713-082218.log:330-428` + `:500-553`: two ~28.5-min bisection arcs (~29% of that run's
   wall clock, ~28 of 113 Edits / ~25%) spent inserting and reverting temporary
   `DBGEXEC`/`DBGFRAME`/`DBGHS` klog lines by direct source Edit -- one Edit+rebuild+retest+revert
@@ -511,7 +519,7 @@
   record-rollover .` (or a doc + phase-guard hint) that records build -> suite-all -> smoke IN ORDER over
   one final tree, so the rollover receipt set is produced once instead of cascading. Cost/cadence papercut,
   not a wedge (the runner recovered); B4/F2 (coverage tolerance) is a DIFFERENT rollover facet and worked.
-- [ ] **[det] J2. Minor Canary #1 papercuts (batch).** (a) A Bash guard false-matched a benign grep for
+- [x] **[det] J2. Minor Canary #1 papercuts (batch).** (a) A Bash guard false-matched a benign grep for
   "waiver"/"split" (recovered by simplifying the grep) -- find which guard over-matches an alternation.
   (b) `wait-for-codex-verdict.sh` silently accepts a bare number as a phantom LOG path (`... .out 300`
   intending `--max 300`) -- reject a non-existent log arg or warn. (c) `lint.sh` is in the P3.4 BLOCK
@@ -524,7 +532,7 @@
   false-match does NOT reproduce against the reconstructed grep (no Bash PreToolUse hook fires), so it needs
   the EXACT command from the run transcript to identify the over-matching guard; J2d (review latency) is a
   Codex-behavior / P2-convergence concern, not a code fix here.
-- [ ] **[doctrine] J3. A Codex adversarial review of a SECURITY-gate change trips Codex's cyber-risk
+- [x] **[doctrine] J3. A Codex adversarial review of a SECURITY-gate change trips Codex's cyber-risk
   filter when the prompt is framed offensively.** SURFACED 2026-07-14 while reviewing the C-RECV gate
   change: a prompt saying "attack the security property / bypass / can X be tricked" was flagged
   ("flagged for possible cybersecurity risk ... Turn failed", rc=1) and the review crashed mid-analysis.
