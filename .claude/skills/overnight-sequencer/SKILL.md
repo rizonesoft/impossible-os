@@ -373,7 +373,14 @@ information or judgment; none of this weakens a gate):**
     NOT a safe boundary (its content-binding must also match HEAD -- the verb
     enforces this and a stale binding cannot be repaired by waiting);
   - no background job running.
-  Then run `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
+  Then, IN ORDER:
+  1. `python3 .claude/hooks/run_phase_guard.py review-resolved` -- records a
+     content-bound receipt attesting the review cycle is resolved + GREEN at this
+     HEAD (it verifies the received review binds HEAD and that build + test
+     receipts are content-valid; REFUSES otherwise). If it refuses, you are not at
+     a resolved+green boundary -- fix/receive/re-verify (a green `build.sh` +
+     `test.sh` with recorded receipts) and retry, or continue in-session.
+  2. `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
   - **VERIFIED** -> the verb has already written the enriched section-checkpoint
     (fail-closed: no checkpoint, no authorization) and armed the cursor. Final-
     answer with a one-line "mid-section rotation at section N" summary and END the

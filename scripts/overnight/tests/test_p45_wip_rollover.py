@@ -125,11 +125,13 @@ def _hint(root, on=True):
 
 
 def _verb_mod(root, gate_fails=None, checkpoint_ok=True, state_extra=None,
-              unpushed=1):
+              unpushed=1, ship_stamp=False, resolution_ok=True):
     mod = _load(root / ".claude/state/s.json", root)
     mod._rollover_failures_wip = lambda r, s: (gate_fails or [])
     mod._write_section_checkpoint = lambda r: checkpoint_ok    # F2
     mod._unpushed_count = lambda r: unpushed                   # A1 (default: WIP ahead)
+    mod._head_adds_ship_stamp = lambda r: ship_stamp           # A4 (default: not ship)
+    mod._review_resolution_valid = lambda r: (resolution_ok, "")  # A5 (default: OK)
     st = {"active": True, "phase": "SECTIONS", "file": "todo/T.md", "section_idx": 5}
     if state_extra:
         st.update(state_extra)
@@ -215,6 +217,104 @@ def test_unpushed_count_none_without_upstream():              # A1 helper contra
         root = _git_repo(d)
         mod = _load(root / ".claude/state/s.json", root)
         assert mod._unpushed_count(root) is None
+
+
+# ---------------------------------------------- A4: reliable ship-stamp refusal
+def test_rollover_wip_refused_on_ship_stamp_commit():        # A4 round-2
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, ship_stamp=True)               # HEAD is a stamp commit
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+        assert "rollover" not in mod.load_state()
+
+
+def test_head_adds_ship_stamp_detects_verified_stamp():      # A4 helper contract
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        (root / "todo").mkdir()
+        (root / "todo/T.md").write_text("## 1. X\n\n> **Verified:** 2026-07-14\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "ship stamp"],
+                       check=True, capture_output=True)
+        assert mod._head_adds_ship_stamp(root) is True
+        # a follow-up CODE commit (no stamp) -> not a ship commit
+        (root / "src/x.c").write_text("int y;\n")
+        subprocess.run(["git", "-C", str(root), "commit", "-qam", "wip"], check=True,
+                       capture_output=True)
+        assert mod._head_adds_ship_stamp(root) is False
+
+
+# ------------------------------------ A5: review-resolution boundary + verb
+def test_rollover_wip_refused_without_resolution_receipt():  # A5 round-2
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, resolution_ok=False)           # no green resolution
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+        assert "rollover" not in mod.load_state()
+
+
+def test_review_resolution_valid_head_bound():               # A5 helper contract
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        p = root / ".claude/state/last-review-resolution.json"
+        # absent -> refuse
+        ok, why = mod._review_resolution_valid(root)
+        assert not ok and "no review-resolution receipt" in why
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        p.write_text(json.dumps({"head": head}))             # matches HEAD -> ok
+        assert mod._review_resolution_valid(root)[0] is True
+        p.write_text(json.dumps({"head": "0" * 40}))         # stale -> refuse
+        assert mod._review_resolution_valid(root)[0] is False
+
+
+def _resolved_mod(root, received=True, bind_head=True, receipts_ok=True):
+    mod = _load(root / ".claude/state/s.json", root)
+    mod._build_suite_receipts_ok = lambda r: (receipts_ok, "" if receipts_ok
+                                              else "build receipt not content-valid")
+    _review(root, received, bind_head=bind_head)
+    mod.save_state({"active": True, "phase": "SECTIONS", "file": "todo/T.md",
+                    "section_idx": 5})
+    return mod
+
+
+def test_review_resolved_writes_receipt_when_green_and_bound():   # A5 verb happy path
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _resolved_mod(root)
+        assert mod.cli(["review-resolved"]) == 0
+        rr = json.loads((root / ".claude/state/last-review-resolution.json").read_text())
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        assert rr["head"] == head
+
+
+def test_review_resolved_refused_when_review_unbound():       # A5 verb: F3 binding
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _resolved_mod(root, bind_head=False)           # received but no binding
+        assert mod.cli(["review-resolved"]) == 1
+        assert not (root / ".claude/state/last-review-resolution.json").exists()
+
+
+def test_review_resolved_refused_when_receipts_red():        # A5 verb: green gate
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _resolved_mod(root, receipts_ok=False)
+        assert mod.cli(["review-resolved"]) == 1
+        assert not (root / ".claude/state/last-review-resolution.json").exists()
+
+
+def test_review_resolved_refused_outside_sections():         # A5 verb: mid-section only
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _resolved_mod(root)
+        mod.save_state({"active": True, "phase": "FILE_CLOSE"})
+        assert mod.cli(["review-resolved"]) == 1
 
 
 if __name__ == "__main__":

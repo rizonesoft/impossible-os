@@ -40,27 +40,31 @@
   `rollover-wip` fires only at a WIP-clean boundary, rotates, and the fresh worker resumes the SAME section
   safely. Do A1 -> A2 -> A3.
 
-- [ ] **[unattended-gate] A4. rollover-wip: a RELIABLE section-shipped signal (round-2 A1, HIGH).**
-  The `unpushed>0` guard (commit `c153c48f`) refuses the dominant post-ship boundary (the ship path pushes
-  atomically), but a stamped-but-NOT-yet-pushed section still passes `unpushed>0` and could WIP-rotate via
-  the weaker gate. The reviewer's fix ("require the cursor section to remain NEEDS_WORK/unstamped") is NOT
-  reliably implementable today: `section_idx` is an operator-supplied display value (`run_phase_guard.py`
-  cursor cmd, defaults 0, used only for checkpoint display), not rigorously equal to the `## N.` number
-  `section_manifest.section_block()` keys on -- a stale/zero idx parses the wrong section. **Accepted as a
-  tracked gate:** the residual window requires a doctrine VIOLATION of atomic commit+push and self-heals
-  (next launch rebuilds the graph + re-runs the oracle), so it is acceptable for the ATTENDED A3 canary but
-  must be closed before an UNATTENDED arm. Fix: have the ship path record a durable `section_shipped`
-  marker (file+section, cleared on advance) that `rollover-wip` checks -- reliable, unlike `section_idx`.
+- [x] **[unattended-gate] A4. rollover-wip: a RELIABLE section-shipped signal (round-2 A1, HIGH). DONE 2026-07-14.**
+  The `unpushed>0` guard refused the dominant post-ship boundary but a stamped-but-NOT-yet-pushed section
+  still passed it. The reviewer's `section_idx`-based check was not reliably implementable (it is a loose
+  display value). Instead keyed on the DEFINITIVE ship marker: `_head_adds_ship_stamp()` returns True when
+  HEAD's `git show -- todo` diff adds a `**Verified:**` / `**Quality reviewed:**` line (same `_STAMP_ADDED_RE`
+  the commit-gate uses), and `rollover-wip` refuses on it -- robust vs `section_idx`, closing the exact
+  pre-push window. Tests: `test_head_adds_ship_stamp_detects_verified_stamp`, `test_rollover_wip_refused_on_ship_stamp_commit`.
 
-- [ ] **[unattended-gate] A5. rollover-wip: a durable review-resolution boundary (round-2 A3, HIGH).**
-  The WIP gate treats `received:true` + F3 `trigger_blobs==HEAD` as a clean review boundary, but `received`
-  is set when a findings-bearing review is ACKNOWLEDGED, before findings are ledgered/fixed/green -- so a
-  rotation can fire mid-triage. Findings are NOT lost (the checkpoint carries `open_findings`), but an
-  ACKNOWLEDGED-but-unledgered finding can drop from resume context. Building a full content-bound
-  review-resolution receipt subsystem is disproportionate for an optional rotation optimization, so it is
-  **accepted as a tracked gate** (doctrine already requires findings triaged+fixed+green first). Before an
-  UNATTENDED arm: persist a review-resolution receipt keyed to the review run + HEAD, and gate `rollover-wip`
-  on all current-TODO findings being durably resolved with the owning green verification.
+- [x] **[unattended-gate] A5. rollover-wip: a durable review-resolution boundary (round-2 A3, HIGH). DONE 2026-07-14.**
+  Built the receipt Codex asked for, minimally: a new `review-resolved` verb records a content-bound receipt
+  `{head, review_run_id, ts}` ONLY after verifying the last review is received + binds HEAD (F3) + build & test
+  receipts are content-valid (`_build_suite_receipts_ok`, reusing `receipts.py`); `rollover-wip` then refuses
+  unless `_review_resolution_valid()` finds a receipt matching current HEAD (fail-closed on absent/stale). The
+  SKILL doctrine + the `rotate_hint` reminder now instruct `review-resolved` THEN `rollover-wip`. Tests:
+  `test_review_resolution_valid_head_bound`, `test_rollover_wip_refused_without_resolution_receipt`, and 4
+  `review-resolved` verb cases (happy path, unbound review, red receipts, outside-SECTIONS).
+
+- [x] **[bug] A6. Latent: `import subprocess` inside `cli()` shadowed the module global. FOUND+FIXED 2026-07-14.**
+  While unit-testing A5 I hit `UnboundLocalError: subprocess` in the new verb. Root cause: an `import
+  subprocess` inside the `fixpoint` cmd block (`run_phase_guard.py:926`) made `subprocess` FUNCTION-LOCAL
+  across ALL of `cli()` (Python static scoping), so every bare `subprocess.run` reached before that line
+  raised. This ALSO silently broke the full `rollover`'s inline `section-checkpoint.py write` (its
+  `except: pass` swallowed the `UnboundLocalError`, so that checkpoint was never written). Fix: removed the
+  redundant inner import. `_write_section_checkpoint` (the WIP-rollover helper) is module-scope and was
+  unaffected, so P4.2/P4.5 were OK; only the FULL rollover's inline write was hit.
 
 ## Deferred backlog (closed "not now" 2026-07-14; re-open if the need resurfaces)
 

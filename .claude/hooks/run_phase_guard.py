@@ -33,6 +33,7 @@ within-section hooks -- this guard does not micro-manage it.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -551,6 +552,85 @@ def _unpushed_count(root: Path):
         return None
 
 
+# A4 (review 2026-07-14 round 2): the review-gate's own definition of a ship stamp
+# (kept in sync with section_commit_gate._STAMP_ADDED_RE). A section-SHIP/stamp
+# commit adds a `**Verified:**` / `**Quality reviewed:**` line to a todo/ file.
+_SHIP_STAMP_RE = re.compile(r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*")
+
+
+def _head_adds_ship_stamp(root: Path) -> bool:
+    """A4: True if HEAD's commit touches a review ship-stamp in a todo/ file -- i.e.
+    HEAD is a section-SHIP/stamp commit, not mid-section WIP. Robust vs the loose
+    section_idx (which is only a display value): keys on the definitive stamp the
+    review-gate recognizes. This closes the stamped-but-not-yet-pushed window the
+    unpushed>0 guard cannot see (progress/section_shipped is only set post-push).
+    Fail-open (False) on a git error -- the unpushed guard fail-CLOSES on the same
+    error, so the pair stays safe."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "show", "--format=", "HEAD",
+                            "--", "todo"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return False
+    if r.returncode != 0:
+        return False
+    return any(_SHIP_STAMP_RE.match(ln) for ln in r.stdout.splitlines())
+
+
+_REVIEW_RESOLUTION_REL = ".claude/state/last-review-resolution.json"
+
+
+def _build_suite_receipts_ok(root: Path):
+    """A5 (review 2026-07-14 round 2): (ok, why) for content-valid build + test
+    receipts over the CURRENT tree -- the 'owning green verification' a resolved
+    review boundary requires. Smoke is NOT required (a mid-section rotation is not
+    a ship; smoke stays on the full rollover). Fail-CLOSED."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "overnight_receipts", str(root / "scripts/overnight/receipts.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"receipts.py unavailable ({exc})"
+    try:
+        ok, why = mod.check_build(root)
+        if not ok:
+            return False, f"build receipt not content-valid ({why})"
+        ok, why = mod.check_suite(root, "all")
+        if not ok:
+            return False, f"test receipt not content-valid ({why})"
+    except Exception as exc:  # noqa: BLE001
+        return False, ("build/test receipt missing (record with receipts.py after "
+                       f"a green build + test.sh) ({exc})")
+    return True, ""
+
+
+def _review_resolution_valid(root: Path):
+    """A5: (ok, why). A mid-section WIP rotation must stand on a RESOLVED review
+    cycle proven green at THIS HEAD, not merely a received:true bit. The
+    `review-resolved` verb writes a content-bound receipt {head, ...}; this requires
+    it to match the current HEAD. Fail-CLOSED (absent/stale/unreadable -> refuse)."""
+    try:
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True,
+                              timeout=10).stdout.strip()
+    except Exception:
+        return False, "cannot read HEAD (fail-closed)"
+    p = root / _REVIEW_RESOLUTION_REL
+    if not p.exists():
+        return False, ("no review-resolution receipt -- run `review-resolved` to "
+                       "prove the review cycle is resolved + green at this HEAD")
+    try:
+        rr = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return False, "review-resolution receipt unreadable (fail-closed)"
+    if not head or rr.get("head") != head:
+        return False, (f"review-resolution receipt is for "
+                       f"{str(rr.get('head'))[:12]}, HEAD is {head[:12]} -- re-run "
+                       "`review-resolved` at HEAD after resolving the review cycle")
+    return True, ""
+
+
 def _write_section_checkpoint(root: Path) -> bool:
     """Write the durable section checkpoint; return True iff it succeeded (rc==0).
     Extracted so the F2 fail-closed behavior in rollover-wip is unit-testable."""
@@ -843,7 +923,10 @@ def cli(argv):
         # watchdog auto-disarms). It must NOT be fakeable: machine-verify via the
         # triage oracle (graph-truth, freshly rebuilt) that ZERO work remains.
         # If anything remains, REFUSE -- the run stays active and keeps looping.
-        import subprocess
+        # (subprocess is imported at module scope; a redundant `import subprocess`
+        # here previously made the name function-local across ALL of cli(), so any
+        # bare subprocess.run reached before this line -- e.g. the rollover inline
+        # checkpoint write and the review-resolved verb -- raised UnboundLocalError.)
         root = repo_root()
         try:
             subprocess.run(
@@ -969,6 +1052,72 @@ def cli(argv):
               "the run stays armed and the cursor carries the state.",
               file=sys.stderr)
         return 0
+    if cmd == "review-resolved":
+        # A5 (review 2026-07-14 round 2): record a content-bound review-RESOLUTION
+        # receipt {head, review_run_id, ts} attesting the current section's review
+        # cycle is COMPLETE and green at HEAD -- the boundary a mid-section
+        # rollover-wip must stand on (received:true alone does not prove findings
+        # were fixed + verified). Requires: active + SECTIONS; the last review
+        # received AND bound to HEAD (F3: fixes committed + re-reviewed); and
+        # content-valid build + test receipts. Fail-CLOSED; writes nothing unless
+        # all hold.
+        if not state.get("active") or state.get("phase") != "SECTIONS":
+            print("[sequencer] review-resolved REFUSED: only valid mid-section "
+                  "(active run, phase == SECTIONS).", file=sys.stderr)
+            return 1
+        root = repo_root()
+        rs_path = root / ".claude/state/last-codex-review.json"
+        rs = {}
+        if rs_path.exists():
+            try:
+                rs = json.loads(rs_path.read_text())
+            except (OSError, ValueError):
+                print("[sequencer] review-resolved REFUSED: last-codex-review.json "
+                      "unreadable (fail-closed).", file=sys.stderr)
+                return 1
+        if rs and rs.get("received") is not True:
+            print("[sequencer] review-resolved REFUSED: the last Codex review is "
+                  "not yet received -- receive it (Skill "
+                  "superpowers:receiving-code-review) and fix its findings first.",
+                  file=sys.stderr)
+            return 1
+        bind_fail = _review_not_binding_head(root, rs) if rs else ""
+        if bind_fail:
+            print(f"[sequencer] review-resolved REFUSED: {bind_fail}. The received "
+                  "review must bind the CURRENT HEAD (fixes committed + "
+                  "re-reviewed).", file=sys.stderr)
+            return 1
+        ok, why = _build_suite_receipts_ok(root)
+        if not ok:
+            print(f"[sequencer] review-resolved REFUSED: {why}. Run a green build + "
+                  "test.sh, record receipts, then retry.", file=sys.stderr)
+            return 1
+        try:
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True,
+                                  timeout=10).stdout.strip()
+        except Exception:
+            head = ""
+        if not head:
+            print("[sequencer] review-resolved REFUSED: cannot read HEAD.",
+                  file=sys.stderr)
+            return 1
+        rec = {"head": head, "review_run_id": rs.get("review_run_id", ""),
+               "ts": int(time.time())}
+        try:
+            p = root / _REVIEW_RESOLUTION_REL
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(json.dumps(rec))
+            os.replace(tmp, p)
+        except Exception as exc:  # noqa: BLE001
+            print("[sequencer] review-resolved REFUSED: could not write receipt "
+                  f"({exc}).", file=sys.stderr)
+            return 1
+        print(f"[sequencer] review-resolved VERIFIED: review cycle resolved + green "
+              f"at {head[:12]}. A mid-section `rollover-wip` may now proceed at this "
+              "HEAD.", file=sys.stderr)
+        return 0
     if cmd == "rollover-wip":
         # P4.6: MID-SECTION context-cap rotation (safe-boundary firing). Fires
         # ONLY when BOTH hold: (a) the P4.1 rotate_hint is set (context actually
@@ -1032,6 +1181,15 @@ def cli(argv):
                   "receipts + todo-graph). Otherwise continue in-session.",
                   file=sys.stderr)
             return 1
+        # A4 (round 2): reliably refuse a SHIP/stamp commit even in the pre-push
+        # window the unpushed guard cannot see -- key on the definitive **Verified:**
+        # stamp, not the loose section_idx.
+        if _head_adds_ship_stamp(repo_root()):
+            print("[sequencer] rollover-wip REFUSED: HEAD is a section-SHIP/stamp "
+                  "commit (adds a **Verified:** stamp to a todo/ file) -- a shipped "
+                  "section uses the full `rollover` (receipts + todo-graph), never a "
+                  "WIP rotation. Push, then run `rollover`.", file=sys.stderr)
+            return 1
         fails = _rollover_failures_wip(repo_root(), state)
         if fails:
             print("[sequencer] rollover-wip REFUSED (not at a safe WIP boundary):\n"
@@ -1041,6 +1199,13 @@ def cli(argv):
                     "mid-fix-loop, never during a review wait). Commit the WIP / "
                     "receive the review / wait for the job, then retry -- or just "
                     "continue in-session.", file=sys.stderr)
+            return 1
+        # A5 (round 2): the review cycle must be RESOLVED + green at THIS HEAD, not
+        # merely received. `review-resolved` writes a content-bound receipt; require
+        # it to match HEAD. Fail-CLOSED (absent/stale -> refuse, run review-resolved).
+        rr_ok, rr_why = _review_resolution_valid(repo_root())
+        if not rr_ok:
+            print(f"[sequencer] rollover-wip REFUSED: {rr_why}.", file=sys.stderr)
             return 1
         # F2 (review 2026-07-14): write the DURABLE checkpoint FIRST and
         # fail-CLOSED if it fails -- never authorize a Stop/rotation without a
