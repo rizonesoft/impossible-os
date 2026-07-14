@@ -492,6 +492,17 @@
   is usable evidence and the find-and-fix cycle needs NO opt-out. This is the deferred TODO-10 §7 /
   P1.3-completion "background completion -> trusted receipt binding" work; it is the last hole keeping
   Canary #1 from zero-SKIP. Distinct from B3 (capture, DONE): this is the RECEIVED/completion half.
+  **DONE 2026-07-14 + HARDENED via adversarial review:** shipped `_maybe_auto_receive_clean` /
+  `_out_is_clean` -- a `wait-for-codex-verdict.sh` poll auto-sets `received:true` ONLY for a demonstrably
+  clean broker completion; content-binding untouched. The mandatory Codex adversarial review returned
+  `needs-attention` with THREE valid HIGH spoofs in the first cut, all fixed (commit `ee9c8404`): F1 --
+  empty recorded kind acted as a wildcard + no recency binding, so a STALE clean same-kind `.out` could
+  complete a finding-bearing state (fix: exact non-empty kind + reject `.out` mtime before dispatch); F2 --
+  an embedded `Turn completed (rc=0)` in the review BODY shadowed a real terminal rc=1 crash (fix: anchor
+  to the broker's FINAL line); F3 -- the clean-check trusted clean-sounding substrings and never read the
+  authoritative verdict, so `Verdict: needs-attention` + `No material findings.` passed (fix: require the
+  LAST structured `{"verdict":...}` to be approve-class). 9 regression tests. The adversarial review of the
+  review GATE was itself the value -- it found real spoofs a doctrine-only fix would have shipped.
 - [x] **[det] J1. Rollover receipt recording is ORDER-SENSITIVE and the runner discovers it via a
   refuse-fix-refuse loop.** SURFACED LIVE in Canary #1: the smoke receipt binds to the built IMAGE, but
   running the full `all` suite AFTER smoke rebuilds the image and re-stales the smoke receipt
@@ -513,6 +524,19 @@
   false-match does NOT reproduce against the reconstructed grep (no Bash PreToolUse hook fires), so it needs
   the EXACT command from the run transcript to identify the over-matching guard; J2d (review latency) is a
   Codex-behavior / P2-convergence concern, not a code fix here.
+- [ ] **[doctrine] J3. A Codex adversarial review of a SECURITY-gate change trips Codex's cyber-risk
+  filter when the prompt is framed offensively.** SURFACED 2026-07-14 while reviewing the C-RECV gate
+  change: a prompt saying "attack the security property / bypass / can X be tricked" was flagged
+  ("flagged for possible cybersecurity risk ... Turn failed", rc=1) and the review crashed mid-analysis.
+  Re-dispatching with a CORRECTNESS/verification framing ("verify at file:line whether a review with
+  findings could be mis-classified as clean") completed cleanly and found 3 real HIGH spoofs. **Fix
+  (doctrine):** when adversarially reviewing review-infra / security-gate code, frame the prompt as
+  correctness verification, not offense. (Reassuring: C-RECV's own fail-safe correctly REJECTED the
+  crashed rc=1 review .out, so the filter-crash was harmless.) Also note: the bare `Turn completed`
+  completion-sentinel detection in `wait-for-codex-verdict.sh` + `review-envelope.leg_summary` matches the
+  string ANYWHERE, so a meta-review whose body quotes the sentinel can read as complete early -- low
+  severity (only when reviewing review-infra), but the C-RECV hardening (F2, anchor to the final line)
+  already applies the robust pattern; the waiter/envelope could adopt it too.
 
 ## Recorded observations (measured, NOT filed as actionable)
 
