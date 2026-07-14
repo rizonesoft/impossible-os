@@ -35,8 +35,10 @@ def _git_repo(d):
     subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
     (root / "src").mkdir()
     (root / "src/x.c").write_text("int x;\n")
-    # .claude/state/ is gitignored in the real repo, so the gates never see
-    # runtime state files -- mirror that here (else they read as untracked work).
+    # coverage.* is TRACKED in the real repo (regenerated -> ' M' unstaged);
+    # .claude/state/ is gitignored so the gates never see runtime state files.
+    (root / "docs/test-coverage").mkdir(parents=True)
+    (root / "docs/test-coverage/coverage.md").write_text("orig\n")
     (root / ".gitignore").write_text(".claude/state/\n")
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "i"], check=True,
@@ -45,9 +47,17 @@ def _git_repo(d):
     return root
 
 
-def _review(root, received):
+def _head_blob(root, path):
+    return subprocess.run(["git", "-C", str(root), "rev-parse", f"HEAD:{path}"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _review(root, received, bind_head=True):
+    # F3: a received review must bind the committed HEAD content. bind_head=True
+    # writes trigger_blobs matching HEAD:src/x.c (the reviewed == committed case).
+    blobs = {"src/x.c": _head_blob(root, "src/x.c")} if bind_head else {}
     (root / ".claude/state/last-codex-review.json").write_text(
-        json.dumps({"received": received}))
+        json.dumps({"received": received, "trigger_blobs": blobs}))
 
 
 # ----------------------------------------------------- WIP gate internals (P4.5)
@@ -82,13 +92,30 @@ def test_wip_gate_rejects_outstanding_review():
 def test_wip_gate_tolerates_autogen_and_never_checks_pushed():
     with tempfile.TemporaryDirectory() as d:
         root = _git_repo(d); _review(root, True)
-        (root / "docs/test-coverage").mkdir(parents=True)
-        (root / "docs/test-coverage/coverage.md").write_text("regen\n")  # auto-gen
+        (root / "docs/test-coverage/coverage.md").write_text("regen\n")  # ' M' auto-gen
         mod = _load(pathlib.Path(d) / "s.json", root)
         fails = mod._rollover_failures_wip(root, {"active": True})
         # auto-gen tolerated; unpushed / receipts / graph are NEVER checked here
         assert not any("WIP not committed" in f or "not pushed" in f
                        or "receipt" in f or "todo-graph" in f for f in fails), fails
+
+
+def test_wip_gate_rejects_review_with_no_binding():          # F3
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d); _review(root, True, bind_head=False)  # no trigger_blobs
+        mod = _load(pathlib.Path(d) / "s.json", root)
+        fails = mod._rollover_failures_wip(root, {"active": True})
+        assert any("content binding" in f for f in fails), fails
+
+
+def test_wip_gate_rejects_review_stale_vs_head():            # F3
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        (root / ".claude/state/last-codex-review.json").write_text(json.dumps(
+            {"received": True, "trigger_blobs": {"src/x.c": "0" * 40}}))
+        mod = _load(pathlib.Path(d) / "s.json", root)
+        fails = mod._rollover_failures_wip(root, {"active": True})
+        assert any("stale relative to the WIP commit" in f for f in fails), fails
 
 
 # ------------------------------------------------ rollover-wip firing verb (P4.6)
@@ -97,21 +124,27 @@ def _hint(root, on=True):
         json.dumps({"count": 200, "hint": on}))
 
 
+def _verb_mod(root, gate_fails=None, checkpoint_ok=True, state_extra=None):
+    mod = _load(root / ".claude/state/s.json", root)
+    mod._rollover_failures_wip = lambda r, s: (gate_fails or [])
+    mod._write_section_checkpoint = lambda r: checkpoint_ok    # F2
+    st = {"active": True, "phase": "SECTIONS", "file": "todo/T.md", "section_idx": 5}
+    if state_extra:
+        st.update(state_extra)
+    mod.save_state(st)
+    return mod
+
+
 def test_rollover_wip_refused_without_hint():
     with tempfile.TemporaryDirectory() as d:
-        root = _git_repo(d)
-        mod = _load(root / ".claude/state/s.json", root)
-        mod._rollover_failures_wip = lambda r, s: []        # gate would pass
-        mod.save_state({"active": True, "file": "todo/T.md", "section_idx": 5})
+        mod = _verb_mod(_git_repo(d))
         assert mod.cli(["rollover-wip"]) == 1               # no hint -> refuse
 
 
 def test_rollover_wip_verified_with_hint_and_clean_gate():
     with tempfile.TemporaryDirectory() as d:
         root = _git_repo(d)
-        mod = _load(root / ".claude/state/s.json", root)
-        mod._rollover_failures_wip = lambda r, s: []
-        mod.save_state({"active": True, "file": "todo/T.md", "section_idx": 5})
+        mod = _verb_mod(root)
         _hint(root, True)
         assert mod.cli(["rollover-wip"]) == 0
         st = mod.load_state()
@@ -122,11 +155,37 @@ def test_rollover_wip_verified_with_hint_and_clean_gate():
 def test_rollover_wip_refused_when_gate_fails():
     with tempfile.TemporaryDirectory() as d:
         root = _git_repo(d)
-        mod = _load(root / ".claude/state/s.json", root)
-        mod._rollover_failures_wip = lambda r, s: ["WIP not committed -- tree not clean"]
-        mod.save_state({"active": True, "file": "todo/T.md", "section_idx": 5})
+        mod = _verb_mod(root, gate_fails=["WIP not committed -- tree not clean"])
         _hint(root, True)
-        assert mod.cli(["rollover-wip"]) == 1               # hint set but gate fails
+        assert mod.cli(["rollover-wip"]) == 1
+
+
+def test_rollover_wip_refused_when_checkpoint_fails():        # F2
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, checkpoint_ok=False)
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+        assert "rollover" not in mod.load_state()            # no authorization
+
+
+def test_rollover_wip_refused_if_ship_rollover_refused():     # F1
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, state_extra={"rollover_refused":
+                                           {"file": "todo/T.md", "section_idx": 5}})
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+        # a WIP rotation must NOT launder / clear the P3.2 advance-block
+        assert "rollover_refused" in mod.load_state()
+
+
+def test_rollover_wip_refused_outside_sections():             # F1
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, state_extra={"phase": "FILE_CLOSE"})
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
 
 
 if __name__ == "__main__":

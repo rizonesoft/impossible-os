@@ -400,12 +400,26 @@ def _dirty_path(porcelain_line: str) -> str:
 
 
 def _dirty_owner(porcelain_line: str) -> str:
-    """Classify a dirty file: 'auto-gen' (regenerated docs), 'untracked', or
-    'tracked-source' -- so the diagnostic names the probable owner (B4)."""
-    if _dirty_path(porcelain_line) in _ROLLOVER_AUTOGEN:
-        return "auto-gen"
+    """Classify a `git status --porcelain` line by its XY status (F4, C-RECV-class
+    review 2026-07-14). ONLY an UNSTAGED modification (` M`) of an allowlisted
+    auto-gen file is tolerated. A STAGED change (index column set), a delete /
+    rename / copy, an unmerged/conflicted entry (UU/AA/DD/AU/UA/UD/DU), or an
+    untracked file is NEVER 'auto-gen' -- even on an allowlisted path -- because
+    each is uncommitted index state or new content a rotation could strand or
+    misinterpret. The old pathname-only test tolerated all of these on
+    coverage.*/COUNT.md/todo-graph.md."""
     if porcelain_line.startswith("??"):
         return "untracked"
+    xy = (porcelain_line[:2] + "  ")[:2]
+    x, y = xy[0], xy[1]
+    if "U" in xy or xy in ("AA", "DD"):
+        return "conflict"
+    # anything staged (X is a real op) or an unstaged delete/rename/copy blocks.
+    if x != " " or y in ("D", "R", "C"):
+        return "tracked-source"
+    # the ONLY tolerated case: unstaged modification of a tracked generated file.
+    if y == "M" and _dirty_path(porcelain_line) in _ROLLOVER_AUTOGEN:
+        return "auto-gen"
     return "tracked-source"
 
 
@@ -516,6 +530,49 @@ def _rollover_failures(root: Path, state: dict) -> list:
     return fails
 
 
+def _write_section_checkpoint(root: Path) -> bool:
+    """Write the durable section checkpoint; return True iff it succeeded (rc==0).
+    Extracted so the F2 fail-closed behavior in rollover-wip is unit-testable."""
+    try:
+        cp = subprocess.run(
+            ["python3", str(root / "scripts/overnight/section-checkpoint.py"),
+             "write"], cwd=str(root), capture_output=True, timeout=30)
+        return cp.returncode == 0
+    except Exception:
+        return False
+
+
+def _review_not_binding_head(root: Path, rs: dict) -> str:
+    """F3 (C-RECV-class review 2026-07-14): return a failure string if the
+    received review's `trigger_blobs` do NOT match the current HEAD source, so a
+    stale received:true from a prior round cannot pass a WIP rotation as a
+    'reviewed' boundary. Every reviewed file must be present in the committed HEAD
+    with the exact blob the reviewer saw. Fail-CLOSED: empty blobs or a git error
+    is a failure."""
+    blobs = rs.get("trigger_blobs")
+    if not isinstance(blobs, dict) or not blobs:
+        return ("received review has no content binding (trigger_blobs) -- cannot "
+                "prove the committed WIP was reviewed")
+    for path, recorded in blobs.items():
+        try:
+            r = subprocess.run(["git", "-C", str(root), "rev-parse", f"HEAD:{path}"],
+                               capture_output=True, text=True, timeout=10)
+        except Exception:
+            return f"cannot verify review binding for {path} (git error, fail-closed)"
+        if r.returncode != 0:
+            return (f"reviewed file {path} is not in the committed HEAD -- the WIP "
+                    f"was not committed as reviewed")
+        head_sha = r.stdout.strip()
+        rec = str(recorded)
+        # trigger_blobs may be a bare sha or a `mode:sha` (B3); compare the sha.
+        rec_sha = (rec.split(":", 1)[1]
+                   if ":" in rec and rec.split(":", 1)[0].isdigit() else rec)
+        if head_sha != rec_sha:
+            return (f"reviewed file {path} differs from the committed HEAD -- the "
+                    f"received review is stale relative to the WIP commit")
+    return ""
+
+
 def _rollover_failures_wip(root: Path, state: dict) -> list:
     """P4.5: gate for a MID-SECTION (context-cap) rotation. The shipped
     _rollover_failures() above -- which governs the SECTION-BOUNDARY ship rollover
@@ -553,15 +610,24 @@ def _rollover_failures_wip(root: Path, state: dict) -> list:
                              f"WIP before a mid-section rotation")
     except Exception:
         fails.append("git status unavailable")
-    # (2) no outstanding review (fail-CLOSED on unreadable).
+    # (2) no outstanding review (fail-CLOSED on unreadable), AND (F3) a received
+    # review must actually BIND the committed HEAD content -- a stale global
+    # received:true from a prior fix-loop round does not prove the committed WIP
+    # was reviewed.
     review_state = root / ".claude/state/last-codex-review.json"
     if review_state.exists():
         try:
             rs = json.loads(review_state.read_text())
+        except (OSError, ValueError):
+            rs = None
+            fails.append("last-codex-review.json unreadable (fail-closed)")
+        if isinstance(rs, dict):
             if rs.get("received") is not True:
                 fails.append("outstanding Codex review not yet received")
-        except (OSError, ValueError):
-            fails.append("last-codex-review.json unreadable (fail-closed)")
+            else:
+                bad = _review_not_binding_head(root, rs)
+                if bad:
+                    fails.append(bad)
     # (3) no active background job (a running codex-review / watcher).
     try:
         out = subprocess.run(
@@ -896,6 +962,24 @@ def cli(argv):
         if not state.get("active"):
             print("[sequencer] rollover-wip REFUSED: no active run", file=sys.stderr)
             return 1
+        # F1 (review 2026-07-14): a WIP rotation is ONLY a mid-section move. It
+        # must NOT be an alternate ship path. Require phase == SECTIONS, and
+        # REFUSE outright if a SHIP rollover was refused (rollover_refused set) --
+        # a failed ship gate (unpushed / missing receipts / bad graph) must be
+        # fixed, never laundered into a WIP rotation. And it must NEVER clear
+        # rollover_refused (the P3.2 advance-block stays until a real ship rollover
+        # verifies).
+        if state.get("phase") != "SECTIONS":
+            print("[sequencer] rollover-wip REFUSED: only valid mid-section "
+                  f"(phase == SECTIONS), current phase is {state.get('phase')!r}.",
+                  file=sys.stderr)
+            return 1
+        if state.get("rollover_refused"):
+            print("[sequencer] rollover-wip REFUSED: a ship rollover was refused "
+                  "(rollover_refused set). Fix the ship-gate failures and re-run "
+                  "`rollover` -- a WIP rotation must not bypass a failed ship gate.",
+                  file=sys.stderr)
+            return 1
         try:
             hint = json.loads(
                 (repo_root() / ".claude/state/rotate-hint.json").read_text())
@@ -916,21 +1000,24 @@ def cli(argv):
                     "receive the review / wait for the job, then retry -- or just "
                     "continue in-session.", file=sys.stderr)
             return 1
+        # F2 (review 2026-07-14): write the DURABLE checkpoint FIRST and
+        # fail-CLOSED if it fails -- never authorize a Stop/rotation without a
+        # checkpoint the fresh worker can resume from. Only after a successful
+        # write do we set the rollover-pending authorization.
+        if not _write_section_checkpoint(repo_root()):
+            print("[sequencer] rollover-wip REFUSED: could not write a durable "
+                  "section-checkpoint -- refusing to authorize a rotation the "
+                  "fresh worker cannot resume from.", file=sys.stderr)
+            return 1
         state["rollover"] = {"pending": True, "epoch": int(time.time()),
                              "wip": True}
-        state.pop("rollover_refused", None)
+        # NB: rollover_refused is intentionally NOT cleared here (F1) -- a WIP
+        # rotation resumes the SAME section and must not lift the advance-block.
         save_state(state)
-        # Reset the turn counter for the fresh worker + write the enriched
-        # checkpoint so the resume re-orients (P4.2/P4.3). Best-effort.
+        # Reset the turn counter for the fresh worker (the checkpoint is already
+        # written above). Best-effort.
         try:
             (repo_root() / ".claude/state/rotate-hint.json").unlink()
-        except Exception:
-            pass
-        try:
-            subprocess.run(
-                ["python3", str(repo_root()
-                                / "scripts/overnight/section-checkpoint.py"),
-                 "write"], cwd=str(repo_root()), capture_output=True, timeout=30)
         except Exception:
             pass
         print("[sequencer] rollover-wip VERIFIED: WIP committed, no pending review, "
