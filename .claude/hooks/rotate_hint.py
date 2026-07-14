@@ -99,16 +99,15 @@ def main() -> int:
         data["hint_since_ts"] = time.time()
         data["hint_at_turns"] = data["count"]
         newly_set = True
-    # A4 (review 2026-07-14): emit ONLY after the state persisted. If write_text
-    # fails, the incremented count is in-memory only; the next event re-reads the
-    # old count and would re-cross/re-emit forever while rollover-wip (which reads
-    # the FILE) sees no hint and refuses -- an emit/refuse loop. Fail-silent on a
-    # write error instead: no persisted transition, no reminder.
-    # A4 (review 2026-07-14): persist ATOMICALLY (tmp + os.replace, matching
-    # run_phase_guard.save_state) so a crash mid-write cannot leave a truncated
-    # file. (The lost-increment race across concurrent hooks is not reachable:
-    # after the A2 gate only the single headless session increments, and its
-    # PostToolUse hooks run serially -- a file lock would be dead weight.)
+    # A4 (review 2026-07-14): persist ATOMICALLY, then emit ONLY if it persisted.
+    # (1) tmp + os.replace (matching run_phase_guard.save_state) so a crash
+    # mid-write cannot leave a truncated file. (2) If the write fails, the
+    # incremented count is in-memory only; emitting anyway would re-cross/re-emit
+    # every event forever while rollover-wip (which reads the FILE) sees no hint
+    # and refuses -- an emit/refuse loop. So fail-silent: no persisted transition,
+    # no reminder. The lost-increment race across concurrent hooks is unreachable
+    # (the A2 gate leaves only the single headless session incrementing, and its
+    # PostToolUse hooks run serially -- a file lock would be dead weight).
     persisted = False
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
