@@ -9,13 +9,16 @@
 
 ## Arm-readiness gate (do these before any unattended arm)
 
-- [ ] **[review] A1. Triage + fix the P4.5/P4.6 (mid-section WIP rollover) adversarial review.**
-  DISPATCHED 2026-07-14 (`.claude/overnight/reviews/20260714-082529-adversarial.out`, correctness framing
-  per J3), IN FLIGHT at close-out. It attacks the one property that matters: can `_rollover_failures_wip()`
-  accept a state where in-progress work is LOST/CORRUPTED across a rotation, can rotation fire mid-fix-loop
-  / during a review wait, and does it weaken the shipped `_rollover_failures()` ship gate. When it lands:
-  process through `Skill(superpowers:receiving-code-review)`, verify each finding at file:line, fix the
-  valid ones (the C-RECV precedent found 3 real HIGH spoofs in an analogous gate), re-test. Code: `5975d72a`.
+- [x] **[review] A1. Triage + fix the P4.5/P4.6 (mid-section WIP rollover) adversarial review. DONE 2026-07-14.**
+  The review (`20260714-082529-adversarial.out`) returned needs-attention / do-not-ship with 3 HIGH + 1
+  MEDIUM, all verified valid + fixed (commit `e282332c`, received through `receiving-code-review` first):
+  F1 -- rollover-wip was an alternate ship path (cleared `rollover_refused`, no phase guard) -> require
+  phase==SECTIONS, refuse if `rollover_refused` set, never clear it; F2 -- authorization survived a failed
+  checkpoint write -> `_write_section_checkpoint()` first, fail-closed; F3 -- `received:true` did not prove
+  the COMMITTED WIP was reviewed -> `_review_not_binding_head()` requires trigger_blobs to match HEAD; F4 --
+  `_dirty_owner` classified by pathname only -> parse porcelain XY status, tolerate ONLY ` M` of a tracked
+  generated file (also tightens the ship gate's B4/F2 tolerance). Tests grew to 13; suite 42/42. Same
+  pattern as C-RECV: the review of the review-*gate* caught real spoofs a doctrine-only build would ship.
 
 - [ ] **[canary] A2. C-RECV confirmation canary -- prove zero-`SKIP_*`.**
   Canary #1 validated the Stage 2/3 cluster but ended with ONE `SKIP_REVIEW_HOOK` (the `received:true`
