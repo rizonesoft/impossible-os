@@ -92,6 +92,46 @@
   B is resolved (`run_phase_guard.py:608-631`). Fix: require `receipt.review_run_id` == the latest review
   state's `run_id` (nonempty), and invalidate the receipt whenever a new review is dispatched.
 
+## Canary #2 observations (2026-07-14, attended, TODO-22 §11 PATHEXT) -- next unattended
+
+> Watched run on branch `overnight-runner-improvements-2026-07-13`. §11 shipped cleanly (code `7a8842a8` +
+> stamps `f6475f2e`, both pushed) through the FULL pipeline (implement -> 4 pre-commit adversarial rounds ->
+> commit+push -> 3 post-commit legs -> stamps -> full rollover VERIFIED). Nothing critically broken; zero
+> crashes; the runner self-recovered from every gate refusal. Validated live: P3.4 build-offload BLOCK +
+> wrapper escape-hatch, the lint gate (numeric section refs), the section-commit re-adversarial requirement,
+> receipt content-binding, and the full-rollover gate (refuse -> repair -> retry -> VERIFIED). Three findings:
+
+- [ ] **[canary-finding] B1. The mid-section WIP rotation is effectively INERT under the real runner workflow (questions Phase 4's premise).**
+  The rotation needs a "committed-but-UNPUSHED WIP" boundary, but the runner commits AND pushes atomically at
+  ship, and does NOT make intermediate unpushed commits during a section. So when the hint crosses 140 (which
+  happened only late, DURING the post-commit review pipeline), the section is already pushed -> `rollover-wip`'s
+  `unpushed>0` guard correctly refuses; the full rollover is the only real exit. Also calibration: a ~2h,
+  7-review-round HEAVY section accumulated only ~132 tool-events, so 140 is ~one whole section -- the rotation
+  could at most fire once per section, at the ship boundary, redundant with the full rollover. Decide before
+  investing further in Phase 4: either (a) have the runner make periodic UNPUSHED WIP commits at natural
+  in-section boundaries (doctrine change that CREATES rotation points), or (b) accept the rotation is inert for
+  this workflow and retire/soften it. The rotation MECHANICS are correct + fail-safe (all the A1-A9 gates); the
+  gap is that its PRECONDITION never occurs.
+
+- [ ] **[canary-finding] B2. Review-churn spiral on trivial sections (7 Codex reviews for a one-`#define` feature, ~2h).**
+  §11 (one `#define` + one `env_seed` + a test assertion) drew 4 PRE-commit adversarial rounds + 3 POST-commit
+  legs. Driver: the runner's fix for a leak-exemption finding added a prewarm/verify test with an
+  allocator-layout-dependent `delta <= 16` bound, which ITSELF drew findings each round, and the section-commit
+  gate mandates a fresh re-adversarial on every source change -> spiral. It converged (HIGH -> MEDIUM ->
+  de-escalations), so not a wedge, but very expensive. Options: allow a lighter "confirming" re-adversarial for
+  test-only/cosmetic diffs (cone-bounded), and/or damp the instinct to add finding-generating test bounds.
+
+- [ ] **[canary-finding] B3. `SKIP_REVIEW_HOOK` stamp-commit resets `received` -> full rollover refused + receiving-review re-block -> repair loop.**
+  The legitimate stamp-only opt-out (`SKIP_REVIEW_HOOK=1`, "review stamp commit is TODO-only") reset
+  `last-codex-review.json` `received:false`, even though all reviews were genuinely received (6x). That then (a)
+  REFUSED the full rollover ("outstanding review not received") and (b) re-BLOCKED edits via
+  `receiving_review_required`, forcing a repair loop: re-verify green (full build+test+smoke, ~expensive) +
+  re-assert received. Self-recovered, but this is the ONE SKIP that kept Canary #2 from being zero-SKIP, and it
+  costs a full re-verification. Fix: a stamp-only-commit SKIP must NOT invalidate the review-received flag (the
+  code review that passed still stands), or the rollover/receiving gates should treat a stamp-only SKIP as
+  non-invalidating. Related to the documented "2-commit + honest opt-out" gotcha, but the reset->refuse->reblock
+  chain is the concrete cost to eliminate.
+
 ## Deferred backlog (closed "not now" 2026-07-14; re-open if the need resurfaces)
 
 - **P3.5** -- reviewed-`[/]`-partial clean ship path. Largely SUBSUMED by B3 + C-RECV (the SKIP-deadlock it
