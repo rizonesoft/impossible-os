@@ -2122,17 +2122,26 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                     "requires a durable paper trail; refusing the commit.\n"
                 )
                 return 2
-            # Codex post-commit review_B: SKIP is a state transition,
-            # not just an audit append. Reset last-codex-review.json
-            # `received` to false so a stamp-only SKIP cannot leave a
-            # stale received state available to satisfy a later
-            # section commit's review_evidence binding.
-            _reset_review_state(root)
+            # B3 (Canary #2, 2026-07-14): do NOT reset last-codex-review.json
+            # `received` for a STAMP-ONLY SKIP. A stamp-only commit touches only
+            # TODO markdown (adds a `**Verified:**` stamp) and does NOT change the
+            # source the code review passed -- so the code review's `received: true`
+            # still legitimately stands, and the run needs it to persist for the
+            # immediately-following full `rollover` and the receiving-review gate.
+            # The reset here was redundant anyway: the ORIGINAL concern (a later
+            # section commit reusing this stale received to satisfy its gate) is
+            # already blocked by _review_evidence content-binding above -- a later
+            # code commit whose staged blobs differ from the review's trigger_blobs
+            # fails the binding regardless of the `received` flag. Resetting only
+            # broke the legitimate stamp-only workflow (Canary #2 B3:
+            # reset -> rollover refused -> receiving-review re-block -> repair loop).
+            # The SKIP is still recorded in skip-log.jsonl above (the paper trail).
             sys.stderr.write(
                 f"[section-commit-gate] SKIP allowed (stamp_only) -- "
                 f"reason: {skip_reason}\n"
                 f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
-                f"last-codex-review.json reset (received: false).\n"
+                f"last-codex-review.json received flag PRESERVED (stamp-only does "
+                f"not invalidate the passed code review -- B3).\n"
             )
             return 0
         fourd_ok, fourd_err = _four_dispatch_evidence(root, flipped)

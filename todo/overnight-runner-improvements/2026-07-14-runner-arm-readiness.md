@@ -121,7 +121,13 @@
   de-escalations), so not a wedge, but very expensive. Options: allow a lighter "confirming" re-adversarial for
   test-only/cosmetic diffs (cone-bounded), and/or damp the instinct to add finding-generating test bounds.
 
-- [ ] **[canary-finding] B3. `SKIP_REVIEW_HOOK` stamp-commit resets `received` -> full rollover refused + receiving-review re-block -> repair loop.**
+- [x] **[canary-finding] B3. `SKIP_REVIEW_HOOK` stamp-commit resets `received` -> repair loop. FIXED 2026-07-14.**
+  Fix: `section_commit_gate._evaluate` no longer calls `_reset_review_state` in the `stamp_only` branch -- a
+  stamp-only commit does not change the reviewed source, so the code review's `received:true` legitimately
+  stands (the immediately-following rollover + receiving gate need it). The reset was redundant: the ORIGINAL
+  concern (a later commit reusing a stale received) is already blocked by `_review_evidence` content-binding
+  (trigger_blobs must equal the staged blobs). The general-source SKIP branch still resets. Tests:
+  `test_b3_stamp_only_skip_preserves_received` + `test_b3_general_skip_still_resets_received`. Original:
   The legitimate stamp-only opt-out (`SKIP_REVIEW_HOOK=1`, "review stamp commit is TODO-only") reset
   `last-codex-review.json` `received:false`, even though all reviews were genuinely received (6x). That then (a)
   REFUSED the full rollover ("outstanding review not received") and (b) re-BLOCKED edits via

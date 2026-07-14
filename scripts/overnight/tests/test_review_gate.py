@@ -357,7 +357,79 @@ def test_f1_orphaned_active_falls_back():
         assert scg._attribute_review_todo(root, ["todo/a/TODO-9.md"]) == "todo/a/TODO-9.md"
 
 
+# --------------------------------------- B3: stamp-only SKIP preserves received
+def _stamp_repo(d):
+    root = pathlib.Path(d)
+    (root / ".claude/state").mkdir(parents=True)
+    (root / "todo").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "t"], check=True)
+    (root / "todo/T.md").write_text(
+        "## 1. Section\n\n| Item | Done |\n| A | [x] |\n\nbody\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+    return root
+
+
+def _with_skip_env(fn):
+    import os
+    keys = ("SKIP_REVIEW_HOOK", "SKIP_REVIEW_HOOK_REASON")
+    saved = {k: os.environ.get(k) for k in keys}
+    os.environ["SKIP_REVIEW_HOOK"] = "1"
+    os.environ["SKIP_REVIEW_HOOK_REASON"] = "review stamp commit is TODO-only, code already reviewed"
+    try:
+        return fn()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_b3_stamp_only_skip_preserves_received():
+    # B3 (Canary #2, 2026-07-14): a stamp-only SKIP commit must NOT reset the
+    # passed code review's received:true -- the immediately-following full
+    # rollover + the receiving-review gate both need it to persist.
+    with tempfile.TemporaryDirectory() as d:
+        root = _stamp_repo(d)
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(review)", trigger_files=["src/kernel/x.c"],
+               trigger_blobs={"src/kernel/x.c": "abc"}, head_sha="h")
+        # stage a stamp-only change: add a blockquoted **Verified:** line, no source
+        (root / "todo/T.md").write_text(
+            "## 1. Section\n\n| Item | Done |\n| A | [x] |\n\nbody\n\n"
+            "> **Verified:** 2026-07-14 test\n")
+        subprocess.run(["git", "-C", str(root), "add", "todo/T.md"], check=True)
+        assert scg._detect_signature(root)[0] == "stamp_only", \
+            "fixture must present a stamp_only signature"
+        rc = _with_skip_env(lambda: scg._evaluate(root, "git-hook", ""))
+        assert rc == 0, f"stamp-only SKIP must be allowed, rc={rc}"
+        after = json.loads(
+            (root / ".claude/state/last-codex-review.json").read_text())
+        assert after.get("received") is True, \
+            "B3: a stamp-only SKIP must PRESERVE received:true (not reset it)"
+
+
+def test_b3_general_skip_still_resets_received():
+    # Regression guard: the fix is scoped to stamp_only. `_reset_review_state`
+    # itself (used by the general-source SKIP branch) must still invalidate a
+    # received:true so a code-SKIP cannot leave a reusable stale flag.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger_blobs={"src/x.c": "abc"})
+        scg._reset_review_state(root)
+        after = json.loads(
+            (root / ".claude/state/last-codex-review.json").read_text())
+        assert after.get("received") is False and after.get("skipped_section_commit") is True
+
+
 if __name__ == "__main__":
+    test_b3_stamp_only_skip_preserves_received()
+    test_b3_general_skip_still_resets_received()
     test_broker_is_background_and_stampable()
     test_foreground_wrapper_unaffected()
     test_generic_bg_task_is_background_but_not_broker()
