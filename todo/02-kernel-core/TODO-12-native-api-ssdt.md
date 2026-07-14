@@ -380,7 +380,9 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §2).
 
 - [x] `NtCreateProcess(0x0030)`: wraps task_create + ob_handle_table_inherit; returns HANDLE
-- [ ] TODO-22 §1 has landed: wire `env_copy()` into every child-creation path (`task_fork`, `task_create_user`/NtCreateProcess) before publish; fail creation on copy OOM (→ XREF `TODO-22-environment-variables.md §1`)
+- [ ] Wire `env_copy()` fail-closed into every constructor (`task_fork`, `task_create`=NtCreateProcess+boot/desktop, `task_create_user`) before `num_tasks++` publish (→ XREF `03-memory-concurrency/TODO-07-smp-phase2.md` §3)
+- [ ] That env_copy pre-publish wiring also needs the atomic unpublished-slot reservation (concurrent creators must not claim the same `num_tasks` pid) -> XREF `03-memory-concurrency/TODO-06-scheduler-enhancement.md` §13
+- [ ] The env_copy child snapshot must take cwd + environ TOGETHER under the parent `chdir_lock` (§12 made cwd + `=X:` one txn; a split snapshot or `task_create` cwd=root reset yields a child whose cwd + `=X:` never coexisted)
 - [x] `NtCreateProcessEx(0x0031)`: aliases NtCreateProcess (extended flags deferred to TODO-21)
 - [ ] `NtCreateUserProcess(0x0045)`: stub returning STATUS_NOT_IMPLEMENTED (needs PE loader TODO-21)
 - [x] `NtCreateThread(0x0036)`: wraps thread_create; supports CreateSuspended via suspend_count
@@ -422,7 +424,7 @@ Process and thread creation, suspension, termination, and thread context access 
 > **Notes:**
 > - 23 process/thread lifecycle handlers shipped in `nt_process.c` (create/open/terminate/suspend/resume, query/set info, delay), registered in the SSDT.
 > - Adversarial review: handle model is a PID/TID-as-handle shortcut (not OB objects), NtCreateProcess leaves a runnable NULL-entry task, info syscalls unprobed -- 3 [Critical] filed (2 §7 -> D02 T05 §2, 1 -> §29).
-> - Most other open items are blocked on external prerequisites (env-copy D02 T22, NtCreateUserProcess D02 T21, Context D02 T23, ApcThread D02 T07, Impersonate D02 T15) and defer with their existing XREFs.
+> - Most other open items are blocked on external prerequisites (env-copy child-inheritance wiring gated on the D03 T07 §3 publication lock + D03 T06 §13 slot-reservation (the two §7 prereq items), NtCreateUserProcess D02 T21, Context D02 T23, ApcThread D02 T07, Impersonate D02 T15) and defer with their existing XREFs.
 
 > **Deferred:** [Critical] §7 process/thread handle model (real OB PROCESS/THREAD objects + handle-rights + user-pointer probes + non-runnable NtCreateProcess + teardown) is gated on the OB object model + the NT trust-boundary campaign with §29 -> XREF: 02-kernel-core/TODO-12 §7 (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct" at line 413, + sibling at 414) and D02 T05 §2
 
@@ -704,7 +706,7 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > - Test gap: STATUS_KEY_HAS_CHILDREN + ring-3 5+arg paths untested (direct-dispatch tests cover handler logic).
 > **Verified:** 2026-07-02 | commit `1d898565` | 10/13 items | build OK | abi 426/426 PASS
 > **Deferred:** [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args -> XREF: 02-kernel-core/TODO-12 §14 (item: "Registry syscalls with 5+ args" at line 687)
-> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 707)
+> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 709)
 > **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 291)
 > **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
@@ -1105,7 +1107,7 @@ Per-process syscall restrictions allow a process to lock down which system servi
 > **Verified:** 2026-07-03 | commit `269eccd9` | 8/8 items | build OK | tests 13686 kernel + 16 user PASS
 > **Accepted:** [H] KernelMode bypass + filtered-task resolution read the global current-thread cursor (not SMP-closed); on real SMP a filtered user syscall could be misclassified as KernelMode -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]` ... closes the cross-CPU probe-gating half of 02-kernel-core/TODO-12 §12 (`ssdt_previous_mode`)" at line 116)
 > **Accepted:** [H] snapshot free at the reap barrier has no cross-CPU reader grace period; safe on the single-cursor scheduler, a sibling reader on another CPU could race the free once per-CPU run queues land -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §6 (item: "`call_rcu(cb)` defers callbacks to a per-CPU list drained after each quiescent state" at line 160)
-> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects ... Use real OB objects + rights" at line 1108)
+> **Accepted:** [M] cross-process filter install (beyond self) needs real OB process objects + granted-access rights; restricted to self meanwhile -> XREF: 02-kernel-core/TODO-12 §7 (item: "[Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects ... Use real OB objects + rights" at line 1110)
 > **Accepted:** [H] `NtCreateProcess` leaks the unstarted child task if `ObpAllocateHandle` fails after `task_create` (the inherited filter clone is freed, but the child TCB is not); the child is inert (no returned handle, never scheduled/exec'd) so it is not an unfiltered-runnable escape -> XREF: 02-kernel-core/TODO-05-object-manager.md (item: "Atomic CreateProcess teardown on failure ... add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown" at line 359)
 > **Accepted:** [M] the active-count drop at `TASK_DEAD` precedes a proven all-threads-off-CPU quiescence; correct on the single-cursor scheduler (a DEAD task's threads never run), but on real SMP a still-running sibling could see the count reach zero -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor ... proven-off-CPU-on-all-CPUs reap barrier" at line 116)
 > **Accepted:** [M] the audit-mode log throttle bumps one global `s_audit_log_seq` atomic on the blocked-audit branch; uncontended on the single-cursor scheduler but a shared cacheline under real per-CPU run queues (a multi-core audited loop would bounce it) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (per-CPU state; replace the global audit sample counter with a per-CPU cacheline-isolated one at line 116)

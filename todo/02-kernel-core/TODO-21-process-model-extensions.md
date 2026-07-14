@@ -51,26 +51,26 @@ title: "TODO-21 -- Process Model Extensions"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                               | Depends On     | Status |
-| --- | :---: | --------------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS            |  [x]   |
-| 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3         |  [/]   |
-| 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5    |  [/]   |
-| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists) |  [/]   |
-| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | §4             |  [/]   |
-| 💎   |   6   | Process capabilities and privilege bitmask                | --             |  [/]   |
-| ⭐   |   7   | Capability inheritance and drop-only policy               | §6             |  [/]   |
-| 💎   |   8   | Process accounting fields (times, I/O counters)           | §1             |  [/]   |
-| 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6         |  [/]   |
-| 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6 |  [/]   |
-| 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1     |  [/]   |
-| ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7         |  [x]   |
-| 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5     |  [/]   |
-| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9         |  [/]   |
-| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14            |  [/]   |
+| ⭐   | Order | Deliverable                                               | Depends On         | Status |
+| --- | :---: | --------------------------------------------------------- | ------------------ | :----: |
+| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring)           | VFS                |  [x]   |
+| 💎   |   2   | Standard handle pre-wiring at process creation            | T05 §3             |  [/]   |
+| 💎   |   3   | User-mode program break (brk/sbrk Linux compat)           | VMM, T17 §5        |  [/]   |
+| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`)         | sched (exists)     |  [/]   |
+| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`)          | §4                 |  [/]   |
+| 💎   |   6   | Process capabilities and privilege bitmask                | --                 |  [/]   |
+| ⭐   |   7   | Capability inheritance and drop-only policy               | §6                 |  [/]   |
+| 💎   |   8   | Process accounting fields (times, I/O counters)           | §1                 |  [/]   |
+| 💎   |   9   | Per-process resource limits (rlimits)                     | §3, §6             |  [/]   |
+| 💎   |  10   | CPU affinity per process                                  | §4, D03 T06 §6     |  [/]   |
+| 💎   |  11   | Per-process mitigation policy                             | §6, T10 §1         |  [/]   |
+| ⭐   |  12   | Pledge/unveil-style process restriction                   | §6, §7             |  [x]   |
+| 💎   |  13   | Job Object syscalls wired to SSDT                         | §6, T12 §5         |  [/]   |
+| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9             |  [/]   |
+| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle              | §14                |  [/]   |
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1, T12 §7 |  [/]   |
-| 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --             |  [/]   |
-| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17       |  [/]   |
+| 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --                 |  [/]   |
+| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -83,10 +83,11 @@ title: "TODO-21 -- Process Model Extensions"
 
 - [x] Add `char cwd[TASK_CWD_MAX]` (512, `_Static_assert`-pinned to `VFS_MAX_PATH`) + `spinlock_t cwd_lock` to `struct task`; init `"C:\\"` at `task_init`/`task_create`/`task_create_user`
 - [x] Inherit CWD from parent at `task_fork()` (and `task_create_user`) -- snapshot parent under its lock, commit to child
-- [ ] Inherit parent environ into the child at `task_fork()` via `env_copy` (TODO-22 §4 exec inherit needs it), race-safe: env_copy yields on `environ_lock` mid-fork -- needs the atomic slot publication owned by TODO-06 §13
+- [ ] Child environ inheritance (incl. this fork path) owned by `TODO-12` §7 (env_copy fail-closed pre-publish across ALL constructors; publish-lock + slot-reserve prereqs are the two `TODO-12` §7 items)
 - [x] `task_exec()` preserves CWD (mutates in place, never touches cwd); PEB `CurrentDirectory` re-synced from `task->cwd` in `peb_alloc_for_task`
 - [x] `vfs_resolve_path(cwd, in, out, size)` canonicalizer: join relative onto cwd, `/`->`\`, collapse `.`/empty, apply `..` without escaping the drive root, reject overflow (no truncation)
 - [x] `task_get_cwd`/`task_set_cwd`/`task_resolve_path` -- lock-guarded snapshot/commit so a concurrent set is never observed half-written
+- [ ] Concurrent `NtSetCurrentDirectory` non-linearizable (resolves vs a cwd snapshot outside `chdir_lock`; racing relative chdirs leave a non-serial cwd). Low-pri (Win not-thread-safe); fix via cwd gen-counter + verify-retry
 - [x] `NtSetCurrentDirectory(UNICODE_STRING *)` (SSDT 0x03D9): decode+narrow, resolve, require `VFS_DIRECTORY`, release the probe ref, leave cwd unchanged on failure
 - [x] `NtQueryCurrentDirectory(WCHAR *buf, ULONG bytes)` (SSDT 0x03DA): widen `task->cwd` to UTF-16, `STATUS_BUFFER_TOO_SMALL` if it does not fit, probe+copy_to_user
 - [x] Relative-path resolution wired into ALL fs pathname consumers -- NtCreateFile (`nt_syscall.c`), NtDeleteFile + NtQueryAttributesFile (`nt_file.c`); `vfs_open` stays absolute-only (design review F3)
@@ -391,11 +392,11 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 394)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 395)
-> **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 655)
-> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 657)
-> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 659)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 395)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 396)
+> **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 657)
+> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 659)
+> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 661)
 > **Quality reviewed:** 2026-07-12 | Codex 22x (design, adversarial, re-adversarial, consistency, perf) | ~21H+6M fixed, 3H accepted-XREF, 3M deferred | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---
@@ -546,7 +547,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 549)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 550)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

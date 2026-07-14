@@ -1613,6 +1613,14 @@ int task_resolve_path_for(struct task *t, const char *in, char *out,
         if (!is_letter || c2 == '\\' || c2 == '/')
             return vfs_resolve_path("C:\\", in, out, out_size);
 
+        /* Drive-relative "X:tail" whose TAIL is ITSELF drive-qualified ("D:C:\..")
+         * is malformed: vfs_resolve_path would take the drive from the tail and
+         * silently cross to that other volume (a cross-drive delete/overwrite via
+         * NtDeleteFile). Fail closed. c2 is a non-separator here; read in[3] only
+         * when c2 is a letter (so in[2] is non-NUL and in[3] is in bounds). */
+        if (((c2 >= 'A' && c2 <= 'Z') || (c2 >= 'a' && c2 <= 'z')) && in[3] == ':')
+            return -1;
+
         {
             char drive = (c0 >= 'a' && c0 <= 'z') ? (char)(c0 - 32) : c0;
             char base[TASK_CWD_MAX];
@@ -1819,10 +1827,12 @@ int task_fork(struct interrupt_frame *frame)
      * sleeping mutex) BETWEEN ob_job_fork_inherit (child joined the job) and
      * num_tasks++ (child published); a concurrent job termination during that
      * yield snapshots child_pid, finds it not-yet-published, skips it, and the
-     * fork then publishes a live child in a terminated job. Race-safe fork env
-     * inheritance needs the job-membership/publication window made atomic w.r.t.
-     * termination -- owned by the process-model fork work
-     * (02-kernel-core/TODO-21). SYS_EXEC with envp==NULL still inherits whatever
+     * fork then publishes a live child in a terminated job. Race-safe env
+     * inheritance across EVERY constructor (this fork; the shared task_create that
+     * NtCreateProcess and boot/desktop launchers use; and task_create_user) needs
+     * the job-membership/publication window made atomic w.r.t. termination -- owned
+     * by the child-creation env_copy wiring (02-kernel-core/TODO-12 s7). SYS_EXEC
+     * with envp==NULL still inherits whatever
      * environ the task holds (execv semantics); that path is correct
      * independent of this gap. */
 

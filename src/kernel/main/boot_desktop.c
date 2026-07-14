@@ -107,7 +107,9 @@ void boot_phase3(void)
 
     /* Seed PID 0's environment block from the Registry (or a hardcoded fallback
      * if registry population failed). Registry is up (Phase 2) by now, so the
-     * full default set lands; descendants inherit it via env_copy at creation. */
+     * full default set lands. (Descendants are DESIGNED to inherit it via
+     * env_copy at creation, but that wiring is not live yet -- owned by
+     * TODO-12 s7; children do not inherit today.) */
     env_init_kernel_task();
 
     ahci_enable_events();  /* safe now: yield handler registered */

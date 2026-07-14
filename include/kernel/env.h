@@ -99,9 +99,12 @@ int env_unset(struct task *t, const char *name);
 
 /* Deep-copy src's environ into dst (dst must be an unpublished child: its lock
  * is NOT taken). Snapshots src under src->environ_lock. On any allocation
- * failure the partial dst copy is unwound and dst->environ stays NULL. Called
- * from the process-creation path (NtCreateProcess child-env inheritance).
- * Returns ENV_OK or a negative code. */
+ * failure the partial dst copy is unwound and dst->environ stays NULL. Intended
+ * for every constructor (task_fork; the shared task_create that NtCreateProcess
+ * and the boot/desktop launchers use; and task_create_user) to give a
+ * NULL-lpEnvironment child the parent's block; it has NO live caller yet (wiring
+ * owned by TODO-12 s7, fail-closed before the num_tasks++ publish), so children do
+ * NOT inherit today. Returns ENV_OK or a negative code. */
 int env_copy(struct task *dst, const struct task *src);
 
 /* Free task->environ and task->argv and their strings; NULLs the fields. Call
@@ -236,10 +239,11 @@ int env_parse_block(struct task *t, const void *block, uint32_t len,
  * the second separates name from value). These are stored in the SAME sorted
  * task->environ array as ordinary variables; because '=' (0x3D) sorts before any
  * letter, they naturally appear at the FRONT of a built environment block, and
- * env_copy inherits them for free. They are NOT enumerated by SET / user-facing
- * listings (a display filter drops leading-'=' names), but they ARE present in
- * the block a child receives. The '=X:' name is the ONLY name form permitted to
- * contain '=' (env_name_classify accepts exactly "=<A-Z>:" and rejects any other
+ * env_copy would inherit them for free once inheritance is wired (TODO-12 s7 --
+ * env_copy has no live caller today, so children do NOT yet receive them). They
+ * are NOT enumerated by SET / user-facing listings (a display filter drops
+ * leading-'=' names). The '=X:' name is the ONLY name form permitted to contain
+ * '=' (env_name_classify accepts exactly "=<A-Z>:" and rejects any other
  * '='-containing name). */
 
 /* Set the hidden "=X:" variable (X = uppercased `drive`) to `path` (the full
@@ -252,13 +256,17 @@ int env_set_drive_cwd(struct task *t, char drive, const char *path);
 /* Copy the current directory remembered for drive `drive` (its hidden "=X:"
  * variable) into `out` (NUL-terminated), under t->environ_lock. When the drive
  * has no remembered directory, `out` receives the drive root "X:\" and the call
- * still succeeds. `drive` must be an ASCII letter; a non-letter, NULL out, or
- * out_size < 4 returns ENV_ERR_INVAL. Returns the value length in bytes
- * (excluding NUL) on success -- like env_get_copy, an oversize value is truncated
- * to fit and the FULL required length (>= out_size) is returned so a caller can
- * detect truncation. This is a COPY-OUT (never a borrowed pointer): the env
- * reader-lifetime contract forbids returning a raw pointer that a sibling
- * env_set/env_unset would free after the lock drops. */
+ * still succeeds. A PRESENT value that is not a canonical absolute path ON drive
+ * X (a foreign-drive or non-absolute value -- storable because env_set validates
+ * the "=X:" NAME but not the VALUE) is REJECTED with ENV_ERR_INVAL, so a consumer
+ * never resolves a drive-relative path against a wrong-volume base. `drive` must
+ * be an ASCII letter; a non-letter, NULL out, or out_size < 4 returns
+ * ENV_ERR_INVAL. Returns the value length in bytes (excluding NUL) on success --
+ * like env_get_copy, an oversize value is truncated to fit and the FULL required
+ * length (>= out_size) is returned so a caller can detect truncation. This is a
+ * COPY-OUT (never a borrowed pointer): the env reader-lifetime contract forbids
+ * returning a raw pointer that a sibling env_set/env_unset would free after the
+ * lock drops. */
 int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size);
 
 /* --- System default environment (system-default-variables feature) -------- */
@@ -274,10 +282,14 @@ int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size);
  * fully populated. Registry values that are not REG_SZ/REG_EXPAND_SZ are ignored.
  *
  * This is the seed used for the initial system process (PID 0) via
- * env_init_kernel_task(); ordinary child processes inherit their parent's block
- * through env_copy() (child-creation wiring owned by the native-API process/
- * thread lifecycle work), NOT by re-deriving Registry defaults. Callable only
- * from thread/boot context (takes the env mutex + reads the Registry); never
+ * env_init_kernel_task(). Ordinary child processes are DESIGNED to inherit their
+ * parent's block through env_copy() (NOT by re-deriving Registry defaults), but
+ * that inheritance is not yet wired: env_copy() has no live caller -- every
+ * constructor (task_fork, the shared task_create that NtCreateProcess + the
+ * boot/desktop launchers use, and task_create_user) must call it fail-closed
+ * before the num_tasks++ publish (owned by the native-API process/thread
+ * lifecycle work, TODO-12 s7). Callable only from thread/boot context (takes the
+ * env mutex + reads the Registry); never
  * from an ISR. Returns ENV_OK, or the first negative env_set error code
  * encountered (best-effort: earlier successful sets are retained). */
 int env_init_defaults(struct task *t);

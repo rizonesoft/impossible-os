@@ -1968,6 +1968,13 @@ static void test_env_drive_cwd_adapter_boundaries(void)
     TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'C', out, sizeof(out)),
                    (int)(sizeof(big) - 1u), "truncated get returns full length");
     TEST_ASSERT(out[sizeof(out) - 1u] == '\0', "truncated out stays NUL-terminated");
+    /* A present value naming a DIFFERENT drive (or non-absolute) is rejected by
+     * the getter itself -- the resolution base must be on the requested drive. */
+    env_free(&s_env_fixture);
+    env_fixture_reset();
+    env_set(&s_env_fixture, "=D:", "C:\\Trap");        /* foreign drive in value */
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'D', out, sizeof(out)),
+                   ENV_ERR_INVAL, "foreign-drive =D: value rejected by getter");
     env_free(&s_env_fixture);
 }
 
@@ -2026,6 +2033,22 @@ static void test_env_drive_cwd_resolve_matrix(void)
     env_set_drive_cwd(&s_env_fixture, 'F', big);
     TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "F:x", out, sizeof(out)),
                    -1, "oversized =F: fails closed (no root retarget)");
+    /* A crafted "=H:" naming ANOTHER drive must NOT retarget H:relative to that
+     * drive -- fail closed rather than resolve "H:x" against "C:\Trap". */
+    env_set(&s_env_fixture, "=H:", "C:\\Trap");
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "H:x", out, sizeof(out)),
+                   -1, "foreign-drive =H: fails closed (no cross-drive retarget)");
+    /* A non-absolute "=I:" value ("I:rel", no separator) is also rejected. */
+    env_set(&s_env_fixture, "=I:", "I:rel");
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "I:x", out, sizeof(out)),
+                   -1, "non-absolute =I: fails closed");
+    /* A drive-relative path whose TAIL is itself drive-qualified ("D:C:\Victim")
+     * must NOT cross to the tail's drive -- fail closed (both other-drive and
+     * current-drive forms). */
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "D:C:\\Victim", out, sizeof(out)),
+                   -1, "nested drive qualifier (other drive) fails closed");
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "C:D:\\x", out, sizeof(out)),
+                   -1, "nested drive qualifier (current drive) fails closed");
 
     s_env_fixture.cwd[0] = '\0';                      /* clear cwd for later tests */
     env_free(&s_env_fixture);

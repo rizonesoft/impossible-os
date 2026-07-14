@@ -1430,8 +1430,9 @@ done:
  * Windows records the current directory of each drive letter in a hidden env
  * variable whose name begins with '=' ("=C:", "=D:", ...). These live in the
  * SAME sorted environ[] as ordinary variables: '=' (0x3D) sorts before any
- * letter so they land at the front of a built block, env_copy inherits them,
- * and env_build_block emits them first -- no separate storage. env_set /
+ * letter so they land at the front of a built block, env_copy carries them along
+ * once child inheritance is wired (TODO-12 s7), and env_build_block emits them
+ * first -- no separate storage. env_set /
  * env_get_copy already accept the "=X:" name (env_name_classify), so these are
  * thin drive-letter -> "=X:" adapters.
  * =========================================================================== */
@@ -1482,6 +1483,21 @@ int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size)
         out[3] = '\0';
         return 3;                          /* value length, excluding NUL */
     }
+    if (rc < 0)
+        return rc;
+    /* A PRESENT "=X:" value MUST be a canonical absolute path ON drive X
+     * ("X:\..."). env_set / env_adopt_block / env_parse_block validate the NAME
+     * (only "=X:") but NOT the value, so a crafted "=D:=C:\Victim" (or a
+     * non-absolute "=D:=foo") can be stored. Consuming such a value as the
+     * resolution base would let vfs_resolve_path take the drive from the VALUE and
+     * silently retarget "D:relative" to another volume -- reaching destructive
+     * callers (NtDeleteFile). Reject a foreign-drive or non-absolute value
+     * (fail-closed via ENV_ERR_INVAL) rather than resolve against it. A truncated
+     * value that starts "X:\" still passes here and is caught by the caller's
+     * rc >= out_size guard. */
+    if (env_drive_upper(out[0]) != up || out[1] != ':' ||
+        (out[2] != '\\' && out[2] != '/'))
+        return ENV_ERR_INVAL;
     return rc;
 }
 

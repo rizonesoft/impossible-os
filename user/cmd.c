@@ -402,9 +402,12 @@ static int run_external(const char *path, char *const argv[])
     }
     if (pid == 0) {
         /* Child: exec replaces the cmd.exe image with the child .exe, passing
-         * the tokenized argv (envp NULL -> the child inherits our environment).
-         * On success, exec never returns; on failure, fall through to
-         * sys_exit(127) so the parent's waitpid sees a distinct code. */
+         * the tokenized argv (envp NULL -> exec PRESERVES the child's current
+         * environment). NOTE: fork does not yet copy the parent env (env_copy is
+         * unwired -- TODO-12 s7), so the child's env is EMPTY until that lands; it
+         * does NOT inherit cmd.exe's PATH/defaults today. On success exec never
+         * returns; on failure, fall through to sys_exit(127) so the parent's
+         * waitpid sees a distinct code. */
         sys_exec(path, argv, (char *const *)0);
         sys_exit(127);
     }

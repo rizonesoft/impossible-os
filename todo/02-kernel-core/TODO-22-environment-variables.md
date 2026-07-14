@@ -145,7 +145,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   2. **System overlay**: enumerate `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` (→ XREF `TODO-14-registry-completion.md §4`) via `RegEnumValue`; `env_set` each REG_SZ/REG_EXPAND_SZ value (overrides synth; non-string types skipped).
   3. **User overlay**: enumerate `HKCU\Environment`; `env_set` each (overrides system). `PATH` is APPENDED to the base with `;`, not replaced.
   Value buffers are heap/PMM-sized from `RegQueryInfoKey`, never a 32 KiB stack buffer (design-review adoption). Missing/unreadable keys are skipped so the synth base always lands.
-- [x] Lifecycle: `env_init_defaults` seeds the initial system process only; children inherit via `env_copy` (→ XREF `TODO-12-native-api-ssdt.md §7`), not by re-reading the Registry per spawn (design-review adoption).
+- [x] Lifecycle: `env_init_defaults` seeds the initial system process only; children will inherit via `env_copy` once wired (→ XREF `TODO-12 §7`; no live caller today), not by re-reading the Registry per spawn.
 - [x] `env_init_kernel_task()` seeds PID 0 (`task_get_by_pid(0)`) from `boot_phase3` after `task_init()`; applies a hardcoded bootstrap fallback table when `SUBSYS_REGISTRY` is not ready:
   ```c
   static const struct { const char *name, *value; } bootstrap_env[] = {
@@ -164,7 +164,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 7 env-default suites, 0 failures
 > **Notes:**
 > - **What shipped** -- `env_init_defaults`/`env_init_kernel_task` in `src/kernel/env.c`: 3-layer (synth base -> HKLM system overlay -> HKCU user overlay, PATH appended) default environment seed; heap/PMM-sized enumeration buffers.
-> - **How it integrates** -- `env_init_kernel_task()` seeds PID 0 in `boot_phase3` after `task_init()`; registry reads are best-effort (synth base always lands); descendants inherit via `env_copy`.
+> - **How it integrates** -- `env_init_kernel_task()` seeds PID 0 in `boot_phase3` after `task_init()`; registry reads are best-effort (synth base always lands); descendants will inherit via `env_copy` once wired (TODO-12 §7; not yet).
 > - **Downstream effects** -- adds `HARDWARE\CPU\Count` + `ComputerName` + `Session Manager\Environment` Registry defaults; unblocks env-block builders and shell PATH lookup; Codex design adoptions in the commit message.
 > - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) `env_init_defaults` contract.
 > - **Scope boundary** -- §2 owns the default seed + Registry read; per-child env inheritance is `TODO-12 §7` (`env_copy`); token-derived `USERNAME` is SRM account-name work; `%VAR%` expansion is §3.
@@ -245,7 +245,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Scope boundary: §6 owns `GetCommandLineW/A`; §15 owns `CommandLineToArgvW` decode + round-trip; envp -> PEB Environment PAGE owned by TODO-11 §21; the non-recoverable `copy_from_user` gap by TODO-02 §4.
 > **Verified:** 2026-07-13 | commit `bda8324f` | 8/9 items | build OK | 20644 kernel + 16 user tests PASS, smoke PASS
 > **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 632)
-> **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-21 §1 (item: "Inherit parent environ into the child at `task_fork()`" at line 86)
+> **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "Wire `env_copy()` into every child path")
 > **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 196)
 > **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 126)
 > **Deferred:** [M] full exec-commit transactionality (roll back / terminate on a task_exec failure after the argv/env commit) -> XREF: 02-kernel-core/TODO-22 §4 (item: "Follow-up: make SYS_EXEC argv/env commit transactional" at line 233)
@@ -422,7 +422,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Adoptions (detail in commit messages): value pointers derive from the stored `=`; ASCII-only stable fold over ephemeral NLS; O(n log n) adopt sort; O(1) block cap via cached byte total.
 > - New `test_env_*` cases (sort, build/parse ANSI+Unicode, dedup, malformed, 1 MiB cap, over-value skip, oversize reject, unset-reclaims, empty-adopt quota) under SUITE=abi; build+test+smoke green.
 > - Canonical doc: byte-cap contract + block-cap rationale in the `include/kernel/env.h` header comment.
-> - Scope: full NLS folding is TODO-13's (deferred `[/]`); CREATE_UNICODE_ENVIRONMENT + child-env wiring are TODO-12 §7 / TODO-21 §2; the NULL-env RtlExpand 128 KiB cap is §19's.
+> - Scope: full NLS folding is TODO-13's (deferred `[/]`); child-env `env_copy` wiring is solely TODO-12 §7 (TODO-21 §2 is standard-handle pre-wiring, not inheritance); the NULL-env RtlExpand 128 KiB cap is §19's.
 
 > **Verified:** 2026-07-14 | commit `90a3b1fa` (+review) | 11/12 items | build OK | tests 1653/1653 abi PASS + smoke PASS
 > **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 600)
@@ -445,7 +445,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 > **Notes:**
 > - **What shipped:** `ENV_DEF_PATHEXT` (`.EXE`) seeded in `env.c` `env_synth_base`; one `test_env_defaults_derived` assertion; a `test_ntenv_live_env_hwm` prewarm suite absorbing the live-task `environ[]` high-water-mark grow.
-> - **How it integrates:** the default lands in every task's env via the existing default-seed layer; `env_get(t, "PATHEXT")` returns `.EXE` until the §7 shell consumer iterates it.
+> - **How it integrates:** the default lands in PID 0's env today (`env_init_kernel_task`); children reach it only after TODO-12 §7 wires `env_copy` before publish; `env_get(t, "PATHEXT")` returns `.EXE` until the §7 shell consumer iterates it.
 > - **Design review:** trimmed value to `.EXE` (Codex, adoptions in commit msg) because `exec.c` has no `.CMD`/`.BAT` loader; fuller Windows default waits on a batch processor.
 > - **Scope boundary:** §11 owns only the default var; the `shell_find_command` PATHEXT consumer is owned by §7 (deferred) + `12-user-platform-sdk/TODO-02` §5 (Extension precedence).
 
@@ -461,16 +461,13 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `env_set_drive_cwd(task, char drive, const char *path)` -- builds `=X:` (uppercased) + `env_set`; non-letter drive / NULL path → `ENV_ERR_INVAL` (`src/kernel/env.c`, `include/kernel/env.h`)
 - [x] `env_get_drive_cwd(task, char drive, char *out, uint32_t out_size)` -- COPY-OUT (design review: no borrowed pointer); returns value length, fills `X:\` root and succeeds when the drive is unset
 - [x] `NtSetCurrentDirectory_handler` commits `env_set_drive_cwd`+`task_set_cwd` as ONE txn under a per-task sleeping `chdir_lock` (adversarial: closes same-drive divergence); env-first OOM → `STATUS_NO_MEMORY`, cwd unchanged
-- [x] Drive-relative resolution wired (the consumer): `task_resolve_path_for` resolves `X:tail`/bare `X:` from cwd when the drive matches, else remembered `=X:`, else `X:\`; oversized `=X:` FAILS CLOSED; `X:\tail` absolute
-- [/] Process-creation inheritance: NULL `lpEnvironment` copies `=X:` automatically ONCE `env_copy` is wired at `task_fork` (blocked -- no live caller). Storage is inheritance-READY; custom-block already preserves `=X:`
+- [x] Drive-relative resolution: `task_resolve_path_for` resolves `X:tail`/bare `X:` from cwd (drive match), else remembered `=X:`, else `X:\`; oversized/foreign/nested-qualifier (`D:C:\`) tails FAIL CLOSED; `X:\tail` absolute
+- [/] Process inheritance: NULL `lpEnvironment` inherits `=X:` ONCE `env_copy` is wired fail-closed pre-publish in every constructor (`task_fork`, `task_create`, `task_create_user`) -- no live caller. Storage READY
 
 - [x] Hidden `=X:` variables sort before regular variables because `=` (0x3D) sorts before any letter (A=0x41); they appear at the front of the environment block (existing sorted store + `env_build_block` emit them first)
 - [x] `env_build_block` (§10) includes hidden drive vars in the sorted output (leading-`=` names emitted verbatim; `test_env_drive_cwd_sorts_first` asserts `=C:` before `AAA`)
 
 - [x] Commit: `"kernel/env: hidden =X: drive-letter current directory variables"`
-
-> **Deferred:** [High] automatic child-process inheritance of `=X:` vars is blocked on live `env_copy` wiring at fork -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §1 (item: "Inherit parent environ into the child at `task_fork()` via `env_copy`"). Storage design is inheritance-ready; only the fork-time copy caller is missing.
-> **Accepted:** [High] the `chdir_lock` txn relies on `mutex_t`, whose `mutex_unlock` clears ownership after releasing `locked` (SMP orphan race shared by every contended per-task mutex incl. `environ_lock`) -> XREF: `03-memory-concurrency/TODO-08-advanced-sync.md` §11 (item: "Unlock ownership-clear ordering"). Pre-existing primitive defect; §12 uses the mutex identically to shipped `environ_lock`.
 
 **Test checkpoint:** `env_set_drive_cwd(t,'C',"C:\Users")` round-trips via `env_get_drive_cwd`/`env_get_copy(t,"=C:")`; unset drive → `X:\`; hidden `=C:` sorts before `AAA`; a custom block carrying `=C:` survives `env_parse_block`; only the `=X:` shape is a legal `=`-name; the drive-relative matrix (current/other/unset/absolute/bare/dot-dot) resolves and an oversized `=X:` fails closed. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -479,9 +476,15 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Notes:**
 > - Shipped: `env_set_drive_cwd`/`env_get_drive_cwd` + `env_name_is_drive_cwd`/`env_entry_key_span` (`env.c`/`env.h`); `=X:` stored in the same sorted `environ`, so sort/block/inherit reuse existing code with no builder change.
 > - Consumer: `task_resolve_path_for` (new explicit-task form of `task_resolve_path`) resolves drive-relative `X:tail`/bare `X:`; `NtSetCurrentDirectory` updates `=X:` under a per-task `chdir_lock` transaction (env-first, failure-atomic).
-> - Design + 2x adversarial adoptions (copy-out getter, drive-relative consumer, chdir_lock same-drive-divergence fix, fail-closed on oversized `=X:`) in the section commit message.
-> - Scope: §12 owns `=X:` storage + resolution; fork-time auto-inheritance is TODO-21 §1 (env_copy wiring); the `mutex_unlock` SMP orphan race is TODO-08 §11 (pre-existing primitive).
+> - Review adoptions (copy-out getter, drive-relative consumer, chdir_lock divergence fix, fail-closed on oversized AND foreign-drive `=X:`) in the commit messages.
+> - Scope: §12 owns `=X:` storage + resolution; child-creation auto-inheritance is TODO-12 §7 (env_copy wiring); the `mutex_unlock` SMP orphan race is TODO-08 §11 (pre-existing primitive).
 > - Test gap (accepted): the `NtSetCurrentDirectory` handler-level integration (env-OOM injection through the SSDT route + a live VFS dir) is serial-validation only; the pure resolver matrix + adapter boundaries are unit-tested (8 suites).
+> **Verified:** 2026-07-14 | commit `0f0dab43` | 7/8 items | build OK | tests 21042/21042 PASS
+> **Accepted:** [H] concurrent multi-thread `NtSetCurrentDirectory` is non-linearizable (path resolved against a cwd snapshot outside `chdir_lock`; pre-existing, and Windows documents `SetCurrentDirectory` as not thread-safe). `chdir_lock` keeps cwd + `=X:` mutually consistent -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §1 (item: "Concurrent `NtSetCurrentDirectory` non-linearizable").
+> **Accepted:** [H] the `chdir_lock` txn relies on `mutex_t`, whose `mutex_unlock` clears ownership after releasing `locked` (SMP orphan race shared by every contended per-task mutex incl. `environ_lock`) -> XREF: `03-memory-concurrency/TODO-08-advanced-sync.md` §11 (item: "Unlock ownership-clear ordering"). Pre-existing primitive defect; §12 uses the mutex identically to shipped `environ_lock`.
+> **Accepted:** [H] automatic child inheritance of `=X:` needs `env_copy` wired fail-closed before publish in every child-creation path (owner elsewhere) -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md` §7 (item: "Wire `env_copy()` into every child path"). Storage is inheritance-ready; custom blocks already carry `=X:`.
+> **Accepted:** [H] the legacy `SYS_OPENFILE` passes a RAW user pointer to `task_resolve_path`, so the nested-qualifier guard (and `vfs_resolve_path`'s own drive select) can be defeated by a concurrent user-buffer mutation (double-fetch). Pre-existing; the NT handlers already snapshot. The guard is sound for snapshotted callers -> XREF: `03-memory-concurrency/TODO-02-memory-security.md` §4 (item: "Audit all syscall handlers" at line 126).
+> **Quality reviewed:** 2026-07-14 | Codex 18x (design, adversarial, test-coverage, consistency, perf, re-adversarial) | 12H fixed, 4 accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -630,40 +633,40 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 
 ## OS Comparison
 
-| ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS     |
-| --- | -------------------------- | --------------------- | -------------------- | ------------------- |
-| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API     |
-| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ✅ §3 `env_expand`   |
-| 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth |
-| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ✅ §4 crt0->main     |
-| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⚠️ §5 Nt✅, §19 Rtl  |
-| 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6                |
-| 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
-| 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                |
-| 💎   | PATH lookup                | ✅ PATHEXT             | ✅ POSIX PATH         | ⬜ §7                |
-| 💎   | SET shell cmd              | ✅ cmd built-in        | ✅ export/env         | ⬜ §7                |
-| 💎   | Shell startup              | ✅ HKCU at logon       | ✅ profile files      | ⬜ §8                |
-| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE    | ⚠️ inotify etc       | ⬜ §9                |
-| 💎   | Persistent set             | ✅ setx.exe            | ⚠️ edit dotfiles     | ⬜ §9                |
-| ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9                |
-| ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7                |
-| ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8                |
-| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ✅ §10 ASCII sort    |
-| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7  |
-| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB      |
-| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⚠️ §11 `.EXE` def   |
+| ⭐   | Feature                    | 🪟 Win11               | 🐧 Linux              | 🚀 Impossible OS      |
+| --- | -------------------------- | --------------------- | -------------------- | -------------------- |
+| 💎   | Per-process env storage    | ✅ PEB UTF-16          | ✅ POSIX environ      | ✅ §1 kernel API      |
+| 💎   | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`         | ✅ bash `$VAR`        | ✅ §3 `env_expand`    |
+| 💎   | System defaults            | ✅ Session Manager     | ✅ `/etc/environment` | ✅ §2 Registry+synth  |
+| 💎   | argv to child              | ✅ CRT cmdline         | ✅ execve argv        | ✅ §4 crt0->main      |
+| 💎   | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only         | ⚠️ §5 Nt✅, §19 Rtl   |
+| 💎   | Get/Set env Win32          | ✅ kernel32 A/W        | ⚠️ Wine path         | ⬜ §6                 |
+| 💎   | Expand env strings         | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                 |
+| 💎   | GetCommandLine             | ✅ A/W                 | ⚠️ Wine path         | ⬜ §6                 |
+| 💎   | PATH lookup                | ✅ PATHEXT             | ✅ POSIX PATH         | ⬜ §7                 |
+| 💎   | SET shell cmd              | ✅ cmd built-in        | ✅ export/env         | ⬜ §7                 |
+| 💎   | Shell startup              | ✅ HKCU at logon       | ✅ profile files      | ⬜ §8                 |
+| 💎   | Env change notify          | ✅ WM_SETTINGCHANGE    | ⚠️ inotify etc       | ⬜ §9                 |
+| 💎   | Persistent set             | ✅ setx.exe            | ⚠️ edit dotfiles     | ⬜ §9                 |
+| ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9                 |
+| ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7                 |
+| ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8                 |
+| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ✅ §10 ASCII sort     |
+| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7   |
+| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB       |
+| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⚠️ §11 `.EXE` def    |
 | 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⚠️ §12 (inherit def) |
-| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13               |
-| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13               |
-| 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14               |
-| 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14               |
-| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15               |
-| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16               |
-| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17               |
-| 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18               |
-| 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18               |
-| 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19               |
-| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX  |
+| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13                |
+| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13                |
+| 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14                |
+| 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14                |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15                |
+| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16                |
+| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
+| 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |
+| 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |
+| 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19                |
+| 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX   |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
 

@@ -78,8 +78,9 @@ int main(void)
     if (pid2 == 0) {
         /* Child path -- replace our image with hello.exe, passing a known argv
          * so the child can prove the vector reached main() (hello returns 42
-         * only for exactly {"hello.exe","alpha","beta"}). envp NULL inherits
-         * our environment. */
+         * only for exactly {"hello.exe","alpha","beta"}). envp NULL PRESERVES the
+         * child's current env (empty after fork until env_copy is wired --
+         * TODO-12 s7), not the parent's environment. */
         char *const child_argv[] = {
             (char *)HELLO_EXE_NAME, (char *)"alpha", (char *)"beta", (char *)0
         };
