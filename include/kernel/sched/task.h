@@ -218,6 +218,14 @@ struct task {
      * another (the whole struct is shared across threads[]). */
     char        cwd[TASK_CWD_MAX];
     spinlock_t  cwd_lock;
+    /* Serializes a SetCurrentDirectory COMMIT (the hidden "=X:" drive-cwd env
+     * update + the task cwd write) as one transaction so two threads changing to
+     * the same drive concurrently cannot commit different winners to cwd vs "=X:"
+     * (TODO-22 s12 adversarial finding). A SLEEPING mutex, not a spinlock: the env
+     * update allocates. Lock order: chdir_lock (outer) -> environ_lock (inside
+     * env_set) -> cwd_lock (inside task_set_cwd); the two inner locks are never
+     * held simultaneously. Taken ONLY on the chdir path. */
+    mutex_t     chdir_lock;
     /* --- Per-process environment + arguments (env.h API) ---
      * environ: NULL-terminated "KEY=VALUE" UTF-8 array; argv: NULL-terminated
      * argument array. Both are process-wide (shared by all threads[]) and are
@@ -458,10 +466,18 @@ uint64_t task_mitigation_get(struct task *t);
  * future ring-3 setter (currently deferred); no live ring-3 caller today. */
 int      task_mitigation_child_set(struct task *t, uint32_t child_flags);
 
-/* Resolve `in` (relative or absolute) against the CURRENT task's cwd into a
- * canonical absolute path `out`. The single entry point every NT pathname
- * syscall uses so relative paths resolve consistently. Returns 0 on success,
- * -1 on invalid input / overflow (vfs_resolve_path contract). */
+/* Resolve `in` (relative or absolute) against `t`'s cwd into a canonical
+ * absolute path `out`. Handles drive-relative "X:tail" / bare "X:" by consulting
+ * the current drive's remembered directory: `t`'s cwd when its drive matches,
+ * else the hidden "=X:" env variable, else the "X:\" root (TODO-22 s12). Returns
+ * 0 on success, -1 on invalid input / overflow. Explicit-task form so the
+ * resolver is unit-testable against a fixture task without task_current(). */
+int task_resolve_path_for(struct task *t, const char *in, char *out,
+                          uint32_t out_size);
+
+/* Resolve `in` against the CURRENT task's cwd (task_resolve_path_for over
+ * task_current()). The single entry point every NT pathname syscall uses so
+ * relative paths resolve consistently. Returns 0 on success, -1 on failure. */
 int task_resolve_path(const char *in, char *out, uint32_t out_size);
 
 /* Get total number of tasks (including dead ones). */

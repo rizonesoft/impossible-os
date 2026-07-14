@@ -28,12 +28,14 @@
 /* ---- Maximum limits ----
  * Raised 2026-04-19 from 512 to 1024 after the suite count hit 496;
  * raised 2026-05-10 from 1024 to 2048 after the cap was hit again
- * (1024 + 42 dropped on the 2026-05-10 boot-suite run). When
+ * (1024 + 42 dropped on the 2026-05-10 boot-suite run); raised 2026-07-14
+ * from 2048 to 4096 after the ABI suite crossed 2048 (TODO-22 s12 drive-cwd
+ * tests). Each slot is 24 bytes, so 4096 is ~96 KiB of test-build BSS. When
  * suite_count approaches TEST_MAX_SUITES again, revisit the testing
  * infrastructure: consider kunit-style conditional compilation,
  * parallel execution on SMP, or splitting into loadable test modules.
  * Current growth rate: ~5 suites per TODO section. */
-#define TEST_MAX_SUITES     2048
+#define TEST_MAX_SUITES     4096
 #define TEST_MAX_NAME_LEN   32
 
 /* ---- Test categories for selective execution ---- */

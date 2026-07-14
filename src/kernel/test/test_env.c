@@ -1826,8 +1826,229 @@ static void test_env_adopt_empty_resets_quota(void)
     env_free(&s_env_fixture);
 }
 
+/* ========================================================================
+ * s12: hidden drive-letter current-directory variables (=C:, =D:)
+ * ======================================================================== */
+
+/* Round-trip: env_set_drive_cwd stores "=X:" and env_get_drive_cwd / env_get_copy
+ * read it back. The hidden entry is a normal store entry with a leading-'=' name. */
+static void test_env_drive_cwd_roundtrip(void)
+{
+    char out[64];
+    int r;
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_set_drive_cwd(&s_env_fixture, 'C', "C:\\Users"), ENV_OK,
+                   "env_set_drive_cwd stores =C:");
+    r = env_get_drive_cwd(&s_env_fixture, 'C', out, sizeof(out));
+    TEST_ASSERT_EQ(r, 8, "get_drive_cwd returns value length 8");
+    TEST_ASSERT(env_streq(out, "C:\\Users"), "=C: value round-trips");
+    /* The stored name is literally "=C:" -- readable via env_get_copy too. */
+    r = env_get_copy(&s_env_fixture, "=C:", out, sizeof(out));
+    TEST_ASSERT_EQ(r, 8, "env_get_copy on =C: returns the same value");
+    TEST_ASSERT(env_streq(out, "C:\\Users"), "env_get_copy value matches");
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 1u, "one hidden entry stored");
+    env_free(&s_env_fixture);
+}
+
+/* An unset drive resolves to its root "X:\" and still succeeds. */
+static void test_env_drive_cwd_default_root(void)
+{
+    char out[64];
+    int r;
+    env_fixture_reset();
+    r = env_get_drive_cwd(&s_env_fixture, 'D', out, sizeof(out));
+    TEST_ASSERT_EQ(r, 3, "unset drive returns root length 3");
+    TEST_ASSERT(env_streq(out, "D:\\"), "unset drive returns X:\\ root");
+    env_free(&s_env_fixture);
+}
+
+/* Case-fold: lowercase drive stores/reads the same "=X:" entry; a non-letter
+ * drive is rejected. */
+static void test_env_drive_cwd_case_and_invalid(void)
+{
+    char out[64];
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_set_drive_cwd(&s_env_fixture, 'c', "C:\\Tmp"), ENV_OK,
+                   "lowercase drive accepted (uppercased to =C:)");
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'C', out, sizeof(out)), 6,
+                   "uppercase get reads the lowercase-set entry (one drive)");
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 1u, "'c' and 'C' are one entry");
+    TEST_ASSERT_EQ(env_set_drive_cwd(&s_env_fixture, '1', "X"), ENV_ERR_INVAL,
+                   "non-letter drive rejected");
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, '1', out, sizeof(out)),
+                   ENV_ERR_INVAL, "non-letter get rejected");
+    env_free(&s_env_fixture);
+}
+
+/* env_name_classify: only the exact "=X:" shape is a legal '='-name; any other
+ * leading-'=' or embedded-'=' name is still rejected by env_set. */
+static void test_env_drive_cwd_name_validation(void)
+{
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "=C:", "C:\\W"), ENV_OK,
+                   "=C: is a legal hidden name");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "=CD:", "v"), ENV_ERR_INVAL,
+                   "=CD: (two-letter) rejected");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "=C", "v"), ENV_ERR_INVAL,
+                   "=C (no colon) rejected");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "=", "v"), ENV_ERR_INVAL,
+                   "bare = rejected");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "A=B", "v"), ENV_ERR_INVAL,
+                   "embedded = still rejected");
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 1u, "only the legal =C: stored");
+    env_free(&s_env_fixture);
+}
+
+/* Hidden "=X:" vars sort BEFORE ordinary names in a built block: '=' (0x3D) is
+ * below any letter, so they appear at the front (the CreateProcess contract). */
+static void test_env_drive_cwd_sorts_first(void)
+{
+    char buf[64];
+    uint32_t outlen = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "AAA", "2");
+    env_set_drive_cwd(&s_env_fixture, 'C', "C:\\Users");
+    rc = env_build_block(&s_env_fixture, buf, sizeof(buf), 0, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_OK, "block builds");
+    /* "=C:=C:\\Users\0" (13) + "AAA=2\0" (6) + "\0" = 20 bytes */
+    TEST_ASSERT_EQ((int)outlen, 20, "block length includes both entries + terminator");
+    TEST_ASSERT(env_streq(buf, "=C:=C:\\Users"), "hidden =C: entry sorts FIRST");
+    TEST_ASSERT(env_streq(buf + 13, "AAA=2"), "ordinary AAA follows the hidden var");
+    env_free(&s_env_fixture);
+}
+
+/* A custom CreateProcess block carrying a "=X:" entry is preserved through
+ * env_parse_block (the Windows contract that a caller-supplied block may include
+ * the hidden drive vars), and it still sorts to the front on rebuild. */
+static void test_env_drive_cwd_parse_block_preserved(void)
+{
+    static const char blk[] = "AAA=1\0=C:=C:\\W\0";   /* unsorted, hidden last */
+    char buf[64];
+    uint32_t outlen = 0;
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_parse_block(&s_env_fixture, blk, sizeof(blk) - 1u, 0),
+                   ENV_OK, "parse block with a hidden =C: entry");
+    TEST_ASSERT_EQ(s_env_fixture.environ_count, 2u, "both entries retained");
+    env_build_block(&s_env_fixture, buf, sizeof(buf), 0, &outlen);
+    TEST_ASSERT(env_streq(buf, "=C:=C:\\W"), "hidden =C: sorted to front after parse");
+    env_free(&s_env_fixture);
+}
+
+/* Public adapter contracts: NULL guards, the out_size<4 boundary, the exact
+ * 4-byte root case, oversized-value truncation (full length returned, NUL kept),
+ * and env_set NULL-arg propagation. */
+static void test_env_drive_cwd_adapter_boundaries(void)
+{
+    char out[8];
+    char big[600];
+    uint32_t i;
+    env_fixture_reset();
+    /* NULL / bad-arg guards. */
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'C', (char *)0, 8u),
+                   ENV_ERR_INVAL, "NULL out rejected");
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'C', out, 3u),
+                   ENV_ERR_INVAL, "out_size < 4 rejected");
+    TEST_ASSERT_EQ(env_set_drive_cwd(&s_env_fixture, 'C', (const char *)0),
+                   ENV_ERR_INVAL, "NULL path rejected");
+    TEST_ASSERT_EQ(env_set_drive_cwd((struct task *)0, 'C', "x"),
+                   ENV_ERR_INVAL, "NULL task rejected");
+    /* Exact 4-byte buffer holds the "X:\" root of an unset drive. */
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'E', out, 4u), 3,
+                   "unset drive fits exactly in a 4-byte buffer");
+    TEST_ASSERT(env_streq(out, "E:\\"), "4-byte root is E:\\");
+    /* Oversized stored value: the getter truncates into a small buffer, keeps the
+     * NUL, and returns the FULL length so a caller can detect truncation. */
+    big[0] = 'C'; big[1] = ':'; big[2] = '\\';
+    for (i = 3; i < sizeof(big) - 1u; i++)
+        big[i] = 'a';
+    big[sizeof(big) - 1u] = '\0';
+    TEST_ASSERT_EQ(env_set_drive_cwd(&s_env_fixture, 'C', big), ENV_OK,
+                   "oversized =C: stored");
+    TEST_ASSERT_EQ(env_get_drive_cwd(&s_env_fixture, 'C', out, sizeof(out)),
+                   (int)(sizeof(big) - 1u), "truncated get returns full length");
+    TEST_ASSERT(out[sizeof(out) - 1u] == '\0', "truncated out stays NUL-terminated");
+    env_free(&s_env_fixture);
+}
+
+/* Drive-relative resolution matrix (the hidden-var CONSUMER), exercised
+ * hermetically through task_resolve_path_for against the env fixture. Covers
+ * current-drive (uses cwd), other-drive (uses =X:), unset (root), absolute,
+ * bare drive, dot-dot, and an oversized-=X: truncation fallback. */
+static void test_env_drive_cwd_resolve_matrix(void)
+{
+    char out[TASK_CWD_MAX];              /* a remembered dir can approach TASK_CWD_MAX */
+    char big[600];
+    uint32_t i;
+    env_fixture_reset();
+    task_set_cwd(&s_env_fixture, "C:\\Cur\\Dir");     /* current drive = C: */
+    env_set_drive_cwd(&s_env_fixture, 'D', "D:\\Saved");
+
+    /* Current drive, relative -> from the live cwd (not any =C: var). */
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "C:sub", out, sizeof(out)),
+                   0, "C:sub resolves");
+    TEST_ASSERT(env_streq(out, "C:\\Cur\\Dir\\sub"), "C:sub -> cwd\\sub");
+    /* Bare current drive -> the cwd itself. */
+    task_resolve_path_for(&s_env_fixture, "C:", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "C:\\Cur\\Dir"), "bare C: -> cwd");
+    /* Other drive, relative -> from that drive's remembered "=D:". */
+    task_resolve_path_for(&s_env_fixture, "D:sub", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "D:\\Saved\\sub"), "D:sub -> =D:\\sub");
+    /* Bare other drive -> the remembered directory. */
+    task_resolve_path_for(&s_env_fixture, "D:", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "D:\\Saved"), "bare D: -> =D:");
+    /* Dot-dot is applied against the remembered base. */
+    task_resolve_path_for(&s_env_fixture, "D:..", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "D:\\"), "D:.. pops =D: to root");
+    /* Unset drive -> the drive root. */
+    task_resolve_path_for(&s_env_fixture, "E:sub", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "E:\\sub"), "unset E:sub -> E:\\sub");
+    /* Absolute drive path ignores the remembered directory. */
+    task_resolve_path_for(&s_env_fixture, "D:\\abs", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "D:\\abs"), "D:\\abs stays absolute");
+    /* A LARGE but representable remembered dir (short components, ~400 bytes,
+     * well under sizeof(base)/VFS_MAX_NAME) still resolves -- the truncation guard
+     * must not false-trip below the buffer bound. */
+    big[0] = 'G'; big[1] = ':';
+    for (i = 2; i < 400u; ) { big[i++] = '\\'; big[i++] = 'a'; }   /* "G:\a\a...\a" */
+    big[400] = '\0';
+    env_set_drive_cwd(&s_env_fixture, 'G', big);
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "G:", out, sizeof(out)),
+                   0, "large (400-byte) remembered =G: resolves");
+    TEST_ASSERT(env_streq(out, big), "large =G: value resolves verbatim");
+    /* Oversized "=F:" (past TASK_CWD_MAX) is PRESENT but unrepresentable: the
+     * resolver FAILS CLOSED (returns -1) rather than silently retargeting to the
+     * drive root (adversarial re-review -- root-fallback would mis-target). */
+    big[0] = 'F'; big[1] = ':'; big[2] = '\\';
+    for (i = 3; i < sizeof(big) - 1u; i++)
+        big[i] = 'a';
+    big[sizeof(big) - 1u] = '\0';                     /* strlen 599 > TASK_CWD_MAX */
+    env_set_drive_cwd(&s_env_fixture, 'F', big);
+    TEST_ASSERT_EQ(task_resolve_path_for(&s_env_fixture, "F:x", out, sizeof(out)),
+                   -1, "oversized =F: fails closed (no root retarget)");
+
+    s_env_fixture.cwd[0] = '\0';                      /* clear cwd for later tests */
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
+    test_suite_register_cat("Env: drive-cwd =X: round-trip",
+                            test_env_drive_cwd_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: drive-cwd unset -> X:\\ root",
+                            test_env_drive_cwd_default_root, TEST_CAT_ABI);
+    test_suite_register_cat("Env: drive-cwd case-fold + invalid drive",
+                            test_env_drive_cwd_case_and_invalid, TEST_CAT_ABI);
+    test_suite_register_cat("Env: =X: name validation (only =X: legal)",
+                            test_env_drive_cwd_name_validation, TEST_CAT_ABI);
+    test_suite_register_cat("Env: hidden =X: sorts first in block",
+                            test_env_drive_cwd_sorts_first, TEST_CAT_ABI);
+    test_suite_register_cat("Env: =X: preserved through parse_block",
+                            test_env_drive_cwd_parse_block_preserved, TEST_CAT_ABI);
+    test_suite_register_cat("Env: drive-cwd adapter boundaries",
+                            test_env_drive_cwd_adapter_boundaries, TEST_CAT_ABI);
+    test_suite_register_cat("Env: drive-relative resolution matrix",
+                            test_env_drive_cwd_resolve_matrix, TEST_CAT_ABI);
     test_suite_register_cat("Env: argv set + free",
                             test_argv_set_and_free, TEST_CAT_ABI);
     test_suite_register_cat("Env: argv replace + clear",

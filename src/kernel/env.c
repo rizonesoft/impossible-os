@@ -63,7 +63,11 @@ static char env_lc(char c)
  * "entry + querylen + 1" point past the '=' and read/overrun the value. */
 static uint32_t env_entry_keylen(const char *entry)
 {
-    uint32_t i = 0;
+    /* A hidden "=X:" drive variable's name BEGINS with '=' (entry "=C:=value");
+     * that leading '=' is part of the name, so start the separator scan one byte
+     * in. For an ordinary "KEY=VALUE" entry (no leading '='), this is the plain
+     * first-'=' offset. */
+    uint32_t i = (entry[0] == '=') ? 1u : 0u;
     while (entry[i] != '\0' && entry[i] != '=')
         i++;
     return i;
@@ -151,10 +155,23 @@ static void env_ptr_msort(char **arr, uint32_t n, char **scratch)
     }
 }
 
+/* True iff `name` (namelen bytes) is EXACTLY a hidden drive-variable name:
+ * '=' + one ASCII letter + ':' (3 bytes, e.g. "=C:"). This is the ONLY name
+ * form permitted to contain '='; every other '='-bearing name is invalid. */
+static int env_name_is_drive_cwd(const char *name, uint32_t namelen)
+{
+    return namelen == 3u && name[0] == '=' &&
+           ((name[1] >= 'A' && name[1] <= 'Z') ||
+            (name[1] >= 'a' && name[1] <= 'z')) &&
+           name[2] == ':';
+}
+
 /* Classify a to-be-set variable name and return its length via `*out_len`.
  * Distinguishes ENV_ERR_TOOLONG (length > ENV_NAME_MAX) from ENV_ERR_INVAL
- * (NULL, empty, or contains '=' -- the separator; hidden "=X:" drive vars are
- * a later feature). Returns ENV_OK when the name is storable. */
+ * (NULL, empty, or contains '=' -- the separator). The sole '='-containing name
+ * accepted is the hidden "=X:" drive-cwd form (TODO-22 s12); any OTHER
+ * leading-'=' or embedded-'=' name is ENV_ERR_INVAL. Returns ENV_OK when the
+ * name is storable. */
 static int env_name_classify(const char *name, uint32_t *out_len)
 {
     uint32_t n;
@@ -167,6 +184,14 @@ static int env_name_classify(const char *name, uint32_t *out_len)
     n = env_strnlen(name, ENV_NAME_MAX + 1u);
     if (n > ENV_NAME_MAX)
         return ENV_ERR_TOOLONG;
+    if (name[0] == '=') {
+        /* Only the exact "=X:" hidden drive-cwd shape is a legal '='-name. */
+        if (env_name_is_drive_cwd(name, n)) {
+            *out_len = n;
+            return ENV_OK;
+        }
+        return ENV_ERR_INVAL;
+    }
     {
         uint32_t k;
         for (k = 0; k < n; k++)
@@ -175,6 +200,30 @@ static int env_name_classify(const char *name, uint32_t *out_len)
     }
     *out_len = n;
     return ENV_OK;
+}
+
+/* Key (name) span of a RAW untrusted "name=value" entry from an exec envp / a
+ * CreateProcess block, honoring a leading '=' that belongs to a hidden "=X:"
+ * drive variable. On a well-formed name sets *sep to the separator offset
+ * (== key length) and returns 0; returns -1 when the name is empty, has no
+ * separator within `elen`, or is a leading-'=' name that is not exactly "=X:".
+ * Mirrors env_name_classify's '=' rule so env_adopt_block's per-entry filter
+ * admits the same names env_set does. */
+static int env_entry_key_span(const char *e, uint32_t elen, uint32_t *sep)
+{
+    uint32_t k = (e[0] == '=') ? 1u : 0u;
+    while (k < elen && e[k] != '=')
+        k++;
+    if (k >= elen)
+        return -1;                       /* no separator -> not "name=value" */
+    if (e[0] == '=') {
+        if (!env_name_is_drive_cwd(e, k)) /* leading '=' but not exactly "=X:" */
+            return -1;
+    } else if (k == 0) {
+        return -1;                       /* empty key */
+    }
+    *sep = k;
+    return 0;
 }
 
 /* --- String allocation: heap up to 4 KiB, page-backed PMM above ----------- */
@@ -701,10 +750,10 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
         elen = env_strnlen(e, ENV_NAME_MAX + 1u + ENV_VALUE_MAX + 1u);
         if (elen == 0 || elen > ENV_NAME_MAX + 1u + ENV_VALUE_MAX)
             continue;                       /* over-long or missing terminator */
-        for (eq = 0; eq < elen && e[eq] != '='; eq++)
-            ;
-        if (eq == 0 || eq >= elen)
-            continue;                       /* empty key or no '=' */
+        /* Split the name honoring a leading '=' hidden drive var; skip a name
+         * that is empty, separator-less, or an illegal '='-name (only "=X:"). */
+        if (env_entry_key_span(e, elen, &eq) != 0)
+            continue;
         /* Enforce the name and value byte caps SEPARATELY, exactly as env_set
          * does: the combined-length check above still admits e.g. a 1-byte name
          * with a 32,769-byte value (total < NAME_MAX+1+VALUE_MAX), which env_set
@@ -1372,6 +1421,67 @@ done:
             env_str_free(owned[i], env_strlen(owned[i]) + 1u);
     kfree(owned);
     kfree(list);
+    return rc;
+}
+
+/* ===========================================================================
+ * Hidden drive-letter current-directory variables (=C:, =D:) -- TODO-22 s12
+ *
+ * Windows records the current directory of each drive letter in a hidden env
+ * variable whose name begins with '=' ("=C:", "=D:", ...). These live in the
+ * SAME sorted environ[] as ordinary variables: '=' (0x3D) sorts before any
+ * letter so they land at the front of a built block, env_copy inherits them,
+ * and env_build_block emits them first -- no separate storage. env_set /
+ * env_get_copy already accept the "=X:" name (env_name_classify), so these are
+ * thin drive-letter -> "=X:" adapters.
+ * =========================================================================== */
+
+/* Uppercase an ASCII drive letter; returns 0 for a non-letter. */
+static char env_drive_upper(char drive)
+{
+    if (drive >= 'a' && drive <= 'z')
+        return (char)(drive - 32);
+    if (drive >= 'A' && drive <= 'Z')
+        return drive;
+    return '\0';
+}
+
+int env_set_drive_cwd(struct task *t, char drive, const char *path)
+{
+    char name[4];                          /* "=X:" + NUL */
+    char up = env_drive_upper(drive);
+
+    if (!t || !path || up == '\0')
+        return ENV_ERR_INVAL;
+    name[0] = '=';
+    name[1] = up;
+    name[2] = ':';
+    name[3] = '\0';
+    return env_set(t, name, path);         /* serializes on t->environ_lock */
+}
+
+int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size)
+{
+    char name[4];                          /* "=X:" + NUL */
+    char up = env_drive_upper(drive);
+    int rc;
+
+    if (!t || !out || out_size < 4u || up == '\0')   /* room for "X:\" + NUL */
+        return ENV_ERR_INVAL;
+    name[0] = '=';
+    name[1] = up;
+    name[2] = ':';
+    name[3] = '\0';
+    rc = env_get_copy(t, name, out, out_size);
+    if (rc == ENV_ERR_NOTFOUND) {
+        /* No remembered directory for this drive -> its root "X:\". out_size >= 4
+         * is guaranteed above, so this never truncates. */
+        out[0] = up;
+        out[1] = ':';
+        out[2] = '\\';
+        out[3] = '\0';
+        return 3;                          /* value length, excluding NUL */
+    }
     return rc;
 }
 

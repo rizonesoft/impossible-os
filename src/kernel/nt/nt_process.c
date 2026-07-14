@@ -24,6 +24,7 @@
 #include "kernel/mm/heap.h"         /* kfree (inherited-filter cleanup) */
 #include "kernel/nt/nt_unicode.h"   /* nt_decode_unicode_string / nt_unicode_to_ascii */
 #include "kernel/fs/vfs.h"          /* vfs_open / vfs_close / VFS_DIRECTORY (cwd validation) */
+#include "kernel/env.h"             /* env_set_drive_cwd (hidden =X: per-drive cwd, TODO-22 s12) */
 
 /* ---- Helper: look up task by HANDLE (currently PID) --------------------- */
 static struct task *task_from_handle(HANDLE h)
@@ -927,8 +928,36 @@ static NTSTATUS NtSetCurrentDirectory_handler(uint64_t a1, uint64_t a2,
     }
     vfs_close(node);
 
-    if (task_set_cwd(t, resolved) != 0)
+    /* Commit the hidden "=X:" per-drive current-directory variable AND the task
+     * cwd as ONE serialized transaction under t->chdir_lock (TODO-22 s12). This
+     * closes the adversarial-review race: two threads changing to the SAME drive
+     * concurrently could otherwise interleave the two separate-lock writes and
+     * commit different winners to cwd vs "=X:" (both calls succeeding), leaving a
+     * permanent divergence that a later cross-drive "X:relative" open resolves
+     * against the stale value. chdir_lock is a sleeping mutex (the env update
+     * allocates); it is the OUTER lock, never held with environ_lock/cwd_lock
+     * simultaneously (env_set and task_set_cwd take + release their own locks).
+     *
+     * Within the transaction, do the fallible allocating env update FIRST so an
+     * OOM / block-cap returns the failure with cwd unchanged (never "success with
+     * a stale =X:"); task_set_cwd then cannot fail (resolved already fit
+     * TASK_CWD_MAX in task_resolve_path), so the two writes cannot diverge.
+     * resolved[0] is the drive letter of the absolute "X:\..." path. */
+    mutex_lock(&t->chdir_lock);
+    {
+        int erc = env_set_drive_cwd(t, resolved[0], resolved);
+        if (erc == ENV_ERR_NOMEM || erc == ENV_ERR_NOSPACE) {
+            mutex_unlock(&t->chdir_lock);
+            return STATUS_NO_MEMORY;        /* leave cwd unchanged -- no divergence */
+        }
+        /* Any other negative (e.g. a non-letter drive, which resolved absolute
+         * paths never carry) is non-fatal; the cwd change proceeds. */
+    }
+    if (task_set_cwd(t, resolved) != 0) {
+        mutex_unlock(&t->chdir_lock);
         return STATUS_NAME_TOO_LONG;
+    }
+    mutex_unlock(&t->chdir_lock);
 
     klog(LOG_DEBUG, "task", "cwd set to %s (pid %u)", resolved, (uint64_t)t->pid);
     return STATUS_SUCCESS;

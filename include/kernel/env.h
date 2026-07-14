@@ -228,6 +228,39 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
 int env_parse_block(struct task *t, const void *block, uint32_t len,
                     int is_unicode);
 
+/* --- Hidden drive-letter current-directory variables (=C:, =D:) ----------- */
+
+/* Windows tracks the current directory of each drive letter in a HIDDEN
+ * environment variable whose NAME literally begins with '=' -- "=C:", "=D:",
+ * etc. (entry form "=C:=C:\Users\Default": the first '=' is part of the name,
+ * the second separates name from value). These are stored in the SAME sorted
+ * task->environ array as ordinary variables; because '=' (0x3D) sorts before any
+ * letter, they naturally appear at the FRONT of a built environment block, and
+ * env_copy inherits them for free. They are NOT enumerated by SET / user-facing
+ * listings (a display filter drops leading-'=' names), but they ARE present in
+ * the block a child receives. The '=X:' name is the ONLY name form permitted to
+ * contain '=' (env_name_classify accepts exactly "=<A-Z>:" and rejects any other
+ * '='-containing name). */
+
+/* Set the hidden "=X:" variable (X = uppercased `drive`) to `path` (the full
+ * current directory for that drive, e.g. "C:\Users\Default"). `drive` must be an
+ * ASCII letter; a non-letter or NULL `path` returns ENV_ERR_INVAL. Serializes on
+ * t->environ_lock via env_set (same block-cap / allocation-atomicity contract).
+ * Returns ENV_OK or a negative env_set error. */
+int env_set_drive_cwd(struct task *t, char drive, const char *path);
+
+/* Copy the current directory remembered for drive `drive` (its hidden "=X:"
+ * variable) into `out` (NUL-terminated), under t->environ_lock. When the drive
+ * has no remembered directory, `out` receives the drive root "X:\" and the call
+ * still succeeds. `drive` must be an ASCII letter; a non-letter, NULL out, or
+ * out_size < 4 returns ENV_ERR_INVAL. Returns the value length in bytes
+ * (excluding NUL) on success -- like env_get_copy, an oversize value is truncated
+ * to fit and the FULL required length (>= out_size) is returned so a caller can
+ * detect truncation. This is a COPY-OUT (never a borrowed pointer): the env
+ * reader-lifetime contract forbids returning a raw pointer that a sibling
+ * env_set/env_unset would free after the lock drops. */
+int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size);
+
 /* --- System default environment (system-default-variables feature) -------- */
 
 /* Populate `t`'s environment with the system default variable set: a synthesised

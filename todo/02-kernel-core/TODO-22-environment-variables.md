@@ -74,7 +74,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
 | 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
 | 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
-| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [ ]   |
+| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [ ]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [ ]   |
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [ ]   |
@@ -408,7 +408,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] Max value length `ENV_VALUE_MAX`=32767 bytes; `env_set` returns `ENV_ERR_TOOLONG` (§5 maps `STATUS_NAME_TOO_LONG`)
 - [x] Max name length `ENV_NAME_MAX`=256 bytes; `env_name_classify` rejects longer names
 - [x] Reconciled UTF-16 char vs UTF-8 byte caps (← XREF §5): documented byte-cap contract in `include/kernel/env.h` (one byte cap, applied after the NT layer's UTF-16→UTF-8 conversion)
-- [x] Name validation: `env_name_classify` rejects names containing `=`; leading-`=` hidden drive vars are §12's surface
+- [x] Name validation: `env_name_classify` rejects `=`-containing names EXCEPT the hidden `=X:` drive-cwd shape (shipped §12); empty/NULL rejected
 - [x] Per-process block-size DoS cap: `env_set`/`env_adopt_block`/`env_parse_block` reject a total block over `ENV_BLOCK_MAX` (1 MiB) with `ENV_ERR_NOSPACE`; klog warns once past `ENV_BLOCK_WARN` (256 KiB)
 - [x] `REG_EXPAND_SZ` stored RAW during overlay then expanded once against the fully-assembled env in a deterministic post-overlay pass (`env_expand_reg_values`), never inline during `RegEnumValue`
 - [x] Commit: `"kernel/env: sorted environment block, size limits, name validation"`
@@ -457,18 +457,31 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 12. Hidden Drive-Letter Variables (`=C:`, `=D:`)
 
-- [ ] Windows tracks the current directory for each drive letter via hidden environment variables named `=C:`, `=D:`, etc. (the name starts with `=`); these are **not** visible in `SET` output or user-facing enumerations but are present in the environment block
-- [ ] `env_set_drive_cwd(task, drive_letter, path)` -- set `=X:` where X is the uppercase drive letter; value is the full path (e.g. `=C:` → `C:\Users\Default`)
-- [ ] `env_get_drive_cwd(task, drive_letter)` -- return the current directory for the given drive, or `X:\` root if not set
-- [ ] When `SetCurrentDirectory` changes drives, also call `env_set_drive_cwd` to update the hidden variable
-- [ ] On process creation: if `lpEnvironment` is NULL (inherit parent), the hidden drive vars are copied automatically; if `lpEnvironment` is non-NULL (custom block), the caller must include them manually (Windows contract: `CreateProcess` does not inject them)
+- [x] Hidden `=X:` drive vars live in the sorted `task->environ` (entry `=C:=C:\path`, leading `=` is the name); `env_entry_keylen`/`env_name_classify`/`env_entry_key_span` accept ONLY the 3-byte `=<A-Z>:` shape (`env.c`)
+- [x] `env_set_drive_cwd(task, char drive, const char *path)` -- builds `=X:` (uppercased) + `env_set`; non-letter drive / NULL path → `ENV_ERR_INVAL` (`src/kernel/env.c`, `include/kernel/env.h`)
+- [x] `env_get_drive_cwd(task, char drive, char *out, uint32_t out_size)` -- COPY-OUT (design review: no borrowed pointer); returns value length, fills `X:\` root and succeeds when the drive is unset
+- [x] `NtSetCurrentDirectory_handler` commits `env_set_drive_cwd`+`task_set_cwd` as ONE txn under a per-task sleeping `chdir_lock` (adversarial: closes same-drive divergence); env-first OOM → `STATUS_NO_MEMORY`, cwd unchanged
+- [x] Drive-relative resolution wired (the consumer): `task_resolve_path_for` resolves `X:tail`/bare `X:` from cwd when the drive matches, else remembered `=X:`, else `X:\`; oversized `=X:` FAILS CLOSED; `X:\tail` absolute
+- [/] Process-creation inheritance: NULL `lpEnvironment` copies `=X:` automatically ONCE `env_copy` is wired at `task_fork` (blocked -- no live caller). Storage is inheritance-READY; custom-block already preserves `=X:`
 
-- [ ] Hidden `=X:` variables sort before regular variables because `=` (0x3D) sorts before any letter (A=0x41); they appear at the front of the environment block
-- [ ] `env_build_block` (§10) must include hidden drive vars in the sorted output
+- [x] Hidden `=X:` variables sort before regular variables because `=` (0x3D) sorts before any letter (A=0x41); they appear at the front of the environment block (existing sorted store + `env_build_block` emit them first)
+- [x] `env_build_block` (§10) includes hidden drive vars in the sorted output (leading-`=` names emitted verbatim; `test_env_drive_cwd_sorts_first` asserts `=C:` before `AAA`)
 
-- [ ] Commit: `"kernel/env: hidden =X: drive-letter current directory variables"`
+- [x] Commit: `"kernel/env: hidden =X: drive-letter current directory variables"`
 
-**Test checkpoint:** Hidden `=C:` sorts before `AAA`; drive CWD round-trip. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Deferred:** [High] automatic child-process inheritance of `=X:` vars is blocked on live `env_copy` wiring at fork -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §1 (item: "Inherit parent environ into the child at `task_fork()` via `env_copy`"). Storage design is inheritance-ready; only the fork-time copy caller is missing.
+> **Accepted:** [High] the `chdir_lock` txn relies on `mutex_t`, whose `mutex_unlock` clears ownership after releasing `locked` (SMP orphan race shared by every contended per-task mutex incl. `environ_lock`) -> XREF: `03-memory-concurrency/TODO-08-advanced-sync.md` §11 (item: "Unlock ownership-clear ordering"). Pre-existing primitive defect; §12 uses the mutex identically to shipped `environ_lock`.
+
+**Test checkpoint:** `env_set_drive_cwd(t,'C',"C:\Users")` round-trips via `env_get_drive_cwd`/`env_get_copy(t,"=C:")`; unset drive → `X:\`; hidden `=C:` sorts before `AAA`; a custom block carrying `=C:` survives `env_parse_block`; only the `=X:` shape is a legal `=`-name; the drive-relative matrix (current/other/unset/absolute/bare/dot-dot) resolves and an oversized `=X:` fails closed. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 8 `Env: *drive*/=X:*` suites, 0 failures
+
+> **Notes:**
+> - Shipped: `env_set_drive_cwd`/`env_get_drive_cwd` + `env_name_is_drive_cwd`/`env_entry_key_span` (`env.c`/`env.h`); `=X:` stored in the same sorted `environ`, so sort/block/inherit reuse existing code with no builder change.
+> - Consumer: `task_resolve_path_for` (new explicit-task form of `task_resolve_path`) resolves drive-relative `X:tail`/bare `X:`; `NtSetCurrentDirectory` updates `=X:` under a per-task `chdir_lock` transaction (env-first, failure-atomic).
+> - Design + 2x adversarial adoptions (copy-out getter, drive-relative consumer, chdir_lock same-drive-divergence fix, fail-closed on oversized `=X:`) in the section commit message.
+> - Scope: §12 owns `=X:` storage + resolution; fork-time auto-inheritance is TODO-21 §1 (env_copy wiring); the `mutex_unlock` SMP orphan race is TODO-08 §11 (pre-existing primitive).
+> - Test gap (accepted): the `NtSetCurrentDirectory` handler-level integration (env-OOM injection through the SSDT route + a live VFS dir) is serial-validation only; the pure resolver matrix + adapter boundaries are unit-tested (8 suites).
 
 ---
 
@@ -639,7 +652,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7  |
 | 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB      |
 | 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⚠️ §11 `.EXE` def   |
-| 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12               |
+| 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⚠️ §12 (inherit def) |
 | 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13               |
 | 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13               |
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14               |

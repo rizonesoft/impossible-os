@@ -407,6 +407,7 @@ boot_result_t task_init(void)
         tasks[i].argv = NULL;
         tasks[i].argc = 0;
         mutex_init(&tasks[i].environ_lock, "environ");
+        mutex_init(&tasks[i].chdir_lock, "chdir");   /* SetCurrentDirectory commit txn */
         tasks[i].pledge_mask = 0;
         tasks[i].unveil_list = (struct unveil_entry *)0;
         tasks[i].unveil_locked = 0;
@@ -1585,22 +1586,71 @@ int task_set_cwd(struct task *t, const char *abs)
     return ret;
 }
 
-int task_resolve_path(const char *in, char *out, uint32_t out_size)
+int task_resolve_path_for(struct task *t, const char *in, char *out,
+                          uint32_t out_size)
 {
     char cwd[TASK_CWD_MAX];
 
-    /* Absolute drive-qualified inputs ("X:...") ignore the cwd -- resolve them
-     * WITHOUT taking cwd_lock so concurrent absolute-path opens (a hot syscall
-     * path) do not serialize on the process-wide lock. The passed cwd is unused
-     * by vfs_resolve_path for absolute input. */
-    if (in && in[0] && in[1] == ':')
-        return vfs_resolve_path("C:\\", in, out, out_size);
+    /* Drive-qualified input "X:..." -- three shapes, distinguished by the byte
+     * after the colon:
+     *   "X:\tail" / "X:/tail"  -> ABSOLUTE: resolve from the drive root; cwd is
+     *                             irrelevant, so resolve WITHOUT taking cwd_lock
+     *                             (concurrent absolute-path opens are a hot
+     *                             syscall path and must not serialize on the
+     *                             process-wide lock).
+     *   "X:tail" / "X:"        -> DRIVE-RELATIVE: resolve `tail` against the
+     *                             directory REMEMBERED for drive X. Windows keeps
+     *                             that per-drive cwd in the hidden "=X:" env
+     *                             variable (TODO-22 s12). When X is the process's
+     *                             CURRENT drive, the live task cwd is authoritative
+     *                             (and lock-free); otherwise the "=X:" value, or
+     *                             the drive root "X:\" when the drive is unset.
+     * A non-letter drive falls through to vfs_resolve_path, which rejects it. */
+    if (in && in[0] && in[1] == ':') {
+        char c0 = in[0];
+        int is_letter = (c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z');
+        char c2 = in[2];
+        if (!is_letter || c2 == '\\' || c2 == '/')
+            return vfs_resolve_path("C:\\", in, out, out_size);
 
-    task_get_cwd(task_current(), cwd, sizeof(cwd));
+        {
+            char drive = (c0 >= 'a' && c0 <= 'z') ? (char)(c0 - 32) : c0;
+            char base[TASK_CWD_MAX];
+            char cdrv;
+            int glen;
+
+            task_get_cwd(t, cwd, sizeof(cwd));
+            cdrv = (cwd[0] >= 'a' && cwd[0] <= 'z') ? (char)(cwd[0] - 32) : cwd[0];
+            if (cwd[0] && cwd[1] == ':' && cdrv == drive)
+                return vfs_resolve_path(cwd, &in[2], out, out_size);  /* current drive */
+
+            /* Other drive: the remembered "=X:" directory. env_get_drive_cwd
+             * fills the "X:\" root on a genuinely UNSET drive (returns 3, base =
+             * "X:\") -- that flows through normally and correctly resolves from the
+             * root. But a "=X:" set directly via env_set / a custom CreateProcess
+             * block may be up to ENV_VALUE_MAX bytes -- far past TASK_CWD_MAX -- in
+             * which case the getter TRUNCATES into `base` and returns the FULL
+             * length. Such a value is PRESENT but unrepresentable: falling back to
+             * the root would silently RETARGET the operation to "X:\tail" (a wrong,
+             * possibly destructive path), so FAIL CLOSED instead (adversarial
+             * re-review). glen < 0 (bad arg) is likewise a hard failure. */
+            glen = env_get_drive_cwd(t, drive, base, sizeof(base));
+            if (glen < 0 || (uint32_t)glen >= sizeof(base))
+                return -1;   /* unrepresentable remembered dir -> reject, never retarget */
+            return vfs_resolve_path(base, &in[2], out, out_size);
+        }
+    }
+
+    task_get_cwd(t, cwd, sizeof(cwd));
     if (!cwd[0]) {               /* defensive: a task with no cwd resolves from root */
         cwd[0] = 'C'; cwd[1] = ':'; cwd[2] = '\\'; cwd[3] = '\0';
     }
     return vfs_resolve_path(cwd, in, out, out_size);
+}
+
+int task_resolve_path(const char *in, char *out, uint32_t out_size)
+{
+    return task_resolve_path_for(task_current(), in, out, out_size);
 }
 
 uint32_t task_count(void)
