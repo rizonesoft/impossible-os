@@ -355,6 +355,32 @@ information or judgment; none of this weakens a gate):**
     relaunch mechanism.)
   - **REFUSED** -> the listed failures are unfinished work: finish/clean them
     and continue in-session (never force a rollover past a red gate).
+- **Mid-section context-cap rotation (P4.6/P4.8).** A single section can outrun
+  the doctrine context band before it ships (long fix loops, multi-round reviews).
+  `rotate_hint.py` counts tool-events since the last rollover and, past its band,
+  posts an advisory `systemMessage` ("context-rotation hint set ... run
+  `rollover-wip`"), re-nudging periodically until acted on. **When you see that
+  reminder, do NOT stop mid-work.** Carry the current unit of work to the NEXT
+  WIP-clean boundary within the SAME section -- the last change committed (a local
+  WIP commit is enough; unlike the full-section rollover, the WIP gate does NOT
+  require a push, since the fresh worker resumes the same on-host tree), no pending
+  Codex review, no background job running -- then run
+  `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
+  - **VERIFIED** -> the verb has already written the enriched section-checkpoint
+    (fail-closed: no checkpoint, no authorization) and armed the cursor. Final-
+    answer with a one-line "mid-section rotation at section N" summary and END the
+    turn. The watchdog relaunches a fresh worker that resumes this SAME section
+    from the checkpoint's `next_action` (step 0's resume path) -- NOT a new
+    section. This is a context rotation, not a stop; the run stays armed.
+  - **REFUSED** -> you are not at a safe boundary (uncommitted WIP, an in-flight
+    review, a live background job, or a section that already FAILED its ship gate
+    with `rollover_refused` set). Keep working and retry at the next boundary.
+    Never force it, never abandon in-flight work to rotate, and never use it to
+    escape a refused ship rollover -- `rollover-wip` refuses outside `phase
+    SECTIONS` and never clears `rollover_refused` (it is not a ship path).
+  This is orthogonal to the full-section rollover above: the full rollover fires
+  AFTER a section ships (clean tree, receipts, no WIP); this one fires DURING a
+  long section at a committed-but-unshipped boundary, and only when hinted.
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
   (missing prerequisite owned elsewhere, hardware-only validation, deliberate
   roadmap "no code today"), the implement/review skill marks it `[/]` + a
