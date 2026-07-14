@@ -516,6 +516,67 @@ def _rollover_failures(root: Path, state: dict) -> list:
     return fails
 
 
+def _rollover_failures_wip(root: Path, state: dict) -> list:
+    """P4.5: gate for a MID-SECTION (context-cap) rotation. The shipped
+    _rollover_failures() above -- which governs the SECTION-BOUNDARY ship rollover
+    -- is deliberately NOT touched. This PARALLEL gate accepts a WIP tree
+    (committed but UNPUSHED, UNSTAMPED, no green receipts: the section is still in
+    progress) and keeps ONLY the checks that protect against LOSING or CORRUPTING
+    work across a rotation:
+
+      (1) the working tree is CLEAN (auto-gen tolerated, same B4/F2 classifier) --
+          the WIP MUST be committed, else the rotation strands uncommitted edits;
+      (2) NO outstanding Codex review -- a pending review must be received first,
+          else the fresh worker inherits an un-triaged review;
+      (3) NO active background job -- a running codex-review would be stranded.
+
+    It intentionally DROPS the pushed / receipt / todo-graph checks (a mid-section
+    WIP is not ship-ready and must not be forced to be). The checks are DUPLICATED
+    from the ship gate on purpose -- refactoring the ship gate is the one thing
+    P4.5 must not risk. Fail-CLOSED: unreadable review state is a failure."""
+    fails = []
+    # (1) clean tree (WIP committed), auto-gen tolerated.
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "-uall"],
+                             cwd=str(root), capture_output=True, text=True,
+                             timeout=30)
+        if out.returncode != 0:
+            fails.append("git status unavailable")
+        elif out.stdout.strip():
+            dirty = [ln for ln in out.stdout.splitlines() if ln.strip()]
+            blocking = [ln for ln in dirty if _dirty_owner(ln) != "auto-gen"]
+            if blocking:
+                named = ", ".join(f"{_dirty_path(ln)} [{_dirty_owner(ln)}]"
+                                  for ln in blocking[:6])
+                fails.append(f"WIP not committed -- tree not clean "
+                             f"({len(blocking)} change(s): {named}); commit the "
+                             f"WIP before a mid-section rotation")
+    except Exception:
+        fails.append("git status unavailable")
+    # (2) no outstanding review (fail-CLOSED on unreadable).
+    review_state = root / ".claude/state/last-codex-review.json"
+    if review_state.exists():
+        try:
+            rs = json.loads(review_state.read_text())
+            if rs.get("received") is not True:
+                fails.append("outstanding Codex review not yet received")
+        except (OSError, ValueError):
+            fails.append("last-codex-review.json unreadable (fail-closed)")
+    # (3) no active background job (a running codex-review / watcher).
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "list-units", "--state=active",
+             "--no-legend", "codex-rev-*", "seq-watcher-*"],
+            capture_output=True, text=True, timeout=10)
+        jobs = [ln.split()[0] for ln in out.stdout.splitlines() if ln.strip()]
+        if jobs:
+            fails.append(f"outstanding background job(s) still active: "
+                         f"{', '.join(jobs[:4])}")
+    except Exception:
+        pass  # systemctl absent -> cannot enumerate; not a hard fail
+    return fails
+
+
 def _live_oracle_status():
     """Best-effort live triage-oracle verdict for the Stop fallback.
 
@@ -820,6 +881,64 @@ def cli(argv):
               "watchdog relaunches a fresh worker context on its next tick; "
               "the run stays armed and the cursor carries the state.",
               file=sys.stderr)
+        return 0
+    if cmd == "rollover-wip":
+        # P4.6: MID-SECTION context-cap rotation (safe-boundary firing). Fires
+        # ONLY when BOTH hold: (a) the P4.1 rotate_hint is set (context actually
+        # grew past the band -- do NOT rotate mid-section on a whim), and (b) the
+        # P4.5 WIP gate passes (committed-clean tree, no pending review, no bg
+        # job). Rotation is HARD-FORBIDDEN mid-fix-loop -- an uncommitted edit or
+        # an outstanding review both FAIL the WIP gate -- and during a review wait
+        # (an active codex-rev-* unit fails the WIP gate). On success it uses the
+        # SAME rotation mechanism as `rollover`; the enriched section-checkpoint
+        # (P4.2/P4.3) carries next_action + open_findings so the fresh worker
+        # resumes the SAME section without re-deriving.
+        if not state.get("active"):
+            print("[sequencer] rollover-wip REFUSED: no active run", file=sys.stderr)
+            return 1
+        try:
+            hint = json.loads(
+                (repo_root() / ".claude/state/rotate-hint.json").read_text())
+        except Exception:
+            hint = {}
+        if not (isinstance(hint, dict) and hint.get("hint")):
+            print("[sequencer] rollover-wip REFUSED: no rotate_hint set -- context "
+                  "has not crossed the size band, so a mid-section rotation is not "
+                  "warranted. Continue in-session.", file=sys.stderr)
+            return 1
+        fails = _rollover_failures_wip(repo_root(), state)
+        if fails:
+            print("[sequencer] rollover-wip REFUSED (not at a safe WIP boundary):\n"
+                  + "\n".join(f"  - {f}" for f in fails)
+                  + "\nA mid-section rotation is allowed ONLY at a WIP-commit-clean "
+                    "tree with NO pending review and NO background job (never "
+                    "mid-fix-loop, never during a review wait). Commit the WIP / "
+                    "receive the review / wait for the job, then retry -- or just "
+                    "continue in-session.", file=sys.stderr)
+            return 1
+        state["rollover"] = {"pending": True, "epoch": int(time.time()),
+                             "wip": True}
+        state.pop("rollover_refused", None)
+        save_state(state)
+        # Reset the turn counter for the fresh worker + write the enriched
+        # checkpoint so the resume re-orients (P4.2/P4.3). Best-effort.
+        try:
+            (repo_root() / ".claude/state/rotate-hint.json").unlink()
+        except Exception:
+            pass
+        try:
+            subprocess.run(
+                ["python3", str(repo_root()
+                                / "scripts/overnight/section-checkpoint.py"),
+                 "write"], cwd=str(repo_root()), capture_output=True, timeout=30)
+        except Exception:
+            pass
+        print("[sequencer] rollover-wip VERIFIED: WIP committed, no pending review, "
+              "no background job. This is a MID-SECTION context rotation -- "
+              "final-answer with a one-line checkpoint and END the turn; the "
+              "watchdog relaunches a fresh worker that resumes the SAME section "
+              "from the cursor (section-checkpoint carries next_action + "
+              "open_findings). The run stays armed.", file=sys.stderr)
         return 0
     if cmd == "selftest":
         return selftest()

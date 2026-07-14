@@ -232,11 +232,11 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
   CORRECTION to the old "1c": the resume path ALREADY calls `section-checkpoint.py show` (`SKILL.md:162`), so P4.2 is NOT dead weight. Real work: ensure the enriched fields appear in the `show` output AND the resuming session re-orients from them without re-deriving; optionally also auto-inject via `session_brief_inject.py` for reliability.
 - [ ] **[canary] P4.4 Attended canary of the enriched re-orient.**
   Prove a resumed session re-orients without re-deriving the same file:line facts. Gates whether P4.1-P4.3 pay off before any gate work is built. (This one IS a canary by nature.)
-- [ ] **[canary] P4.5 Parallel `_rollover_failures_wip()` gate (HIGH-RISK).**
+- [x] **[canary] P4.5 Parallel `_rollover_failures_wip()` gate (HIGH-RISK).**
   Accepts a WIP-commit-clean (committed, unpushed, unstamped) tree but KEEPS the review-received + no-background-jobs checks. Do NOT weaken the shipped `_rollover_failures()` -- it governs the ship rollover too.
-- [ ] **[canary] P4.6 Safe-boundary firing (HIGH-RISK).**
+- [x] **[canary] P4.6 Safe-boundary firing (HIGH-RISK).**
   Rotate ONLY at a WIP-commit-clean tree / between Codex rounds / after a green fix-loop round. Hard-forbid rotation during a review wait, an uncommitted edit, or mid-fix-loop (the fix-then-regress guard the 2026-07-03 self-diff gate protects).
-- [ ] **[det] P4.7 Tests for the WIP gate + boundary guard.**
+- [x] **[det] P4.7 Tests for the WIP gate + boundary guard.**
   Rejects open review / active bg job / dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
 - [ ] **[canary] P4.8 Mandatory attended canary of full mid-section rotation before ANY unattended arm.**
   The control-plane-manifest change mandates the green attended canary.
