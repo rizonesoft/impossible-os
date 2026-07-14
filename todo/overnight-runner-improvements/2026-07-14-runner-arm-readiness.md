@@ -113,7 +113,14 @@
   this workflow and retire/soften it. The rotation MECHANICS are correct + fail-safe (all the A1-A9 gates); the
   gap is that its PRECONDITION never occurs.
 
-- [ ] **[canary-finding] B2. Review-churn spiral on trivial sections (7 Codex reviews for a one-`#define` feature, ~2h).**
+- [x] **[canary-finding] B2. Review-churn spiral on trivial sections (7 Codex reviews for a one-`#define`). FIXED 2026-07-14.**
+  Doctrine fix (NOT a gate change -- a gate exemption for test deltas would be unsafe: a wrong-but-green test
+  slips, the exact §11 failure mode). Added to `review-todo-section` step 6 (canonical) + `implement-todo-section`
+  step 15: a fix diff confined to TEST files or COSMETIC edits takes the lighter self-verify path (no full
+  re-adversarial; at most one scoped confirming round if it changes WHAT is asserted). And the root-cause note:
+  when a finding asks to harden a test, do NOT use a fragile allocator-/layout-dependent bound (magic `delta<=N`
+  tied to heap internals draws a new finding every round) -- use a structural invariant that converges in one
+  round. Original:
   §11 (one `#define` + one `env_seed` + a test assertion) drew 4 PRE-commit adversarial rounds + 3 POST-commit
   legs. Driver: the runner's fix for a leak-exemption finding added a prewarm/verify test with an
   allocator-layout-dependent `delta <= 16` bound, which ITSELF drew findings each round, and the section-commit
