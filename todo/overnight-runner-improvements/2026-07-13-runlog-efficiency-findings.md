@@ -477,7 +477,7 @@
 > VERIFIED); one `SKIP_REVIEW_HOOK` remained (down from 2), root-caused below. Full run scorecard in the
 > sibling plan's "Canary #1" section.
 
-- [ ] **[det] C-RECV. (MUST-FIX before unattended arm) A broker review's `received: true` completion flag
+- [x] **[det] C-RECV. (MUST-FIX before unattended arm) A broker review's `received: true` completion flag
   is never set, so a find-and-fix re-adversarial's approve verdict cannot be USED as gate evidence.**
   SURFACED LIVE in Canary #1: B3 fixed the CAPTURE (trigger_files/trigger_blobs came back fully populated
   over the working tree -- the previous empty-trigger_files bug is gone), but the §10 impl commit STILL
@@ -492,7 +492,7 @@
   is usable evidence and the find-and-fix cycle needs NO opt-out. This is the deferred TODO-10 §7 /
   P1.3-completion "background completion -> trusted receipt binding" work; it is the last hole keeping
   Canary #1 from zero-SKIP. Distinct from B3 (capture, DONE): this is the RECEIVED/completion half.
-- [ ] **[det] J1. Rollover receipt recording is ORDER-SENSITIVE and the runner discovers it via a
+- [x] **[det] J1. Rollover receipt recording is ORDER-SENSITIVE and the runner discovers it via a
   refuse-fix-refuse loop.** SURFACED LIVE in Canary #1: the smoke receipt binds to the built IMAGE, but
   running the full `all` suite AFTER smoke rebuilds the image and re-stales the smoke receipt
   ("built image changed since the receipted smoke"), so the runner burned ~3 rollover attempts +
@@ -508,6 +508,11 @@
   BLOCK. (d) Codex reviews ran ~13-33 min each tonight and §10's find-and-fix cycle spanned ~2h -- a real
   cost concern (relates to P2 convergence + a possible max-review-wall B2 refinement for growing-but-
   wandering reviews), not a regression.
+  **STATUS 2026-07-14:** J2a DONE (`wait-for-codex-verdict.sh` warns + ignores a bare-number phantom log);
+  J2b DONE (`lint.sh` removed from the `build_offload_reminder` BLOCK matcher); J2c DEFERRED -- the guard
+  false-match does NOT reproduce against the reconstructed grep (no Bash PreToolUse hook fires), so it needs
+  the EXACT command from the run transcript to identify the over-matching guard; J2d (review latency) is a
+  Codex-behavior / P2-convergence concern, not a code fix here.
 
 ## Recorded observations (measured, NOT filed as actionable)
 

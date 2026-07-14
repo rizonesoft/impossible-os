@@ -81,7 +81,32 @@ def test_smoke_receipt_binds_image_and_inputs():
         assert _run(fx, "check-smoke").returncode == 1
 
 
+def test_record_rollover_records_all_three_consistently():
+    # J1: record-rollover records build + suite 'all' + smoke over the SAME tree
+    # in one shot, so all three check-valid together (no order-sensitive cascade).
+    with tempfile.TemporaryDirectory() as d:
+        fx = pathlib.Path(d) / "fx"
+        (fx / "src/kernel").mkdir(parents=True)
+        (fx / "build").mkdir()
+        subprocess.run(["git", "init", "-q", str(fx)], check=True)
+        (fx / "src/kernel/a.c").write_text("int a(void){return 1;}\n")
+        (fx / "Makefile").write_text("all:\n")
+        (fx / "build/kernel.exe").write_bytes(b"IMAGEv1")
+        subprocess.run(["git", "-C", str(fx), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(fx), "-c", "user.email=t@t",
+                        "-c", "user.name=t", "commit", "-qm", "init"],
+                       check=True, capture_output=True)
+        assert _run(fx, "record-rollover").returncode == 0
+        # all three receipts valid over the same final tree/image
+        assert _run(fx, "check-build").returncode == 0
+        r = subprocess.run([sys.executable, str(RECEIPTS), "check-suite",
+                            str(fx), "all"], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout
+        assert _run(fx, "check-smoke").returncode == 0
+
+
 if __name__ == "__main__":
     test_receipt_lifecycle()
     test_smoke_receipt_binds_image_and_inputs()
+    test_record_rollover_records_all_three_consistently()
     print("PASS: receipts")

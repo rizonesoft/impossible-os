@@ -40,8 +40,11 @@ from pathlib import Path
 
 FRESH_NS = 900 * 1_000_000_000  # 15 min: a dispatch this recent counts
 
+# J2b: `lint.sh` is intentionally NOT here -- lint is cheap and does not flood
+# the context like a full build/test/smoke run, so BLOCKing it to force the
+# run-artifact.sh reroute was mild over-reach. Only the output-heavy scripts route.
 _SCRIPT_RE = re.compile(
-    r"\bbash\s+scripts/(?:build|test|test-smoke|lint|test-tooling)\.sh\b")
+    r"\bbash\s+scripts/(?:build|test|test-smoke|test-tooling)\.sh\b")
 
 _MSG = (
     "[build-offload BLOCK -- reroute] Overnight SECTIONS phase ran `{script}` "

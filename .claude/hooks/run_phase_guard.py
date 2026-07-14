@@ -785,6 +785,10 @@ def cli(argv):
             save_state(state)
             print("[sequencer] rollover REFUSED (checkpoint not verified):\n"
                   + "\n".join(f"  - {f}" for f in fails)
+                  + "\n(receipt failures: run build -> test -> smoke with SMOKE "
+                    "LAST, then `python3 scripts/overnight/receipts.py "
+                    "record-rollover .` in ONE shot -- J1 -- so the image binding "
+                    "stays valid instead of a refuse-fix-refuse cascade.)"
                   + "\nRepair these on the CURRENT section and RE-RUN `rollover` "
                     "-- do NOT start the next section un-rotated (P3.2).",
                   file=sys.stderr)

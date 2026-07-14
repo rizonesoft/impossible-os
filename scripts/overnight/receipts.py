@@ -259,15 +259,40 @@ def check_smoke(project: Path, markers: str = SMOKE_MARKERS_DEFAULT
     return True, f"smoke green over current inputs+image ({key[:12]})"
 
 
+def record_rollover(project: Path) -> int:
+    """J1: record the FULL rollover receipt set (build + suite 'all' + smoke) over
+    the CURRENT tree/image in ONE shot, so all three bind to the same final state.
+
+    The rollover receipt cascade is order-sensitive: the smoke receipt binds to the
+    built IMAGE, and running the full suite AFTER smoke rebuilds the image, which
+    re-stales the smoke receipt. Discovering that reactively cost the 2026-07-14
+    canary ~3 refuse-fix-refuse rollover attempts. Contract: run build -> test
+    (suite all) -> smoke with SMOKE LAST (no rebuild after it), THEN call this
+    once. Returns nonzero if any leg's receipt could not be recorded."""
+    rc = 0
+    if record_build(project) != 0:
+        rc = 1
+    if record_suite(project, "all") != 0:
+        rc = 1
+    if record_smoke(project) != 0:
+        rc = 1
+    print("rollover receipt set recorded (build + suite all + smoke) -- run "
+          "smoke LAST before this so the image binding stays valid")
+    return rc
+
+
 def main(argv: list[str]) -> int:
     verbs = ("record-build", "check-build", "record-suite", "check-suite",
-             "record-smoke", "check-smoke")
+             "record-smoke", "check-smoke", "record-rollover")
     if len(argv) < 2 or argv[0] not in verbs:
         print("usage: receipts.py record-build|check-build PROJECT_DIR | "
               "record-suite|check-suite PROJECT_DIR SUITE | "
-              "record-smoke|check-smoke PROJECT_DIR", file=sys.stderr)
+              "record-smoke|check-smoke PROJECT_DIR | "
+              "record-rollover PROJECT_DIR", file=sys.stderr)
         return 2
     project = Path(argv[1])
+    if argv[0] == "record-rollover":
+        return record_rollover(project)
     if argv[0] == "record-build":
         return record_build(project)
     if argv[0] == "check-build":

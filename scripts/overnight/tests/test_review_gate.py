@@ -199,6 +199,88 @@ def test_b3_find_and_fix_re_review_supersedes():
         assert ok, why
 
 
+# ------------------------------------------------------- C-RECV auto-receive
+import shutil  # noqa: E402
+
+
+def _crecv_repo(d):
+    root = pathlib.Path(d)
+    (root / ".claude/state").mkdir(parents=True)
+    (root / ".claude/overnight/reviews").mkdir(parents=True)
+    (root / "scripts/overnight").mkdir(parents=True)
+    # the auto-receive clean-check loads the canonical review-envelope parser
+    shutil.copy(REPO / "scripts/overnight/review-envelope.py",
+                root / "scripts/overnight/review-envelope.py")
+    return root
+
+
+def _rec(root, kind="re-adversarial", received=False):
+    (root / ".claude/state/last-codex-review.json").write_text(json.dumps({
+        "received": received, "review_kind": kind, "trigger_files": ["src/x.c"],
+        "trigger_blobs": {"src/x.c": "abc"}, "received_timestamp_ns": None}))
+
+
+def _out_file(root, kind, body):
+    p = root / f".claude/overnight/reviews/20260714-000000-{kind}.out"
+    p.write_text(body)
+    return p
+
+
+def _poll(root, out_path):
+    crc._maybe_auto_receive_clean(
+        {"tool_name": "Bash", "tool_input": {"command":
+         f"bash scripts/overnight/wait-for-codex-verdict.sh {out_path}"}}, root)
+    return json.loads((root / ".claude/state/last-codex-review.json").read_text())
+
+
+def test_crecv_clean_completion_auto_receives():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial",
+                        "Verdict: approve\nNo material findings.\nTurn completed (rc=0)\n")
+        assert _poll(root, out)["received"] is True
+
+
+def test_crecv_findings_not_received():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial",
+                        "[HIGH] real bug at x.c:5\nTurn completed (rc=0)\n")
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_crashed_not_received():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial", "approve\nTurn completed (rc=1)\n")
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_severity_in_tail_not_received():
+    # A clean-ish verdict that still NAMES a severity in the tail -> fail-safe.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial",
+                        "verdict: approve; the earlier HIGH is fixed\nTurn completed (rc=0)\n")
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_kind_mismatch_not_received():
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "adversarial")   # record kind != out kind
+        out = _out_file(root, "perf",
+                        "approve\nno material findings\nTurn completed (rc=0)\n")
+        assert _poll(root, out)["received"] is False
+
+
+def test_crecv_no_approve_signal_not_received():
+    # Completed + no findings but NO explicit approve signal -> stay unreceived.
+    with tempfile.TemporaryDirectory() as d:
+        root = _crecv_repo(d); _rec(root, "re-adversarial")
+        out = _out_file(root, "re-adversarial", "done reviewing.\nTurn completed (rc=0)\n")
+        assert _poll(root, out)["received"] is False
+
+
 # ------------------------------------------------------------ F1 attribution
 def test_f1_active_section_wins_over_first_staged():
     # F1: with TODO-12 staged FIRST (reciprocal XREF) but TODO-22 the active
@@ -244,7 +326,13 @@ if __name__ == "__main__":
     test_b3_review_over_unstaged_binds_then_gate_accepts_when_staged()
     test_b3_edit_after_review_still_blocks()
     test_b3_find_and_fix_re_review_supersedes()
+    test_crecv_clean_completion_auto_receives()
+    test_crecv_findings_not_received()
+    test_crecv_crashed_not_received()
+    test_crecv_severity_in_tail_not_received()
+    test_crecv_kind_mismatch_not_received()
+    test_crecv_no_approve_signal_not_received()
     test_f1_active_section_wins_over_first_staged()
     test_f1_falls_back_to_first_staged_without_active()
     test_f1_orphaned_active_falls_back()
-    print("PASS: review-gate P1.2/P1.3 + B3 + F1")
+    print("PASS: review-gate P1.2/P1.3 + B3 + F1 + C-RECV")

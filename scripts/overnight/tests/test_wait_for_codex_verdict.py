@@ -125,6 +125,18 @@ def test_still_running_reports_activity():
         assert "bytes" in r.stdout and "last growth" in r.stdout
 
 
+def test_bare_number_arg_ignored_not_phantom_log():
+    # J2a: `... <log> 300` (intending --max 300) must NOT add a phantom "300"
+    # log; the DONE log alone should still complete.
+    with tempfile.TemporaryDirectory() as d:
+        log = pathlib.Path(d) / "r.log"
+        log.write_text("Turn completed (rc=0)\n")
+        r = subprocess.run(["bash", str(TOOL), "--max", "5", str(log), "300"],
+                           capture_output=True, text=True, cwd=d)
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        assert "ignoring bare number '300'" in r.stderr, r.stderr
+
+
 if __name__ == "__main__":
     test_sentinel_present_returns_done()
     test_no_sentinel_returns_still_running()
@@ -135,4 +147,5 @@ if __name__ == "__main__":
     test_stale_flagged_after_no_growth()
     test_growth_resets_stall_clock()
     test_still_running_reports_activity()
-    print("PASS: wait-for-codex-verdict (B1 + B2)")
+    test_bare_number_arg_ignored_not_phantom_log()
+    print("PASS: wait-for-codex-verdict (B1 + B2 + J2a)")

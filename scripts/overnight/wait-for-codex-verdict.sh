@@ -50,7 +50,16 @@ while [ $# -gt 0 ]; do
         --max=*)        MAX="${1#--max=}"; shift ;;
         --stale-secs)   STALE="${2:-}"; shift 2 ;;
         --stale-secs=*) STALE="${1#--stale-secs=}"; shift ;;
-        *)              LOGS+=("$1"); shift ;;
+        *)
+            # J2a: a BARE number that is not a file is almost always a misused
+            # `--max` (`... .out 300` intending `--max 300`); adding it as a
+            # phantom log makes the wait never complete. Warn + skip it.
+            if printf '%s' "$1" | grep -qE '^[0-9]+$' && [ ! -f "$1" ]; then
+                echo "wait-for-codex-verdict.sh: ignoring bare number '$1' (not a log file) -- did you mean '--max $1'?" >&2
+            else
+                LOGS+=("$1")
+            fi
+            shift ;;
     esac
 done
 if [ "${#LOGS[@]}" -lt 1 ] || ! [ "$MAX" -gt 0 ] 2>/dev/null \

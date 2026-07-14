@@ -1086,6 +1086,90 @@ def _debug_log(root, event: str, **fields) -> None:
         pass
 
 
+def _out_kind_from_name(name: str) -> str:
+    """'<ts>-<kind>.out' -> '<kind>' (e.g. 20260714-024817-re-adversarial.out)."""
+    m = re.match(r".*?-([a-z][a-z-]*)\.out$", name)
+    return m.group(1) if m else ""
+
+
+def _out_is_clean(root: Path, out_path: Path) -> bool:
+    """C-RECV: a review .out is CLEAN iff the CANONICAL leg parser
+    (review-envelope.leg_summary -- the same one the pipeline uses to decide
+    all_clean / needs_redispatch) says it completed, did not crash (rc==0), and
+    carries ZERO severity-marked findings, AND its tail carries an explicit
+    approve signal with no severity token. FAIL-SAFE in every direction: a parse
+    failure, a missing rc, any finding line, or any severity word in the tail all
+    return False -> no auto-receive, and the model must still triage the review
+    through receiving-code-review. Reusing the pipeline parser means this can
+    never call 'clean' a leg the pipeline would re-dispatch."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "review_envelope_recv", str(root / "scripts/overnight/review-envelope.py"))
+        env = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(env)
+        leg = env.leg_summary({"logFile": str(out_path)})
+    except Exception:
+        return False
+    if not (leg.get("complete") and not leg.get("crashed")
+            and leg.get("rc") == 0 and not leg.get("findings")):
+        return False
+    tail = " ".join(leg.get("tail") or []).lower()
+    # Extra fail-safe: never call clean when the FINAL verdict still names a
+    # severity (covers finding formats the line-anchored FINDING_RE may miss,
+    # e.g. `**F1 [high]`), so an unaddressed finding can never auto-receive.
+    if re.search(r"\b(critical|high|medium|low)\b", tail):
+        return False
+    return any(s in tail for s in (
+        '"verdict":"approve"', '"verdict": "approve"', "verdict: approve",
+        "no material findings", "no findings", "zero findings",
+        "no material issues", "ship: yes"))
+
+
+def _maybe_auto_receive_clean(payload: dict, root) -> None:
+    """C-RECV: mark a COMPLETED broker review received when its verdict is
+    demonstrably CLEAN, so a clean find-and-fix re-adversarial (which has nothing
+    to triage, so the model never invokes receiving-code-review) is usable gate
+    evidence instead of forcing a SKIP_REVIEW_HOOK. Detected on a
+    `wait-for-codex-verdict.sh <out>` poll. Content-binding is UNTOUCHED -- the
+    gate still requires trigger_blobs == staged blobs, so this only removes the
+    opt-out for a clean re-review; it never accepts unreviewed content."""
+    if root is None or payload.get("tool_name") != "Bash":
+        return
+    cmd = str((payload.get("tool_input") or {}).get("command") or "")
+    if "wait-for-codex-verdict.sh" not in cmd:
+        return
+    try:
+        import shlex
+        toks = shlex.split(cmd)
+    except Exception:
+        toks = cmd.split()
+    outs = [t for t in toks if t.endswith(".out")]
+    if not outs:
+        return
+    state_path = _state_path(root)
+    state = _load_state(state_path)
+    if not isinstance(state, dict) or state.get("received") is True:
+        return
+    rec_kind = str(state.get("review_kind") or "")
+    for out_rel in outs:
+        p = Path(out_rel) if os.path.isabs(out_rel) else (root / out_rel)
+        out_kind = _out_kind_from_name(p.name)
+        # Only auto-receive the record's OWN kind (a multi-log wait may list
+        # several .out paths; the current record tracks exactly one review).
+        if rec_kind and out_kind and out_kind != rec_kind:
+            continue
+        if _out_is_clean(root, p):
+            state["received"] = True
+            state["received_timestamp_ns"] = time.time_ns()
+            state["received_via"] = "auto-clean-broker-completion (C-RECV)"
+            ok, _err = _write_atomic(state_path, state)
+            if ok:
+                _append_history(root, state)
+                _debug_log(root, "auto_receive_clean", kind=rec_kind, out=str(p))
+            return
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -1098,6 +1182,10 @@ def main() -> int:
     kind, label = _classify(payload)
     _debug_log(root_for_debug, "classify", kind=kind, label=label)
     if not kind:
+        # C-RECV: a `wait-for-codex-verdict.sh` poll is not a trigger/receive,
+        # but a COMPLETED broker review with a demonstrably-clean verdict should
+        # mark itself received (nothing to triage) so the gate can use it.
+        _maybe_auto_receive_clean(payload, root_for_debug)
         return 0
     root = _repo_root()
     if root is None:

@@ -107,10 +107,21 @@ def test_message_has_no_checks_runner_text():
     assert "checks-runner" not in mod._MSG, mod._MSG
 
 
+def test_lint_is_exempt_from_block():
+    # J2b: lint is cheap -> not in the BLOCK matcher, so a bare lint does NOT block.
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        rc, out, err = _run_main(mod, "bash scripts/lint.sh", root)
+        assert rc == 0 and err.strip() == "", (rc, err)
+
+
 if __name__ == "__main__":
     test_wrapped_command_is_exempt()
     test_bare_command_blocks_with_reroute()
     test_wrapped_test_and_smoke_also_exempt()
     test_block_is_idempotent_but_log_dedups()
     test_message_has_no_checks_runner_text()
-    print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup")
+    test_lint_is_exempt_from_block()
+    print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt")
