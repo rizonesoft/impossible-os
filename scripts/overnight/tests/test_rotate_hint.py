@@ -15,12 +15,15 @@ HERE = pathlib.Path(__file__).resolve().parent
 HOOK = HERE.parents[2] / ".claude/hooks/rotate_hint.py"
 
 
-def _load(root):
+def _load(root, enabled=True):
     spec = importlib.util.spec_from_file_location("rotate_hint", HOOK)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     mod._repo_root = lambda: root
     mod.ROTATE_HINT_TURNS = 3  # low threshold for a fast test
+    # B1: the hook is RETIRED (inert) by default; the mechanism tests re-enable it
+    # to exercise the (dormant, re-enablable) logic.
+    mod.ROTATE_HINT_ENABLED = enabled
     return mod
 
 
@@ -154,7 +157,20 @@ def test_no_emit_when_persist_fails():                     # A4 emit-after-persi
             os.chmod(state_dir, 0o755)
 
 
+def test_retired_by_default_is_inert():                    # B1 retirement
+    # With ROTATE_HINT_ENABLED False (the shipped default), the hook never counts
+    # and never emits -- even in a headless SECTIONS run past the threshold.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _sections(root)
+        mod = _load(root, enabled=False)
+        for _ in range(6):                                 # well past threshold(3)
+            assert not _has_msg(_feed(mod))
+        assert _hint(root) is None, "retired hook must not touch the counter"
+
+
 if __name__ == "__main__":
+    test_retired_by_default_is_inert()
     test_hint_fires_at_threshold()
     test_silent_outside_sections()
     test_no_run_state_silent()

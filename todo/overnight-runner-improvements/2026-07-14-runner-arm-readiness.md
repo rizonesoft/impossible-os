@@ -66,27 +66,27 @@
   redundant inner import. `_write_section_checkpoint` (the WIP-rollover helper) is module-scope and was
   unaffected, so P4.2/P4.5 were OK; only the FULL rollover's inline write was hit.
 
-## Unattended-arm gates from the A4/A5 review (round 3, 20260714-103035) -- fix before UNATTENDED
+## A4/A5-rotation gate-hardening (round 3, 20260714-103035) -- BACKLOG (rotation retired, B1)
 
-> All three verified valid; NONE is critically broken for an ATTENDED canary (the gates work for the normal
-> flow; each bypass needs a specific sequence that will not arise in a watched run). Deferred to the next
-> unattended pass by operator decision 2026-07-14.
+> All three verified valid, but they only harden the `rollover-wip` gate -- which is now RETIRED (B1). The
+> gate code stays dormant and fail-safe, so these are NOT arm-blocking. Re-open ONLY if the mid-section
+> rotation is ever un-retired. Downgraded from unattended-gate to backlog by operator decision 2026-07-14.
 
-- [ ] **[unattended-gate] A7. `_head_adds_ship_stamp` only examines HEAD + fails open (HIGH).**
+- [ ] **[backlog] A7. `_head_adds_ship_stamp` only examines HEAD + fails open (HIGH).**
   A stamp commit followed by an unpushed FIXUP leaves `unpushed>0` but HEAD no longer shows the stamp, so the
   weaker WIP path proceeds (`run_phase_guard.py:561-576`; the follow-up-commit-returns-False behavior is
   codified at `test_p45_wip_rollover.py:242-246`). It also fails OPEN on git error/timeout/nonzero exit. Fix:
   scan the cumulative `@{u}..HEAD` range for the stamp (or persist a durable section-shipped marker), and
   return an unknown/error state that `rollover-wip` REFUSES (fail-closed).
 
-- [ ] **[unattended-gate] A8. `review-resolved` does not prove findings were resolved (HIGH).**
+- [ ] **[backlog] A8. `review-resolved` does not prove findings were resolved (HIGH).**
   It writes a resolution receipt for a received-but-UNFIXED findings-bearing review when the unchanged blobs
   still match HEAD and existing build/test receipts are green; and with an absent/`{}` review record it skips
   both review checks and writes a receipt with an EMPTY run ID (`run_phase_guard.py:1069-1106`). Fix: require
   a present, well-formed current review with a nonempty `review_run_id` + machine-verifiable resolution
   evidence (a clean post-fix review, or complete finding dispositions bound to that run + HEAD).
 
-- [ ] **[unattended-gate] A9. Resolution receipt ignores `review_run_id` (HIGH).**
+- [ ] **[backlog] A9. Resolution receipt ignores `review_run_id` (HIGH).**
   `_review_resolution_valid` checks only `receipt.head`, so a resolved receipt for review A at HEAD H stays
   valid after a newer findings-bearing review B is received at the SAME H -- the WIP gate then rotates before
   B is resolved (`run_phase_guard.py:608-631`). Fix: require `receipt.review_run_id` == the latest review
@@ -101,7 +101,14 @@
 > wrapper escape-hatch, the lint gate (numeric section refs), the section-commit re-adversarial requirement,
 > receipt content-binding, and the full-rollover gate (refuse -> repair -> retry -> VERIFIED). Three findings:
 
-- [ ] **[canary-finding] B1. The mid-section WIP rotation is effectively INERT under the real runner workflow (questions Phase 4's premise).**
+- [x] **[canary-finding] B1. RETIRE the mid-section WIP rotation (keep A1-A9 code dormant). DECIDED 2026-07-14.**
+  Canary #2 proved the precondition never occurs (commit+push is atomic at ship -> no unpushed-WIP window;
+  a ~2h/7-review section hit only ~132 tool-events, so 140 ~= one section and the per-section full rollover
+  already gives context hygiene; an oversized section should be SPLIT via the split predictor, not rotated).
+  Action taken: `rotate_hint.ROTATE_HINT_ENABLED = False` (hook inert -- no nudge into a rotation that only
+  refuses); the SECTIONS-phase rotation doctrine replaced with a RETIRED note; the `rollover-wip` /
+  `review-resolved` verbs + the A1-A9 gates KEPT in the code, dormant and fail-safe. Re-enable only if the
+  runner ever adopts periodic unpushed WIP commits (flip the flag, restore the doctrine, close A7-A9). ORIGINAL:
   The rotation needs a "committed-but-UNPUSHED WIP" boundary, but the runner commits AND pushes atomically at
   ship, and does NOT make intermediate unpushed commits during a section. So when the hint crosses 140 (which
   happened only late, DURING the post-commit review pipeline), the section is already pushed -> `rollover-wip`'s

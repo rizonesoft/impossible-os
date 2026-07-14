@@ -20,6 +20,18 @@ import sys
 import time
 from pathlib import Path
 
+# B1 (Canary #2, 2026-07-14): the mid-section rotation is RETIRED as an active
+# mechanism. Canary #2 proved its precondition never occurs -- the runner commits
+# AND pushes atomically at ship, so there is no committed-but-unpushed WIP window
+# for `rollover-wip` to fire on, and a full ~2h/7-review section reached only ~132
+# tool-events (140 ~= one section, so the per-section full rollover already handles
+# context hygiene; an oversized section should be SPLIT, not rotated mid-way). The
+# A1-A9 verb + gate code stays in place, dormant and fail-safe. This flag keeps the
+# hook inert so the runner is never nudged into a rotation that would only refuse.
+# To re-enable (e.g. if the runner ever adopts periodic unpushed WIP commits):
+# flip this True AND un-retire the SECTIONS-phase doctrine in the sequencer SKILL.
+ROTATE_HINT_ENABLED = False
+
 # Turn-count proxy for the doctrine context band. Deliberately conservative: the
 # hint is advisory, and P4.6 only acts at a safe boundary, so an early hint costs
 # nothing. Tune via the canary (P4.4/P4.8).
@@ -74,6 +86,9 @@ def main() -> int:
     try:
         json.load(sys.stdin)  # consume payload; any tool event is one "turn"
     except Exception:
+        return 0
+    # B1: retired -> fully inert (no counting, no reminder). Dormant fail-safe.
+    if not ROTATE_HINT_ENABLED:
         return 0
     # A2 (review 2026-07-14): count + emit ONLY inside the headless overnight run.
     # arm-sequencer.sh sets OVERNIGHT_SEQUENCER_RUN=1 in the unit environment; an

@@ -355,51 +355,20 @@ information or judgment; none of this weakens a gate):**
     relaunch mechanism.)
   - **REFUSED** -> the listed failures are unfinished work: finish/clean them
     and continue in-session (never force a rollover past a red gate).
-- **Mid-section context-cap rotation (P4.6/P4.8).** A single section can outrun
-  the doctrine context band before it ships (long fix loops, multi-round reviews).
-  `rotate_hint.py` counts tool-events since the last rollover and, past its band,
-  posts an advisory `systemMessage` ("context-rotation hint set ... run
-  `rollover-wip`"), re-nudging periodically until acted on. **When you see that
-  reminder, do NOT stop mid-work.** Carry the current unit of work to the NEXT
-  WIP-clean boundary within the SAME section, which means ALL of:
-  - the last change **committed** (a local WIP commit is enough; unlike the full-
-    section rollover, the WIP gate does NOT require a push -- the fresh worker
-    resumes the same on-host tree). There MUST be committed-but-unpushed local work
-    for a WIP rotation: if everything is already pushed you have either shipped
-    (use the full `rollover`) or done nothing to rotate, and the verb refuses;
-  - **no in-flight OR unresolved Codex review** -- not merely "received". If a
-    review is open, its findings must be triaged, fixed, and the fix-loop green
-    FIRST. A review that is `received` but whose findings are not yet resolved is
-    NOT a safe boundary (its content-binding must also match HEAD -- the verb
-    enforces this and a stale binding cannot be repaired by waiting);
-  - no background job running.
-  Then, IN ORDER:
-  1. `python3 .claude/hooks/run_phase_guard.py review-resolved` -- records a
-     content-bound receipt attesting the review cycle is resolved + GREEN at this
-     HEAD (it verifies the received review binds HEAD and that build + test
-     receipts are content-valid; REFUSES otherwise). If it refuses, you are not at
-     a resolved+green boundary -- fix/receive/re-verify (a green `build.sh` +
-     `test.sh` with recorded receipts) and retry, or continue in-session.
-  2. `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
-  - **VERIFIED** -> the verb has already written the enriched section-checkpoint
-    (fail-closed: no checkpoint, no authorization) and armed the cursor. Final-
-    answer with a one-line "mid-section rotation at section N" summary and END the
-    turn. The watchdog relaunches a fresh worker that resumes this SAME section
-    from the checkpoint's `next_action` (step 0's resume path) -- NOT a new
-    section. This is a context rotation, not a stop; the run stays armed.
-  - **REFUSED** -> READ the refusal reason; it is NOT always "wait and retry".
-    Only a transient boundary (uncommitted WIP mid-edit, a still-running background
-    job) is repaired by reaching the next clean boundary. A structural refusal --
-    everything already pushed (post-ship: use the full `rollover`), a review whose
-    binding is stale or missing, `rollover_refused` set (a failed ship gate), or
-    phase != SECTIONS -- will NOT change by retrying: continue in-session and let
-    the next natural exit (ship -> full rollover) handle rotation. Never force it,
-    never abandon in-flight work to rotate, and never use it to escape a refused
-    ship rollover -- `rollover-wip` refuses outside `phase SECTIONS` and never
-    clears `rollover_refused` (it is not a ship path).
-  This is orthogonal to the full-section rollover above: the full rollover fires
-  AFTER a section ships (clean tree, PUSHED, receipts, no WIP); this one fires
-  DURING a long section at a committed-but-unpushed boundary, and only when hinted.
+- **Mid-section context-cap rotation -- RETIRED (B1, Canary #2 2026-07-14).** Do
+  NOT attempt a mid-section rotation; the `rotate_hint` reminder is disabled
+  (`ROTATE_HINT_ENABLED = False`) so it will not fire. Canary #2 proved the
+  mechanism's precondition never occurs: you commit AND push atomically at ship, so
+  there is never a committed-but-unpushed WIP window for `rollover-wip`, and a full
+  ~2h/7-review section reached only ~132 tool-events (140 ~= one section). The
+  per-section full `rollover` above already provides context hygiene at every
+  section boundary; a section too big for one context should be SPLIT (the
+  `section-manifest` split predictor), not rotated mid-way. The `rollover-wip` /
+  `review-resolved` verbs + the A1-A9 gates remain in the code, dormant and
+  fail-safe -- they only ever refuse if invoked. Re-enable ONLY if the runner ever
+  adopts periodic unpushed WIP commits (flip `ROTATE_HINT_ENABLED` True, restore
+  this doctrine from git history, and first close arm-readiness A7-A9). Until then:
+  rely on ship -> full rollover, and split oversized sections.
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
   (missing prerequisite owned elsewhere, hardware-only validation, deliberate
   roadmap "no code today"), the implement/review skill marks it `[/]` + a
