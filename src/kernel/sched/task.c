@@ -403,6 +403,7 @@ boot_result_t task_init(void)
          * slots are never reused without a task_cleanup env_free in between). */
         tasks[i].environ = NULL;
         tasks[i].environ_count = 0;
+        tasks[i].environ_bytes = 0;
         tasks[i].argv = NULL;
         tasks[i].argc = 0;
         mutex_init(&tasks[i].environ_lock, "environ");

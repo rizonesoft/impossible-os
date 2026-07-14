@@ -1710,6 +1710,86 @@ static void test_env_parse_block_oversize_rejected(void)
     env_free(&s_env_fixture);
 }
 
+/* env_adopt_block: reverse-order input with a duplicate name -> sorted output,
+ * duplicate collapsed to the LAST occurrence (stable merge sort + linear dedup). */
+static void test_env_adopt_block_sorts_dedups(void)
+{
+    const char *entries[] = { "ZED=1", "MID=2", "AAA=3", "MID=4" };
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_adopt_block(&s_env_fixture, entries, 4), ENV_OK,
+                   "adopt reverse-order + duplicate block");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 3, "duplicate MID collapsed to one");
+    TEST_ASSERT(env_streq(s_env_fixture.environ[0], "AAA=3"), "AAA sorts first");
+    TEST_ASSERT(env_streq(s_env_fixture.environ[1], "MID=4"), "MID second, last occurrence wins");
+    TEST_ASSERT(env_streq(s_env_fixture.environ[2], "ZED=1"), "ZED sorts last");
+    env_free(&s_env_fixture);
+}
+
+/* Cached block-byte total stays accurate: fill to the block cap, unset one
+ * entry, and a new same-size set must then fit (env_unset decremented the
+ * cached total; a drifted counter would wrongly reject). */
+static char s_bt_val[8192];
+static void test_env_bytes_unset_reclaims(void)
+{
+    char name[8];
+    uint32_t i;
+    int hit = 0;
+    env_fixture_reset();
+    for (i = 0; i < sizeof(s_bt_val) - 1u; i++)
+        s_bt_val[i] = 'z';
+    s_bt_val[sizeof(s_bt_val) - 1u] = '\0';
+    for (i = 0; i < ENV_MAX_ENTRIES; i++) {
+        int rc;
+        name[0] = 'B';
+        name[1] = (char)('A' + (int)((i / 26u) % 26u));
+        name[2] = (char)('A' + (int)(i % 26u));
+        name[3] = '\0';
+        rc = env_set(&s_env_fixture, name, s_bt_val);
+        if (rc == ENV_ERR_NOSPACE) {
+            hit = 1;
+            break;
+        }
+        TEST_ASSERT_EQ(rc, ENV_OK, "env_set succeeds until the block cap");
+    }
+    TEST_ASSERT(hit, "environment filled to the 1 MiB block cap");
+    TEST_ASSERT_EQ(env_unset(&s_env_fixture, "BAA"), ENV_OK, "unset an existing entry");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "NEW", s_bt_val), ENV_OK,
+                   "unset reclaimed block budget for a new same-size set");
+    env_free(&s_env_fixture);
+}
+
+/* Adopting an EMPTY block must reset the cached byte total, not retain the old
+ * quota charge -- otherwise the next env_set spuriously returns NOSPACE. */
+static void test_env_adopt_empty_resets_quota(void)
+{
+    char name[8];
+    uint32_t i;
+    int hit = 0;
+    env_fixture_reset();
+    for (i = 0; i < sizeof(s_bt_val) - 1u; i++)
+        s_bt_val[i] = 'q';
+    s_bt_val[sizeof(s_bt_val) - 1u] = '\0';
+    for (i = 0; i < ENV_MAX_ENTRIES; i++) {
+        int rc;
+        name[0] = 'Q';
+        name[1] = (char)('A' + (int)((i / 26u) % 26u));
+        name[2] = (char)('A' + (int)(i % 26u));
+        name[3] = '\0';
+        rc = env_set(&s_env_fixture, name, s_bt_val);
+        if (rc == ENV_ERR_NOSPACE) {
+            hit = 1;
+            break;
+        }
+    }
+    TEST_ASSERT(hit, "environment filled to the block cap");
+    TEST_ASSERT_EQ(env_adopt_block(&s_env_fixture, (const char *const *)0, 0u), ENV_OK,
+                   "adopt empty block clears environ");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 0, "environ empty after clear");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "AFTER", "x"), ENV_OK,
+                   "set succeeds after empty adoption reset the cached quota");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: argv set + free",
@@ -1862,6 +1942,12 @@ void test_register_env(void)
                             test_env_parse_block_over_value_skipped, TEST_CAT_ABI);
     test_suite_register_cat("Env: parse rejects oversize block up front",
                             test_env_parse_block_oversize_rejected, TEST_CAT_ABI);
+    test_suite_register_cat("Env: adopt sorts + dedups (last-wins)",
+                            test_env_adopt_block_sorts_dedups, TEST_CAT_ABI);
+    test_suite_register_cat("Env: unset reclaims cached block budget",
+                            test_env_bytes_unset_reclaims, TEST_CAT_ABI);
+    test_suite_register_cat("Env: empty adoption resets cached quota",
+                            test_env_adopt_empty_resets_quota, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

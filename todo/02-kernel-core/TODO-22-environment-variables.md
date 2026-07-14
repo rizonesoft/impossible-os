@@ -415,14 +415,18 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Test checkpoint:** `GetEnvironmentStrings` order AAA before ZZZ; oversize name rejected. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1510 suites, 0 failures (10 new s10 cases)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1653 suites, 0 failures (s10 build/parse/sort/cap/quota cases)
 
 > **Notes:**
-> - Shipped in `src/kernel/env.c` + `env.h`: sorted `environ[]` (`env_name_cmp` + `env_bsearch`), caller-buffer `env_build_block`/`env_parse_block` (ANSI+UTF-16), 1 MiB block-size cap (256 KiB warn), deterministic `REG_EXPAND_SZ` expansion.
-> - Design-review adoptions (detail in commit message): value pointers derive from the stored `=` not query length; ASCII-only stable fold over ephemeral NLS; registry expansion moved out of `RegEnumValue` order.
-> - 10 new `test_env_*` cases (sort, build/parse ANSI+Unicode, dedup, malformed, block cap) under SUITE=abi; full build+test green.
+> - Shipped in `src/kernel/env.c` + `env.h`: sorted `environ[]` (`env_name_cmp`/`env_bsearch`, merge sort in adopt), caller-buffer `env_build_block`/`env_parse_block` (ANSI+UTF-16), 1 MiB block cap, two-phase `REG_EXPAND_SZ` expansion.
+> - Adoptions (detail in commit messages): value pointers derive from the stored `=`; ASCII-only stable fold over ephemeral NLS; O(n log n) adopt sort; O(1) block cap via cached byte total.
+> - New `test_env_*` cases (sort, build/parse ANSI+Unicode, dedup, malformed, 1 MiB cap, over-value skip, oversize reject, unset-reclaims, empty-adopt quota) under SUITE=abi; build+test+smoke green.
 > - Canonical doc: byte-cap contract + block-cap rationale in the `include/kernel/env.h` header comment.
-> - Scope: full NLS Unicode folding is TODO-13's (deferred `[/]`); CREATE_UNICODE_ENVIRONMENT + child-env wiring are TODO-12 §7 / TODO-21 §2.
+> - Scope: full NLS folding is TODO-13's (deferred `[/]`); CREATE_UNICODE_ENVIRONMENT + child-env wiring are TODO-12 §7 / TODO-21 §2; the NULL-env RtlExpand 128 KiB cap is §19's.
+
+> **Verified:** 2026-07-14 | commit `90a3b1fa` (+review) | 11/12 items | build OK | tests 1653/1653 abi PASS + smoke PASS
+> **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 600)
+> **Quality reviewed:** 2026-07-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 2H+4M+1L fixed, 1M accepted-XREF, 1 rejected | scope: kernel-code-quality
 
 ---
 
@@ -597,6 +601,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [ ] `RtlSetEnvironmentVariable(Environment, Name, Value)` -- routes to §5 `NtSetEnvironmentVariable`; NULL value deletes
 - [ ] `RtlCreateEnvironment` / `RtlDestroyEnvironment` -- allocate/free a standalone UTF-16 env block (for `CreateProcess lpEnvironment`, §10/§13)
 - [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these Rtl exports so ntdll imports resolve; `RtlExpandEnvironmentStrings_U` already lives in §3
+- [ ] Raise the NULL-env expansion cap above 128 KiB: `rtl_env_expand_pass` (`nt_rtlenv.c`) counts output in a uint32 (wraps at 2^32), so `RTL_ENV_BLOCK_MAX_WCHARS` stays 64 KiWCHAR; switch to a saturating uint64 count then raise the cap
 - [ ] Commit: `"ntdll: Rtl environment layer over the Nt env syscalls"`
 
 **Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment` builds a sorted block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.

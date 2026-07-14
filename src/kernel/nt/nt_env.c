@@ -434,9 +434,13 @@ static NTSTATUS NtSetEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
 
     r = env_set(task_current(), name8, val8);
     nt_env_free(val8, (uint32_t)val8_n);
+    /* ENV_ERR_NOSPACE is the per-process quota (block > 1 MiB or entry-count cap),
+     * a deterministic limit -- STATUS_QUOTA_EXCEEDED, not the transient
+     * STATUS_INSUFFICIENT_RESOURCES (which is ENV_ERR_NOMEM's actual-alloc-failure
+     * signal). TODO-22 s10 requires QUOTA_EXCEEDED for block overflow. */
     return (r == ENV_OK)          ? STATUS_SUCCESS
          : (r == ENV_ERR_NOMEM)   ? STATUS_NO_MEMORY
-         : (r == ENV_ERR_NOSPACE) ? STATUS_INSUFFICIENT_RESOURCES
+         : (r == ENV_ERR_NOSPACE) ? STATUS_QUOTA_EXCEEDED
          : (r == ENV_ERR_TOOLONG) ? STATUS_NAME_TOO_LONG
                                   : STATUS_INVALID_PARAMETER;
 }

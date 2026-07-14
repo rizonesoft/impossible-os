@@ -30,8 +30,13 @@
  * WCHARs (includes inter-entry NULs + terminators). Bounds both the double-NUL
  * scan of a supplied block and the size of a synthesized current-process block,
  * so a stripped terminator or a pathological environ cannot drive an unbounded
- * kernel walk/allocation. 64 KiWCHAR = 128 KiB, far above any real env block
- * (the PEB env region is a single 4 KiB page). */
+ * kernel walk/allocation. 64 KiWCHAR = 128 KiB. This is DELIBERATELY smaller than
+ * the storage-layer ENV_BLOCK_MAX (1 MiB): the expansion pass counts its output
+ * length in a uint32, so a cap near ENV_BLOCK_MAX would let a crafted block+source
+ * wrap the accumulator at 2^32 WCHARs. A NULL-environment expansion of a valid
+ * env larger than this cap fails STATUS_INVALID_PARAMETER; raising it safely
+ * requires a saturating uint64 length count in the Rtl environment expansion
+ * layer, which owns that limit -- not this storage block-sort feature. */
 #define RTL_ENV_BLOCK_MAX_WCHARS   65536u
 
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-

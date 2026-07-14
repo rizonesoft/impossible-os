@@ -228,6 +228,7 @@ struct task {
      * (never touched from an ISR). Freed at the task_cleanup reap barrier. */
     char      **environ;        /* "KEY=VALUE" strings, or NULL */
     uint32_t    environ_count;  /* live entries (excludes NULL terminator) */
+    uint32_t    environ_bytes;  /* cached SUM(strlen(entry)+1) under environ_lock; O(1) block cap */
     char      **argv;           /* argument strings, or NULL until argv setup */
     int         argc;
     mutex_t     environ_lock;
