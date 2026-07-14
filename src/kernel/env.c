@@ -1425,6 +1425,107 @@ done:
 }
 
 /* ===========================================================================
+ * userenv.dll CreateEnvironmentBlock / DestroyEnvironmentBlock (TODO-22 s13)
+ *
+ * A created block is SELF-DESCRIBING: env_str_alloc gives back a size-class the
+ * free path derives purely from the byte count, but that byte count is not stored
+ * inline, and the Win32 DestroyEnvironmentBlock signature carries only the block
+ * pointer (LocalAlloc tracks its own size on real Windows; this kernel has no
+ * LocalAlloc). So a fixed-size header holding the wchar count precedes the body;
+ * env_destroy_block recovers the total byte count from it. The body pointer we
+ * hand back is the header + 8 bytes, so it stays 2-byte aligned for the UTF-16
+ * block regardless of the header size.
+ * =========================================================================== */
+
+#define ENV_BLK_MAGIC 0x424E5645u   /* 'EVNB' little-endian; header sentinel */
+
+struct env_block_hdr {
+    uint32_t magic;    /* ENV_BLK_MAGIC -- validated on destroy */
+    uint32_t wchars;   /* body length in WCHARs (env_str_free size recovery) */
+};
+
+int env_create_block(struct task *caller, const void *htoken, int inherit,
+                     void **out_block)
+{
+    uint16_t *blk;
+    uint32_t wchars, i;
+    uint32_t total_bytes;
+    struct env_block_hdr *hdr;
+    uint16_t *body;
+    int rc;
+
+    if (!out_block)
+        return ENV_ERR_INVAL;
+    *out_block = NULL;
+    if (!caller)
+        return ENV_ERR_INVAL;
+
+    /* Deferred Win32 branches -- refused explicitly, never fabricated (see the
+     * env.h contract). A per-user token needs a SID->hive map + LoadUserProfile;
+     * a no-inherit fresh block needs an SMP-safe runtime Registry snapshot. */
+    if (htoken != NULL)
+        return ENV_ERR_UNSUPPORTED;
+    if (!inherit)
+        return ENV_ERR_UNSUPPORTED;
+
+    /* Supported path: snapshot the caller's current environment (already the
+     * assembled system+user set) into a sorted UTF-16 double-NUL block. SMP-safe:
+     * env_build_block_utf16 serializes on caller->environ_lock and walks no
+     * Registry. Cap at ENV_CREATE_BLOCK_MAX_WCHARS so the result is consumable by
+     * the Rtl expansion path; an over-large environ returns ENV_ERR_NOSPACE. */
+    rc = env_build_block_utf16(caller, &blk, &wchars, ENV_CREATE_BLOCK_MAX_WCHARS);
+    if (rc != ENV_OK)
+        return rc;
+
+    /* Wrap the block in a self-describing allocation. wchars <=
+     * ENV_CREATE_BLOCK_MAX_WCHARS so total_bytes cannot overflow uint32_t. */
+    total_bytes = (uint32_t)sizeof(struct env_block_hdr) + wchars * 2u;
+    hdr = (struct env_block_hdr *)env_str_alloc(total_bytes);
+    if (!hdr) {
+        env_free_block_utf16(blk, wchars);
+        return ENV_ERR_NOMEM;
+    }
+    hdr->magic = ENV_BLK_MAGIC;
+    hdr->wchars = wchars;
+    body = (uint16_t *)(hdr + 1);
+    for (i = 0; i < wchars; i++)
+        body[i] = blk[i];
+    env_free_block_utf16(blk, wchars);
+
+    *out_block = (void *)body;
+    return ENV_OK;
+}
+
+void env_destroy_block(void *block)
+{
+    struct env_block_hdr *hdr;
+    uint32_t total_bytes;
+
+    if (!block)
+        return;
+    /* CONTRACT: `block` MUST be a pointer returned by env_create_block (or NULL),
+     * called EXACTLY once, exactly as Win32 DestroyEnvironmentBlock requires a
+     * CreateEnvironmentBlock pointer -- reading the predecessor header of an
+     * arbitrary pointer is a caller error, not a supported input. The checks below
+     * are a BEST-EFFORT reject of an obviously-malformed header, NOT a foreign-
+     * pointer validator and NOT a double-free guarantee:
+     *   - magic mismatch  -> not our header (or already poisoned): no-op.
+     *   - wchars over the create-time cap -> corrupted header: no-op rather than
+     *     compute a wrapped/oversized free extent (wchars <= ENV_CREATE_BLOCK_MAX_
+     *     WCHARS keeps total_bytes well under UINT32_MAX). */
+    hdr = (struct env_block_hdr *)block - 1;
+    if (hdr->magic != ENV_BLK_MAGIC || hdr->wchars > ENV_CREATE_BLOCK_MAX_WCHARS)
+        return;
+    total_bytes = (uint32_t)sizeof(struct env_block_hdr) + hdr->wchars * 2u;
+    /* Poison the header before freeing: a best-effort net so an IMMEDIATE double-
+     * free (before this memory is handed back out) is a no-op rather than a
+     * wrong-size re-free. Once the allocator reuses the memory this net is gone --
+     * the single-free contract above is the real guarantee. */
+    hdr->magic = 0u;
+    env_str_free((char *)hdr, total_bytes);
+}
+
+/* ===========================================================================
  * Hidden drive-letter current-directory variables (=C:, =D:) -- TODO-22 s12
  *
  * Windows records the current directory of each drive letter in a hidden env

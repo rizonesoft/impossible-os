@@ -84,3 +84,33 @@
 NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
                                        UNICODE_STRING *Destination,
                                        uint32_t *ReturnedLength);
+
+struct task;
+
+/* Win32 userenv.dll ExpandEnvironmentStringsForUserW(HANDLE hToken, LPCWSTR lpSrc,
+ * LPWSTR lpDst, DWORD dwSize) -- expand `%VAR%` in `Source` against the environment
+ * of the user identified by `htoken`, writing the UTF-16 result into `Destination`.
+ *
+ *   htoken == NULL: expand against `caller`'s current process environment (the
+ *                   SMP-safe authoritative store). This builds a bounded block from
+ *                   caller->environ and runs it through RtlExpandEnvironmentStrings_U,
+ *                   so ALL the aliasing / two-pass / cap guarantees of that path
+ *                   apply unchanged. The strict Win32 "system variables only" subset
+ *                   for a NULL token needs an SMP-safe Registry snapshot and is
+ *                   deferred with CreateEnvironmentBlock (env.h) -- documented, not
+ *                   fabricated.
+ *   htoken != NULL: a per-user expansion needs a token-SID -> HKU-hive map +
+ *                   LoadUserProfile (see env_create_block); refused with
+ *                   STATUS_NOT_SUPPORTED rather than expanding against the wrong
+ *                   identity.
+ *
+ * `htoken` is an ACCESS_TOKEN* (typed void* to keep this header free of the
+ * security headers); only its NULL-ness is consulted today. `caller` must be
+ * non-NULL for the supported path. An environ larger than RTL_ENV_BLOCK_MAX_WCHARS
+ * fails STATUS_BUFFER_TOO_SMALL (the block cannot be built within the scan cap).
+ * Returns the RtlExpandEnvironmentStrings_U status set, plus STATUS_NOT_SUPPORTED
+ * (per-user token) and STATUS_INVALID_PARAMETER (NULL caller). Thread context only. */
+NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken,
+                                         UNICODE_STRING *Source,
+                                         UNICODE_STRING *Destination,
+                                         uint32_t *ReturnedLength);

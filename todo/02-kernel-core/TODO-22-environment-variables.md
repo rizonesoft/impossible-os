@@ -75,7 +75,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
 | 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
-| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [ ]   |
+| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [ ]   |
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [ ]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [ ]   |
@@ -490,24 +490,26 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 13. CreateEnvironmentBlock / DestroyEnvironmentBlock
 
-- [ ] `CreateEnvironmentBlock(LPVOID *lpEnvironment, HANDLE hToken, BOOL bInherit)` -- Win32 API from `userenv.dll`:
-  - If `hToken == NULL`: build an environment block containing **system variables only** (from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`)
-  - If `hToken != NULL`: merge system variables + user variables from `HKCU\Environment` for the user identified by the token; token must have `TOKEN_QUERY` and `TOKEN_DUPLICATE` access
-  - If `bInherit == TRUE`: start with the calling process's environment, then overlay system and user variables from the Registry
-  - If `bInherit == FALSE`: build a fresh block from Registry only (no inheritance)
-  - Output: a contiguous UTF-16 sorted environment block (double-NUL terminated), allocated with `LocalAlloc`; caller must free with `DestroyEnvironmentBlock`
-- [ ] `DestroyEnvironmentBlock(LPVOID lpEnvironment)` → `LocalFree(lpEnvironment)`
-- [ ] `ExpandEnvironmentStringsForUserW(HANDLE hToken, LPCWSTR lpSrc, LPWSTR lpDst, DWORD dwSize)` -- expand `%VAR%` using the environment of the user identified by `hToken`:
-  - Build a temporary env block via `CreateEnvironmentBlock(NULL, hToken, FALSE)`
-  - Parse the block, match `%VAR%` references against it
-  - Token requires `TOKEN_QUERY`, `TOKEN_DUPLICATE`, and `TOKEN_IMPERSONATE`
-  - If `hToken == NULL`, expand using system variables only
-- [ ] These APIs are used by services (e.g. Task Scheduler, logon service) that launch processes on behalf of other users
-- [ ] **Profile load vs user vars:** Per Microsoft Learn `CreateEnvironmentBlock` remarks, user-specific variables such as `%USERPROFILE%` apply only after the user's profile is loaded (`LoadUserProfile` on Win32). Until D02 T21 or D02 T15 defines an equivalent profile-load sequence, return documented failure (or system-only block) when a token requires HKCU-backed vars without a loaded profile; do not invent profile paths.
+- [/] `env_create_block()` -- Win32 `CreateEnvironmentBlock` (`src/kernel/env.c`): self-describing sorted UTF-16 block; `htoken==NULL && inherit` snapshots the caller env under `environ_lock`. Other branches return `ENV_ERR_UNSUPPORTED`.
+- [x] `env_destroy_block()` -- Win32 `DestroyEnvironmentBlock`: pointer-only free via a hidden `{magic,wchars}` header (no kernel `LocalAlloc`); NULL is a no-op; called once with a live `env_create_block` pointer (Win32 contract).
+- [/] `ExpandEnvironmentStringsForUser()` -- Win32 `ExpandEnvironmentStringsForUserW` (`nt_rtlenv.c`): `htoken==NULL` expands the caller block via `RtlExpandEnvironmentStrings_U`; `htoken!=NULL` returns `STATUS_NOT_SUPPORTED`.
+- [x] **Profile-load policy honored:** a token needing HKCU vars without a loaded profile returns documented failure (`ENV_ERR_UNSUPPORTED`/`STATUS_NOT_SUPPORTED`); no profile path invented (MS Learn: user vars apply only after `LoadUserProfile`).
+- [ ] Per-user block/expansion (`htoken!=NULL`): token-SID -> `HKEY_USERS` hive + `LoadUserProfile` + HANDLE `granted_access` check. -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
+- [ ] `htoken==NULL` system-only / no-inherit fresh block: needs an SMP-safe runtime Registry snapshot (`env_init_defaults` is boot-only). -> XREF: 02-kernel-core/TODO-14 §14 (item: "Registry SMP synchronization")
+- [ ] User-mode `userenv.dll` export wiring: kernel returns kernel-resident blocks today (like the unwired `RtlExpandEnvironmentStrings_U`); blocked on a user heap / `LocalAlloc`.
 
-- [ ] Commit: `"kernel/env: CreateEnvironmentBlock, DestroyEnvironmentBlock, ExpandEnvironmentStringsForUser"`
+- [x] Commit: `"kernel/env: CreateEnvironmentBlock, DestroyEnvironmentBlock, ExpandEnvironmentStringsForUser"`
 
 **Test checkpoint:** `CreateEnvironmentBlock` + `DestroyEnvironmentBlock` no leak; sorted block. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 new env s13 cases, 0 failures
+
+> **Notes:**
+> - **What shipped:** `env_create_block` / `env_destroy_block` (`src/kernel/env.c`, self-describing `{magic,wchars}`-header UTF-16 block) + `ExpandEnvironmentStringsForUser` (`src/kernel/nt/nt_rtlenv.c`); 6 tests in `test_env.c`.
+> - **How it runs:** caller-env subset -- snapshots the caller `environ` under its mutex, no runtime Registry walk, no scratch task; a >4 KiB block shares the pre-existing unlocked-PMM exposure (owner: 03-memory-concurrency/TODO-03 PMM bitmap SMP locking). Design + adversarial review adoptions in the commit message.
+> - **Downstream:** honors the profile-load policy (documented failure, no invented paths); per-user / registry-fresh / userenv-export paths deferred with XREFs to TODO-15 §5, TODO-14 §14.
+> - **Canonical doc:** `include/kernel/env.h` (`env_create_block` contract) + `include/kernel/nt/nt_rtlenv.h`.
+> - **Scope boundary:** §13 owns the caller-env block build/free (environ_lock snapshot) + NULL-token expand; per-user token identity is TODO-15 §5 + profile-load infra; runtime Registry snapshot is TODO-14 §14.
 
 ---
 
@@ -656,8 +658,8 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB       |
 | 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⚠️ §11 `.EXE` def    |
 | 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⚠️ §12 (inherit def) |
-| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13                |
-| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13                |
+| 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⚠️ §13 caller blk    |
+| 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⚠️ §13 NULL token    |
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ⬜ §14                |
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ⬜ §14                |
 | 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15                |
@@ -728,7 +730,7 @@ The `source` / `.` command (section 8 above) remains a differentiator over Windo
 - [ ] **Sorted block**: `GetEnvironmentStrings()` output is alphabetically sorted; insert `ZZZ` then `AAA`; `AAA` must appear before `ZZZ` in the block.
 - [ ] **PATHEXT**: set `PATHEXT=.CMD;.EXE`; create both `test.cmd` and `test.exe` in `C:\Impossible\Bin\`; type `test` in shell; `test.cmd` must be selected (`.CMD` first in PATHEXT).
 - [ ] **Hidden drive vars**: after `SetCurrentDirectory("D:\\Docs")`, `GetEnvironmentStrings()` block contains `=D:=D:\Docs` before any letter-named variable.
-- [ ] **CreateEnvironmentBlock**: call with a user token; returned block includes both `HKLM` system vars and `HKCU` user vars; block is sorted; `DestroyEnvironmentBlock` frees without leak.
+- [ ] **CreateEnvironmentBlock**: `env_create_block(caller, NULL, 1, &blk)` returns a sorted UTF-16 caller-env block; `env_destroy_block(blk)` frees via the pointer alone; non-NULL token / no-inherit returns `ENV_ERR_UNSUPPORTED` (deferred).
 - [ ] **SearchPathW**: `SearchPathW(NULL, L"notepad", L".exe", ...)` → finds `C:\Impossible\System32\notepad.exe`; `SearchPathW(NULL, L"nonexistent", L".exe", ...)` → returns 0, `GetLastError() == ERROR_FILE_NOT_FOUND`.
 - [ ] **CommandLineToArgvW**: `CommandLineToArgvW(L"a.exe \"hello world\" test", &argc)` → `argc==3`, `argv[0]=="a.exe"`, `argv[1]=="hello world"`, `argv[2]=="test"`.
 - [ ] **Security sanitization**: create elevated child process; parent sets `LD_PRELOAD=/evil.so`; child's `env_get("LD_PRELOAD")` returns `NULL` (stripped by `env_sanitize_for_elevation`).

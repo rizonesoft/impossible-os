@@ -2054,6 +2054,157 @@ static void test_env_drive_cwd_resolve_matrix(void)
     env_free(&s_env_fixture);
 }
 
+/* ============================================================================
+ * s13: CreateEnvironmentBlock / DestroyEnvironmentBlock / ExpandForUser
+ * ========================================================================== */
+
+/* env_create_block (NULL token, inherit): self-describing sorted UTF-16 block
+ * that env_destroy_block frees with the pointer alone (no leak). */
+static void test_env_create_block_roundtrip(void)
+{
+    void *block = NULL;
+    const uint16_t *body;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "ZED", "1");
+    env_set(&s_env_fixture, "ALPHA", "2");
+    rc = env_create_block(&s_env_fixture, (const void *)0, 1, &block);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_create_block succeeds for NULL token + inherit");
+    TEST_ASSERT(block != (void *)0, "block pointer returned");
+    body = (const uint16_t *)block;
+    /* environ is sorted case-insensitively: ALPHA=2 precedes ZED=1. */
+    TEST_ASSERT(env_test_weq_ascii(body, 7, "ALPHA=2"),
+                "block starts with the alphabetically-first entry");
+    env_destroy_block(block);   /* pointer-only free; leak check below catches a miss */
+    env_free(&s_env_fixture);
+}
+
+/* env_create_block: empty environ still yields a valid "\0\0" block. */
+static void test_env_create_block_empty(void)
+{
+    void *block = NULL;
+    const uint16_t *body;
+    int rc;
+    env_fixture_reset();
+    rc = env_create_block(&s_env_fixture, (const void *)0, 1, &block);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_create_block succeeds on empty environ");
+    body = (const uint16_t *)block;
+    TEST_ASSERT(body && body[0] == 0 && body[1] == 0,
+                "empty environment block is the double-NUL form");
+    env_destroy_block(block);
+    env_free(&s_env_fixture);
+}
+
+/* env_create_block: deferred Win32 branches are refused, never fabricated. */
+static void test_env_create_block_deferred_branches(void)
+{
+    void *block = (void *)0x1;   /* sentinel: must be NULLed on every failure path */
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "V");
+
+    /* Non-NULL token -> per-user block needs SID->hive + LoadUserProfile. */
+    rc = env_create_block(&s_env_fixture, (const void *)0x1000, 1, &block);
+    TEST_ASSERT_EQ(rc, ENV_ERR_UNSUPPORTED, "non-NULL token refused (deferred)");
+    TEST_ASSERT(block == (void *)0, "out_block cleared on refusal");
+
+    /* inherit == 0 -> fresh Registry-only block needs SMP-safe snapshot. */
+    block = (void *)0x1;
+    rc = env_create_block(&s_env_fixture, (const void *)0, 0, &block);
+    TEST_ASSERT_EQ(rc, ENV_ERR_UNSUPPORTED, "no-inherit refused (deferred)");
+    TEST_ASSERT(block == (void *)0, "out_block cleared on refusal");
+
+    /* NULL out pointer / NULL caller are argument errors. */
+    TEST_ASSERT_EQ(env_create_block(&s_env_fixture, (const void *)0, 1, (void **)0),
+                   ENV_ERR_INVAL, "NULL out_block rejected");
+    block = (void *)0x1;
+    TEST_ASSERT_EQ(env_create_block((struct task *)0, (const void *)0, 1, &block),
+                   ENV_ERR_INVAL, "NULL caller rejected");
+    TEST_ASSERT(block == (void *)0, "out_block cleared on NULL caller");
+    env_free(&s_env_fixture);
+}
+
+/* env_destroy_block: NULL is a no-op; an in-bounds buffer with a non-matching
+ * header is ignored (magic gate); a valid single create/destroy leaves the heap
+ * intact. Does NOT test double-destroy: that reads freed memory (UAF) and is a
+ * caller-contract violation, not a supported input (the poison is only a best-
+ * effort net before allocator reuse). The per-test leak check catches a bad free. */
+static void test_env_destroy_block_defensive(void)
+{
+    void *block = NULL;
+    /* 8-wchar buffer: [0..3] stand in for a {magic,wchars} header, [4..7] a body.
+     * Passing &buf[4] makes the header read hit buf[0..3] (IN BOUNDS); magic 0 !=
+     * ENV_BLK_MAGIC, so it is ignored -- no predecessor fault, no free. */
+    uint16_t buf[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+    env_destroy_block((void *)0);        /* NULL -> no-op */
+    env_destroy_block((void *)&buf[4]);  /* wrong-magic header -> ignored */
+
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "V");
+    TEST_ASSERT_EQ(env_create_block(&s_env_fixture, (const void *)0, 1, &block),
+                   ENV_OK, "valid block created");
+    env_destroy_block(block);   /* single free of a live pointer (the contract) */
+    /* Heap intact after the NULL / wrong-header calls + a valid create/destroy:
+     * a fresh block still allocates and frees. */
+    block = NULL;
+    TEST_ASSERT_EQ(env_create_block(&s_env_fixture, (const void *)0, 1, &block),
+                   ENV_OK, "heap intact after defensive calls + a valid destroy");
+    env_destroy_block(block);
+    env_free(&s_env_fixture);
+}
+
+/* ExpandEnvironmentStringsForUser: NULL token expands against the caller env. */
+static void test_env_expand_for_user_null_token(void)
+{
+    uint16_t srcbuf[16], dstbuf[64];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0;
+    NTSTATUS st;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "GREET", "Hi");
+
+    src.Length = (uint16_t)(env_test_wfill("%GREET%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = ExpandEnvironmentStringsForUser(&s_env_fixture, (const void *)0,
+                                         &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "NULL-token expansion succeeds");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, 2, "Hi"),
+                "expands %GREET% against caller environment");
+    TEST_ASSERT_EQ((int)dst.Length, (int)(2u * 2u),
+                   "Destination->Length is result bytes excluding NUL");
+    env_free(&s_env_fixture);
+}
+
+/* ExpandEnvironmentStringsForUser: per-user token + NULL caller are refused. */
+static void test_env_expand_for_user_refusals(void)
+{
+    uint16_t srcbuf[16], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+    env_fixture_reset();
+    src.Length = (uint16_t)(env_test_wfill("%X%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = ExpandEnvironmentStringsForUser(&s_env_fixture, (const void *)0x1000,
+                                         &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_NOT_SUPPORTED,
+                   "per-user token refused (deferred)");
+    st = ExpandEnvironmentStringsForUser((struct task *)0, (const void *)0,
+                                         &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER, "NULL caller rejected");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -2231,6 +2382,19 @@ void test_register_env(void)
                             test_env_bytes_unset_reclaims, TEST_CAT_ABI);
     test_suite_register_cat("Env: empty adoption resets cached quota",
                             test_env_adopt_empty_resets_quota, TEST_CAT_ABI);
+    /* s13: CreateEnvironmentBlock / DestroyEnvironmentBlock / ExpandForUser. */
+    test_suite_register_cat("Env: create/destroy block round-trip",
+                            test_env_create_block_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: create block empty double-NUL",
+                            test_env_create_block_empty, TEST_CAT_ABI);
+    test_suite_register_cat("Env: create block deferred branches refused",
+                            test_env_create_block_deferred_branches, TEST_CAT_ABI);
+    test_suite_register_cat("Env: destroy block NULL/foreign no-op",
+                            test_env_destroy_block_defensive, TEST_CAT_ABI);
+    test_suite_register_cat("Env: ExpandForUser NULL token expands",
+                            test_env_expand_for_user_null_token, TEST_CAT_ABI);
+    test_suite_register_cat("Env: ExpandForUser per-user/NULL-caller refused",
+                            test_env_expand_for_user_refusals, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

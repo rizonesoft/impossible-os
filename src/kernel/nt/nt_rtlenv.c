@@ -349,3 +349,48 @@ done:
         env_free_block_utf16(synth, synth_wchars);
     return status;
 }
+
+/* ===========================================================================
+ * userenv.dll ExpandEnvironmentStringsForUser (TODO-22 s13)
+ *
+ * A thin per-user front-end over RtlExpandEnvironmentStrings_U: it builds a
+ * bounded UTF-16 block from the target user's environment and expands against it.
+ * Today only the NULL-token (calling-process environment) path is supported;
+ * per-user token expansion is deferred (see the header contract + env_create_block).
+ * =========================================================================== */
+
+NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken,
+                                         UNICODE_STRING *Source,
+                                         UNICODE_STRING *Destination,
+                                         uint32_t *ReturnedLength)
+{
+    uint16_t *block = NULL;
+    uint32_t block_wchars = 0;
+    NTSTATUS status;
+    int rc;
+
+    /* Per-user token needs a SID->hive map + LoadUserProfile (env_create_block);
+     * refuse rather than expand against the wrong identity. */
+    if (htoken != NULL)
+        return STATUS_NOT_SUPPORTED;
+    if (!caller)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Build a private, bounded block from the caller's environ, then reuse the
+     * fully-guarded explicit-block expansion path. The block is capped at
+     * RTL_ENV_BLOCK_MAX_WCHARS so it is always a valid input to that path (an
+     * over-large environ fails to build -> STATUS_BUFFER_TOO_SMALL). */
+    rc = env_build_block_utf16(caller, &block, &block_wchars,
+                               RTL_ENV_BLOCK_MAX_WCHARS);
+    if (rc == ENV_ERR_NOMEM)
+        return STATUS_NO_MEMORY;
+    if (rc == ENV_ERR_NOSPACE)
+        return STATUS_BUFFER_TOO_SMALL;   /* environ exceeds the expansion cap */
+    if (rc != ENV_OK)
+        return STATUS_INVALID_PARAMETER;
+
+    status = RtlExpandEnvironmentStrings_U(block, Source, Destination,
+                                           ReturnedLength);
+    env_free_block_utf16(block, block_wchars);
+    return status;
+}

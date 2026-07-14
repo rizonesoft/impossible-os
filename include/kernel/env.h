@@ -64,6 +64,9 @@ struct task;
 #define ENV_ERR_TOOLONG   (-3)     /* name or value exceeds a limit */
 #define ENV_ERR_NOSPACE   (-4)     /* environ array is full (ENV_MAX_ENTRIES) */
 #define ENV_ERR_NOTFOUND  (-5)     /* variable does not exist (env_unset) */
+#define ENV_ERR_UNSUPPORTED (-6)   /* operation needs infrastructure not present yet
+                                    * (per-user token / loaded-profile / SMP-safe
+                                    * runtime Registry snapshot) -- see env_create_block */
 
 /* Copy the value of `name` into `out` (NUL-terminated) under the env lock.
  * Case-insensitive name match (Windows semantics). Returns the value length in
@@ -230,6 +233,57 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
  * hard error (ENV_ERR_NOSPACE). Returns ENV_OK or a negative code. */
 int env_parse_block(struct task *t, const void *block, uint32_t len,
                     int is_unicode);
+
+/* --- userenv.dll CreateEnvironmentBlock / DestroyEnvironmentBlock (s13) ---- */
+
+/* Upper bound on a created block, in WCHARs. Matches the RtlExpandEnvironmentStrings_U
+ * explicit-block scan bound (RTL_ENV_BLOCK_MAX_WCHARS) so a block produced here is
+ * always consumable by the Rtl expansion path (ExpandEnvironmentStringsForUser). */
+#define ENV_CREATE_BLOCK_MAX_WCHARS 65536u
+
+/* Win32 userenv.dll CreateEnvironmentBlock(LPVOID *lpEnvironment, HANDLE hToken,
+ * BOOL bInherit). Produces a SELF-DESCRIBING contiguous UTF-16 environment block
+ * (a hidden {magic,wchar-count} header precedes the returned pointer, so the
+ * pointer-only env_destroy_block can recover the allocation size -- the kernel
+ * has no LocalAlloc/LocalFree size bookkeeping). `*out_block` is the block BODY
+ * (sorted "NAME=VALUE\0"... double-NUL terminated), which callers read exactly
+ * like any NT env block; free it with env_destroy_block().
+ *
+ * Supported today (no runtime Registry walk): htoken == NULL && inherit != 0
+ * snapshots `caller`'s current environment (already the assembled system+user set
+ * from process creation). The environ snapshot serializes under
+ * caller->environ_lock; the block allocation itself uses env_str_alloc, so a block
+ * over ENV_STR_KMALLOC_MAX (4 KiB) rides the SAME pre-existing unlocked-PMM
+ * exposure that env_build_block_utf16 / RtlExpandEnvironmentStrings_U already carry
+ * (owned by the PMM bitmap SMP-locking work in 03-memory-concurrency/TODO-03), NOT
+ * a new hazard. The other Win32 branches need
+ * infrastructure that is not present yet and return ENV_ERR_UNSUPPORTED without
+ * fabricating data:
+ *   - htoken != NULL  -> a per-user block needs a token-SID -> HKU-hive map and
+ *     LoadUserProfile, neither of which exists (TODO-22 s13 defers this). Returning
+ *     the process-global user's data for an arbitrary token would leak another
+ *     identity's PATH/TEMP/profile, so it is refused.
+ *   - inherit == 0    -> a fresh Registry-only block needs an SMP-safe runtime
+ *     Registry snapshot (env_init_defaults is documented boot-context-only because
+ *     the Registry has no SMP lock); deferred, so refused rather than raced.
+ * Returns ENV_OK; ENV_ERR_INVAL (NULL out/caller); ENV_ERR_UNSUPPORTED (deferred
+ * branch above); ENV_ERR_NOSPACE (environ exceeds ENV_CREATE_BLOCK_MAX_WCHARS);
+ * ENV_ERR_NOMEM. `htoken` is an ACCESS_TOKEN* (typed void* to keep env.h free of
+ * the security headers); only its NULL-ness is consulted today. Thread context
+ * only (takes caller->environ_lock). */
+int env_create_block(struct task *caller, const void *htoken, int inherit,
+                     void **out_block);
+
+/* Win32 userenv.dll DestroyEnvironmentBlock(LPVOID lpEnvironment). Frees a block
+ * returned by env_create_block using only the pointer (recovers the size from the
+ * hidden header). NULL is a no-op. `block` MUST be a pointer previously returned by
+ * env_create_block (or NULL) -- exactly as Win32 DestroyEnvironmentBlock requires a
+ * CreateEnvironmentBlock pointer; passing an arbitrary pointer is a caller error
+ * (it reads the predecessor header). The header magic + wchar-cap check is a
+ * BEST-EFFORT reject of an obviously-malformed header on an otherwise-valid pointer
+ * (never a foreign-pointer validator, and NOT a use-after-free / double-free
+ * guarantee -- once freed, the header memory may be reused). Call exactly once. */
+void env_destroy_block(void *block);
 
 /* --- Hidden drive-letter current-directory variables (=C:, =D:) ----------- */
 
