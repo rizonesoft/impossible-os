@@ -325,6 +325,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/verify_cadence_reminder.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/rotate_hint.py\"",
+            "timeout": 5
           }
         ]
       },

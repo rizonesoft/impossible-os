@@ -798,6 +798,12 @@ def cli(argv):
         state["rollover"] = {"pending": True, "epoch": int(time.time())}
         state.pop("rollover_refused", None)  # P3.2: a verified rollover clears it
         save_state(state)
+        # P4.1: a verified rollover resets the context-rotation turn counter so
+        # the fresh worker counts from zero (best-effort).
+        try:
+            (repo_root() / ".claude/state/rotate-hint.json").unlink()
+        except Exception:
+            pass
         # Durable checkpoint so the relaunched session loads settled facts
         # (section-pack digest, receipts, review status) instead of
         # rediscovering them. Best-effort -- never blocks the rollover.

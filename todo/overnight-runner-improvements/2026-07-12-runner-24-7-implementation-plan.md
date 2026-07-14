@@ -224,7 +224,7 @@ Risk is concentrated ENTIRELY in the relaxed gate (P4.5/P4.6). P4.1-P4.3/P4.7 ar
 `[det]`; P4.4/P4.5/P4.6/P4.8 alter live rotation flow and are `[canary]`. Ship the `[det]` pieces
 first; if Phases 1-3 stop sections ballooning, most sections may never need the relaxed gate.
 
-- [ ] **[det] P4.1 Size/turn trigger, advisory only.**
+- [x] **[det] P4.1 Size/turn trigger, advisory only.**
   Set a "rotate at next safe point" flag when context (or a turn-count proxy) crosses the doctrine band (~200-250K per `TODO-Claude-Overnight-Runner.md:246`, NOT the earlier ~350K; tune via canary). Sets the flag only -- cannot corrupt state.
 - [ ] **[det] P4.2 Enrich `section-checkpoint.py gather()`.**
   Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, next intended action. Additive, fail-open per field.
