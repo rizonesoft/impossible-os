@@ -395,6 +395,10 @@ static void test_env_defaults_derived(void)
     TEST_ASSERT(env_get_copy(&s_env_fixture, "PROCESSOR_ARCHITECTURE", out,
                              sizeof(out)) > 0 && env_streq(out, "AMD64"),
                 "PROCESSOR_ARCHITECTURE default");
+    /* PATHEXT default: only .EXE (exec.c runs PE/ELF/EIF; no .CMD/.BAT
+     * interpreter -- section 11). */
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "PATHEXT", out, sizeof(out)) > 0 &&
+                env_streq(out, ".EXE"), "PATHEXT default is .EXE only");
     {
         int r = env_get_copy(&s_env_fixture, "NUMBER_OF_PROCESSORS", out,
                              sizeof(out));
@@ -1268,6 +1272,34 @@ static NTSTATUS env_nt_query(UNICODE_STRING *name, UNICODE_STRING *out,
                          (uint64_t)(uintptr_t)vlen, 0, 0, 0);
 }
 
+/* Prewarm the LIVE current task's environ[] to its high-water-mark BEFORE the
+ * NtSet/NtQuery syscall suites run, so none of them each trip the one-time array
+ * grow inside their own leak-measured window. env_set krealloc-grows
+ * task->environ to count+2 and env_unset never shrinks it (the array is freed
+ * only at task teardown by env_free -> kfree), so a single add+remove leaves a
+ * reachable one-pointer-slot retention (16 bytes at allocator granularity).
+ * env_set/env_unset are used directly (no UTF-16 temporaries) so the exemption
+ * covers ONLY the array grow -- keeping full heap-leak protection on the syscall
+ * suites. Seeding one more system default (e.g. PATHEXT, section 11) shifts which
+ * suite would otherwise first trip the grow, which is exactly what this absorbs.
+ *
+ * TEST_EXPECT_LEAK is a deliberate LOWER bound (test_runner.c: exact heap
+ * accounting is fragile because kmalloc/krealloc block-header + MIN_BLOCK_SIZE +
+ * split-remainder overhead perturbs the observed delta), so it stays green even
+ * if the one-slot grow accounts for 32/48/64 bytes on a different heap layout. It
+ * cannot mask a UNIQUE env_set/env_unset leak: those two paths are exercised
+ * WITHOUT any exemption by the ~20 other env set/get/replace/unset suites above,
+ * which would fail first. This suite only blesses the reachable array retention. */
+static void test_ntenv_live_env_hwm(void)
+{
+    struct task *t = task_current();
+    TEST_EXPECT_LEAK(16, "env: live-task environ[] high-water-mark grow (reachable)");
+    TEST_ASSERT_EQ((uint32_t)env_set(t, "NTENV_HWM", "1"), (uint32_t)ENV_OK,
+                   "seed throwaway var to grow environ[] to high-water-mark");
+    TEST_ASSERT_EQ((uint32_t)env_unset(t, "NTENV_HWM"), (uint32_t)ENV_OK,
+                   "remove throwaway var (array capacity retained, not shrunk)");
+}
+
 static void test_ntenv_set_query_roundtrip(void)
 {
     struct task *t = task_current();
@@ -1275,6 +1307,10 @@ static void test_ntenv_set_query_roundtrip(void)
     UNICODE_STRING name, val, out;
     uint32_t vlen = 0;
 
+    /* The live-task environ[] high-water-mark grow is absorbed by the
+     * test_ntenv_live_env_hwm prewarm registered just before this suite, so
+     * this suite keeps full leak protection on the NtSet/NtQuery heap paths
+     * (NtQuery allocates a bounce buffer). */
     env_mk_us(&name, nbuf, 16, "NTENV_A");
     env_mk_us(&val, vbuf, 16, "hello");
     TEST_ASSERT_EQ((uint32_t)env_nt_set(&name, &val), (uint32_t)STATUS_SUCCESS,
@@ -1900,7 +1936,10 @@ void test_register_env(void)
                             test_rtl_expand_empty_block_second_nul, TEST_CAT_ABI);
     test_suite_register_cat("Env: expand overlap preserves source",
                             test_env_expand_overlap_preserves_source, TEST_CAT_ABI);
-    /* s5: Nt/Zw environment-variable syscalls (via ssdt_dispatch). */
+    /* s5: Nt/Zw environment-variable syscalls (via ssdt_dispatch). The prewarm
+     * suite runs first to absorb the live-task environ[] high-water-mark grow. */
+    test_suite_register_cat("Env: live-task environ[] high-water-mark prewarm",
+                            test_ntenv_live_env_hwm, TEST_CAT_ABI);
     test_suite_register_cat("Env: NtSet/NtQuery roundtrip",
                             test_ntenv_set_query_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("Env: NtQuery variable not found",

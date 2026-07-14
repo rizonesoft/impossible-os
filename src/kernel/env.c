@@ -1408,6 +1408,14 @@ done:
 #define ENV_DEF_PROC_ARCH    "AMD64"
 #define ENV_DEF_OS           "Impossible_OS"
 #define ENV_DEF_PATH_BASE    "C:\\Impossible\\Bin;C:\\Impossible\\System32;C:\\Programs"
+/* PATHEXT: only .EXE is seeded because exec.c (src/kernel/exec.c exec_init)
+ * registers loaders for PE32+/ELF/EIF binaries only -- there is no .CMD/.BAT
+ * batch interpreter, so advertising those extensions would let a future PATHEXT
+ * lookup select a script it cannot run over a valid .EXE. Windows' fuller
+ * default (.COM;.EXE;.BAT;.CMD;...) is deferred until a batch processor exists.
+ * The consumer that iterates PATHEXT is the (deferred) user-mode shell
+ * PATH-lookup path (shell_find_command), not the kernel env layer. */
+#define ENV_DEF_PATHEXT      ".EXE"
 
 /* Case-insensitive compare of two NUL-terminated names (env_lc folds ASCII). */
 static int env_name_ci_eq(const char *a, const char *b)
@@ -1539,6 +1547,7 @@ static void env_synth_base(struct task *t, int *err)
     env_seed(t, "SYSTEMROOT", ENV_DEF_SYSTEMROOT, err);
     env_seed(t, "SYSTEMDRIVE", ENV_DEF_SYSTEMDRIVE, err);
     env_seed(t, "PATH", ENV_DEF_PATH_BASE, err);
+    env_seed(t, "PATHEXT", ENV_DEF_PATHEXT, err);
 
     /* NUMBER_OF_PROCESSORS: HARDWARE\CPU\Count (DWORD), else the live CPU count. */
     {

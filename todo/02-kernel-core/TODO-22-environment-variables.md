@@ -73,7 +73,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   8   | `.profile` startup script                          | §7                         |  [/]   |
 | ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
 | 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
-| 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [ ]   |
+| 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [ ]   |
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [ ]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [ ]   |
@@ -323,7 +323,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   1. If `name` contains `\` or `/`: treat as an explicit path; try verbatim, then with `.exe` appended; return first match
   2. Otherwise: retrieve `PATH` value via `env_get(current_task, "PATH")`
   3. Split `PATH` on `;` into directory list
-  4. For each directory: try `dir\name` (exact), then `dir\name.exe`; call `vfs_stat(path)` to check existence; return first hit
+  4. For each directory: try `dir\name` (exact), then `dir\name{ext}` for each ext in `PATHEXT` order (§11; `env_get`, split `;`; default `.EXE`); `vfs_stat` each; return first hit
   5. If no match: return `SHELL_COMMAND_NOT_FOUND`
 - [ ] Shell uses `shell_find_command` before any `exec` call; replaces current ad-hoc path construction
 
@@ -432,19 +432,22 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 11. PATHEXT Variable & Extension Search Order
 
-- [ ] Add `PATHEXT` to system default variables (§2): default value `".EXE;.CMD;.BAT"` (subset of Windows default `.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC` -- only the extensions Impossible OS can execute)
-- [ ] Modify `shell_find_command` (§7) to use `PATHEXT`:
-  1. If `name` has an explicit extension: try as-is, no PATHEXT iteration
-  2. If `name` has no extension: retrieve `PATHEXT` via `env_get(current_task, "PATHEXT")`
-  3. Split `PATHEXT` on `;` into extension list
-  4. For each PATH directory, try `dir\name{ext}` for each extension in PATHEXT order
-  5. First hit wins; this makes extension priority configurable by the user
-- [ ] Current search order (before PATHEXT): tries only `.exe`; too restrictive
-- [ ] `PATHEXT` with empty value: fall back to `.EXE` only (Windows behavior)
+- [x] Add `PATHEXT` to system default variables (§2): seeded `.EXE` only (`ENV_DEF_PATHEXT` in `env.c`); design review trimmed `.EXE;.CMD;.BAT` since `exec.c` runs only PE/ELF/EIF (see commit msg)
+- [/] Modify `shell_find_command` (§7) to use `PATHEXT`. Deferred: §7 deferred (`src/shell/` empty). -> XREF: §7 + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §5 (item: "Extension precedence")
+- [/] Current search order (before PATHEXT): tries only `.exe`; too restrictive. Deferred with the §7 consumer above (no shell lookup exists to widen yet).
+- [/] `PATHEXT` with empty value: fall back to `.EXE` only (Windows behavior). Deferred: empty-value semantics belong to the §7 lookup consumer; the seeded default is already `.EXE`.
 
-- [ ] Commit: `"kernel/env: PATHEXT extension search order for PATH-based command lookup"`
+- [x] Commit: `"kernel/env: PATHEXT extension search order for PATH-based command lookup"`
 
-**Test checkpoint:** `PATHEXT` order selects `.cmd` before `.exe` when configured. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `env_init_defaults` seeds `PATHEXT=.EXE`; the `.cmd`-before-`.exe` ordering test lands with the §7 shell consumer. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1654 suites, 0 failures (PATHEXT default assertion in `test_env_defaults_derived`)
+
+> **Notes:**
+> - **What shipped:** `ENV_DEF_PATHEXT` (`.EXE`) seeded in `env.c` `env_synth_base`; one `test_env_defaults_derived` assertion; a `TEST_EXPECT_LEAK` note on `test_ntenv_set_query_roundtrip`.
+> - **How it integrates:** the default lands in every task's env via the existing default-seed layer; `env_get(t, "PATHEXT")` returns `.EXE` until the §7 shell consumer iterates it.
+> - **Design review:** trimmed value to `.EXE` (Codex, adoptions in commit msg) because `exec.c` has no `.CMD`/`.BAT` loader; fuller Windows default waits on a batch processor.
+> - **Scope boundary:** §11 owns only the default var; the `shell_find_command` PATHEXT consumer is owned by §7 (deferred) + `12-user-platform-sdk/TODO-02` §5 (Extension precedence).
 
 ---
 
@@ -629,9 +632,9 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7                |
 | ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8                |
 | 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ✅ §10 ASCII sort    |
-| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7   |
+| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7  |
 | 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB      |
-| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⬜ §11               |
+| 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⚠️ §11 `.EXE` def   |
 | 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12               |
 | 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13               |
 | 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⬜ §13               |
