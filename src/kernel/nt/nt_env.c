@@ -206,6 +206,15 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
                 return STATUS_NO_MEMORY;
             r = env_get_copy(task_current(), name8, val8, vcap);
         }
+        if (r >= 0 && (uint32_t)r >= vcap) {
+            /* Defense in depth: a stored value is always <= ENV_VALUE_MAX
+             * (env_set + env_adopt_block enforce the value cap), so the
+             * ENV_VALUE_MAX+1 retry buffer fits. If a returned length still
+             * meets or exceeds the buffer, refuse rather than let the UTF-8
+             * decoder below read past val8[vcap]. */
+            nt_env_free(val8, vcap);
+            return STATUS_NAME_TOO_LONG;
+        }
         if (r < 0) {
             nt_env_free(val8, vcap);
             switch (r) {

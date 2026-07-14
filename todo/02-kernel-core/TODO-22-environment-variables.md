@@ -72,7 +72,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
 | 💎   |   8   | `.profile` startup script                          | §7                         |  [/]   |
 | ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
-| 💎   |  10   | Environment block sorting & size limits            | §1                         |  [ ]   |
+| 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
 | 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [ ]   |
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [ ]   |
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [ ]   |
@@ -132,7 +132,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `49335ede` | 10/10 items | build OK | tests 1193/1193 PASS
 > **Accepted:** [H] task_cleanup reap barrier lacks all-CPU quiescence for env_free (single-CPU scheduler today) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "task_cleanup reap barrier" at line 122)
 > **Accepted:** [M] environ_lock inherits the mutex_t waiter-queue SMP race (unreachable on single-CPU) -> XREF: 03-memory-concurrency/TODO-08-advanced-sync.md §11 (item: "Wait-queue protection" at line 275)
-> **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 370)
+> **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 135)
 > **Accepted:** [L] env_copy has no live caller yet (§1 is storage+API only) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
 > **Quality reviewed:** 2026-07-13 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3M+2L fixed, 1H+2M+1L accepted-XREF | scope: kernel-code-quality
 
@@ -275,7 +275,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
-> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 403)
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 278)
 > **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
 > **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
@@ -399,25 +399,30 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 10. Environment Block Sorting & Size Limits
 
-- [ ] Windows requires all strings in the environment block to be **sorted alphabetically by name** (case-insensitive, Unicode order, locale-independent); `CreateProcess` and `GetEnvironmentStrings` both depend on this invariant
-- [ ] Upgrade env name case-folding from ASCII-only (`env_lc` in `src/kernel/env.c`) to NLS Unicode upcasing so `env_entry_key_eq` matches non-ASCII names case-insensitively (-> XREF `TODO-13-atom-nls-locale-subsystem.md`)
-- [ ] `env_set` must maintain sorted order: on insert, binary-search the `environ[]` array for the correct position and shift entries to keep alphabetical order; on replace, check whether the new name changes sort position
-- [ ] `env_build_block(task, out_buf, max_len, is_unicode)` -- build a contiguous env block suitable for `CreateProcess` `lpEnvironment`:
-  - Each entry: `name=value\0` (or UTF-16 equivalent)
-  - Block terminated by extra `\0` (ANSI) or `\0\0` (Unicode / 4 zero bytes)
-  - Entries must be in sorted order
-  - Return total block size in bytes; return `STATUS_BUFFER_TOO_SMALL` if `max_len` exceeded
-  - **CREATE_UNICODE_ENVIRONMENT:** When `NtCreateProcess` / Win32 `CreateProcess*` receives a non-NULL caller-built UTF-16 `lpEnvironment`, set `CREATE_UNICODE_ENVIRONMENT` in creation flags; omit for inherited default env or ANSI blocks (Microsoft Learn: "Changing Environment Variables"; `CreateEnvironmentBlock` remarks). Wire via → XREF `TODO-12-native-api-ssdt.md §7` and `TODO-21-process-model-extensions.md §2`.
-- [ ] `env_parse_block(task, block, len, is_unicode)` -- parse a contiguous env block (from `lpEnvironment`) into the `task->environ[]` array; validate: no name contains `=` (except hidden `=X:` drive vars), no empty names, sorted order
-- [ ] Maximum single variable value length: 32,767 characters; `env_set` returns `STATUS_NAME_TOO_LONG` if exceeded
-- [ ] Maximum variable name length: 256 characters (practical Windows limit); reject names > 256 chars
-- [ ] Reconcile UTF-16 char limits vs UTF-8 byte caps (← XREF §5): `ENV_NAME_MAX`/`ENV_VALUE_MAX` are byte caps, so a UTF-16 input within the char limit but over the byte cap is rejected. Raise caps or document the contract.
-- [ ] Variable name validation: name must not contain `=` (the separator); names starting with `=` are reserved for hidden drive-letter variables (§12); reject all other `=`-prefixed names
-- [ ] No technical limit on environment block size (Windows Vista+); however, enforce a 1 MiB per-process sanity cap (`env_set` enforcement point) to prevent DoS -- now user-reachable via §5 `NtSetEnvironmentVariable`; log warning at 256 KiB
-- [ ] `REG_EXPAND_SZ` values from Registry: expand `%VAR%` references at read time using `env_expand` before storing; raw unexpanded values are never stored in `task->environ[]`
-- [ ] Commit: `"kernel/env: sorted environment block, size limits, name validation"`
+- [x] `environ[]` kept **sorted by name** (case-insensitive) always so `GetEnvironmentStrings` sees alphabetical order; one comparator `env_name_cmp` (`src/kernel/env.c`) is the sole authority for identity AND order
+- [/] Full NLS Unicode name upcasing. Deferred: `nls_upcase_char` U+0100+ is disk-backed/ephemeral, corpus unshipped. Stable ASCII fold ships; non-ASCII compares ordinally (→ XREF `TODO-13-atom-nls-locale-subsystem.md` §10 full-BMP corpus)
+- [x] `env_set` maintains sorted order via binary-search insert + tail shift (`env_bsearch`); a same-name replace keeps position. `env_find_index`/`get_copy`/`peek`/`unset` route through `env_bsearch`
+- [x] `env_build_block(t, out, max_len, is_unicode, *out_len)` -- contiguous block into caller buffer: `name=value\0`...`\0` (ANSI=UTF-8) or UTF-16 `...\0\0`; sorted; `*out_len`=required bytes; `ENV_ERR_NOSPACE` (no partial write) if too small
+- [x] CREATE_UNICODE_ENVIRONMENT flag decision stays in the process-creation caller (→ XREF `TODO-12-native-api-ssdt.md §7`, `TODO-21-process-model-extensions.md §2`); env just supplies the block
+- [x] `env_parse_block(t, block, len, is_unicode)` -- decode block and REPLACE `environ[]` via atomic `env_adopt_block`; validates + sorts + de-dups (last-wins); ANSI or UTF-16 (converted to UTF-8)
+- [x] Max value length `ENV_VALUE_MAX`=32767 bytes; `env_set` returns `ENV_ERR_TOOLONG` (§5 maps `STATUS_NAME_TOO_LONG`)
+- [x] Max name length `ENV_NAME_MAX`=256 bytes; `env_name_classify` rejects longer names
+- [x] Reconciled UTF-16 char vs UTF-8 byte caps (← XREF §5): documented byte-cap contract in `include/kernel/env.h` (one byte cap, applied after the NT layer's UTF-16→UTF-8 conversion)
+- [x] Name validation: `env_name_classify` rejects names containing `=`; leading-`=` hidden drive vars are §12's surface
+- [x] Per-process block-size DoS cap: `env_set`/`env_adopt_block`/`env_parse_block` reject a total block over `ENV_BLOCK_MAX` (1 MiB) with `ENV_ERR_NOSPACE`; klog warns once past `ENV_BLOCK_WARN` (256 KiB)
+- [x] `REG_EXPAND_SZ` stored RAW during overlay then expanded once against the fully-assembled env in a deterministic post-overlay pass (`env_expand_reg_values`), never inline during `RegEnumValue`
+- [x] Commit: `"kernel/env: sorted environment block, size limits, name validation"`
 
 **Test checkpoint:** `GetEnvironmentStrings` order AAA before ZZZ; oversize name rejected. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1510 suites, 0 failures (10 new s10 cases)
+
+> **Notes:**
+> - Shipped in `src/kernel/env.c` + `env.h`: sorted `environ[]` (`env_name_cmp` + `env_bsearch`), caller-buffer `env_build_block`/`env_parse_block` (ANSI+UTF-16), 1 MiB block-size cap (256 KiB warn), deterministic `REG_EXPAND_SZ` expansion.
+> - Design-review adoptions (detail in commit message): value pointers derive from the stored `=` not query length; ASCII-only stable fold over ephemeral NLS; registry expansion moved out of `RegEnumValue` order.
+> - 10 new `test_env_*` cases (sort, build/parse ANSI+Unicode, dedup, malformed, block cap) under SUITE=abi; full build+test green.
+> - Canonical doc: byte-cap contract + block-cap rationale in the `include/kernel/env.h` header comment.
+> - Scope: full NLS Unicode folding is TODO-13's (deferred `[/]`); CREATE_UNICODE_ENVIRONMENT + child-env wiring are TODO-12 §7 / TODO-21 §2.
 
 ---
 
@@ -618,9 +623,9 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | ⭐   | sysdm env tab              | ✅ sysdm.cpl           | ❌ no GNOME equiv     | ⬜ §9                |
 | ⭐   | SET /A arith               | ✅ cmd only            | ✅ bash arith         | ⬜ §7                |
 | ⭐   | source / `.`               | ❌ not cmd             | ✅ POSIX              | ⬜ §8                |
-| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ⬜ §10               |
-| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⬜ §10, T12 §7       |
-| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ⬜ §10               |
+| 💎   | Sorted env block           | ✅ Unicode sort        | ❌ unsorted           | ✅ §10 ASCII sort    |
+| 💎   | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs  | ❌ Win32-only         | ⚠️ §10 blk, T12 §7   |
+| 💎   | Env size limits            | ✅ 32K/var             | ⚠️ ARG_MAX           | ✅ §10 32K+1MiB      |
 | 💎   | PATHEXT                    | ✅ long default        | ❌ N/A                | ⬜ §11               |
 | 💎   | Hidden `=C:` cwd           | ✅ per drive           | ❌ single cwd         | ⬜ §12               |
 | 💎   | CreateEnvBlock             | ✅ userenv             | ❌ none               | ⬜ §13               |

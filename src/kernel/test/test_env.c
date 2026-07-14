@@ -1484,6 +1484,232 @@ static void test_ntenv_empty_value_null_buffer(void)
     env_unset(t, "NTENV_EMPTY");
 }
 
+/* ========================================================================
+ * s10: sorted block, caller-buffer build/parse, size caps
+ * ======================================================================== */
+
+/* Sorted storage: inserting out of order yields an alphabetically sorted block. */
+static void test_env_sorted_block_ansi(void)
+{
+    char buf[128];
+    uint32_t outlen = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "ZZZ", "1");
+    env_set(&s_env_fixture, "AAA", "2");
+    env_set(&s_env_fixture, "MMM", "3");
+    rc = env_build_block(&s_env_fixture, buf, sizeof(buf), 0, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_build_block ANSI succeeds");
+    /* "AAA=2\0MMM=3\0ZZZ=1\0\0" = 6 + 6 + 6 + 1 = 19 bytes */
+    TEST_ASSERT_EQ((int)outlen, 19, "block length = sum of entries + terminator");
+    TEST_ASSERT(env_streq(buf, "AAA=2"), "first entry is AAA (sorted, not insertion order)");
+    TEST_ASSERT(env_streq(buf + 6, "MMM=3"), "second entry is MMM");
+    TEST_ASSERT(env_streq(buf + 12, "ZZZ=1"), "third entry is ZZZ");
+    TEST_ASSERT(buf[18] == '\0', "block is double-NUL terminated");
+    env_free(&s_env_fixture);
+}
+
+/* Case-insensitive sort: mixed-case names order by upcased key. */
+static void test_env_sorted_block_case_insensitive(void)
+{
+    char buf[64];
+    uint32_t outlen = 0;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "beta", "1");
+    env_set(&s_env_fixture, "Alpha", "2");
+    env_build_block(&s_env_fixture, buf, sizeof(buf), 0, &outlen);
+    TEST_ASSERT(env_streq(buf, "Alpha=2"), "Alpha sorts before beta case-insensitively");
+    TEST_ASSERT(env_streq(buf + 8, "beta=1"), "beta second");
+    env_free(&s_env_fixture);
+}
+
+/* Too-small buffer: no partial write, required length reported; NULL sizes. */
+static void test_env_build_block_too_small(void)
+{
+    char buf[4];
+    uint32_t outlen = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "KEY", "VALUE");   /* "KEY=VALUE\0\0" = 11 bytes */
+    rc = env_build_block(&s_env_fixture, buf, sizeof(buf), 0, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_ERR_NOSPACE, "too-small buffer returns NOSPACE");
+    TEST_ASSERT_EQ((int)outlen, 11, "required byte length reported");
+    outlen = 0;
+    rc = env_build_block(&s_env_fixture, (void *)0, 0, 0, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_ERR_NOSPACE, "NULL sizing call returns NOSPACE");
+    TEST_ASSERT_EQ((int)outlen, 11, "NULL sizing call reports required length");
+    env_free(&s_env_fixture);
+}
+
+/* Unicode block: caller buffer, UTF-16 entries + double-NUL. */
+static void test_env_build_block_unicode(void)
+{
+    uint16_t buf[32];
+    uint32_t outlen = 0;
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "K", "V");
+    rc = env_build_block(&s_env_fixture, buf, sizeof(buf), 1, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_build_block UNICODE succeeds");
+    TEST_ASSERT_EQ((int)outlen, 10, "unicode block is 5 wchars = 10 bytes");
+    TEST_ASSERT(env_test_weq_ascii(buf, 3, "K=V"), "unicode block holds K=V");
+    TEST_ASSERT(buf[3] == 0 && buf[4] == 0, "double-NUL terminates unicode block");
+    env_free(&s_env_fixture);
+}
+
+/* Empty environment: ANSI "\0\0" (2 bytes), UNICODE 0x0000 0x0000 (4 bytes). */
+static void test_env_build_block_empty_caller(void)
+{
+    char abuf[4];
+    uint16_t wbuf[4];
+    uint32_t outlen = 0;
+    int rc;
+    env_fixture_reset();
+    rc = env_build_block(&s_env_fixture, abuf, sizeof(abuf), 0, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_OK, "empty ANSI block builds");
+    TEST_ASSERT_EQ((int)outlen, 2, "empty ANSI block is 2 bytes");
+    TEST_ASSERT(abuf[0] == '\0' && abuf[1] == '\0', "empty ANSI block is double-NUL");
+    outlen = 0;
+    rc = env_build_block(&s_env_fixture, wbuf, sizeof(wbuf), 1, &outlen);
+    TEST_ASSERT_EQ(rc, ENV_OK, "empty unicode block builds");
+    TEST_ASSERT_EQ((int)outlen, 4, "empty unicode block is 4 bytes");
+    TEST_ASSERT(wbuf[0] == 0 && wbuf[1] == 0, "empty unicode block is 0x0000 0x0000");
+}
+
+/* env_parse_block ANSI: replaces environ, entries sorted + retrievable. */
+static void test_env_parse_block_ansi(void)
+{
+    const char block[] = "AAA=1\0BBB=2\0";   /* +implicit NUL -> double-NUL terminated */
+    char out[64];
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "OLD", "x");      /* must be replaced away by parse */
+    rc = env_parse_block(&s_env_fixture, block, sizeof(block), 0);
+    TEST_ASSERT_EQ(rc, ENV_OK, "env_parse_block ANSI succeeds");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 2, "parse replaced environ (2 entries)");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "AAA", out, sizeof(out)), 1, "AAA present");
+    TEST_ASSERT(env_streq(out, "1"), "AAA=1");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "BBB", out, sizeof(out)), 1, "BBB present");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "OLD", out, sizeof(out)),
+                   ENV_ERR_NOTFOUND, "OLD replaced away by block");
+    env_free(&s_env_fixture);
+}
+
+/* env_parse_block: duplicate name -> last occurrence wins, one entry kept. */
+static void test_env_parse_block_dedup(void)
+{
+    const char block[] = "DUP=first\0DUP=second\0";
+    char out[64];
+    int rc;
+    env_fixture_reset();
+    rc = env_parse_block(&s_env_fixture, block, sizeof(block), 0);
+    TEST_ASSERT_EQ(rc, ENV_OK, "parse with duplicate name succeeds");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 1, "duplicate collapsed to one entry");
+    env_get_copy(&s_env_fixture, "DUP", out, sizeof(out));
+    TEST_ASSERT(env_streq(out, "second"), "last occurrence wins");
+    env_free(&s_env_fixture);
+}
+
+/* env_parse_block: malformed entries (empty name / leading '=') are skipped. */
+static void test_env_parse_block_skips_malformed(void)
+{
+    const char block[] = "=BAD\0GOOD=ok\0";
+    char out[64];
+    int rc;
+    env_fixture_reset();
+    rc = env_parse_block(&s_env_fixture, block, sizeof(block), 0);
+    TEST_ASSERT_EQ(rc, ENV_OK, "parse skips a malformed entry");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 1, "only the well-formed entry kept");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "GOOD", out, sizeof(out)), 2, "GOOD present");
+    env_free(&s_env_fixture);
+}
+
+/* env_parse_block UNICODE: round-trips a value through build+parse. */
+static void test_env_parse_block_unicode(void)
+{
+    uint16_t block[32];
+    uint32_t bytes = 0;
+    char out[64];
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "UK", "uv");
+    rc = env_build_block(&s_env_fixture, block, sizeof(block), 1, &bytes);
+    TEST_ASSERT_EQ(rc, ENV_OK, "build unicode block for round-trip");
+    env_free(&s_env_fixture);
+    env_fixture_reset();
+    rc = env_parse_block(&s_env_fixture, block, bytes, 1);
+    TEST_ASSERT_EQ(rc, ENV_OK, "parse unicode block succeeds");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 1, "one entry parsed");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "UK", out, sizeof(out)), 2, "UK present");
+    TEST_ASSERT(env_streq(out, "uv"), "UK=uv round-trips through the unicode block");
+    env_free(&s_env_fixture);
+}
+
+/* 1 MiB block-size DoS cap: repeated large sets eventually return NOSPACE. */
+static char s_cap_val[8192];
+static void test_env_block_size_cap(void)
+{
+    char name[16];
+    uint32_t i;
+    int hit_cap = 0;
+    env_fixture_reset();
+    for (i = 0; i < sizeof(s_cap_val) - 1u; i++)
+        s_cap_val[i] = 'x';
+    s_cap_val[sizeof(s_cap_val) - 1u] = '\0';   /* ~8 KiB value */
+    for (i = 0; i < ENV_MAX_ENTRIES; i++) {
+        int rc;
+        name[0] = 'V';
+        name[1] = (char)('A' + (int)((i / 26u) % 26u));
+        name[2] = (char)('A' + (int)(i % 26u));
+        name[3] = '\0';
+        rc = env_set(&s_env_fixture, name, s_cap_val);
+        if (rc == ENV_ERR_NOSPACE) {
+            hit_cap = 1;
+            break;
+        }
+        TEST_ASSERT_EQ(rc, ENV_OK, "env_set succeeds until the block cap");
+    }
+    TEST_ASSERT(hit_cap, "1 MiB block cap eventually rejects a set with NOSPACE");
+    env_free(&s_env_fixture);
+}
+
+/* Parser must not install a value over ENV_VALUE_MAX (would let NtQuery read
+ * past its ENV_VALUE_MAX-sized buffer): the over-cap entry is skipped. */
+static char s_parse_block[ENV_VALUE_MAX + 16];
+static void test_env_parse_block_over_value_skipped(void)
+{
+    uint32_t i, p = 0;
+    int rc;
+    env_fixture_reset();
+    s_parse_block[p++] = 'A';
+    s_parse_block[p++] = '=';
+    for (i = 0; i < ENV_VALUE_MAX + 2u; i++)   /* value = ENV_VALUE_MAX+2 bytes (over cap) */
+        s_parse_block[p++] = 'x';
+    s_parse_block[p++] = '\0';                 /* entry terminator */
+    s_parse_block[p++] = '\0';                 /* block terminator */
+    rc = env_parse_block(&s_env_fixture, s_parse_block, p, 0);
+    TEST_ASSERT_EQ(rc, ENV_OK, "parse succeeds (over-value entry skipped, not an error)");
+    TEST_ASSERT_EQ((int)s_env_fixture.environ_count, 0,
+                   "over-ENV_VALUE_MAX value not stored");
+    env_free(&s_env_fixture);
+}
+
+/* Oversize block (raw size cannot fit ENV_BLOCK_MAX) is rejected BEFORE any
+ * scan/alloc, leaving the prior environment intact. */
+static void test_env_parse_block_oversize_rejected(void)
+{
+    char dummy[4] = { 'A', '=', 'x', 0 };
+    char kv[8];
+    int rc;
+    env_fixture_reset();
+    env_set(&s_env_fixture, "KEEP", "me");
+    rc = env_parse_block(&s_env_fixture, dummy, ENV_BLOCK_MAX + 1u, 0);
+    TEST_ASSERT_EQ(rc, ENV_ERR_NOSPACE, "oversize block rejected up front");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "KEEP", kv, sizeof(kv)), 2,
+                   "prior environ untouched by the rejected block");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: argv set + free",
@@ -1611,6 +1837,31 @@ void test_register_env(void)
                             test_ntenv_overlap_and_null, TEST_CAT_ABI);
     test_suite_register_cat("Env: Nt empty value + NULL buffer rejected",
                             test_ntenv_empty_value_null_buffer, TEST_CAT_ABI);
+    /* s10: sorted block, caller-buffer build/parse, size caps. */
+    test_suite_register_cat("Env: sorted ANSI block (insertion order ignored)",
+                            test_env_sorted_block_ansi, TEST_CAT_ABI);
+    test_suite_register_cat("Env: sorted block case-insensitive",
+                            test_env_sorted_block_case_insensitive, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build block too small reports length",
+                            test_env_build_block_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build UNICODE caller-buffer block",
+                            test_env_build_block_unicode, TEST_CAT_ABI);
+    test_suite_register_cat("Env: build empty block double-NUL",
+                            test_env_build_block_empty_caller, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse ANSI block replaces environ",
+                            test_env_parse_block_ansi, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse block dedup last-wins",
+                            test_env_parse_block_dedup, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse block skips malformed",
+                            test_env_parse_block_skips_malformed, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse UNICODE block round-trip",
+                            test_env_parse_block_unicode, TEST_CAT_ABI);
+    test_suite_register_cat("Env: 1 MiB block-size cap",
+                            test_env_block_size_cap, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse skips over-value entry",
+                            test_env_parse_block_over_value_skipped, TEST_CAT_ABI);
+    test_suite_register_cat("Env: parse rejects oversize block up front",
+                            test_env_parse_block_oversize_rejected, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

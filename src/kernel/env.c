@@ -56,19 +56,67 @@ static char env_lc(char c)
     return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
 }
 
-/* True if the "KEY" portion of entry "KEY=VALUE" equals `name` (namelen bytes),
- * case-insensitively (Windows env-name semantics). */
-static int env_entry_key_eq(const char *entry, const char *name, uint32_t namelen)
+/* Length of the "KEY" portion of a stored "KEY=VALUE" entry: the byte offset of
+ * the first '=' (every stored entry has one). The value pointer is derived from
+ * the STORED entry, never from a query's byte length -- the two can differ once a
+ * case-fold equates names of unequal encoded length, which would make
+ * "entry + querylen + 1" point past the '=' and read/overrun the value. */
+static uint32_t env_entry_keylen(const char *entry)
 {
+    uint32_t i = 0;
+    while (entry[i] != '\0' && entry[i] != '=')
+        i++;
+    return i;
+}
+
+/* Borrowed pointer to the VALUE portion of a stored "KEY=VALUE" entry (past the
+ * '='). If the entry has no '=' (never happens for a well-formed store) this
+ * points at the terminating NUL, i.e. an empty value. */
+static const char *env_entry_value(const char *entry)
+{
+    uint32_t k = env_entry_keylen(entry);
+    return (entry[k] == '=') ? (entry + k + 1) : (entry + k);
+}
+
+/* Total order over environment-variable NAMES, case-insensitive with an
+ * ASCII-only fold (A-Z <-> a-z); all other bytes compare ordinally as unsigned.
+ * Returns <0 / 0 / >0. Shorter sorts before a longer name that shares its prefix
+ * ("A" < "AA"). This is the SINGLE authority for both identity (== 0) and sort
+ * order, so binary search is sound (equal keys are comparator-equal + adjacent).
+ *
+ * ASCII-ONLY BY DESIGN: the full-BMP NLS upcase table (nls_upcase_char, U+0100+)
+ * is disk-backed, version-dependent, and ephemeral -- unsafe as the PERSISTENT
+ * identity/order of a stored identifier, and its corpus is not yet shipped
+ * (owned by TODO-13). A byte-wise ASCII fold is stable, compiled-in, and
+ * byte-length-preserving (case-equal names keep identical UTF-8 length, which
+ * keeps env_entry_value offsets valid), and never decodes code points (so a
+ * malformed UTF-8 name from an exec envp cannot collapse into a different one).
+ * Non-ASCII names therefore compare case-SENSITIVELY; full NLS-aware folding is
+ * a deferred upgrade tracked in TODO-13. */
+static int env_name_cmp(const char *a, uint32_t alen,
+                        const char *b, uint32_t blen)
+{
+    uint32_t n = (alen < blen) ? alen : blen;
     uint32_t i;
-    for (i = 0; i < namelen; i++) {
-        char e = entry[i];
-        if (e == '\0' || e == '=')
-            return 0;
-        if (env_lc(e) != env_lc(name[i]))
-            return 0;
+    for (i = 0; i < n; i++) {
+        unsigned char ca = (unsigned char)env_lc(a[i]);
+        unsigned char cb = (unsigned char)env_lc(b[i]);
+        if (ca != cb)
+            return (ca < cb) ? -1 : 1;
     }
-    return entry[namelen] == '=';
+    if (alen == blen)
+        return 0;
+    return (alen < blen) ? -1 : 1;
+}
+
+/* Compare a stored "KEY=VALUE" entry's KEY against `name` (namelen bytes) via the
+ * single name ordering. Returns <0 / 0 / >0; == 0 is the case-insensitive name
+ * match that binary search and de-duplication rely on (derived from the same
+ * order, so identity can never disagree with the sort). */
+static int env_entry_name_cmp(const char *entry, const char *name,
+                              uint32_t namelen)
+{
+    return env_name_cmp(entry, env_entry_keylen(entry), name, namelen);
 }
 
 /* Classify a to-be-set variable name and return its length via `*out_len`.
@@ -161,17 +209,41 @@ static char *env_make_entry(const char *name, uint32_t namelen,
     return p;
 }
 
+/* Binary search environ[] (kept sorted by env_name_cmp) for `name`. On a hit
+ * returns the index; on a miss returns -1 and, when `pos` is non-NULL, sets *pos
+ * to the insertion index that keeps the array sorted. environ[0..count) has no
+ * NULL holes (every mutator keeps it dense), so the search needs no hole checks.
+ * Caller MUST hold t->environ_lock. */
+static int env_bsearch(struct task *t, const char *name, uint32_t namelen,
+                       uint32_t *pos)
+{
+    uint32_t lo = 0, hi;
+    if (!t->environ) {
+        if (pos)
+            *pos = 0;
+        return -1;
+    }
+    hi = t->environ_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        int c = env_entry_name_cmp(t->environ[mid], name, namelen);
+        if (c == 0)
+            return (int)mid;
+        if (c < 0)            /* stored entry sorts before name -> go right */
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    if (pos)
+        *pos = lo;
+    return -1;
+}
+
 /* Index of the entry matching `name` (case-insensitive), or -1. The caller MUST
  * hold t->environ_lock. */
 static int env_find_index(struct task *t, const char *name, uint32_t namelen)
 {
-    uint32_t i;
-    if (!t->environ)
-        return -1;
-    for (i = 0; i < t->environ_count; i++)
-        if (t->environ[i] && env_entry_key_eq(t->environ[i], name, namelen))
-            return (int)i;
-    return -1;
+    return env_bsearch(t, name, namelen, (uint32_t *)0);
 }
 
 /* --- Public API ----------------------------------------------------------- */
@@ -199,7 +271,7 @@ const char *env_peek_locked(struct task *t, const char *name)
     idx = env_find_index(t, name, namelen);
     if (idx < 0)
         return NULL;
-    return t->environ[idx] + namelen + 1;   /* value portion, past "name=" */
+    return env_entry_value(t->environ[idx]);   /* value past the stored '=' */
 }
 
 int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size)
@@ -224,7 +296,7 @@ int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size)
         return ENV_ERR_NOTFOUND;
     }
     {
-        const char *val = t->environ[idx] + namelen + 1;
+        const char *val = env_entry_value(t->environ[idx]);   /* past stored '=' */
         uint32_t vlen = env_strlen(val);
         uint32_t copy = (vlen < out_size) ? vlen : (out_size - 1);
         uint32_t i;
@@ -237,11 +309,25 @@ int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size)
     return ret;
 }
 
+/* Total byte size of the contiguous environment block ("name=value\0"... + one
+ * trailing NUL) for the DoS-guard cap. Caller MUST hold t->environ_lock. */
+static uint32_t env_block_bytes_locked(struct task *t)
+{
+    uint32_t total = 1u;                   /* trailing block terminator NUL */
+    uint32_t i;
+    if (t->environ)
+        for (i = 0; i < t->environ_count; i++)
+            total += env_strlen(t->environ[i]) + 1u;   /* "name=value" + its NUL */
+    return total;
+}
+
 int env_set(struct task *t, const char *name, const char *value)
 {
     uint32_t namelen, vallen, entlen;
+    uint32_t pos = 0;
     char *newent;
     int idx;
+    int warn = 0;
 
     if (!t || !value)
         return ENV_ERR_INVAL;
@@ -262,35 +348,67 @@ int env_set(struct task *t, const char *name, const char *value)
         return ENV_ERR_NOMEM;
 
     mutex_lock(&t->environ_lock);
-    idx = env_find_index(t, name, namelen);
-    if (idx >= 0) {
-        char *old = t->environ[idx];
-        uint32_t oldn = env_strlen(old) + 1;
-        t->environ[idx] = newent;          /* swap pointer under lock */
-        mutex_unlock(&t->environ_lock);
-        env_str_free(old, oldn);           /* free old outside the lock */
-        return ENV_OK;
-    }
-    if (t->environ_count >= ENV_MAX_ENTRIES) {
-        mutex_unlock(&t->environ_lock);
-        env_str_free(newent, entlen);
-        return ENV_ERR_NOSPACE;
-    }
+
+    /* Block-size DoS guard: reject a set that would push the total block past
+     * ENV_BLOCK_MAX, and note a crossing of ENV_BLOCK_WARN (warn logged after the
+     * lock is dropped -- never klog under the mutex). */
     {
-        uint32_t oldcnt = t->environ_count;
-        uint32_t newcap = oldcnt + 2u;     /* +1 new entry, +1 NULL terminator */
-        char **arr = (char **)krealloc(t->environ, newcap * sizeof(char *));
-        if (!arr) {
+        uint32_t old_total = env_block_bytes_locked(t);
+        uint32_t projected;
+        idx = env_bsearch(t, name, namelen, &pos);
+        if (idx >= 0)
+            projected = old_total - (env_strlen(t->environ[idx]) + 1u) + entlen;
+        else
+            projected = old_total + entlen;
+        if (projected > ENV_BLOCK_MAX) {
             mutex_unlock(&t->environ_lock);
             env_str_free(newent, entlen);
-            return ENV_ERR_NOMEM;
+            return ENV_ERR_NOSPACE;
         }
-        arr[oldcnt] = newent;
-        arr[oldcnt + 1] = NULL;
-        t->environ = arr;
-        t->environ_count = oldcnt + 1;
+        if (old_total < ENV_BLOCK_WARN && projected >= ENV_BLOCK_WARN)
+            warn = 1;
     }
-    mutex_unlock(&t->environ_lock);
+
+    if (idx >= 0) {
+        /* Replace in place: the name is unchanged, so the sorted position does
+         * not move -- swap the pointer, no shift. */
+        char *old = t->environ[idx];
+        uint32_t oldn = env_strlen(old) + 1;
+        t->environ[idx] = newent;
+        mutex_unlock(&t->environ_lock);
+        env_str_free(old, oldn);           /* free old outside the lock */
+    } else {
+        if (t->environ_count >= ENV_MAX_ENTRIES) {
+            mutex_unlock(&t->environ_lock);
+            env_str_free(newent, entlen);
+            return ENV_ERR_NOSPACE;
+        }
+        {
+            uint32_t oldcnt = t->environ_count;
+            uint32_t newcap = oldcnt + 2u; /* +1 new entry, +1 NULL terminator */
+            char **arr = (char **)krealloc(t->environ, newcap * sizeof(char *));
+            uint32_t i;
+            if (!arr) {
+                mutex_unlock(&t->environ_lock);
+                env_str_free(newent, entlen);
+                return ENV_ERR_NOMEM;
+            }
+            t->environ = arr;
+            /* Open a slot at the sorted insertion index by shifting the tail up
+             * one; keep the array sorted so binary search stays valid. */
+            for (i = oldcnt; i > pos; i--)
+                arr[i] = arr[i - 1];
+            arr[pos] = newent;
+            arr[oldcnt + 1] = NULL;        /* new terminator */
+            t->environ_count = oldcnt + 1;
+        }
+        mutex_unlock(&t->environ_lock);
+    }
+
+    if (warn)
+        klog(LOG_WARN, "env",
+             "environment block for pid %u exceeded %u KiB",
+             (uint64_t)t->pid, (uint64_t)(ENV_BLOCK_WARN / 1024u));
     return ENV_OK;
 }
 
@@ -546,6 +664,13 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
             ;
         if (eq == 0 || eq >= elen)
             continue;                       /* empty key or no '=' */
+        /* Enforce the name and value byte caps SEPARATELY, exactly as env_set
+         * does: the combined-length check above still admits e.g. a 1-byte name
+         * with a 32,769-byte value (total < NAME_MAX+1+VALUE_MAX), which env_set
+         * would reject. Storing an over-ENV_VALUE_MAX value would let a reader
+         * (NtQueryEnvironmentVariable) walk past its ENV_VALUE_MAX-sized buffer. */
+        if (eq > ENV_NAME_MAX || (elen - eq - 1u) > ENV_VALUE_MAX)
+            continue;                       /* name or value over its byte cap */
         arr[n] = env_strdup(e);
         if (!arr[n]) {
             uint32_t j;
@@ -556,6 +681,63 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
             return ENV_ERR_NOMEM;
         }
         n++;
+    }
+
+    /* De-duplicate by name, LAST occurrence wins (matches env_set replace
+     * semantics), so the sorted invariant is never violated by a block that
+     * repeats a name. Two-pointer in-place filter: drop an entry that a later
+     * entry supersedes; the dedup scan only reads FORWARD, so compaction of the
+     * kept entries down never disturbs a slot still to be examined. */
+    {
+        uint32_t w = 0, a, b;
+        for (a = 0; a < n; a++) {
+            uint32_t ka = env_entry_keylen(arr[a]);
+            int superseded = 0;
+            for (b = a + 1u; b < n; b++) {
+                if (env_name_cmp(arr[a], ka, arr[b], env_entry_keylen(arr[b])) == 0) {
+                    superseded = 1;
+                    break;
+                }
+            }
+            if (superseded) {
+                env_str_free(arr[a], env_strlen(arr[a]) + 1u);
+            } else {
+                arr[w++] = arr[a];
+            }
+        }
+        for (a = w; a <= count; a++)
+            arr[a] = NULL;                  /* clear the freed tail + keep terminator */
+        n = w;
+    }
+
+    /* Sort the unique entries by name (insertion sort; n <= ENV_MAX_ENTRIES) so
+     * env_bsearch is valid on the published array. */
+    {
+        uint32_t a, b;
+        for (a = 1u; a < n; a++) {
+            char *key = arr[a];
+            uint32_t kl = env_entry_keylen(key);
+            b = a;
+            while (b > 0u && env_entry_name_cmp(arr[b - 1u], key, kl) > 0) {
+                arr[b] = arr[b - 1u];
+                b--;
+            }
+            arr[b] = key;
+        }
+    }
+
+    /* Enforce the per-process block-size DoS cap on the final de-duplicated set. */
+    {
+        uint32_t total = 1u, a;
+        for (a = 0; a < n; a++)
+            total += env_strlen(arr[a]) + 1u;
+        if (total > ENV_BLOCK_MAX) {
+            for (a = 0; a < n; a++)
+                if (arr[a])
+                    env_str_free(arr[a], env_strlen(arr[a]) + 1u);
+            kfree(arr);
+            return ENV_ERR_NOSPACE;
+        }
     }
 
     mutex_lock(&t->environ_lock);
@@ -895,6 +1077,269 @@ void env_free_block_utf16(uint16_t *block, uint32_t wchars)
 }
 
 /* ===========================================================================
+ * Contiguous CreateProcess environment blocks (caller-buffer build + parse)
+ *
+ * env_build_block() serializes the SORTED environ into a caller-supplied buffer
+ * (ANSI = raw UTF-8 bytes, or UTF-16); env_parse_block() decodes such a block
+ * back into the environ via the atomic env_adopt_block() path (validate + sort +
+ * dedup + block cap). These are the CreateProcess lpEnvironment surface; the
+ * CREATE_UNICODE_ENVIRONMENT flag decision lives in the process-creation caller,
+ * not here.
+ * =========================================================================== */
+
+int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
+                    int is_unicode, uint32_t *out_len)
+{
+    uint32_t i;
+
+    if (!t || !out_len)
+        return ENV_ERR_INVAL;
+    *out_len = 0;
+
+    mutex_lock(&t->environ_lock);
+
+    if (is_unicode) {
+        uint32_t wchars = 1u;              /* trailing block terminator wchar */
+        uint32_t nent = 0;
+        uint32_t need, cap, w;
+        uint16_t *blk;
+        if (t->environ) {
+            for (i = 0; i < t->environ_count; i++) {
+                const char *e = t->environ[i];
+                int nn;
+                if (!e)
+                    continue;
+                nn = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
+                                          (uint16_t *)0, 0u, NLS_CP_REPLACE);
+                if (nn < 0) {
+                    mutex_unlock(&t->environ_lock);
+                    return ENV_ERR_INVAL;
+                }
+                wchars += (uint32_t)nn + 1u;   /* entry WCHARs + its NUL */
+                nent++;
+            }
+        }
+        if (nent == 0u)
+            wchars = 2u;                   /* empty block is "\0\0" */
+        need = wchars * 2u;                /* bytes */
+        *out_len = need;
+        if (!out_buf || need > max_len) {
+            mutex_unlock(&t->environ_lock);
+            return ENV_ERR_NOSPACE;
+        }
+        blk = (uint16_t *)out_buf;
+        cap = max_len / 2u;
+        w = 0;
+        if (t->environ) {
+            for (i = 0; i < t->environ_count; i++) {
+                const char *e = t->environ[i];
+                int got;
+                if (!e)
+                    continue;
+                got = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
+                                           &blk[w], cap - w, NLS_CP_REPLACE);
+                if (got < 0) {             /* sizing guaranteed room; defensive */
+                    mutex_unlock(&t->environ_lock);
+                    return ENV_ERR_INVAL;
+                }
+                w += (uint32_t)got;
+                blk[w++] = 0;              /* terminate this entry */
+            }
+        }
+        blk[w++] = 0;                      /* block terminator */
+        if (nent == 0u)
+            blk[w++] = 0;                  /* second NUL for the empty block */
+    } else {
+        uint32_t bytes = 1u;               /* trailing block terminator byte */
+        uint32_t nent = 0;
+        uint32_t p;
+        char *blk;
+        if (t->environ) {
+            for (i = 0; i < t->environ_count; i++) {
+                const char *e = t->environ[i];
+                if (!e)
+                    continue;
+                bytes += env_strlen(e) + 1u;   /* "name=value" + its NUL */
+                nent++;
+            }
+        }
+        if (nent == 0u)
+            bytes = 2u;                    /* empty block is "\0\0" */
+        *out_len = bytes;
+        if (!out_buf || bytes > max_len) {
+            mutex_unlock(&t->environ_lock);
+            return ENV_ERR_NOSPACE;
+        }
+        blk = (char *)out_buf;
+        p = 0;
+        if (t->environ) {
+            for (i = 0; i < t->environ_count; i++) {
+                const char *e = t->environ[i];
+                uint32_t el, j;
+                if (!e)
+                    continue;
+                el = env_strlen(e);
+                for (j = 0; j < el; j++)
+                    blk[p++] = e[j];
+                blk[p++] = '\0';           /* terminate this entry */
+            }
+        }
+        blk[p++] = '\0';                   /* block terminator */
+        if (nent == 0u)
+            blk[p++] = '\0';               /* second NUL for the empty block */
+    }
+
+    mutex_unlock(&t->environ_lock);
+    return ENV_OK;
+}
+
+/* The largest a single "name=value" entry can be and still satisfy the byte
+ * caps; parse skips anything larger BEFORE allocating it. */
+#define ENV_PARSE_ENTRY_MAX  (ENV_NAME_MAX + 1u + ENV_VALUE_MAX)
+
+int env_parse_block(struct task *t, const void *block, uint32_t len,
+                    int is_unicode)
+{
+    const char **list;
+    char **owned;                          /* temp UTF-8 entry copies to free */
+    uint32_t n = 0, i;
+    uint32_t cum = 1u;                     /* cumulative block bytes (+ terminator) */
+    int overflow = 0;
+    int rc = ENV_OK;
+
+    if (!t)
+        return ENV_ERR_INVAL;
+    if (!block || len == 0u)
+        return env_adopt_block(t, (const char *const *)0, 0u);   /* clear */
+
+    /* Bound the raw work BEFORE any scan/alloc/convert: a block whose raw size
+     * cannot fit ENV_BLOCK_MAX cannot yield a valid environment. Each unit (a
+     * byte for ANSI, a wchar for UTF-16) decodes to >= 1 UTF-8 byte, so the unit
+     * count is a lower bound on the decoded byte count -- reject a huge caller
+     * block outright instead of scanning/converting it. */
+    if ((is_unicode ? (len / 2u) : len) > ENV_BLOCK_MAX)
+        return ENV_ERR_NOSPACE;
+
+    /* list[] + owned[] hold one extra slot for the NULL terminator; (511+1)*8 ==
+     * 4096 bytes, at the kmalloc ceiling. */
+    list  = (const char **)kmalloc((ENV_MAX_ENTRIES + 1u) * sizeof(char *));
+    owned = (char **)kmalloc((ENV_MAX_ENTRIES + 1u) * sizeof(char *));
+    if (!list || !owned) {
+        if (list)  kfree(list);
+        if (owned) kfree(owned);
+        return ENV_ERR_NOMEM;
+    }
+
+    if (is_unicode) {
+        const uint16_t *w = (const uint16_t *)block;
+        uint32_t wlen = len / 2u;
+        uint32_t p = 0;
+        while (p < wlen) {
+            uint32_t q = p;
+            int need;
+            char *u8;
+            while (q < wlen && w[q] != 0)
+                q++;
+            if (q == p)
+                break;                     /* empty entry -> block end */
+            if (n >= ENV_MAX_ENTRIES) {
+                overflow = 1;
+                break;
+            }
+            if (q - p > ENV_PARSE_ENTRY_MAX) {   /* over-max entry -> skip, no work */
+                if (q >= wlen)
+                    break;
+                p = q + 1u;
+                continue;
+            }
+            need = nls_cp_utf16_to_utf8(&w[p], q - p, (uint8_t *)0, 0u,
+                                        NLS_CP_REPLACE);
+            if (need < 0 || (uint32_t)need > ENV_PARSE_ENTRY_MAX) {
+                if (q >= wlen)             /* bad or over-cap entry -> skip */
+                    break;
+                p = q + 1u;
+                continue;
+            }
+            if (cum + (uint32_t)need + 1u > ENV_BLOCK_MAX) {
+                overflow = 1;             /* cumulative block cap -> reject block */
+                break;
+            }
+            u8 = env_str_alloc((uint32_t)need + 1u);
+            if (!u8) {
+                rc = ENV_ERR_NOMEM;
+                goto done;
+            }
+            nls_cp_utf16_to_utf8(&w[p], q - p, (uint8_t *)u8, (uint32_t)need,
+                                 NLS_CP_REPLACE);
+            u8[need] = '\0';
+            owned[n] = u8;
+            list[n] = u8;
+            n++;
+            cum += (uint32_t)need + 1u;
+            if (q >= wlen)
+                break;
+            p = q + 1u;
+        }
+    } else {
+        const char *b = (const char *)block;
+        uint32_t p = 0;
+        while (p < len) {
+            uint32_t q = p, el, j;
+            char *u8;
+            while (q < len && b[q] != '\0')
+                q++;
+            if (q == p)
+                break;                     /* empty entry -> block end */
+            if (n >= ENV_MAX_ENTRIES) {
+                overflow = 1;
+                break;
+            }
+            el = q - p;
+            if (el > ENV_PARSE_ENTRY_MAX) {      /* over-max entry -> skip, no alloc */
+                if (q >= len)
+                    break;
+                p = q + 1u;
+                continue;
+            }
+            if (cum + el + 1u > ENV_BLOCK_MAX) {
+                overflow = 1;             /* cumulative block cap -> reject block */
+                break;
+            }
+            u8 = env_str_alloc(el + 1u);
+            if (!u8) {
+                rc = ENV_ERR_NOMEM;
+                goto done;
+            }
+            for (j = 0; j < el; j++)
+                u8[j] = b[p + j];
+            u8[el] = '\0';
+            owned[n] = u8;
+            list[n] = u8;
+            n++;
+            cum += el + 1u;
+            if (q >= len)
+                break;
+            p = q + 1u;
+        }
+    }
+
+    if (overflow) {
+        rc = ENV_ERR_NOSPACE;
+    } else {
+        list[n] = NULL;
+        rc = env_adopt_block(t, list, n);  /* deep-copies; validates + sorts */
+    }
+
+done:
+    for (i = 0; i < n; i++)
+        if (owned[i])
+            env_str_free(owned[i], env_strlen(owned[i]) + 1u);
+    kfree(owned);
+    kfree(list);
+    return rc;
+}
+
+/* ===========================================================================
  * System default environment (system-default-variables feature)
  *
  * env_init_defaults() seeds a task with the machine's default variables in
@@ -1119,12 +1564,66 @@ static void env_path_append(struct task *t, const char *user_path, int *err)
     env_str_free(joined, need);
 }
 
+/* Deferred-expansion collector: the NAMES of REG_EXPAND_SZ values seen while
+ * overlaying, so their %VAR% references are expanded AFTER every layer is applied
+ * -- never inline during RegEnumValue (whose linked-list enumeration order would
+ * make "BIN=%BASE%\\bin" capture a stale or missing BASE purely from insertion
+ * history, and make a retry produce a different result). Expanding once at the
+ * end against the fully-assembled environment is deterministic and independent of
+ * enumeration order. */
+struct env_expand_list {
+    char   **names;    /* env_strdup'd REG_EXPAND_SZ names */
+    uint32_t count;
+    uint32_t cap;
+    int      err;      /* first failure (NOMEM) sticks */
+};
+
+/* Record a REG_EXPAND_SZ name for the later expansion pass. Duplicates are
+ * harmless (a second expand of a %-free value is a no-op), so no dedup. */
+static void env_expand_list_add(struct env_expand_list *l, const char *name)
+{
+    if (l->count >= l->cap) {
+        uint32_t newcap = l->cap ? (l->cap * 2u) : 8u;
+        char **grown = (char **)krealloc(l->names, newcap * sizeof(char *));
+        if (!grown) {
+            if (l->err == ENV_OK)
+                l->err = ENV_ERR_NOMEM;
+            return;
+        }
+        l->names = grown;
+        l->cap = newcap;
+    }
+    l->names[l->count] = env_strdup(name);
+    if (!l->names[l->count]) {
+        if (l->err == ENV_OK)
+            l->err = ENV_ERR_NOMEM;
+        return;
+    }
+    l->count++;
+}
+
+static void env_expand_list_free(struct env_expand_list *l)
+{
+    uint32_t i;
+    for (i = 0; i < l->count; i++)
+        if (l->names[i])
+            env_str_free(l->names[i], env_strlen(l->names[i]) + 1u);
+    if (l->names)
+        kfree(l->names);
+    l->names = NULL;
+    l->count = 0;
+    l->cap = 0;
+}
+
 /* Layers 2/3: overlay every REG_SZ/REG_EXPAND_SZ value under root\subkey via
  * env_set. When path_append is set, a "PATH" value is appended to the base
- * instead of replacing it. Buffers are heap/PMM-sized from the key metadata
- * (never a 32 KiB stack buffer). A missing key is a silent no-op. */
+ * instead of replacing it. REG_EXPAND_SZ values are stored RAW and their name
+ * recorded in `exlist` for the deterministic post-overlay expansion pass.
+ * Buffers are heap/PMM-sized from the key metadata (never a 32 KiB stack buffer).
+ * A missing key is a silent no-op. */
 static void env_overlay_key(struct task *t, HKEY root, const char *subkey,
-                            int path_append, int *err)
+                            int path_append, int *err,
+                            struct env_expand_list *exlist)
 {
     HKEY hk;
     uint32_t nvals = 0, max_name = 0, max_val = 0;
@@ -1193,6 +1692,10 @@ static void env_overlay_key(struct task *t, HKEY root, const char *subkey,
             if (rc2 != ENV_OK && *err == ENV_OK)
                 *err = rc2;
         }
+        /* Defer %VAR% expansion of REG_EXPAND_SZ (incl. PATH) to after all layers
+         * land -- record the name; the raw value is what we just stored. */
+        if (type == REG_EXPAND_SZ)
+            env_expand_list_add(exlist, namebuf);
     }
 
     env_str_free(namebuf, namecap);
@@ -1200,14 +1703,63 @@ static void env_overlay_key(struct task *t, HKEY root, const char *subkey,
     RegCloseKey(hk);
 }
 
+/* Deterministic post-overlay expansion pass: for each recorded REG_EXPAND_SZ
+ * name, expand its raw %VAR% value against the FULLY-assembled environment and
+ * store the result. env_expand is single-pass (Win32 ExpandEnvironmentStrings
+ * semantics), so a value referencing another %VAR% expands exactly once (no
+ * recursion, so cycles cannot hang), an unknown reference is left verbatim, and
+ * a PATH self-reference resolves against the just-built PATH -- all order-
+ * independent because every layer is already in place. */
+static void env_expand_reg_values(struct task *t, struct env_expand_list *l,
+                                  int *err)
+{
+    uint32_t i;
+    char probe[1];
+    char *raw, *out;
+
+    for (i = 0; i < l->count; i++) {
+        const char *name = l->names[i];
+        int rawlen;
+        if (!name)
+            continue;
+        rawlen = env_get_copy(t, name, probe, sizeof(probe));   /* full length */
+        if (rawlen <= 0)
+            continue;                                 /* absent/empty -> nothing to do */
+        raw = env_str_alloc((uint32_t)rawlen + 1u);
+        out = env_str_alloc(ENV_VALUE_MAX + 1u);      /* expansion is bounded by the cap */
+        if (!raw || !out) {
+            if (raw) env_str_free(raw, (uint32_t)rawlen + 1u);
+            if (out) env_str_free(out, ENV_VALUE_MAX + 1u);
+            if (*err == ENV_OK)
+                *err = ENV_ERR_NOMEM;
+            continue;
+        }
+        if (env_get_copy(t, name, raw, (uint32_t)rawlen + 1u) > 0) {
+            env_expand(t, raw, out, ENV_VALUE_MAX + 1u);
+            {
+                int rc = env_set(t, name, out);
+                if (rc != ENV_OK && *err == ENV_OK)
+                    *err = rc;
+            }
+        }
+        env_str_free(raw, (uint32_t)rawlen + 1u);
+        env_str_free(out, ENV_VALUE_MAX + 1u);
+    }
+}
+
 int env_init_defaults(struct task *t)
 {
     int err = ENV_OK;
+    struct env_expand_list ex = { (char **)0, 0u, 0u, ENV_OK };
     if (!t)
         return ENV_ERR_INVAL;
-    env_synth_base(t, &err);                                            /* layer 1 */
-    env_overlay_key(t, HKEY_LOCAL_MACHINE, ENV_REG_SYSTEM_ENV, 0, &err); /* layer 2 */
-    env_overlay_key(t, HKEY_CURRENT_USER, ENV_REG_USER_ENV, 1, &err);    /* layer 3 */
+    env_synth_base(t, &err);                                                  /* layer 1 */
+    env_overlay_key(t, HKEY_LOCAL_MACHINE, ENV_REG_SYSTEM_ENV, 0, &err, &ex); /* layer 2 */
+    env_overlay_key(t, HKEY_CURRENT_USER, ENV_REG_USER_ENV, 1, &err, &ex);    /* layer 3 */
+    if (ex.err != ENV_OK && err == ENV_OK)
+        err = ex.err;
+    env_expand_reg_values(t, &ex, &err);   /* layer 4: deterministic %VAR% expand */
+    env_expand_list_free(&ex);
     return err;
 }
 

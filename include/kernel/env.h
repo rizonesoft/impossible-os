@@ -31,11 +31,31 @@
 struct task;
 
 /* Size limits (the env-syscall, block-builder, and sanitization layers reuse
- * these). Values are in bytes of UTF-8, excluding the NUL terminator. */
+ * these). Values are in bytes of UTF-8, excluding the NUL terminator.
+ *
+ * BYTE-CAP CONTRACT (TODO-22 s10): ENV_NAME_MAX / ENV_VALUE_MAX are UTF-8 BYTE
+ * caps, matching the UTF-8 storage model -- NOT the Windows UTF-16 CHARACTER
+ * limits (name ~255 chars, value 32767 chars). The NT env syscalls
+ * (NtSetEnvironmentVariable) convert the caller's UTF-16 to UTF-8 and THEN apply
+ * these byte caps, so a UTF-16 value within the 32767-character limit but whose
+ * UTF-8 encoding exceeds ENV_VALUE_MAX bytes is rejected (ENV_ERR_TOOLONG ->
+ * STATUS_NAME_TOO_LONG). This is deliberate: it keeps one authoritative byte cap
+ * across the storage, block-builder, and DoS-guard layers rather than tracking a
+ * separate char count. Names/values are ASCII in every practical case, where
+ * byte length == char length and the distinction is moot. */
 #define ENV_NAME_MAX        256u   /* max variable name length (Windows practical limit) */
 #define ENV_VALUE_MAX       32767u /* max variable value length (Windows 32K-1 limit) */
 #define ENV_MAX_ENTRIES     511u   /* (n+1)*sizeof(char*) stays <= 4 KiB kmalloc array */
 #define ENV_STR_KMALLOC_MAX 4096u  /* "KEY=VALUE" strings up to this via kmalloc; larger via PMM */
+
+/* Per-process environment block sanity cap (TODO-22 s10). Windows Vista+ imposes
+ * no hard block-size limit, but an unbounded block is a DoS vector now that
+ * env_set is user-reachable via NtSetEnvironmentVariable (s5). env_set / the
+ * exec-adoption / block-parse paths reject an operation that would push the total
+ * block ("name=value\0"... + final NUL) past ENV_BLOCK_MAX (ENV_ERR_NOSPACE), and
+ * a klog warning fires the first time the block crosses ENV_BLOCK_WARN. */
+#define ENV_BLOCK_MAX       (1u * 1024u * 1024u)   /* 1 MiB hard cap */
+#define ENV_BLOCK_WARN      (256u * 1024u)         /* warn threshold */
 
 /* Return codes: 0 on success, negative on error. */
 #define ENV_OK             0
@@ -66,7 +86,11 @@ const char *env_peek_locked(struct task *t, const char *name);
 
 /* Set (create or replace) `name`=`value`. Case-insensitive replace. Allocates
  * the new "KEY=VALUE" string BEFORE freeing any old one, so an allocation
- * failure leaves the prior value intact. Returns ENV_OK or a negative code. */
+ * failure leaves the prior value intact. Maintains the environ[] SORTED
+ * invariant (case-insensitive by name, ASCII fold): a new name is inserted at
+ * its ordered position; a replace keeps the (unchanged) position. Rejects a set
+ * that would push the total block past ENV_BLOCK_MAX (ENV_ERR_NOSPACE) and warns
+ * once at ENV_BLOCK_WARN. Returns ENV_OK or a negative code. */
 int env_set(struct task *t, const char *name, const char *value);
 
 /* Remove `name` (validated as in env_set). Returns ENV_OK, ENV_ERR_NOTFOUND,
@@ -167,6 +191,42 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
 /* Free a block returned by env_build_block_utf16. `wchars` MUST be the same
  * `*out_wchars` that build returned. */
 void env_free_block_utf16(uint16_t *block, uint32_t wchars);
+
+/* --- Contiguous CreateProcess environment blocks (TODO-22 s10) ------------- */
+
+/* Build a contiguous NT environment block into the CALLER's buffer, snapshotting
+ * `t`'s environ under t->environ_lock. Entries are emitted in the sorted storage
+ * order (case-insensitive by name), so the block satisfies the CreateProcess /
+ * GetEnvironmentStrings "sorted" invariant that the storage layer maintains.
+ *
+ *   is_unicode == 0 (ANSI):    bytes,  "name=value\0"...  + one trailing '\0'
+ *                              (an empty environment is "\0\0").
+ *   is_unicode != 0 (UNICODE): UTF-16, "name=value\0"...  + one trailing 0x0000
+ *                              (an empty environment is 0x0000 0x0000). Entries
+ *                              convert UTF-8 -> UTF-16 via nls_cp (NLS_CP_REPLACE).
+ *
+ * `max_len` is the caller buffer size in BYTES. `*out_len` is set to the required
+ * byte count in ALL cases (including too-small and empty), so a caller can size a
+ * buffer with a first NULL/0 sizing call. Returns ENV_OK on a full write,
+ * ENV_ERR_NOSPACE (no partial write) when `max_len` is too small, ENV_ERR_INVAL
+ * on bad args. "ANSI" here means the raw stored UTF-8 bytes (Impossible stores
+ * UTF-8, not a legacy system code page). Callable from thread context only. */
+int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
+                    int is_unicode, uint32_t *out_len);
+
+/* Parse a contiguous CreateProcess-style environment block (from a caller-built
+ * `lpEnvironment`) and REPLACE `t`'s environ with it, atomically (build the whole
+ * new array, then swap under t->environ_lock -- a malformed block or allocation
+ * failure leaves the prior environ intact). `len` is the block length in BYTES.
+ *   is_unicode == 0: ANSI/UTF-8 "name=value\0"... block.
+ *   is_unicode != 0: UTF-16 block; each entry converts UTF-16 -> UTF-8 first.
+ * Validation mirrors env_adopt_block (which does the atomic swap): an entry with
+ * an empty name, a '=' inside the name, or over the byte caps is SKIPPED; the
+ * resulting environ is sorted and de-duplicated (last occurrence wins). A block
+ * whose total exceeds ENV_BLOCK_MAX, or more than ENV_MAX_ENTRIES entries, is a
+ * hard error (ENV_ERR_NOSPACE). Returns ENV_OK or a negative code. */
+int env_parse_block(struct task *t, const void *block, uint32_t len,
+                    int is_unicode);
 
 /* --- System default environment (system-default-variables feature) -------- */
 
