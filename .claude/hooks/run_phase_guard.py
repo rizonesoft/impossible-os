@@ -530,6 +530,27 @@ def _rollover_failures(root: Path, state: dict) -> list:
     return fails
 
 
+def _unpushed_count(root: Path):
+    """A1 (review 2026-07-14): number of local commits ahead of the upstream, or
+    None if it cannot be determined (no upstream / git error). Used to separate a
+    genuine MID-section WIP boundary (committed-but-unpushed local work -- the WIP
+    rotation does not push) from a POST-ship boundary (the ship path pushes, so
+    everything is upstream). A WIP rotation is only meaningful in the former; in
+    the latter the full `rollover` (with its receipt/graph verification) is the
+    correct exit. None -> caller treats as 'cannot prove unshipped WIP' (refuse)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-list", "--count",
+                            "@{u}..HEAD"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return int(r.stdout.strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def _write_section_checkpoint(root: Path) -> bool:
     """Write the durable section checkpoint; return True iff it succeeded (rc==0).
     Extracted so the F2 fail-closed behavior in rollover-wip is unit-testable."""
@@ -989,6 +1010,27 @@ def cli(argv):
             print("[sequencer] rollover-wip REFUSED: no rotate_hint set -- context "
                   "has not crossed the size band, so a mid-section rotation is not "
                   "warranted. Continue in-session.", file=sys.stderr)
+            return 1
+        # A1 (review 2026-07-14): a WIP rotation must NOT substitute for the full
+        # ship rollover. After a section ships (commit + PUSH) + `progress`, the
+        # phase is still SECTIONS and the tree is clean, so the WIP gate alone
+        # would pass -- letting a shipped section rotate via the weaker gate,
+        # skipping the full rollover's receipt + todo-graph verification. A genuine
+        # mid-section boundary always has committed-but-unpushed local work (the
+        # WIP rotation deliberately does not push); a post-ship boundary has none.
+        # Refuse when nothing is unpushed (or it cannot be determined): use the
+        # full `rollover` there. This is the successful-ship analogue of the P4.5
+        # F1 alternate-ship-path guard.
+        ahead = _unpushed_count(repo_root())
+        if not ahead:  # 0 or None
+            reason = ("everything is pushed -- no unshipped WIP to rotate"
+                      if ahead == 0 else
+                      "cannot determine unpushed state (no upstream / git error)")
+            print("[sequencer] rollover-wip REFUSED: " + reason + ". A mid-section "
+                  "rotation is only for committed-but-unpushed in-progress work; if "
+                  "the section has SHIPPED, run the full `rollover` (it verifies "
+                  "receipts + todo-graph). Otherwise continue in-session.",
+                  file=sys.stderr)
             return 1
         fails = _rollover_failures_wip(repo_root(), state)
         if fails:

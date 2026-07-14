@@ -15,6 +15,7 @@ fires just means the size-trigger is unavailable, never a wedge).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -69,6 +70,14 @@ def main() -> int:
         json.load(sys.stdin)  # consume payload; any tool event is one "turn"
     except Exception:
         return 0
+    # A2 (review 2026-07-14): count + emit ONLY inside the headless overnight run.
+    # arm-sequencer.sh sets OVERNIGHT_SEQUENCER_RUN=1 in the unit environment; an
+    # interactive operator session in the same checkout (e.g. the attended-canary
+    # watcher) has it unset. Without this gate, that session's tool events inflate
+    # the runner's shared counter AND it receives the rollover-wip systemMessage --
+    # mirrors run_phase_guard.py `_in_overnight_run()` and agent_dispatch_required.
+    if os.environ.get("OVERNIGHT_SEQUENCER_RUN") != "1":
+        return 0
     root = _repo_root()
     if root is None or not _in_sections(root):
         return 0
@@ -86,15 +95,22 @@ def main() -> int:
         data["hint_since_ts"] = time.time()
         data["hint_at_turns"] = data["count"]
         newly_set = True
+    # A4 (review 2026-07-14): emit ONLY after the state persisted. If write_text
+    # fails, the incremented count is in-memory only; the next event re-reads the
+    # old count and would re-cross/re-emit forever while rollover-wip (which reads
+    # the FILE) sees no hint and refuses -- an emit/refuse loop. Fail-silent on a
+    # write error instead: no persisted transition, no reminder.
+    persisted = False
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data))
+        persisted = True
     except Exception:
-        pass
+        persisted = False
     # Surface the flag on the crossing turn, then re-nudge every RENUDGE turns
     # until a verified rollover clears the file. A legacy file with hint:true but
     # no hint_at_turns yields since==0 -> no re-nudge (conservative, never spams).
-    if data.get("hint"):
+    if persisted and data.get("hint"):
         since = data["count"] - int(data.get("hint_at_turns", data["count"]))
         if newly_set or (since > 0 and since % ROTATE_RENUDGE_TURNS == 0):
             try:

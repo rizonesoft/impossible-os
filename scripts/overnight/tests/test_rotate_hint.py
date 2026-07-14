@@ -6,6 +6,7 @@
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import pathlib
@@ -29,9 +30,16 @@ def _sections(root):
         json.dumps({"active": True, "phase": "SECTIONS"}))
 
 
-def _feed(mod):
-    """Run one tool-event turn; return anything the hook printed to stdout."""
+def _feed(mod, headless=True):
+    """Run one tool-event turn; return anything the hook printed to stdout.
+    headless=True sets OVERNIGHT_SEQUENCER_RUN=1 (the armed run); False clears it
+    (an interactive operator session in the same checkout -- must stay silent)."""
     old_in, old_out = sys.stdin, sys.stdout
+    old_env = os.environ.get("OVERNIGHT_SEQUENCER_RUN")
+    if headless:
+        os.environ["OVERNIGHT_SEQUENCER_RUN"] = "1"
+    else:
+        os.environ.pop("OVERNIGHT_SEQUENCER_RUN", None)
     sys.stdin = io.StringIO(json.dumps({"tool_name": "Read"}))
     sys.stdout = io.StringIO()
     try:
@@ -39,6 +47,10 @@ def _feed(mod):
         return sys.stdout.getvalue()
     finally:
         sys.stdin, sys.stdout = old_in, old_out
+        if old_env is None:
+            os.environ.pop("OVERNIGHT_SEQUENCER_RUN", None)
+        else:
+            os.environ["OVERNIGHT_SEQUENCER_RUN"] = old_env
 
 
 def _hint(root):
@@ -108,10 +120,44 @@ def test_reminder_renudges_but_does_not_spam():            # P4.6 re-nudge caden
         assert outs == [False, False, True, False, True, False, True], outs
 
 
+def test_silent_in_interactive_session():                  # A2 session isolation
+    # OVERNIGHT_SEQUENCER_RUN unset (interactive) -> never counts, never emits,
+    # even with an active SECTIONS cursor from a concurrent armed run.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _sections(root)
+        mod = _load(root)
+        for _ in range(5):
+            out = _feed(mod, headless=False)
+            assert not _has_msg(out), out
+        assert _hint(root) is None, "interactive session must not touch the counter"
+
+
+def test_no_emit_when_persist_fails():                     # A4 emit-after-persist
+    if os.geteuid() == 0:
+        return  # root bypasses file perms; the write-failure path is untestable
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        _sections(root)
+        mod = _load(root)                                  # ROTATE_HINT_TURNS = 3
+        _feed(mod); _feed(mod)                             # count -> 2 (persisted)
+        hp = root / ".claude/state/rotate-hint.json"
+        assert _hint(root)["count"] == 2
+        os.chmod(hp, 0o444)                                # make the write fail
+        try:
+            out = _feed(mod)                               # crossing turn, write fails
+            assert not _has_msg(out), "must not emit from unpersisted state"
+            assert _hint(root)["count"] == 2, "count must not have persisted"
+        finally:
+            os.chmod(hp, 0o644)
+
+
 if __name__ == "__main__":
     test_hint_fires_at_threshold()
     test_silent_outside_sections()
     test_no_run_state_silent()
     test_reminder_emitted_on_crossing_turn_only()
     test_reminder_renudges_but_does_not_spam()
+    test_silent_in_interactive_session()
+    test_no_emit_when_persist_fails()
     print("PASS: rotate-hint (P4.1)")

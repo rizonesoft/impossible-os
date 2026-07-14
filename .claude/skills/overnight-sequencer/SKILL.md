@@ -361,26 +361,38 @@ information or judgment; none of this weakens a gate):**
   posts an advisory `systemMessage` ("context-rotation hint set ... run
   `rollover-wip`"), re-nudging periodically until acted on. **When you see that
   reminder, do NOT stop mid-work.** Carry the current unit of work to the NEXT
-  WIP-clean boundary within the SAME section -- the last change committed (a local
-  WIP commit is enough; unlike the full-section rollover, the WIP gate does NOT
-  require a push, since the fresh worker resumes the same on-host tree), no pending
-  Codex review, no background job running -- then run
-  `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
+  WIP-clean boundary within the SAME section, which means ALL of:
+  - the last change **committed** (a local WIP commit is enough; unlike the full-
+    section rollover, the WIP gate does NOT require a push -- the fresh worker
+    resumes the same on-host tree). There MUST be committed-but-unpushed local work
+    for a WIP rotation: if everything is already pushed you have either shipped
+    (use the full `rollover`) or done nothing to rotate, and the verb refuses;
+  - **no in-flight OR unresolved Codex review** -- not merely "received". If a
+    review is open, its findings must be triaged, fixed, and the fix-loop green
+    FIRST. A review that is `received` but whose findings are not yet resolved is
+    NOT a safe boundary (its content-binding must also match HEAD -- the verb
+    enforces this and a stale binding cannot be repaired by waiting);
+  - no background job running.
+  Then run `python3 .claude/hooks/run_phase_guard.py rollover-wip`:
   - **VERIFIED** -> the verb has already written the enriched section-checkpoint
     (fail-closed: no checkpoint, no authorization) and armed the cursor. Final-
     answer with a one-line "mid-section rotation at section N" summary and END the
     turn. The watchdog relaunches a fresh worker that resumes this SAME section
     from the checkpoint's `next_action` (step 0's resume path) -- NOT a new
     section. This is a context rotation, not a stop; the run stays armed.
-  - **REFUSED** -> you are not at a safe boundary (uncommitted WIP, an in-flight
-    review, a live background job, or a section that already FAILED its ship gate
-    with `rollover_refused` set). Keep working and retry at the next boundary.
-    Never force it, never abandon in-flight work to rotate, and never use it to
-    escape a refused ship rollover -- `rollover-wip` refuses outside `phase
-    SECTIONS` and never clears `rollover_refused` (it is not a ship path).
+  - **REFUSED** -> READ the refusal reason; it is NOT always "wait and retry".
+    Only a transient boundary (uncommitted WIP mid-edit, a still-running background
+    job) is repaired by reaching the next clean boundary. A structural refusal --
+    everything already pushed (post-ship: use the full `rollover`), a review whose
+    binding is stale or missing, `rollover_refused` set (a failed ship gate), or
+    phase != SECTIONS -- will NOT change by retrying: continue in-session and let
+    the next natural exit (ship -> full rollover) handle rotation. Never force it,
+    never abandon in-flight work to rotate, and never use it to escape a refused
+    ship rollover -- `rollover-wip` refuses outside `phase SECTIONS` and never
+    clears `rollover_refused` (it is not a ship path).
   This is orthogonal to the full-section rollover above: the full rollover fires
-  AFTER a section ships (clean tree, receipts, no WIP); this one fires DURING a
-  long section at a committed-but-unshipped boundary, and only when hinted.
+  AFTER a section ships (clean tree, PUSHED, receipts, no WIP); this one fires
+  DURING a long section at a committed-but-unpushed boundary, and only when hinted.
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
   (missing prerequisite owned elsewhere, hardware-only validation, deliberate
   roadmap "no code today"), the implement/review skill marks it `[/]` + a

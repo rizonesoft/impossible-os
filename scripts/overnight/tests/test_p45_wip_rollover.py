@@ -124,10 +124,12 @@ def _hint(root, on=True):
         json.dumps({"count": 200, "hint": on}))
 
 
-def _verb_mod(root, gate_fails=None, checkpoint_ok=True, state_extra=None):
+def _verb_mod(root, gate_fails=None, checkpoint_ok=True, state_extra=None,
+              unpushed=1):
     mod = _load(root / ".claude/state/s.json", root)
     mod._rollover_failures_wip = lambda r, s: (gate_fails or [])
     mod._write_section_checkpoint = lambda r: checkpoint_ok    # F2
+    mod._unpushed_count = lambda r: unpushed                   # A1 (default: WIP ahead)
     st = {"active": True, "phase": "SECTIONS", "file": "todo/T.md", "section_idx": 5}
     if state_extra:
         st.update(state_extra)
@@ -186,6 +188,33 @@ def test_rollover_wip_refused_outside_sections():             # F1
         mod = _verb_mod(root, state_extra={"phase": "FILE_CLOSE"})
         _hint(root, True)
         assert mod.cli(["rollover-wip"]) == 1
+
+
+def test_rollover_wip_refused_when_nothing_unpushed():        # A1 post-ship guard
+    # everything pushed (unpushed==0) -> a shipped section must not WIP-rotate via
+    # the weaker gate; the full `rollover` (receipt/graph checks) is the exit.
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, unpushed=0)
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+        assert "rollover" not in mod.load_state()             # no authorization
+
+
+def test_rollover_wip_refused_when_upstream_undeterminable():  # A1 fail-closed
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _verb_mod(root, unpushed=None)                  # no upstream / git error
+        _hint(root, True)
+        assert mod.cli(["rollover-wip"]) == 1
+
+
+def test_unpushed_count_none_without_upstream():              # A1 helper contract
+    # a fresh repo with no upstream -> _unpushed_count returns None (not a crash).
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        assert mod._unpushed_count(root) is None
 
 
 if __name__ == "__main__":
