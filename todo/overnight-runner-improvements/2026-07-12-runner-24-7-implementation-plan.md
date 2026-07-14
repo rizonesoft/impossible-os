@@ -226,9 +226,9 @@ first; if Phases 1-3 stop sections ballooning, most sections may never need the 
 
 - [x] **[det] P4.1 Size/turn trigger, advisory only.**
   Set a "rotate at next safe point" flag when context (or a turn-count proxy) crosses the doctrine band (~200-250K per `TODO-Claude-Overnight-Runner.md:246`, NOT the earlier ~350K; tune via canary). Sets the flag only -- cannot corrupt state.
-- [ ] **[det] P4.2 Enrich `section-checkpoint.py gather()`.**
+- [x] **[det] P4.2 Enrich `section-checkpoint.py gather()`.**
   Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, next intended action. Additive, fail-open per field.
-- [ ] **[det] P4.3 Surface + act on the enriched checkpoint on resume.**
+- [x] **[det] P4.3 Surface + act on the enriched checkpoint on resume.**
   CORRECTION to the old "1c": the resume path ALREADY calls `section-checkpoint.py show` (`SKILL.md:162`), so P4.2 is NOT dead weight. Real work: ensure the enriched fields appear in the `show` output AND the resuming session re-orients from them without re-deriving; optionally also auto-inject via `session_brief_inject.py` for reliability.
 - [ ] **[canary] P4.4 Attended canary of the enriched re-orient.**
   Prove a resumed session re-orients without re-deriving the same file:line facts. Gates whether P4.1-P4.3 pay off before any gate work is built. (This one IS a canary by nature.)

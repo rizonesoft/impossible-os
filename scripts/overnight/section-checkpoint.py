@@ -72,6 +72,26 @@ def _receipts(root):
         return {}
 
 
+def _next_action(cp: dict, run: dict) -> str:
+    """P4.2: derive the single next intended action from the checkpoint state so a
+    resumed worker acts instead of re-deriving. Order matters: an unreceived
+    review blocks everything else."""
+    phase = run.get("phase") or "?"
+    if cp.get("outstanding_review"):
+        return ("receive the pending Codex review via "
+                "Skill(superpowers:receiving-code-review), triage findings at "
+                "file:line, then re-run the section-commit gate")
+    if phase == "SECTIONS":
+        sec = run.get("section_idx")
+        return (f"continue section {sec}: finish implement/review, then build + "
+                "commit + stamp (or advance if the section is shipped)")
+    if phase == "FILE_CLOSE":
+        return "finish the file-close audit (hygiene + loose ends), then ADVANCE"
+    if phase in ("VALIDATE", "GAP_AUDIT", "TRIAGE", "PREFLIGHT"):
+        return f"resume the {phase} stage for {run.get('file') or 'the cursor file'}"
+    return f"resume phase {phase}"
+
+
 def gather(root: Path) -> dict:
     changed = _work_changed(root)
     cp = {
@@ -97,10 +117,43 @@ def gather(root: Path) -> dict:
     rev = _json(root, ".claude/state/last-codex-review.json")
     if isinstance(rev, dict):
         cp["outstanding_review"] = (rev.get("received") is not True)
-    ledger = _json(root, ".claude/state/finding-ledger.json")
-    if isinstance(ledger, (dict, list)):
-        cp["findings_recorded"] = (len(ledger) if isinstance(ledger, list)
-                                   else len(ledger.get("findings", [])))
+    # P4.2: enriched re-orient fields (additive, fail-open PER field) so a resumed
+    # worker re-orients from the checkpoint instead of re-deriving review/finding/
+    # decision state -- gated by P4.4/P4.8 canaries before an unattended arm.
+    cp["phase"] = run.get("phase")
+    todo = run.get("file") or ""
+    # Open Codex findings + verdicts for the CURRENT cursor TODO, from the ACTUAL
+    # ledger file (finding-triage.jsonl -- the old code read a non-existent
+    # finding-ledger.json, so findings_recorded was always absent). Bounded.
+    try:
+        finds = []
+        for ln in (root / ".claude/state/finding-triage.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                e = json.loads(ln)
+            except ValueError:
+                continue
+            if todo and todo in (e.get("todo") or ""):
+                finds.append({"loc": e.get("loc"),
+                              "decision": e.get("decision"),
+                              "title": (e.get("title") or "")[:100]})
+        cp["findings_recorded"] = len(finds)
+        cp["open_findings"] = finds[-10:]
+    except Exception:
+        pass
+    # A count of settled decisions the resumed worker can consult (I4 registry).
+    try:
+        dr = (root / ".claude/state/decision-registry.jsonl").read_text(
+            encoding="utf-8").splitlines()
+        cp["decisions_indexed"] = sum(1 for x in dr if x.strip())
+    except Exception:
+        pass
+    # Next intended action, DERIVED from phase + review/receipt state so the
+    # resumed worker knows what to do next without re-deriving it.
+    cp["next_action"] = _next_action(cp, run)
     return cp
 
 

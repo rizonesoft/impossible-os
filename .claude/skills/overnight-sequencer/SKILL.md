@@ -200,8 +200,13 @@ separate re-poll turns.
   If `stale` is false, REUSE its settled facts (section-pack digest+path, verified
   receipts, outstanding-review flag) -- do NOT re-discover the same symbols and
   constants the prior session already established (measured waste: two resumes
-  re-derived identical facts). If `stale`, the tree moved since the checkpoint --
-  re-orient via the packet above.
+  re-derived identical facts). **P4.2/P4.3: the checkpoint now also carries
+  `phase`, `open_findings` (the current section's recorded Codex findings +
+  verdicts), `decisions_indexed`, and a derived `next_action` -- ACT on
+  `next_action` directly (e.g. "receive the pending review", "continue section N:
+  build + commit + stamp") and treat `open_findings` as already-triaged rather
+  than re-dispatching a review or re-reading the finding set.** If `stale`, the
+  tree moved since the checkpoint -- re-orient via the packet above.
 
 ### 1. PREFLIGHT (`phase PREFLIGHT`)
 

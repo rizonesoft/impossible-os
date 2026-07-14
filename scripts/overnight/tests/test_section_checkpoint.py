@@ -55,6 +55,44 @@ def test_write_then_show_current_then_stale():
         assert json.loads(_run(root, "show"))["stale"] is True
 
 
+def test_p42_enriched_fields_surface_on_show():
+    # P4.2/P4.3: the checkpoint carries phase + the CURRENT todo's open findings +
+    # decisions count + a derived next_action, and `show` surfaces them so a
+    # resumed worker re-orients without re-deriving.
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo(d)
+        (root / ".claude/state/last-codex-review.json").write_text(
+            json.dumps({"received": False}))
+        (root / ".claude/state/finding-triage.jsonl").write_text(
+            json.dumps({"todo": "todo/T.md", "loc": "src/a.c:1",
+                        "decision": "fix", "title": "bug"}) + "\n"
+            + json.dumps({"todo": "todo/OTHER.md", "loc": "x:1",
+                          "decision": "reject", "title": "other"}) + "\n")
+        (root / ".claude/state/decision-registry.jsonl").write_text('{"id":"1"}\n{"id":"2"}\n')
+        _run(root, "write")
+        cp = json.loads(_run(root, "show"))["checkpoint"]
+        assert cp["phase"] == "SECTIONS"
+        # ONLY the current todo's findings (not OTHER.md)
+        assert cp["open_findings"] == [{"loc": "src/a.c:1", "decision": "fix",
+                                        "title": "bug"}], cp["open_findings"]
+        assert cp["findings_recorded"] == 1
+        assert cp["decisions_indexed"] == 2
+        # an unreceived review takes priority in next_action
+        assert "receiving-code-review" in cp["next_action"], cp["next_action"]
+
+
+def test_p42_next_action_reflects_phase_without_review():
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo(d)
+        (root / ".claude/state/last-codex-review.json").write_text(
+            json.dumps({"received": True}))
+        _run(root, "write")
+        cp = json.loads(_run(root, "show"))["checkpoint"]
+        assert "section 2" in cp["next_action"], cp["next_action"]
+
+
 if __name__ == "__main__":
     test_write_then_show_current_then_stale()
+    test_p42_enriched_fields_surface_on_show()
+    test_p42_next_action_reflects_phase_without_review()
     print("PASS: section-checkpoint")
