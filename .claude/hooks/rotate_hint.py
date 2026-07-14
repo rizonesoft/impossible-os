@@ -39,13 +39,17 @@ HINT_REL = ".claude/state/rotate-hint.json"
 _MSG = (
     "[sequencer] context-rotation hint set ({n} tool-events since the last "
     "rollover). At the NEXT WIP-clean boundary in THIS section -- work committed "
-    "(a local WIP commit is enough; push is NOT required mid-section), no pending "
-    "Codex review, no background job -- run `python3 "
+    "but NOT yet pushed (there must be local unshipped WIP; push is not required "
+    "mid-section), any open Codex review fully resolved (findings triaged + fixed "
+    "+ green, not merely received), no background job -- run `python3 "
     ".claude/hooks/run_phase_guard.py rollover-wip`. VERIFIED -> final-answer + "
     "END the turn (mid-section context rotation: the watchdog relaunches a fresh "
     "worker that resumes this SAME section from the enriched checkpoint). REFUSED "
-    "-> not at a safe boundary; keep working and retry at the next boundary. Never "
-    "force it, never abandon in-flight work to rotate."
+    "-> READ the reason: a transient boundary (uncommitted WIP, a running job) is "
+    "repaired at the next clean boundary, but a STRUCTURAL refusal (already pushed "
+    "/ stale review binding / rollover_refused / phase != SECTIONS) will NOT "
+    "change by retrying -- continue in-session and let the next ship -> full "
+    "rollover handle rotation. Never force it, never abandon in-flight work."
 )
 
 
@@ -100,10 +104,17 @@ def main() -> int:
     # old count and would re-cross/re-emit forever while rollover-wip (which reads
     # the FILE) sees no hint and refuses -- an emit/refuse loop. Fail-silent on a
     # write error instead: no persisted transition, no reminder.
+    # A4 (review 2026-07-14): persist ATOMICALLY (tmp + os.replace, matching
+    # run_phase_guard.save_state) so a crash mid-write cannot leave a truncated
+    # file. (The lost-increment race across concurrent hooks is not reachable:
+    # after the A2 gate only the single headless session increments, and its
+    # PostToolUse hooks run serially -- a file lock would be dead weight.)
     persisted = False
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data))
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, p)
         persisted = True
     except Exception:
         persisted = False

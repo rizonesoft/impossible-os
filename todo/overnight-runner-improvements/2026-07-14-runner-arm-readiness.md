@@ -29,10 +29,38 @@
 
 - [ ] **[canary] A3. Canary #2 -- attended run of the full mid-section rotation (was P4.4 + P4.8).**
   Phase-4 code (rotate-hint, enriched checkpoint, WIP gate + `rollover-wip`) is built + unit-tested (suite
-  42/42) but NOT canaried. Before arming Phase-4 rotation unattended: (a) P4.4 -- a resumed worker
-  re-orients from the enriched checkpoint (`next_action` + `open_findings`) WITHOUT re-deriving; (b) P4.8 --
-  a full mid-section `rollover-wip` fires only at a WIP-clean boundary, rotates, and the fresh worker
-  resumes the SAME section safely. Do A1 (fix WIP-gate findings) -> A2 -> A3.
+  42/42) but NOT canaried. **Prereq SHIPPED 2026-07-14:** the `rollover-wip` CONSUMER wiring was missing
+  entirely (the hint only wrote a flag file no one read; no doctrine called the verb), so the rotation
+  could never fire. Built the advisory `rotate_hint` reminder + the SECTIONS-phase doctrine (commits
+  `9cd942f2`, `c153c48f`, + the r2-fix commit below); two adversarial rounds found + fixed 4 then 2 issues
+  (A2 session-leak, A4 emit-after-persist, A1 unpushed guard, doctrine mismatches -- all real, a
+  doctrine-only build would have shipped the counter-pollution that would have invalidated this canary).
+  Before arming Phase-4 rotation unattended: (a) P4.4 -- a resumed worker re-orients from the enriched
+  checkpoint (`next_action` + `open_findings`) WITHOUT re-deriving; (b) P4.8 -- a full mid-section
+  `rollover-wip` fires only at a WIP-clean boundary, rotates, and the fresh worker resumes the SAME section
+  safely. Do A1 -> A2 -> A3.
+
+- [ ] **[unattended-gate] A4. rollover-wip: a RELIABLE section-shipped signal (round-2 A1, HIGH).**
+  The `unpushed>0` guard (commit `c153c48f`) refuses the dominant post-ship boundary (the ship path pushes
+  atomically), but a stamped-but-NOT-yet-pushed section still passes `unpushed>0` and could WIP-rotate via
+  the weaker gate. The reviewer's fix ("require the cursor section to remain NEEDS_WORK/unstamped") is NOT
+  reliably implementable today: `section_idx` is an operator-supplied display value (`run_phase_guard.py`
+  cursor cmd, defaults 0, used only for checkpoint display), not rigorously equal to the `## N.` number
+  `section_manifest.section_block()` keys on -- a stale/zero idx parses the wrong section. **Accepted as a
+  tracked gate:** the residual window requires a doctrine VIOLATION of atomic commit+push and self-heals
+  (next launch rebuilds the graph + re-runs the oracle), so it is acceptable for the ATTENDED A3 canary but
+  must be closed before an UNATTENDED arm. Fix: have the ship path record a durable `section_shipped`
+  marker (file+section, cleared on advance) that `rollover-wip` checks -- reliable, unlike `section_idx`.
+
+- [ ] **[unattended-gate] A5. rollover-wip: a durable review-resolution boundary (round-2 A3, HIGH).**
+  The WIP gate treats `received:true` + F3 `trigger_blobs==HEAD` as a clean review boundary, but `received`
+  is set when a findings-bearing review is ACKNOWLEDGED, before findings are ledgered/fixed/green -- so a
+  rotation can fire mid-triage. Findings are NOT lost (the checkpoint carries `open_findings`), but an
+  ACKNOWLEDGED-but-unledgered finding can drop from resume context. Building a full content-bound
+  review-resolution receipt subsystem is disproportionate for an optional rotation optimization, so it is
+  **accepted as a tracked gate** (doctrine already requires findings triaged+fixed+green first). Before an
+  UNATTENDED arm: persist a review-resolution receipt keyed to the review run + HEAD, and gate `rollover-wip`
+  on all current-TODO findings being durably resolved with the owning green verification.
 
 ## Deferred backlog (closed "not now" 2026-07-14; re-open if the need resurfaces)
 

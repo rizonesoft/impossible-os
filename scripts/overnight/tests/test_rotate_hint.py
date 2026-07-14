@@ -135,21 +135,23 @@ def test_silent_in_interactive_session():                  # A2 session isolatio
 
 def test_no_emit_when_persist_fails():                     # A4 emit-after-persist
     if os.geteuid() == 0:
-        return  # root bypasses file perms; the write-failure path is untestable
+        return  # root bypasses fs perms; the write-failure path is untestable
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
         _sections(root)
         mod = _load(root)                                  # ROTATE_HINT_TURNS = 3
         _feed(mod); _feed(mod)                             # count -> 2 (persisted)
-        hp = root / ".claude/state/rotate-hint.json"
+        state_dir = root / ".claude/state"
         assert _hint(root)["count"] == 2
-        os.chmod(hp, 0o444)                                # make the write fail
+        # Atomic persist writes a tmp then os.replace -- both need DIR write; a
+        # read-only dir (still r-x) fails the write but allows the read.
+        os.chmod(state_dir, 0o555)
         try:
             out = _feed(mod)                               # crossing turn, write fails
             assert not _has_msg(out), "must not emit from unpersisted state"
             assert _hint(root)["count"] == 2, "count must not have persisted"
         finally:
-            os.chmod(hp, 0o644)
+            os.chmod(state_dir, 0o755)
 
 
 if __name__ == "__main__":
