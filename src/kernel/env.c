@@ -1469,10 +1469,13 @@ int env_create_block(struct task *caller, const void *htoken, int inherit,
         return ENV_ERR_UNSUPPORTED;
 
     /* Supported path: snapshot the caller's current environment (already the
-     * assembled system+user set) into a sorted UTF-16 double-NUL block. SMP-safe:
-     * env_build_block_utf16 serializes on caller->environ_lock and walks no
-     * Registry. Cap at ENV_CREATE_BLOCK_MAX_WCHARS so the result is consumable by
-     * the Rtl expansion path; an over-large environ returns ENV_ERR_NOSPACE. */
+     * assembled system+user set) into a sorted UTF-16 double-NUL block. The
+     * environ snapshot serializes on caller->environ_lock and walks no Registry;
+     * a block over ENV_STR_KMALLOC_MAX shares the pre-existing unlocked-PMM
+     * exposure env_build_block_utf16 already carries (owner: the PMM bitmap SMP-
+     * locking work in 03-memory-concurrency/TODO-03), not a new hazard. Cap at
+     * ENV_CREATE_BLOCK_MAX_WCHARS so the result is consumable by the Rtl expansion
+     * path; an over-large environ returns ENV_ERR_NOSPACE. */
     rc = env_build_block_utf16(caller, &blk, &wchars, ENV_CREATE_BLOCK_MAX_WCHARS);
     if (rc != ENV_OK)
         return rc;

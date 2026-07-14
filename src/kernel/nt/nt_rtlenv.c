@@ -379,14 +379,19 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
     /* Build a private, bounded block from the caller's environ, then reuse the
      * fully-guarded explicit-block expansion path. The block is capped at
      * RTL_ENV_BLOCK_MAX_WCHARS so it is always a valid input to that path (an
-     * over-large environ fails to build -> STATUS_BUFFER_TOO_SMALL). */
+     * over-large environ fails to build -> STATUS_INVALID_PARAMETER, matching the
+     * RtlExpandEnvironmentStrings_U NULL-Environment over-cap mapping; NOT a
+     * retryable STATUS_BUFFER_TOO_SMALL). */
     rc = env_build_block_utf16(caller, &block, &block_wchars,
                                RTL_ENV_BLOCK_MAX_WCHARS);
     if (rc == ENV_ERR_NOMEM)
         return STATUS_NO_MEMORY;
-    if (rc == ENV_ERR_NOSPACE)
-        return STATUS_BUFFER_TOO_SMALL;   /* environ exceeds the expansion cap */
     if (rc != ENV_OK)
+        /* Includes ENV_ERR_NOSPACE (environ over the RTL_ENV_BLOCK_MAX_WCHARS
+         * cap): map it exactly as the RtlExpandEnvironmentStrings_U NULL-Environment
+         * path maps its own build failure -- STATUS_INVALID_PARAMETER, NOT a
+         * retryable STATUS_BUFFER_TOO_SMALL (a larger Destination cannot resolve an
+         * over-cap INTERNAL block; the size limit is not the caller's buffer). */
         return STATUS_INVALID_PARAMETER;
 
     status = RtlExpandEnvironmentStrings_U(block, Source, Destination,

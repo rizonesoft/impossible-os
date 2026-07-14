@@ -502,7 +502,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Test checkpoint:** `CreateEnvironmentBlock` + `DestroyEnvironmentBlock` no leak; sorted block. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 new env s13 cases, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 7 new env s13 cases, 0 failures
 
 > **Notes:**
 > - **What shipped:** `env_create_block` / `env_destroy_block` (`src/kernel/env.c`, self-describing `{magic,wchars}`-header UTF-16 block) + `ExpandEnvironmentStringsForUser` (`src/kernel/nt/nt_rtlenv.c`); 6 tests in `test_env.c`.
@@ -510,6 +510,9 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Downstream:** honors the profile-load policy (documented failure, no invented paths); per-user / registry-fresh / userenv-export paths deferred with XREFs to TODO-15 §5, TODO-14 §14.
 > - **Canonical doc:** `include/kernel/env.h` (`env_create_block` contract) + `include/kernel/nt/nt_rtlenv.h`.
 > - **Scope boundary:** §13 owns the caller-env block build/free (environ_lock snapshot) + NULL-token expand; per-user token identity is TODO-15 §5 + profile-load infra; runtime Registry snapshot is TODO-14 §14.
+> **Verified:** 2026-07-15 | commit `b39fe250` | 2/7 items | build OK | tests 1727/1727 PASS
+> **Accepted:** [M] UTF-16 `%=X:%` expansion cannot resolve hidden `=X:` drive vars (Rtl lookup uses the first `=` as separator) -> XREF: 02-kernel-core/TODO-22 §19 (item: "UTF-16 `%=X:%` expansion parity" at line 633)
+> **Quality reviewed:** 2026-07-15 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 7H+2M fixed, 0 open, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -627,6 +630,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [ ] `RtlCreateEnvironment` / `RtlDestroyEnvironment` -- allocate/free a standalone UTF-16 env block (for `CreateProcess lpEnvironment`, §10/§13)
 - [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these Rtl exports so ntdll imports resolve; `RtlExpandEnvironmentStrings_U` already lives in §3
 - [ ] Raise the NULL-env expansion cap above 128 KiB: `rtl_env_expand_pass` (`nt_rtlenv.c`) counts output in a uint32 (wraps at 2^32), so `RTL_ENV_BLOCK_MAX_WCHARS` stays 64 KiWCHAR; switch to a saturating uint64 count then raise the cap
+- [ ] UTF-16 `%=X:%` expansion parity: the Rtl UTF-16 lookup (`nt_rtlenv.c` ~line 73) uses the FIRST `=` as separator, so hidden `=C:=<path>` yields an empty key and `%=C:%` never resolves (UTF-8 `env_expand` handles it). Scan the SECOND `=`.
 - [ ] Commit: `"ntdll: Rtl environment layer over the Nt env syscalls"`
 
 **Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment` builds a sorted block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.

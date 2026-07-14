@@ -107,7 +107,9 @@ struct task;
  * `htoken` is an ACCESS_TOKEN* (typed void* to keep this header free of the
  * security headers); only its NULL-ness is consulted today. `caller` must be
  * non-NULL for the supported path. An environ larger than RTL_ENV_BLOCK_MAX_WCHARS
- * fails STATUS_BUFFER_TOO_SMALL (the block cannot be built within the scan cap).
+ * fails STATUS_INVALID_PARAMETER (an over-cap INTERNAL block is not a caller-buffer
+ * problem -- mapped exactly as the RtlExpandEnvironmentStrings_U NULL-Environment
+ * path maps its own over-cap build failure, NOT a retryable STATUS_BUFFER_TOO_SMALL).
  * Returns the RtlExpandEnvironmentStrings_U status set, plus STATUS_NOT_SUPPORTED
  * (per-user token) and STATUS_INVALID_PARAMETER (NULL caller). Thread context only. */
 NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken,

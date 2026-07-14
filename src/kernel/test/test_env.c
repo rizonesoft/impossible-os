@@ -2205,6 +2205,41 @@ static void test_env_expand_for_user_refusals(void)
     env_free(&s_env_fixture);
 }
 
+/* ExpandEnvironmentStringsForUser: an environ that exceeds RTL_ENV_BLOCK_MAX_WCHARS
+ * (64 KiWCHAR) fails to build the block and maps to STATUS_INVALID_PARAMETER (NOT a
+ * retryable STATUS_BUFFER_TOO_SMALL) -- the over-cap C1 mapping, consistent with the
+ * RtlExpandEnvironmentStrings_U NULL-Environment path. Three ~32 KiB ASCII values
+ * (1 byte -> 1 WCHAR) push the block past the cap. */
+static void test_env_expand_for_user_over_cap(void)
+{
+    static char bigval[32001];   /* > ENV_STR_KMALLOC_MAX; 3 of these exceed 64 KiWCHAR */
+    uint16_t srcbuf[16], dstbuf[64];
+    UNICODE_STRING src, dst;
+    uint32_t i;
+    NTSTATUS st;
+
+    env_fixture_reset();
+    for (i = 0; i < sizeof(bigval) - 1u; i++)
+        bigval[i] = 'x';
+    bigval[sizeof(bigval) - 1u] = '\0';
+    env_set(&s_env_fixture, "V1", bigval);
+    env_set(&s_env_fixture, "V2", bigval);
+    env_set(&s_env_fixture, "V3", bigval);   /* block now > RTL_ENV_BLOCK_MAX_WCHARS */
+
+    src.Length = (uint16_t)(env_test_wfill("%V1%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = ExpandEnvironmentStringsForUser(&s_env_fixture, (const void *)0,
+                                         &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "over-cap environ -> STATUS_INVALID_PARAMETER (non-retryable)");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -2395,6 +2430,8 @@ void test_register_env(void)
                             test_env_expand_for_user_null_token, TEST_CAT_ABI);
     test_suite_register_cat("Env: ExpandForUser per-user/NULL-caller refused",
                             test_env_expand_for_user_refusals, TEST_CAT_ABI);
+    test_suite_register_cat("Env: ExpandForUser over-cap -> INVALID_PARAMETER",
+                            test_env_expand_for_user_over_cap, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
