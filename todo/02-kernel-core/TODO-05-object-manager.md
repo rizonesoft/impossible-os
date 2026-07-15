@@ -401,7 +401,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 > **Verified:** 2026-06-21 | core ship -- review fixes | 4/5 items | build OK | tests 355 ob PASS
 > **Deferred:** [M] SSDT `NtQueryDirectoryObject` returns `ReturnLength` as an entry count, not bytes -> XREF: 02-kernel-core/TODO-05 §11 (item: "`NtQueryDirectoryObject` `ReturnLength` in bytes" at line 384)
 > **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [H] `ProbeForWrite` is range-check-only (no page touch) and `copy_to_user` has no fault fixup, so a probe-passing-but-unmapped user page #PFs in the copy -- a kernel-wide user-access gap, not §11-specific -> XREF: 02-kernel-core/TODO-23 §13 (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 376)
+> **Accepted:** [H] `ProbeForWrite` is range-check-only (no page touch) and `copy_to_user` has no fault fixup, so a probe-passing-but-unmapped user page #PFs in the copy -- a kernel-wide user-access gap, not §11-specific -> XREF: 02-kernel-core/TODO-23 §13 (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 52)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Crit+2H fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

@@ -32,8 +32,9 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 > `ImageBase`). It has **no import dependencies** -- it is the lowest user-mode layer.
 > All Nt* functions issue raw `SYSCALL`; all Rtl*/Ldr* functions are pure user-mode logic.
 >
-> **VEH (§5) interacts with SEH frames** -- after exhausting the VEH list, dispatch falls
-> back to the SEH chain at `TEB.ExceptionList` (→ XREF `02-kernel-core/TODO-23 §3`).
+> **VEH (§5) interacts with SEH frames** -- after exhausting the VEH list, dispatch falls back to
+> table-based x64 SEH (`RtlLookupFunctionEntry` + `RtlVirtualUnwind` per frame), NOT the legacy
+> x86-32 `TEB.ExceptionList` chain (→ XREF `02-kernel-core/TODO-23 §6`, `§8`).
 
 ---
 
@@ -48,7 +49,7 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 - `src/win32/ntdll.c` -- existing minimal stubs from `D10T08 §2` (extend, do not duplicate)
 - `10-platform-services/TODO-07-win32-pe-loader.md §9` (→ XREF) -- TEB/PEB minimal setup
 - `10-platform-services/TODO-08-win32-api-surface.md §2 §3 §7` (→ XREF) -- stubs + VirtualAlloc + LoadLibrary forwards
-- `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (→ XREF) -- SEH frame walk; VEH fallback
+- `02-kernel-core/TODO-23-exception-dispatch-seh.md §8` (→ XREF) -- SEH frame walk; VEH fallback
 - `user/lib/crt0_pe.asm` -- existing from `TODO-07 §6`; extend for static initializers (§7)
 
 ---
@@ -252,6 +253,17 @@ are available via `CreateFiber`/`SwitchToFiber`.
 > Novel exception dispatch chain. No prior Impossible OS VEH exists. Kernel delivers
 > exceptions via `NtRaiseException`; ntdll dispatches to VEH → SEH → UnhandledExceptionFilter.
 
+> [!IMPORTANT]
+> **Ownership boundary with `02-kernel-core/TODO-23` (binding both ways).** THIS section owns the
+> ring-3 half: the VEH/VCH lists, `RtlDispatchException`, `__C_specific_handler`, `RtlRestoreContext`,
+> and the top-level filter + crash dialog. TODO-23 owns the ring-0 half: fault capture, debugger
+> mediation, trap-frame delivery to `KiUserExceptionDispatcher`, `NtContinue`/`NtRaiseException`
+> validation, and terminal termination. The kernel never calls a user handler.
+> `SetUnhandledExceptionFilter` state lives HERE as a process-global (Windows uses the kernel32
+> global `BasepCurrentTopLevelFilter`, `EncodePointer`-obfuscated) -- it is **not** a PEB field.
+> When ring-3 dispatch declines everything, re-enter the kernel via `NtRaiseException(first_chance=FALSE)`
+> so TODO-23 §4 can run second-chance and terminate.
+
 **Source file:** `src/user/ntdll/ntdll_except.c`
 
 - [ ] **VEH list**: doubly-linked list of `VECTORED_HANDLER_ENTRY` nodes anchored at
@@ -266,7 +278,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
   - Walk `TEB.VehListHead` list: call each `handler(EXCEPTION_POINTERS *)`:
     - Returns `EXCEPTION_CONTINUE_EXECUTION` → restore context and resume; done
     - Returns `EXCEPTION_CONTINUE_SEARCH` → continue to next handler
-  - If list exhausted: walk SEH frames from `TEB.ExceptionList` (→ XREF `02-kernel-core/TODO-23 §3`)
+  - If list exhausted: walk SEH via **table-based x64 dispatch** -- `RtlLookupFunctionEntry` + `RtlVirtualUnwind` per frame, invoking each frame's language handler (`__C_specific_handler`). x64 has NO frame-linked chain: do NOT walk `TEB.ExceptionList` (that is the legacy x86-32 mechanism; the kernel sets it to -1 "no SEH" at `task.c:2319`) (→ XREF `02-kernel-core/TODO-23 §6`, `§8`)
   - If SEH also exhausted: call `UnhandledExceptionFilter(EXCEPTION_POINTERS *)`
     - Default: `MessageBox`-style crash dialog with exception code + module name + offset + stack trace (10 frames via `RtlCaptureStackBackTrace`)
     - Call `ExitProcess(1)` after dialog dismissed
