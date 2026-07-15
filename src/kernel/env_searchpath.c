@@ -15,11 +15,8 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/nls_cp.h"
 #include "kernel/ob/teb.h"
-#include "kernel/mm/heap.h"
-#include "kernel/mm/pmm.h"
+#include "kernel/mm/heap.h"           /* kmalloc / kfree (sp_work scratch) */
 #include "registry.h"                 /* ERROR_* Win32 codes */
-
-#define SP_PAGE_SIZE  4096u
 
 /* ---- small local string helpers (freestanding) --------------------------- */
 
@@ -39,36 +36,25 @@ static uint32_t sp_wcslen(const uint16_t *s)
     return n;
 }
 
-/* kmalloc for <= 4 KiB, PMM-contiguous (identity-mapped) beyond -- mirrors
- * env.c's env_str_alloc so a large %PATH% (up to ENV_VALUE_MAX) never truncates. */
+/* This file's view of the shared env buffer allocator (env.h). The size-class rule
+ * itself lives there; these adapters keep this file's local contract: a 0-byte
+ * request still yields a real 1-byte buffer, because a search-path leg may legally
+ * be the empty string and the callers below hand the result to string code that
+ * expects a writable NUL slot. env_buf_alloc(0) is NULL by contract, so the
+ * normalization must happen HERE -- and identically in both halves, since the count
+ * selects the deallocator. */
 static char *sp_alloc(uint32_t n)
 {
     if (n == 0)
         n = 1;
-    if (n <= ENV_STR_KMALLOC_MAX)
-        return (char *)kmalloc(n);
-    {
-        uint64_t frames = (n + (SP_PAGE_SIZE - 1)) / SP_PAGE_SIZE;
-        uintptr_t phys = pmm_alloc_contiguous(frames);   /* identity-mapped; 0 -> NULL */
-        return (char *)phys;
-    }
+    return (char *)env_buf_alloc(n);
 }
 
 static void sp_free(char *p, uint32_t n)
 {
-    if (!p)
-        return;
     if (n == 0)
         n = 1;
-    if (n <= ENV_STR_KMALLOC_MAX) {
-        kfree(p);
-    } else {
-        uint64_t frames = (n + (SP_PAGE_SIZE - 1)) / SP_PAGE_SIZE;
-        uint64_t f;
-        uintptr_t base = (uintptr_t)p;
-        for (f = 0; f < frames; f++)
-            pmm_free_frame(base + f * SP_PAGE_SIZE);
-    }
+    env_buf_free(p, n);
 }
 
 /* Set the executing thread's TEB LastErrorValue when a live TEB exists (a fixture

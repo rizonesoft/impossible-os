@@ -78,6 +78,30 @@ struct task;
                                     * (per-user token / loaded-profile / SMP-safe
                                     * runtime Registry snapshot) -- see env_create_block */
 
+/* --- Shared environment buffer allocator (TODO-22 s21) -------------------
+ * ONE implementation of the environment subsystem's "kind by size" allocation
+ * rule: kmalloc for <= ENV_STR_KMALLOC_MAX, else identity-mapped contiguous PMM
+ * frames. It existed as three near-identical private copies (env.c env_str_alloc,
+ * nt_env.c nt_env_alloc, env_searchpath.c sp_alloc), which is the third-occurrence
+ * trigger for kernel-code-quality Gate 10; the copies are now thin adapters over
+ * this pair so the size-class rule -- and any future change to it -- lives in one
+ * place.
+ *
+ * CALLER-SUPPLIED SIZE IS LOAD-BEARING: `n` passed to env_buf_free MUST be the
+ * exact byte count passed to env_buf_alloc. The size selects the DEALLOCATOR, so a
+ * mismatch that crosses ENV_STR_KMALLOC_MAX calls kfree() on PMM frames or
+ * pmm_free_frame() on heap memory. A self-describing {magic,total_bytes} header
+ * would remove that caller obligation entirely; it is a layout change to every
+ * allocation (and nests under env_create_block's existing env_block_hdr), so it is
+ * owned by TODO-22 s22 (item: "Fold the caller-supplied size into a
+ * self-describing env_buf header") rather than done here.
+ *
+ * n == 0 returns NULL (there is no zero-byte allocation to free); env_buf_free
+ * ignores a NULL pointer. Callers that need a minimum 1-byte buffer for an empty
+ * string normalize the count themselves before calling. */
+void *env_buf_alloc(uint32_t n);
+void  env_buf_free(void *p, uint32_t n);
+
 /* Copy the value of `name` into `out` (NUL-terminated) under the env lock.
  * Case-insensitive name match (Windows semantics). Returns the value length in
  * bytes (excluding NUL) on success. If `out` is too small the value is
@@ -368,7 +392,7 @@ int env_parse_block(struct task *t, const void *block, uint32_t len,
  * but valid environ is expandable yet not create-block-able. Raising this to match
  * means a ~2 MiB contiguous-PMM allocation, which needs the PMM bitmap SMP-locking
  * work verified under load first (03-memory-concurrency/TODO-03); tracked as a
- * concrete item in TODO-22 s20. */
+ * concrete item in TODO-22 s22. */
 #define ENV_CREATE_BLOCK_MAX_WCHARS 65536u
 
 /* Win32 userenv.dll CreateEnvironmentBlock(LPVOID *lpEnvironment, HANDLE hToken,
@@ -403,6 +427,23 @@ int env_parse_block(struct task *t, const void *block, uint32_t len,
  * only (takes caller->environ_lock). */
 int env_create_block(struct task *caller, const void *htoken, int inherit,
                      void **out_block);
+
+/* Produce an EMPTY environment block in the same self-describing format
+ * env_create_block returns (hidden {magic,wchar-count} header, body = the two-WCHAR
+ * "\0\0" empty-block form), freed by the same env_destroy_block. Takes no task and
+ * no lock: an empty block reads nothing from any environ.
+ *
+ * WHY THIS IS NOT env_create_block(inherit == 0): the two zeroes mean different
+ * things. `inherit == 0` is the Win32 userenv CreateEnvironmentBlock(bInherit =
+ * FALSE) form, which must produce a fresh REGISTRY-DERIVED block for the token's
+ * identity -- it is refused above precisely because that needs an SMP-safe runtime
+ * Registry snapshot, and quietly returning an EMPTY block instead would be a wrong
+ * answer, not a deferral. The ntdll RtlCreateEnvironment(CloneCurrent = FALSE) form
+ * genuinely means EMPTY (ntdll walks no Registry). Separate entries keep each
+ * contract honest while sharing one block format and one free path.
+ *
+ * Returns ENV_OK or ENV_ERR_INVAL (NULL out_block) / ENV_ERR_NOMEM. */
+int env_create_empty_block(void **out_block);
 
 /* Win32 userenv.dll DestroyEnvironmentBlock(LPVOID lpEnvironment). Frees a block
  * returned by env_create_block using only the pointer (recovers the size from the

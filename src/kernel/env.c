@@ -233,20 +233,20 @@ static int env_entry_key_span(const char *e, uint32_t elen, uint32_t *sep)
 /* Allocate `n` bytes (including NUL) for an env string. The allocator kind is a
  * pure function of `n`, so env_str_free recovers it from strlen()+1 with no
  * per-string bookkeeping. Returns NULL on failure. */
-static char *env_str_alloc(uint32_t n)
+void *env_buf_alloc(uint32_t n)
 {
+    if (n == 0u)
+        return NULL;
     if (n <= ENV_STR_KMALLOC_MAX)
-        return (char *)kmalloc(n);
+        return kmalloc(n);
     {
         uint64_t frames = (n + (ENV_PAGE_SIZE - 1)) / ENV_PAGE_SIZE;
         uintptr_t phys = pmm_alloc_contiguous(frames);   /* identity-mapped */
-        return (char *)phys;                             /* 0 -> NULL */
+        return (void *)phys;                             /* 0 -> NULL */
     }
 }
 
-/* Free a string allocated by env_str_alloc. `n` MUST be the same byte count
- * (strlen(str)+1) that was passed to env_str_alloc. */
-static void env_str_free(char *p, uint32_t n)
+void env_buf_free(void *p, uint32_t n)
 {
     if (!p)
         return;
@@ -259,6 +259,21 @@ static void env_str_free(char *p, uint32_t n)
         for (f = 0; f < frames; f++)
             pmm_free_frame(base + f * ENV_PAGE_SIZE);
     }
+}
+
+/* env.c's string-typed view of the shared allocator. Kept as a named adapter (not
+ * a rename of every call site) because the "KEY=VALUE" strings this file allocates
+ * are char*, and the cast belongs in one place. */
+static char *env_str_alloc(uint32_t n)
+{
+    return (char *)env_buf_alloc(n);
+}
+
+/* Free a string allocated by env_str_alloc. `n` MUST be the same byte count
+ * (strlen(str)+1) that was passed to env_str_alloc. */
+static void env_str_free(char *p, uint32_t n)
+{
+    env_buf_free(p, n);
 }
 
 /* Duplicate a NUL-terminated string via env_str_alloc. */
@@ -2004,14 +2019,48 @@ struct env_block_hdr {
     uint32_t wchars;   /* body length in WCHARs (env_str_free size recovery) */
 };
 
+/* Copy `wchars` WCHARs of `src` into a fresh self-describing allocation and hand
+ * back the BODY pointer. SINGLE constructor for the env_destroy_block format: every
+ * entry that produces a block goes through here, so the header layout, the magic,
+ * and the body offset cannot drift between them. Returns ENV_OK or ENV_ERR_NOMEM.
+ * `wchars` is bounded by ENV_CREATE_BLOCK_MAX_WCHARS by every caller, so
+ * total_bytes cannot overflow uint32_t. */
+static int env_wrap_block(const uint16_t *src, uint32_t wchars, void **out_block)
+{
+    uint32_t total_bytes = (uint32_t)sizeof(struct env_block_hdr) + wchars * 2u;
+    struct env_block_hdr *hdr = (struct env_block_hdr *)env_str_alloc(total_bytes);
+    uint16_t *body;
+    uint32_t i;
+
+    if (!hdr)
+        return ENV_ERR_NOMEM;
+    hdr->magic = ENV_BLK_MAGIC;
+    hdr->wchars = wchars;
+    body = (uint16_t *)(hdr + 1);
+    for (i = 0; i < wchars; i++)
+        body[i] = src[i];
+    *out_block = (void *)body;
+    return ENV_OK;
+}
+
+int env_create_empty_block(void **out_block)
+{
+    /* The empty block is the two-WCHAR "\0\0" form -- the same shape
+     * env_build_block_utf16 forces for an empty environment, so consumers see one
+     * empty-block representation no matter which entry produced it. */
+    static const uint16_t empty[2] = { 0u, 0u };
+
+    if (!out_block)
+        return ENV_ERR_INVAL;
+    *out_block = NULL;
+    return env_wrap_block(empty, 2u, out_block);
+}
+
 int env_create_block(struct task *caller, const void *htoken, int inherit,
                      void **out_block)
 {
     uint16_t *blk;
-    uint32_t wchars, i;
-    uint32_t total_bytes;
-    struct env_block_hdr *hdr;
-    uint16_t *body;
+    uint32_t wchars;
     int rc;
 
     if (!out_block)
@@ -2040,23 +2089,11 @@ int env_create_block(struct task *caller, const void *htoken, int inherit,
     if (rc != ENV_OK)
         return rc;
 
-    /* Wrap the block in a self-describing allocation. wchars <=
-     * ENV_CREATE_BLOCK_MAX_WCHARS so total_bytes cannot overflow uint32_t. */
-    total_bytes = (uint32_t)sizeof(struct env_block_hdr) + wchars * 2u;
-    hdr = (struct env_block_hdr *)env_str_alloc(total_bytes);
-    if (!hdr) {
-        env_free_block_utf16(blk, wchars);
-        return ENV_ERR_NOMEM;
-    }
-    hdr->magic = ENV_BLK_MAGIC;
-    hdr->wchars = wchars;
-    body = (uint16_t *)(hdr + 1);
-    for (i = 0; i < wchars; i++)
-        body[i] = blk[i];
+    /* Wrap the builder's block in the shared self-describing allocation, then drop
+     * the builder's copy -- the wrap owns the returned body. */
+    rc = env_wrap_block(blk, wchars, out_block);
     env_free_block_utf16(blk, wchars);
-
-    *out_block = (void *)body;
-    return ENV_OK;
+    return rc;
 }
 
 void env_destroy_block(void *block)

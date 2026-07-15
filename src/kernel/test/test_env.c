@@ -15,6 +15,7 @@
 #include "kernel/fs/vfs.h"         /* vfs_create/vfs_stat/vfs_unlink for probes */
 #include "kernel/nt/nt_rtlenv.h" /* RtlExpandEnvironmentStrings_U (UTF-16 path) */
 #include "kernel/nt/ssdt.h"      /* ssdt_dispatch (s5 syscall route) */
+#include "kernel/pe.h"           /* pe_ntdll_export_ssdt (s21 reachability gate) */
 #include "kernel/nt/service_numbers.h" /* SSDT_Nt{Query,Set}EnvironmentVariable */
 #include "kernel/ob/peb.h"       /* UNICODE_STRING */
 #include "kernel/nt/ntstatus.h"  /* STATUS_* */
@@ -592,6 +593,25 @@ static int env_test_weq_ascii(const uint16_t *w, uint32_t wlen, const char *asci
             return 0;
     }
     return ascii[wlen] == '\0';
+}
+
+/* True if a double-NUL-terminated UTF-16 block contains an entry exactly equal to
+ * ASCII `entry` (e.g. "NAME=value"). Walks entry-by-entry rather than searching, so
+ * a partial match inside a longer entry is not a false positive. */
+static int env_test_block_has_ascii(const uint16_t *blk, const char *entry)
+{
+    uint32_t i = 0;
+    if (!blk)
+        return 0;
+    while (blk[i] != 0u) {
+        uint32_t len = 0;
+        while (blk[i + len] != 0u)
+            len++;
+        if (env_test_weq_ascii(&blk[i], len, entry))
+            return 1;
+        i += len + 1u;              /* step past this entry's terminator */
+    }
+    return 0;
 }
 
 /* env_expand: %VAR% substituted; verbatim prefix/suffix preserved. */
@@ -2658,6 +2678,476 @@ static void test_env_create_block_empty(void)
     env_free(&s_env_fixture);
 }
 
+/* ==== s21: ntdll Rtl environment exports ==================================
+ * Query/Set operate on the running thread's own task_current() environ with
+ * uniquely-named keys (the same route the s5 syscall suites take), cleaned up via
+ * env_unset so nothing leaks between suites; they run AFTER the environ[]
+ * high-water-mark prewarm so none trips the one-time array grow. Create/Destroy
+ * need no fixture -- they return their own block. */
+
+/* RtlSetEnvironmentVariable stores a value RtlQueryEnvironmentVariable_U reads
+ * back, both against the calling process (NULL Environment). */
+static void test_rtlenv_set_query_roundtrip(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], obuf[32];
+    UNICODE_STRING name, val, out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_RT");
+    env_mk_us(&val, vbuf, 24, "hello");
+    st = RtlSetEnvironmentVariable((void **)0, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "RtlSetEnvironmentVariable stores a value");
+
+    env_mk_us(&out, obuf, 32, "");
+    out.Length = 0u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "RtlQueryEnvironmentVariable_U succeeds");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 10u,
+                   "Length is the CONTENT byte count excluding the NUL (5 WCHARs)");
+    TEST_ASSERT(env_test_weq_ascii(out.Buffer, 5, "hello"),
+                "queried value matches what was set");
+    env_unset(t, "RTLENV_RT");
+}
+
+/* An absent name is STATUS_VARIABLE_NOT_FOUND (0xC0000100), not a generic error. */
+static void test_rtlenv_query_not_found(void)
+{
+    uint16_t nbuf[24], obuf[16];
+    UNICODE_STRING name, out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_NOPE");
+    env_mk_us(&out, obuf, 16, "");
+    out.Length = 0u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_VARIABLE_NOT_FOUND,
+                   "absent variable reports STATUS_VARIABLE_NOT_FOUND");
+}
+
+/* The ntdll length convention: on BUFFER_TOO_SMALL Length is the required CONTENT
+ * bytes EXCLUDING the NUL, and a buffer of exactly that many bytes FITS (the NUL is
+ * not required to fit; it is written only when there is strictly more room). */
+static void test_rtlenv_query_length_convention(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], obuf[8];
+    UNICODE_STRING name, val, out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_LEN");
+    env_mk_us(&val, vbuf, 24, "abcd");                  /* 4 WCHARs = 8 bytes */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed the value");
+
+    /* Too small: 6 < 8 required. */
+    env_mk_us(&out, obuf, 8, "");
+    out.Length = 0u;
+    out.MaximumLength = 6u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "undersized buffer reports STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 8u,
+                   "BUFFER_TOO_SMALL publishes the required CONTENT bytes (excl NUL)");
+
+    /* Exact fit: MaximumLength == Length succeeds and writes NO NUL. */
+    obuf[4] = 0xBEEFu;                                  /* sentinel past the content */
+    env_mk_us(&out, obuf, 8, "");
+    out.Length = 0u;
+    out.MaximumLength = 8u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "a buffer of exactly Length bytes FITS (NUL not required)");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 8u, "exact-fit Length is the content size");
+    TEST_ASSERT_EQ((uint32_t)obuf[4], 0xBEEFu,
+                   "exact fit does not write a NUL past the content");
+
+    /* Room to spare: the NUL IS written. */
+    env_mk_us(&out, obuf, 8, "");
+    out.Length = 0u;
+    out.MaximumLength = 10u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "oversized buffer succeeds");
+    TEST_ASSERT_EQ((uint32_t)obuf[4], 0u, "NUL is written when there is room");
+
+    /* ODD MaximumLength of exactly need_bytes + 1: there is one spare BYTE but a NUL
+     * is a two-byte WCHAR, so it must NOT be written. A `MaximumLength > Length`
+     * test would write a 1-byte overflow here. */
+    obuf[4] = 0xBEEFu;
+    env_mk_us(&out, obuf, 8, "");
+    out.Length = 0u;
+    out.MaximumLength = 9u;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "odd MaximumLength with room for the content succeeds");
+    TEST_ASSERT_EQ((uint32_t)obuf[4], 0xBEEFu,
+                   "no NUL is written when only ONE spare byte exists (no overflow)");
+    env_unset(t, "RTLENV_LEN");
+}
+
+/* A foreign (non-NULL) Environment is refused UNIFORMLY across the layer, and for
+ * Set the refusal happens BEFORE *Environment is dereferenced -- so all three
+ * pointer shapes are refused, including the distinct `*Environment == NULL` form
+ * (an initially-empty caller-owned environment, NOT the current process). */
+static void test_rtlenv_foreign_block_refused(void)
+{
+    uint16_t nbuf[24], vbuf[24], obuf[16];
+    UNICODE_STRING name, val, out;
+    void *some_block = (void *)0x1000;
+    void *null_block = (void *)0;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_FOREIGN");
+    env_mk_us(&val, vbuf, 24, "v");
+    env_mk_us(&out, obuf, 16, "");
+    out.Length = 0u;
+
+    st = RtlQueryEnvironmentVariable_U(some_block, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_SUPPORTED,
+                   "Query refuses a non-NULL Environment");
+    st = RtlSetEnvironmentVariable(&some_block, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_SUPPORTED,
+                   "Set refuses &non_null_block");
+    st = RtlSetEnvironmentVariable(&null_block, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_SUPPORTED,
+                   "Set refuses &null_block (a caller-owned empty env, not us)");
+    TEST_ASSERT(null_block == (void *)0,
+                "the refused out-pointer cell is left untouched");
+}
+
+/* NULL Value deletes; deleting an absent variable is a SILENT SUCCESS. */
+static void test_rtlenv_set_delete(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], obuf[16];
+    UNICODE_STRING name, val, out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_DEL");
+    env_mk_us(&val, vbuf, 24, "x");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed the value");
+
+    st = RtlSetEnvironmentVariable((void **)0, &name, (UNICODE_STRING *)0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "RtlSetEnvironmentVariable(NULL Value) deletes");
+    env_mk_us(&out, obuf, 16, "");
+    out.Length = 0u;
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name, &out),
+                   (uint32_t)STATUS_VARIABLE_NOT_FOUND, "the variable is gone");
+
+    /* Deleting it AGAIN is success, not VARIABLE_NOT_FOUND. */
+    st = RtlSetEnvironmentVariable((void **)0, &name, (UNICODE_STRING *)0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "deleting an absent variable is a silent success");
+    (void)t;
+}
+
+/* ntdll's name rule: '=' is illegal EXCEPT at position 0. The store is stricter
+ * still (only the exact "=X:" drive-cwd shape), so "=FOO" passes the ABI check here
+ * and is refused one layer down -- both land on STATUS_INVALID_PARAMETER. */
+static void test_rtlenv_name_equals_rule(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], obuf[24];
+    UNICODE_STRING name, val, out;
+    NTSTATUS st;
+
+    env_mk_us(&val, vbuf, 24, "v");
+
+    env_mk_us(&name, nbuf, 24, "RTL=BAD");
+    st = RtlSetEnvironmentVariable((void **)0, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "'=' after position 0 is STATUS_INVALID_PARAMETER");
+
+    env_mk_us(&name, nbuf, 24, "=FOO");
+    st = RtlSetEnvironmentVariable((void **)0, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "a leading-'=' name that is not \"=X:\" is refused by the store");
+
+    /* The hidden drive-cwd form IS legal at position 0. */
+    env_mk_us(&name, nbuf, 24, "=R:");
+    env_mk_us(&val, vbuf, 24, "R:\\tmp");
+    st = RtlSetEnvironmentVariable((void **)0, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "the hidden \"=X:\" drive-cwd name is accepted at position 0");
+    env_mk_us(&out, obuf, 24, "");
+    out.Length = 0u;
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name, &out),
+                   (uint32_t)STATUS_SUCCESS, "and is queryable by the same name");
+    env_unset(t, "=R:");
+}
+
+/* An empty value is a legal set/query and never touches a NULL Value->Buffer. */
+static void test_rtlenv_empty_value(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], obuf[8];
+    UNICODE_STRING name, val, out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_EMPTY");
+    /* Zero-Length descriptor with a NULL Buffer -- legal, and the set path must not
+     * dereference it. */
+    val.Length = 0u;
+    val.MaximumLength = 0u;
+    val._pad = 0u;
+    val.Buffer = (uint16_t *)0;
+    st = RtlSetEnvironmentVariable((void **)0, &name, &val);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "an empty value with a NULL buffer sets successfully");
+
+    env_mk_us(&out, obuf, 8, "");
+    out.Length = 0xFFu;                                 /* poison: must be overwritten */
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "empty value queries back");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 0u, "empty value reports Length 0");
+    env_unset(t, "RTLENV_EMPTY");
+}
+
+/* RtlCreateEnvironment(0) is EMPTY -- the ntdll contract -- not the Registry-derived
+ * block env_create_block(inherit == 0) refuses. */
+static void test_rtlenv_create_empty(void)
+{
+    void *env = (void *)0;
+    const uint16_t *body;
+    NTSTATUS st;
+
+    st = RtlCreateEnvironment(0u, &env);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "RtlCreateEnvironment(clone_current = 0) succeeds");
+    body = (const uint16_t *)env;
+    TEST_ASSERT(body && body[0] == 0 && body[1] == 0,
+                "clone_current = 0 yields the EMPTY double-NUL block");
+    TEST_ASSERT_EQ((uint32_t)RtlDestroyEnvironment(env), (uint32_t)STATUS_SUCCESS,
+                   "RtlDestroyEnvironment returns NTSTATUS STATUS_SUCCESS");
+}
+
+/* RtlCreateEnvironment(1) clones the calling process's environment, sorted, in the
+ * same format env_destroy_block frees. */
+static void test_rtlenv_create_clone(void)
+{
+    struct task *t = task_current();
+    void *env = (void *)0;
+    NTSTATUS st;
+
+    TEST_ASSERT_EQ((uint32_t)env_set(t, "RTLENV_CLONE", "yes"), (uint32_t)ENV_OK,
+                   "seed a variable to find in the clone");
+    st = RtlCreateEnvironment(1u, &env);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "RtlCreateEnvironment(clone_current = 1) succeeds");
+    TEST_ASSERT(env != (void *)0, "clone block pointer returned");
+    TEST_ASSERT(env_test_block_has_ascii((const uint16_t *)env, "RTLENV_CLONE=yes"),
+                "the clone contains the seeded variable");
+    TEST_ASSERT_EQ((uint32_t)RtlDestroyEnvironment(env), (uint32_t)STATUS_SUCCESS,
+                   "the clone frees through RtlDestroyEnvironment");
+    env_unset(t, "RTLENV_CLONE");
+}
+
+/* NULL out_env is rejected; NULL env is a destroy no-op. */
+static void test_rtlenv_create_destroy_nulls(void)
+{
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(0u, (void **)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "RtlCreateEnvironment(NULL out_env) is STATUS_INVALID_PARAMETER");
+    TEST_ASSERT_EQ((uint32_t)RtlDestroyEnvironment((void *)0),
+                   (uint32_t)STATUS_SUCCESS,
+                   "RtlDestroyEnvironment(NULL) is a successful no-op");
+}
+
+/* Malformed descriptors are rejected on EVERY entry, with no environment mutation
+ * and no write through the output descriptor. These are the branches the
+ * hand-written Query output validation and rtl_env_us_valid/rtl_env_name_to_utf8
+ * cover; a regression here is a NULL write or an OOB read, so each shape is pinned. */
+static void test_rtlenv_malformed_descriptors(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], obuf[16];
+    UNICODE_STRING name, val, out;
+    char probe[8];
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_MAL");
+    env_mk_us(&val, vbuf, 24, "v");
+
+    /* --- Query: descriptor shapes --- */
+    env_mk_us(&out, obuf, 16, "");
+    out.Length = 0u;
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0,
+                        (UNICODE_STRING *)0, &out),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "Query: NULL Name rejected");
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name,
+                        (UNICODE_STRING *)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "Query: NULL Value rejected");
+
+    /* Capacity claimed but no buffer: refused, never written through. */
+    out.Length = 0u;
+    out.MaximumLength = 16u;
+    out._pad = 0u;
+    out.Buffer = (uint16_t *)0;
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name, &out),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "Query: MaximumLength > 0 with NULL Buffer rejected");
+
+    /* --- Query: zero capacity still publishes the required length --- */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed a value to size");
+    obuf[0] = 0xBEEFu;
+    env_mk_us(&out, obuf, 16, "");
+    out.Length = 0u;
+    out.MaximumLength = 0u;
+    TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name, &out),
+                   (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "Query: zero-capacity buffer is STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)out.Length, 2u,
+                   "Query: zero-capacity still publishes the required content bytes");
+    TEST_ASSERT_EQ((uint32_t)obuf[0], 0xBEEFu,
+                   "Query: zero-capacity writes nothing to the buffer");
+
+    /* --- Set: malformed Name shapes, none of which may mutate the environ --- */
+    env_mk_us(&name, nbuf, 24, "RTLENV_ODD");
+    name.Length = 5u;                                   /* odd byte count */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "Set: odd Name.Length rejected");
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_OVER");
+    name.Length = 24u;
+    name.MaximumLength = 8u;                            /* Length > MaximumLength */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "Set: Name.Length > MaximumLength rejected");
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_NUL");
+    nbuf[3] = 0u;                                       /* embedded NUL */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "Set: embedded NUL in Name rejected");
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_EMPTYNAME");
+    name.Length = 0u;
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "Set: empty Name rejected");
+
+    /* None of the rejected sets created anything. */
+    TEST_ASSERT_EQ((uint32_t)env_get_copy(t, "RTLENV_ODD", probe, sizeof(probe)),
+                   (uint32_t)ENV_ERR_NOTFOUND, "rejected sets mutate no environment");
+    env_unset(t, "RTLENV_MAL");
+}
+
+/* The shared allocator picks kfree vs pmm_free_frame from the CALLER-SUPPLIED size,
+ * so the 4096-byte size class boundary is load-bearing: a size that lands one side
+ * on alloc and the other on free would release heap as frames (or vice versa). Drive
+ * values just below and just above the boundary THROUGH the public Rtl entries, so
+ * Set's page-backed scratch and Query's grow-and-retry both execute and both free
+ * through the size they allocated with. */
+static void test_rtlenv_alloc_size_class_boundary(void)
+{
+    struct task *t = task_current();
+    struct rtl_budget_buf vb = { 0, 0 }, ob = { 0, 0 };
+    uint16_t nbuf[24];
+    uint16_t *vw, *ow;
+    UNICODE_STRING name, val, out;
+    /* Set scratch is (utf8_len + 1): 4095 -> 4096 (kmalloc, exactly at the cap);
+     * 4096 -> 4097 (crosses to contiguous PMM). Query starts at a 4096-byte buffer
+     * and retries at ENV_VALUE_MAX+1 once the value meets it, so 4096 drives the
+     * retry as well. */
+    const uint32_t cases[2] = { 4095u, 4096u };
+    uint32_t c;
+
+    vw = rtl_budget_alloc(&vb, 4200u);
+    ow = rtl_budget_alloc(&ob, 4200u);
+    if (!vw || !ow) {
+        rtl_budget_free(&vb);
+        rtl_budget_free(&ob);
+        TEST_SKIP("pmm_alloc_contiguous for the size-class buffers failed");
+        return;
+    }
+
+    for (c = 0; c < 2u; c++) {
+        uint32_t n = cases[c], i;
+        for (i = 0; i < n; i++)
+            vw[i] = (uint16_t)'a';
+
+        env_mk_us(&name, nbuf, 24, "RTLENV_SZ");
+        val.Length = (uint16_t)(n * 2u);
+        val.MaximumLength = (uint16_t)(n * 2u);
+        val._pad = 0u;
+        val.Buffer = vw;
+        TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                       (uint32_t)STATUS_SUCCESS,
+                       "Set round-trips a value across the allocator size class");
+
+        out.Length = 0u;
+        out.MaximumLength = (uint16_t)(n * 2u + 2u);
+        out._pad = 0u;
+        out.Buffer = ow;
+        ow[0] = 0u;
+        TEST_ASSERT_EQ((uint32_t)RtlQueryEnvironmentVariable_U((void *)0, &name, &out),
+                       (uint32_t)STATUS_SUCCESS,
+                       "Query round-trips the same value back");
+        TEST_ASSERT_EQ((uint32_t)out.Length, n * 2u,
+                       "Query reports the full content length across the size class");
+        TEST_ASSERT_EQ((uint32_t)ow[0], (uint32_t)'a', "queried content starts correct");
+        TEST_ASSERT_EQ((uint32_t)ow[n - 1u], (uint32_t)'a', "queried content ends correct");
+        TEST_ASSERT_EQ((uint32_t)env_unset(t, "RTLENV_SZ"), (uint32_t)ENV_OK,
+                       "the size-class value deletes cleanly");
+    }
+
+    rtl_budget_free(&vb);
+    rtl_budget_free(&ob);
+}
+
+/* The documented status mappings for limits and allocation failure, plus the
+ * out_env-cleared-on-failure safety property RtlCreateEnvironment promises. */
+static void test_rtlenv_status_mappings(void)
+{
+    uint16_t vbuf[24];
+    uint16_t nbuf[ENV_NAME_MAX + 8u];
+    UNICODE_STRING name, val;
+    void *env = (void *)0x5A5A5A5Au;                    /* poison: must be cleared */
+    uint32_t i;
+
+    env_mk_us(&val, vbuf, 24, "v");
+
+    /* A name past ENV_NAME_MAX cannot convert into the name8 buffer. */
+    for (i = 0; i < ENV_NAME_MAX + 4u; i++)
+        nbuf[i] = (uint16_t)'N';
+    name.Length = (uint16_t)((ENV_NAME_MAX + 4u) * 2u);
+    name.MaximumLength = name.Length;
+    name._pad = 0u;
+    name.Buffer = nbuf;
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_NAME_TOO_LONG,
+                   "a name over ENV_NAME_MAX is STATUS_NAME_TOO_LONG");
+
+    /* Create: the failure path must clear *out_env, never leave the caller's poison
+     * looking like a block it is obliged to destroy. */
+    kmalloc_fail_next();
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(0u, &env),
+                   (uint32_t)STATUS_NO_MEMORY,
+                   "RtlCreateEnvironment maps an allocation failure to STATUS_NO_MEMORY");
+    TEST_ASSERT(env == (void *)0,
+                "a failed RtlCreateEnvironment leaves *out_env NULL, not the caller's value");
+}
+
+/* REACHABILITY GATE (s21): these exports must NOT be reachable from user mode while
+ * s20's BLOCKING item is open (the expansion/block path allocates ~2 MiB on an
+ * unsynchronized PMM bitmap -- 03-memory-concurrency/TODO-03 s1). Wiring an ntdll
+ * export row is what would make them reachable, so pin its absence: this test fails
+ * the moment someone adds the row, forcing the PMM gate to be closed first. */
+static void test_rtlenv_exports_not_user_reachable(void)
+{
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlQueryEnvironmentVariable_U"),
+                   (uint32_t)-1, "RtlQueryEnvironmentVariable_U is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlSetEnvironmentVariable"),
+                   (uint32_t)-1, "RtlSetEnvironmentVariable is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlCreateEnvironment"),
+                   (uint32_t)-1, "RtlCreateEnvironment is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlDestroyEnvironment"),
+                   (uint32_t)-1, "RtlDestroyEnvironment is not ntdll-exported");
+}
+
 /* env_create_block: deferred Win32 branches are refused, never fabricated. */
 static void test_env_create_block_deferred_branches(void)
 {
@@ -4298,6 +4788,36 @@ void test_register_env(void)
                             test_ntenv_overlap_and_null, TEST_CAT_ABI);
     test_suite_register_cat("Env: Nt empty value + NULL buffer rejected",
                             test_ntenv_empty_value_null_buffer, TEST_CAT_ABI);
+    /* s21: ntdll Rtl environment exports. Registered after the s5 prewarm above so
+     * the live-task environ[] grow is already absorbed. */
+    test_suite_register_cat("Env: Rtl set/query roundtrip",
+                            test_rtlenv_set_query_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl query variable not found",
+                            test_rtlenv_query_not_found, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl query length convention",
+                            test_rtlenv_query_length_convention, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl foreign block refused",
+                            test_rtlenv_foreign_block_refused, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl set(NULL) deletes",
+                            test_rtlenv_set_delete, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl name '=' rule",
+                            test_rtlenv_name_equals_rule, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl empty value",
+                            test_rtlenv_empty_value, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl create empty environment",
+                            test_rtlenv_create_empty, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl create clone environment",
+                            test_rtlenv_create_clone, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl create/destroy NULL handling",
+                            test_rtlenv_create_destroy_nulls, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl malformed descriptors rejected",
+                            test_rtlenv_malformed_descriptors, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl allocator size-class boundary",
+                            test_rtlenv_alloc_size_class_boundary, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl status mappings",
+                            test_rtlenv_status_mappings, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl exports not user-reachable",
+                            test_rtlenv_exports_not_user_reachable, TEST_CAT_ABI);
     /* s10: sorted block, caller-buffer build/parse, size caps. */
     test_suite_register_cat("Env: sorted ANSI block (insertion order ignored)",
                             test_env_sorted_block_ansi, TEST_CAT_ABI);

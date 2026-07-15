@@ -22,6 +22,7 @@
 
 #include "kernel/nt/nt_rtlenv.h"
 #include "kernel/env.h"
+#include "kernel/nt/nls_cp.h"      /* nls_cp_utf16_to_utf8 / nls_cp_utf8_to_utf16 */
 #include "kernel/sched/task.h"     /* task_current() */
 #include "kernel/types.h"
 
@@ -607,7 +608,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
      * read past a caller's allocation. The ABI-preserving path is a boundary
      * that probes + copies the block into a terminated kernel snapshot and calls
      * rtl_env_expand_block with the extent it then knows; that boundary is owned
-     * by TODO-22 s21. Nothing user-reachable calls this today, and every
+     * by TODO-22 s22. Nothing user-reachable calls this today, and every
      * in-kernel caller already uses the extent-taking entry, so this refusal
      * removes no working capability (TODO-22 s20). */
     if (Environment)
@@ -693,4 +694,268 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
                                  RTL_ENV_EXPAND_WORK_MAX);
     env_free_block_utf16(block, block_wchars);
     return status;
+}
+
+/* ===========================================================================
+ * ntdll Rtl environment exports (TODO-22 s21)
+ *
+ * Thin routines over the SAME storage API the Nt env syscalls use, so both ABIs
+ * observe one authoritative environment with one set of validation rules. See the
+ * header for the contract, the uniform foreign-block refusal, and the reachability
+ * gate. Nothing here takes environ_lock: env_get_copy / env_set / env_unset /
+ * env_create_block each acquire it internally, so calling them while holding it
+ * would self-deadlock a non-recursive mutex.
+ * =========================================================================== */
+
+/* Map a storage-layer code to the status set these entries document. ENV_ERR_NOSPACE
+ * means "block cap reached" for a SET (a quota), which is why it is not mapped here
+ * for the create path -- RtlCreateEnvironment maps its own NOSPACE separately. */
+static NTSTATUS rtl_env_status_from_env(int rc)
+{
+    switch (rc) {
+    case ENV_OK:              return STATUS_SUCCESS;
+    case ENV_ERR_NOTFOUND:    return STATUS_VARIABLE_NOT_FOUND;
+    case ENV_ERR_TOOLONG:     return STATUS_NAME_TOO_LONG;
+    case ENV_ERR_NOMEM:       return STATUS_NO_MEMORY;
+    case ENV_ERR_NOSPACE:     return STATUS_QUOTA_EXCEEDED;
+    case ENV_ERR_UNSUPPORTED: return STATUS_NOT_SUPPORTED;
+    default:                  return STATUS_INVALID_PARAMETER;
+    }
+}
+
+/* Validate an ntdll env NAME and convert it to NUL-terminated UTF-8 in `name8`,
+ * which MUST have room for ENV_NAME_MAX + 1 bytes. Enforces ntdll's own name rule;
+ * the storage layer applies its (stricter) one afterwards. */
+static NTSTATUS rtl_env_name_to_utf8(const UNICODE_STRING *Name, char *name8)
+{
+    uint32_t wchars, i;
+    int cvt;
+
+    if (!rtl_env_us_valid(Name))
+        return STATUS_INVALID_PARAMETER;
+    wchars = (uint32_t)(Name->Length / 2u);
+    if (wchars == 0u)
+        return STATUS_INVALID_PARAMETER;            /* empty name */
+    for (i = 0; i < wchars; i++) {
+        if (Name->Buffer[i] == 0u)
+            return STATUS_INVALID_PARAMETER;        /* embedded NUL */
+        /* ntdll rejects '=' everywhere EXCEPT position 0, which is what admits the
+         * hidden "=X:" drive-cwd name (TODO-22 s12). Checking from index 1 is
+         * exactly that rule -- not an oversight. */
+        if (i > 0u && Name->Buffer[i] == RTL_ENV_WEQ)
+            return STATUS_INVALID_PARAMETER;
+    }
+    cvt = nls_cp_utf16_to_utf8(Name->Buffer, wchars, (uint8_t *)name8,
+                               ENV_NAME_MAX, NLS_CP_STRICT);
+    if (cvt < 0)
+        return (cvt == NLS_CP_ERR_TOO_SMALL) ? STATUS_NAME_TOO_LONG
+                                             : STATUS_INVALID_PARAMETER;
+    name8[cvt] = '\0';
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
+                                       UNICODE_STRING *Value)
+{
+    char name8[ENV_NAME_MAX + 1u];
+    char *val8;
+    struct task *cur;
+    uint32_t vcap = ENV_STR_KMALLOC_MAX;
+    uint32_t val_len8, need_wchars, need_bytes;
+    NTSTATUS st;
+    int r, cvt;
+
+    /* A foreign block is a bare pointer with no extent -- refused for the same
+     * reason RtlExpandEnvironmentStrings_U refuses it (see the header). */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+    /* Value is IN/OUT, and only MaximumLength + Buffer are INPUTS: Length is written
+     * by this call, so the value a caller happens to arrive with is meaningless and
+     * MUST NOT be validated (rtl_env_us_valid would reject an odd or over-long
+     * incoming Length -- a descriptor real ntdll accepts, since it overwrites the
+     * field anyway). Validate exactly the two fields that bound the write. */
+    if (!Value)
+        return STATUS_INVALID_PARAMETER;
+    if (Value->MaximumLength != 0u && !Value->Buffer)
+        return STATUS_INVALID_PARAMETER;
+    st = rtl_env_name_to_utf8(Name, name8);
+    if (st != STATUS_SUCCESS)
+        return st;
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Fetch into a heap-sized buffer first and grow ONCE to the value cap only if
+     * the store reports a longer value: the common query is far below 4 KiB, and
+     * starting at ENV_VALUE_MAX would force a contiguous-PMM scan on every call. */
+    val8 = (char *)env_buf_alloc(vcap);
+    if (!val8)
+        return STATUS_NO_MEMORY;
+    r = env_get_copy(cur, name8, val8, vcap);
+    if (r >= 0 && (uint32_t)r >= vcap) {
+        env_buf_free(val8, vcap);
+        vcap = ENV_VALUE_MAX + 1u;
+        val8 = (char *)env_buf_alloc(vcap);
+        if (!val8)
+            return STATUS_NO_MEMORY;
+        r = env_get_copy(cur, name8, val8, vcap);
+    }
+    if (r >= 0 && (uint32_t)r >= vcap) {
+        /* Defense in depth: env_set / env_adopt_block cap a stored value at
+         * ENV_VALUE_MAX, so the retry buffer always fits. A length that still meets
+         * the buffer means the store is inconsistent -- refuse rather than let the
+         * decoder below read past val8[vcap]. */
+        env_buf_free(val8, vcap);
+        return STATUS_NAME_TOO_LONG;
+    }
+    if (r < 0) {
+        env_buf_free(val8, vcap);
+        return rtl_env_status_from_env(r);
+    }
+    val_len8 = (uint32_t)r;
+
+    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, NULL, 0,
+                               NLS_CP_STRICT);
+    if (cvt < 0) {
+        env_buf_free(val8, vcap);
+        return STATUS_INVALID_PARAMETER;            /* corrupt stored value */
+    }
+    need_wchars = (uint32_t)cvt;
+    need_bytes  = need_wchars * 2u;                 /* excl the WCHAR NUL */
+    /* Length is a uint16 byte count. A stored value is <= ENV_VALUE_MAX (32767)
+     * UTF-8 bytes, which is at most 32767 WCHARs = 65534 bytes, so this cannot trip
+     * today; it is the explicit guard that keeps the cast below honest if either cap
+     * ever moves. */
+    if (need_bytes > 0xFFFEu) {
+        env_buf_free(val8, vcap);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Publish the required CONTENT size EXCLUDING the NUL on BOTH paths -- ntdll's
+     * convention, which its kernel32 caller relies on (it appends the NUL itself).
+     * The buffer FITS at MaximumLength == Length; the NUL is written only when there
+     * is strictly more room. */
+    Value->Length = (uint16_t)need_bytes;
+    if (Value->MaximumLength < need_bytes) {
+        env_buf_free(val8, vcap);
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, Value->Buffer,
+                               need_wchars, NLS_CP_STRICT);
+    env_buf_free(val8, vcap);
+    if (cvt < 0 || (uint32_t)cvt != need_wchars)
+        return STATUS_INVALID_PARAMETER;
+    /* The NUL is a WCHAR: it needs TWO spare bytes, not one. `MaximumLength >
+     * need_bytes` would be true for an ODD MaximumLength of exactly need_bytes + 1
+     * and write a 2-byte unit into 1 byte of space. The two tests agree for every
+     * even MaximumLength (the only shape a UTF-16 caller should present), so this
+     * costs well-formed callers nothing and closes the odd-length overflow. */
+    if ((uint32_t)Value->MaximumLength >= need_bytes + 2u)
+        Value->Buffer[need_wchars] = 0u;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS RtlSetEnvironmentVariable(void **Environment, UNICODE_STRING *Name,
+                                   UNICODE_STRING *Value)
+{
+    char name8[ENV_NAME_MAX + 1u];
+    char *val8;
+    struct task *cur;
+    uint32_t vlen_w, vcap;
+    NTSTATUS st;
+    int rc, cvt;
+
+    /* Refuse EVERY non-NULL pointer BEFORE dereferencing it. `Environment != NULL`
+     * with `*Environment == NULL` is a distinct ntdll form (an initially empty
+     * caller-owned environment to allocate and write back), NOT the current process
+     * -- serving it as the current process would mutate the wrong environment. And
+     * the pointer is untrusted, so it must not be read to find that out. */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+    st = rtl_env_name_to_utf8(Name, name8);
+    if (st != STATUS_SUCCESS)
+        return st;
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!Value) {
+        /* NULL Value deletes. Deleting an absent variable is a SILENT SUCCESS in
+         * ntdll -- the caller asked for a state that already holds. */
+        rc = env_unset(cur, name8);
+        if (rc == ENV_ERR_NOTFOUND)
+            return STATUS_SUCCESS;
+        return rtl_env_status_from_env(rc);
+    }
+    if (!rtl_env_us_valid(Value))
+        return STATUS_INVALID_PARAMETER;
+    vlen_w = (uint32_t)(Value->Length / 2u);
+    if (vlen_w == 0u) {
+        /* Empty value: a legal set, and handled without touching Value->Buffer,
+         * which a zero-Length descriptor is allowed to leave NULL. */
+        rc = env_set(cur, name8, "");
+        return rtl_env_status_from_env(rc);
+    }
+
+    cvt = nls_cp_utf16_to_utf8(Value->Buffer, vlen_w, NULL, 0, NLS_CP_STRICT);
+    if (cvt < 0)
+        return STATUS_INVALID_PARAMETER;
+    vcap = (uint32_t)cvt + 1u;                      /* + NUL */
+    val8 = (char *)env_buf_alloc(vcap);
+    if (!val8)
+        return STATUS_NO_MEMORY;
+    cvt = nls_cp_utf16_to_utf8(Value->Buffer, vlen_w, (uint8_t *)val8,
+                               vcap - 1u, NLS_CP_STRICT);
+    if (cvt < 0) {
+        env_buf_free(val8, vcap);
+        return STATUS_INVALID_PARAMETER;
+    }
+    val8[cvt] = '\0';
+    /* env_set applies the name/value caps and the ENV_BLOCK_MAX quota; it copies the
+     * string, so the scratch buffer is freed immediately after. */
+    rc = env_set(cur, name8, val8);
+    env_buf_free(val8, vcap);
+    return rtl_env_status_from_env(rc);
+}
+
+NTSTATUS RtlCreateEnvironment(uint8_t clone_current, void **out_env)
+{
+    struct task *cur;
+    int rc;
+
+    if (!out_env)
+        return STATUS_INVALID_PARAMETER;
+    *out_env = NULL;
+
+    if (!clone_current) {
+        /* EMPTY, not Registry-derived: ntdll walks no Registry, so this is the
+         * complete answer (see env_create_empty_block's contract for why this is a
+         * separate entry from env_create_block(inherit == 0)). */
+        rc = env_create_empty_block(out_env);
+    } else {
+        cur = task_current();
+        if (!cur)
+            return STATUS_INVALID_PARAMETER;
+        rc = env_create_block(cur, NULL, 1, out_env);
+    }
+
+    switch (rc) {
+    case ENV_OK:          return STATUS_SUCCESS;
+    case ENV_ERR_NOMEM:   return STATUS_NO_MEMORY;
+    /* The environ outgrew ENV_CREATE_BLOCK_MAX_WCHARS. Reported as a size failure
+     * rather than the SET path's quota status: nothing was rejected for policy, the
+     * result simply does not fit the block format's cap. */
+    case ENV_ERR_NOSPACE: return STATUS_BUFFER_TOO_SMALL;
+    default:              return rtl_env_status_from_env(rc);
+    }
+}
+
+NTSTATUS RtlDestroyEnvironment(void *env)
+{
+    /* NTSTATUS rather than VOID is deliberate (see the header): it is the
+     * binary-compatible superset when the sources disagree. env_destroy_block is a
+     * no-op on NULL and best-effort on a malformed header, so there is no failure to
+     * report today -- the status exists for the ABI, not for a condition we hide. */
+    env_destroy_block(env);
+    return STATUS_SUCCESS;
 }

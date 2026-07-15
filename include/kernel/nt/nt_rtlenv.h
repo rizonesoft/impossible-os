@@ -78,7 +78,7 @@
  * KiB, where the same ceiling allows thousands, so only pathological
  * block/reference combinations are rejected. The VALUE is a reasoned ceiling,
  * not a measured one; deriving it from worst-case bare-metal timing is owned by
- * TODO-22 s21 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
+ * TODO-22 s22 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
 #define RTL_ENV_EXPAND_WORK_MAX    8388608u
 
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-
@@ -100,7 +100,7 @@
  * pages proves nothing about the C object's length. The ABI-preserving safe
  * shape is a BOUNDARY that probes + copies the caller's block into a terminated
  * kernel snapshot (whose extent it then knows) and calls rtl_env_expand_block
- * below; that boundary is owned by TODO-22 s21 (item: "Boundary probe+copy for a
+ * below; that boundary is owned by TODO-22 s22 (item: "Boundary probe+copy for a
  * non-NULL Environment"). Until it exists the form is refused explicitly rather
  * than served unsafely, and the symbol MUST NOT be described as
  * compatibility-complete when it is exported. Nothing is user-reachable today
@@ -220,4 +220,135 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
                                          UNICODE_STRING *Source,
                                          UNICODE_STRING *Destination,
                                          uint32_t *ReturnedLength);
+
+/* ===========================================================================
+ * ntdll Rtl environment exports (TODO-22 s21)
+ *
+ * Real ntdll resolves environment access entirely in user mode over the
+ * PEB-resident block. Impossible OS keeps the authoritative environment in the
+ * KERNEL (task->environ), so these are thin kernel-side routines over the same
+ * env_get_copy / env_set / env_unset storage API the Nt env syscalls use -- the
+ * compat bridge that lets an ntdll-importing binary and the CRT resolve.
+ *
+ * FOREIGN-BLOCK REFUSAL IS UNIFORM ACROSS THIS LAYER. Query and Set below refuse a
+ * non-NULL `Environment` with STATUS_NOT_SUPPORTED, exactly as
+ * RtlExpandEnvironmentStrings_U does and for the identical reason: a bare pointer
+ * carries no allocation EXTENT, so reading it means trusting a caller-supplied
+ * terminator. The consequence is stated plainly rather than papered over: a block
+ * from RtlCreateEnvironment is a CLONE/DESTROY artifact only -- it cannot be
+ * queried or mutated through these entries -- so this export set is NOT
+ * compatibility-complete and MUST NOT be described as such. TODO-22 s22 restores
+ * the explicit-block forms through ONE trusted probe+copy snapshot helper shared by
+ * the query and expansion paths.
+ *
+ * REACHABILITY GATE: none of these is user-reachable (no SSDT row, no kernel32
+ * caller, no ntdll export-table row), and they MUST NOT become reachable while
+ * TODO-22 s20's BLOCKING item is open -- the block/expansion path takes ~2 MiB via
+ * pmm_alloc_contiguous on an unsynchronized PMM bitmap, so two CPUs can
+ * double-allocate the same frames (owner: 03-memory-concurrency/TODO-03 s1). A unit
+ * test pins the absence of an ntdll export row so wiring one is a deliberate act,
+ * not an accident.
+ * =========================================================================== */
+
+/* ntdll RtlQueryEnvironmentVariable_U(PVOID Environment, PUNICODE_STRING Name,
+ * PUNICODE_STRING Value). Copies the value of `Name` into `Value->Buffer`.
+ *
+ *   Environment  MUST be NULL (the calling process's own environment, read from
+ *                task_current()'s authoritative environ). Non-NULL is refused with
+ *                STATUS_NOT_SUPPORTED -- see the foreign-block note above.
+ *   Name         UTF-16, case-insensitive. `=` is rejected (STATUS_INVALID_PARAMETER)
+ *                EXCEPT at position 0, which is ntdll's own rule and admits the
+ *                hidden "=X:" drive-cwd form (TODO-22 s12). The storage layer is
+ *                STRICTER still (env_name_classify accepts only the exact "=<A-Z>:"
+ *                shape), so a name like "=FOO" passes this ntdll-shaped check and is
+ *                then refused by storage -- the layering is deliberate: this entry
+ *                enforces the ABI's rule, the store enforces its own.
+ *   Value        IN/OUT. MaximumLength (bytes) bounds the write.
+ *
+ * LENGTH CONVENTION (both on success and on STATUS_BUFFER_TOO_SMALL): Value->Length
+ * is the CONTENT byte count EXCLUDING the terminating NUL. The buffer FITS when
+ * MaximumLength >= Length -- the NUL is NOT required to fit, and is written only
+ * when there is room for a full WCHAR. Its kernel32 caller depends on the count
+ * convention (GetEnvironmentVariableW adds the NUL itself and sizes from it).
+ *
+ * THE EXACT-FIT RULE FOLLOWS THE WRK, AND THE SOURCES CONFLICT -- same tie-break as
+ * RtlDestroyEnvironment below. At MaximumLength == Length the WRK
+ * (base/ntos/rtl/environ.c, the real NT source) SUCCEEDS:
+ *     Value->Length = CurrentValue.Length;
+ *     if (Value->MaximumLength >= CurrentValue.Length) {
+ *         RtlCopyMemory(...);
+ *         if (Value->MaximumLength > CurrentValue.Length) { ...Buffer[...] = L'\0'; }
+ *         Status = STATUS_SUCCESS;
+ *     }
+ * whereas ReactOS (sdk/lib/rtl/env.c) compares strictly (`*ReturnLength <
+ * ValueLength`) and returns STATUS_BUFFER_TOO_SMALL for the same call. We match the
+ * WRK: the target is Win11 binary compatibility, not ReactOS compatibility.
+ *
+ * THE SHARP EDGE THIS INHERITS, STATED SO NOBODY REDISCOVERS IT: at exact fit,
+ * STATUS_SUCCESS does NOT imply Buffer is NUL-terminated. A caller that treats
+ * success as "I now hold a C string" is wrong here exactly as it is wrong on
+ * Windows -- read Value->Length. Our one deliberate divergence from the WRK is the
+ * NUL guard: the WRK's `MaximumLength > Length` writes a 2-byte WCHAR when an ODD
+ * MaximumLength leaves only ONE spare byte, so we require two (>= Length + 2). The
+ * two rules are identical for every even MaximumLength, i.e. for every well-formed
+ * UTF-16 caller.
+ *
+ * Returns STATUS_SUCCESS, STATUS_VARIABLE_NOT_FOUND (0xC0000100) when absent,
+ * STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_NAME_TOO_LONG,
+ * STATUS_NO_MEMORY, or STATUS_NOT_SUPPORTED. Thread context only. */
+NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
+                                       UNICODE_STRING *Value);
+
+/* ntdll RtlSetEnvironmentVariable(PVOID *Environment, PUNICODE_STRING Name,
+ * PUNICODE_STRING Value). Sets or deletes a variable.
+ *
+ *   Environment  POINTER-TO-POINTER in the real ABI because ntdll may reallocate an
+ *                explicit block and write the new pointer back. Only the
+ *                `Environment == NULL` form (the calling process's own environment)
+ *                is supported; ANY non-NULL pointer is refused with
+ *                STATUS_NOT_SUPPORTED BEFORE `*Environment` is dereferenced.
+ *                The distinction matters and is not pedantry: `Environment != NULL`
+ *                with `*Environment == NULL` is a DIFFERENT ntdll form (an initially
+ *                empty caller-owned environment to be allocated and written back),
+ *                so treating it as the current process would silently mutate the
+ *                wrong environment. Refusing before the deref also means an
+ *                untrusted pointer is never read.
+ *   Name         validated exactly as RtlQueryEnvironmentVariable_U above.
+ *   Value        NULL DELETES the variable. Deleting a variable that does not exist
+ *                is a SILENT SUCCESS (STATUS_SUCCESS), matching ntdll.
+ *
+ * For the supported NULL form there is no cell to write back: all pointer storage is
+ * left untouched. Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER,
+ * STATUS_NAME_TOO_LONG, STATUS_NO_MEMORY, STATUS_QUOTA_EXCEEDED (block cap), or
+ * STATUS_NOT_SUPPORTED. Thread context only. */
+NTSTATUS RtlSetEnvironmentVariable(void **Environment, UNICODE_STRING *Name,
+                                   UNICODE_STRING *Value);
+
+/* ntdll RtlCreateEnvironment(BOOLEAN CloneCurrent, PVOID *Environment). Produces a
+ * block in the env_create_block format (see env.h), freed by RtlDestroyEnvironment.
+ *
+ *   clone_current != 0  -> a sorted snapshot of the calling process's environment.
+ *   clone_current == 0  -> an EMPTY block. NOT the Registry-derived block that
+ *                          userenv's CreateEnvironmentBlock(bInherit = FALSE) means:
+ *                          ntdll walks no Registry, so empty is the correct and
+ *                          complete answer here (env_create_empty_block, env.h).
+ *
+ * The resulting block cannot be queried or mutated through the Rtl entries above
+ * until TODO-22 s22 lands the trusted-snapshot boundary; it is a clone/destroy
+ * artifact today. Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER (NULL out_env),
+ * STATUS_NO_MEMORY, or STATUS_BUFFER_TOO_SMALL (environ over
+ * ENV_CREATE_BLOCK_MAX_WCHARS). Thread context only. */
+NTSTATUS RtlCreateEnvironment(uint8_t clone_current, void **out_env);
+
+/* ntdll RtlDestroyEnvironment(PVOID Environment). Frees a block from
+ * RtlCreateEnvironment; NULL is a no-op. `env` MUST be a pointer previously returned
+ * by RtlCreateEnvironment (the env_destroy_block contract: it recovers the size from
+ * the hidden header, so an arbitrary pointer reads the wrong predecessor).
+ *
+ * RETURNS NTSTATUS, NOT VOID: the sources conflict (the ReactOS NDK prototypes it
+ * VOID, the WRK returns NTSTATUS). NTSTATUS is the strict binary-compat superset on
+ * x86-64 -- a VOID-expecting caller simply ignores RAX, whereas a status-expecting
+ * caller reading RAX from a VOID function would read garbage. Always STATUS_SUCCESS
+ * today (the free path is best-effort by env_destroy_block's own contract). */
+NTSTATUS RtlDestroyEnvironment(void *env);
 

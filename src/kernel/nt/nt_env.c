@@ -41,40 +41,21 @@
 #include "kernel/sched/task.h"       /* task_current */
 #include "kernel/cpu_security.h"     /* copy_from_user / copy_to_user */
 
-#define NT_ENV_PAGE            4096u
 /* Widest UTF-16 payload a user Value descriptor can carry: UNICODE_STRING.Length
  * is a uint16 byte count, so at most 65534 even bytes = 32767 WCHARs; +1 holds
  * the terminator the decode helper appends. */
 #define NT_ENV_VAL_WCHARS_MAX  32768u
 
-/* --- Transient buffer allocator: heap up to 4 KiB, page-backed PMM above
- * (identity-mapped, mirroring env.c's env_str_alloc kind-by-size rule). ------ */
+/* --- Transient buffer allocator: this file's view of the shared env allocator
+ * (env.h). The heap-vs-PMM size-class rule lives there, in one place. --------- */
 static void *nt_env_alloc(uint32_t n)
 {
-    if (n == 0u)
-        return NULL;
-    if (n <= NT_ENV_PAGE)
-        return kmalloc(n);
-    {
-        uint64_t frames = (n + (NT_ENV_PAGE - 1u)) / NT_ENV_PAGE;
-        uintptr_t phys = pmm_alloc_contiguous(frames);   /* identity-mapped */
-        return (void *)phys;                             /* 0 -> NULL */
-    }
+    return env_buf_alloc(n);
 }
 
 static void nt_env_free(void *p, uint32_t n)
 {
-    if (!p)
-        return;
-    if (n <= NT_ENV_PAGE) {
-        kfree(p);
-    } else {
-        uint64_t frames = (n + (NT_ENV_PAGE - 1u)) / NT_ENV_PAGE;
-        uint64_t f;
-        uintptr_t base = (uintptr_t)p;
-        for (f = 0; f < frames; f++)
-            pmm_free_frame(base + f * NT_ENV_PAGE);
-    }
+    env_buf_free(p, n);
 }
 
 /* Half-open [a,a+alen) intersects [b,b+blen); both empty extents intersect
@@ -192,7 +173,7 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
      * env_get_copy is internally atomic (returned length matches the bytes
      * copied), so there is no size-then-copy race, and a tiny or missing query
      * no longer forces a multi-page PMM allocation. */
-    vcap = NT_ENV_PAGE;                              /* fast path: kmalloc */
+    vcap = ENV_STR_KMALLOC_MAX;                      /* fast path: kmalloc */
     val8 = (char *)nt_env_alloc(vcap);
     if (!val8)
         return STATUS_NO_MEMORY;
