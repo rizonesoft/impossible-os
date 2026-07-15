@@ -30,14 +30,30 @@
  * WCHARs (includes inter-entry NULs + terminators). Bounds both the double-NUL
  * scan of a supplied block and the size of a synthesized current-process block,
  * so a stripped terminator or a pathological environ cannot drive an unbounded
- * kernel walk/allocation. 64 KiWCHAR = 128 KiB. This is DELIBERATELY smaller than
- * the storage-layer ENV_BLOCK_MAX (1 MiB): the expansion pass counts its output
- * length in a uint32, so a cap near ENV_BLOCK_MAX would let a crafted block+source
- * wrap the accumulator at 2^32 WCHARs. A NULL-environment expansion of a valid
- * env larger than this cap fails STATUS_INVALID_PARAMETER; raising it safely
- * requires a saturating uint64 length count in the Rtl environment expansion
- * layer, which owns that limit -- not this storage block-sort feature. */
-#define RTL_ENV_BLOCK_MAX_WCHARS   65536u
+ * kernel walk/allocation. 1 MiWCHAR = 2 MiB, sized to cover a full storage-layer
+ * ENV_BLOCK_MAX (1 MiB of UTF-8 -> at most 1 MiWCHAR, hit when every stored byte
+ * is ASCII), so any environ the store accepts is expandable through the
+ * NULL-Environment form. The cap is a CEILING, not an allocation size: the NULL
+ * path allocates only what the environ actually needs (env_build_block_utf16
+ * returns ENV_ERR_NOSPACE past the cap -> STATUS_INVALID_PARAMETER), so a typical
+ * few-KiB environ still costs a few KiB.
+ *
+ * This was 64 KiWCHAR until TODO-22 s19 because rtl_env_expand_pass counted its
+ * output in a uint32 and a larger block could wrap that accumulator at 2^32
+ * WCHARs. The pass now counts in a SATURATING uint64 and the public entry rejects
+ * a saturated count before any narrowing, so the wrap that forced the smaller cap
+ * is gone. */
+#define RTL_ENV_BLOCK_MAX_WCHARS   1048576u
+
+/* Largest content length (in WCHARs, excluding the NUL) an expansion can report
+ * through a UNICODE_STRING. Length/MaximumLength are USHORT BYTE counts, so a
+ * NUL-terminated result needs (n + 1) * 2 <= 65535 -> n <= 32766. A requirement
+ * above this is UNSATISFIABLE at any buffer size (the caller cannot express a
+ * large enough MaximumLength), so the entry reports STATUS_UNSUCCESSFUL rather
+ * than STATUS_BUFFER_TOO_SMALL: a too-small status would send a grow-and-retry
+ * caller into an unbounded loop. Real ntdll guards identically (its
+ * UNICODE_STRING_MAX_CHARS check returns STATUS_UNSUCCESSFUL). */
+#define RTL_ENV_MAX_RESULT_WCHARS  32766u
 
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-
  * terminated UTF-16 "NAME=VALUE\0"... block), writing the expanded UTF-16 result
@@ -78,9 +94,15 @@
  *
  * On STATUS_BUFFER_TOO_SMALL no partial output is written and Destination->Length
  * is left unchanged. On success Destination->Buffer is NUL-terminated and
- * Destination->Length is the result length in bytes excluding the NUL. Returns
- * STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, or
- * STATUS_NO_MEMORY. */
+ * Destination->Length is the result length in bytes excluding the NUL.
+ *
+ * A result longer than RTL_ENV_MAX_RESULT_WCHARS returns STATUS_UNSUCCESSFUL and
+ * does NOT set ReturnedLength: such a length is unrepresentable in a
+ * UNICODE_STRING at any buffer size, so reporting BUFFER_TOO_SMALL would loop a
+ * grow-and-retry caller forever (TODO-22 s19).
+ *
+ * Returns STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER,
+ * STATUS_UNSUCCESSFUL, or STATUS_NO_MEMORY. */
 NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
                                        UNICODE_STRING *Destination,
                                        uint32_t *ReturnedLength);
@@ -116,3 +138,4 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
                                          UNICODE_STRING *Source,
                                          UNICODE_STRING *Destination,
                                          uint32_t *ReturnedLength);
+

@@ -355,9 +355,20 @@ int env_parse_block(struct task *t, const void *block, uint32_t len,
 
 /* --- userenv.dll CreateEnvironmentBlock / DestroyEnvironmentBlock (s13) ---- */
 
-/* Upper bound on a created block, in WCHARs. Matches the RtlExpandEnvironmentStrings_U
- * explicit-block scan bound (RTL_ENV_BLOCK_MAX_WCHARS) so a block produced here is
- * always consumable by the Rtl expansion path (ExpandEnvironmentStringsForUser). */
+/* Upper bound on a created block, in WCHARs. MUST stay <= the
+ * RtlExpandEnvironmentStrings_U explicit-block scan bound (RTL_ENV_BLOCK_MAX_WCHARS)
+ * so a block produced here is always consumable by the Rtl expansion path
+ * (ExpandEnvironmentStringsForUser); a _Static_assert in nt_rtlenv.c pins that.
+ * The two were EQUAL until TODO-22 s19 raised the scan bound to 1 MiWCHAR; only
+ * `<=` is required, so this stayed at 64 KiWCHAR.
+ *
+ * KNOWN LIMITATION (not merely a reworded invariant): the store accepts an environ
+ * up to ENV_BLOCK_MAX (1 MiB), and s19 made the expansion path consume all of it,
+ * but env_create_block still returns ENV_ERR_NOSPACE past 64 KiWCHAR -- so a large
+ * but valid environ is expandable yet not create-block-able. Raising this to match
+ * means a ~2 MiB contiguous-PMM allocation, which needs the PMM bitmap SMP-locking
+ * work verified under load first (03-memory-concurrency/TODO-03); tracked as a
+ * concrete item in TODO-22 s20. */
 #define ENV_CREATE_BLOCK_MAX_WCHARS 65536u
 
 /* Win32 userenv.dll CreateEnvironmentBlock(LPVOID *lpEnvironment, HANDLE hToken,

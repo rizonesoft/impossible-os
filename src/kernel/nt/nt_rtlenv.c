@@ -25,6 +25,31 @@
 #define RTL_ENV_WPCT   ((uint16_t)'%')
 #define RTL_ENV_WEQ    ((uint16_t)'=')
 
+/* Saturation ceiling for the expansion output counter (see rtl_env_expand_pass).
+ * A count that reaches this is NOT a length -- the public entry rejects it rather
+ * than narrowing a wrapped value into a caller's required-size field. */
+#define RTL_ENV_COUNT_SAT   0xFFFFFFFFFFFFFFFFull
+
+/* Saturating +1. Every output-length increment goes through this so the counter
+ * can never wrap silently, whatever the block cap is raised to later. */
+static uint64_t rtl_env_count_inc(uint64_t out)
+{
+    return (out == RTL_ENV_COUNT_SAT) ? out : out + 1u;
+}
+
+/* The Rtl expansion path scans a supplied block up to RTL_ENV_BLOCK_MAX_WCHARS,
+ * so every block env_create_block can produce must fit inside that bound or a
+ * created block could be un-expandable. Only `<=` is required (equality is not):
+ * pinning it here catches a future raise of the create cap past the scan cap at
+ * COMPILE time rather than as a runtime STATUS_INVALID_PARAMETER (TODO-22 s19). */
+_Static_assert(ENV_CREATE_BLOCK_MAX_WCHARS <= RTL_ENV_BLOCK_MAX_WCHARS,
+               "a created env block must be consumable by the Rtl expansion scan");
+
+/* A representable result must leave room for the WCHAR NUL inside a USHORT byte
+ * count: (RTL_ENV_MAX_RESULT_WCHARS + 1) * 2 <= 65535. */
+_Static_assert((RTL_ENV_MAX_RESULT_WCHARS + 1u) * 2u <= 0xFFFFu,
+               "RTL_ENV_MAX_RESULT_WCHARS must leave room for the NUL in a USHORT");
+
 /* ASCII lower-case fold (A-Z only), matching env.c's env_lc storage comparator.
  * Latin-1 / Unicode folding is deliberately NOT applied so the UTF-16 path and
  * the UTF-8 env_get path resolve the same names identically. */
@@ -72,7 +97,15 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
     uint32_t p = 0;
     while (p < block_wchars && block[p] != 0) {
         uint32_t start = p;
-        uint32_t eq = p;
+        /* A hidden "=X:" drive variable's name BEGINS with '=' (entry
+         * "=C:=value"), so that leading '=' is part of the NAME and the
+         * separator is the NEXT one. Start the scan one WCHAR in for such an
+         * entry; for an ordinary "KEY=VALUE" entry this is the plain first-'='
+         * offset. Mirrors the UTF-8 storage comparator (env.c env_entry_name_len)
+         * so `%=C:%` resolves identically on both expansion paths -- before this,
+         * an "=C:=..." entry split at index 0 and yielded an empty key that no
+         * reference could ever name (TODO-22 s19). */
+        uint32_t eq = (block[start] == RTL_ENV_WEQ) ? start + 1u : start;
         while (eq < block_wchars && block[eq] != 0 && block[eq] != RTL_ENV_WEQ)
             eq++;
         if (eq < block_wchars && block[eq] == RTL_ENV_WEQ) {
@@ -103,18 +136,28 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
  * The two passes agree over immutable, kernel-resident, NON-overlapping inputs;
  * the `dst_cap` clamp is a defensive belt so that even if a caller aliases the
  * destination with Source/Environment (which the public entry also rejects),
- * pass 2 can never write past the length pass 1 counted -- no buffer overrun. */
-static uint32_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars,
+ * pass 2 can never write past the length pass 1 counted -- no buffer overrun.
+ *
+ * The count is a SATURATING uint64: every increment stops at RTL_ENV_COUNT_SAT
+ * instead of wrapping. Worst case is far past any representable result -- a
+ * 32767-WCHAR Source can hold ~10922 `%V%` references, each expanding to a value
+ * up to RTL_ENV_BLOCK_MAX_WCHARS (1 Mi) -> ~3.4e10 WCHARs -- so a uint32 count
+ * WOULD wrap at 2^32 and hand the caller a small "required" length for a huge
+ * result. uint64 cannot wrap at these magnitudes; the saturation is belt-and-
+ * braces so the invariant survives any future cap raise, and the public entry
+ * rejects a saturated count outright (TODO-22 s19). */
+static uint64_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars,
                                     const uint16_t *src, uint32_t src_wchars,
-                                    uint16_t *dst, uint32_t dst_cap)
+                                    uint16_t *dst, uint64_t dst_cap)
 {
-    uint32_t i = 0, out = 0;
+    uint32_t i = 0;
+    uint64_t out = 0;
     while (i < src_wchars) {
         uint16_t c = src[i];
         if (c != RTL_ENV_WPCT) {
             if (dst && out < dst_cap)
                 dst[out] = c;
-            out++;
+            out = rtl_env_count_inc(out);
             i++;
             continue;
         }
@@ -132,7 +175,7 @@ static uint32_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
                 while (i < src_wchars) {
                     if (dst && out < dst_cap)
                         dst[out] = src[i];
-                    out++;
+                    out = rtl_env_count_inc(out);
                     i++;
                 }
                 break;
@@ -153,7 +196,7 @@ static uint32_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
                     for (k = 0; k < vlen; k++) {
                         if (dst && out < dst_cap)
                             dst[out] = val[k];
-                        out++;
+                        out = rtl_env_count_inc(out);
                     }
                 } else {
                     /* Unknown or empty name: copy the literal `%NAME%`. */
@@ -161,7 +204,7 @@ static uint32_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
                     for (p = i; p <= j; p++) {
                         if (dst && out < dst_cap)
                             dst[out] = src[p];
-                        out++;
+                        out = rtl_env_count_inc(out);
                     }
                 }
                 i = j + 1u;
@@ -213,7 +256,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     uint32_t src_wchars, src_bytes;
     uint16_t *dst_buf;                /* SNAPSHOT of Destination->Buffer */
     uint32_t dst_max;                 /* SNAPSHOT of Destination->MaximumLength */
-    uint32_t required;                /* output WCHARs excluding NUL */
+    uint64_t required;                /* output WCHARs excluding NUL (saturating) */
     uint64_t needed_bytes;            /* wide accumulator (incl NUL), avoids u16 wrap */
     uint16_t *synth = NULL;
     uint32_t synth_wchars = 0;
@@ -306,8 +349,30 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
 
     /* Pass 1: count the required output length (no write). */
     required = rtl_env_expand_pass(block, block_wchars, src, src_wchars, NULL, 0u);
-    needed_bytes = ((uint64_t)required + 1u) * 2u;   /* include the WCHAR NUL */
 
+    /* CHECKED-CONVERSION ORDER (TODO-22 s19). Every narrowing below is guarded
+     * BEFORE it happens, so no caller can ever receive a truncated required size
+     * and under-allocate on the retry:
+     *   1. a saturated count is not a length -- refuse it outright;
+     *   2. a result over RTL_ENV_MAX_RESULT_WCHARS cannot be expressed in a
+     *      UNICODE_STRING at ANY buffer size, so it is STATUS_UNSUCCESSFUL, not
+     *      STATUS_BUFFER_TOO_SMALL (which would loop a grow-and-retry caller
+     *      forever). Both refusals precede the *ReturnedLength store, so a
+     *      truncated value is never published;
+     *   3. only then is needed_bytes (<= 65535 by step 2) narrowed to uint32 for
+     *      ReturnedLength and compared against the uint16 MaximumLength snapshot.
+     */
+    if (required == RTL_ENV_COUNT_SAT) {
+        status = STATUS_UNSUCCESSFUL;
+        goto done;
+    }
+    if (required > (uint64_t)RTL_ENV_MAX_RESULT_WCHARS) {
+        status = STATUS_UNSUCCESSFUL;
+        goto done;
+    }
+    needed_bytes = (required + 1u) * 2u;             /* include the WCHAR NUL */
+
+    /* needed_bytes <= (32766 + 1) * 2 = 65534 here, so this narrowing is exact. */
     if (ReturnedLength)
         *ReturnedLength = (uint32_t)needed_bytes;
 
@@ -327,7 +392,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     /* Pass 2: write to the SNAPSHOT buffer, clamped to `required` WCHARs (room
      * for `required` + the NUL; the clamp defends against any aliasing tear). */
     {
-        uint32_t written = rtl_env_expand_pass(block, block_wchars, src,
+        uint64_t written = rtl_env_expand_pass(block, block_wchars, src,
                                                src_wchars, dst_buf, required);
         /* The two passes must agree. They only differ if the caller-owned Source
          * or explicit Environment was mutated by another CPU between passes (the
@@ -341,7 +406,10 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
             goto done;
         }
     }
-    dst_buf[required] = 0;
+    /* Both narrowings are exact: `required` <= RTL_ENV_MAX_RESULT_WCHARS (32766)
+     * by the step-2 check above, so required * 2 <= 65532 fits the USHORT Length
+     * and the index cannot overflow. */
+    dst_buf[(uint32_t)required] = 0;
     Destination->Length = (uint16_t)(required * 2u);  /* bytes, excluding NUL */
 
 done:

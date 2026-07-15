@@ -726,6 +726,108 @@ static void test_rtl_expand_buffer_too_small(void)
     TEST_ASSERT_EQ((int)dst.Length, 0, "Length unchanged on BUFFER_TOO_SMALL");
 }
 
+/* s19: a hidden "=C:" drive variable resolves on the UTF-16 path. The entry is
+ * "=C:=C:\dir", whose NAME is "=C:" -- the separator is the SECOND '='. The old
+ * lookup split at the first one, producing an empty key that no reference could
+ * name, so %=C:% expanded to the literal. Mirrors the UTF-8 comparator. */
+static void test_rtl_expand_hidden_drive_var(void)
+{
+    /* Block "=C:=C:\D\0PATH=p\0\0" -- a hidden entry FOLLOWED by a normal one, so
+     * this also proves the leading-'=' entry does not desync the block walk. */
+    uint16_t block[] = { '=','C',':','=','C',':','\\','D', 0,
+                         'P','A','T','H','=','p', 0, 0 };
+    uint16_t srcbuf[16], dstbuf[64];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%=C:%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "hidden =C: expansion succeeds");
+    TEST_ASSERT_EQ((int)dst.Length, (int)(env_test_strlen("C:\\D") * 2u),
+                   "%=C:% yields the drive cwd value, not the literal");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("C:\\D"), "C:\\D"),
+                "hidden drive var expands to C:\\D");
+
+    /* The entry AFTER the hidden one must still resolve (block walk intact). */
+    src.Length = (uint16_t)(env_test_wfill("%PATH%", srcbuf) * 2u);
+    dst.Length = 0;
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "entry after a hidden var resolves");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, 1u, "p"),
+                "normal entry following a hidden entry still expands");
+}
+
+/* s19: an ordinary "KEY=VALUE" entry is unaffected by the leading-'=' rule -- the
+ * separator scan only shifts for an entry that BEGINS with '='. Regression guard. */
+static void test_rtl_expand_normal_entry_unshifted(void)
+{
+    uint16_t block[] = { 'A','=','1','=','2', 0, 0 };   /* A=1=2 -> value "1=2" */
+    uint16_t srcbuf[16], dstbuf[32];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%A%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "normal entry expands");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("1=2"), "1=2"),
+                "only the FIRST = splits a non-'=' entry; value keeps its '='");
+}
+
+/* s19: a result longer than RTL_ENV_MAX_RESULT_WCHARS is unrepresentable in a
+ * UNICODE_STRING at ANY buffer size, so it must fail STATUS_UNSUCCESSFUL rather
+ * than STATUS_BUFFER_TOO_SMALL (which would loop a grow-and-retry caller forever)
+ * and must NOT publish a required length. Built from a 1000-WCHAR value referenced
+ * 33 times = 33000 output WCHARs > 32766, without a 64 KiB buffer. */
+static uint16_t rtl_big_block[1008];   /* single-threaded test runner; no sharing */
+static uint16_t rtl_big_src[128];
+static void test_rtl_expand_result_unrepresentable(void)
+{
+    uint16_t dstbuf[8];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0xA5A5A5A5u;         /* poison: must stay untouched */
+    uint32_t i, w = 0;
+    NTSTATUS st;
+
+    /* "V=" + 1000 * 'x' + NUL + NUL */
+    rtl_big_block[w++] = 'V';
+    rtl_big_block[w++] = '=';
+    for (i = 0; i < 1000u; i++)
+        rtl_big_block[w++] = 'x';
+    rtl_big_block[w++] = 0;
+    rtl_big_block[w++] = 0;
+
+    for (i = 0, w = 0; i < 33u; i++) {  /* "%V%" x 33 -> 33 * 1000 = 33000 WCHARs */
+        rtl_big_src[w++] = '%';
+        rtl_big_src[w++] = 'V';
+        rtl_big_src[w++] = '%';
+    }
+    src.Length = (uint16_t)(w * 2u);
+    src.MaximumLength = (uint16_t)sizeof(rtl_big_src);
+    src.Buffer = rtl_big_src;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(rtl_big_block, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_UNSUCCESSFUL,
+                   "over-32766 result is UNSUCCESSFUL, not BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((int)rl, (int)0xA5A5A5A5u,
+                   "ReturnedLength untouched: no truncated size is ever published");
+    TEST_ASSERT_EQ((int)dst.Length, 0, "Length unchanged on an unrepresentable result");
+}
+
 /* RtlExpandEnvironmentStrings_U: %% preserved verbatim + case-insensitive ASCII name match. */
 static void test_rtl_expand_escape_and_case(void)
 {
@@ -2213,14 +2315,22 @@ static void test_env_expand_for_user_refusals(void)
     env_free(&s_env_fixture);
 }
 
-/* ExpandEnvironmentStringsForUser: an environ that exceeds RTL_ENV_BLOCK_MAX_WCHARS
- * (64 KiWCHAR) fails to build the block and maps to STATUS_INVALID_PARAMETER (NOT a
- * retryable STATUS_BUFFER_TOO_SMALL) -- the over-cap C1 mapping, consistent with the
- * RtlExpandEnvironmentStrings_U NULL-Environment path. Three ~32 KiB ASCII values
- * (1 byte -> 1 WCHAR) push the block past the cap. */
-static void test_env_expand_for_user_over_cap(void)
+/* s19: an environ far past the OLD 64 KiWCHAR expansion cap now builds and expands.
+ * Three ~32 KiB ASCII values (1 byte -> 1 WCHAR) make a ~96 KiWCHAR block, which
+ * previously failed env_build_block_utf16 and mapped to STATUS_INVALID_PARAMETER.
+ * RTL_ENV_BLOCK_MAX_WCHARS is now 1 MiWCHAR, deliberately sized to cover a full
+ * ENV_BLOCK_MAX (1 MiB UTF-8 -> at most 1 MiWCHAR), so any environ the STORE
+ * accepts is expandable and this build succeeds. A small "S" variable is what gets
+ * expanded so the destination stays small while the BLOCK is the large thing.
+ *
+ * Note there is deliberately no over-cap-via-environ case left: the storage cap
+ * (ENV_BLOCK_MAX) now binds before the expansion cap can, so env_set refuses first
+ * and the over-cap branch is unreachable from this direction. It remains reachable
+ * (and tested) for an explicit unterminated block -- see the block-scan cap case,
+ * which still asserts the non-retryable STATUS_INVALID_PARAMETER mapping. */
+static void test_env_expand_for_user_large_env(void)
 {
-    static char bigval[32001];   /* > ENV_STR_KMALLOC_MAX; 3 of these exceed 64 KiWCHAR */
+    static char bigval[32001];   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */
     uint16_t srcbuf[16], dstbuf[64];
     UNICODE_STRING src, dst;
     uint32_t i;
@@ -2230,11 +2340,28 @@ static void test_env_expand_for_user_over_cap(void)
     for (i = 0; i < sizeof(bigval) - 1u; i++)
         bigval[i] = 'x';
     bigval[sizeof(bigval) - 1u] = '\0';
-    env_set(&s_env_fixture, "V1", bigval);
-    env_set(&s_env_fixture, "V2", bigval);
-    env_set(&s_env_fixture, "V3", bigval);   /* block now > RTL_ENV_BLOCK_MAX_WCHARS */
+    /* Assert every setup insert: if these silently failed, "S" alone would still
+     * expand and this case would pass over a TINY environ, proving nothing about
+     * the raised cap. */
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V1", bigval), ENV_OK, "V1 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V2", bigval), ENV_OK, "V2 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V3", bigval), ENV_OK, "V3 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "S", "ok"), ENV_OK, "small S stored");
 
-    src.Length = (uint16_t)(env_test_wfill("%V1%", srcbuf) * 2u);
+    /* Prove the block really is past the OLD 64 KiWCHAR cap, so this case
+     * genuinely exercises the raise rather than a small-environ happy path. */
+    {
+        uint16_t *blk = (uint16_t *)0;
+        uint32_t bw = 0;
+        TEST_ASSERT_EQ(env_build_block_utf16(&s_env_fixture, &blk, &bw,
+                                             RTL_ENV_BLOCK_MAX_WCHARS),
+                       ENV_OK, "large block builds under the new 1 MiWCHAR cap");
+        TEST_ASSERT(bw > 65536u,
+                    "block exceeds the old 64 KiWCHAR cap: the raise is exercised");
+        env_free_block_utf16(blk, bw);
+    }
+
+    src.Length = (uint16_t)(env_test_wfill("%S%", srcbuf) * 2u);
     src.MaximumLength = (uint16_t)sizeof(srcbuf);
     src.Buffer = srcbuf;
     dst.Length = 0;
@@ -2243,8 +2370,10 @@ static void test_env_expand_for_user_over_cap(void)
 
     st = ExpandEnvironmentStringsForUser(&s_env_fixture, (const void *)0,
                                          &src, &dst, (uint32_t *)0);
-    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
-                   "over-cap environ -> STATUS_INVALID_PARAMETER (non-retryable)");
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS,
+                   "a ~96 KiWCHAR environ now expands (was over-cap at 64 KiWCHAR)");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, 2u, "ok"),
+                "small var expands correctly out of a large block");
     env_free(&s_env_fixture);
 }
 
@@ -3746,8 +3875,8 @@ void test_register_env(void)
                             test_env_expand_for_user_null_token, TEST_CAT_ABI);
     test_suite_register_cat("Env: ExpandForUser per-user/NULL-caller refused",
                             test_env_expand_for_user_refusals, TEST_CAT_ABI);
-    test_suite_register_cat("Env: ExpandForUser over-cap -> INVALID_PARAMETER",
-                            test_env_expand_for_user_over_cap, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s19 ExpandForUser large (~96 KiWCHAR) environ expands",
+                            test_env_expand_for_user_large_env, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath finds System32 binary",
                             test_env_searchpath_finds_system32, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath missing -> FILE_NOT_FOUND",
@@ -3819,6 +3948,12 @@ void test_register_env(void)
                             test_app_paths_register_hklm_auth, TEST_CAT_ABI);
     test_suite_register_cat("Env: s17 App Paths elevation gate + MORE_DATA + Path delete",
                             test_app_paths_lookup_elevation_moredata, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s19 hidden =C: drive var expands on the UTF-16 path",
+                            test_rtl_expand_hidden_drive_var, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s19 normal entry keeps first-= split",
+                            test_rtl_expand_normal_entry_unshifted, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s19 unrepresentable result -> UNSUCCESSFUL, no length",
+                            test_rtl_expand_result_unrepresentable, TEST_CAT_ABI);
     test_suite_register_cat("Env: s17 App Paths malformed unterminated value -> MORE_DATA",
                             test_app_paths_malformed_value, TEST_CAT_ABI);
 }
