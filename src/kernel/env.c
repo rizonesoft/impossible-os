@@ -272,6 +272,20 @@ _Static_assert(ENV_BUF_PAYLOAD_MAX < ENV_STR_KMALLOC_MAX,
  * raising the bound would silently under-charge and re-open the unbounded mutex hold. */
 _Static_assert((1u << ENV_LOOKUP_CMP_MAX) >= (ENV_MAX_ENTRIES + 1u),
                "ENV_LOOKUP_CMP_MAX must bound the binary search over ENV_MAX_ENTRIES");
+/* kmalloc is 4 KiB-only by repo doctrine, but heap.c's own KMALLOC_MAX is 256 MiB (an
+ * overflow guard), so nothing downstream would catch a raise of this constant silently
+ * violating the rule at env_buf_alloc's kmalloc branch. Pin it where it is depended on. */
+_Static_assert(ENV_STR_KMALLOC_MAX <= 4096u,
+               "env_buf's kmalloc size class must honour the repo-wide 4 KiB kmalloc ceiling");
+/* The budget must clear the WORST LEGITIMATE input or it becomes a compat bug rather
+ * than a DoS guard (see env.h's derivation): the densest packing of a max-size input is
+ * ENV_VALUE_MAX/3 "%A%" triples, each charged ENV_LOOKUP_CMP_MAX*(ENV_NAME_MAX+1)+1.
+ * Raising ENV_NAME_MAX or ENV_VALUE_MAX without raising the ceiling would silently start
+ * refusing legal input. The UTF-16 peer pins its own floor at nt_rtlenv.c. */
+_Static_assert((uint64_t)ENV_EXPAND_WORK_MAX >
+                   ((uint64_t)(ENV_VALUE_MAX / 3u) *
+                    ((uint64_t)ENV_LOOKUP_CMP_MAX * (ENV_NAME_MAX + 1u) + 1u)),
+               "ENV_EXPAND_WORK_MAX must exceed the worst legitimate input's charge");
 
 void *env_buf_alloc(uint32_t n)
 {
@@ -1617,8 +1631,6 @@ void cmdline_free_argv(void *argv)
  * infinite-loop risk (delayed `!VAR!` re-expansion is a separate cmd.exe mode).
  * =========================================================================== */
 
-/* Append one byte to `out`, reserving the final slot for the NUL terminator.
- * Sets *trunc when the byte does not fit (out stays NUL-terminatable). */
 /* Append one byte. Truncation is NOT this function's job any more (s22): every
  * caller now gates on capacity (out + 1 < max_len) BEFORE charging the work budget
  * and sets `trunc` itself, because charging first let a budget expiring on exactly
@@ -2222,6 +2234,14 @@ struct env_block_hdr {
     uint32_t magic;    /* ENV_BLK_MAGIC -- validated on destroy */
     uint32_t wchars;   /* body length in WCHARs (env_str_free size recovery) */
 };
+
+/* Same 8-byte/alignment contract cmdl_hdr asserts, and for the same reason: the body
+ * handed out is `hdr + 1`, so an 8-byte header keeps every uint16_t in it naturally
+ * aligned on top of env_str_alloc's >= 16-byte-aligned payload (s22 puts the env_buf
+ * header underneath, which preserves that). This assert was missing while its
+ * cmdl_hdr sibling had one -- an asymmetry, not a deliberate exemption. */
+_Static_assert(sizeof(struct env_block_hdr) == 8,
+               "env_block_hdr must be 8 bytes so the WCHAR body stays 2-aligned");
 
 /* Copy `wchars` WCHARs of `src` into a fresh self-describing allocation and hand
  * back the BODY pointer. SINGLE constructor for the env_destroy_block format: every

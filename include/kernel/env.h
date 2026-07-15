@@ -53,7 +53,14 @@ struct task;
  * and uint16_t alignment assumptions still hold (see cmdl_hdr's 8-alignment assert).
  * ENV_BUF_MAGIC is "ENVB" in ASCII; a freed header is poisoned to 0. */
 #define ENV_BUF_HDR_BYTES   16u
-#define ENV_BUF_MAGIC       0x424E5645u  /* "ENVB" little-endian */
+/* DISTINCT from env.c's ENV_BLK_MAGIC on purpose: s22 made env_block_hdr nest INSIDE
+ * an env_buf allocation, so the two sentinels now live 16 bytes apart in one buffer.
+ * They were byte-identical (both 0x424E5645), which defeats the one job a sentinel
+ * has -- discriminating type. Today the recovery offsets never coincide (body-8 vs
+ * p-16), so nothing misreads; but any future change to ENV_BUF_HDR_BYTES or
+ * env_block_hdr's size would make them collide and pass the magic check on the WRONG
+ * header, picking a wrong free extent -- exactly what this header exists to prevent. */
+#define ENV_BUF_MAGIC       0x42564E45u  /* "ENVB" little-endian (ENV_BLK_MAGIC is "EVNB") */
 /* Largest payload still served from the heap: the total must stay within the 4 KiB
  * kmalloc ceiling once the header is added. */
 #define ENV_BUF_PAYLOAD_MAX (ENV_STR_KMALLOC_MAX - ENV_BUF_HDR_BYTES)
@@ -352,16 +359,19 @@ uint32_t argv_frame_bytes(int argc, const char *const *argv);
  * an input long enough to burn CPU also blocks every other env op on the task. Work
  * is capped at ENV_EXPAND_WORK_MAX; exceeding it returns ENV_EXPAND_OVER_BUDGET.
  * Charged units: one per input byte examined (including the initial overlap
- * measure), one per value byte emitted, and namelen * (ENV_LOOKUP_CMP_MAX + 1) per
- * %NAME% reference -- the name copy plus an upper BOUND on env_find_index's binary
- * search, whose key comparisons are otherwise invisible to a per-input-byte charge
- * and would leave the mutex hold unbounded. The walk also stops as soon as `output`
- * is full, so the real work is bounded by the output capacity and the budget is the
- * backstop above it. This is the UTF-8 peer of RTL_ENV_EXPAND_WORK_MAX
- * (nt_rtlenv.h): both charge one unit per comparison, so both refuse
- * pathological input -- but the units differ (bytes here, WCHARs there) and the two
- * cost models are NOT byte-for-byte identical, so treat the equal ceilings as
- * comparable-in-spirit, not as a guarantee that both refuse the exact same input.
+ * measure), one per value byte emitted, and
+ * ENV_LOOKUP_CMP_MAX * (ENV_NAME_MAX + namelen) + namelen per %NAME% reference --
+ * the name copy plus a true upper BOUND on the lookup, whose <= ENV_LOOKUP_CMP_MAX
+ * binary-search comparisons EACH scan a stored key (env_entry_keylen walks to the
+ * '=', up to ENV_NAME_MAX) before comparing up to namelen. That stored-key term is
+ * what makes the bound real: a one-byte miss against 256-byte keys inspects ~257
+ * bytes per comparison, so charging namelen alone under-counts ~250x and leaves the
+ * mutex hold unbounded. The walk also stops as soon as `output` is full, so real
+ * work is bounded by the output capacity and the budget is the backstop above it.
+ * RELATION TO RTL_ENV_EXPAND_WORK_MAX (nt_rtlenv.h): same idea, DIFFERENT scales --
+ * the ceilings are deliberately unequal (32 Mi here vs 8 Mi there) because the cost
+ * models differ (bytes vs WCHARs, and this side prices the stored-key scan). Do NOT
+ * read the two constants as interchangeable or as refusing the same input.
  *
  * On refusal `output` never holds a partial expansion. Which of the two shapes you
  * get depends on WHERE the budget ran out: during the walk, `output` is set to the

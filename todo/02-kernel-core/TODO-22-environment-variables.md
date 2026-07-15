@@ -85,7 +85,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
 | 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
 | 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
-| 💎   |  23   | Remaining ntdll env export surface                 | §20, §21, §24              |  [ ]   |
+| 💎   |  23   | Remaining ntdll env export surface (after §24)     | §20, §21, §24              |  [ ]   |
 | 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -765,7 +765,7 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 - [/] Raise `ENV_CREATE_BLOCK_MAX_WCHARS` toward `RTL_ENV_BLOCK_MAX_WCHARS` so `RtlCreateEnvironment` (§21) accepts every environ the store does, once the ~2 MiB PMM path is SMP-stress-verified → XREF `03-memory-concurrency/TODO-03`
 - [x] Commit: `"kernel/env: self-describing env_buf header + UTF-8 expansion work budget"`
 
-**Test checkpoint:** an `env_buf` payload round-trips at both size classes and stays 16-byte aligned; a free naming the WRONG size across the 4 KiB class releases the recorded extent instead of calling the wrong deallocator; an immediate double free is a no-op; zero and wrapping requests are refused. `env_expand` refuses over-budget input -- emptying `output` when the walk ran out, leaving BOTH buffers untouched when the pre-lock measure did (overlap is not yet known) -- and is byte-identical to its pre-budget result under the ceiling; a `%NAME%` reference is charged its lookup bound, and the walk stops once `output` is full. Serial/klog observable (error paths use `TEST_KLOG_SUPPRESS`, so a green run stays clean). QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** an `env_buf` payload round-trips at both size classes and stays 16-byte aligned; a free naming the WRONG size across the 4 KiB class is REFUSED (the caller's size is the independent witness the header cannot corrupt), as is a corrupt header, a coherent paired corruption, and an immediate double free; zero and wrapping requests are refused. `env_expand` refuses over-budget input -- emptying `output` when the walk ran out, leaving BOTH buffers untouched when the pre-lock measure did (overlap is not yet known) -- and is byte-identical to its pre-budget result under the ceiling; a `%NAME%` reference is charged its lookup bound, and the walk stops once `output` is full. Serial/klog observable (error paths use `TEST_KLOG_SUPPRESS`, so a green run stays clean). QEMU WHPX + TCG; VirtualBox; bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 2063 suites, 0 failures
 
@@ -775,6 +775,11 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 > - **Downstream effects:** closes §21's Accepted `env_buf_free(p, n)` wrong-deallocator finding; the caller's `n` is now a logged cross-check, not a load-bearing input. Adoptions in the commit message.
 > - **Canonical doc:** [`include/kernel/env.h`](../../include/kernel/env.h) (env_buf self-describing contract, size-class rule, expansion-budget failure contract).
 > - **Scope boundary:** §22 owns the `env.c` allocator + UTF-8 budget; §24 owns the `nt_rtlenv.c` boundary copy, budget measurement, and lookup cache; the ~2 MiB PMM path is `03-memory-concurrency/TODO-03` §1.
+
+> **Verified:** 2026-07-15 | commit `ab60e334` + review fixes | 7/8 items | build OK | tests 21408 kernel + 16 user-mode PASS | smoke PASS (KVM 3.4s)
+> **Accepted:** [H] keying the size class on header+payload moves payloads in (4080, 4096] from `kmalloc` to the SMP-unlocked `pmm_alloc_contiguous`; the race is pre-existing and user-reachable for every payload > 4096 (`env_set` via `NtSetEnvironmentVariable`), and this widens it by 16 bytes of payload space (reason: infra -- the 4 KiB kmalloc ceiling forces the header+payload class, and the fix is PMM locking) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
+> **Accepted:** [M] a 32768-byte payload now spans 9 contiguous frames instead of 8; inherent to sub-payload metadata, and the real waste is the fixed `ENV_VALUE_MAX + 1` retry rather than the header (reason: scope -- the query probe already knows the length) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Right-size the grow-once retry to `returned_length + 1`")
+> **Quality reviewed:** 2026-07-15 | Codex 11x (design, adversarial x3, re-adversarial x2, consistency x2, perf x2, test-coverage) | 5H+10M fixed, 1H+1M accepted-XREF, 2H split to §24 | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---
 
@@ -803,8 +808,10 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 - [ ] Even WITH fault-recoverable usercopy, an unterminated block scanned to a coincidental double NUL reads adjacent memory; user pages share identity-mapped frames today, so refusing it needs per-process isolation
 - [ ] **Measure `RTL_ENV_EXPAND_WORK_MAX`**: the 8388608 ceiling is reasoned (~8 ms at ~1e9 compares/s), not measured. Derive it from worst-case bare-metal timing and record the method next to the constant
 - [ ] Lookup cache for repeated `%NAME%` misses: a bounded (<= 4 KiB `kmalloc`, no PMM) per-call name cache shared by both passes would cut the O(refs x block) constant. The §20 budget is the hard bound; this is the optimization under it
-- [ ] Drop the per-query 4 KiB heap round-trip: `RtlQueryEnvironmentVariable_U` + `NtQueryEnvironmentVariable_handler` both `env_buf_alloc(ENV_STR_KMALLOC_MAX)` before knowing the size. A 256B stack probe keeps grow-once; fix BOTH or they diverge
+- [ ] Drop the per-query heap round-trip: `RtlQueryEnvironmentVariable_U` + `NtQueryEnvironmentVariable_handler` both `env_buf_alloc(ENV_BUF_PAYLOAD_MAX)` before knowing the size. A 256B stack probe keeps grow-once; fix BOTH or they diverge
 - [ ] Right-size the grow-once retry to `returned_length + 1`: both query paths retry at a fixed `ENV_VALUE_MAX + 1` (32768), which with §22's 16-byte header spans 9 frames instead of 8. The probe already knows the length
+- [ ] Make the `env_buf` magic poison the serialization point: `env_buf_free` read-checks then writes `magic` non-atomically, so two CPUs freeing the same pointer both pass and both release. `__atomic_compare_exchange_n` makes the catch SMP-real
+- [ ] Pin `env_expand`'s truncation sentinel against `ENV_EXPAND_OVER_BUDGET`: a `max_len` of `0xFFFFFFFF` returns `(int)max_len` == -1, indistinguishable from a refusal. No caller comes near it; state a `max_len <= INT32_MAX` contract
 - [ ] Commit: `"ntdll: measured expansion budget + lookup cache for Rtl env"`
 
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
