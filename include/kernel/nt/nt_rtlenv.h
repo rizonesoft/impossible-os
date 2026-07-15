@@ -78,7 +78,7 @@
  * KiB, where the same ceiling allows thousands, so only pathological
  * block/reference combinations are rejected. The VALUE is a reasoned ceiling,
  * not a measured one; deriving it from worst-case bare-metal timing is owned by
- * TODO-22 s22 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
+ * TODO-22 s24 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
 #define RTL_ENV_EXPAND_WORK_MAX    8388608u
 
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-
@@ -100,7 +100,7 @@
  * pages proves nothing about the C object's length. The ABI-preserving safe
  * shape is a BOUNDARY that probes + copies the caller's block into a terminated
  * kernel snapshot (whose extent it then knows) and calls rtl_env_expand_block
- * below; that boundary is owned by TODO-22 s22 (item: "Boundary probe+copy for a
+ * below; that boundary is owned by TODO-22 s24 (item: "Boundary probe+copy for a
  * non-NULL Environment"). Until it exists the form is refused explicitly rather
  * than served unsafely, and the symbol MUST NOT be described as
  * compatibility-complete when it is exported. Nothing is user-reachable today
@@ -237,7 +237,7 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
  * terminator. The consequence is stated plainly rather than papered over: a block
  * from RtlCreateEnvironment is a CLONE/DESTROY artifact only -- it cannot be
  * queried or mutated through these entries -- so this export set is NOT
- * compatibility-complete and MUST NOT be described as such. TODO-22 s22 restores
+ * compatibility-complete and MUST NOT be described as such. TODO-22 s24 restores
  * the explicit-block forms through ONE trusted probe+copy snapshot helper shared by
  * the query and expansion paths.
  *
@@ -344,7 +344,7 @@ NTSTATUS RtlSetEnvironmentVariable(void **Environment, UNICODE_STRING *Name,
  *                          complete answer here (env_create_empty_block, env.h).
  *
  * The resulting block cannot be queried or mutated through the Rtl entries above
- * until TODO-22 s22 lands the trusted-snapshot boundary; it is a clone/destroy
+ * until TODO-22 s24 lands the trusted-snapshot boundary; it is a clone/destroy
  * artifact today. Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER (NULL out_env),
  * STATUS_NO_MEMORY, or STATUS_BUFFER_TOO_SMALL (environ over
  * ENV_CREATE_BLOCK_MAX_WCHARS). Thread context only. */

@@ -10,6 +10,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h" /* TEST_KLOG_SUPPRESS for s22 error-path tests */
 #include "kernel/env.h"
 #include "kernel/env_searchpath.h" /* SearchPathW/A, SetSearchPathMode (s14) */
 #include "kernel/fs/vfs.h"         /* vfs_create/vfs_stat/vfs_unlink for probes */
@@ -626,6 +627,158 @@ static void test_env_expand_basic(void)
     TEST_ASSERT_EQ(r, (int)env_test_strlen("hello world!"),
                    "env_expand returns bytes written excluding NUL");
     env_free(&s_env_fixture);
+}
+
+/* s22 item: env_expand refuses input past its work budget rather than burning CPU
+ * with environ_lock held. Driven through env_expand_budget with a tiny ceiling --
+ * the production ENV_EXPAND_WORK_MAX would need an 8 MiB input to trip. */
+static void test_env_expand_budget_refuses(void)
+{
+    char out[64];
+    int r;
+    TEST_KLOG_SUPPRESS("env");   /* the refusal deliberately logs; keep serial clean */
+    env_fixture_reset();
+    env_set(&s_env_fixture, "PLACE", "world");
+    out[0] = 'S';   /* sentinel: the walk-phase refusal must overwrite this */
+    /* "hello %PLACE%!" is 14 bytes, so a 16-unit budget survives the measure (14)
+     * and then runs out inside the walk -- the phase that has already written
+     * output and must therefore empty it. */
+    r = env_expand_budget(&s_env_fixture, "hello %PLACE%!", out, sizeof(out), 16u);
+    TEST_ASSERT_EQ(r, ENV_EXPAND_OVER_BUDGET, "env_expand refuses over-budget input");
+    TEST_ASSERT(env_streq(out, ""),
+                "walk-phase refusal empties output (never a partial expansion)");
+
+    /* TRUNCATION WINS OVER THE BUDGET. A tiny output fills partway through the
+     * value; the remaining value bytes cannot change the answer, so the walk must
+     * stop rather than charge on and convert a proper truncation into a refusal.
+     * Budget is ample for the lookup but NOT for scanning the unused remainder. */
+    {
+        char tiny[4];
+        env_set(&s_env_fixture, "V", "0123456789abcdef");
+        r = env_expand_budget(&s_env_fixture, "%V%", tiny, sizeof(tiny), 4096u);
+        TEST_ASSERT_EQ(r, (int)sizeof(tiny),
+                       "output full mid-value returns the max_len truncation sentinel");
+        TEST_ASSERT(env_streq(tiny, "012"), "truncated prefix is preserved, not erased");
+    }
+    env_free(&s_env_fixture);
+}
+
+/* s22 item: the MEASURE-PHASE refusal. The pre-lock overlap measure is budgeted, and
+ * a refusal there happens before anything is written -- it cannot rule out an alias
+ * past the scanned prefix, so it must leave BOTH buffers exactly as passed rather
+ * than writing output[0]. A zero budget refuses any non-empty input; an empty input
+ * examines no bytes and still succeeds. */
+static void test_env_expand_measure_refusal(void)
+{
+    char out[64];
+    TEST_KLOG_SUPPRESS("env");   /* the refusals deliberately log; keep serial clean */
+    env_fixture_reset();
+
+    out[0] = 'S';
+    out[1] = '\0';
+    TEST_ASSERT_EQ(env_expand_budget(&s_env_fixture, "hello %PLACE%!", out, sizeof(out), 2u),
+                   ENV_EXPAND_OVER_BUDGET, "measure-phase refusal returns the sentinel");
+    TEST_ASSERT(env_streq(out, "S"),
+                "measure-phase refusal leaves output untouched (may alias input)");
+
+    TEST_ASSERT_EQ(env_expand_budget(&s_env_fixture, "x", out, sizeof(out), 0u),
+                   ENV_EXPAND_OVER_BUDGET, "zero budget refuses non-empty input");
+    TEST_ASSERT_EQ(env_expand_budget(&s_env_fixture, "", out, sizeof(out), 0u), 0,
+                   "zero budget still serves an empty input");
+    TEST_ASSERT(env_streq(out, ""), "empty input yields empty output");
+    env_free(&s_env_fixture);
+}
+
+/* s22 item: the alloc contract -- usable 16-aligned storage (the payload alignment
+ * every pointer-array consumer depends on), and refusal of the two bad sizes: zero
+ * (nothing to free) and one that would wrap uint32 once the header is added. */
+static void test_env_buf_alloc_contract(void)
+{
+    char *p = (char *)env_buf_alloc(64u);
+    TEST_ASSERT(p != NULL, "env_buf_alloc(64) returns storage");
+    TEST_ASSERT_EQ((int)((uintptr_t)p % 16u), 0,
+                   "env_buf payload stays 16-byte aligned");
+    p[0] = 'a';
+    p[63] = 'z';
+    TEST_ASSERT(p[0] == 'a' && p[63] == 'z', "full payload is writable");
+    env_buf_free(p, 64u);
+    TEST_ASSERT(env_buf_alloc(0u) == NULL, "env_buf_alloc(0) returns NULL");
+    TEST_ASSERT(env_buf_alloc(ENV_BUF_ALLOC_MAX + 1u) == NULL,
+                "env_buf_alloc refuses a size that would wrap with the header");
+    /* The exact size-class boundary. ENV_BUF_PAYLOAD_MAX is load-bearing: the Nt/Rtl
+     * query fast paths ask for exactly this so header+payload lands on the 4 KiB
+     * kmalloc ceiling and stays off the unlocked-PMM path (TODO-03 s1). One past it
+     * is the first PMM-class payload; both must round-trip. */
+    {
+        void *heap = env_buf_alloc(ENV_BUF_PAYLOAD_MAX);
+        void *pmm  = env_buf_alloc(ENV_BUF_PAYLOAD_MAX + 1u);
+        TEST_ASSERT(heap != NULL, "largest heap-class payload allocates");
+        TEST_ASSERT(pmm != NULL, "first PMM-class payload allocates");
+        env_buf_free(heap, ENV_BUF_PAYLOAD_MAX);
+        env_buf_free(pmm, ENV_BUF_PAYLOAD_MAX + 1u);
+    }
+}
+
+/* s22 item: the FREE REFUSAL CONTRACT -- env_buf_free releases storage only when
+ * two INDEPENDENT witnesses agree: the header (magic + self-consistent extent) and
+ * the caller's `n`. Each case below defeats exactly one witness and must be refused
+ * rather than acted on, because leaking is recoverable and freeing a wrong extent is
+ * not. Case 3 is the one the magic alone cannot catch: the magic sits at offset 0,
+ * FARTHEST from the payload, so an underrun rewrites the extent fields first and a
+ * coherent forgery still looks live. */
+static void test_env_buf_free_refusal_contract(void)
+{
+    void *p;
+    uint32_t *hdr;
+    TEST_KLOG_SUPPRESS("env");   /* every refusal below logs; keep serial clean */
+
+    /* Case 1: caller size lies across the class boundary -> witness disagrees. */
+    p = env_buf_alloc(ENV_BUF_PAYLOAD_MAX + 1u);          /* PMM class */
+    TEST_ASSERT(p != NULL, "PMM-class allocation succeeds");
+    hdr = (uint32_t *)p - 4;
+    env_buf_free(p, 8u);
+    TEST_ASSERT_EQ((int)hdr[0], (int)ENV_BUF_MAGIC,
+                   "wrong-size free refused -- magic live, nothing released");
+    env_buf_free(p, ENV_BUF_PAYLOAD_MAX + 1u);            /* honest size frees */
+    TEST_ASSERT_EQ((int)hdr[0], 0, "honest free poisons the magic");
+
+    /* Case 2: total_bytes alone corrupted -> internal invariant catches it. */
+    p = env_buf_alloc(64u);                               /* heap class */
+    TEST_ASSERT(p != NULL, "heap-class allocation succeeds");
+    hdr = (uint32_t *)p - 4;
+    hdr[1] = ENV_STR_KMALLOC_MAX + 4096u;                 /* claims the PMM class */
+    env_buf_free(p, 64u);
+    TEST_ASSERT_EQ((int)hdr[0], (int)ENV_BUF_MAGIC, "corrupt extent refused, not freed");
+
+    /* Case 3: payload_bytes AND total_bytes corrupted COHERENTLY -- passes every
+     * internal check; only the caller's `n` catches it. */
+    hdr[2] = 8176u;
+    hdr[1] = 8176u + ENV_BUF_HDR_BYTES;
+    env_buf_free(p, 64u);
+    TEST_ASSERT_EQ((int)hdr[0], (int)ENV_BUF_MAGIC,
+                   "paired corruption caught by the caller-size witness");
+
+    /* Case 3b: _reserved alone corrupted. It is the field CLOSEST to the payload,
+     * so an underrun damages it FIRST -- it must be an independent rejection. */
+    hdr[2] = 64u;
+    hdr[1] = 64u + ENV_BUF_HDR_BYTES;
+    hdr[3] = 1u;
+    env_buf_free(p, 64u);
+    TEST_ASSERT_EQ((int)hdr[0], (int)ENV_BUF_MAGIC, "nonzero _reserved refused, not freed");
+    hdr[3] = 0u;
+
+    /* Case 3c: a zero payload can own no storage -> refused. */
+    hdr[2] = 0u;
+    hdr[1] = ENV_BUF_HDR_BYTES;
+    env_buf_free(p, 0u);
+    TEST_ASSERT_EQ((int)hdr[0], (int)ENV_BUF_MAGIC, "zero payload_bytes refused, not freed");
+
+    /* Case 4: restore, free honestly, then double free -> poisoned magic refuses. */
+    hdr[2] = 64u;
+    hdr[1] = 64u + ENV_BUF_HDR_BYTES;
+    env_buf_free(p, 64u);
+    env_buf_free(p, 64u);   /* double free: poisoned magic refuses, no second release */
+    TEST_ASSERT_EQ((int)hdr[0], 0, "magic stays poisoned after the double free");
 }
 
 /* env_expand: %% is NOT a cmd-style escape -- Win32/ntdll ExpandEnvironmentStrings
@@ -4657,6 +4810,14 @@ static void test_app_paths_malformed_value(void)
 
 void test_register_env(void)
 {
+    test_suite_register_cat("Env: expand over-budget",
+                            test_env_expand_budget_refuses, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand measure refusal",
+                            test_env_expand_measure_refusal, TEST_CAT_ABI);
+    test_suite_register_cat("Env: env_buf free refusal contract",
+                            test_env_buf_free_refusal_contract, TEST_CAT_ABI);
+    test_suite_register_cat("Env: env_buf alloc contract",
+                            test_env_buf_alloc_contract, TEST_CAT_ABI);
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
                             test_env_drive_cwd_roundtrip, TEST_CAT_ABI);
     test_suite_register_cat("Env: drive-cwd unset -> X:\\ root",

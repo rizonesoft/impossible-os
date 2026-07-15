@@ -608,7 +608,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
      * read past a caller's allocation. The ABI-preserving path is a boundary
      * that probes + copies the block into a terminated kernel snapshot and calls
      * rtl_env_expand_block with the extent it then knows; that boundary is owned
-     * by TODO-22 s22. Nothing user-reachable calls this today, and every
+     * by TODO-22 s24. Nothing user-reachable calls this today, and every
      * in-kernel caller already uses the extent-taking entry, so this refusal
      * removes no working capability (TODO-22 s20). */
     if (Environment)
@@ -762,7 +762,10 @@ NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
     struct task *cur;
     uint16_t *vbuf;
     uint32_t vmax;
-    uint32_t vcap = ENV_STR_KMALLOC_MAX;
+    /* ENV_BUF_PAYLOAD_MAX, not ENV_STR_KMALLOC_MAX: the latter bounds the
+     * header+payload TOTAL (s22), so asking for it exactly would push this common
+     * query onto the unlocked-PMM path (03-memory-concurrency/TODO-03 s1). */
+    uint32_t vcap = ENV_BUF_PAYLOAD_MAX;
     uint32_t val_len8, need_wchars, need_bytes;
     NTSTATUS st;
     int r, cvt;

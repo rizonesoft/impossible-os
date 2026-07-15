@@ -163,7 +163,10 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
      * env_get_copy is internally atomic (returned length matches the bytes
      * copied), so there is no size-then-copy race, and a tiny or missing query
      * no longer forces a multi-page PMM allocation. */
-    vcap = ENV_STR_KMALLOC_MAX;                      /* fast path: kmalloc */
+    /* ENV_BUF_PAYLOAD_MAX, not ENV_STR_KMALLOC_MAX: the latter bounds the
+     * header+payload TOTAL (s22), so asking for it exactly would push this common
+     * query onto the unlocked-PMM path (03-memory-concurrency/TODO-03 s1). */
+    vcap = ENV_BUF_PAYLOAD_MAX;                      /* fast path: kmalloc */
     val8 = (char *)env_buf_alloc(vcap);
     if (!val8)
         return STATUS_NO_MEMORY;

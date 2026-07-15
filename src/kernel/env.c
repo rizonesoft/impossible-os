@@ -245,28 +245,117 @@ static uint64_t env_buf_frames(uint32_t n)
     return ((uint64_t)n + (ENV_PAGE_SIZE - 1u)) / ENV_PAGE_SIZE;
 }
 
+/* Self-describing allocation header (TODO-22 s22). Sits immediately below every
+ * pointer env_buf_alloc hands out, so env_buf_free picks the deallocator from the
+ * allocation rather than from a caller-supplied size that can silently disagree.
+ * `total_bytes` is the full header+payload extent (what the size class was chosen
+ * on); `payload_bytes` is what the caller asked for, kept solely to cross-check the
+ * `n` the caller passes to free. */
+struct env_buf_hdr {
+    uint32_t magic;          /* ENV_BUF_MAGIC while live, 0 once freed */
+    uint32_t total_bytes;    /* header + payload; selects kfree vs pmm_free_frame */
+    uint32_t payload_bytes;  /* caller's requested n; cross-check only */
+    uint32_t _reserved;      /* pad to ENV_BUF_HDR_BYTES */
+};
+
+/* The payload alignment every existing caller relies on (8-aligned pointer arrays
+ * in cmdl_hdr, uint16_t slots in env_block_hdr) follows from the header being a
+ * 16-byte multiple on top of kmalloc's >= 16-byte / PMM's page alignment. */
+_Static_assert(sizeof(struct env_buf_hdr) == ENV_BUF_HDR_BYTES,
+               "env_buf_hdr must be ENV_BUF_HDR_BYTES so the payload stays 16-aligned");
+_Static_assert(ENV_BUF_HDR_BYTES % 16u == 0u,
+               "env_buf header must be a 16-byte multiple to preserve payload alignment");
+_Static_assert(ENV_BUF_PAYLOAD_MAX < ENV_STR_KMALLOC_MAX,
+               "heap payload ceiling must leave room for the header inside the kmalloc cap");
+/* The expansion budget charges each lookup namelen * ENV_LOOKUP_CMP_MAX as an upper
+ * bound on env_find_index's binary search. Growing ENV_MAX_ENTRIES past 2^N without
+ * raising the bound would silently under-charge and re-open the unbounded mutex hold. */
+_Static_assert((1u << ENV_LOOKUP_CMP_MAX) >= (ENV_MAX_ENTRIES + 1u),
+               "ENV_LOOKUP_CMP_MAX must bound the binary search over ENV_MAX_ENTRIES");
+
 void *env_buf_alloc(uint32_t n)
 {
+    struct env_buf_hdr *hdr;
+    uint32_t total;
+
     if (n == 0u)
         return NULL;
-    if (n <= ENV_STR_KMALLOC_MAX)
-        return kmalloc(n);
-    {
-        uintptr_t phys = pmm_alloc_contiguous(env_buf_frames(n));  /* identity-mapped */
-        return (void *)phys;                                       /* 0 -> NULL */
+    /* Reject before the header push can wrap: a caller asking within
+     * ENV_BUF_HDR_BYTES of UINT32_MAX would otherwise get a tiny allocation and
+     * believe it owns 4 GiB. No current caller comes near this (ENV_VALUE_MAX is
+     * 32 KiB), but this is the single choke point for every env allocation. */
+    if (n > ENV_BUF_ALLOC_MAX)
+        return NULL;
+    total = n + ENV_BUF_HDR_BYTES;
+
+    if (total <= ENV_STR_KMALLOC_MAX) {
+        hdr = (struct env_buf_hdr *)kmalloc(total);
+    } else {
+        /* identity-mapped; 0 -> NULL */
+        hdr = (struct env_buf_hdr *)pmm_alloc_contiguous(env_buf_frames(total));
     }
+    if (!hdr)
+        return NULL;
+
+    hdr->magic = ENV_BUF_MAGIC;
+    hdr->total_bytes = total;
+    hdr->payload_bytes = n;
+    hdr->_reserved = 0u;
+    return (void *)(hdr + 1);
 }
 
 void env_buf_free(void *p, uint32_t n)
 {
+    struct env_buf_hdr *hdr;
+    uint32_t total;
+
     if (!p)
         return;
-    if (n <= ENV_STR_KMALLOC_MAX) {
-        kfree(p);
+    hdr = (struct env_buf_hdr *)p - 1;
+
+    /* A bad magic means this pointer did not come from env_buf_alloc, or it was
+     * already freed. Either way the extent below is unknowable, so refuse: leaking
+     * a buffer is recoverable, handing a wrong extent to pmm_free_frame is not. */
+    if (hdr->magic != ENV_BUF_MAGIC) {
+        klog(LOG_ERROR, "env", "env_buf_free: bad magic %x (double free/foreign), leak %u",
+             hdr->magic, n);
+        return;
+    }
+    /* The magic alone is NOT sufficient. It sits at offset 0, FARTHEST from the
+     * payload, so a payload underrun corrupts _reserved, payload_bytes and
+     * total_bytes BEFORE it reaches the magic -- leaving a header that still looks
+     * live while carrying an extent that would pick the wrong deallocator or free
+     * arbitrary frames, exactly what this header exists to prevent. Validate the
+     * whole invariant with overflow-safe arithmetic before trusting the extent. */
+    if (hdr->_reserved != 0u ||
+        hdr->payload_bytes == 0u ||
+        hdr->payload_bytes > ENV_BUF_ALLOC_MAX ||
+        hdr->total_bytes != hdr->payload_bytes + ENV_BUF_HDR_BYTES) {
+        klog(LOG_ERROR, "env", "env_buf_free: header corrupt (t=%u p=%u r=%u), refused",
+             hdr->total_bytes, hdr->payload_bytes, hdr->_reserved);
+        return;
+    }
+    /* The header fields alone are NOT enough: they are adjacent and equally
+     * corruptible, so an underrun that rewrites payload_bytes and total_bytes
+     * COHERENTLY satisfies every check above and could hand heap memory to
+     * pmm_free_frame. The caller's `n` is the one witness that underrun cannot
+     * reach, so it is the independent cross-check -- free only when both agree,
+     * and refuse otherwise. Leaking is recoverable; freeing a wrong extent is not. */
+    if (n != hdr->payload_bytes) {
+        klog(LOG_ERROR, "env", "env_buf_free: size mismatch (caller %u, alloc %u), refused",
+             n, hdr->payload_bytes);
+        return;
+    }
+
+    total = hdr->total_bytes;
+    hdr->magic = 0u;             /* poison first: an immediate double free is a no-op */
+
+    if (total <= ENV_STR_KMALLOC_MAX) {
+        kfree(hdr);
     } else {
-        uint64_t frames = env_buf_frames(n);
+        uint64_t frames = env_buf_frames(total);
         uint64_t f;
-        uintptr_t base = (uintptr_t)p;
+        uintptr_t base = (uintptr_t)hdr;
         for (f = 0; f < frames; f++)
             pmm_free_frame(base + f * ENV_PAGE_SIZE);
     }
@@ -1232,7 +1321,8 @@ struct cmdl_hdr {
      CMDL_ARGV_MAX_BYTES)
 
 /* An 8-byte header keeps the following pointer array 8-byte aligned: env_str_alloc
- * returns >=16-byte-aligned (kmalloc) or page-aligned (PMM) storage, so hdr+1 is
+ * returns >= 16-byte-aligned storage on BOTH paths (kmalloc's own guarantee, and a
+ * page-aligned PMM frame plus the 16-byte env_buf header -- s22), so hdr+1 is
  * 8-aligned and every char or uint16_t pointer slot lands naturally aligned. */
 _Static_assert(sizeof(struct cmdl_hdr) == 8,
                "cmdl_hdr must be 8 bytes so the pointer array stays 8-aligned");
@@ -1529,19 +1619,27 @@ void cmdline_free_argv(void *argv)
 
 /* Append one byte to `out`, reserving the final slot for the NUL terminator.
  * Sets *trunc when the byte does not fit (out stays NUL-terminatable). */
-static void env_exp_put(char *out, uint32_t max_len, uint32_t *pos, int *trunc,
-                        char c)
+/* Append one byte. Truncation is NOT this function's job any more (s22): every
+ * caller now gates on capacity (out + 1 < max_len) BEFORE charging the work budget
+ * and sets `trunc` itself, because charging first let a budget expiring on exactly
+ * the filling byte convert a TRUNCATION into an over-budget refusal. With capacity
+ * owned by the loops, the emitter just emits. */
+static void env_exp_put(char *out, uint32_t *pos, char c)
 {
-    if (*pos + 1u < max_len)
-        out[(*pos)++] = c;
-    else
-        *trunc = 1;
+    out[(*pos)++] = c;
 }
 
 int env_expand(struct task *t, const char *input, char *output, uint32_t max_len)
 {
+    return env_expand_budget(t, input, output, max_len, ENV_EXPAND_WORK_MAX);
+}
+
+int env_expand_budget(struct task *t, const char *input, char *output,
+                      uint32_t max_len, uint64_t work_max)
+{
     uint32_t in = 0, out = 0;
     int trunc = 0;
+    uint64_t work = 0;   /* bytes examined; capped at work_max (s22) */
 
     if (!output || max_len == 0)
         return 0;
@@ -1554,11 +1652,26 @@ int env_expand(struct task *t, const char *input, char *output, uint32_t max_len
      * buffer -- writing output[0] here would corrupt the source (exact alias
      * erases input[0]; a partial overlap inserts a NUL into the source). This is
      * the one exception to the "output always NUL-terminated" guarantee. Measure
-     * input (kernel-resident, NUL-terminated by contract) then compare ranges. */
+     * input (kernel-resident, NUL-terminated by contract) then compare ranges.
+     *
+     * The measure is BUDGETED: a plain env_strlen would walk an arbitrarily long
+     * input for free, which is the exact uncapped scan this budget exists to close.
+     * Charge every byte, and if the extent cannot be established within budget,
+     * refuse WITHOUT touching output -- an alias past the scanned prefix cannot be
+     * ruled out, so the same caution the overlap rejection takes applies. */
     {
-        uint32_t inlen = env_strlen(input);
-        uintptr_t i0 = (uintptr_t)input, i1 = i0 + inlen + 1u;
-        uintptr_t o0 = (uintptr_t)output, o1 = o0 + max_len;
+        uint32_t inlen = 0;
+        uintptr_t i0, i1, o0, o1;
+        while (input[inlen]) {
+            if (++work > work_max) {
+                klog(LOG_WARN, "env", "env_expand: over budget %u at measure (pid %u)",
+                     (unsigned)work_max, (unsigned)t->pid);
+                return ENV_EXPAND_OVER_BUDGET;   /* both buffers untouched */
+            }
+            inlen++;
+        }
+        i0 = (uintptr_t)input; i1 = i0 + inlen + 1u;
+        o0 = (uintptr_t)output; o1 = o0 + max_len;
         if (i0 < o1 && o0 < i1)
             return 0;                            /* overlap: leave both buffers intact */
     }
@@ -1572,11 +1685,38 @@ int env_expand(struct task *t, const char *input, char *output, uint32_t max_len
     env_lock(t);
     while (input[in]) {
         char c = input[in];
+        /* Charge before the work, so a refusal lands BEFORE the cycles are burnt.
+         * EVERY unbounded loop below charges too: the closing-'%' scan, the
+         * no-closing-'%' remainder copy, and the value copy each walk
+         * caller-controlled or environment-controlled lengths, so budgeting only
+         * this outer step would leave three uncapped paths. */
+        /* Output is full: every remaining byte would be discarded by env_exp_put,
+         * so scanning on changes neither `output` nor the returned max_len sentinel
+         * -- it only holds environ_lock longer. Stopping here bounds the real work
+         * by the OUTPUT capacity rather than the input length, which is the bound
+         * that actually matters (the budget is the backstop above it). Tested
+         * BEFORE the charge: an already-final result must never be turned into an
+         * over-budget refusal by an iteration that could not have changed it. */
+        if (trunc)
+            break;
         if (c != '%') {
-            env_exp_put(output, max_len, &out, &trunc, c);   /* verbatim */
+            /* Capacity BEFORE the charge: a verbatim byte always emits, so once
+             * output is final this byte is a truncation, and charging first would
+             * let a budget expiring on exactly this byte report a refusal instead.
+             * (Deliberately NOT hoisted above the '%' branch: a `%EMPTY%` emits
+             * nothing, so a full output does not imply truncation there.) */
+            if (out + 1u >= max_len) {
+                trunc = 1;
+                break;
+            }
+            if (++work > work_max)
+                goto over_budget;
+            env_exp_put(output, &out, c);   /* verbatim */
             in++;
             continue;
         }
+        if (++work > work_max)
+            goto over_budget;
         /* Win32/ntdll ExpandEnvironmentStrings semantics: `%%` is NOT an escape.
          * An empty name (`%%`) is an unresolved variable, so both percent signs
          * are preserved verbatim by the empty-name -> literal branch below.
@@ -1585,14 +1725,22 @@ int env_expand(struct task *t, const char *input, char *output, uint32_t max_len
         /* Scan for the closing '%'. */
         {
             uint32_t j = in + 1;
-            while (input[j] && input[j] != '%')
+            while (input[j] && input[j] != '%') {
+                if (++work > work_max)
+                    goto over_budget;
                 j++;
+            }
             if (input[j] != '%') {
-                /* No closing '%': copy the remainder verbatim and stop. */
-                while (input[in]) {
-                    env_exp_put(output, max_len, &out, &trunc, input[in]);
+                /* No closing '%': copy the remainder verbatim and stop. Capacity
+                 * gates the loop for the same reason as the copies above. */
+                while (input[in] && out + 1u < max_len) {
+                    if (++work > work_max)
+                        goto over_budget;
+                    env_exp_put(output, &out, input[in]);
                     in++;
                 }
+                if (input[in])
+                    trunc = 1;                  /* remainder did not fit */
                 break;
             }
             {
@@ -1601,22 +1749,56 @@ int env_expand(struct task *t, const char *input, char *output, uint32_t max_len
                 if (namelen >= 1 && namelen <= ENV_NAME_MAX) {
                     char nb[ENV_NAME_MAX + 1];
                     uint32_t k;
+                    /* Charge the LOOKUP before doing it. env_peek_locked runs a
+                     * binary search whose comparisons are invisible to the
+                     * per-input-byte charge; left uncharged, the budget would not
+                     * bound the mutex hold time at all -- the entire point of it.
+                     * Each of the <= ENV_LOOKUP_CMP_MAX comparisons costs the
+                     * STORED key scan (env_entry_keylen walks to the '=', up to
+                     * ENV_NAME_MAX) PLUS the compare itself (up to namelen). The
+                     * stored-key term is what makes this a true upper bound: a
+                     * ONE-byte miss against 256-byte keys really inspects ~257
+                     * bytes per comparison, so charging namelen alone under-counts
+                     * by ~250x. The trailing namelen is the name copy below. */
+                    {
+                        uint64_t cost = (uint64_t)ENV_LOOKUP_CMP_MAX *
+                                            ((uint64_t)ENV_NAME_MAX + namelen) + namelen;
+                        if (work + cost > work_max)
+                            goto over_budget;
+                        work += cost;
+                    }
                     for (k = 0; k < namelen; k++)
                         nb[k] = input[in + 1 + k];
                     nb[namelen] = '\0';
                     val = env_peek_locked(t, nb);            /* borrowed, under lock */
                 }
+                /* Both copies below stop the instant `output` fills. Without that,
+                 * a long value or literal keeps charging AFTER the result is
+                 * already final, so a budget that runs out mid-substitution would
+                 * report ENV_EXPAND_OVER_BUDGET and erase a result that is properly
+                 * a TRUNCATION -- turning a max_len return into -1 and discarding
+                 * bytes the caller is entitled to. Truncation wins over the budget:
+                 * once out is full, no remaining work can change the answer. */
                 if (val) {
                     uint32_t v = 0;
-                    while (val[v]) {
-                        env_exp_put(output, max_len, &out, &trunc, val[v]);
+                    while (val[v] && out + 1u < max_len) {
+                        if (++work > work_max)
+                            goto over_budget;
+                        env_exp_put(output, &out, val[v]);
                         v++;
                     }
+                    if (val[v])
+                        trunc = 1;              /* value did not fit */
                 } else {
                     /* Unknown or over-long name: copy the literal `%NAME%`. */
                     uint32_t p;
-                    for (p = in; p <= j; p++)
-                        env_exp_put(output, max_len, &out, &trunc, input[p]);
+                    for (p = in; p <= j && out + 1u < max_len; p++) {
+                        if (++work > work_max)
+                            goto over_budget;
+                        env_exp_put(output, &out, input[p]);
+                    }
+                    if (p <= j)
+                        trunc = 1;              /* literal did not fit */
                 }
                 in = j + 1;
             }
@@ -1626,6 +1808,17 @@ int env_expand(struct task *t, const char *input, char *output, uint32_t max_len
 
     output[out] = '\0';
     return trunc ? (int)max_len : (int)out;
+
+    /* Single refusal exit for every budget check above. Placed past the normal
+     * return so the success path cannot fall into it. The empty output is
+     * deliberate: a caller that ignores the return value gets nothing rather than
+     * a silently truncated expansion it would treat as the real result. */
+over_budget:
+    env_unlock(t);
+    output[0] = '\0';
+    klog(LOG_WARN, "env", "env_expand: over work budget %u (pid %u)",
+         (unsigned)work_max, (unsigned)t->pid);
+    return ENV_EXPAND_OVER_BUDGET;
 }
 
 /* ===========================================================================
@@ -2685,10 +2878,18 @@ static void env_expand_reg_values(struct task *t, struct env_expand_list *l,
             continue;
         }
         if (env_get_copy(t, name, raw, (uint32_t)rawlen + 1u) > 0) {
-            env_expand(t, raw, out, ENV_VALUE_MAX + 1u);
-            results[i] = env_strdup(out);             /* keep the expanded result */
-            if (!results[i] && *err == ENV_OK)
-                *err = ENV_ERR_NOMEM;
+            /* An over-budget refusal leaves `out` empty; recording that as this
+             * variable's expansion would silently erase a value the caller still
+             * holds. Report it and leave results[i] NULL (the caller's absent
+             * marker) rather than publishing an empty expansion. */
+            if (env_expand(t, raw, out, ENV_VALUE_MAX + 1u) == ENV_EXPAND_OVER_BUDGET) {
+                if (*err == ENV_OK)
+                    *err = ENV_ERR_TOOLONG;
+            } else {
+                results[i] = env_strdup(out);         /* keep the expanded result */
+                if (!results[i] && *err == ENV_OK)
+                    *err = ENV_ERR_NOMEM;
+            }
         }
         env_str_free(raw, (uint32_t)rawlen + 1u);
         env_str_free(out, ENV_VALUE_MAX + 1u);

@@ -46,7 +46,20 @@ struct task;
 #define ENV_NAME_MAX        256u   /* max variable name length (Windows practical limit) */
 #define ENV_VALUE_MAX       32767u /* max variable value length (Windows 32K-1 limit) */
 #define ENV_MAX_ENTRIES     511u   /* (n+1)*sizeof(char*) stays <= 4 KiB kmalloc array */
-#define ENV_STR_KMALLOC_MAX 4096u  /* "KEY=VALUE" strings up to this via kmalloc; larger via PMM */
+#define ENV_STR_KMALLOC_MAX 4096u  /* env_buf TOTAL (header+payload) up to this via kmalloc; larger via PMM */
+
+/* env_buf allocation header (TODO-22 s22). 16 bytes keeps the payload at the same
+ * >= 16-byte alignment kmalloc/PMM hand out, so every existing caller's pointer-array
+ * and uint16_t alignment assumptions still hold (see cmdl_hdr's 8-alignment assert).
+ * ENV_BUF_MAGIC is "ENVB" in ASCII; a freed header is poisoned to 0. */
+#define ENV_BUF_HDR_BYTES   16u
+#define ENV_BUF_MAGIC       0x424E5645u  /* "ENVB" little-endian */
+/* Largest payload still served from the heap: the total must stay within the 4 KiB
+ * kmalloc ceiling once the header is added. */
+#define ENV_BUF_PAYLOAD_MAX (ENV_STR_KMALLOC_MAX - ENV_BUF_HDR_BYTES)
+/* Largest payload env_buf_alloc accepts at all: anything above this wraps uint32
+ * when the header is added. Freestanding, so no UINT32_MAX from <stdint.h>. */
+#define ENV_BUF_ALLOC_MAX   (0xFFFFFFFFu - ENV_BUF_HDR_BYTES)
 
 /* Per-process environment block sanity cap (TODO-22 s10). Windows Vista+ imposes
  * no hard block-size limit, but an unbounded block is a DoS vector now that
@@ -87,14 +100,27 @@ struct task;
  * this pair so the size-class rule -- and any future change to it -- lives in one
  * place.
  *
- * CALLER-SUPPLIED SIZE IS LOAD-BEARING: `n` passed to env_buf_free MUST be the
- * exact byte count passed to env_buf_alloc. The size selects the DEALLOCATOR, so a
- * mismatch that crosses ENV_STR_KMALLOC_MAX calls kfree() on PMM frames or
- * pmm_free_frame() on heap memory. A self-describing {magic,total_bytes} header
- * would remove that caller obligation entirely; it is a layout change to every
- * allocation (and nests under env_create_block's existing env_block_hdr), so it is
- * owned by TODO-22 s22 (item: "Fold the caller-supplied size into a
- * self-describing env_buf header") rather than done here.
+ * SELF-DESCRIBING (TODO-22 s22): every allocation carries a private
+ * {magic,total_bytes,payload_bytes} header immediately below the returned pointer,
+ * so env_buf_free recovers the DEALLOCATOR from the allocation itself rather than
+ * from the caller. `n` is no longer the DECIDER, but it stays load-bearing as the
+ * independent witness: the header fields are adjacent and equally corruptible, so a
+ * payload underrun can rewrite payload_bytes and total_bytes coherently and still
+ * look live. `n` is the one value such an underrun cannot reach, so a free happens
+ * only when the caller's `n` and the recorded payload AGREE; a mismatch is refused
+ * and logged rather than acted on (leaking is recoverable, freeing a wrong extent is
+ * not). That turns the old silent corruption -- a size disagreement crossing
+ * ENV_STR_KMALLOC_MAX called kfree() on PMM frames or pmm_free_frame() on heap
+ * memory -- into a caught, non-destructive bug. The magic is poisoned on free, so an immediate double free
+ * is a logged no-op -- best effort, not a lifetime guarantee (same contract as
+ * env.c's cmdl_free_block, whose {magic,total_bytes} idiom this generalizes).
+ *
+ * SIZE CLASS IS CHOSEN ON THE TOTAL (header + payload), never the payload alone:
+ * kmalloc is capped at 4 KiB repo-wide, so a 4096-byte payload plus a header MUST
+ * come from PMM. ENV_STR_KMALLOC_MAX therefore bounds the TOTAL; the largest
+ * heap-backed payload is ENV_BUF_PAYLOAD_MAX. Callers are unaffected (both paths
+ * still return >= 16-byte-aligned storage); only payloads in the top
+ * ENV_BUF_HDR_BYTES of the heap size class shift to a PMM frame.
  *
  * n == 0 returns NULL (there is no zero-byte allocation to free); env_buf_free
  * ignores a NULL pointer. Callers that need a minimum 1-byte buffer for an empty
@@ -320,8 +346,56 @@ uint32_t argv_frame_bytes(int argc, const char *const *argv);
  * even write output[0], since output may alias input). Caller contract: must NOT
  * already hold t->environ_lock (env_expand takes it for the whole walk). For
  * kernel-internal expansion pass the initial system process (task_get_by_pid(0))
- * as `t`. */
+ * as `t`.
+ *
+ * WORK BUDGET (TODO-22 s22): the walk holds environ_lock for its whole duration, so
+ * an input long enough to burn CPU also blocks every other env op on the task. Work
+ * is capped at ENV_EXPAND_WORK_MAX; exceeding it returns ENV_EXPAND_OVER_BUDGET.
+ * Charged units: one per input byte examined (including the initial overlap
+ * measure), one per value byte emitted, and namelen * (ENV_LOOKUP_CMP_MAX + 1) per
+ * %NAME% reference -- the name copy plus an upper BOUND on env_find_index's binary
+ * search, whose key comparisons are otherwise invisible to a per-input-byte charge
+ * and would leave the mutex hold unbounded. The walk also stops as soon as `output`
+ * is full, so the real work is bounded by the output capacity and the budget is the
+ * backstop above it. This is the UTF-8 peer of RTL_ENV_EXPAND_WORK_MAX
+ * (nt_rtlenv.h): both charge one unit per comparison, so both refuse
+ * pathological input -- but the units differ (bytes here, WCHARs there) and the two
+ * cost models are NOT byte-for-byte identical, so treat the equal ceilings as
+ * comparable-in-spirit, not as a guarantee that both refuse the exact same input.
+ *
+ * On refusal `output` never holds a partial expansion. Which of the two shapes you
+ * get depends on WHERE the budget ran out: during the walk, `output` is set to the
+ * empty string; during the initial overlap measure -- before anything is written --
+ * BOTH buffers are left exactly as passed, because an alias beyond the scanned
+ * prefix cannot be ruled out and writing output[0] could corrupt `input`. That is
+ * the same caution (and the same exception to the always-NUL-terminated guarantee)
+ * the overlap rejection already takes. */
+/* Ceiling on bytes examined per expansion. DERIVATION (the charge is a true upper
+ * bound, so the ceiling must clear the worst LEGITIMATE input or it becomes a compat
+ * bug): the production caller's input is at most ENV_VALUE_MAX + 1 (32768) bytes,
+ * whose densest reference packing is ~10922 "%A%" triples. Each costs
+ * ENV_LOOKUP_CMP_MAX * (ENV_NAME_MAX + 1) + 1 == 2314 when every stored key is the
+ * 256-byte maximum, so a fully adversarial-but-legal input charges ~25.3M. 32 Mi
+ * clears that with headroom. NOTE the value is still REASONED, not measured on the
+ * slowest target -- measuring it (and its UTF-16 peer) is owned by s24 (item:
+ * "Measure RTL_ENV_EXPAND_WORK_MAX"). */
+#define ENV_EXPAND_WORK_MAX    33554432u /* 32 Mi; see derivation above and nt_rtlenv.h RTL_ENV_EXPAND_WORK_MAX */
+#define ENV_EXPAND_OVER_BUDGET (-1)      /* env_expand refused: work exceeded the budget */
+/* Worst-case comparisons a single env_find_index binary search can make over a full
+ * ENV_MAX_ENTRIES array: ceil(log2(511+1)) == 9. Each comparison inspects up to the
+ * name length, so a lookup is charged namelen * this -- an upper BOUND on the real
+ * cost, which is what a work budget needs. env.c static-asserts it against
+ * ENV_MAX_ENTRIES so growing the array cannot silently under-charge. */
+#define ENV_LOOKUP_CMP_MAX     9u
 int env_expand(struct task *t, const char *input, char *output, uint32_t max_len);
+
+/* env_expand with an explicit work ceiling. env_expand is the thin wrapper that
+ * passes ENV_EXPAND_WORK_MAX; this entry exists so the refusal path is reachable
+ * from a test with a small budget instead of an 8 MiB input buffer -- the same
+ * split rtl_env_expand_block/rtl_env_expand_block_budget uses on the UTF-16 side.
+ * `work_max == 0` refuses any non-empty input. Semantics are otherwise identical. */
+int env_expand_budget(struct task *t, const char *input, char *output,
+                      uint32_t max_len, uint64_t work_max);
 
 /* Build a UTF-16 NT environment block ("NAME=VALUE\0"... double-NUL terminated)
  * from `t`'s UTF-8 environ, snapshotting under t->environ_lock. Entries are
