@@ -20,6 +20,8 @@
 #include "kernel/nt/ntstatus.h"  /* STATUS_* */
 #include "kernel/sched/task.h"
 #include "kernel/sched/mutex.h"
+#include "kernel/security/token.h" /* ACCESS_TOKEN for s16 elevation tests */
+#include "kernel/security/sid.h"   /* SeILLow/Medium/High/System integrity SIDs */
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
 #include "kernel/boot_init.h" /* kernel_subsystem_ready() for the overlay test */
 #include "registry.h"         /* HKCU PATH-append test injects a user value */
@@ -59,6 +61,7 @@ static void env_fixture_reset(void)
     s_env_fixture.argc = 0;
     s_env_fixture.search_path_mode = 0;  /* s14: fresh SearchPath ordering per test */
     s_env_fixture.cwd[0] = '\0';         /* s14: no stale cwd into a SearchPath probe */
+    s_env_fixture.token = NULL;          /* s16: default non-elevated context per test */
     mutex_init(&s_env_fixture.environ_lock, "test-env");
 }
 
@@ -2969,6 +2972,239 @@ static void test_env_cmdline_large_alloc_crossover(void)
     cmdline_free_argv(argv);
 }
 
+/* ==== s16: environment security & sanitization (AT_SECURE parallel) ========
+ * env_name_is_privilege_sensitive / env_is_secure_context / the read+build
+ * gates / env_sanitize_for_elevation. Tokens are built on the stack: only the
+ * IntegrityLevelSid is read (via SeGetTokenIntegrityLevel), so a zero-init body
+ * plus one SID pointer is sufficient. */
+
+/* Case-insensitive substring scan over a raw environment block (bytes may hold
+ * embedded NULs between entries; needle is NUL-terminated). */
+static int env_test_block_has(const char *blk, uint32_t len, const char *needle)
+{
+    uint32_t nlen = env_test_strlen(needle);
+    uint32_t i;
+    if (nlen == 0u || len < nlen)
+        return 0;
+    for (i = 0; i + nlen <= len; i++) {
+        uint32_t j = 0;
+        while (j < nlen && blk[i + j] == needle[j])
+            j++;
+        if (j == nlen)
+            return 1;
+    }
+    return 0;
+}
+
+static void test_env_privilege_sensitive_names(void)
+{
+    /* Exact matches, case-insensitive. */
+    TEST_ASSERT(env_name_is_privilege_sensitive("LD_PRELOAD", 10u),
+                "LD_PRELOAD is blocklisted");
+    TEST_ASSERT(env_name_is_privilege_sensitive("ld_preload", 10u),
+                "lowercase ld_preload is blocklisted (store is case-insensitive)");
+    TEST_ASSERT(env_name_is_privilege_sensitive("LD_LIBRARY_PATH", 15u),
+                "LD_LIBRARY_PATH is blocklisted");
+    /* Prefix match for the debug family, case-insensitive. */
+    TEST_ASSERT(env_name_is_privilege_sensitive("_IMPOSSIBLE_DEBUG_", 18u),
+                "_IMPOSSIBLE_DEBUG_ (exact prefix) is blocklisted");
+    TEST_ASSERT(env_name_is_privilege_sensitive("_IMPOSSIBLE_DEBUG_TRACE", 23u),
+                "_IMPOSSIBLE_DEBUG_TRACE is blocklisted (prefix)");
+    TEST_ASSERT(env_name_is_privilege_sensitive("_impossible_debug_trace", 23u),
+                "lowercase debug prefix is blocklisted");
+    /* Negatives: near-misses must NOT be blocklisted. */
+    TEST_ASSERT(!env_name_is_privilege_sensitive("PATH", 4u),
+                "PATH is not blocklisted");
+    TEST_ASSERT(!env_name_is_privilege_sensitive("LD_PRELOADX", 11u),
+                "LD_PRELOADX (superstring) is not blocklisted");
+    TEST_ASSERT(!env_name_is_privilege_sensitive("_IMPOSSIBLE_DEBUG", 17u),
+                "_IMPOSSIBLE_DEBUG (one short of prefix) is not blocklisted");
+    TEST_ASSERT(!env_name_is_privilege_sensitive((const char *)0, 0u),
+                "NULL name is not blocklisted");
+}
+
+static void test_env_secure_context(void)
+{
+    ACCESS_TOKEN tok = {0};
+
+    env_fixture_reset();
+    /* No token assigned -> fail-closed secure. */
+    TEST_ASSERT(env_is_secure_context(&s_env_fixture),
+                "NULL token is a secure context (fail closed)");
+
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILLow;
+    TEST_ASSERT(!env_is_secure_context(&s_env_fixture),
+                "Low integrity is not secure");
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT(!env_is_secure_context(&s_env_fixture),
+                "Medium integrity is not secure");
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    TEST_ASSERT(env_is_secure_context(&s_env_fixture),
+                "High integrity is a secure context");
+    tok.IntegrityLevelSid = (SID *)SeILSystem;
+    TEST_ASSERT(env_is_secure_context(&s_env_fixture),
+                "System integrity is a secure context");
+
+    s_env_fixture.token = NULL;   /* do not leak the stack token past this test */
+}
+
+static void test_env_secure_read_gate(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char buf[64];
+    const char *peek;
+
+    env_fixture_reset();
+    /* env_set is NOT gated; the values exist in the store regardless. */
+    env_set(&s_env_fixture, "LD_PRELOAD", "evil.so");
+    env_set(&s_env_fixture, "PATH", "C:\\Bin");
+    s_env_fixture.token = &tok;
+
+    /* Medium (non-secure): the Linux compat layer legitimately reads LD_PRELOAD. */
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "LD_PRELOAD", buf, sizeof(buf)) > 0
+                && env_streq(buf, "evil.so"),
+                "Medium process reads LD_PRELOAD");
+    env_lock(&s_env_fixture);
+    peek = env_peek_locked(&s_env_fixture, "LD_PRELOAD");
+    TEST_ASSERT(peek != NULL && env_streq(peek, "evil.so"),
+                "Medium env_peek_locked returns LD_PRELOAD");
+    env_unlock(&s_env_fixture);
+
+    /* High (secure): blocklisted name reads as absent via both getters. */
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "LD_PRELOAD", buf, sizeof(buf)),
+                   ENV_ERR_NOTFOUND,
+                   "High process reads LD_PRELOAD as absent");
+    env_lock(&s_env_fixture);
+    peek = env_peek_locked(&s_env_fixture, "LD_PRELOAD");
+    TEST_ASSERT(peek == NULL, "High env_peek_locked hides LD_PRELOAD");
+    env_unlock(&s_env_fixture);
+    /* A non-blocklisted name stays visible to the elevated process. */
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "PATH", buf, sizeof(buf)) > 0
+                && env_streq(buf, "C:\\Bin"),
+                "High process still reads PATH");
+
+    s_env_fixture.token = NULL;
+    env_free(&s_env_fixture);   /* heap-neutral: free before per-test leak check */
+}
+
+static void test_env_sanitize_for_elevation(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char buf[64];
+    int removed;
+
+    env_fixture_reset();
+    env_set(&s_env_fixture, "LD_PRELOAD", "a.so");
+    env_set(&s_env_fixture, "LD_LIBRARY_PATH", "/lib");
+    env_set(&s_env_fixture, "_IMPOSSIBLE_DEBUG_A", "1");
+    env_set(&s_env_fixture, "_IMPOSSIBLE_DEBUG_B", "1");
+    env_set(&s_env_fixture, "PATH", "C:\\Bin");
+    env_set(&s_env_fixture, "GREETING", "hi");
+
+    removed = env_sanitize_for_elevation(&s_env_fixture);
+    TEST_ASSERT_EQ(removed, 4, "sanitize removes all four blocklisted vars");
+
+    /* Verify PHYSICAL removal with a Medium token (read gate would otherwise mask
+     * a still-present var). */
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "LD_PRELOAD", buf, sizeof(buf)),
+                   ENV_ERR_NOTFOUND, "LD_PRELOAD physically stripped");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "_IMPOSSIBLE_DEBUG_A", buf, sizeof(buf)),
+                   ENV_ERR_NOTFOUND, "adjacent debug var A stripped");
+    TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "_IMPOSSIBLE_DEBUG_B", buf, sizeof(buf)),
+                   ENV_ERR_NOTFOUND, "adjacent debug var B stripped");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "PATH", buf, sizeof(buf)) > 0
+                && env_streq(buf, "C:\\Bin"), "PATH survives sanitize");
+    TEST_ASSERT(env_get_copy(&s_env_fixture, "GREETING", buf, sizeof(buf)) > 0
+                && env_streq(buf, "hi"), "GREETING survives sanitize");
+    s_env_fixture.token = NULL;
+
+    /* Idempotent: a clean environment removes nothing. */
+    removed = env_sanitize_for_elevation(&s_env_fixture);
+    TEST_ASSERT_EQ(removed, 0, "sanitize is idempotent on a clean environment");
+
+    env_free(&s_env_fixture);   /* heap-neutral: free before per-test leak check */
+}
+
+static void test_env_secure_block_excludes(void)
+{
+    ACCESS_TOKEN tok = {0};
+    static char blk[4096];
+    uint32_t len = 0;
+
+    env_fixture_reset();
+    env_set(&s_env_fixture, "LD_PRELOAD", "x.so");
+    env_set(&s_env_fixture, "PATH", "C:\\Bin");
+    s_env_fixture.token = &tok;
+
+    /* Medium (non-secure): serialized block still carries LD_PRELOAD. */
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT_EQ(env_build_block(&s_env_fixture, blk, sizeof(blk), 0, &len),
+                   ENV_OK, "ANSI block builds (Medium)");
+    TEST_ASSERT(env_test_block_has(blk, len, "LD_PRELOAD"),
+                "Medium block includes LD_PRELOAD");
+
+    /* High (secure): block omits LD_PRELOAD but keeps PATH. */
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    TEST_ASSERT_EQ(env_build_block(&s_env_fixture, blk, sizeof(blk), 0, &len),
+                   ENV_OK, "ANSI block builds (High)");
+    TEST_ASSERT(!env_test_block_has(blk, len, "LD_PRELOAD"),
+                "High block excludes LD_PRELOAD");
+    TEST_ASSERT(env_test_block_has(blk, len, "PATH"),
+                "High block still includes PATH");
+
+    s_env_fixture.token = NULL;
+    env_free(&s_env_fixture);   /* heap-neutral: free before per-test leak check */
+}
+
+static void test_env_copy_secure_source_excludes(void)
+{
+    static struct task dst;   /* static: struct task is large; keep it off the stack */
+    ACCESS_TOKEN tok = {0};
+    char buf[64];
+
+    env_fixture_reset();
+    env_set(&s_env_fixture, "LD_PRELOAD", "x.so");
+    env_set(&s_env_fixture, "PATH", "C:\\Bin");
+
+    /* Secure SOURCE (High): env_copy must NOT export the blocklisted name. */
+    dst.environ = NULL; dst.environ_count = 0; dst.environ_bytes = 0; dst.token = NULL;
+    mutex_init(&dst.environ_lock, "test-env-dst");
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    TEST_ASSERT_EQ(env_copy(&dst, &s_env_fixture), ENV_OK, "env_copy from secure source");
+    s_env_fixture.token = NULL;
+    /* Read the child under a Medium token to prove PHYSICAL exclusion (a NULL/High
+     * dst token would merely mask the name via the read gate). */
+    dst.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT_EQ(env_get_copy(&dst, "LD_PRELOAD", buf, sizeof(buf)), ENV_ERR_NOTFOUND,
+                   "child did not inherit LD_PRELOAD from a secure parent");
+    TEST_ASSERT(env_get_copy(&dst, "PATH", buf, sizeof(buf)) > 0 && env_streq(buf, "C:\\Bin"),
+                "child inherited PATH from a secure parent");
+    dst.token = NULL;
+    env_free(&dst);
+
+    /* Non-secure SOURCE (Medium): full inheritance incl LD_PRELOAD (compat layer). */
+    dst.environ = NULL; dst.environ_count = 0; dst.environ_bytes = 0; dst.token = NULL;
+    mutex_init(&dst.environ_lock, "test-env-dst2");
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    TEST_ASSERT_EQ(env_copy(&dst, &s_env_fixture), ENV_OK, "env_copy from Medium source");
+    s_env_fixture.token = NULL;
+    dst.token = &tok;   /* still Medium */
+    TEST_ASSERT(env_get_copy(&dst, "LD_PRELOAD", buf, sizeof(buf)) > 0 && env_streq(buf, "x.so"),
+                "child inherited LD_PRELOAD from a Medium parent");
+    dst.token = NULL;
+    env_free(&dst);
+
+    env_free(&s_env_fixture);   /* heap-neutral: free before per-test leak check */
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -3209,6 +3445,19 @@ void test_register_env(void)
                             test_env_cmdline_quote_runs, TEST_CAT_ABI);
     test_suite_register_cat("Env: CommandLineToArgv PMM allocator crossover",
                             test_env_cmdline_large_alloc_crossover, TEST_CAT_ABI);
+    /* s16: environment security & sanitization */
+    test_suite_register_cat("Env: s16 privilege-sensitive name blocklist",
+                            test_env_privilege_sensitive_names, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s16 secure-context integrity threshold",
+                            test_env_secure_context, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s16 AT_SECURE read gate hides blocklisted",
+                            test_env_secure_read_gate, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s16 sanitize strips blocklisted from environ",
+                            test_env_sanitize_for_elevation, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s16 secure block omits blocklisted names",
+                            test_env_secure_block_excludes, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s16 env_copy secure source excludes blocklisted",
+                            test_env_copy_secure_source_excludes, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

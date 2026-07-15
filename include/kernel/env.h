@@ -110,6 +110,40 @@ int env_set(struct task *t, const char *name, const char *value);
  * ENV_ERR_INVAL (NULL/empty/'='-containing), or ENV_ERR_TOOLONG. */
 int env_unset(struct task *t, const char *name);
 
+/* --- s16: elevation security (AT_SECURE parallel) ------------------------
+ * A privilege-sensitive variable is one an elevated (High/System integrity)
+ * process must never observe or export: LD_PRELOAD, LD_LIBRARY_PATH (loader
+ * hijack vectors honored only for NORMAL processes by the Linux compat layer),
+ * and any name beginning "_IMPOSSIBLE_DEBUG_" (debug knobs). The blocklist match
+ * is case-INSENSITIVE (the env store is), so a mixed-case spelling cannot bypass.
+ *
+ * The gate has two layers. (1) READ gate, active now: env_get_copy and
+ * env_peek_locked report a blocklisted name as ABSENT, and the block builders
+ * (env_build_block_utf16/env_build_block -> CreateEnvironmentBlock + Rtl NULL
+ * expansion) omit it, whenever env_is_secure_context(owner) holds. (2) PHYSICAL
+ * strip: env_sanitize_for_elevation removes the names outright at an elevation
+ * transition; that INVOCATION site (UAC in-place token replacement; elevated
+ * child env inheritance) is owned downstream and deferred (TODO-15 SRM,
+ * 02-kernel-core/TODO-12 s7). */
+
+/* True iff `name` (namelen bytes, no NUL required) is on the elevation blocklist.
+ * Exposed for the s16 unit tests; the getters/builders call it internally. */
+int env_name_is_privilege_sensitive(const char *name, uint32_t namelen);
+
+/* True iff `t`'s primary token integrity level is above Medium (elevated admin
+ * or System service), so the blocklist applies. FAIL-CLOSED: a task with no
+ * assigned token is treated as secure. A malformed non-NULL token collapses to
+ * Medium (non-secure) -- deliberate, so a normal-integrity process keeps its
+ * legitimate LD_PRELOAD for the Linux compat layer. */
+int env_is_secure_context(struct task *t);
+
+/* Physically strip every blocklisted variable from `t`'s environment (the
+ * elevation-transition primitive). Returns the count removed. Detaches each
+ * entry under environ_lock, then audit-logs the NAME (never the value) and frees
+ * AFTER unlocking -- klog under environ_lock is forbidden. Idempotent; a clean
+ * environment returns 0. */
+int env_sanitize_for_elevation(struct task *t);
+
 /* Deep-copy src's environ into dst (dst must be an unpublished child: its lock
  * is NOT taken). Snapshots src under src->environ_lock. On any allocation
  * failure the partial dst copy is unwound and dst->environ stays NULL. Intended

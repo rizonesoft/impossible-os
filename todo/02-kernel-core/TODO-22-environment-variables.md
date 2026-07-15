@@ -78,7 +78,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
-| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [ ]   |
+| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [ ]   |
 | 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
 | 💎   |  19   | ntdll Rtl environment layer                        | §5, §6                     |  [ ]   |
@@ -588,29 +588,25 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 16. Environment Variable Security & Sanitization
 
-- [ ] When a process runs with elevated privileges (e.g. admin token from UAC elevation, or a service), sanitize the inherited environment by stripping variables that could enable privilege escalation:
-  - Strip `LD_PRELOAD`, `LD_LIBRARY_PATH` (Linux compat layer only -- XREF `TODO-23-exception-dispatch-seh.md`)
-  - Strip any variable whose name starts with `_IMPOSSIBLE_DEBUG_` in non-debug builds (prevent debug knobs from being inherited into privileged processes)
-- [ ] `env_sanitize_for_elevation(task)` -- called by `NtCreateProcess` when the child process has a higher integrity level than the parent:
-  - Walk `task->environ[]`; remove blocklisted variables
-  - Log removed variables to security audit log at `LOG_NOTICE` level
-- [ ] Parallel to Linux `secure_getenv()` / glibc `AT_SECURE`: if `task->token` has setuid-equivalent elevation, `env_get` for blocklisted names returns `NULL` even if the variable is present
-
-- [ ] `NtSetEnvironmentVariable` must validate:
-  - Name does not contain `=` (except hidden `=X:` drive vars)
-  - Name is not empty (zero-length)
-  - Name length ≤ 256 characters
-  - Value length ≤ 32,767 characters
-  - Total environment block size after insertion ≤ 1 MiB
-  - Return `STATUS_INVALID_PARAMETER` for invalid names, `STATUS_NAME_TOO_LONG` for oversized values, `STATUS_QUOTA_EXCEEDED` for block overflow
-- [ ] `NtQueryEnvironmentVariable` must validate:
-  - Output buffer is properly `ProbeForWrite`-validated before any kernel data is written
-  - Name string is `ProbeForRead`-validated before dereferencing
-  - Return `STATUS_BUFFER_TOO_SMALL` with required length if buffer is insufficient (do not truncate silently)
+- [x] Blocklist `env_name_is_privilege_sensitive` (`env.c`): case-insensitive `LD_PRELOAD`, `LD_LIBRARY_PATH` (Linux loader-hijack -- XREF `TODO-23-exception-dispatch-seh.md`), any `_IMPOSSIBLE_DEBUG_`-prefix name
+- [x] `env_sanitize_for_elevation(task)` (`env.c`): physically strips blocklisted vars, audit-logs each NAME at `LOG_WARN`, idempotent; detaches under `environ_lock` then klog+free after unlock
+- [/] Elevation-transition invocation DEFERRED: `NtCreateProcess` never raises child IL above parent; owners TODO-15 SRM (UAC in-place token install) + TODO-12 §7 (child env inheritance)
+- [x] AT_SECURE read gate `env_is_secure_context` + `env_get_copy`/`env_peek_locked`/block builders: token IL > Medium hides blocklisted names, NULL-token fail-closed; active now, independent of the deferred strip wiring
+- [x] `NtSetEnvironmentVariable` validation (§5, `nt/nt_env.c:340`): empty/`=`/length rejects, value over cap `STATUS_NAME_TOO_LONG`, block quota `STATUS_QUOTA_EXCEEDED`, else `STATUS_INVALID_PARAMETER`
+- [x] `NtQueryEnvironmentVariable` validation (§5, `nt/nt_env.c:128`): `ProbeForWrite` descriptor+buffer+len, `ProbeForRead` name, `STATUS_BUFFER_TOO_SMALL` w/ required length, no partial write
 
 - [ ] Commit: `"kernel/env: security sanitization for elevated processes, input validation"`
 
-**Test checkpoint:** Elevated child strips `LD_PRELOAD`; invalid name returns `STATUS_INVALID_PARAMETER`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Elevated (High/System) task reads `LD_PRELOAD` as absent and its env block omits it; a Medium task still reads it; `env_sanitize_for_elevation` strips all blocklisted vars and is idempotent; invalid `NtSetEnvironmentVariable` name returns `STATUS_INVALID_PARAMETER` (§5). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 5 s16 suites (blocklist, secure-context, read gate, sanitize, block-exclude), 0 failures
+
+> **Notes:**
+> - **What shipped** -- `env.c` s16 layer: `env_name_is_privilege_sensitive`, `env_is_secure_context` (token IL > Medium, NULL fail-closed), `env_sanitize_for_elevation`, + AT_SECURE read/serialize gate on the getters and both block builders.
+> - **How it runs** -- read gate is ACTIVE now (keyed on live token integrity); `env_sanitize_for_elevation` is the transition primitive whose call site is deferred to the token-install owners. Nt-handler input validation was already delivered by §5.
+> - **Downstream effects** -- filed reciprocal sanitize-invocation items in TODO-15 (UAC token install) and TODO-12 §7 (elevated-child env inheritance); Codex design-review adoptions are in the commit message.
+> - **Canonical doc** -- `include/kernel/env.h` "s16: elevation security" contract block.
+> - **Scope boundary** -- §16 owns the blocklist + read gate + strip primitive; the transition INVOCATION is owned by TODO-15 (UAC) and TODO-12 §7 (child env copy); Linux `LD_*` semantics owned by the compat layer (TODO-23).
 
 ---
 
@@ -696,7 +692,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ✅ env_searchpath.c   |
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ✅ safe-search CAS    |
 | 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⚠️ §15 kernel prim   |
-| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16                |
+| 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⚠️ §16 read gate     |
 | ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |

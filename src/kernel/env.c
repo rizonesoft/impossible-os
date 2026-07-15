@@ -20,6 +20,7 @@
 #include "kernel/klog.h"         /* klog() */
 #include "kernel/nt/nls_cp.h"    /* nls_cp_utf8_to_utf16 (env block build) */
 #include "kernel/ob/teb.h"       /* TEB LastErrorValue (CommandLineToArgvW) */
+#include "kernel/security/mic.h" /* SeGetTokenIntegrityLevel, SECURITY_MANDATORY_*_RID (s16 AT_SECURE) */
 #include "registry.h"            /* RegOpenKeyEx / RegEnumValue / RegGet* + ERROR_* */
 
 #define ENV_PAGE_SIZE 4096u
@@ -328,6 +329,76 @@ static int env_find_index(struct task *t, const char *name, uint32_t namelen)
     return env_bsearch(t, name, namelen, (uint32_t *)0);
 }
 
+/* --- s16: privilege-sensitive variable policy (AT_SECURE parallel) --------
+ * A small blocklist of variable NAMES an elevated (High/System integrity)
+ * process must never observe or export, mirroring glibc secure_getenv() /
+ * AT_SECURE: LD_PRELOAD and LD_LIBRARY_PATH are DLL/loader-hijack vectors the
+ * Linux compat layer honors for NORMAL processes but must ignore under
+ * elevation; any name beginning "_IMPOSSIBLE_DEBUG_" is a debug knob that must
+ * not be inheritable into a privileged process. Matching is case-INSENSITIVE
+ * because the env store itself is (env_name_cmp lowercases via env_lc), so a
+ * mixed-case spelling ("ld_preload") is the SAME stored entry and cannot bypass
+ * the gate. env_get_copy/env_peek_locked hide these names, the block builders
+ * omit them from a secure task's serialized block, and env_sanitize_for_elevation
+ * physically strips them at an elevation transition. */
+static int env_name_span_ci_eq(const char *name, uint32_t namelen, const char *lit)
+{
+    return env_name_cmp(name, namelen, lit, env_strlen(lit)) == 0;
+}
+
+static int env_name_span_ci_prefix(const char *name, uint32_t namelen, const char *lit)
+{
+    uint32_t llen = env_strlen(lit);
+    return namelen >= llen && env_name_cmp(name, llen, lit, llen) == 0;
+}
+
+/* True iff `name` (namelen bytes, no NUL required) is on the elevation blocklist. */
+int env_name_is_privilege_sensitive(const char *name, uint32_t namelen)
+{
+    if (!name || namelen == 0u)
+        return 0;
+    return env_name_span_ci_eq(name, namelen, "LD_PRELOAD")
+        || env_name_span_ci_eq(name, namelen, "LD_LIBRARY_PATH")
+        || env_name_span_ci_prefix(name, namelen, "_IMPOSSIBLE_DEBUG_");
+}
+
+/* Same test against a stored "name=value" entry (name is the key span). */
+static int env_entry_is_privilege_sensitive(const char *entry)
+{
+    return env_name_is_privilege_sensitive(entry, env_entry_keylen(entry));
+}
+
+/* True iff task `t` runs at a privilege level where the blocklist applies --
+ * i.e. its primary token's integrity level is above Medium (an elevated admin
+ * or a service running as System). FAIL-CLOSED: a task with no assigned token
+ * (no security context established yet) is treated as secure so an unassigned
+ * process cannot be used to launder a blocklisted name. A malformed non-NULL
+ * token collapses to Medium inside SeGetTokenIntegrityLevel (its own fail-safe)
+ * and is therefore treated as non-secure -- deliberate, because a Medium process
+ * legitimately reads LD_PRELOAD for the Linux compat layer and a malformed token
+ * is indistinguishable from a real Medium one at this layer.
+ *
+ * The primary token is assign-once at task creation (task.c) and atomically
+ * exchanged to NULL only at reap (task.c task_cleanup, task already TASK_DEAD);
+ * we ACQUIRE-load it to pair with that teardown store and avoid a torn pointer.
+ * There is deliberately NO in-place Medium->High replacement path today. When
+ * TODO-15 s9 adds one (UAC ProcessAccessToken swap), that transition MUST
+ * publish the elevated token and restrict/sanitize the environment atomically
+ * (a task-level elevating flag under environ_lock that rejects a blocklisted
+ * env_set); until then the read gate below is sound because no concurrent
+ * elevation of a running task can occur. */
+int env_is_secure_context(struct task *t)
+{
+    void *tok;
+    if (!t)
+        return 0;                    /* no task -> no boundary to enforce */
+    tok = __atomic_load_n(&t->token, __ATOMIC_ACQUIRE);
+    if (!tok)
+        return 1;                    /* fail closed: no security context yet */
+    return SeGetTokenIntegrityLevel((const ACCESS_TOKEN *)tok)
+           > SECURITY_MANDATORY_MEDIUM_RID;
+}
+
 /* --- Public API ----------------------------------------------------------- */
 
 void env_lock(struct task *t)
@@ -350,6 +421,9 @@ const char *env_peek_locked(struct task *t, const char *name)
         return NULL;
     if (env_name_classify(name, &namelen) != ENV_OK)   /* same validation as env_set */
         return NULL;
+    /* AT_SECURE: an elevated process never observes a blocklisted name (s16). */
+    if (env_is_secure_context(t) && env_name_is_privilege_sensitive(name, namelen))
+        return NULL;
     idx = env_find_index(t, name, namelen);
     if (idx < 0)
         return NULL;
@@ -370,6 +444,12 @@ int env_get_copy(struct task *t, const char *name, char *out, uint32_t out_size)
         if (nrc != ENV_OK)
             return nrc;
     }
+
+    /* AT_SECURE: an elevated process reads a blocklisted name as absent (s16).
+     * Checked before the lock -- env_is_secure_context reads only the (assign-once)
+     * primary token, never t->environ. */
+    if (env_is_secure_context(t) && env_name_is_privilege_sensitive(name, namelen))
+        return ENV_ERR_NOTFOUND;
 
     mutex_lock(&t->environ_lock);
     idx = env_find_index(t, name, namelen);
@@ -532,6 +612,102 @@ int env_unset(struct task *t, const char *name)
     return ENV_OK;
 }
 
+/* s16: physically strip every privilege-sensitive (blocklisted) variable from a
+ * process's environment, for use at an elevation transition (the invocation
+ * site -- UAC in-place token replacement and elevated-child env inheritance -- is
+ * owned downstream; see TODO-22 s16 XREFs). Returns the number of variables
+ * removed. Only the NAME is logged, never the value (which may hold a secret).
+ *
+ * ATOMICITY: all victims are detached in ONE locked compaction pass (two reads
+ * of environ[] under a single mutex hold, no intervening unlock) so a concurrent
+ * env_set cannot slip a blocklisted entry through a mid-scan window. Victim
+ * pointers are retained in a kmalloc'd array (alloc under the sleeping mutex is
+ * permitted, as env_build_block_utf16 documents; nv <= ENV_MAX_ENTRIES so the
+ * array is <= 4 KiB) and the klog + env_str_free happen AFTER the unlock -- the
+ * env module forbids klog (synchronous serial/framebuffer/disk I/O) under
+ * environ_lock. On the rare victim-array OOM, victims are freed under the lock
+ * (memory-safe) and a single count is logged instead of per-name lines. NOTE:
+ * this establishes the postcondition at the point of the call; a full "no
+ * blocklisted var may EVER exist while elevated" guarantee also needs env_set to
+ * reject blocklisted names during the elevation transition, owned by TODO-15 s9
+ * (the read gate above already masks any post-call residue while secure). */
+int env_sanitize_for_elevation(struct task *t)
+{
+    char   **victims = NULL;
+    uint32_t nv = 0, cap, rd, wr, i;
+    int removed;
+
+    if (!t)
+        return 0;
+
+    mutex_lock(&t->environ_lock);
+
+    /* Pass 1: count blocklisted entries under the lock. */
+    for (rd = 0; rd < t->environ_count; rd++) {
+        const char *e = t->environ[rd];
+        if (e && env_entry_is_privilege_sensitive(e))
+            nv++;
+    }
+    if (nv == 0u) {
+        mutex_unlock(&t->environ_lock);
+        return 0;
+    }
+
+    /* Retain victims for post-unlock audit+free; NULL on OOM -> free under lock. */
+    cap = nv;
+    victims = (char **)kmalloc(cap * (uint32_t)sizeof(char *));
+
+    /* Pass 2: single locked compaction. Keep non-victims (shift down), detach
+     * victims (retain or free), fix the cached byte total and count. */
+    nv = 0;
+    wr = 0;
+    for (rd = 0; rd < t->environ_count; rd++) {
+        char *e = t->environ[rd];
+        if (e && env_entry_is_privilege_sensitive(e)) {
+            uint32_t vn = env_strlen(e) + 1u;
+            t->environ_bytes -= vn;                 /* cached total: drop the victim */
+            if (victims && nv < cap)
+                victims[nv] = e;                    /* retain for post-unlock log+free */
+            else
+                env_str_free(e, vn);                /* OOM fallback: free under lock */
+            nv++;
+        } else {
+            t->environ[wr++] = e;                   /* keep (compact down) */
+        }
+    }
+    while (wr < t->environ_count)
+        t->environ[wr++] = NULL;                    /* clear the freed tail */
+    t->environ_count -= nv;
+    removed = (int)nv;
+
+    mutex_unlock(&t->environ_lock);
+
+    /* Audit + free AFTER unlock. */
+    if (victims) {
+        for (i = 0; i < nv && i < cap; i++) {
+            char *e = victims[i];
+            char namebuf[ENV_NAME_MAX + 1];
+            uint32_t keylen = env_entry_keylen(e);
+            uint32_t k;
+            if (keylen > ENV_NAME_MAX)
+                keylen = ENV_NAME_MAX;              /* defensive; keys capped at set time */
+            for (k = 0; k < keylen; k++)
+                namebuf[k] = e[k];
+            namebuf[keylen] = '\0';
+            klog(LOG_WARN, "env", "sanitized privileged variable '%s' from elevated process",
+                 namebuf);
+            env_str_free(e, env_strlen(e) + 1u);
+        }
+        kfree(victims);
+    } else {
+        klog(LOG_WARN, "env",
+             "sanitized %d privileged variable(s) from elevated process (name audit skipped: OOM)",
+             removed);
+    }
+
+    return removed;
+}
+
 int env_copy(struct task *dst, const struct task *src)
 {
     struct task *s = (struct task *)src;   /* mutex_lock takes non-const; no logical mutation */
@@ -560,23 +736,36 @@ int env_copy(struct task *dst, const struct task *src)
     }
     for (i = 0; i <= count; i++)
         arr[i] = NULL;                     /* pre-null (incl terminator) for clean unwind */
-    for (i = 0; i < count; i++) {
-        if (!s->environ[i])
-            continue;
-        arr[i] = env_strdup(s->environ[i]);
-        if (!arr[i]) {
-            uint32_t j;
-            for (j = 0; j < i; j++)
-                if (arr[j])
-                    env_str_free(arr[j], env_strlen(arr[j]) + 1);
-            kfree(arr);
-            mutex_unlock(&s->environ_lock);
-            return ENV_ERR_NOMEM;
+    /* AT_SECURE (s16): a secure SOURCE must not EXPORT a blocklisted name, so the
+     * child never inherits it -- consistent with the read gate + block builders,
+     * and defensive against a caller that forgets the elevated-child sanitize.
+     * Compact the destination (write index `w` <= src index) and recompute the
+     * cached byte total from the kept entries, since skipping breaks the exact
+     * "same block bytes" equality. */
+    {
+        int secure = env_is_secure_context(s);
+        uint32_t w = 0, kept_bytes = 0;
+        for (i = 0; i < count; i++) {
+            const char *e = s->environ[i];
+            if (!e || (secure && env_entry_is_privilege_sensitive(e)))
+                continue;
+            arr[w] = env_strdup(e);
+            if (!arr[w]) {
+                uint32_t j;
+                for (j = 0; j < w; j++)
+                    if (arr[j])
+                        env_str_free(arr[j], env_strlen(arr[j]) + 1);
+                kfree(arr);
+                mutex_unlock(&s->environ_lock);
+                return ENV_ERR_NOMEM;
+            }
+            kept_bytes += env_strlen(e) + 1u;
+            w++;
         }
+        dst->environ = arr;
+        dst->environ_count = w;
+        dst->environ_bytes = kept_bytes;   /* recomputed: skipped entries excluded */
     }
-    dst->environ = arr;
-    dst->environ_count = count;
-    dst->environ_bytes = s->environ_bytes;   /* exact deep copy -> same block bytes */
     mutex_unlock(&s->environ_lock);
     return ENV_OK;
 }
@@ -1388,6 +1577,7 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
     uint32_t total, i, w, nentries;
     char *raw;
     uint16_t *blk;
+    int secure;
 
     if (!t || !out_block || !out_wchars)
         return ENV_ERR_INVAL;
@@ -1404,6 +1594,11 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
      * the small-block path). Tracked for a real physical-allocator lock. */
     mutex_lock(&t->environ_lock);
 
+    /* AT_SECURE: an elevated task's serialized block omits blocklisted names, so
+     * a child receiving this block (CreateEnvironmentBlock / Rtl expansion) cannot
+     * recover LD_PRELOAD et al. Constant for the whole build; both passes agree. */
+    secure = env_is_secure_context(t);
+
     /* Sizing pass: UTF-8 entries convert to a variable number of WCHARs (a
      * multibyte UTF-8 char is one BMP WCHAR or a surrogate pair, never one WCHAR
      * per byte), so measure the real UTF-16 length via nls_cp_utf8_to_utf16 with
@@ -1415,7 +1610,7 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
         for (i = 0; i < t->environ_count; i++) {
             const char *e = t->environ[i];
             int need;
-            if (!e)
+            if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                 continue;
             need = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                         (uint16_t *)0, 0u, NLS_CP_REPLACE);
@@ -1456,7 +1651,7 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
         for (i = 0; i < t->environ_count; i++) {
             const char *e = t->environ[i];
             int got;
-            if (!e)
+            if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                 continue;
             got = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                        &blk[w], total - w, NLS_CP_REPLACE);
@@ -1501,12 +1696,16 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
                     int is_unicode, uint32_t *out_len)
 {
     uint32_t i;
+    int secure;
 
     if (!t || !out_len)
         return ENV_ERR_INVAL;
     *out_len = 0;
 
     mutex_lock(&t->environ_lock);
+
+    /* AT_SECURE: omit blocklisted names from an elevated task's block (s16). */
+    secure = env_is_secure_context(t);
 
     if (is_unicode) {
         uint32_t wchars = 1u;              /* trailing block terminator wchar */
@@ -1517,7 +1716,7 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
             for (i = 0; i < t->environ_count; i++) {
                 const char *e = t->environ[i];
                 int nn;
-                if (!e)
+                if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                     continue;
                 nn = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                           (uint16_t *)0, 0u, NLS_CP_REPLACE);
@@ -1544,7 +1743,7 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
             for (i = 0; i < t->environ_count; i++) {
                 const char *e = t->environ[i];
                 int got;
-                if (!e)
+                if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                     continue;
                 got = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                            &blk[w], cap - w, NLS_CP_REPLACE);
@@ -1567,7 +1766,7 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
         if (t->environ) {
             for (i = 0; i < t->environ_count; i++) {
                 const char *e = t->environ[i];
-                if (!e)
+                if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                     continue;
                 bytes += env_strlen(e) + 1u;   /* "name=value" + its NUL */
                 nent++;
@@ -1586,7 +1785,7 @@ int env_build_block(struct task *t, void *out_buf, uint32_t max_len,
             for (i = 0; i < t->environ_count; i++) {
                 const char *e = t->environ[i];
                 uint32_t el, j;
-                if (!e)
+                if (!e || (secure && env_entry_is_privilege_sensitive(e)))
                     continue;
                 el = env_strlen(e);
                 for (j = 0; j < el; j++)

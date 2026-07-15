@@ -527,6 +527,7 @@ title: "TODO-15 -- Security Reference Monitor"
   5. On denial: return `STATUS_PRIVILEGE_NOT_HELD`
 - [ ] Note: full consent UI implementation is in `08-desktop-shell` -- this TODO provides only the kernel side of the handshake
 - [ ] `WRITE_RESTRICTED` flag: `TOKEN_WRITE_RESTRICTED` token flag; when set, §5's restricted-SID second pass applies ONLY to write-class access, so read/execute is not falsely denied. -> XREF: 02-kernel-core/TODO-15 §5
+- [ ] After the `NtRequestTokenElevation` `ProcessAccessToken` swap to a higher-IL token, call `env_sanitize_for_elevation(process)` to strip blocklisted env vars -> XREF: 02-kernel-core/TODO-22 §16 (item: "env_sanitize_for_elevation(task)")
 - [ ] Commit: `"kernel/security: NtFilterToken, linked token pair, UAC elevation protocol"`
 
 **Test checkpoint:** `NtFilterToken` with `DISABLE_MAX_PRIVILEGE` → new token has only SeChangeNotifyPrivilege enabled. `NtFilterToken` with SidsToDisable=[BA] → BA group has `SE_GROUP_USE_FOR_DENY_ONLY`. Linked token pair: `NtQueryInformationToken(TokenLinkedToken)` on filtered → returns handle to full admin token. `ElevationType` of filtered == `TokenElevationTypeLimited`. Serial log: `"[SRM] NtFilterToken: %u privileges removed, %u groups disabled"`. Test on: QEMU WHPX + TCG.
@@ -633,7 +634,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 > - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights + unref'd token lifetime = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226).
 > - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
 > **Verified:** 2026-07-05 | commit `993bcd60` | 9/20 items | build OK | tests compile (security + ob; runtime on WHPX)
-> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1233)
+> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1234)
 > **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`" at line 364)
 > **Quality reviewed:** 2026-07-05 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
