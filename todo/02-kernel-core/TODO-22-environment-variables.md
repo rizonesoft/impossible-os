@@ -82,7 +82,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
 | 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [/]   |
 | 💎   |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                         |  [x]   |
-| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [ ]   |
+| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
 | 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -678,10 +678,7 @@ Two latent defects in the SHIPPED §3 UTF-16 expansion path (`nt_rtlenv.c`), fix
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (cap rationale + return set).
 > - **Scope boundary:** §20 owns the three BLOCKING gates review filed there (lookup-work bound, foreign-block extent, the expand-path 2 MiB PMM alloc the raise made live) plus the at-cap allocation test; §21 owns the four Rtl exports and stays non-user-reachable until §20 clears -- nothing here is user-reachable until §21 wires an export; §3 owns the expansion primitives.
 > **Verified:** 2026-07-15 | commit `b0c184e0` + review fixes | 4/5 items | build OK | tests 21290 kernel + 16 user-mode PASS
-> **Deferred:** [H] `rtl_env_block_lookup` walks the whole block per `%NAME%`, so ~10922 missing refs against a near-cap environ cost ~1.1e10 compares/pass, 16x worse since the raise (no user-reachable caller exists: `nt_rtlenv.c` has no SSDT row) -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before any user-reachable export:** bound `rtl_env_block_lookup` work" at line 694)
-> **Deferred:** [H] `rtl_env_block_len` takes a pointer + cap with no allocation extent, so an unterminated non-NULL `Environment` reads up to 2 MiB past its allocation (reason: not-functional-today -- the sole caller passes a self-built terminated block) -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before any user-reachable export:** `RtlExpandEnvironmentStrings_U` must take a trusted extent" at line 695)
-> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 696)
-> **Deferred:** [M] no test at the raise's real boundary (at-cap environ -> 512 frames); coverage tops out at ~48 frames and only proves the OLD cap was passed -> XREF: 02-kernel-core/TODO-22 §20 (item: "Test the raise at its real boundary" at line 697)
+> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 697)
 > **Accepted:** [M] the unsynchronized PMM frame bitmap that lets the above double-allocate is a pre-existing kernel-wide gap this section AMPLIFIES (32 -> 512 frames), not originates -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
 > **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2M+3L fixed, 3H+1M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
@@ -691,13 +688,24 @@ Two latent defects in the SHIPPED §3 UTF-16 expansion path (`nt_rtlenv.c`), fix
 
 The three BLOCKING gates §19's review filed against the shipped `nt_rtlenv.c` expansion path, plus the at-cap allocation test. Split out of the original combined §20 (which paired them with the exports that consume them): these harden the EXISTING §3 path and are the precondition for §21 making any of it user-reachable, so they land first and independently. Nothing in `nt_rtlenv.c` is user-reachable today (no SSDT row, no kernel32 caller), which is what keeps these deferrable-but-blocking rather than live defects.
 
-- [ ] **BLOCKING before any user-reachable export:** bound `rtl_env_block_lookup` work -- it walks the whole block per `%NAME%`, so ~10922 missing refs cost ~1.1e10 compares/pass; add a name index or work budget + a repeated-miss perf test
-- [ ] **BLOCKING before any user-reachable export:** `RtlExpandEnvironmentStrings_U` must take a trusted extent for a non-NULL `Environment` or refuse it -- `rtl_env_block_len` reads up to 2 MiB past an unterminated block; guard-page test
-- [ ] **BLOCKING before a user-reachable export:** expand path takes 2 MiB via `pmm_alloc_contiguous(512)` on an unlocked PMM, so two tasks can double-allocate → XREF `03-memory-concurrency/TODO-03` §1 (item: "**PMM bitmap SMP locking**" line 103)
-- [ ] Test the raise at its real boundary: an at-cap environ (`environ_bytes` = `ENV_BLOCK_MAX` - 1 -> 512 frames); today `test_env_expand_for_user_large_env` tops out at ~48 frames and only proves the OLD 64 KiWCHAR cap was passed
-- [ ] Commit: `"kernel/env: bound Rtl block lookup + foreign-block extent before exports"`
+- [x] Bounded `rtl_env_block_lookup` work: per-pass `RTL_ENV_EXPAND_WORK_MAX` budget, over-budget -> `STATUS_INSUFFICIENT_RESOURCES` refused before any store. A budget, not a name index: an index over a 1 MiWCHAR block needs ~168 KB of PMM
+- [x] Trusted extent: new `rtl_env_expand_block(block, block_extent, ...)` engine bounds the scan by `min(extent, cap)`; the ntdll ABI carries no extent, so `RtlExpandEnvironmentStrings_U` refuses a non-NULL `Environment` (`STATUS_NOT_SUPPORTED`)
+- [x] `rtl_env_block_validate` returns the lookup bound AND the verified extent in one call (`extent >= 2`, genuine double NUL), replacing the `(bound == 0) ? 2 : bound + 1` reconstruction
+- [/] **BLOCKING before a user-reachable export:** expand path takes 2 MiB via `pmm_alloc_contiguous(512)` on an unlocked PMM, so two tasks can double-allocate → XREF `03-memory-concurrency/TODO-03` §1 (item: "**PMM bitmap SMP locking**" line 103)
+- [x] Test the raise at its real boundary: `test_env_expand_at_cap_boundary` fills the environ to `ENV_BLOCK_MAX` and asserts a > 1e6 WCHAR block (~488+ frames vs the ~48 the old case reached)
+- [x] Commit: `"kernel/env: bound Rtl block lookup + foreign-block extent before exports"`
 
-**Test checkpoint:** a repeated-miss expansion over a near-cap environ completes within the work budget (was ~1.1e10 compares); a non-NULL `Environment` whose block runs off its allocation is refused rather than read past (guard-page test); an at-cap environ expands through the real 512-frame path. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** a repeated-miss expansion (1750 misses x ~5028 WCHARs) is refused with `STATUS_INSUFFICIENT_RESOURCES` publishing no length, and the refusal lands exactly at the budget boundary (1668 misses reach the buffer check, 1669 are refused) on both the miss and hit paths; a block with no terminator inside its extent is refused rather than scanned past; a lone `"\0"` is not accepted as the empty block; an at-cap environ expands through the real ~512-frame path. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 9 suites added, 0 failures (2109 registered; 1972 kernel + 16 user-mode green)
+> **Notes:**
+> - **What shipped:** `nt_rtlenv.c` gains `rtl_env_block_validate` (extent-bounded, replacing `rtl_env_block_len`), the `rtl_env_expand_block` engine, and a per-pass work budget charged via `rtl_env_work_charge`; 9 new tests.
+> - **How it integrates:** in-kernel callers pass the extent they already know; the public entry keeps its ntdll signature but serves only the NULL form. Fresh-per-pass budgets keep a refusal from landing mid-write.
+> - **Downstream effects:** unblocks §21. The non-NULL ABI divergence, the unmeasured budget constant, and the lookup cache are each owned by a concrete §21 item.
+> - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (extent contract, budget rationale, the non-NULL refusal and why).
+> - **Scope boundary:** §20 owns the three gates + the at-cap test; §21 owns the exports, the boundary probe+copy, the budget measurement, and the cache; the PMM bitmap is `03-memory-concurrency/TODO-03` §1.
+> **Deferred:** [H] the expand path's 2 MiB `pmm_alloc_contiguous(512)` runs on an unsynchronized PMM frame bitmap, so two CPUs can double-allocate the same frames; the root cause is kernel-wide and owned elsewhere, and a local lock here would be a second allocator lock racing the real one (no user-reachable caller exists: `nt_rtlenv.c` has no SSDT row, and §21 carries the gate item that keeps it that way) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
+> **Accepted:** [M] a bounded per-call name cache would cut the repeated-miss constant the work budget merely bounds; rejected here because it cannot bound the worst case (all-distinct misses still thrash) and the budget must exist regardless -> XREF: 02-kernel-core/TODO-22 §21 (item: "Lookup cache for repeated `%NAME%` misses")
+> **Accepted:** [M] refusing a non-NULL `Environment` diverges from the documented ntdll explicit-block form; the ABI-preserving shape needs a probe+copy boundary that derives a trusted extent, which is not this section's surface -> XREF: 02-kernel-core/TODO-22 §21 (item: "**Boundary probe+copy for a non-NULL `Environment`**")
 
 ---
 
@@ -719,6 +727,9 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [ ] Raise `ENV_CREATE_BLOCK_MAX_WCHARS` toward `RTL_ENV_BLOCK_MAX_WCHARS` so `RtlCreateEnvironment` accepts every environ the store does, once the ~2 MiB PMM path is SMP-stress-verified → XREF `03-memory-concurrency/TODO-03`
 - [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these Rtl exports so ntdll imports resolve; `RtlExpandEnvironmentStrings_U` already lives in §3
 - [ ] Gate: no export here becomes user-reachable (SSDT row or kernel32 caller) until §20's three BLOCKING items are closed or explicitly re-deferred with the reachability re-checked
+- [ ] **Boundary probe+copy for a non-NULL `Environment`**: copy the caller block into a terminated kernel snapshot, then call `rtl_env_expand_block` with its extent. Restores the ntdll explicit-block form §20 refuses
+- [ ] **Measure `RTL_ENV_EXPAND_WORK_MAX`**: the 8388608 ceiling is reasoned (~8 ms at ~1e9 compares/s), not measured. Derive it from worst-case bare-metal timing and record the method next to the constant
+- [ ] Lookup cache for repeated `%NAME%` misses: a bounded (<= 4 KiB `kmalloc`, no PMM) per-call name cache shared by both passes would cut the O(refs x block) constant. The §20 budget is the hard bound; this is the optimization under it
 - [ ] Commit: `"ntdll: Rtl environment exports over the Nt env syscalls"`
 
 **Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment(0, &e)` builds an empty block and `(1, &e)` a sorted clone; `RtlSetEnvironmentVariable` with a non-NULL Environment returns `STATUS_NOT_SUPPORTED`. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
@@ -761,7 +772,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |
 | 💎   | ntdll Rtl env exports      | ✅ ntdll usermode      | ❌ none               | ⬜ §21                |
 | ⭐   | Rtl expansion hardening    | ⚠️ uint32 len fields  | ❌ n/a                | ✅ §19 u64 + `%=X:%`  |
-| ⭐   | Rtl lookup work bound      | ❌ O(n) scan per ref   | ❌ n/a                | ⬜ §20 index/budget   |
+| ⭐   | Rtl lookup work bound      | ❌ O(n) scan per ref   | ❌ n/a                | ✅ §20 work budget    |
 | 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX   |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.

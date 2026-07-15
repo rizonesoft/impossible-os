@@ -55,20 +55,58 @@
  * UNICODE_STRING_MAX_CHARS check returns STATUS_UNSUCCESSFUL). */
 #define RTL_ENV_MAX_RESULT_WCHARS  32766u
 
+/* Per-PASS ceiling on block-inspection work, counted in WCHARs examined by the
+ * name lookup. Bounds the O(refs * block) product that makes an expansion
+ * expensive: rtl_env_block_lookup walks the whole block on a MISS, and a
+ * 32767-WCHAR Source holds up to 10922 `%V%` references, so a near-cap block
+ * costs ~1.1e10 comparisons per pass (seconds of kernel time) with no bound at
+ * all. At ~1e9 simple comparisons/sec this ceiling caps one pass near ~8 ms;
+ * exceeding it is STATUS_INSUFFICIENT_RESOURCES -- a resource-policy refusal,
+ * deliberately distinct from STATUS_INVALID_PARAMETER (malformed input).
+ *
+ * The budget is per PASS and each pass starts from a FRESH copy, NOT one counter
+ * shared across both: a shared counter would let pass 1 consume most of it and
+ * pass 2 trip on identical work, making the outcome depend on which pass you are
+ * in rather than on the inputs. Fresh-per-pass keeps the verdict a pure function
+ * of (block, Source) -- if pass 1 fits, pass 2 does the same work and also fits
+ * -- so a budget refusal can never land mid-write. The two passes' consumed work
+ * is compared afterwards, which also makes this a concurrent-mutation detector
+ * alongside the existing written-vs-required check (TODO-22 s20).
+ *
+ * WHAT THIS INTENTIONALLY REFUSES: against a near-cap (1 MiWCHAR) block a
+ * legitimate expansion gets ~8 full-block misses. Real environments are a few
+ * KiB, where the same ceiling allows thousands, so only pathological
+ * block/reference combinations are rejected. The VALUE is a reasoned ceiling,
+ * not a measured one; deriving it from worst-case bare-metal timing is owned by
+ * TODO-22 s21 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
+#define RTL_ENV_EXPAND_WORK_MAX    8388608u
+
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-
  * terminated UTF-16 "NAME=VALUE\0"... block), writing the expanded UTF-16 result
  * into `Destination->Buffer`.
  *
- *   Environment    kernel-resident UTF-16 env block, or NULL to use the calling
- *                  process's own environment (synthesized from task_current()'s
- *                  environ). A non-NULL block MUST be a well-formed double-NUL-
- *                  terminated block (as ntdll requires): RTL_ENV_BLOCK_MAX_WCHARS
- *                  only backstops a runaway scan and does NOT substitute for a
- *                  valid terminator, so the boundary that copies a user block
- *                  into a kernel snapshot must guarantee the terminator lies
- *                  within the copied length. A block with no terminator inside
- *                  the cap fails STATUS_INVALID_PARAMETER. A block that aliases
- *                  the Destination range is rejected (STATUS_INVALID_PARAMETER).
+ *   Environment    MUST be NULL: the calling process's own environment, which is
+ *                  synthesized from task_current()'s environ (a kernel-resident
+ *                  block whose exact extent is known). A NON-NULL Environment is
+ *                  refused with STATUS_NOT_SUPPORTED -- see the gate below.
+ *
+ * NON-NULL Environment IS A DELIBERATE, TEMPORARY ABI DIVERGENCE (TODO-22 s20).
+ * ntdll documents the explicit-block form, and this entry accepted it until the
+ * s19 review showed why it cannot be done safely through this signature: a bare
+ * `void *` carries no allocation EXTENT, so the double-NUL scan had to trust the
+ * caller's terminator and would read up to RTL_ENV_BLOCK_MAX_WCHARS (2 MiB) past
+ * a short or unterminated allocation. No amount of capping fixes that -- a cap
+ * bounds the runaway but still reads adjacent allocations, and probing mapped
+ * pages proves nothing about the C object's length. The ABI-preserving safe
+ * shape is a BOUNDARY that probes + copies the caller's block into a terminated
+ * kernel snapshot (whose extent it then knows) and calls rtl_env_expand_block
+ * below; that boundary is owned by TODO-22 s21 (item: "Boundary probe+copy for a
+ * non-NULL Environment"). Until it exists the form is refused explicitly rather
+ * than served unsafely, and the symbol MUST NOT be described as
+ * compatibility-complete when it is exported. Nothing is user-reachable today
+ * (no SSDT row, no kernel32 caller), so this refusal takes no capability away
+ * from any existing caller: every in-kernel caller and test uses the
+ * extent-taking rtl_env_expand_block entry instead.
  *   Source         UNICODE_STRING with the template (Length is an even byte count).
  *   Destination    UNICODE_STRING output buffer; MaximumLength bounds the write.
  *   ReturnedLength  optional; set to the required buffer size in BYTES including
@@ -104,10 +142,31 @@
  * branch and stores it unconditionally (TODO-22 s19).
  *
  * Returns STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER,
- * STATUS_UNSUCCESSFUL, or STATUS_NO_MEMORY. */
+ * STATUS_UNSUCCESSFUL, STATUS_INSUFFICIENT_RESOURCES, STATUS_NO_MEMORY, or
+ * STATUS_NOT_SUPPORTED (non-NULL Environment). */
 NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
                                        UNICODE_STRING *Destination,
                                        uint32_t *ReturnedLength);
+
+/* The expansion engine, taking the one fact the ntdll ABI above cannot express:
+ * `block_extent` -- the number of WCHARs the caller GUARANTEES are readable at
+ * `block`. Every in-kernel caller either built the block itself (and knows its
+ * length) or owns a fixed array, so the extent is always available on this side;
+ * only the public `void *` form lacks it. The scan is bounded by
+ * min(block_extent, RTL_ENV_BLOCK_MAX_WCHARS), so a missing terminator can never
+ * read past the allocation -- it fails STATUS_INVALID_PARAMETER instead.
+ *
+ * `block` MUST be kernel-resident, immutable for the call, and a well-formed
+ * double-NUL-terminated block within `block_extent`; `block_extent` MUST be >= 2
+ * (the smallest legal block is the empty "\0\0" form, which is validated as a
+ * genuine double NUL rather than assumed -- TODO-22 s20). Source / Destination /
+ * ReturnedLength semantics, the no-alias matrix, the two-pass agreement check,
+ * and the full status set are exactly as documented for
+ * RtlExpandEnvironmentStrings_U above, plus STATUS_INSUFFICIENT_RESOURCES when a
+ * pass exceeds RTL_ENV_EXPAND_WORK_MAX lookup work. */
+NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
+                              UNICODE_STRING *Source, UNICODE_STRING *Destination,
+                              uint32_t *ReturnedLength);
 
 struct task;
 

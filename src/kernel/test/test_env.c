@@ -23,6 +23,8 @@
 #include "kernel/security/token.h" /* ACCESS_TOKEN for s16 elevation tests */
 #include "kernel/security/sid.h"   /* SeILLow/Medium/High/System integrity SIDs */
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
+#include "kernel/mm/pmm.h"     /* pmm_alloc_contiguous for the budget buffers */
+#include "kernel/mm/vmm.h"     /* VMM_PAGE_SIZE */
 #include "kernel/boot_init.h" /* kernel_subsystem_ready() for the overlay test */
 #include "registry.h"         /* HKCU PATH-append test injects a user value */
 #include "kernel/env_apppaths.h" /* s17 App Paths lookup/register */
@@ -51,6 +53,20 @@ static uint32_t env_test_strlen(const char *s)
 /* One fixture reused across tests. env_fixture_reset frees the prior test's
  * allocations (no leaks) then re-initializes the mutex + NULL fields, mirroring
  * the boot-time all-slots init in task_init. */
+/* ONE ~32 KiB value buffer shared by every large-environ case. Two separate
+ * statics of this size push the kernel BSS past the user base and the build's
+ * BSS-collision gate rejects the image, so the cases share this buffer; the test
+ * runner is single-threaded, and any case that mutates it restores it. */
+static char env_test_bigval[32001];
+
+static void env_test_fill_bigval(void)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof(env_test_bigval) - 1u; i++)
+        env_test_bigval[i] = 'x';
+    env_test_bigval[sizeof(env_test_bigval) - 1u] = '\0';
+}
+
 static struct task s_env_fixture;
 
 static void env_fixture_reset(void)
@@ -673,7 +689,18 @@ static void test_env_build_block_utf16(void)
     env_free(&s_env_fixture);
 }
 
-/* RtlExpandEnvironmentStrings_U: explicit block, %VAR% expansion, lengths. */
+/* The explicit-block tests below drive rtl_env_expand_block -- the expansion
+ * ENGINE -- because the public RtlExpandEnvironmentStrings_U serves only the
+ * NULL-Environment form and refuses a caller-supplied block (its ntdll signature
+ * cannot carry an allocation extent; TODO-22 s20). Each test owns its block as
+ * an ARRAY, so the array's own size IS the readable extent: deriving it here
+ * keeps every test honest, since a hand-written extent could over-claim and mask
+ * the exact overread the extent parameter exists to prevent. */
+#define RTL_EXPAND_ARR(blk, s, d, rl) \
+    rtl_env_expand_block((blk), (uint32_t)(sizeof(blk) / sizeof((blk)[0])), \
+                         (s), (d), (rl))
+
+/* rtl_env_expand_block: explicit block, %VAR% expansion, lengths. */
 static void test_rtl_expand_basic(void)
 {
     /* Block "PATH=C:\X\0\0". */
@@ -690,7 +717,7 @@ static void test_rtl_expand_basic(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    st = RTL_EXPAND_ARR(block, &src, &dst, &rl);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "explicit-block expansion succeeds");
     TEST_ASSERT_EQ((int)dst.Length, (int)(env_test_strlen("C:\\X") * 2u),
                    "Destination->Length is result bytes excluding NUL");
@@ -702,7 +729,7 @@ static void test_rtl_expand_basic(void)
                    "Destination is NUL-terminated");
 }
 
-/* RtlExpandEnvironmentStrings_U: undersized Destination -> STATUS_BUFFER_TOO_SMALL,
+/* rtl_env_expand_block: undersized Destination -> STATUS_BUFFER_TOO_SMALL,
  * ReturnedLength set to the requirement, no partial output, Length unchanged. */
 static void test_rtl_expand_buffer_too_small(void)
 {
@@ -719,7 +746,7 @@ static void test_rtl_expand_buffer_too_small(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);   /* 4 bytes = 2 wchars: too small */
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    st = RTL_EXPAND_ARR(block, &src, &dst, &rl);
     TEST_ASSERT_EQ((int)st, (int)STATUS_BUFFER_TOO_SMALL, "small buffer rejected");
     TEST_ASSERT_EQ((int)rl, (int)((env_test_strlen("abcde") + 1u) * 2u),
                    "ReturnedLength reports required bytes including NUL");
@@ -747,7 +774,7 @@ static void test_rtl_expand_hidden_drive_var(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "hidden =C: expansion succeeds");
     TEST_ASSERT_EQ((int)dst.Length, (int)(env_test_strlen("C:\\D") * 2u),
                    "%=C:% yields the drive cwd value, not the literal");
@@ -757,7 +784,7 @@ static void test_rtl_expand_hidden_drive_var(void)
     /* The entry AFTER the hidden one must still resolve (block walk intact). */
     src.Length = (uint16_t)(env_test_wfill("%PATH%", srcbuf) * 2u);
     dst.Length = 0;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "entry after a hidden var resolves");
     TEST_ASSERT(env_test_weq_ascii(dstbuf, 1u, "p"),
                 "normal entry following a hidden entry still expands");
@@ -779,7 +806,7 @@ static void test_rtl_expand_normal_entry_unshifted(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "normal entry expands");
     TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("1=2"), "1=2"),
                 "only the FIRST = splits a non-'=' entry; value keeps its '='");
@@ -821,7 +848,7 @@ static void test_rtl_expand_result_unrepresentable(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(rtl_big_block, &src, &dst, &rl);
+    st = RTL_EXPAND_ARR(rtl_big_block, &src, &dst, &rl);
     TEST_ASSERT_EQ((int)st, (int)STATUS_UNSUCCESSFUL,
                    "over-32766 result is UNSUCCESSFUL, not BUFFER_TOO_SMALL");
     TEST_ASSERT_EQ((int)rl, 0,
@@ -830,7 +857,7 @@ static void test_rtl_expand_result_unrepresentable(void)
     TEST_ASSERT_EQ((int)dst.Length, 0, "Length unchanged on an unrepresentable result");
 }
 
-/* RtlExpandEnvironmentStrings_U: %% preserved verbatim + case-insensitive ASCII name match. */
+/* rtl_env_expand_block: %% preserved verbatim + case-insensitive ASCII name match. */
 static void test_rtl_expand_escape_and_case(void)
 {
     uint16_t block[] = { 'P','a','t','h','=','Q', 0, 0 };   /* Path=Q */
@@ -847,13 +874,13 @@ static void test_rtl_expand_escape_and_case(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "%% + case expansion succeeds");
     TEST_ASSERT(env_test_weq_ascii(dstbuf, env_test_strlen("50%% Q"), "50%% Q"),
                 "%% preserved verbatim + case-insensitive name match");
 }
 
-/* RtlExpandEnvironmentStrings_U: an unterminated block (no double-NUL within the
+/* rtl_env_expand_block: an unterminated block (no double-NUL within the
  * cap is impractical to build, but a block whose only content lacks a terminator
  * within a tiny synthetic cap is rejected) and NULL args are rejected. */
 static void test_rtl_expand_invalid_args(void)
@@ -865,13 +892,13 @@ static void test_rtl_expand_invalid_args(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, (UNICODE_STRING *)0, &dst,
+    st = RTL_EXPAND_ARR(block, (UNICODE_STRING *)0, &dst,
                                        (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "NULL Source rejected with STATUS_INVALID_PARAMETER");
 }
 
-/* RtlExpandEnvironmentStrings_U: empty Source expands to an empty string. */
+/* rtl_env_expand_block: empty Source expands to an empty string. */
 static void test_rtl_expand_empty_source(void)
 {
     uint16_t block[] = { 'A','=','b', 0, 0 };
@@ -885,14 +912,14 @@ static void test_rtl_expand_empty_source(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    st = RTL_EXPAND_ARR(block, &src, &dst, &rl);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "empty Source expands successfully");
     TEST_ASSERT_EQ((int)dst.Length, 0, "empty Source yields empty result");
     TEST_ASSERT_EQ((int)rl, 2, "ReturnedLength is the lone NUL (2 bytes)");
     TEST_ASSERT_EQ((int)dstbuf[0], 0, "result NUL-terminated");
 }
 
-/* RtlExpandEnvironmentStrings_U: a later entry in a multi-entry block resolves. */
+/* rtl_env_expand_block: a later entry in a multi-entry block resolves. */
 static void test_rtl_expand_multi_entry(void)
 {
     /* "AAA=1\0BBB=22\0\0" */
@@ -906,7 +933,7 @@ static void test_rtl_expand_multi_entry(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "multi-entry block expands");
     TEST_ASSERT(env_test_weq_ascii(dstbuf, 2, "22"),
                 "second block entry resolves correctly");
@@ -926,7 +953,7 @@ static void test_env_build_block_over_cap(void)
     env_free(&s_env_fixture);
 }
 
-/* RtlExpandEnvironmentStrings_U: a fitting result with a NULL Destination buffer
+/* rtl_env_expand_block: a fitting result with a NULL Destination buffer
  * is a caller error -> STATUS_INVALID_PARAMETER, never a NULL write. */
 static void test_rtl_expand_null_dest_buffer(void)
 {
@@ -940,12 +967,12 @@ static void test_rtl_expand_null_dest_buffer(void)
     dst.Length = 0;
     dst.MaximumLength = 16;                       /* room for the result... */
     dst.Buffer = (uint16_t *)0;                  /* ...but NULL buffer */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "fitting result + NULL Destination buffer rejected, not written");
 }
 
-/* RtlExpandEnvironmentStrings_U: a Destination that aliases Source is rejected
+/* rtl_env_expand_block: a Destination that aliases Source is rejected
  * (the two-pass count/write would tear on an in-place overwrite). */
 static void test_rtl_expand_overlap_rejected(void)
 {
@@ -960,7 +987,7 @@ static void test_rtl_expand_overlap_rejected(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(shared);
     dst.Buffer = shared;                         /* aliases Source */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "Destination aliasing Source rejected");
 }
@@ -1016,7 +1043,7 @@ static void test_env_expand_overlap_rejected(void)
     env_free(&s_env_fixture);
 }
 
-/* RtlExpandEnvironmentStrings_U: a Destination at a non-empty block's terminating
+/* rtl_env_expand_block: a Destination at a non-empty block's terminating
  * NUL overlaps the block extent and is rejected. */
 static void test_rtl_expand_overlap_block_terminator(void)
 {
@@ -1030,12 +1057,12 @@ static void test_rtl_expand_overlap_block_terminator(void)
     dst.Length = 0;
     dst.MaximumLength = 2;                          /* 1 wchar */
     dst.Buffer = &block[4];                         /* the terminating NUL */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "Destination at the block terminator rejected");
 }
 
-/* RtlExpandEnvironmentStrings_U: a Destination aliasing an empty block ("\0\0")
+/* rtl_env_expand_block: a Destination aliasing an empty block ("\0\0")
  * is rejected (the extent covers the terminator even when block_wchars == 0). */
 static void test_rtl_expand_overlap_empty_block(void)
 {
@@ -1050,12 +1077,12 @@ static void test_rtl_expand_overlap_empty_block(void)
     dst.Length = 0;
     dst.MaximumLength = 8;
     dst.Buffer = &block[0];                         /* aliases the empty block */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "Destination aliasing an empty block rejected");
 }
 
-/* RtlExpandEnvironmentStrings_U: a name longer than ENV_NAME_MAX is left literal
+/* rtl_env_expand_block: a name longer than ENV_NAME_MAX is left literal
  * (same limit as env_expand), even when an over-limit entry exists in the block. */
 static void test_rtl_expand_name_over_limit(void)
 {
@@ -1081,7 +1108,7 @@ static void test_rtl_expand_name_over_limit(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS, "over-limit-name expansion succeeds");
     /* Result is the literal "%<257 A's>%" (n+2 wchars), NOT "x". */
     TEST_ASSERT_EQ((int)dst.Length, (int)((n + 2u) * 2u),
@@ -1089,7 +1116,7 @@ static void test_rtl_expand_name_over_limit(void)
     TEST_ASSERT_EQ((int)dstbuf[0], (int)(uint16_t)'%', "leading % preserved");
 }
 
-/* RtlExpandEnvironmentStrings_U: a Destination->Buffer pointing into its own
+/* rtl_env_expand_block: a Destination->Buffer pointing into its own
  * descriptor is rejected (would corrupt the write pointer mid-flight). */
 static void test_rtl_expand_self_referential_dest(void)
 {
@@ -1103,12 +1130,12 @@ static void test_rtl_expand_self_referential_dest(void)
     dst.Length = 0;
     dst.MaximumLength = 64;
     dst.Buffer = (uint16_t *)&dst;                 /* aliases the descriptor */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "self-referential Destination buffer rejected");
 }
 
-/* RtlExpandEnvironmentStrings_U: a ReturnedLength aliasing the output range is
+/* rtl_env_expand_block: a ReturnedLength aliasing the output range is
  * rejected (the *ReturnedLength store would corrupt the output). */
 static void test_rtl_expand_returnedlength_alias(void)
 {
@@ -1122,12 +1149,12 @@ static void test_rtl_expand_returnedlength_alias(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)&dstbuf[0]);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)&dstbuf[0]);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "ReturnedLength aliasing the output range rejected");
 }
 
-/* RtlExpandEnvironmentStrings_U: a ReturnedLength aliasing Source data is
+/* rtl_env_expand_block: a ReturnedLength aliasing Source data is
  * rejected (the between-passes store would mutate the input). */
 static void test_rtl_expand_returnedlength_aliases_source(void)
 {
@@ -1141,12 +1168,12 @@ static void test_rtl_expand_returnedlength_aliases_source(void)
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)&srcbuf[0]);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)&srcbuf[0]);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "ReturnedLength aliasing Source data rejected");
 }
 
-/* RtlExpandEnvironmentStrings_U: Destination at block[1] of an empty "\0\0"
+/* rtl_env_expand_block: Destination at block[1] of an empty "\0\0"
  * block is rejected (the extent covers both terminators). */
 static void test_rtl_expand_empty_block_second_nul(void)
 {
@@ -1161,9 +1188,391 @@ static void test_rtl_expand_empty_block_second_nul(void)
     dst.Length = 0;
     dst.MaximumLength = 8;
     dst.Buffer = &block[1];                        /* the second terminator */
-    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, (uint32_t *)0);
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
                    "Destination at an empty block's second NUL rejected");
+}
+
+/* RtlExpandEnvironmentStrings_U: the PUBLIC ntdll entry refuses a caller-supplied
+ * Environment. Its signature passes a bare `void *` with no allocation extent, so
+ * serving the form at all means trusting a caller's terminator and reading up to
+ * 2 MiB past a short block. The engine is reachable with an extent instead. */
+static void test_rtl_expand_public_refuses_explicit_block(void)
+{
+    uint16_t block[] = { 'V','=','1', 0, 0 };
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    uint32_t rl = 0xA5A5A5A5u;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RtlExpandEnvironmentStrings_U(block, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_NOT_SUPPORTED,
+                   "a non-NULL Environment is refused, not scanned without an extent");
+    TEST_ASSERT_EQ((int)dst.Length, 0, "refused call writes no output");
+}
+
+/* rtl_env_expand_block: an extent too small to hold even the empty "\0\0" block
+ * is malformed input, not a zero-length success. */
+static void test_rtl_expand_extent_too_small(void)
+{
+    uint16_t block[] = { 0, 0 };
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = rtl_env_expand_block(block, 1u, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "a 1-WCHAR extent cannot hold a block and is rejected");
+    st = rtl_env_expand_block(block, 0u, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "a 0-WCHAR extent is rejected");
+}
+
+/* rtl_env_expand_block: a lone NUL is NOT the empty block. The second NUL is
+ * verified rather than assumed, so a malformed one-NUL allocation cannot be
+ * promoted into a two-WCHAR range the overlap matrix would then read. */
+static void test_rtl_expand_malformed_empty_block(void)
+{
+    uint16_t block[2];
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    block[0] = 0;
+    block[1] = 'X';                                 /* NOT a double NUL */
+    src.Length = (uint16_t)(env_test_wfill("%V%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "a single NUL followed by content is not a valid empty block");
+}
+
+/* rtl_env_expand_block: a block with no terminator INSIDE its extent is refused.
+ * This is the overread guard: the scan stops at the caller's guaranteed extent
+ * rather than running to RTL_ENV_BLOCK_MAX_WCHARS (2 MiB) hunting a terminator
+ * that the allocation never contained. */
+static void test_rtl_expand_unterminated_within_extent(void)
+{
+    uint16_t block[] = { 'A','=','b' };             /* no NUL at all */
+    uint16_t srcbuf[8], dstbuf[16];
+    UNICODE_STRING src, dst;
+    NTSTATUS st;
+
+    src.Length = (uint16_t)(env_test_wfill("%A%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = RTL_EXPAND_ARR(block, &src, &dst, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INVALID_PARAMETER,
+                   "an unterminated block is refused at its extent, not scanned past");
+}
+
+/* The budget cases need a block and a Source large enough that references x block
+ * exceeds RTL_ENV_EXPAND_WORK_MAX (8388608): ~5028 WCHARs per miss x 1750 misses
+ * = ~8.8e6. That is ~20 KiB, which does NOT fit in BSS -- the kernel image sits
+ * ~13 KiB under the user base and the build's BSS-collision gate rejects the
+ * overflow -- so the buffers are allocated for the duration of the case.
+ * RTL_BUDGET_* are the shapes; the frame counts follow from them. */
+#define RTL_BUDGET_BLOCK_WCHARS  5030u
+#define RTL_BUDGET_SRC_WCHARS    5300u
+#define RTL_BUDGET_MISSES        1750u
+#define RTL_BUDGET_VALUE_WCHARS  5025u
+
+/* The largest miss count that FITS the budget. One "V=" + 5025 'x' entry makes a
+ * miss cost exactly 5028 WCHAR inspections (the whole entry through its NUL), and
+ * RTL_ENV_EXPAND_WORK_MAX / 5028 = 1668.4 -- so 1668 misses spend 8386704 of
+ * 8388608 and one more cannot fit. The boundary cases below straddle exactly this
+ * line, which is where an overshooting FINAL lookup would otherwise slip through. */
+#define RTL_BUDGET_MISS_EXACT    1668u
+
+struct rtl_budget_buf {
+    uintptr_t base;
+    uint64_t  frames;
+};
+
+static uint16_t *rtl_budget_alloc(struct rtl_budget_buf *b, uint32_t wchars)
+{
+    b->frames = ((uint64_t)wchars * 2u + (VMM_PAGE_SIZE - 1u)) / VMM_PAGE_SIZE;
+    b->base = pmm_alloc_contiguous(b->frames);
+    return (uint16_t *)b->base;
+}
+
+static void rtl_budget_free(struct rtl_budget_buf *b)
+{
+    uint64_t f;
+    if (!b->base)
+        return;
+    for (f = 0; f < b->frames; f++)
+        pmm_free_frame(b->base + f * VMM_PAGE_SIZE);
+    b->base = 0;
+}
+
+/* Fill `blk` with one entry "V=xxx..." spanning RTL_BUDGET_VALUE_WCHARS, so every
+ * miss walks the whole block. Returns the block's terminator index. */
+static uint32_t rtl_budget_fill_block(uint16_t *blk)
+{
+    uint32_t i, w = 0;
+    blk[w++] = 'V';
+    blk[w++] = '=';
+    for (i = 0; i < RTL_BUDGET_VALUE_WCHARS; i++)
+        blk[w++] = 'x';
+    blk[w++] = 0;
+    blk[w++] = 0;
+    return w;
+}
+
+/* rtl_env_expand_block: repeated MISSES are the pathological shape -- a miss
+ * walks the entire block, so references x block is unbounded work. The budget
+ * turns that into a refusal instead of seconds of kernel time, and refuses in
+ * pass 1, before any output or length is published. */
+static void test_rtl_expand_work_budget(void)
+{
+    struct rtl_budget_buf bb = { 0, 0 }, sb = { 0, 0 };
+    uint16_t *blk, *srcb;
+    UNICODE_STRING src, dst;
+    uint16_t dstbuf[64];
+    uint32_t i, w = 0;
+    uint32_t rl = 0xA5A5A5A5u;      /* poison: must be overwritten with 0 */
+    NTSTATUS st;
+
+    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
+    srcb = rtl_budget_alloc(&sb, RTL_BUDGET_SRC_WCHARS);
+    if (!blk || !srcb) {
+        rtl_budget_free(&bb);
+        rtl_budget_free(&sb);
+        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
+        return;
+    }
+
+    rtl_budget_fill_block(blk);
+    /* 1750 x "%Q%" -- Q is absent, so every reference is a full-block miss. */
+    for (i = 0; i < RTL_BUDGET_MISSES; i++) {
+        srcb[w++] = '%';
+        srcb[w++] = 'Q';
+        srcb[w++] = '%';
+    }
+    src.Length = (uint16_t)(w * 2u);
+    src.MaximumLength = (uint16_t)(RTL_BUDGET_SRC_WCHARS * 2u);
+    src.Buffer = srcb;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst, &rl);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
+                   "over-budget lookup work is a resource refusal, not a slow success");
+    TEST_ASSERT_EQ((int)rl, 0,
+                   "no length published: the poison is gone and nothing was written");
+    TEST_ASSERT_EQ((int)dst.Length, 0, "Destination->Length untouched by a refusal");
+
+    rtl_budget_free(&bb);
+    rtl_budget_free(&sb);
+}
+
+/* Build a Source of `misses` x "%Q%" (all absent) optionally followed by one
+ * "%V%" (present). Returns the WCHAR count written. */
+static uint32_t rtl_budget_fill_src(uint16_t *srcb, uint32_t misses, int trailing_hit)
+{
+    uint32_t i, w = 0;
+    for (i = 0; i < misses; i++) {
+        srcb[w++] = '%';
+        srcb[w++] = 'Q';
+        srcb[w++] = '%';
+    }
+    if (trailing_hit) {
+        srcb[w++] = '%';
+        srcb[w++] = 'V';
+        srcb[w++] = '%';
+    }
+    return w;
+}
+
+/* Drive a budget case: `misses` full-block misses plus an optional trailing hit.
+ * Returns the status. */
+static NTSTATUS rtl_budget_run(uint32_t misses, int trailing_hit, uint32_t *rl)
+{
+    struct rtl_budget_buf bb = { 0, 0 }, sb = { 0, 0 };
+    uint16_t *blk, *srcb;
+    uint16_t dstbuf[64];
+    UNICODE_STRING src, dst;
+    uint32_t w;
+    NTSTATUS st;
+
+    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
+    srcb = rtl_budget_alloc(&sb, RTL_BUDGET_SRC_WCHARS);
+    if (!blk || !srcb) {
+        rtl_budget_free(&bb);
+        rtl_budget_free(&sb);
+        return STATUS_NO_MEMORY;
+    }
+    rtl_budget_fill_block(blk);
+    w = rtl_budget_fill_src(srcb, misses, trailing_hit);
+    src.Length = (uint16_t)(w * 2u);
+    src.MaximumLength = (uint16_t)(RTL_BUDGET_SRC_WCHARS * 2u);
+    src.Buffer = srcb;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst, rl);
+    rtl_budget_free(&bb);
+    rtl_budget_free(&sb);
+    return st;
+}
+
+/* rtl_env_expand_block: the LAST reference crosses the budget and there is no
+ * later lookup to notice. Charging must refuse the overshoot at the moment the
+ * cost is known -- clamping the balance to zero instead lets this exact shape
+ * complete, spending a full extra block scan past the ceiling while reporting
+ * success. RTL_BUDGET_MISS_EXACT is the largest miss count that FITS
+ * (1668 x ~5028 = ~8.386e6 <= 8388608); one more must not. */
+static void test_rtl_expand_budget_final_miss_boundary(void)
+{
+    NTSTATUS st;
+
+    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT, 0, (uint32_t *)0);
+    if (st == STATUS_NO_MEMORY) {
+        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
+        return;
+    }
+    /* BUFFER_TOO_SMALL, not SUCCESS: 1668 literals expand to 5004 WCHARs, far past
+     * the small Destination. That is the point -- the limiter is the BUFFER, which
+     * proves the work budget did NOT trip at the largest affordable miss count. */
+    TEST_ASSERT_EQ((int)st, (int)STATUS_BUFFER_TOO_SMALL,
+                   "the largest affordable miss count is not refused for work: it "
+                   "reaches the buffer check");
+
+    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT + 1u, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
+                   "one miss past the budget is refused even as the FINAL reference, "
+                   "with no later lookup to expose the drained balance");
+}
+
+/* rtl_env_expand_block: same boundary on the HIT path. A hit returns the instant
+ * it matches, so an unaffordable hit is the shape most likely to slip through --
+ * it never reaches a next-entry check at all. */
+static void test_rtl_expand_budget_final_hit_boundary(void)
+{
+    NTSTATUS st;
+
+    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT, 1, (uint32_t *)0);
+    if (st == STATUS_NO_MEMORY) {
+        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
+        return;
+    }
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
+                   "a trailing HIT that cannot afford its own scan is refused, not "
+                   "returned after overspending the ceiling");
+}
+
+/* rtl_env_expand_block: one reference against a big block must still SUCCEED --
+ * the floor the _Static_assert pins (the budget affords at least a full-block
+ * miss). Without this, a budget trimmed below the block cap would refuse correct
+ * programs and only the refusal case above would still pass. */
+static void test_rtl_expand_single_miss_within_budget(void)
+{
+    struct rtl_budget_buf bb = { 0, 0 };
+    uint16_t *blk;
+    UNICODE_STRING src, dst;
+    uint16_t srcbuf[8], dstbuf[64];
+    NTSTATUS st;
+
+    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
+    if (!blk) {
+        TEST_SKIP("pmm_alloc_contiguous for the budget block failed");
+        return;
+    }
+    rtl_budget_fill_block(blk);
+
+    src.Length = (uint16_t)(env_test_wfill("%Q%", srcbuf) * 2u);
+    src.MaximumLength = (uint16_t)sizeof(srcbuf);
+    src.Buffer = srcbuf;
+    dst.Length = 0;
+    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+    dst.Buffer = dstbuf;
+
+    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst,
+                              (uint32_t *)0);
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS,
+                   "one full-block miss stays well inside the budget");
+    TEST_ASSERT(env_test_weq_ascii(dstbuf, 3u, "%Q%"),
+                "an absent name is still copied literally, not refused");
+    rtl_budget_free(&bb);
+}
+
+/* env_expand_at_cap: the REAL boundary the s19 cap raise created. The existing
+ * large-env case tops out near 48 frames and only proves the OLD 64 KiWCHAR cap
+ * was passed; this drives the environ to ENV_BLOCK_MAX so the block builder takes
+ * the full ~512-frame (2 MiB) contiguous allocation, and proves an at-cap environ
+ * still expands rather than failing at the size the store itself accepts. */
+static void test_env_expand_at_cap_boundary(void)
+{
+    uint16_t *blk = (uint16_t *)0;
+    uint32_t bw = 0, i, big = 0, med = 0;
+    char name[8];
+
+    env_fixture_reset();
+    env_test_fill_bigval();
+
+    name[0] = 'B'; name[3] = '\0';
+    for (i = 0; i < 40u; i++) {         /* fill to the storage cap in ~32 KiB steps */
+        name[1] = (char)('0' + (i / 10u));
+        name[2] = (char)('0' + (i % 10u));
+        if (env_set(&s_env_fixture, name, env_test_bigval) != ENV_OK)
+            break;
+        big++;
+    }
+    /* Top off the remainder in ~2 KiB steps, reusing the SAME buffer truncated in
+     * place: a second ~32 KiB static would push the kernel past the user base. */
+    env_test_bigval[2000] = '\0';
+    name[0] = 'M';
+    for (i = 0; i < 40u; i++) {
+        name[1] = (char)('0' + (i / 10u));
+        name[2] = (char)('0' + (i % 10u));
+        if (env_set(&s_env_fixture, name, env_test_bigval) != ENV_OK)
+            break;
+        med++;
+    }
+    env_test_bigval[2000] = 'x';        /* restore: the buffer is shared */
+    TEST_ASSERT(big > 30u, "environ filled with ~32 KiB values up to the cap");
+    TEST_ASSERT(med > 0u,
+                "the ~32 KiB fill left a remainder the ~2 KiB top-off consumed, so "
+                "the environ sits within ~2 KiB of ENV_BLOCK_MAX rather than short of it");
+
+    TEST_ASSERT_EQ(env_build_block_utf16(&s_env_fixture, &blk, &bw,
+                                         RTL_ENV_BLOCK_MAX_WCHARS),
+                   ENV_OK, "an at-cap environ still builds a block");
+    /* bw WCHARs -> bw*2 bytes -> /4096 frames. Past 1000000 WCHARs the builder is
+     * taking ~488+ contiguous frames, an order of magnitude past the ~48 the old
+     * coverage reached and the regime the raise actually created. */
+    TEST_ASSERT(bw > 1000000u,
+                "at-cap block spans > 1e6 WCHARs: the ~512-frame contiguous path is live");
+    TEST_ASSERT(bw <= RTL_ENV_BLOCK_MAX_WCHARS,
+                "an at-cap block still fits the Rtl scan bound with no margin to spare");
+    env_free_block_utf16(blk, bw);
+    env_fixture_reset();                /* release ~1 MiB of fixture env storage */
 }
 
 /* env_expand: a rejected overlap leaves the SOURCE bytes untouched (exact and
@@ -2332,22 +2741,18 @@ static void test_env_expand_for_user_refusals(void)
  * which still asserts the non-retryable STATUS_INVALID_PARAMETER mapping. */
 static void test_env_expand_for_user_large_env(void)
 {
-    static char bigval[32001];   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */
     uint16_t srcbuf[16], dstbuf[64];
     UNICODE_STRING src, dst;
-    uint32_t i;
     NTSTATUS st;
 
     env_fixture_reset();
-    for (i = 0; i < sizeof(bigval) - 1u; i++)
-        bigval[i] = 'x';
-    bigval[sizeof(bigval) - 1u] = '\0';
+    env_test_fill_bigval();   /* > ENV_STR_KMALLOC_MAX; 3 of these = ~96 KiWCHAR */
     /* Assert every setup insert: if these silently failed, "S" alone would still
      * expand and this case would pass over a TINY environ, proving nothing about
      * the raised cap. */
-    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V1", bigval), ENV_OK, "V1 (~32 KiB) stored");
-    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V2", bigval), ENV_OK, "V2 (~32 KiB) stored");
-    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V3", bigval), ENV_OK, "V3 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V1", env_test_bigval), ENV_OK, "V1 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V2", env_test_bigval), ENV_OK, "V2 (~32 KiB) stored");
+    TEST_ASSERT_EQ(env_set(&s_env_fixture, "V3", env_test_bigval), ENV_OK, "V3 (~32 KiB) stored");
     TEST_ASSERT_EQ(env_set(&s_env_fixture, "S", "ok"), ENV_OK, "small S stored");
 
     /* Prove the block really is past the OLD 64 KiWCHAR cap, so this case
@@ -3773,24 +4178,42 @@ void test_register_env(void)
                             test_env_expand_truncation, TEST_CAT_ABI);
     test_suite_register_cat("Env: build UTF-16 block",
                             test_env_build_block_utf16, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U basic",
+    test_suite_register_cat("Env: rtl_env_expand_block basic",
                             test_rtl_expand_basic, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U buffer too small",
+    test_suite_register_cat("Env: rtl_env_expand_block buffer too small",
                             test_rtl_expand_buffer_too_small, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U escape+case",
+    test_suite_register_cat("Env: rtl_env_expand_block escape+case",
                             test_rtl_expand_escape_and_case, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U invalid args",
+    test_suite_register_cat("Env: rtl_env_expand_block invalid args",
                             test_rtl_expand_invalid_args, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U empty source",
+    test_suite_register_cat("Env: rtl_env_expand_block empty source",
                             test_rtl_expand_empty_source, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U multi-entry",
+    test_suite_register_cat("Env: rtl_env_expand_block multi-entry",
                             test_rtl_expand_multi_entry, TEST_CAT_ABI);
     test_suite_register_cat("Env: build UTF-16 block over cap",
                             test_env_build_block_over_cap, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U NULL dest buffer",
+    test_suite_register_cat("Env: rtl_env_expand_block NULL dest buffer",
                             test_rtl_expand_null_dest_buffer, TEST_CAT_ABI);
-    test_suite_register_cat("Env: RtlExpandEnvironmentStrings_U overlap rejected",
+    test_suite_register_cat("Env: rtl_env_expand_block overlap rejected",
                             test_rtl_expand_overlap_rejected, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl public entry refuses explicit block",
+                            test_rtl_expand_public_refuses_explicit_block, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block extent too small",
+                            test_rtl_expand_extent_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block malformed empty block",
+                            test_rtl_expand_malformed_empty_block, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block unterminated in extent",
+                            test_rtl_expand_unterminated_within_extent, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block work budget refusal",
+                            test_rtl_expand_work_budget, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block final-miss budget boundary",
+                            test_rtl_expand_budget_final_miss_boundary, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block final-hit budget boundary",
+                            test_rtl_expand_budget_final_hit_boundary, TEST_CAT_ABI);
+    test_suite_register_cat("Env: rtl_env_expand_block single miss in budget",
+                            test_rtl_expand_single_miss_within_budget, TEST_CAT_ABI);
+    test_suite_register_cat("Env: expand at-cap environ (512-frame path)",
+                            test_env_expand_at_cap_boundary, TEST_CAT_ABI);
     test_suite_register_cat("Env: build UTF-16 empty block double-NUL",
                             test_env_build_block_empty, TEST_CAT_ABI);
     test_suite_register_cat("Env: build UTF-16 block UTF-8 conversion",

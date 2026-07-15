@@ -6,10 +6,14 @@
  * NULL-Environment path; no shared mutable state, so no locking is required
  * here (env_build_block_utf16 does its own snapshot under the env mutex).
  *
- * Three invariants keep this safe and consistent with the UTF-8 env layer:
- *  - the raw double-NUL scan is HARD-BOUNDED (RTL_ENV_BLOCK_MAX_WCHARS) and the
- *    transformer takes explicit kernel-resident lengths, never scanning user
- *    memory to an unbounded terminator;
+ * Four invariants keep this safe and consistent with the UTF-8 env layer:
+ *  - every block scan is bounded by an EXTENT the caller guarantees is readable
+ *    (rtl_env_expand_block), so a stripped terminator fails validation instead
+ *    of reading past the allocation; RTL_ENV_BLOCK_MAX_WCHARS is a second
+ *    ceiling, not the primary bound. The public ntdll entry cannot express an
+ *    extent, so it serves only the NULL form and refuses the rest;
+ *  - lookup work is BUDGETED per pass (RTL_ENV_EXPAND_WORK_MAX), so the
+ *    O(references * block) product cannot burn unbounded kernel time;
  *  - a NULL Environment is honored via a synthesized current-process block (from
  *    the authoritative UTF-8 environ), not by rejecting the documented ABI form;
  *  - name matching folds ASCII only, matching the UTF-8 storage comparator, so
@@ -64,6 +68,48 @@ _Static_assert(RTL_ENV_BLOCK_MAX_WCHARS >= ENV_BLOCK_MAX,
 _Static_assert(RTL_ENV_MAX_RESULT_WCHARS <= (0xFFFFu / 2u) - 1u,
                "RTL_ENV_MAX_RESULT_WCHARS must leave room for the NUL in a USHORT");
 
+/* The work budget must afford at least ONE full-block miss, or a single
+ * legitimate `%NAME%` against a maximum-size block would be refused outright and
+ * the budget would be rejecting correct programs rather than pathological ones.
+ * This is the floor the RTL_ENV_EXPAND_WORK_MAX rationale rests on; pinning it
+ * here catches a future cap raise (or budget trim) that inverts the relationship
+ * at COMPILE time instead of as a mystery STATUS_INSUFFICIENT_RESOURCES
+ * (TODO-22 s20). */
+_Static_assert(RTL_ENV_EXPAND_WORK_MAX >= RTL_ENV_BLOCK_MAX_WCHARS,
+               "the expansion work budget must afford at least one full-block miss");
+
+/* Per-PASS lookup-work accounting. `left` is the remaining budget, `used` the
+ * consumed total (compared between the two passes to detect concurrent input
+ * mutation), and `exhausted` a sticky flag meaning the pass is INVALID and its
+ * output must not be published. Stack-local per call: no shared mutable state,
+ * so the file stays lock-free and SMP-safe by construction. */
+struct rtl_env_work {
+    uint64_t left;
+    uint64_t used;
+    int      exhausted;
+};
+
+/* Charge `cost` WCHAR inspections against the budget. Returns 0 -- and marks the
+ * pass exhausted -- when the charge does not FIT, in which case the lookup that
+ * incurred it must be abandoned rather than accepted.
+ *
+ * Refusing the charge before it lands is what makes the ceiling real. Clamping a
+ * too-large charge to zero instead would let the lookup that overshot still
+ * return its answer, and if it were the LAST lookup of the pass nothing would
+ * ever observe the drained balance -- the pass would succeed having spent up to
+ * a full extra block scan beyond the ceiling. Checking here, at the point the
+ * cost is known, means no path can complete work it could not afford. */
+static int rtl_env_work_charge(struct rtl_env_work *w, uint32_t cost)
+{
+    if ((uint64_t)cost > w->left) {
+        w->exhausted = 1;
+        return 0;
+    }
+    w->left -= (uint64_t)cost;
+    w->used += (uint64_t)cost;
+    return 1;
+}
+
 /* ASCII lower-case fold (A-Z only), matching env.c's env_lc storage comparator.
  * Latin-1 / Unicode folding is deliberately NOT applied so the UTF-16 path and
  * the UTF-8 env_get path resolve the same names identically. */
@@ -82,35 +128,90 @@ static int rtl_env_name_ci_eq(const uint16_t *a, const uint16_t *b, uint32_t n)
     return 1;
 }
 
-/* Content length in WCHARs of a double-NUL-terminated block, scanning at most
- * `cap` wchars. Returns the index of the terminating empty entry (block[idx]==0
- * at an entry start), which is exactly the bound the lookup below walks. Returns
- * `cap` when no empty entry is found within `cap` (caller rejects as malformed).
- * `block` MUST be kernel-resident (contract in the header). */
-static uint32_t rtl_env_block_len(const uint16_t *block, uint32_t cap)
+/* Validate a double-NUL-terminated block lying entirely within `extent` WCHARs
+ * of readable memory, and report BOTH bounds the rest of the file needs:
+ *
+ *   *out_bound  the terminator INDEX -- the bound the lookup walks;
+ *   *out_extent the VERIFIED consumed length in WCHARs (through the terminating
+ *               NUL), used for the Destination-overlap matrix.
+ *
+ * Returns 1 when the block is well-formed within min(extent, cap), else 0.
+ *
+ * `extent` is the caller's GUARANTEE of readable WCHARs at `block`, so the scan
+ * is bounded by it and can never read past the allocation -- a block whose
+ * terminator lies outside the extent is malformed, not an excuse to keep
+ * scanning. Without an extent the scan trusted the caller's terminator and could
+ * run RTL_ENV_BLOCK_MAX_WCHARS (2 MiB) past a short allocation (TODO-22 s20).
+ *
+ * The empty block is the two-WCHAR "\0\0" form, and both NULs are VERIFIED here
+ * rather than assumed: returning only the terminator index forces the caller to
+ * reconstruct the extent as `(bound == 0) ? 2 : bound + 1`, which silently
+ * promotes a malformed one-WCHAR "\0" allocation into a two-WCHAR range.
+ * Deriving both numbers in one place removes that reconstruction entirely. */
+static int rtl_env_block_validate(const uint16_t *block, uint32_t extent,
+                                  uint32_t *out_bound, uint32_t *out_extent)
 {
+    uint32_t cap = (extent < RTL_ENV_BLOCK_MAX_WCHARS) ? extent
+                                                       : RTL_ENV_BLOCK_MAX_WCHARS;
     uint32_t p = 0;
+
+    /* The smallest legal block is "\0\0"; a 0- or 1-WCHAR extent cannot hold one. */
+    if (!block || extent < 2u)
+        return 0;
+
     while (p < cap) {
-        if (block[p] == 0)
-            return p;                     /* empty entry -> end of block */
+        if (block[p] == 0) {
+            /* Terminating empty entry. An EMPTY block (p == 0) must be a genuine
+             * double NUL, and every block spans through this NUL. */
+            if (p == 0u) {
+                if (cap < 2u || block[1] != 0)
+                    return 0;
+                *out_bound = 0u;
+                *out_extent = 2u;
+                return 1;
+            }
+            *out_bound = p;
+            *out_extent = p + 1u;
+            return 1;
+        }
         while (p < cap && block[p] != 0)  /* skip this entry's content */
             p++;
         if (p < cap)
             p++;                          /* skip this entry's NUL */
     }
-    return cap;                           /* no terminator within cap */
+    return 0;                             /* no terminator within the extent */
 }
 
 /* Look up `name` (namelen WCHARs) in `block` (bounded by block_wchars). On a
  * case-insensitive ASCII match sets out_val + out_vlen to the value run and
- * returns 1; returns 0 when absent. */
+ * returns 1; returns 0 when absent.
+ *
+ * `w` carries the remaining WCHAR-inspection budget. A MISS walks the whole
+ * block, so that product is the expensive term the budget exists to bound; when
+ * it runs out `w->exhausted` is set and the caller ABORTS the pass rather than
+ * accepting the truncated lookup as a miss (which would silently expand
+ * `%NAME%` to the wrong text). See RTL_ENV_EXPAND_WORK_MAX. */
 static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
                                 const uint16_t *name, uint32_t namelen,
-                                const uint16_t **out_val, uint32_t *out_vlen)
+                                const uint16_t **out_val, uint32_t *out_vlen,
+                                struct rtl_env_work *w)
 {
     uint32_t p = 0;
     while (p < block_wchars && block[p] != 0) {
         uint32_t start = p;
+        uint32_t eq;
+        uint32_t cost;
+
+        /* Cheap early-out: a drained balance cannot afford even a 1-WCHAR entry,
+         * so refuse without scanning this one. rtl_env_work_charge below is the
+         * authoritative gate -- this only avoids the wasted scan. A lookup that
+         * finishes with exactly 0 left is a real miss, not a refusal, which is
+         * why the caller tests the sticky flag and never `left == 0`. */
+        if (w->left == 0u) {
+            w->exhausted = 1;
+            return 0;
+        }
+
         /* A hidden "=X:" drive variable's name BEGINS with '=' (entry
          * "=C:=value"), so that leading '=' is part of the NAME and the
          * separator is the NEXT one. Start the scan one WCHAR in for such an
@@ -119,7 +220,7 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
          * so `%=C:%` resolves identically on both expansion paths -- before this,
          * an "=C:=..." entry split at index 0 and yielded an empty key that no
          * reference could ever name (TODO-22 s19). */
-        uint32_t eq = (block[start] == RTL_ENV_WEQ) ? start + 1u : start;
+        eq = (block[start] == RTL_ENV_WEQ) ? start + 1u : start;
         while (eq < block_wchars && block[eq] != 0 && block[eq] != RTL_ENV_WEQ)
             eq++;
         if (eq < block_wchars && block[eq] == RTL_ENV_WEQ) {
@@ -130,6 +231,12 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
                 uint32_t vend = vstart;
                 while (vend < block_wchars && block[vend] != 0)
                     vend++;
+                /* Charge the hit (name scan + value scan) BEFORE accepting it: a
+                 * hit returns immediately, so an unaffordable one would otherwise
+                 * leave the pass with no later check to notice. */
+                cost = vend - start;
+                if (!rtl_env_work_charge(w, cost))
+                    return 0;
                 *out_val = &block[vstart];
                 *out_vlen = vend - vstart;
                 return 1;
@@ -140,6 +247,12 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
             p++;
         if (p < block_wchars)
             p++;
+        /* Charge every WCHAR this entry cost to inspect. The LAST entry of a miss
+         * exits the loop below, so an unaffordable charge has to be caught here
+         * too, not on a next iteration that never runs. */
+        cost = p - start;
+        if (!rtl_env_work_charge(w, cost))
+            return 0;
     }
     return 0;
 }
@@ -164,11 +277,17 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
  * outright (TODO-22 s19). */
 static uint64_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars,
                                     const uint16_t *src, uint32_t src_wchars,
-                                    uint16_t *dst, uint64_t dst_cap)
+                                    uint16_t *dst, uint64_t dst_cap,
+                                    struct rtl_env_work *w)
 {
     uint32_t i = 0;
     uint64_t out = 0;
     while (i < src_wchars) {
+        /* A budget-exhausted lookup produced no usable answer, so the rest of
+         * this pass would be built on it. Stop immediately; the caller turns the
+         * sticky flag into STATUS_INSUFFICIENT_RESOURCES and publishes nothing. */
+        if (w->exhausted)
+            break;
         uint16_t c = src[i];
         if (c != RTL_ENV_WPCT) {
             if (dst && out < dst_cap)
@@ -207,7 +326,7 @@ static uint64_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
                  * here vs UTF-8 bytes there; env names are ASCII, so they agree). */
                 if (namelen >= 1u && namelen <= ENV_NAME_MAX &&
                     rtl_env_block_lookup(block, block_wchars, &src[i + 1u],
-                                         namelen, &val, &vlen)) {
+                                         namelen, &val, &vlen, w)) {
                     uint32_t k;
                     for (k = 0; k < vlen; k++) {
                         if (dst && out < dst_cap)
@@ -262,23 +381,29 @@ static int rtl_env_us_valid(const UNICODE_STRING *us)
     return 1;
 }
 
-NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
-                                       UNICODE_STRING *Destination,
-                                       uint32_t *ReturnedLength)
+NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
+                              UNICODE_STRING *Source, UNICODE_STRING *Destination,
+                              uint32_t *ReturnedLength)
 {
-    const uint16_t *block;
-    uint32_t block_wchars, block_extent;
+    uint32_t block_wchars;            /* lookup bound (terminator index) */
+    uint32_t verified_extent;         /* WCHARs the block VERIFIABLY spans */
     const uint16_t *src;
     uint32_t src_wchars, src_bytes;
     uint16_t *dst_buf;                /* SNAPSHOT of Destination->Buffer */
     uint32_t dst_max;                 /* SNAPSHOT of Destination->MaximumLength */
     uint64_t required;                /* output WCHARs excluding NUL (saturating) */
     uint64_t needed_bytes;            /* wide accumulator (incl NUL), avoids u16 wrap */
-    uint16_t *synth = NULL;
-    uint32_t synth_wchars = 0;
+    uint64_t pass1_work;              /* lookup work pass 1 consumed */
+    struct rtl_env_work work;
     NTSTATUS status = STATUS_SUCCESS;
 
     if (!rtl_env_us_valid(Source) || !rtl_env_us_valid(Destination))
+        return STATUS_INVALID_PARAMETER;
+
+    /* Bound the terminator scan by the caller's readable extent, so a malformed
+     * block fails here instead of reading past its allocation. */
+    if (!rtl_env_block_validate(block, block_extent, &block_wchars,
+                                &verified_extent))
         return STATUS_INVALID_PARAMETER;
 
     /* Snapshot every scalar we later write through or compare against into LOCALS
@@ -293,39 +418,6 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     dst_buf = Destination->Buffer;
     dst_max = Destination->MaximumLength;
 
-    if (Environment) {
-        block = (const uint16_t *)Environment;
-        /* PRECONDITION: a non-NULL Environment MUST be a well-formed double-NUL-
-         * terminated block (as ntdll requires); the cap only backstops a runaway
-         * loop and does NOT substitute for a valid terminator. A user-supplied
-         * block is probed+copied into a terminated kernel snapshot by the Win32
-         * boundary before it reaches here. */
-        block_wchars = rtl_env_block_len(block, RTL_ENV_BLOCK_MAX_WCHARS);
-        if (block_wchars >= RTL_ENV_BLOCK_MAX_WCHARS)
-            return STATUS_INVALID_PARAMETER;         /* unterminated within the cap */
-        /* `block_wchars` is the terminator INDEX, so a non-empty supplied block
-         * spans block_wchars + 1 WCHARs (through the terminating NUL); an empty
-         * block (index 0) is the two-WCHAR "\0\0" form. */
-        block_extent = (block_wchars == 0u) ? 2u : (block_wchars + 1u);
-    } else {
-        /* NULL Environment: the calling process's own block. Synthesize it from
-         * the current task's authoritative UTF-8 environ (kernel-resident), not
-         * the stale, user-mapped PEB block. */
-        struct task *cur = task_current();
-        int rc;
-        if (!cur)
-            return STATUS_INVALID_PARAMETER;
-        rc = env_build_block_utf16(cur, &synth, &synth_wchars,
-                                   RTL_ENV_BLOCK_MAX_WCHARS);
-        if (rc == ENV_ERR_NOMEM)
-            return STATUS_NO_MEMORY;
-        if (rc != ENV_OK)
-            return STATUS_INVALID_PARAMETER;
-        block = synth;
-        block_wchars = synth_wchars;   /* lookup bound (stops at the NULs anyway) */
-        block_extent = synth_wchars;   /* EXACT allocation length (incl terminators) */
-    }
-
     /* Reject any overlap between the output range [dst_buf, dst_buf+dst_max) and
      * (a) the Source DATA, (b) the Environment block, (c)/(d) the Source and
      * Destination DESCRIPTORS, (e) the ReturnedLength cell. (a)/(b) prevent a
@@ -333,7 +425,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
      * pointer/length we still need. An empty output range (dst_max == 0, the
      * size-query form) overlaps nothing and falls through to BUFFER_TOO_SMALL. */
     if (rtl_env_ranges_overlap(dst_buf, dst_max, src, src_bytes) ||
-        rtl_env_ranges_overlap(dst_buf, dst_max, block, block_extent * 2u) ||
+        rtl_env_ranges_overlap(dst_buf, dst_max, block, verified_extent * 2u) ||
         rtl_env_ranges_overlap(dst_buf, dst_max, Destination,
                                (uint32_t)sizeof(*Destination)) ||
         rtl_env_ranges_overlap(dst_buf, dst_max, Source,
@@ -354,7 +446,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
         (rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
                                 src, src_bytes) ||
          rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
-                                block, block_extent * 2u) ||
+                                block, verified_extent * 2u) ||
          rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
                                 Source, (uint32_t)sizeof(*Source)) ||
          rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
@@ -364,7 +456,20 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     }
 
     /* Pass 1: count the required output length (no write). */
-    required = rtl_env_expand_pass(block, block_wchars, src, src_wchars, NULL, 0u);
+    work.left = RTL_ENV_EXPAND_WORK_MAX;
+    work.used = 0u;
+    work.exhausted = 0;
+    required = rtl_env_expand_pass(block, block_wchars, src, src_wchars, NULL, 0u,
+                                   &work);
+    /* Refuse BEFORE any store. Pass 1 both counts and pays the full lookup cost,
+     * so an over-budget expansion is rejected here, with nothing written and no
+     * length published -- a budget refusal can never land mid-write. */
+    if (work.exhausted) {
+        if (ReturnedLength)
+            *ReturnedLength = 0;
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    pass1_work = work.used;
 
     /* CHECKED-CONVERSION ORDER (TODO-22 s19). Every narrowing below is guarded
      * BEFORE it happens, so no caller can ever receive a truncated required size
@@ -413,17 +518,36 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     /* Pass 2: write to the SNAPSHOT buffer, clamped to `required` WCHARs (room
      * for `required` + the NUL; the clamp defends against any aliasing tear). */
     {
-        uint64_t written = rtl_env_expand_pass(block, block_wchars, src,
-                                               src_wchars, dst_buf, required);
-        /* The two passes must agree. They only differ if the caller-owned Source
-         * or explicit Environment was mutated by another CPU between passes (the
-         * inputs are kernel-resident but not private/immutable here). A shorter
-         * second pass would leave [written, required) UNwritten -- advertising
-         * `required` would disclose stale/uninitialized destination bytes. Refuse
-         * rather than return a torn result. (The Win32 boundary that passes a
-         * private per-call snapshot never trips this.) */
-        if (written != required) {
-            status = STATUS_INVALID_PARAMETER;
+        uint64_t written;
+
+        /* FRESH budget, same ceiling -- never the remainder of pass 1's. Sharing
+         * one counter across both passes would let pass 1 consume most of it and
+         * strand pass 2 on identical work, making the verdict depend on which
+         * pass you are in rather than on the inputs. Starting equal makes the two
+         * passes' work identical over immutable inputs, so this cannot trip when
+         * pass 1 did not. */
+        work.left = RTL_ENV_EXPAND_WORK_MAX;
+        work.used = 0u;
+        work.exhausted = 0;
+        written = rtl_env_expand_pass(block, block_wchars, src, src_wchars,
+                                      dst_buf, required, &work);
+        /* The two passes must agree, in output AND in the work they took. They
+         * only differ if the caller-owned Source or Environment was mutated by
+         * another CPU between passes (the inputs are kernel-resident but not
+         * private/immutable here). A shorter second pass would leave
+         * [written, required) UNwritten -- advertising `required` would disclose
+         * stale/uninitialized destination bytes. The work comparison catches the
+         * same tear when the output length coincidentally matches, and a pass-2
+         * exhaustion is by construction that same mutation case (pass 1 already
+         * proved the work fits). Refuse rather than return a torn result, and
+         * retract the published length: it described a result that was never
+         * written. (The Win32 boundary that passes a private per-call snapshot
+         * never trips this.) */
+        if (work.exhausted || written != required || work.used != pass1_work) {
+            if (ReturnedLength)
+                *ReturnedLength = 0;
+            status = work.exhausted ? STATUS_INSUFFICIENT_RESOURCES
+                                    : STATUS_INVALID_PARAMETER;
             goto done;
         }
     }
@@ -434,8 +558,50 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     Destination->Length = (uint16_t)(required * 2u);  /* bytes, excluding NUL */
 
 done:
-    if (synth)
-        env_free_block_utf16(synth, synth_wchars);
+    return status;
+}
+
+NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
+                                       UNICODE_STRING *Destination,
+                                       uint32_t *ReturnedLength)
+{
+    struct task *cur;
+    uint16_t *synth = NULL;
+    uint32_t synth_wchars = 0;
+    NTSTATUS status;
+    int rc;
+
+    /* A non-NULL Environment is a bare pointer with no allocation EXTENT, and no
+     * amount of scanning recovers one: a cap bounds a runaway walk but still
+     * reads whatever follows a short block, and probing mapped pages says
+     * nothing about the object's length. Refuse the form outright rather than
+     * read past a caller's allocation. The ABI-preserving path is a boundary
+     * that probes + copies the block into a terminated kernel snapshot and calls
+     * rtl_env_expand_block with the extent it then knows; that boundary is owned
+     * by TODO-22 s21. Nothing user-reachable calls this today, and every
+     * in-kernel caller already uses the extent-taking entry, so this refusal
+     * removes no working capability (TODO-22 s20). */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+
+    /* NULL Environment: the calling process's own block. Synthesize it from the
+     * current task's authoritative UTF-8 environ (kernel-resident), not the
+     * stale, user-mapped PEB block. env_build_block_utf16 returns the block's
+     * TOTAL wchar length including terminators, which is exactly the extent the
+     * expansion engine needs. */
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+    rc = env_build_block_utf16(cur, &synth, &synth_wchars,
+                               RTL_ENV_BLOCK_MAX_WCHARS);
+    if (rc == ENV_ERR_NOMEM)
+        return STATUS_NO_MEMORY;
+    if (rc != ENV_OK)
+        return STATUS_INVALID_PARAMETER;
+
+    status = rtl_env_expand_block(synth, synth_wchars, Source, Destination,
+                                  ReturnedLength);
+    env_free_block_utf16(synth, synth_wchars);
     return status;
 }
 
@@ -483,8 +649,12 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
          * over-cap INTERNAL block; the size limit is not the caller's buffer). */
         return STATUS_INVALID_PARAMETER;
 
-    status = RtlExpandEnvironmentStrings_U(block, Source, Destination,
-                                           ReturnedLength);
+    /* env_build_block_utf16 reports the block's total wchar length including
+     * terminators, so this caller KNOWS the extent and uses the extent-taking
+     * engine directly; the public ntdll entry refuses a non-NULL Environment
+     * precisely because its signature cannot carry this number. */
+    status = rtl_env_expand_block(block, block_wchars, Source, Destination,
+                                  ReturnedLength);
     env_free_block_utf16(block, block_wchars);
     return status;
 }
