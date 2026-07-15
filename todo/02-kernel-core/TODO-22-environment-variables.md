@@ -695,7 +695,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⚠️ §13 NULL token    |
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ✅ env_searchpath.c   |
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ✅ safe-search CAS    |
-| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⚠️ §15 kernel prim    |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⚠️ §15 kernel prim   |
 | 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16                |
 | ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |
