@@ -668,14 +668,21 @@ Two latent defects in the SHIPPED §3 UTF-16 expansion path (`nt_rtlenv.c`), fix
 - [/] `ENV_CREATE_BLOCK_MAX_WCHARS` stays 64 KiWCHAR: raising it needs the ~2 MiB contiguous-PMM path stress-verified under SMP (design review) -> XREF §20 (item: "Raise `ENV_CREATE_BLOCK_MAX_WCHARS`")
 - [x] Commit: `"kernel/env: Rtl expansion output-count wrap fix + %=X:% parity"`
 
-**Test checkpoint:** `%=C:%` resolves against a hidden `=C:=C:\dir` entry on the UTF-16 path (it returned the literal before); a result over 32766 WCHARs returns `STATUS_UNSUCCESSFUL` with `ReturnedLength` untouched, not a truncated `BUFFER_TOO_SMALL`; a formerly over-cap ~96 KiWCHAR environ now expands. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 4 suites added/reworked, 0 failures (21284 kernel + 16 user-mode green)
+**Test checkpoint:** `%=C:%` resolves against a hidden `=C:=C:\dir` entry on the UTF-16 path (it returned the literal before); a result over 32766 WCHARs returns `STATUS_UNSUCCESSFUL` with `ReturnedLength` zeroed (ntdll parity), not a truncated `BUFFER_TOO_SMALL`; a formerly over-cap ~96 KiWCHAR environ now expands. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 4 suites added/reworked, 0 failures (21290 kernel + 16 user-mode green)
 > **Notes:**
 > - **What shipped:** `nt_rtlenv.c` counter uint32 -> saturating uint64, `RTL_ENV_BLOCK_MAX_WCHARS` 64 Ki -> 1 MiWCHAR, new `RTL_ENV_MAX_RESULT_WCHARS`, hidden-`=C:` separator fix, 2 `_Static_assert`s.
-> - **How it integrates:** `RtlExpandEnvironmentStrings_U` gains a checked-conversion order (saturation -> representability -> narrow), so `ReturnedLength` never publishes a truncated size and an unsatisfiable result is `STATUS_UNSUCCESSFUL`.
-> - **Downstream effects:** every environ the store accepts is now expandable, so the over-cap-via-environ branch is unreachable and its test became a positive large-environ case; Codex adoptions in the commit message.
+> - **How it integrates:** `RtlExpandEnvironmentStrings_U` gains a checked-conversion order (saturation -> representability -> narrow), so `ReturnedLength` never publishes a truncated size and an unsatisfiable result is `STATUS_UNSUCCESSFUL` with `ReturnedLength` 0 (ntdll parity).
+> - **Downstream effects:** every environ the store accepts is now expandable (pinned by `RTL_ENV_BLOCK_MAX_WCHARS >= ENV_BLOCK_MAX`, true today with ZERO margin), so the over-cap-via-environ branch is unreachable and its test became a positive large-environ case.
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (cap rationale + return set).
-> - **Scope boundary:** §20 owns the four Rtl exports; `ENV_CREATE_BLOCK_MAX_WCHARS` stays 64 KiWCHAR (raising it needs the TODO-03 PMM SMP work); §3 owns the expansion primitives.
+> - **Scope boundary:** §20 owns the four Rtl exports and the three BLOCKING gates review filed there (lookup-work bound, foreign-block extent, the expand-path 2 MiB PMM alloc the raise made live -- nothing here is user-reachable until §20 wires an export); §3 owns the expansion primitives.
+> **Verified:** 2026-07-15 | commit `b0c184e0` + review fixes | 4/5 items | build OK | tests 21290 kernel + 16 user-mode PASS
+> **Deferred:** [H] `rtl_env_block_lookup` walks the whole block per `%NAME%`, so ~10922 missing refs against a near-cap environ cost ~1.1e10 compares/pass, 16x worse since the raise (no user-reachable caller exists: `nt_rtlenv.c` has no SSDT row) -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before any user-reachable export:** bound `rtl_env_block_lookup` work" at line 699)
+> **Deferred:** [H] `rtl_env_block_len` takes a pointer + cap with no allocation extent, so an unterminated non-NULL `Environment` reads up to 2 MiB past its allocation (reason: not-functional-today -- the sole caller passes a self-built terminated block) -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before any user-reachable export:** `RtlExpandEnvironmentStrings_U` must take a trusted extent" at line 700)
+> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 701)
+> **Deferred:** [M] no test at the raise's real boundary (at-cap environ -> 512 frames); coverage tops out at ~48 frames and only proves the OLD cap was passed -> XREF: 02-kernel-core/TODO-22 §20 (item: "Test the raise at its real boundary" at line 702)
+> **Accepted:** [M] the unsynchronized PMM frame bitmap that lets the above double-allocate is a pre-existing kernel-wide gap this section AMPLIFIES (32 -> 512 frames), not originates -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
+> **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2M+3L fixed, 3H+1M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
 ---
 
@@ -696,6 +703,10 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [ ] Extract the third copy of the env allocator wrapper (`env_str_alloc` in `env.c`, `nt_env_alloc` in `nt_env.c`, + this section's) into one shared helper -- `kernel-code-quality` Gate 10
 - [ ] Raise `ENV_CREATE_BLOCK_MAX_WCHARS` toward `RTL_ENV_BLOCK_MAX_WCHARS` so `RtlCreateEnvironment` accepts every environ the store does, once the ~2 MiB PMM path is SMP-stress-verified → XREF `03-memory-concurrency/TODO-03`
 - [ ] kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` (§6) route through these Rtl exports so ntdll imports resolve; `RtlExpandEnvironmentStrings_U` already lives in §3
+- [ ] **BLOCKING before any user-reachable export:** bound `rtl_env_block_lookup` work -- it walks the whole block per `%NAME%`, so ~10922 missing refs cost ~1.1e10 compares/pass; add a name index or work budget + a repeated-miss perf test
+- [ ] **BLOCKING before any user-reachable export:** `RtlExpandEnvironmentStrings_U` must take a trusted extent for a non-NULL `Environment` or refuse it -- `rtl_env_block_len` reads up to 2 MiB past an unterminated block; guard-page test
+- [ ] **BLOCKING before a user-reachable export:** expand path takes 2 MiB via `pmm_alloc_contiguous(512)` on an unlocked PMM, so two tasks can double-allocate → XREF `03-memory-concurrency/TODO-03` §1 (item: "**PMM bitmap SMP locking**" line 103)
+- [ ] Test the raise at its real boundary: an at-cap environ (`environ_bytes` = `ENV_BLOCK_MAX` - 1 -> 512 frames); today `test_env_expand_for_user_large_env` tops out at ~48 frames and only proves the OLD 64 KiWCHAR cap was passed
 - [ ] Commit: `"ntdll: Rtl environment exports over the Nt env syscalls"`
 
 **Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment(0, &e)` builds an empty block and `(1, &e)` a sorted clone; `RtlSetEnvironmentVariable` with a non-NULL Environment returns `STATUS_NOT_SUPPORTED`. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
@@ -737,7 +748,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |
 | 💎   | ntdll Rtl env exports      | ✅ ntdll usermode      | ❌ none               | ⬜ §20                |
-| ⭐   | Rtl expansion hardening    | ⚠️ uint32 len fields   | ❌ n/a                | ✅ §19 u64 + `%=X:%`  |
+| ⭐   | Rtl expansion hardening    | ⚠️ uint32 len fields  | ❌ n/a                | ✅ §19 u64 + `%=X:%`  |
 | 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX   |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.

@@ -788,15 +788,16 @@ static void test_rtl_expand_normal_entry_unshifted(void)
 /* s19: a result longer than RTL_ENV_MAX_RESULT_WCHARS is unrepresentable in a
  * UNICODE_STRING at ANY buffer size, so it must fail STATUS_UNSUCCESSFUL rather
  * than STATUS_BUFFER_TOO_SMALL (which would loop a grow-and-retry caller forever)
- * and must NOT publish a required length. Built from a 1000-WCHAR value referenced
- * 33 times = 33000 output WCHARs > 32766, without a 64 KiB buffer. */
+ * and must publish ReturnedLength 0 -- never the real, truncated-on-narrowing size
+ * -- matching real ntdll, which zeroes its ResultLength on this branch. Built from
+ * a 1000-WCHAR value referenced 33 times = 33000 output WCHARs > 32766. */
 static uint16_t rtl_big_block[1008];   /* single-threaded test runner; no sharing */
 static uint16_t rtl_big_src[128];
 static void test_rtl_expand_result_unrepresentable(void)
 {
     uint16_t dstbuf[8];
     UNICODE_STRING src, dst;
-    uint32_t rl = 0xA5A5A5A5u;         /* poison: must stay untouched */
+    uint32_t rl = 0xA5A5A5A5u;         /* poison: must be overwritten with 0 */
     uint32_t i, w = 0;
     NTSTATUS st;
 
@@ -823,8 +824,9 @@ static void test_rtl_expand_result_unrepresentable(void)
     st = RtlExpandEnvironmentStrings_U(rtl_big_block, &src, &dst, &rl);
     TEST_ASSERT_EQ((int)st, (int)STATUS_UNSUCCESSFUL,
                    "over-32766 result is UNSUCCESSFUL, not BUFFER_TOO_SMALL");
-    TEST_ASSERT_EQ((int)rl, (int)0xA5A5A5A5u,
-                   "ReturnedLength untouched: no truncated size is ever published");
+    TEST_ASSERT_EQ((int)rl, 0,
+                   "ReturnedLength zeroed (ntdll parity): the poison is gone and "
+                   "no truncated size is ever published");
     TEST_ASSERT_EQ((int)dst.Length, 0, "Length unchanged on an unrepresentable result");
 }
 

@@ -97,9 +97,11 @@
  * Destination->Length is the result length in bytes excluding the NUL.
  *
  * A result longer than RTL_ENV_MAX_RESULT_WCHARS returns STATUS_UNSUCCESSFUL and
- * does NOT set ReturnedLength: such a length is unrepresentable in a
- * UNICODE_STRING at any buffer size, so reporting BUFFER_TOO_SMALL would loop a
- * grow-and-retry caller forever (TODO-22 s19).
+ * sets ReturnedLength to 0: such a length is unrepresentable in a UNICODE_STRING
+ * at any buffer size, so reporting BUFFER_TOO_SMALL would loop a grow-and-retry
+ * caller forever. 0 (not the real size) is published so no truncated length ever
+ * reaches a caller, matching real ntdll, which zeroes its ResultLength on this
+ * branch and stores it unconditionally (TODO-22 s19).
  *
  * Returns STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER,
  * STATUS_UNSUCCESSFUL, or STATUS_NO_MEMORY. */

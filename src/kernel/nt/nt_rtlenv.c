@@ -45,9 +45,23 @@ static uint64_t rtl_env_count_inc(uint64_t out)
 _Static_assert(ENV_CREATE_BLOCK_MAX_WCHARS <= RTL_ENV_BLOCK_MAX_WCHARS,
                "a created env block must be consumable by the Rtl expansion scan");
 
+/* THE invariant the s19 cap raise exists to establish: every environ the storage
+ * layer accepts must be expandable through the NULL-Environment form. env_set
+ * caps env_block_bytes_locked() (environ_bytes + 1) at ENV_BLOCK_MAX, and
+ * env_build_block_utf16 builds total = 1 + environ_bytes WCHARs, so the widest
+ * legal environ (all-ASCII, one UTF-8 byte -> one WCHAR) needs exactly
+ * ENV_BLOCK_MAX WCHARs of scan bound. This holds today with ZERO margin
+ * (1 Mi >= 1 Mi); without this assert, raising ENV_BLOCK_MAX by one byte or
+ * lowering the scan cap would silently start refusing a legal environ with
+ * STATUS_INVALID_PARAMETER, build green and tests green (TODO-22 s19). */
+_Static_assert(RTL_ENV_BLOCK_MAX_WCHARS >= ENV_BLOCK_MAX,
+               "the Rtl scan bound must cover every environ the store accepts");
+
 /* A representable result must leave room for the WCHAR NUL inside a USHORT byte
- * count: (RTL_ENV_MAX_RESULT_WCHARS + 1) * 2 <= 65535. */
-_Static_assert((RTL_ENV_MAX_RESULT_WCHARS + 1u) * 2u <= 0xFFFFu,
+ * count. Written as a division so the bound cannot itself wrap: the product form
+ * ((n + 1) * 2 <= 0xFFFF) evaluates in 32-bit unsigned and would PASS for a
+ * future n >= 0x7FFFFFFF by wrapping the product to 0. */
+_Static_assert(RTL_ENV_MAX_RESULT_WCHARS <= (0xFFFFu / 2u) - 1u,
                "RTL_ENV_MAX_RESULT_WCHARS must leave room for the NUL in a USHORT");
 
 /* ASCII lower-case fold (A-Z only), matching env.c's env_lc storage comparator.
@@ -101,7 +115,7 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
          * "=C:=value"), so that leading '=' is part of the NAME and the
          * separator is the NEXT one. Start the scan one WCHAR in for such an
          * entry; for an ordinary "KEY=VALUE" entry this is the plain first-'='
-         * offset. Mirrors the UTF-8 storage comparator (env.c env_entry_name_len)
+         * offset. Mirrors the UTF-8 storage comparator (env.c env_entry_keylen)
          * so `%=C:%` resolves identically on both expansion paths -- before this,
          * an "=C:=..." entry split at index 0 and yielded an empty key that no
          * reference could ever name (TODO-22 s19). */
@@ -140,12 +154,14 @@ static int rtl_env_block_lookup(const uint16_t *block, uint32_t block_wchars,
  *
  * The count is a SATURATING uint64: every increment stops at RTL_ENV_COUNT_SAT
  * instead of wrapping. Worst case is far past any representable result -- a
- * 32767-WCHAR Source can hold ~10922 `%V%` references, each expanding to a value
- * up to RTL_ENV_BLOCK_MAX_WCHARS (1 Mi) -> ~3.4e10 WCHARs -- so a uint32 count
- * WOULD wrap at 2^32 and hand the caller a small "required" length for a huge
- * result. uint64 cannot wrap at these magnitudes; the saturation is belt-and-
- * braces so the invariant survives any future cap raise, and the public entry
- * rejects a saturated count outright (TODO-22 s19). */
+ * 32767-WCHAR Source holds at most 10922 `%V%` references (3 WCHARs each), each
+ * expanding to a value up to RTL_ENV_BLOCK_MAX_WCHARS (1 Mi) -> ~1.1e10 WCHARs
+ * -- so a uint32 count WOULD wrap at 2^32 and hand the caller a small "required"
+ * length for a huge result. (The old 64 KiWCHAR cap topped out near 7.2e8, under
+ * 2^32: the raise is what makes the wider count load-bearing.) uint64 cannot wrap
+ * at these magnitudes; the saturation is belt-and-braces so the invariant
+ * survives any future cap raise, and the public entry rejects a saturated count
+ * outright (TODO-22 s19). */
 static uint64_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars,
                                     const uint16_t *src, uint32_t src_wchars,
                                     uint16_t *dst, uint64_t dst_cap)
@@ -362,11 +378,16 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
      *   3. only then is needed_bytes (<= 65535 by step 2) narrowed to uint32 for
      *      ReturnedLength and compared against the uint16 MaximumLength snapshot.
      */
-    if (required == RTL_ENV_COUNT_SAT) {
-        status = STATUS_UNSUCCESSFUL;
-        goto done;
-    }
-    if (required > (uint64_t)RTL_ENV_MAX_RESULT_WCHARS) {
+    if (required == RTL_ENV_COUNT_SAT ||
+        required > (uint64_t)RTL_ENV_MAX_RESULT_WCHARS) {
+        /* Publish 0, never the real (unrepresentable) size: real ntdll zeroes its
+         * ResultLength on this branch and then stores it unconditionally, so a
+         * caller with an uninitialized ReturnedLength local reads 0 rather than
+         * stack garbage. 0 is not a truncated length -- it is "no length" -- so
+         * the no-truncated-size-published rule is kept, not weakened. The overlap
+         * matrix above already proved ReturnedLength aliases no input. */
+        if (ReturnedLength)
+            *ReturnedLength = 0;
         status = STATUS_UNSUCCESSFUL;
         goto done;
     }
