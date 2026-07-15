@@ -446,9 +446,11 @@ int env_create_block(struct task *caller, const void *htoken, int inherit,
 int env_create_empty_block(void **out_block);
 
 /* Win32 userenv.dll DestroyEnvironmentBlock(LPVOID lpEnvironment). Frees a block
- * returned by env_create_block using only the pointer (recovers the size from the
- * hidden header). NULL is a no-op. `block` MUST be a pointer previously returned by
- * env_create_block (or NULL) -- exactly as Win32 DestroyEnvironmentBlock requires a
+ * returned by env_create_block OR env_create_empty_block using only the pointer
+ * (recovers the size from the hidden header) -- both go through the same single
+ * constructor, so both free identically here.
+ * NULL is a no-op. `block` MUST be a pointer previously returned by one of those two
+ * entries (or NULL) -- exactly as Win32 DestroyEnvironmentBlock requires a
  * CreateEnvironmentBlock pointer; passing an arbitrary pointer is a caller error
  * (it reads the predecessor header). The header magic + wchar-cap check is a
  * BEST-EFFORT reject of an obviously-malformed header on an otherwise-valid pointer

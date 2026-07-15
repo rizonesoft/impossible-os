@@ -26,8 +26,6 @@
 
 #include "kernel/types.h"
 #include "libc/string.h"             /* memcpy */
-#include "kernel/mm/heap.h"          /* kmalloc / kfree */
-#include "kernel/mm/pmm.h"           /* pmm_alloc_contiguous / pmm_free_frame */
 #include "kernel/klog.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"            /* Probe*, ssdt_previous_mode, SSDT_USER_MODE */
@@ -46,17 +44,9 @@
  * the terminator the decode helper appends. */
 #define NT_ENV_VAL_WCHARS_MAX  32768u
 
-/* --- Transient buffer allocator: this file's view of the shared env allocator
- * (env.h). The heap-vs-PMM size-class rule lives there, in one place. --------- */
-static void *nt_env_alloc(uint32_t n)
-{
-    return env_buf_alloc(n);
-}
-
-static void nt_env_free(void *p, uint32_t n)
-{
-    env_buf_free(p, n);
-}
+/* Transient buffers here come straight from the shared env allocator
+ * (env_buf_alloc / env_buf_free, env.h) -- the heap-vs-PMM size-class rule lives
+ * there, in one place. */
 
 /* Half-open [a,a+alen) intersects [b,b+blen); both empty extents intersect
  * nothing. Mirrors nt_rtlenv.c rtl_env_ranges_overlap. */
@@ -174,15 +164,15 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
      * copied), so there is no size-then-copy race, and a tiny or missing query
      * no longer forces a multi-page PMM allocation. */
     vcap = ENV_STR_KMALLOC_MAX;                      /* fast path: kmalloc */
-    val8 = (char *)nt_env_alloc(vcap);
+    val8 = (char *)env_buf_alloc(vcap);
     if (!val8)
         return STATUS_NO_MEMORY;
     {
         int r = env_get_copy(task_current(), name8, val8, vcap);
         if (r >= 0 && (uint32_t)r >= vcap) {
-            nt_env_free(val8, vcap);                 /* truncated: value is large */
+            env_buf_free(val8, vcap);                 /* truncated: value is large */
             vcap = ENV_VALUE_MAX + 1u;
-            val8 = (char *)nt_env_alloc(vcap);
+            val8 = (char *)env_buf_alloc(vcap);
             if (!val8)
                 return STATUS_NO_MEMORY;
             r = env_get_copy(task_current(), name8, val8, vcap);
@@ -193,11 +183,11 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
              * ENV_VALUE_MAX+1 retry buffer fits. If a returned length still
              * meets or exceeds the buffer, refuse rather than let the UTF-8
              * decoder below read past val8[vcap]. */
-            nt_env_free(val8, vcap);
+            env_buf_free(val8, vcap);
             return STATUS_NAME_TOO_LONG;
         }
         if (r < 0) {
-            nt_env_free(val8, vcap);
+            env_buf_free(val8, vcap);
             switch (r) {
             case ENV_ERR_NOTFOUND: return STATUS_VARIABLE_NOT_FOUND;
             case ENV_ERR_TOOLONG:  return STATUS_NAME_TOO_LONG;
@@ -211,7 +201,7 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
     cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, NULL, 0,
                                NLS_CP_STRICT);
     if (cvt < 0) {
-        nt_env_free(val8, vcap);
+        env_buf_free(val8, vcap);
         return STATUS_INVALID_PARAMETER;            /* corrupt stored value */
     }
     need_wchars = (uint32_t)cvt;
@@ -221,7 +211,7 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
     if (uVlen) {
         if (prev == SSDT_USER_MODE) {
             if (copy_to_user(uVlen, &need_bytes, (uint32_t)sizeof(need_bytes)) != 0) {
-                nt_env_free(val8, vcap);
+                env_buf_free(val8, vcap);
                 return STATUS_ACCESS_VIOLATION;
             }
         } else {
@@ -230,11 +220,11 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
     }
 
     if (need_bytes > vmax) {
-        nt_env_free(val8, vcap);
+        env_buf_free(val8, vcap);
         return STATUS_BUFFER_TOO_SMALL;             /* no partial write */
     }
     if (need_bytes > 0u && !vbuf) {
-        nt_env_free(val8, vcap);
+        env_buf_free(val8, vcap);
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -242,17 +232,17 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
      * caller buffer has an extra WCHAR of room. */
     write_bytes = need_bytes;
     if (need_wchars > 0u) {
-        val_w = (uint16_t *)nt_env_alloc((need_wchars + 1u) * 2u);
+        val_w = (uint16_t *)env_buf_alloc((need_wchars + 1u) * 2u);
         if (!val_w) {
-            nt_env_free(val8, vcap);
+            env_buf_free(val8, vcap);
             return STATUS_NO_MEMORY;
         }
         cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, val_w,
                                    need_wchars, NLS_CP_STRICT);
-        nt_env_free(val8, vcap);
+        env_buf_free(val8, vcap);
         val8 = NULL;
         if (cvt < 0 || (uint32_t)cvt != need_wchars) {
-            nt_env_free(val_w, (need_wchars + 1u) * 2u);
+            env_buf_free(val_w, (need_wchars + 1u) * 2u);
             return STATUS_INVALID_PARAMETER;        /* two passes disagreed */
         }
         if (vmax >= need_bytes + 2u) {
@@ -261,10 +251,15 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
         }
     } else {
         /* Empty value: append a NUL only if there is room. */
-        nt_env_free(val8, vcap);
+        env_buf_free(val8, vcap);
         val8 = NULL;
         if (vmax >= 2u) {
-            val_w = (uint16_t *)nt_env_alloc(2u);
+            /* Sized with the SAME expression every env_buf_free(val_w, ...) below
+             * uses. need_wchars is 0 on this branch, so this is literally 2 -- but
+             * writing it as the formula keeps alloc and free textually paired: the
+             * size selects the deallocator, so a divergence here would be a
+             * wrong-allocator free the day this branch's invariant changes. */
+            val_w = (uint16_t *)env_buf_alloc((need_wchars + 1u) * 2u);
             if (!val_w)
                 return STATUS_NO_MEMORY;
             val_w[0] = 0u;
@@ -279,7 +274,7 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
      * would memcpy a terminator through NULL. */
     if (write_bytes > 0u && !vbuf) {
         if (val_w)
-            nt_env_free(val_w, (need_wchars + 1u) * 2u);
+            env_buf_free(val_w, (need_wchars + 1u) * 2u);
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -287,11 +282,11 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
         if (prev == SSDT_USER_MODE) {
             st = ProbeForWrite(vbuf, write_bytes, 2);
             if (st != STATUS_SUCCESS) {
-                nt_env_free(val_w, (need_wchars + 1u) * 2u);
+                env_buf_free(val_w, (need_wchars + 1u) * 2u);
                 return st;
             }
             if (copy_to_user(vbuf, val_w, write_bytes) != 0) {
-                nt_env_free(val_w, (need_wchars + 1u) * 2u);
+                env_buf_free(val_w, (need_wchars + 1u) * 2u);
                 return STATUS_ACCESS_VIOLATION;
             }
         } else {
@@ -299,7 +294,7 @@ static NTSTATUS NtQueryEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
         }
     }
     if (val_w)
-        nt_env_free(val_w, (need_wchars + 1u) * 2u);
+        env_buf_free(val_w, (need_wchars + 1u) * 2u);
 
     /* Write Value.Length back (bytes, excl NUL). */
     {
@@ -373,17 +368,17 @@ static NTSTATUS NtSetEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
             return STATUS_INVALID_PARAMETER;            /* must be WCHAR-aligned */
         val_wcap = (uint32_t)(vlen_bytes / 2u) + 1u;
     }
-    val_w = (uint16_t *)nt_env_alloc(val_wcap * 2u);
+    val_w = (uint16_t *)env_buf_alloc(val_wcap * 2u);
     if (!val_w)
         return STATUS_NO_MEMORY;
     st = nt_decode_unicode_string(uValue, val_w, val_wcap, &val_wchars, prev);
     if (st != STATUS_SUCCESS) {
-        nt_env_free(val_w, val_wcap * 2u);
+        env_buf_free(val_w, val_wcap * 2u);
         return st;
     }
     for (i = 0; i < val_wchars; i++) {
         if (val_w[i] == 0u) {
-            nt_env_free(val_w, val_wcap * 2u);
+            env_buf_free(val_w, val_wcap * 2u);
             return STATUS_INVALID_PARAMETER;        /* embedded NUL */
         }
     }
@@ -391,30 +386,30 @@ static NTSTATUS NtSetEnvironmentVariable_handler(uint64_t a1, uint64_t a2,
     /* Size the UTF-8 form and reject over the storage cap BEFORE the big alloc. */
     cvt = nls_cp_utf16_to_utf8(val_w, val_wchars, NULL, 0, NLS_CP_STRICT);
     if (cvt < 0) {
-        nt_env_free(val_w, val_wcap * 2u);
+        env_buf_free(val_w, val_wcap * 2u);
         return STATUS_INVALID_PARAMETER;
     }
     if ((uint32_t)cvt > ENV_VALUE_MAX) {
-        nt_env_free(val_w, val_wcap * 2u);
+        env_buf_free(val_w, val_wcap * 2u);
         return STATUS_NAME_TOO_LONG;                /* value exceeds ENV_VALUE_MAX */
     }
     val8_n = cvt + 1;
-    val8 = (char *)nt_env_alloc((uint32_t)val8_n);
+    val8 = (char *)env_buf_alloc((uint32_t)val8_n);
     if (!val8) {
-        nt_env_free(val_w, val_wcap * 2u);
+        env_buf_free(val_w, val_wcap * 2u);
         return STATUS_NO_MEMORY;
     }
     cvt = nls_cp_utf16_to_utf8(val_w, val_wchars, (uint8_t *)val8,
                                (uint32_t)(val8_n - 1), NLS_CP_STRICT);
-    nt_env_free(val_w, val_wcap * 2u);
+    env_buf_free(val_w, val_wcap * 2u);
     if (cvt < 0) {
-        nt_env_free(val8, (uint32_t)val8_n);
+        env_buf_free(val8, (uint32_t)val8_n);
         return STATUS_INVALID_PARAMETER;
     }
     val8[cvt] = '\0';
 
     r = env_set(task_current(), name8, val8);
-    nt_env_free(val8, (uint32_t)val8_n);
+    env_buf_free(val8, (uint32_t)val8_n);
     /* ENV_ERR_NOSPACE is the per-process quota (block > 1 MiB or entry-count cap),
      * a deterministic limit -- STATUS_QUOTA_EXCEEDED, not the transient
      * STATUS_INSUFFICIENT_RESOURCES (which is ENV_ERR_NOMEM's actual-alloc-failure

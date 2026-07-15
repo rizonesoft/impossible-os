@@ -3035,6 +3035,36 @@ static void test_rtlenv_malformed_descriptors(void)
     env_unset(t, "RTLENV_MAL");
 }
 
+/* An output range overlapping its own Value descriptor is refused, not served: the
+ * Length store would corrupt the content the caller is about to read, and the NUL
+ * store would then go through a pointer the content itself controls. Pins the rule
+ * the expansion path and the sibling Nt handler already enforce. */
+static void test_rtlenv_query_descriptor_alias_refused(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24];
+    UNICODE_STRING name, val;
+    UNICODE_STRING out;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLENV_ALIAS");
+    env_mk_us(&val, vbuf, 24, "v");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed a value to query");
+
+    /* Aim the output buffer straight at the descriptor that describes it. */
+    out.Length = 0u;
+    out.MaximumLength = (uint16_t)sizeof(out);
+    out._pad = 0u;
+    out.Buffer = (uint16_t *)&out;
+    st = RtlQueryEnvironmentVariable_U((void *)0, &name, &out);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "an output range overlapping the Value descriptor is refused");
+    TEST_ASSERT(out.Buffer == (uint16_t *)&out,
+                "the refused descriptor is left untouched");
+    env_unset(t, "RTLENV_ALIAS");
+}
+
 /* The shared allocator picks kfree vs pmm_free_frame from the CALLER-SUPPLIED size,
  * so the 4096-byte size class boundary is load-bearing: a size that lands one side
  * on alloc and the other on free would release heap as frames (or vice versa). Drive
@@ -3127,6 +3157,7 @@ static void test_rtlenv_status_mappings(void)
     TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(0u, &env),
                    (uint32_t)STATUS_NO_MEMORY,
                    "RtlCreateEnvironment maps an allocation failure to STATUS_NO_MEMORY");
+    kmalloc_fail_countdown_clear();   /* defensive: disarm any residue */
     TEST_ASSERT(env == (void *)0,
                 "a failed RtlCreateEnvironment leaves *out_env NULL, not the caller's value");
 }
@@ -4812,6 +4843,8 @@ void test_register_env(void)
                             test_rtlenv_create_destroy_nulls, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl malformed descriptors rejected",
                             test_rtlenv_malformed_descriptors, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl query descriptor alias refused",
+                            test_rtlenv_query_descriptor_alias_refused, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl allocator size-class boundary",
                             test_rtlenv_alloc_size_class_boundary, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl status mappings",

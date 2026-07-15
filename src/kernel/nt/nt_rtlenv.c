@@ -760,6 +760,8 @@ NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
     char name8[ENV_NAME_MAX + 1u];
     char *val8;
     struct task *cur;
+    uint16_t *vbuf;
+    uint32_t vmax;
     uint32_t vcap = ENV_STR_KMALLOC_MAX;
     uint32_t val_len8, need_wchars, need_bytes;
     NTSTATUS st;
@@ -776,7 +778,21 @@ NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
      * field anyway). Validate exactly the two fields that bound the write. */
     if (!Value)
         return STATUS_INVALID_PARAMETER;
-    if (Value->MaximumLength != 0u && !Value->Buffer)
+
+    /* Snapshot the two INPUT fields into locals before any store, exactly as
+     * rtl_env_expand_core does above and for the same reason: this function writes
+     * Value->Length and then writes THROUGH Value->Buffer, so a caller whose Buffer
+     * points into its own descriptor could otherwise have the write target mutate
+     * mid-call. With locals, every write target is fixed at entry. */
+    vbuf = Value->Buffer;
+    vmax = Value->MaximumLength;
+    if (vmax != 0u && !vbuf)
+        return STATUS_INVALID_PARAMETER;
+    /* ...and reject the alias outright rather than merely surviving it: an output
+     * range covering the descriptor would have the Length store below corrupt the
+     * content the caller is about to read. The sibling NtQueryEnvironmentVariable
+     * handler rejects the identical overlap. */
+    if (rtl_env_ranges_overlap(vbuf, vmax, Value, (uint32_t)sizeof(*Value)))
         return STATUS_INVALID_PARAMETER;
     st = rtl_env_name_to_utf8(Name, name8);
     if (st != STATUS_SUCCESS)
@@ -834,24 +850,33 @@ NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
     /* Publish the required CONTENT size EXCLUDING the NUL on BOTH paths -- ntdll's
      * convention, which its kernel32 caller relies on (it appends the NUL itself).
      * The buffer FITS at MaximumLength == Length; the NUL is written only when there
-     * is strictly more room. */
+     * is room for a whole WCHAR. Every field below is the entry snapshot, never a
+     * re-read of the descriptor this store just touched. */
     Value->Length = (uint16_t)need_bytes;
-    if (Value->MaximumLength < need_bytes) {
+    if (vmax < need_bytes) {
         env_buf_free(val8, vcap);
         return STATUS_BUFFER_TOO_SMALL;
     }
-    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, Value->Buffer,
+    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, vbuf,
                                need_wchars, NLS_CP_STRICT);
     env_buf_free(val8, vcap);
-    if (cvt < 0 || (uint32_t)cvt != need_wchars)
+    if (cvt < 0 || (uint32_t)cvt != need_wchars) {
+        /* Retract the published length: it described content that was never
+         * written. Defensive -- the sizing pass above already succeeded over these
+         * same private bytes, so a disagreeing second pass means the converter is
+         * inconsistent -- but the expansion path retracts on its analogous branch
+         * and a published length that outlives its content is exactly the kind of
+         * asymmetry a later change turns into a real read-past. */
+        Value->Length = 0u;
         return STATUS_INVALID_PARAMETER;
-    /* The NUL is a WCHAR: it needs TWO spare bytes, not one. `MaximumLength >
-     * need_bytes` would be true for an ODD MaximumLength of exactly need_bytes + 1
-     * and write a 2-byte unit into 1 byte of space. The two tests agree for every
-     * even MaximumLength (the only shape a UTF-16 caller should present), so this
-     * costs well-formed callers nothing and closes the odd-length overflow. */
-    if ((uint32_t)Value->MaximumLength >= need_bytes + 2u)
-        Value->Buffer[need_wchars] = 0u;
+    }
+    /* The NUL is a WCHAR: it needs TWO spare bytes, not one. `vmax > need_bytes`
+     * would be true for an ODD vmax of exactly need_bytes + 1 and write a 2-byte
+     * unit into 1 byte of space. The two tests agree for every even vmax (the only
+     * shape a UTF-16 caller should present), so this costs well-formed callers
+     * nothing and closes the odd-length overflow. */
+    if (vmax >= need_bytes + 2u)
+        vbuf[need_wchars] = 0u;
     return STATUS_SUCCESS;
 }
 

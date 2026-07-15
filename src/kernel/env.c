@@ -11,6 +11,7 @@
  * ============================================================================ */
 
 #include "kernel/env.h"
+#include "libc/string.h"         /* memcpy (env_wrap_block body copy) */
 #include "kernel/sched/task.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/mm/heap.h"
@@ -233,6 +234,17 @@ static int env_entry_key_span(const char *e, uint32_t elen, uint32_t *sep)
 /* Allocate `n` bytes (including NUL) for an env string. The allocator kind is a
  * pure function of `n`, so env_str_free recovers it from strlen()+1 with no
  * per-string bookkeeping. Returns NULL on failure. */
+/* Frames needed for `n` bytes. The round-up is computed in 64-bit deliberately:
+ * `n + (ENV_PAGE_SIZE - 1)` in 32-bit wraps to a tiny value (frames == 0) for n
+ * within 4095 of UINT32_MAX, which would free nothing while the caller believes the
+ * allocation is gone. No current caller comes near that, but this is the single
+ * choke point for every env allocation and it is header-public, so it computes the
+ * count that is always right rather than the one that happens to be. */
+static uint64_t env_buf_frames(uint32_t n)
+{
+    return ((uint64_t)n + (ENV_PAGE_SIZE - 1u)) / ENV_PAGE_SIZE;
+}
+
 void *env_buf_alloc(uint32_t n)
 {
     if (n == 0u)
@@ -240,9 +252,8 @@ void *env_buf_alloc(uint32_t n)
     if (n <= ENV_STR_KMALLOC_MAX)
         return kmalloc(n);
     {
-        uint64_t frames = (n + (ENV_PAGE_SIZE - 1)) / ENV_PAGE_SIZE;
-        uintptr_t phys = pmm_alloc_contiguous(frames);   /* identity-mapped */
-        return (void *)phys;                             /* 0 -> NULL */
+        uintptr_t phys = pmm_alloc_contiguous(env_buf_frames(n));  /* identity-mapped */
+        return (void *)phys;                                       /* 0 -> NULL */
     }
 }
 
@@ -253,7 +264,7 @@ void env_buf_free(void *p, uint32_t n)
     if (n <= ENV_STR_KMALLOC_MAX) {
         kfree(p);
     } else {
-        uint64_t frames = (n + (ENV_PAGE_SIZE - 1)) / ENV_PAGE_SIZE;
+        uint64_t frames = env_buf_frames(n);
         uint64_t f;
         uintptr_t base = (uintptr_t)p;
         for (f = 0; f < frames; f++)
@@ -2030,15 +2041,16 @@ static int env_wrap_block(const uint16_t *src, uint32_t wchars, void **out_block
     uint32_t total_bytes = (uint32_t)sizeof(struct env_block_hdr) + wchars * 2u;
     struct env_block_hdr *hdr = (struct env_block_hdr *)env_str_alloc(total_bytes);
     uint16_t *body;
-    uint32_t i;
 
     if (!hdr)
         return ENV_ERR_NOMEM;
     hdr->magic = ENV_BLK_MAGIC;
     hdr->wchars = wchars;
     body = (uint16_t *)(hdr + 1);
-    for (i = 0; i < wchars; i++)
-        body[i] = src[i];
+    /* Scalar libc memcpy, not memcpy_fast: this runs in arbitrary kernel context and
+     * memcpy_fast's SIMD path would need FPU-state protection. A block reaches
+     * ENV_CREATE_BLOCK_MAX_WCHARS (128 KiB), where a per-WCHAR loop is pure waste. */
+    memcpy(body, src, (uint64_t)wchars * sizeof(*body));
     *out_block = (void *)body;
     return ENV_OK;
 }
@@ -2103,7 +2115,9 @@ void env_destroy_block(void *block)
 
     if (!block)
         return;
-    /* CONTRACT: `block` MUST be a pointer returned by env_create_block (or NULL),
+    /* CONTRACT: `block` MUST be a pointer returned by env_create_block or
+     * env_create_empty_block (or NULL) -- both build through env_wrap_block, so both
+     * carry this header and free identically here --
      * called EXACTLY once, exactly as Win32 DestroyEnvironmentBlock requires a
      * CreateEnvironmentBlock pointer -- reading the predecessor header of an
      * arbitrary pointer is a caller error, not a supported input. The checks below

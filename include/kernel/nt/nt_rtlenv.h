@@ -263,7 +263,17 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
  *                shape), so a name like "=FOO" passes this ntdll-shaped check and is
  *                then refused by storage -- the layering is deliberate: this entry
  *                enforces the ABI's rule, the store enforces its own.
- *   Value        IN/OUT. MaximumLength (bytes) bounds the write.
+ *   Value        IN/OUT. MaximumLength (bytes) bounds the write. Only
+ *                MaximumLength and Buffer are INPUTS -- Length is written by this
+ *                call, so whatever a caller arrives with there is ignored rather
+ *                than validated (real ntdll overwrites it too).
+ *
+ * NO-ALIAS: the output range [Value->Buffer, +MaximumLength) MUST NOT overlap the
+ * Value descriptor itself; an overlap returns STATUS_INVALID_PARAMETER. The Length
+ * store would otherwise corrupt the content the caller is about to read, and the
+ * write pointer is snapshotted at entry precisely so a self-aliasing descriptor
+ * cannot move it mid-call. The sibling NtQueryEnvironmentVariable handler and
+ * rtl_env_expand_block enforce the same rule.
  *
  * LENGTH CONVENTION (both on success and on STATUS_BUFFER_TOO_SMALL): Value->Length
  * is the CONTENT byte count EXCLUDING the terminating NUL. The buffer FITS when
