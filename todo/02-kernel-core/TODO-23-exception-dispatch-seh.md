@@ -14,6 +14,9 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 > **Goal:** Replace the current "all CPU exceptions → `panic_screen()`" model with a proper Windows-style exception dispatch pipeline. That means: a captured `CONTEXT` record, an `EXCEPTION_RECORD` with fault address and exception code, a page-fault triage layer that separates recoverable faults from hard kills, debugger first-chance/second-chance notification, a `KiUserExceptionDispatcher` path that delivers faults to user-mode SEH handlers via the TEB chain, x64 table-based unwind (`RtlVirtualUnwind`), kernel-mode stack walking (`RtlCaptureStackBackTrace`), Vectored Exception Handlers (VEH), Vectored Continue Handlers (VCH), `__C_specific_handler` for SEH scope-table dispatch, an unhandled exception filter, kernel-mode safe probing (`ProbeForRead`/`ProbeForWrite`), kernel-driver `__try`/`__except` support, POSIX signal delivery for Linux-compat processes (including `sigaltstack`), and exception dispatch telemetry. Without this, every access violation -- whether in a driver or a user app -- crashes the whole OS rather than being caught and reported correctly.
 
+> [!WARNING]
+> **WHOLE-FILE BLOCKER (2026-07-15): this TODO is gated on `02-kernel-core/TODO-33-higher-half-kernel-relocation.md`.** The kernel `.bss` ends at `0x7FEE55` -- 4523 bytes under `USER_BASE` 0x800000 -- so `scripts/build.sh`'s BSS-collision guard fails any section that adds more than ~4 KiB of `.text`/`.rodata` (sections are page-aligned and chain, so `.text` growth pushes `.bss` START upward; the `.bss` SIZE need not change at all). §1 is implemented, design-reviewed and `[/]`-deferred on exactly this (parked in `git stash` `todo23-s1-wip`), and §2-§16 each add kernel code, so they are in the same position. Do NOT start a section here expecting it to link -- land TODO-33 first, which explicitly authorises the overnight runner to implement it. TODO-23 §1 is the second confirmed casualty after TODO-22 §23.
+
 > [!IMPORTANT]
 > **Current state:** `vmm.c` has a `page_fault_handler` (vector 14) that chains to the swap and mmap handlers for kernel-mode recoverable faults, then falls through to `panic_screen()`. All other CPU exception vectors (0-13, 15-31) dispatch directly to `panic_screen()` via `idt.c`. No `EXCEPTION_RECORD` or `CONTEXT` is captured, no user-mode fault delivery path exists, and there is no kernel safe-probing API. The POSIX signal machinery (`signals` field in `struct task`) is wired but not exercised.
 
@@ -62,7 +65,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1                 |  [ ]   |
+| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §7     |  [/]   |
 | 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
@@ -91,22 +94,27 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a CONTEXT from the ISR frame.
 
 > [!IMPORTANT]
-> → XREF: `TODO-12 §1` -- `NTSTATUS` type must be defined first.
+> → XREF: `TODO-12 §1` -- SATISFIED: `include/kernel/nt/ntstatus.h` is the canonical `NTSTATUS` home (`typedef int32_t NTSTATUS` at `:21`). `except.h` includes it; exception status codes are added THERE, never re-declared here.
+> → XREF: `TODO-33 §1-§7` -- BLOCKER: this section is implemented but cannot link (kernel BSS / `USER_BASE` ceiling). See the Deferred stamp below.
 
-> [!WARNING]
-> A temporary `typedef int32_t NTSTATUS;` already exists in `include/kernel/uefi_vars.h`. Reuse that typedef in `include/kernel/except.h` (or move it to a shared `include/kernel/ntstatus.h` if the include dependency is awkward). Add the exception-specific status codes (`STATUS_ACCESS_VIOLATION 0xC0000005`, etc.) alongside. When TODO-12 §1 lands with the canonical NTSTATUS and full code table, consolidate into a single header.
+> [!NOTE]
+> `CONTEXT` is NOT new: `struct _CONTEXT` (1232 bytes) already ships in `include/kernel/panic.h` for the crash-dump pipeline, forward-declared at `include/kernel/nt/nt_types.h:101`. This section MOVES it (plus `XMM_SAVE_AREA32`, `M128A`, the `CONTEXT_*` flags) into `except.h` and has `panic.h` include that -- a consolidation, not a second definition.
 
-- [ ] `include/kernel/except.h` -- `typedef int32_t NTSTATUS;` (local minimal; removed when TODO-12 §1 lands)
-- [ ] `include/kernel/except.h` -- `EXCEPTION_RECORD`, `CONTEXT`, `EXCEPTION_POINTERS`, exception codes
-- [ ] `CONTEXT.ContextFlags` contract: CONTROL/INTEGER/SEGMENTS/FLOATING_POINT bits select which fields are valid; `NtContinue` (§5), `RtlVirtualUnwind` (§6) and `RtlRestoreContext` (§9) MUST honour them, never restore blindly
-- [ ] `_Static_assert` the AMD64 `CONTEXT` ABI: `ContextFlags` 0x30, legacy `XMM_SAVE_AREA32` 0x100, size 0x4E0 -- a real ntdll must consume it unpatched
-- [ ] FPU/SIMD capture: FXSAVE into `XMM_SAVE_AREA32` with `FCW=0x037F` / `MXCSR=0x1F80`, clearing `CR0.TS` first (bare-metal gotcha); AVX/`XSTATE` stays out of scope -> XREF: `D01 T09 §5` owns `XCR0`
-- [ ] `src/kernel/except.c` -- `context_from_frame()`, `frame_from_context()`
-- [ ] Add to `Makefile` and verify it compiles clean
+- [x] `include/kernel/except.h` -- includes `kernel/nt/ntstatus.h` (canonical NTSTATUS); no local typedef. TODO-12 §1 landed, so the old `uefi_vars.h` temp-typedef instruction was obsolete
+- [x] `include/kernel/except.h` -- `EXCEPTION_RECORD`, `EXCEPTION_POINTERS`, exception codes + `CONTEXT`/`XMM_SAVE_AREA32`/`M128A` moved from `panic.h`; `EXCEPTION_*` alias the `STATUS_*` values added to `ntstatus.h`
+- [x] `CONTEXT.ContextFlags` contract: exact-group `CONTEXT_HAS_GROUP((f & g) == g)` macro -- a bare `flags & CONTEXT_CONTROL` is TRUE for ANY group (all share `CONTEXT_AMD64`). §5/§6/§9 MUST use it, never a bare AND
+- [x] `_Static_assert` the AMD64 `CONTEXT` ABI: `ContextFlags` 0x30, `XMM_SAVE_AREA32` 0x100, size **0x4D0 (1232)** -- the old 0x4E0 was wrong. `EXCEPTION_RECORD` pins every field offset + 152 size
+- [x] FPU/SIMD: `context_from_frame` does NO FXSAVE -- lazy FPU means live regs hold another task state (leak). Unsupported groups zeroed + flag CLEARED; `FltSave` parks at init `FCW=0x037F`/`MXCSR=0x1F80` -> XREF: `D01 T09 §5` owns `XCR0`
+- [x] `src/kernel/except.c` -- `context_from_frame()`, `frame_from_context()`, `context_init_fpu_state()`; frame-backed CONTROL+INTEGER only, returns the mask actually captured. `panic_build_context()` delegates its frame fill
+- [x] `Makefile` auto-globs `src/kernel/**/*.c` -- no edit needed for `except.c`; `TEST_CAT_EXCEPT` did need the `test-except` target
 
-**Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` includes all GP registers + XMM0-15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- all fields match. Serial log: `"except: types compiled, CONTEXT size=<N>"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` == 1232 with all GP registers + XMM0-15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- RIP/RSP/RFLAGS/CS/SS/GP all match. The `_Static_assert` block + the `except` suite are the ABI proof; the boot-log line is emitted by `except_init()` (§3), which owns kernel init registration. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 16 suites -- BLOCKED: cannot link until TODO-33 lands
 
 - [ ] Commit: `"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types"`
+
+> **Deferred:** [Critical] 2026-07-15 -- code COMPLETE + design-reviewed, but BLOCKED on the kernel-BSS/`USER_BASE` ceiling: HEAD `.bss` ends `0x7FEE55`, 4523 B under `USER_BASE` 0x800000; §1 adds ~12 KiB of `.text`/`.rodata`, pushing the page-aligned `.bss` START 0x46b000 -> 0x46e000 and tripping the `scripts/build.sh` guard (`.bss` SIZE is byte-identical -- §1 adds no BSS). Second confirmed casualty after TODO-22 §23. Implementation parked in `git stash` named `todo23-s1-wip` -- apply it, do not rewrite. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7` (item: "Re-run `02-kernel-core/TODO-23` §1 once the guard is gone").
 
 ---
 

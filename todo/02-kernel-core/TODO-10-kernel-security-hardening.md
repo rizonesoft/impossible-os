@@ -338,7 +338,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Design corrected the draft: supervisor-SHSTK PTE marker is Dirty/bit-6 + Write-clear (not "bit 5" = Accessed); CET state saves per-thread `PL0_SSP` on context switch, not `IA32_XSS`/`XSAVES` (XSAVE is per-task + lazy).
 > - When unblocked: add `CET_SS` to the AP probe mask, `cpu_enable_cet_ss()` gated per-AP via `cpu_feature_local()` (mirrors §8 `SPEC_CTRL`), CET-aware no-return enable trampoline, then per-thread + IST shadow stacks.
 >
-> **Deferred:** [Critical] Kernel-ring-0 CET shadow-stack enable unsafe without structured `#CP` (vector 21) handling -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)" at line 67). [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
+> **Deferred:** [Critical] Kernel-ring-0 CET shadow-stack enable unsafe without structured `#CP` (vector 21) handling -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)" at line 70). [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
 
 ---
 
