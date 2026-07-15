@@ -16,9 +16,6 @@
 #include "kernel/env.h"        /* env_is_secure_context */
 #include "registry.h"
 
-/* Base container key, relative to the HKLM/HKCU root sentinel. */
-#define APP_PATHS_BASE  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
-
 /* Longest subkey path this module assembles: base + '\\' + name + ".exe" + NUL.
  * APP_PATHS_BASE is 51 chars; APP_PATHS_NAME_MAX is 255; 51+1+255+4+1 = 312. */
 #define APP_PATHS_SUBKEY_MAX  320u
@@ -57,6 +54,14 @@ static long ap_build_subkey(const char *name, char *out, uint32_t out_size)
             return ERROR_INVALID_PARAMETER;
     }
     if (nlen == 0)
+        return ERROR_INVALID_PARAMETER;
+
+    /* The FINAL subkey component ("{name}" or "{name}.exe") must satisfy the
+     * registry's per-component limit. A dotless name whose ".exe"-appended form
+     * would exceed it is rejected here rather than failing opaquely (or being
+     * silently truncated to the wrong key) inside RegCreateKeyEx/RegOpenKeyEx --
+     * so a dotless name is effectively capped at REG_MAX_KEY_NAME - 4. */
+    if (nlen + (has_dot ? 0u : 4u) > (uint32_t)REG_MAX_KEY_NAME)
         return ERROR_INVALID_PARAMETER;
 
     blen = ap_strlen(base);

@@ -632,6 +632,10 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Downstream effects** -- provides the App Paths fallback primitive §7's shell wiring calls and the registration TODO-03 consumes; design-review adoptions (elevation-bound precedence, rich status, retry-safe Path) in the commit.
 > - **Canonical doc** -- `include/kernel/env_apppaths.h` (full contract + security posture).
 > - **Scope boundary** -- §17 owns the lookup/register primitives; §7 owns the shell `shell_find_command` wiring; TODO-03 owns installer callers; TODO-15 §5 owns real registry-DACL authorization (elevation gate stands in until it lands).
+> **Verified:** 2026-07-15 | commit `2ca1683f` | 4/5 items | build OK | tests 5 App Paths suites PASS
+> **Accepted:** [H] non-atomic default+`Path` pair (concurrent register/lookup can interleave -- lock-free-registry class) -> XREF: 02-kernel-core/TODO-14 §14 (item: "Batched atomic multi-value write under one `reg_lock` hold" at line 662)
+> **Deferred:** [M] `shell_find_command` App Paths fallback wiring (no kernel shell exists yet) -> XREF: 02-kernel-core/TODO-22 §7 (item: "`shell_find_command(name, out_path, max)`" at line 323)
+> **Quality reviewed:** 2026-07-15 | Codex 9x (design + adversarial + consistency + perf + re-adversarial) | 5H+6M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 

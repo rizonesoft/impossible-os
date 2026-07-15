@@ -31,9 +31,16 @@
 
 struct task;
 
+/* The App Paths container key, relative to the HKLM/HKCU root sentinel. Exposed
+ * so consumers and tests reference the one canonical literal (no hand-copies). */
+#define APP_PATHS_BASE  "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
+
 /* Longest executable subkey name (a single filename component) accepted; matches
- * the Windows 255-char registry key-name limit. A longer or empty name, or one
- * containing a path separator, is ERROR_INVALID_PARAMETER. */
+ * the Windows / REG_MAX_KEY_NAME 255-char registry key-name limit. A longer or
+ * empty name, or one containing a path separator, is ERROR_INVALID_PARAMETER.
+ * Note the EFFECTIVE limit for a name WITHOUT an extension is 4 shorter (251):
+ * ".exe" is appended and the resulting component must still fit REG_MAX_KEY_NAME,
+ * so a 252-255-char dotless name is rejected (would build a 256-259-char key). */
 #define APP_PATHS_NAME_MAX  255u
 
 /* Resolve an executable's registered full path via App Paths.
@@ -81,8 +88,11 @@ long app_paths_lookup(struct task *caller, const char *name,
  *
  * `root` MUST be HKEY_LOCAL_MACHINE (machine-wide) or HKEY_CURRENT_USER
  * (per-user); anything else is ERROR_INVALID_PARAMETER. Writing HKLM requires a
- * proven elevated caller (env_is_secure_context(caller)); a NULL, identity-less,
- * or <= Medium caller gets ERROR_ACCESS_DENIED. HKCU (per-user) is unrestricted.
+ * proven elevated caller (env_is_proven_elevated(caller) -- the authorization
+ * predicate requiring BOTH the token's IsElevated flag AND a valid integrity
+ * level at/above High, NOT the fail-closed-to-secure env_is_secure_context used
+ * for lookup precedence); a NULL, identity-less, malformed-token, IsElevated-clear,
+ * or below-High caller gets ERROR_ACCESS_DENIED. HKCU (per-user) is unrestricted.
  *
  * Replacement is deterministic: the default value is set to full_path; when
  * additional_path is non-NULL the "Path" value is set to it, and when

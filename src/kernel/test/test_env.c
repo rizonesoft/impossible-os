@@ -3222,8 +3222,8 @@ static void test_env_copy_secure_source_excludes(void)
 
 /* ---- s17: App Paths registry-based executable lookup --------------------- */
 
-#define APP_PATHS_TEST_BASE \
-    "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
+/* Share the one canonical container literal with the implementation (env_apppaths.h
+ * APP_PATHS_BASE) so cleanup deletes exactly what register/lookup wrote. */
 
 static uint32_t ap_slen(const char *s)
 {
@@ -3238,7 +3238,7 @@ static uint32_t ap_slen(const char *s)
 static void app_paths_test_cleanup(HKEY root, const char *subname)
 {
     char path[288];
-    const char *base = APP_PATHS_TEST_BASE;
+    const char *base = APP_PATHS_BASE;
     uint32_t o = 0, i;
     for (i = 0; base[i]; ++i)
         path[o++] = base[i];
@@ -3322,6 +3322,36 @@ static void test_app_paths_arg_validation(void)
     rc = app_paths_lookup(&s_env_fixture, (const char *)0, path, sizeof path,
                           &need, (char *)0, 0, (uint32_t *)0);
     TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER, "NULL name rejected");
+
+    /* Effective-component-length boundary: a dotless name gets ".exe" appended,
+     * and the final registry component must fit REG_MAX_KEY_NAME (255). */
+    {
+        char longname[260];
+        uint32_t k;
+        for (k = 0; k < 251u; ++k)
+            longname[k] = 'a';
+        longname[251] = '\0';                 /* 251 dotless -> 255-char component */
+        rc = app_paths_lookup(&s_env_fixture, longname, path, sizeof path, &need,
+                              (char *)0, 0, (uint32_t *)0);
+        TEST_ASSERT_EQ((int)rc, ERROR_FILE_NOT_FOUND,
+                       "251-char dotless name accepted (component == 255)");
+
+        longname[251] = 'a';
+        longname[252] = '\0';                 /* 252 dotless -> 256-char component */
+        rc = app_paths_lookup(&s_env_fixture, longname, path, sizeof path, &need,
+                              (char *)0, 0, (uint32_t *)0);
+        TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER,
+                       "252-char dotless name rejected (would exceed 255)");
+
+        for (k = 0; k < 255u; ++k)
+            longname[k] = 'a';
+        longname[128] = '.';                  /* has extension -> no .exe append */
+        longname[255] = '\0';                 /* 255-char component, accepted */
+        rc = app_paths_lookup(&s_env_fixture, longname, path, sizeof path, &need,
+                              (char *)0, 0, (uint32_t *)0);
+        TEST_ASSERT_EQ((int)rc, ERROR_FILE_NOT_FOUND,
+                       "255-char dotted name accepted (no .exe append)");
+    }
 
     /* Register with a root that is neither HKLM nor HKCU. */
     rc = app_paths_register(&s_env_fixture, HKEY_USERS, "x.exe", "C:\\x.exe",
@@ -3471,7 +3501,7 @@ static void test_app_paths_malformed_value(void)
     uint32_t disp = 0;
     char subkey[288], path4[4], path8[8];
     uint32_t need = 0, o = 0, i;
-    const char *base = APP_PATHS_TEST_BASE;
+    const char *base = APP_PATHS_BASE;
     const char *sub = "iobad.exe";
     long rc;
 
