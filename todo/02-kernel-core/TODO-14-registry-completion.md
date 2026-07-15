@@ -659,6 +659,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [/] DEFERRED: upgrade to rwlock if profiling shows read contention (spinlock is v1).
 - [/] DEFERRED: KCB cache globals (`reg_kcb_cache`/`reg_kcb_clock`/counters, §2) written on every `reg_walk_path` hop -- covered by `reg_lock` above. -> XREF: 02-kernel-core/TODO-14 §2
 - [/] DEFERRED: notification-engine SMP (§3) -- watcher slot-claim + `reg_watcher_next_id` + per-key list head-insert + `reg_dispatch_depth` covered by the lock + deferred-dispatch redesign. -> XREF §3
+- [ ] Batched atomic multi-value write under one `reg_lock` hold (default + `Path` pair) so `app_paths_register`/`app_paths_lookup` (TODO-22 §17) get an atomic write + consistent read snapshot -> XREF: 02-kernel-core/TODO-22 §17
 - [ ] Commit: `"kernel/registry: SMP-safe registry with spinlock around all pool and tree operations"`
 
 **Test checkpoint:** Two tasks concurrently creating and deleting keys under `\Registry\Machine\Software\SmpTest` for 1000 iterations. No kernel fault, no duplicate handles, enumeration sees consistent child counts. `RegQueryInfoKey` returns correct `lpcSubKeys` under concurrent mutation. Serial log: `"[REG] SMP lock: %u contention events"` (informational). Test on: QEMU WHPX (2 vCPU).

@@ -25,6 +25,7 @@
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
 #include "kernel/boot_init.h" /* kernel_subsystem_ready() for the overlay test */
 #include "registry.h"         /* HKCU PATH-append test injects a user value */
+#include "kernel/env_apppaths.h" /* s17 App Paths lookup/register */
 #include "kernel/types.h"
 
 /* Local ASCII string compare (no live libc dependency in the test TU). */
@@ -3219,6 +3220,312 @@ static void test_env_copy_secure_source_excludes(void)
     env_free(&s_env_fixture);   /* heap-neutral: free before per-test leak check */
 }
 
+/* ---- s17: App Paths registry-based executable lookup --------------------- */
+
+#define APP_PATHS_TEST_BASE \
+    "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
+
+static uint32_t ap_slen(const char *s)
+{
+    uint32_t n = 0;
+    while (s[n])
+        n++;
+    return n;
+}
+
+/* Delete a test App Paths subkey (and its values) so the live registry is not
+ * polluted across runs. */
+static void app_paths_test_cleanup(HKEY root, const char *subname)
+{
+    char path[288];
+    const char *base = APP_PATHS_TEST_BASE;
+    uint32_t o = 0, i;
+    for (i = 0; base[i]; ++i)
+        path[o++] = base[i];
+    path[o++] = '\\';
+    for (i = 0; subname[i]; ++i)
+        path[o++] = subname[i];
+    path[o] = '\0';
+    RegDeleteTree(root, path);
+}
+
+/* HKCU register + lookup round-trip, including the bare-name ".exe" append and
+ * the independent "Path" value returned in out_additional. */
+static void test_app_paths_lookup_roundtrip(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char path[128], add[128];
+    uint32_t need = 0, anp = 0;
+    long rc;
+
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- App Paths exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    /* Medium-integrity caller: a normal user, HKCU-first precedence. (A NULL
+     * token would fail closed to secure -> HKLM-only.) */
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+
+    app_paths_test_cleanup(HKEY_CURRENT_USER, "iotestapp.exe");
+    rc = app_paths_register(&s_env_fixture, HKEY_CURRENT_USER, "iotestapp.exe",
+                            "C:\\Apps\\iotestapp.exe", "C:\\Apps\\lib");
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS,
+                   "HKCU register succeeds for a normal caller");
+
+    /* Bare name (no extension) resolves via the .exe append. */
+    rc = app_paths_lookup(&s_env_fixture, "iotestapp", path, sizeof path, &need,
+                          add, sizeof add, &anp);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "bare name resolves via .exe append");
+    TEST_ASSERT(env_streq(path, "C:\\Apps\\iotestapp.exe"),
+                "default value = full exe path");
+    TEST_ASSERT_EQ(need, ap_slen(path) + 1u, "out_path_needed = bytes incl NUL");
+    TEST_ASSERT(env_streq(add, "C:\\Apps\\lib"),
+                "Path value returned in out_additional");
+    TEST_ASSERT_EQ(anp, ap_slen(add) + 1u, "out_add_needed = Path bytes incl NUL");
+
+    s_env_fixture.token = NULL;
+    app_paths_test_cleanup(HKEY_CURRENT_USER, "iotestapp.exe");
+    env_free(&s_env_fixture);
+}
+
+/* Argument validation: not-found, path-separator rejection, NULL name, bad root. */
+static void test_app_paths_arg_validation(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char path[64];
+    uint32_t need = 0;
+    long rc;
+
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- App Paths exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+
+    app_paths_test_cleanup(HKEY_CURRENT_USER, "io-absent.exe");
+    rc = app_paths_lookup(&s_env_fixture, "io-absent", path, sizeof path, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_FILE_NOT_FOUND,
+                   "absent name -> ERROR_FILE_NOT_FOUND");
+
+    rc = app_paths_lookup(&s_env_fixture, "sub\\evil.exe", path, sizeof path,
+                          &need, (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER,
+                   "name with backslash rejected (anti-traversal)");
+    rc = app_paths_lookup(&s_env_fixture, "a/b", path, sizeof path, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER, "name with slash rejected");
+    rc = app_paths_lookup(&s_env_fixture, (const char *)0, path, sizeof path,
+                          &need, (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER, "NULL name rejected");
+
+    /* Register with a root that is neither HKLM nor HKCU. */
+    rc = app_paths_register(&s_env_fixture, HKEY_USERS, "x.exe", "C:\\x.exe",
+                            (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER, "invalid root rejected");
+    /* Register with NULL full_path. */
+    rc = app_paths_register(&s_env_fixture, HKEY_CURRENT_USER, "x.exe",
+                            (const char *)0, (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_INVALID_PARAMETER, "NULL full_path rejected");
+
+    s_env_fixture.token = NULL;
+    env_free(&s_env_fixture);
+}
+
+/* HKLM registration is an authorization boundary: only a proven elevated caller
+ * may write machine-wide; NULL / Medium callers are denied. */
+static void test_app_paths_register_hklm_auth(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char path[64];
+    uint32_t need = 0;
+    long rc;
+
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- App Paths exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    app_paths_test_cleanup(HKEY_LOCAL_MACHINE, "iotesthklm.exe");
+
+    /* Medium (non-elevated) caller: HKLM write denied. */
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    rc = app_paths_register(&s_env_fixture, HKEY_LOCAL_MACHINE, "iotesthklm.exe",
+                            "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_ACCESS_DENIED,
+                   "Medium caller cannot register HKLM");
+
+    /* NULL caller: no identity -> denied. */
+    rc = app_paths_register((struct task *)0, HKEY_LOCAL_MACHINE,
+                            "iotesthklm.exe", "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_ACCESS_DENIED,
+                   "NULL caller cannot register HKLM");
+
+    /* Non-NULL task with NO token: not PROVEN elevated -> denied (a fail-closed
+     * read would call this "secure" -- authorization must not). */
+    s_env_fixture.token = NULL;
+    rc = app_paths_register(&s_env_fixture, HKEY_LOCAL_MACHINE, "iotesthklm.exe",
+                            "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_ACCESS_DENIED,
+                   "no-token task cannot register HKLM");
+
+    /* Malformed token (NULL IL SID): not PROVEN elevated -> denied. */
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)0;
+    rc = app_paths_register(&s_env_fixture, HKEY_LOCAL_MACHINE, "iotesthklm.exe",
+                            "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_ACCESS_DENIED,
+                   "malformed-token task cannot register HKLM");
+
+    /* Valid High IL SID but IsElevated CLEAR: an inconsistent token -> denied. A
+     * structurally valid integrity SID alone must NOT authorize a machine-wide
+     * write; the token's own elevation flag must also be set. */
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    tok.IsElevated = 0;
+    rc = app_paths_register(&s_env_fixture, HKEY_LOCAL_MACHINE, "iotesthklm.exe",
+                            "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_ACCESS_DENIED,
+                   "High IL SID with IsElevated clear cannot register HKLM");
+
+    /* Proven elevated (High IL + IsElevated set): HKLM write allowed, resolvable. */
+    tok.IsElevated = 1;
+    rc = app_paths_register(&s_env_fixture, HKEY_LOCAL_MACHINE, "iotesthklm.exe",
+                            "C:\\Sys\\a.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "proven-elevated caller registers HKLM");
+    rc = app_paths_lookup(&s_env_fixture, "iotesthklm", path, sizeof path, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "elevated lookup finds the HKLM entry");
+    TEST_ASSERT(env_streq(path, "C:\\Sys\\a.exe"), "HKLM default value resolved");
+
+    s_env_fixture.token = NULL;
+    app_paths_test_cleanup(HKEY_LOCAL_MACHINE, "iotesthklm.exe");
+    env_free(&s_env_fixture);
+}
+
+/* Elevation gate on lookup (HKCU ignored for elevated caller), MORE_DATA size
+ * reporting, and NULL-Path re-register deleting a stale Path value. */
+static void test_app_paths_lookup_elevation_moredata(void)
+{
+    ACCESS_TOKEN tok = {0};
+    char path[64], small[4], add[64];
+    uint32_t need = 0, anp = 99;
+    long rc;
+
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- App Paths exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+
+    app_paths_test_cleanup(HKEY_CURRENT_USER, "iotestelev.exe");
+    rc = app_paths_register(&s_env_fixture, HKEY_CURRENT_USER, "iotestelev.exe",
+                            "C:\\U\\e.exe", "C:\\U\\lib");
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "HKCU register ok");
+
+    /* Elevated caller must NOT honor the user HKCU entry (hijack gate). */
+    tok.IntegrityLevelSid = (SID *)SeILHigh;
+    rc = app_paths_lookup(&s_env_fixture, "iotestelev", path, sizeof path, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_FILE_NOT_FOUND,
+                   "elevated lookup ignores the HKCU entry (HKLM-only)");
+
+    /* Medium caller, undersized buffer: MORE_DATA with the required size -- never
+     * collapsed to not-found (which would resolve a different binary). */
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+    rc = app_paths_lookup(&s_env_fixture, "iotestelev", small, sizeof small,
+                          &need, (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_MORE_DATA,
+                   "small buffer -> MORE_DATA, not not-found");
+    TEST_ASSERT_EQ(need, ap_slen("C:\\U\\e.exe") + 1u,
+                   "required size incl NUL reported");
+
+    /* Re-register with NULL additional_path: the stale Path must be deleted. */
+    rc = app_paths_register(&s_env_fixture, HKEY_CURRENT_USER, "iotestelev.exe",
+                            "C:\\U\\e.exe", (const char *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "re-register with NULL Path succeeds");
+    add[0] = 'x';
+    rc = app_paths_lookup(&s_env_fixture, "iotestelev", path, sizeof path, &need,
+                          add, sizeof add, &anp);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "exe still resolves after Path delete");
+    TEST_ASSERT_EQ(anp, 0u, "stale Path deleted -> out_add_needed 0");
+    TEST_ASSERT(add[0] == '\0', "out_additional cleared when no Path value");
+
+    s_env_fixture.token = NULL;
+    app_paths_test_cleanup(HKEY_CURRENT_USER, "iotestelev.exe");
+    env_free(&s_env_fixture);
+}
+
+/* A malformed non-terminated REG_SZ that exactly fills the buffer must report
+ * MORE_DATA (with room for a NUL), not a silently truncated SUCCESS. */
+static void test_app_paths_malformed_value(void)
+{
+    ACCESS_TOKEN tok = {0};
+    HKEY hk = (HKEY)0;
+    uint32_t disp = 0;
+    char subkey[288], path4[4], path8[8];
+    uint32_t need = 0, o = 0, i;
+    const char *base = APP_PATHS_TEST_BASE;
+    const char *sub = "iobad.exe";
+    long rc;
+
+    if (!kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+        TEST_SKIP("registry not ready -- App Paths exercised post-Phase-2");
+        return;
+    }
+    env_fixture_reset();
+    s_env_fixture.token = &tok;
+    tok.IntegrityLevelSid = (SID *)SeILMedium;
+
+    for (i = 0; base[i]; ++i)
+        subkey[o++] = base[i];
+    subkey[o++] = '\\';
+    for (i = 0; sub[i]; ++i)
+        subkey[o++] = sub[i];
+    subkey[o] = '\0';
+
+    RegDeleteTree(HKEY_CURRENT_USER, subkey);
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, subkey, 0, (const char *)0, 0,
+                       KEY_ALL_ACCESS, (void *)0, &hk, &disp) != ERROR_SUCCESS) {
+        s_env_fixture.token = NULL;
+        TEST_SKIP("cannot create App Paths test key");
+        env_free(&s_env_fixture);
+        return;
+    }
+    /* Write a 4-byte REG_SZ with NO terminator ("C:\X"). */
+    RegSetValueEx(hk, (const char *)0, 0, REG_SZ, (const uint8_t *)"C:\\X", 4);
+    RegCloseKey(hk);
+
+    /* Size-probe (NULL buffer) must agree with the exact-fit read: report 5 (room
+     * for the terminator), not the raw 4, so a probe-then-allocate caller succeeds
+     * on the first read. */
+    rc = app_paths_lookup(&s_env_fixture, "iobad", (char *)0, 0, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_MORE_DATA, "NULL-buffer probe -> MORE_DATA");
+    TEST_ASSERT_EQ(need, 5u, "probe size matches the exact-fit read (cb+1)");
+
+    rc = app_paths_lookup(&s_env_fixture, "iobad", path4, sizeof path4, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_MORE_DATA,
+                   "exact-fit unterminated value -> MORE_DATA, not truncated SUCCESS");
+    TEST_ASSERT_EQ(need, 5u, "required size includes room for the terminator");
+
+    rc = app_paths_lookup(&s_env_fixture, "iobad", path8, sizeof path8, &need,
+                          (char *)0, 0, (uint32_t *)0);
+    TEST_ASSERT_EQ((int)rc, ERROR_SUCCESS, "buffer with terminator room succeeds");
+    TEST_ASSERT(env_streq(path8, "C:\\X"), "value NUL-terminated after copy");
+
+    s_env_fixture.token = NULL;
+    RegDeleteTree(HKEY_CURRENT_USER, subkey);
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -3472,6 +3779,18 @@ void test_register_env(void)
                             test_env_secure_block_excludes, TEST_CAT_ABI);
     test_suite_register_cat("Env: s16 env_copy secure source excludes blocklisted",
                             test_env_copy_secure_source_excludes, TEST_CAT_ABI);
+
+    /* s17: App Paths registry-based executable lookup */
+    test_suite_register_cat("Env: s17 App Paths HKCU register+lookup round-trip",
+                            test_app_paths_lookup_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s17 App Paths argument validation",
+                            test_app_paths_arg_validation, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s17 App Paths HKLM register authorization gate",
+                            test_app_paths_register_hklm_auth, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s17 App Paths elevation gate + MORE_DATA + Path delete",
+                            test_app_paths_lookup_elevation_moredata, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s17 App Paths malformed unterminated value -> MORE_DATA",
+                            test_app_paths_malformed_value, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

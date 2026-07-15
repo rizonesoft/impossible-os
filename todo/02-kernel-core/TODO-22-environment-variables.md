@@ -79,7 +79,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
-| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [ ]   |
+| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
 | 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
 | 💎   |  19   | ntdll Rtl environment layer                        | §5, §6                     |  [ ]   |
 
@@ -325,7 +325,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   2. Otherwise: retrieve `PATH` value via `env_get(current_task, "PATH")`
   3. Split `PATH` on `;` into directory list; get `PATHEXT` via `env_get(current_task, "PATHEXT")` (split `;`; empty/unset -> `.EXE`)
   4. For each directory: if `name` has an extension probe `dir\name` verbatim, else `dir\name{ext}` for each `PATHEXT` ext in order; `vfs_stat` each; return first hit
-  5. If no match: return `SHELL_COMMAND_NOT_FOUND`
+  5. If no PATH match: consult `app_paths_lookup(caller, name, ...)` (§17 App Paths fallback, matches `ShellExecute`); return its result before `SHELL_COMMAND_NOT_FOUND` → XREF §17
 - [ ] Shell uses `shell_find_command` before any `exec` call; replaces current ad-hoc path construction
 
 - [ ] Before executing any command, the shell calls `env_expand(current_task, raw_cmdline, expanded, sizeof expanded)` on the full command line
@@ -615,19 +615,23 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 17. App Paths Registry-Based Executable Lookup
 
-- [ ] Windows provides an alternative to the `PATH` variable: the `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\` registry key, where each subkey is named after an executable (e.g. `notepad.exe`) and the default value is the full path
-- [ ] `app_paths_lookup(name, out_path, max)` -- check `App Paths\{name}` subkey:
-  1. Open `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}` (if name has no extension, append `.exe`)
-  2. Read default value → full executable path
-  3. Read `Path` value (optional) → additional directory to add to the process's PATH at launch time
-  4. Return the full path or `NULL` if not found
-- [ ] Integration: `shell_find_command` (§7) checks App Paths **after** the standard PATH search fails; this matches Windows `ShellExecute` behavior where App Paths is a fallback
-- [ ] Per-user App Paths: also check `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}` (HKCU takes precedence over HKLM)
-- [ ] `app_paths_register(name, full_path, additional_path)` -- API for installers to register executables without modifying PATH (→ XREF `10-platform-services/TODO-03-updates-packages.md`)
+- [x] App Paths convention shipped in new `env_apppaths.c` + `env_apppaths.h`: `HKLM|HKCU\...\CurrentVersion\App Paths\{name}` subkey, default value = full exe path, `Path` value = extra launch-PATH dir
+- [x] `app_paths_lookup(caller, name, out_path.., out_additional..)` -- `.exe`-appends bare names, rejects `\`/`/`; default -> exe path, optional `Path` -> out_additional; rich Win32 status + required-size (MORE_DATA never reads as not-found)
+- [/] Integration: `shell_find_command` (§7) consults App Paths as the fallback after a PATH miss (Windows `ShellExecute` order) -- DEFERRED with §7 (no kernel shell exists yet; the lookup primitive is shipped and ready to call)
+- [x] Per-user HKCU checked with precedence but caller-elevation-bound: elevated/System (and identity-less NULL) callers see HKLM ONLY so a user HKCU entry cannot hijack a privileged resolution; a normal caller gets HKCU-first then HKLM
+- [x] `app_paths_register(caller, root, name, full_path, additional_path)` -- explicit HKLM/HKCU root; HKLM write needs an elevated caller (else `ERROR_ACCESS_DENIED`); NULL `additional_path` deletes stale `Path` (→ XREF TODO-03)
 
-- [ ] Commit: `"kernel/env: App Paths registry-based executable lookup"`
+- [x] Commit: `"kernel/env: App Paths registry-based executable lookup"`
 
 **Test checkpoint:** App Paths resolves `myapp` not on PATH. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 5 App Paths suites, 0 failures.
+> **Notes:**
+> - **What shipped** -- `src/kernel/env_apppaths.c` + `include/kernel/env_apppaths.h`: `app_paths_lookup` / `app_paths_register` over the registry API; 5 suites in `src/kernel/test/test_env.c` (TEST_CAT_ABI).
+> - **How it runs** -- plain kernel-C callables (NOT SSDT syscalls / pe.c exports); read/write the HKLM|HKCU App Paths subkeys; no allocation; consumers of the lock-free registry (registry-wide SMP sync + atomic multi-value writes owned by TODO-14 §14).
+> - **Downstream effects** -- provides the App Paths fallback primitive §7's shell wiring calls and the registration TODO-03 consumes; design-review adoptions (elevation-bound precedence, rich status, retry-safe Path) in the commit.
+> - **Canonical doc** -- `include/kernel/env_apppaths.h` (full contract + security posture).
+> - **Scope boundary** -- §17 owns the lookup/register primitives; §7 owns the shell `shell_find_command` wiring; TODO-03 owns installer callers; TODO-15 §5 owns real registry-DACL authorization (elevation gate stands in until it lands).
 
 ---
 
@@ -696,7 +700,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ✅ safe-search CAS    |
 | 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⚠️ §15 kernel prim   |
 | 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⚠️ §16 read gate     |
-| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
+| ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⚠️ §17 lookup/reg    |
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |
 | 💎   | ntdll Rtl env layer        | ✅ ntdll usermode      | ❌ none               | ⬜ §19                |

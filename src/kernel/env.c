@@ -407,6 +407,34 @@ int env_is_secure_context(struct task *t)
     return il > SECURITY_MANDATORY_MEDIUM_RID;
 }
 
+/* True iff `t` is PROVEN elevated: a non-NULL task carrying a non-NULL token that
+ * BOTH carries the authoritative IsElevated flag AND resolves to a valid integrity
+ * level at or above High. This is the authorization inverse of
+ * env_is_secure_context: for a WRITE/authorization decision (may this caller
+ * create machine-wide state?) anything short of a fully consistent elevated token
+ * must FAIL CLOSED to NOT-elevated (deny), whereas the READ blocklist gate above
+ * fails closed to secure (restrict). Requiring BOTH signals rejects an
+ * inconsistent token in either direction -- a valid High IL SID with IsElevated
+ * clear (imported / corrupted / filtered-token-with-forged-SID), or an IsElevated
+ * flag paired with a below-High integrity level. A NULL task, NULL token, or
+ * malformed IL SID all return 0. Same ACQUIRE-load + caller-liveness contract as
+ * env_is_secure_context. */
+int env_is_proven_elevated(struct task *t)
+{
+    const ACCESS_TOKEN *tok;
+    uint32_t il;
+    if (!t)
+        return 0;
+    tok = (const ACCESS_TOKEN *)__atomic_load_n(&t->token, __ATOMIC_ACQUIRE);
+    if (!tok)
+        return 0;                    /* no token -> not proven elevated */
+    if (!tok->IsElevated)
+        return 0;                    /* token's own elevation flag must be set */
+    if (!SeTryGetTokenIntegrityLevel(tok, &il))
+        return 0;                    /* malformed / absent IL SID -> not proven */
+    return il >= SECURITY_MANDATORY_HIGH_RID;
+}
+
 /* --- Public API ----------------------------------------------------------- */
 
 void env_lock(struct task *t)

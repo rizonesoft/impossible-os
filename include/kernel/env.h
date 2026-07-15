@@ -139,6 +139,15 @@ int env_name_is_privilege_sensitive(const char *name, uint32_t namelen);
  * must keep `t` alive across the call (all callers pass current/a live parent). */
 int env_is_secure_context(struct task *t);
 
+/* True iff `t` is PROVEN elevated: non-NULL task + non-NULL token whose authoritative
+ * IsElevated flag is set AND whose valid integrity SID is at or above High. The
+ * authorization inverse of env_is_secure_context: a NULL / identity-less /
+ * malformed-token / IsElevated-clear / below-High caller returns 0 (fail closed to
+ * NOT-elevated), so an inconsistent token cannot be authorized to create machine-wide
+ * state (e.g. an HKLM App Paths registration). Use this for a WRITE/authorization gate;
+ * use env_is_secure_context for a READ restriction gate. */
+int env_is_proven_elevated(struct task *t);
+
 /* Physically strip every blocklisted variable from `t`'s environment (the
  * elevation-transition primitive). Returns the count removed. Detaches each
  * entry under environ_lock, then audit-logs the NAME (never the value) and frees
