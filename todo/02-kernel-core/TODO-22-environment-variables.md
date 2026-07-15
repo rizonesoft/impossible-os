@@ -188,15 +188,15 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `env_expand` uses the caller's `task->environ`; kernel-internal calls pass the initial system process (`task_get_by_pid(0)`) as `t`. Caller must NOT already hold `t->environ_lock`
 
 - [x] `RtlExpandEnvironmentStrings_U(Environment, Source, Destination, ReturnedLength)` (`nt/nt_rtlenv.c`, header `nt/nt_rtlenv.h`):
-  - `Environment`: kernel-resident UTF-16 block; if NULL, synthesized from `task_current()`'s UTF-8 environ (authoritative store) via `env_build_block_utf16` -- NOT the stale user-mapped PEB block, honoring the documented NULL "calling process's own block" form from kernel-resident memory
-  - Kernel-resident-input contract: the double-NUL scan is HARD-BOUNDED by `RTL_ENV_BLOCK_MAX_WCHARS` (non-terminating block -> `STATUS_INVALID_PARAMETER`); a raw user block must be probed+copied into a kernel snapshot by the Win32 boundary first (owned by §6 `ExpandEnvironmentStringsW`)
+  - `Environment`: MUST be NULL (synthesized from `task_current()`'s UTF-8 environ via `env_build_block_utf16` -- NOT the stale user-mapped PEB block). A non-NULL block is refused with `STATUS_NOT_SUPPORTED` since §20: the ntdll ABI carries no allocation extent, so the extent-taking `rtl_env_expand_block` engine serves every in-kernel caller instead
+  - Kernel-resident-input contract: since §20 every scan is bounded by a caller-guaranteed EXTENT (`min(extent, RTL_ENV_BLOCK_MAX_WCHARS)`); a block unterminated inside its extent is `STATUS_INVALID_PARAMETER`. A raw user block must be probed+copied into a kernel snapshot by the Win32 boundary first, which then calls `rtl_env_expand_block` (owned by §21, not §6)
   - `Source`/`Destination`: `UNICODE_STRING` (validated: even byte Length, Length <= MaximumLength, Buffer for non-empty); same single-pass `%VAR%`/`%%` semantics as `env_expand`; case-insensitive ASCII-fold name match (consistent with the UTF-8 store)
   - `ReturnedLength`: required buffer size in bytes including the WCHAR NUL; `STATUS_BUFFER_TOO_SMALL` when too small, with NO partial output and `Destination->Length` unchanged; on success `Destination->Length` = result bytes excluding NUL (required length in a wide accumulator)
-  - Used by `ExpandEnvironmentStringsW` (§6) and by the shell for Win32-mode argument expansion
+  - Used by `ExpandEnvironmentStringsW` (§6, through `rtl_env_expand_block`) and by the shell for Win32-mode argument expansion
 
 - [x] Commit: `"kernel/env: env_expand %VAR% substitution, RtlExpandEnvironmentStrings_U"`
 
-**Test checkpoint:** `env_expand` replaces `%VAR%`; `%%` preserved verbatim (Win32, not a cmd escape); `%A%`=`%B%`, `%B%`=`x`, `env_expand("%A%")` -> literal `%B%` (single-pass, no recursion); `RtlExpandEnvironmentStrings_U` expands over an explicit block and returns `STATUS_BUFFER_TOO_SMALL` + required length on an undersized `Destination`. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** `env_expand` replaces `%VAR%`; `%%` preserved verbatim (Win32, not a cmd escape); `%A%`=`%B%`, `%B%`=`x`, `env_expand("%A%")` -> literal `%B%` (single-pass, no recursion); `rtl_env_expand_block` expands over an explicit block and returns `STATUS_BUFFER_TOO_SMALL` + required length on an undersized `Destination` (the public `RtlExpandEnvironmentStrings_U` serves the NULL form only since §20). QEMU WHPX + TCG; VirtualBox; bare metal.
 > **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 27 env_expand/Rtl suites added, 0 failures
 > **Notes:**
 > - **What shipped:** `env_expand` (UTF-8 single-pass `%VAR%`, Win32 `%%`-verbatim, bounded) in `env.c`; `RtlExpandEnvironmentStrings_U` (UTF-16) in new `nt/nt_rtlenv.c`; `env_build_block_utf16` (nls UTF-8->UTF-16) in `env.c`.
@@ -205,7 +205,6 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary:** §3 owns the two primitives; §5/§6 own the syscall/Win32 boundary; cmd `%%`/`!VAR!` is §18; full Unicode name folding + the PMM allocator SMP lock are tracked elsewhere.
 > **Verified:** 2026-07-13 | commit `c89eb4c8` | 3/3 items | build OK | tests 1271/1271 PASS
 > **Accepted:** [H] large synth env block (>4 KiB) routes through the unlocked `pmm_alloc_contiguous` (pre-existing kernel-wide gap; env is one of many callers) -> XREF: 03-memory-concurrency/TODO-03-advanced-allocator.md §1 (item: "PMM bitmap SMP locking" at line 103)
-> **Deferred:** [H] two-pass linear block scan per `%VAR%` (~1.4e9 WCHARs worst case) is a DoS once user-exposed -> XREF: 02-kernel-core/TODO-22 §6 (item: "Bound RtlExpandEnvironmentStrings_U scan cost before user exposure" at line 287)
 > **Quality reviewed:** 2026-07-13 | Codex 12x (design + adversarial + re-adversarial + consistency + perf) | 7H+9M+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -278,7 +277,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
-> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 281)
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 280)
 > **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
 > **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
@@ -300,8 +299,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - Convert `lpSrc` to UTF-16; call `RtlExpandEnvironmentStrings_U` (same section, RTL helper above); convert UTF-16 result to UTF-8 into `lpDst`
   - Return bytes written (including null); if `nSize` too small, return required size (caller must retry)
 - [/] `ExpandEnvironmentStringsW(lpSrc, lpDst, nSize)` -- calls `RtlExpandEnvironmentStrings_U` directly
-- [/] For a user-supplied UTF-16 `Environment` block, `ProbeForRead` + copy into a kernel snapshot and verify its double-NUL terminator is within the copied length before the Rtl call (`nt/nt_rtlenv.h`). NULL needs no probe
-- [/] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: two passes linear-scan the block per %VAR% (~1.4e9 WCHARs worst case). Add a one-time block index, or cap Source at the ExpandEnvironmentStrings boundary
+- [/] User-supplied UTF-16 `Environment` probe+copy into a kernel snapshot (then `rtl_env_expand_block` with its extent) is owned by §21 (item: "**Boundary probe+copy for a non-NULL `Environment`**"); §6 consumes it. NULL needs no probe
+- [x] Bound RtlExpandEnvironmentStrings_U scan cost before user exposure: closed by §20's per-pass `RTL_ENV_EXPAND_WORK_MAX` work budget (`STATUS_INSUFFICIENT_RESOURCES`), which bounds the O(refs x block) product for every caller → XREF §20
 
 - [/] `GetEnvironmentStringsW()`:
   - Walk `current_task->environ[]`; convert each `"KEY=VALUE"` to UTF-16; pack into a contiguous buffer as null-separated entries with a double-null at the end (matches the Win32 format); allocate with `LocalAlloc`
@@ -428,7 +427,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Scope: full NLS folding is TODO-13's (deferred `[/]`); child-env `env_copy` wiring is solely TODO-12 §7 (TODO-21 §2 is standard-handle pre-wiring, not inheritance); the NULL-env RtlExpand 128 KiB cap is §19's.
 
 > **Verified:** 2026-07-14 | commit `90a3b1fa` (+review) | 11/12 items | build OK | tests 1653/1653 abi PASS + smoke PASS
-> **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 431)
+> **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 430)
 > **Quality reviewed:** 2026-07-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 2H+4M+1L fixed, 1M accepted-XREF, 1 rejected | scope: kernel-code-quality
 
 ---
@@ -514,7 +513,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Canonical doc:** `include/kernel/env.h` (`env_create_block` contract) + `include/kernel/nt/nt_rtlenv.h`.
 > - **Scope boundary:** §13 owns the caller-env block build/free (environ_lock snapshot) + NULL-token expand; per-user token identity is TODO-15 §5 + profile-load infra; runtime Registry snapshot is TODO-14 §14.
 > **Verified:** 2026-07-15 | commit `b39fe250` | 2/7 items | build OK | tests 1727/1727 PASS
-> **Accepted:** [M] UTF-16 `%=X:%` expansion cannot resolve hidden `=X:` drive vars (Rtl lookup uses the first `=` as separator) -> XREF: 02-kernel-core/TODO-22 §19 (item: "UTF-16 `%=X:%` expansion parity" at line 517)
+> **Accepted:** [M] UTF-16 `%=X:%` expansion cannot resolve hidden `=X:` drive vars (Rtl lookup uses the first `=` as separator) -> XREF: 02-kernel-core/TODO-22 §19 (item: "UTF-16 `%=X:%` expansion parity" at line 516)
 > **Quality reviewed:** 2026-07-15 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 7H+2M fixed, 0 open, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -548,8 +547,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §14 owns SearchPath ordering; leg-1 (app-load dir) needs a kernel-owned image path owned by `TODO-21 §2`; PATH+PATHEXT shell iteration stays `shell_find_command` (§7).
 > **Verified:** 2026-07-15 | commit `2953e5ce` | 4/7 items | build OK | tests 1804/1804 PASS
 > **Accepted:** [H] SearchPathW non-ASCII CWD leg limited by the ASCII-only NT-path/cwd narrowing (`nt_process.c`) -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §1` (item: "Non-ASCII CWD: NtSetCurrentDirectory narrows..." at line 97)
-> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 551)
-> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 552)
+> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 550)
+> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 551)
 > **Quality reviewed:** 2026-07-15 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 2H+7M fixed, 2H+1M deferred/accepted, 1M rejected | scope: kernel-code-quality
 
 ---
@@ -695,17 +694,21 @@ The three BLOCKING gates §19's review filed against the shipped `nt_rtlenv.c` e
 - [x] Test the raise at its real boundary: `test_env_expand_at_cap_boundary` fills the environ to `ENV_BLOCK_MAX` and asserts a > 1e6 WCHAR block (~488+ frames vs the ~48 the old case reached)
 - [x] Commit: `"kernel/env: bound Rtl block lookup + foreign-block extent before exports"`
 
-**Test checkpoint:** a repeated-miss expansion (1750 misses x ~5028 WCHARs) is refused with `STATUS_INSUFFICIENT_RESOURCES` publishing no length, and the refusal lands exactly at the budget boundary (1668 misses reach the buffer check, 1669 are refused) on both the miss and hit paths; a block with no terminator inside its extent is refused rather than scanned past; a lone `"\0"` is not accepted as the empty block; an at-cap environ expands through the real ~512-frame path. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 9 suites added, 0 failures (2109 registered; 1972 kernel + 16 user-mode green)
+**Test checkpoint:** a repeated-miss expansion at the PRODUCTION ceiling is refused with `STATUS_INSUFFICIENT_RESOURCES` publishing no length; against a small synthetic budget the refusal lands exactly at the boundary (the largest affordable miss count succeeds, one more is refused) on both the miss and hit paths, and one full-block miss still succeeds; a block with no terminator inside its extent is refused rather than scanned past; a lone `"\0"` is not accepted as the empty block; an at-cap environ (`> 1e6` WCHAR block, ~488+ frames) EXPANDS a real reference through `ExpandEnvironmentStringsForUser`. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 9 suites added, 0 failures (2109 registered; 21309 kernel + 16 user-mode green)
 > **Notes:**
-> - **What shipped:** `nt_rtlenv.c` gains `rtl_env_block_validate` (extent-bounded, replacing `rtl_env_block_len`), the `rtl_env_expand_block` engine, and a per-pass work budget charged via `rtl_env_work_charge`; 9 new tests.
-> - **How it integrates:** in-kernel callers pass the extent they already know; the public entry keeps its ntdll signature but serves only the NULL form. Fresh-per-pass budgets keep a refusal from landing mid-write.
+> - **What shipped:** `nt_rtlenv.c` gains `rtl_env_block_validate` (extent-bounded, replacing `rtl_env_block_len`), the `rtl_env_expand_core` engine behind `rtl_env_expand_block`, and a per-pass work budget; 9 new tests.
+> - **How it integrates:** builder-produced blocks reach the engine with the length their builder reported (no re-scan); a caller-supplied one is validated within its extent first. The public entry keeps its ntdll signature, NULL form only.
 > - **Downstream effects:** unblocks §21. The non-NULL ABI divergence, the unmeasured budget constant, and the lookup cache are each owned by a concrete §21 item.
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (extent contract, budget rationale, the non-NULL refusal and why).
 > - **Scope boundary:** §20 owns the three gates + the at-cap test; §21 owns the exports, the boundary probe+copy, the budget measurement, and the cache; the PMM bitmap is `03-memory-concurrency/TODO-03` §1.
+> **Verified:** 2026-07-15 | commit `2ea286cc` + review fixes | 5/6 items | build OK | tests 21309 kernel + 16 user-mode PASS
 > **Deferred:** [H] the expand path's 2 MiB `pmm_alloc_contiguous(512)` runs on an unsynchronized PMM frame bitmap, so two CPUs can double-allocate the same frames; the root cause is kernel-wide and owned elsewhere, and a local lock here would be a second allocator lock racing the real one (no user-reachable caller exists: `nt_rtlenv.c` has no SSDT row, and §21 carries the gate item that keeps it that way) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
 > **Accepted:** [M] a bounded per-call name cache would cut the repeated-miss constant the work budget merely bounds; rejected here because it cannot bound the worst case (all-distinct misses still thrash) and the budget must exist regardless -> XREF: 02-kernel-core/TODO-22 §21 (item: "Lookup cache for repeated `%NAME%` misses")
 > **Accepted:** [M] refusing a non-NULL `Environment` diverges from the documented ntdll explicit-block form; the ABI-preserving shape needs a probe+copy boundary that derives a trusted extent, which is not this section's surface -> XREF: 02-kernel-core/TODO-22 §21 (item: "**Boundary probe+copy for a non-NULL `Environment`**")
+> **Accepted:** [M] the UTF-8 `env_expand` path stays work-unbounded under `environ_lock`, so input this section's UTF-16 budget refuses still burns CPU there (reason: scope -- env.c is §3's surface, and the exposure is O(refs x log(entries) x namelen) via binary search, not the O(refs x block) this section closed) -> XREF: 02-kernel-core/TODO-22 §21 (item: "**Budget the UTF-8 `env_expand` path**")
+> **Accepted:** [M] `RTL_ENV_EXPAND_WORK_MAX` is a reasoned ceiling (~8 ms at ~1e9 compares/s), not one measured on the slowest supported target (reason: not-functional-today -- no user-reachable caller) -> XREF: 02-kernel-core/TODO-22 §21 (item: "**Measure `RTL_ENV_EXPAND_WORK_MAX`**")
+> **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 1H+6M+4L fixed, 4M accepted-XREF, 1H deferred-XREF | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---
 
@@ -730,6 +733,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 - [ ] **Boundary probe+copy for a non-NULL `Environment`**: copy the caller block into a terminated kernel snapshot, then call `rtl_env_expand_block` with its extent. Restores the ntdll explicit-block form §20 refuses
 - [ ] **Measure `RTL_ENV_EXPAND_WORK_MAX`**: the 8388608 ceiling is reasoned (~8 ms at ~1e9 compares/s), not measured. Derive it from worst-case bare-metal timing and record the method next to the constant
 - [ ] Lookup cache for repeated `%NAME%` misses: a bounded (<= 4 KiB `kmalloc`, no PMM) per-call name cache shared by both passes would cut the O(refs x block) constant. The §20 budget is the hard bound; this is the optimization under it
+- [ ] **Budget the UTF-8 `env_expand` path**: `env.c` walks input under `environ_lock` with no work budget, so input the UTF-16 budget refuses keeps burning CPU and blocks the task's env ops. Add a budget + failure contract, or gate the divergence
 - [ ] Commit: `"ntdll: Rtl environment exports over the Nt env syscalls"`
 
 **Test checkpoint:** an app importing `RtlQueryEnvironmentVariable_U` from ntdll resolves and returns the same value as `NtQueryEnvironmentVariable`; `RtlCreateEnvironment(0, &e)` builds an empty block and `(1, &e)` a sorted clone; `RtlSetEnvironmentVariable` with a non-NULL Environment returns `STATUS_NOT_SUPPORTED`. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.

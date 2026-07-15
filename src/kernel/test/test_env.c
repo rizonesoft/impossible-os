@@ -23,8 +23,7 @@
 #include "kernel/security/token.h" /* ACCESS_TOKEN for s16 elevation tests */
 #include "kernel/security/sid.h"   /* SeILLow/Medium/High/System integrity SIDs */
 #include "kernel/mm/heap.h"    /* kmalloc_fail_next for the OOM-safety test */
-#include "kernel/mm/pmm.h"     /* pmm_alloc_contiguous for the budget buffers */
-#include "kernel/mm/vmm.h"     /* VMM_PAGE_SIZE */
+#include "kernel/mm/pmm.h"     /* pmm_alloc_contiguous + PMM_FRAME_SIZE */
 #include "kernel/boot_init.h" /* kernel_subsystem_ready() for the overlay test */
 #include "registry.h"         /* HKCU PATH-append test injects a user value */
 #include "kernel/env_apppaths.h" /* s17 App Paths lookup/register */
@@ -1289,23 +1288,42 @@ static void test_rtl_expand_unterminated_within_extent(void)
                    "an unterminated block is refused at its extent, not scanned past");
 }
 
-/* The budget cases need a block and a Source large enough that references x block
- * exceeds RTL_ENV_EXPAND_WORK_MAX (8388608): ~5028 WCHARs per miss x 1750 misses
- * = ~8.8e6. That is ~20 KiB, which does NOT fit in BSS -- the kernel image sits
- * ~13 KiB under the user base and the build's BSS-collision gate rejects the
- * overflow -- so the buffers are allocated for the duration of the case.
- * RTL_BUDGET_* are the shapes; the frame counts follow from them. */
-#define RTL_BUDGET_BLOCK_WCHARS  5030u
-#define RTL_BUDGET_SRC_WCHARS    5300u
-#define RTL_BUDGET_MISSES        1750u
-#define RTL_BUDGET_VALUE_WCHARS  5025u
+/* Budget-case shapes. The block holds ONE entry "V=" + RTL_BUDGET_VALUE_WCHARS
+ * 'x' + NUL + NUL, so a MISS walks the whole entry and costs exactly
+ * RTL_BUDGET_MISS_COST WCHAR inspections.
+ *
+ * The boundary cases run against a SMALL synthetic budget via
+ * rtl_env_expand_block_budget rather than the production ceiling: the arithmetic
+ * they prove (a charge that does not fit is refused, one that fits is not) is
+ * identical at any budget, and driving it at RTL_ENV_EXPAND_WORK_MAX would burn
+ * ~8.4e6 inspections PER CASE. That cost is real -- it pushed the ABI suite to 25s
+ * against the harness's 60s summary timeout, eroding the margin that catches
+ * genuine hangs on a slower host. One integration case below still runs the
+ * production constant end-to-end so the real ceiling is not left unexercised. */
+#define RTL_BUDGET_VALUE_WCHARS  97u
+#define RTL_BUDGET_BLOCK_WCHARS  101u    /* 'V' '=' + 97 'x' + NUL + NUL */
+#define RTL_BUDGET_SRC_WCHARS    64u
+#define RTL_BUDGET_MISS_COST     100u    /* entry span through its NUL */
 
-/* The largest miss count that FITS the budget. One "V=" + 5025 'x' entry makes a
- * miss cost exactly 5028 WCHAR inspections (the whole entry through its NUL), and
- * RTL_ENV_EXPAND_WORK_MAX / 5028 = 1668.4 -- so 1668 misses spend 8386704 of
- * 8388608 and one more cannot fit. The boundary cases below straddle exactly this
- * line, which is where an overshooting FINAL lookup would otherwise slip through. */
-#define RTL_BUDGET_MISS_EXACT    1668u
+/* A synthetic budget affording exactly RTL_BUDGET_MISS_EXACT misses with a
+ * REMAINDER too small for one more: 10 x 100 = 1000 spent, 50 left, and the 11th
+ * miss costs 100 > 50. The leftover is what makes this the interesting boundary --
+ * a zero remainder would only exercise the cheap left==0 early-out, not the charge
+ * refusal that closes the final-lookup overshoot. */
+#define RTL_BUDGET_TEST_BUDGET   1050u
+#define RTL_BUDGET_MISS_EXACT    10u
+
+/* The ONE production-constant case needs its own, larger shape. A Source is a
+ * UNICODE_STRING whose Length is a USHORT BYTE count, so it holds at most 10922
+ * `%Q%` references -- reaching RTL_ENV_EXPAND_WORK_MAX therefore REQUIRES a miss
+ * cost of at least 8388608 / 10922 = 768. The small shape above (cost 100) tops
+ * out at ~1.1e6 and could never exceed the real ceiling, so this case keeps the
+ * ~5028-cost block: 1750 x 5028 = ~8.8e6 > 8388608. It is the only case that pays
+ * that price. */
+#define RTL_BUDGET_PROD_BLOCK_WCHARS  5030u
+#define RTL_BUDGET_PROD_VALUE_WCHARS  5025u
+#define RTL_BUDGET_PROD_SRC_WCHARS    5300u
+#define RTL_BUDGET_PROD_MISSES        1750u
 
 struct rtl_budget_buf {
     uintptr_t base;
@@ -1314,7 +1332,7 @@ struct rtl_budget_buf {
 
 static uint16_t *rtl_budget_alloc(struct rtl_budget_buf *b, uint32_t wchars)
 {
-    b->frames = ((uint64_t)wchars * 2u + (VMM_PAGE_SIZE - 1u)) / VMM_PAGE_SIZE;
+    b->frames = ((uint64_t)wchars * 2u + (PMM_FRAME_SIZE - 1u)) / PMM_FRAME_SIZE;
     b->base = pmm_alloc_contiguous(b->frames);
     return (uint16_t *)b->base;
 }
@@ -1325,70 +1343,22 @@ static void rtl_budget_free(struct rtl_budget_buf *b)
     if (!b->base)
         return;
     for (f = 0; f < b->frames; f++)
-        pmm_free_frame(b->base + f * VMM_PAGE_SIZE);
+        pmm_free_frame(b->base + f * PMM_FRAME_SIZE);
     b->base = 0;
 }
 
-/* Fill `blk` with one entry "V=xxx..." spanning RTL_BUDGET_VALUE_WCHARS, so every
- * miss walks the whole block. Returns the block's terminator index. */
-static uint32_t rtl_budget_fill_block(uint16_t *blk)
+/* Fill `blk` with one entry "V=xxx..." spanning `value_wchars`, so every miss
+ * walks the whole block. Returns the WCHARs written. */
+static uint32_t rtl_budget_fill_block(uint16_t *blk, uint32_t value_wchars)
 {
     uint32_t i, w = 0;
     blk[w++] = 'V';
     blk[w++] = '=';
-    for (i = 0; i < RTL_BUDGET_VALUE_WCHARS; i++)
+    for (i = 0; i < value_wchars; i++)
         blk[w++] = 'x';
     blk[w++] = 0;
     blk[w++] = 0;
     return w;
-}
-
-/* rtl_env_expand_block: repeated MISSES are the pathological shape -- a miss
- * walks the entire block, so references x block is unbounded work. The budget
- * turns that into a refusal instead of seconds of kernel time, and refuses in
- * pass 1, before any output or length is published. */
-static void test_rtl_expand_work_budget(void)
-{
-    struct rtl_budget_buf bb = { 0, 0 }, sb = { 0, 0 };
-    uint16_t *blk, *srcb;
-    UNICODE_STRING src, dst;
-    uint16_t dstbuf[64];
-    uint32_t i, w = 0;
-    uint32_t rl = 0xA5A5A5A5u;      /* poison: must be overwritten with 0 */
-    NTSTATUS st;
-
-    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
-    srcb = rtl_budget_alloc(&sb, RTL_BUDGET_SRC_WCHARS);
-    if (!blk || !srcb) {
-        rtl_budget_free(&bb);
-        rtl_budget_free(&sb);
-        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
-        return;
-    }
-
-    rtl_budget_fill_block(blk);
-    /* 1750 x "%Q%" -- Q is absent, so every reference is a full-block miss. */
-    for (i = 0; i < RTL_BUDGET_MISSES; i++) {
-        srcb[w++] = '%';
-        srcb[w++] = 'Q';
-        srcb[w++] = '%';
-    }
-    src.Length = (uint16_t)(w * 2u);
-    src.MaximumLength = (uint16_t)(RTL_BUDGET_SRC_WCHARS * 2u);
-    src.Buffer = srcb;
-    dst.Length = 0;
-    dst.MaximumLength = (uint16_t)sizeof(dstbuf);
-    dst.Buffer = dstbuf;
-
-    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst, &rl);
-    TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
-                   "over-budget lookup work is a resource refusal, not a slow success");
-    TEST_ASSERT_EQ((int)rl, 0,
-                   "no length published: the poison is gone and nothing was written");
-    TEST_ASSERT_EQ((int)dst.Length, 0, "Destination->Length untouched by a refusal");
-
-    rtl_budget_free(&bb);
-    rtl_budget_free(&sb);
 }
 
 /* Build a Source of `misses` x "%Q%" (all absent) optionally followed by one
@@ -1409,9 +1379,12 @@ static uint32_t rtl_budget_fill_src(uint16_t *srcb, uint32_t misses, int trailin
     return w;
 }
 
-/* Drive a budget case: `misses` full-block misses plus an optional trailing hit.
- * Returns the status. */
-static NTSTATUS rtl_budget_run(uint32_t misses, int trailing_hit, uint32_t *rl)
+/* Drive a budget case: `misses` full-block misses plus an optional trailing hit,
+ * against a block of `value_wchars` and a per-pass `budget`. Returns the status
+ * (STATUS_NO_MEMORY when the buffers could not be allocated). */
+static NTSTATUS rtl_budget_run(uint32_t block_wchars, uint32_t value_wchars,
+                               uint32_t src_wchars, uint32_t misses,
+                               int trailing_hit, uint64_t budget, uint32_t *rl)
 {
     struct rtl_budget_buf bb = { 0, 0 }, sb = { 0, 0 };
     uint16_t *blk, *srcb;
@@ -1420,51 +1393,89 @@ static NTSTATUS rtl_budget_run(uint32_t misses, int trailing_hit, uint32_t *rl)
     uint32_t w;
     NTSTATUS st;
 
-    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
-    srcb = rtl_budget_alloc(&sb, RTL_BUDGET_SRC_WCHARS);
+    blk = rtl_budget_alloc(&bb, block_wchars);
+    srcb = rtl_budget_alloc(&sb, src_wchars);
     if (!blk || !srcb) {
         rtl_budget_free(&bb);
         rtl_budget_free(&sb);
         return STATUS_NO_MEMORY;
     }
-    rtl_budget_fill_block(blk);
+    rtl_budget_fill_block(blk, value_wchars);
     w = rtl_budget_fill_src(srcb, misses, trailing_hit);
     src.Length = (uint16_t)(w * 2u);
-    src.MaximumLength = (uint16_t)(RTL_BUDGET_SRC_WCHARS * 2u);
+    src.MaximumLength = (uint16_t)(src_wchars * 2u);
     src.Buffer = srcb;
     dst.Length = 0;
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst, rl);
+    st = rtl_env_expand_block_budget(blk, block_wchars, &src, &dst, rl, budget);
     rtl_budget_free(&bb);
     rtl_budget_free(&sb);
     return st;
+}
+
+/* rtl_env_expand_block: repeated MISSES are the pathological shape -- a miss
+ * walks the entire block, so references x block is unbounded work. The budget
+ * turns that into a refusal instead of seconds of kernel time, and refuses in
+ * pass 1, before any output or length is published.
+ *
+ * This is the ONE case driven at the real RTL_ENV_EXPAND_WORK_MAX, so the
+ * production ceiling itself is exercised end-to-end rather than only its
+ * arithmetic. It needs the large shape: a USHORT-Length Source holds at most
+ * 10922 references, so exceeding 8388608 requires a miss cost >= 768. */
+static void test_rtl_expand_work_budget(void)
+{
+    uint32_t rl = 0xA5A5A5A5u;      /* poison: must be overwritten with 0 */
+    NTSTATUS st;
+
+    st = rtl_budget_run(RTL_BUDGET_PROD_BLOCK_WCHARS, RTL_BUDGET_PROD_VALUE_WCHARS,
+                        RTL_BUDGET_PROD_SRC_WCHARS, RTL_BUDGET_PROD_MISSES, 0,
+                        RTL_ENV_EXPAND_WORK_MAX, &rl);
+    if (st == STATUS_NO_MEMORY) {
+        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
+        return;
+    }
+    TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
+                   "over-budget lookup work at the PRODUCTION ceiling is a resource "
+                   "refusal, not a slow success");
+    TEST_ASSERT_EQ((int)rl, 0,
+                   "no length published: the poison is gone and nothing was written");
 }
 
 /* rtl_env_expand_block: the LAST reference crosses the budget and there is no
  * later lookup to notice. Charging must refuse the overshoot at the moment the
  * cost is known -- clamping the balance to zero instead lets this exact shape
  * complete, spending a full extra block scan past the ceiling while reporting
- * success. RTL_BUDGET_MISS_EXACT is the largest miss count that FITS
- * (1668 x ~5028 = ~8.386e6 <= 8388608); one more must not. */
+ * success. Driven at a small synthetic budget: the arithmetic is identical at any
+ * ceiling, so there is no reason to burn the production one to prove it. */
 static void test_rtl_expand_budget_final_miss_boundary(void)
 {
     NTSTATUS st;
 
-    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT, 0, (uint32_t *)0);
+    st = rtl_budget_run(RTL_BUDGET_BLOCK_WCHARS, RTL_BUDGET_VALUE_WCHARS,
+                        RTL_BUDGET_SRC_WCHARS, RTL_BUDGET_MISS_EXACT, 0,
+                        RTL_BUDGET_TEST_BUDGET, (uint32_t *)0);
     if (st == STATUS_NO_MEMORY) {
         TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
         return;
     }
-    /* BUFFER_TOO_SMALL, not SUCCESS: 1668 literals expand to 5004 WCHARs, far past
-     * the small Destination. That is the point -- the limiter is the BUFFER, which
-     * proves the work budget did NOT trip at the largest affordable miss count. */
-    TEST_ASSERT_EQ((int)st, (int)STATUS_BUFFER_TOO_SMALL,
-                   "the largest affordable miss count is not refused for work: it "
-                   "reaches the buffer check");
+    /* The largest affordable miss count expands cleanly: 10 unresolved `%Q%`
+     * references copy 30 WCHARs of literals, well inside the Destination. This is
+     * the half of the boundary that proves the budget does not refuse work it
+     * CAN afford -- without it, a charge gate that rejected everything would still
+     * pass the over-budget case below. */
+    TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS,
+                   "the largest affordable miss count succeeds: the budget refuses "
+                   "only what it cannot afford");
 
-    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT + 1u, 0, (uint32_t *)0);
+    st = rtl_budget_run(RTL_BUDGET_BLOCK_WCHARS, RTL_BUDGET_VALUE_WCHARS,
+                        RTL_BUDGET_SRC_WCHARS, RTL_BUDGET_MISS_EXACT + 1u, 0,
+                        RTL_BUDGET_TEST_BUDGET, (uint32_t *)0);
+    if (st == STATUS_NO_MEMORY) {
+        TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
+        return;
+    }
     TEST_ASSERT_EQ((int)st, (int)STATUS_INSUFFICIENT_RESOURCES,
                    "one miss past the budget is refused even as the FINAL reference, "
                    "with no later lookup to expose the drained balance");
@@ -1477,7 +1488,9 @@ static void test_rtl_expand_budget_final_hit_boundary(void)
 {
     NTSTATUS st;
 
-    st = rtl_budget_run(RTL_BUDGET_MISS_EXACT, 1, (uint32_t *)0);
+    st = rtl_budget_run(RTL_BUDGET_BLOCK_WCHARS, RTL_BUDGET_VALUE_WCHARS,
+                        RTL_BUDGET_SRC_WCHARS, RTL_BUDGET_MISS_EXACT, 1,
+                        RTL_BUDGET_TEST_BUDGET, (uint32_t *)0);
     if (st == STATUS_NO_MEMORY) {
         TEST_SKIP("pmm_alloc_contiguous for the budget buffers failed");
         return;
@@ -1490,7 +1503,7 @@ static void test_rtl_expand_budget_final_hit_boundary(void)
 /* rtl_env_expand_block: one reference against a big block must still SUCCEED --
  * the floor the _Static_assert pins (the budget affords at least a full-block
  * miss). Without this, a budget trimmed below the block cap would refuse correct
- * programs and only the refusal case above would still pass. */
+ * programs and only the refusal cases would still pass. */
 static void test_rtl_expand_single_miss_within_budget(void)
 {
     struct rtl_budget_buf bb = { 0, 0 };
@@ -1499,12 +1512,13 @@ static void test_rtl_expand_single_miss_within_budget(void)
     uint16_t srcbuf[8], dstbuf[64];
     NTSTATUS st;
 
-    blk = rtl_budget_alloc(&bb, RTL_BUDGET_BLOCK_WCHARS);
+    blk = rtl_budget_alloc(&bb, RTL_BUDGET_PROD_BLOCK_WCHARS);
     if (!blk) {
+        rtl_budget_free(&bb);
         TEST_SKIP("pmm_alloc_contiguous for the budget block failed");
         return;
     }
-    rtl_budget_fill_block(blk);
+    rtl_budget_fill_block(blk, RTL_BUDGET_PROD_VALUE_WCHARS);
 
     src.Length = (uint16_t)(env_test_wfill("%Q%", srcbuf) * 2u);
     src.MaximumLength = (uint16_t)sizeof(srcbuf);
@@ -1513,10 +1527,10 @@ static void test_rtl_expand_single_miss_within_budget(void)
     dst.MaximumLength = (uint16_t)sizeof(dstbuf);
     dst.Buffer = dstbuf;
 
-    st = rtl_env_expand_block(blk, RTL_BUDGET_BLOCK_WCHARS, &src, &dst,
+    st = rtl_env_expand_block(blk, RTL_BUDGET_PROD_BLOCK_WCHARS, &src, &dst,
                               (uint32_t *)0);
     TEST_ASSERT_EQ((int)st, (int)STATUS_SUCCESS,
-                   "one full-block miss stays well inside the budget");
+                   "one full-block miss stays well inside the production budget");
     TEST_ASSERT(env_test_weq_ascii(dstbuf, 3u, "%Q%"),
                 "an absent name is still copied literally, not refused");
     rtl_budget_free(&bb);
@@ -1572,6 +1586,34 @@ static void test_env_expand_at_cap_boundary(void)
     TEST_ASSERT(bw <= RTL_ENV_BLOCK_MAX_WCHARS,
                 "an at-cap block still fits the Rtl scan bound with no margin to spare");
     env_free_block_utf16(blk, bw);
+
+    /* Building the block is only half the claim. EXPAND through it: the whole
+     * point of the s19 cap raise was that an environ the store accepts stays
+     * expandable, and that is a property of the expansion path, not of the
+     * builder. Asserting only on `bw` would leave the builder-to-expander boundary
+     * -- the part with zero margin (RTL_ENV_BLOCK_MAX_WCHARS == ENV_BLOCK_MAX) --
+     * unproven while the checklist claimed it. `M00` is one of the small top-off
+     * entries, so this resolves a real name near the END of a near-cap block: the
+     * most expensive lookup the budget has to afford. */
+    {
+        uint16_t srcbuf[16], dstbuf[64];
+        UNICODE_STRING src, dst;
+        NTSTATUS st;
+
+        src.Length = (uint16_t)(env_test_wfill("%M00%", srcbuf) * 2u);
+        src.MaximumLength = (uint16_t)sizeof(srcbuf);
+        src.Buffer = srcbuf;
+        dst.Length = 0;
+        dst.MaximumLength = (uint16_t)sizeof(dstbuf);
+        dst.Buffer = dstbuf;
+
+        st = ExpandEnvironmentStringsForUser(&s_env_fixture, (const void *)0,
+                                             &src, &dst, (uint32_t *)0);
+        TEST_ASSERT_EQ((int)st, (int)STATUS_BUFFER_TOO_SMALL,
+                       "an at-cap environ EXPANDS through the real ~512-frame path: "
+                       "the ~2 KiB value overflows the small Destination, which means "
+                       "the reference resolved rather than the block being refused");
+    }
     env_fixture_reset();                /* release ~1 MiB of fixture env storage */
 }
 

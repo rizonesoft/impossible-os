@@ -168,6 +168,23 @@ NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
                               UNICODE_STRING *Source, UNICODE_STRING *Destination,
                               uint32_t *ReturnedLength);
 
+/* As rtl_env_expand_block, but with the per-pass work ceiling as an explicit
+ * POLICY input instead of RTL_ENV_EXPAND_WORK_MAX. The budget is a resource
+ * choice, not a correctness constant: a caller handling especially untrusted
+ * input may want a tighter one, and the unit tests need to reach the
+ * fit/overshoot boundary with small synthetic counts rather than burning the
+ * production ceiling (~8.4e6 inspections) per case. Identical semantics
+ * otherwise; `budget` of RTL_ENV_EXPAND_WORK_MAX is exactly rtl_env_expand_block.
+ *
+ * A budget below RTL_ENV_BLOCK_MAX_WCHARS can refuse a single legitimate
+ * reference against a large block -- that is the floor the RTL_ENV_EXPAND_WORK_MAX
+ * _Static_assert pins for the default, and a caller passing less owns that
+ * tradeoff deliberately. */
+NTSTATUS rtl_env_expand_block_budget(const uint16_t *block, uint32_t block_extent,
+                                     UNICODE_STRING *Source,
+                                     UNICODE_STRING *Destination,
+                                     uint32_t *ReturnedLength, uint64_t budget);
+
 struct task;
 
 /* Win32 userenv.dll ExpandEnvironmentStringsForUserW(HANDLE hToken, LPCWSTR lpSrc,
@@ -176,9 +193,13 @@ struct task;
  *
  *   htoken == NULL: expand against `caller`'s current process environment (the
  *                   SMP-safe authoritative store). This builds a bounded block from
- *                   caller->environ and runs it through RtlExpandEnvironmentStrings_U,
- *                   so ALL the aliasing / two-pass / cap guarantees of that path
- *                   apply unchanged. The strict Win32 "system variables only" subset
+ *                   caller->environ and runs it through the expansion ENGINE with
+ *                   the extent the builder reported -- NOT through
+ *                   RtlExpandEnvironmentStrings_U, whose public ABI refuses a
+ *                   non-NULL Environment. All the aliasing / two-pass / cap /
+ *                   work-budget guarantees apply unchanged; they live in the
+ *                   engine, which both entries share. The strict Win32
+ *                   "system variables only" subset
  *                   for a NULL token needs an SMP-safe Registry snapshot and is
  *                   deferred with CreateEnvironmentBlock (env.h) -- documented, not
  *                   fabricated.

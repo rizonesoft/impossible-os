@@ -164,7 +164,7 @@ static int rtl_env_block_validate(const uint16_t *block, uint32_t extent,
             /* Terminating empty entry. An EMPTY block (p == 0) must be a genuine
              * double NUL, and every block spans through this NUL. */
             if (p == 0u) {
-                if (cap < 2u || block[1] != 0)
+                if (block[1] != 0)
                     return 0;
                 *out_bound = 0u;
                 *out_extent = 2u;
@@ -381,12 +381,23 @@ static int rtl_env_us_valid(const UNICODE_STRING *us)
     return 1;
 }
 
-NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
-                              UNICODE_STRING *Source, UNICODE_STRING *Destination,
-                              uint32_t *ReturnedLength)
+/* The expansion engine proper. Takes the block's bound + extent ALREADY
+ * established (either verified by rtl_env_block_validate for a caller-supplied
+ * block, or known by construction for a builder-produced one) and the work
+ * `budget` to spend per pass.
+ *
+ * Splitting this out keeps two costs off the paths that do not owe them: a
+ * builder-produced block does not pay a re-scan to re-derive a length its
+ * builder already reported, and the budget is a policy INPUT rather than a
+ * baked-in constant, so a caller with a tighter tolerance (and the tests, which
+ * must reach the fit/overshoot boundary without burning the production ceiling)
+ * can supply its own. */
+static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars,
+                                    uint32_t verified_extent,
+                                    UNICODE_STRING *Source,
+                                    UNICODE_STRING *Destination,
+                                    uint32_t *ReturnedLength, uint64_t budget)
 {
-    uint32_t block_wchars;            /* lookup bound (terminator index) */
-    uint32_t verified_extent;         /* WCHARs the block VERIFIABLY spans */
     const uint16_t *src;
     uint32_t src_wchars, src_bytes;
     uint16_t *dst_buf;                /* SNAPSHOT of Destination->Buffer */
@@ -398,12 +409,6 @@ NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
     NTSTATUS status = STATUS_SUCCESS;
 
     if (!rtl_env_us_valid(Source) || !rtl_env_us_valid(Destination))
-        return STATUS_INVALID_PARAMETER;
-
-    /* Bound the terminator scan by the caller's readable extent, so a malformed
-     * block fails here instead of reading past its allocation. */
-    if (!rtl_env_block_validate(block, block_extent, &block_wchars,
-                                &verified_extent))
         return STATUS_INVALID_PARAMETER;
 
     /* Snapshot every scalar we later write through or compare against into LOCALS
@@ -456,7 +461,7 @@ NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
     }
 
     /* Pass 1: count the required output length (no write). */
-    work.left = RTL_ENV_EXPAND_WORK_MAX;
+    work.left = budget;
     work.used = 0u;
     work.exhausted = 0;
     required = rtl_env_expand_pass(block, block_wchars, src, src_wchars, NULL, 0u,
@@ -526,7 +531,7 @@ NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
          * pass you are in rather than on the inputs. Starting equal makes the two
          * passes' work identical over immutable inputs, so this cannot trip when
          * pass 1 did not. */
-        work.left = RTL_ENV_EXPAND_WORK_MAX;
+        work.left = budget;
         work.used = 0u;
         work.exhausted = 0;
         written = rtl_env_expand_pass(block, block_wchars, src, src_wchars,
@@ -559,6 +564,30 @@ NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
 
 done:
     return status;
+}
+
+NTSTATUS rtl_env_expand_block_budget(const uint16_t *block, uint32_t block_extent,
+                                     UNICODE_STRING *Source,
+                                     UNICODE_STRING *Destination,
+                                     uint32_t *ReturnedLength, uint64_t budget)
+{
+    uint32_t bound;                   /* lookup bound (terminator index) */
+    uint32_t verified_extent;         /* WCHARs the block VERIFIABLY spans */
+
+    /* Bound the terminator scan by the caller's readable extent, so a malformed
+     * block fails here instead of reading past its allocation. */
+    if (!rtl_env_block_validate(block, block_extent, &bound, &verified_extent))
+        return STATUS_INVALID_PARAMETER;
+    return rtl_env_expand_core(block, bound, verified_extent, Source, Destination,
+                               ReturnedLength, budget);
+}
+
+NTSTATUS rtl_env_expand_block(const uint16_t *block, uint32_t block_extent,
+                              UNICODE_STRING *Source, UNICODE_STRING *Destination,
+                              uint32_t *ReturnedLength)
+{
+    return rtl_env_expand_block_budget(block, block_extent, Source, Destination,
+                                       ReturnedLength, RTL_ENV_EXPAND_WORK_MAX);
 }
 
 NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source,
@@ -599,8 +628,14 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     if (rc != ENV_OK)
         return STATUS_INVALID_PARAMETER;
 
-    status = rtl_env_expand_block(synth, synth_wchars, Source, Destination,
-                                  ReturnedLength);
+    /* env_build_block_utf16 reports the block's EXACT total length including the
+     * terminators, so the bound and extent are known by construction. Going
+     * through the validating entry would re-derive them with a full-block scan --
+     * up to a million WCHARs of pure cost on every call, even for a Source with no
+     * references at all. Trust the builder's own number instead. */
+    status = rtl_env_expand_core(synth, synth_wchars, synth_wchars, Source,
+                                 Destination, ReturnedLength,
+                                 RTL_ENV_EXPAND_WORK_MAX);
     env_free_block_utf16(synth, synth_wchars);
     return status;
 }
@@ -608,7 +643,7 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
 /* ===========================================================================
  * userenv.dll ExpandEnvironmentStringsForUser (TODO-22 s13)
  *
- * A thin per-user front-end over RtlExpandEnvironmentStrings_U: it builds a
+ * A thin per-user front-end over the shared expansion engine: it builds a
  * bounded UTF-16 block from the target user's environment and expands against it.
  * Today only the NULL-token (calling-process environment) path is supported;
  * per-user token expansion is deferred (see the header contract + env_create_block).
@@ -649,12 +684,13 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
          * over-cap INTERNAL block; the size limit is not the caller's buffer). */
         return STATUS_INVALID_PARAMETER;
 
-    /* env_build_block_utf16 reports the block's total wchar length including
-     * terminators, so this caller KNOWS the extent and uses the extent-taking
-     * engine directly; the public ntdll entry refuses a non-NULL Environment
-     * precisely because its signature cannot carry this number. */
-    status = rtl_env_expand_block(block, block_wchars, Source, Destination,
-                                  ReturnedLength);
+    /* This caller BUILT the block, so its exact length (including terminators) is
+     * already known -- it goes straight to the engine rather than paying a scan to
+     * re-derive a number it was just handed. The public ntdll entry refuses a
+     * non-NULL Environment precisely because its signature cannot carry this. */
+    status = rtl_env_expand_core(block, block_wchars, block_wchars, Source,
+                                 Destination, ReturnedLength,
+                                 RTL_ENV_EXPAND_WORK_MAX);
     env_free_block_utf16(block, block_wchars);
     return status;
 }
