@@ -373,14 +373,20 @@ static int env_entry_is_privilege_sensitive(const char *entry)
  * or a service running as System). FAIL-CLOSED: a task with no assigned token
  * (no security context established yet) is treated as secure so an unassigned
  * process cannot be used to launder a blocklisted name. A malformed non-NULL
- * token collapses to Medium inside SeGetTokenIntegrityLevel (its own fail-safe)
- * and is therefore treated as non-secure -- deliberate, because a Medium process
- * legitimately reads LD_PRELOAD for the Linux compat layer and a malformed token
- * is indistinguishable from a real Medium one at this layer.
+ * token FAILS CLOSED (treated as secure): SeTryGetTokenIntegrityLevel reports
+ * validity separately, so a corrupt integrity SID no longer masquerades as a
+ * benign Medium and cannot be used to launder a blocklisted name. A genuine
+ * Medium token (valid IL) IS non-secure -- deliberate, so a normal process keeps
+ * its legitimate LD_PRELOAD for the Linux compat layer.
  *
  * The primary token is assign-once at task creation (task.c) and atomically
  * exchanged to NULL only at reap (task.c task_cleanup, task already TASK_DEAD);
  * we ACQUIRE-load it to pair with that teardown store and avoid a torn pointer.
+ * CALLER CONTRACT: `t` must be kept alive across the call (it is: every caller
+ * passes task_current() or a caller-owned parent). A teardown-safe pin of the
+ * primary token (so a future foreign-task caller cannot race reap-time free) is
+ * the deferred kernel-wide per-token-reference protocol -> XREF TODO-15 s4; env
+ * shares the exact contract every other t->token reader already relies on.
  * There is deliberately NO in-place Medium->High replacement path today. When
  * TODO-15 s9 adds one (UAC ProcessAccessToken swap), that transition MUST
  * publish the elevated token and restrict/sanitize the environment atomically
@@ -390,13 +396,15 @@ static int env_entry_is_privilege_sensitive(const char *entry)
 int env_is_secure_context(struct task *t)
 {
     void *tok;
+    uint32_t il;
     if (!t)
         return 0;                    /* no task -> no boundary to enforce */
     tok = __atomic_load_n(&t->token, __ATOMIC_ACQUIRE);
     if (!tok)
         return 1;                    /* fail closed: no security context yet */
-    return SeGetTokenIntegrityLevel((const ACCESS_TOKEN *)tok)
-           > SECURITY_MANDATORY_MEDIUM_RID;
+    if (!SeTryGetTokenIntegrityLevel((const ACCESS_TOKEN *)tok, &il))
+        return 1;                    /* fail closed: malformed / absent IL SID */
+    return il > SECURITY_MANDATORY_MEDIUM_RID;
 }
 
 /* --- Public API ----------------------------------------------------------- */

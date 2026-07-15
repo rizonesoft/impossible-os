@@ -3046,7 +3046,21 @@ static void test_env_secure_context(void)
     TEST_ASSERT(env_is_secure_context(&s_env_fixture),
                 "System integrity is a secure context");
 
+    /* Malformed token (NULL IL SID) must FAIL CLOSED -> secure, so a corrupt
+     * token cannot masquerade as benign Medium and read a blocklisted var. */
+    tok.IntegrityLevelSid = (SID *)0;
+    TEST_ASSERT(env_is_secure_context(&s_env_fixture),
+                "malformed token (NULL IL SID) fails closed to secure");
+    env_set(&s_env_fixture, "LD_PRELOAD", "x.so");
+    {
+        char buf[32];
+        TEST_ASSERT_EQ(env_get_copy(&s_env_fixture, "LD_PRELOAD", buf, sizeof(buf)),
+                       ENV_ERR_NOTFOUND,
+                       "malformed-token task cannot read a blocklisted var");
+    }
+
     s_env_fixture.token = NULL;   /* do not leak the stack token past this test */
+    env_free(&s_env_fixture);     /* free the LD_PRELOAD entry before leak check */
 }
 
 static void test_env_secure_read_gate(void)

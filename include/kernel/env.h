@@ -132,9 +132,11 @@ int env_name_is_privilege_sensitive(const char *name, uint32_t namelen);
 
 /* True iff `t`'s primary token integrity level is above Medium (elevated admin
  * or System service), so the blocklist applies. FAIL-CLOSED: a task with no
- * assigned token is treated as secure. A malformed non-NULL token collapses to
- * Medium (non-secure) -- deliberate, so a normal-integrity process keeps its
- * legitimate LD_PRELOAD for the Linux compat layer. */
+ * token, or one whose integrity SID is malformed, is treated as secure (a
+ * corrupt token cannot masquerade as benign Medium). Only a token with a valid
+ * IL that resolves to <= Medium bypasses the gate -- so a normal-integrity
+ * process keeps its legitimate LD_PRELOAD for the Linux compat layer. Caller
+ * must keep `t` alive across the call (all callers pass current/a live parent). */
 int env_is_secure_context(struct task *t);
 
 /* Physically strip every blocklisted variable from `t`'s environment (the

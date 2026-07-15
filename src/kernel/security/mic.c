@@ -94,6 +94,15 @@ uint32_t SeGetTokenIntegrityLevel(const ACCESS_TOKEN *token)
     return token->IntegrityLevelSid->SubAuthority[0];
 }
 
+int SeTryGetTokenIntegrityLevel(const ACCESS_TOKEN *token, uint32_t *out_il)
+{
+    if (!token || !sid_is_integrity_label(token->IntegrityLevelSid))
+        return 0;                               /* malformed/NULL: caller fails closed */
+    if (out_il)
+        *out_il = token->IntegrityLevelSid->SubAuthority[0];
+    return 1;
+}
+
 uint32_t SeGetObjectIntegrityLevel(const SECURITY_DESCRIPTOR *sd)
 {
     uint32_t il, policy;

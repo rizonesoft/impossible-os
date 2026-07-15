@@ -595,11 +595,11 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `NtSetEnvironmentVariable` validation (§5, `nt/nt_env.c:340`): empty/`=`/length rejects, value over cap `STATUS_NAME_TOO_LONG`, block quota `STATUS_QUOTA_EXCEEDED`, else `STATUS_INVALID_PARAMETER`
 - [x] `NtQueryEnvironmentVariable` validation (§5, `nt/nt_env.c:128`): `ProbeForWrite` descriptor+buffer+len, `ProbeForRead` name, `STATUS_BUFFER_TOO_SMALL` w/ required length, no partial write
 
-- [ ] Commit: `"kernel/env: security sanitization for elevated processes, input validation"`
+- [x] Commit: `"kernel/env: security sanitization for elevated processes, input validation"`
 
-**Test checkpoint:** Elevated (High/System) task reads `LD_PRELOAD` as absent and its env block omits it; a Medium task still reads it; `env_sanitize_for_elevation` strips all blocklisted vars and is idempotent; invalid `NtSetEnvironmentVariable` name returns `STATUS_INVALID_PARAMETER` (§5). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Elevated (High/System) task reads `LD_PRELOAD` as absent and its env block omits it; a Medium task still reads it; a malformed token fails closed; `env_sanitize_for_elevation` strips all blocklisted vars and is idempotent; invalid `NtSetEnvironmentVariable` name returns `STATUS_INVALID_PARAMETER` (§5). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 5 s16 suites (blocklist, secure-context, read gate, sanitize, block-exclude), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 s16 suites (blocklist, secure-context+malformed, read gate, sanitize, block-exclude, env_copy-exclude), 0 failures
 
 > **Notes:**
 > - **What shipped** -- `env.c` s16 layer: `env_name_is_privilege_sensitive`, `env_is_secure_context` (token IL > Medium, NULL fail-closed), `env_sanitize_for_elevation`, + AT_SECURE read/serialize gate on the getters and both block builders.
@@ -607,6 +607,9 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Downstream effects** -- filed reciprocal sanitize-invocation items in TODO-15 (UAC token install) and TODO-12 §7 (elevated-child env inheritance); Codex design-review adoptions are in the commit message.
 > - **Canonical doc** -- `include/kernel/env.h` "s16: elevation security" contract block.
 > - **Scope boundary** -- §16 owns the blocklist + read gate + strip primitive; the transition INVOCATION is owned by TODO-15 (UAC) and TODO-12 §7 (child env copy); Linux `LD_*` semantics owned by the compat layer (TODO-23).
+> **Verified:** 2026-07-15 | commit `e6c0c067` + review fixes | 5/6 items | build OK | tests 1899 abi + 1197 security PASS
+> **Accepted:** [L] `env_is_secure_context` reads `task->token` with an ACQUIRE load but no teardown-safe pin (foreign-task reap could UAF; also a plain-writer/atomic-reader mismatch) -- pre-existing kernel-wide pattern, single-cursor-scheduler-safe today, does not fire (all callers pass a live task) -> XREF: 02-kernel-core/TODO-15 §4 (item: "Teardown-safe primary-token READ pin" at line 333)
+> **Quality reviewed:** 2026-07-15 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 4H+1M fixed, 1L accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---
 
@@ -762,7 +765,7 @@ The `source` / `.` command (section 8 above) remains a differentiator over Windo
 - [ ] **CreateEnvironmentBlock**: `env_create_block(caller, NULL, 1, &blk)` returns a sorted UTF-16 caller-env block; `env_destroy_block(blk)` frees via the pointer alone; non-NULL token / no-inherit returns `ENV_ERR_UNSUPPORTED` (deferred).
 - [ ] **SearchPathW**: `SearchPathW(NULL, L"notepad", L".exe", ...)` → finds `C:\Impossible\System32\notepad.exe`; `SearchPathW(NULL, L"nonexistent", L".exe", ...)` → returns 0, `GetLastError() == ERROR_FILE_NOT_FOUND`.
 - [ ] **CommandLineToArgvW**: `CommandLineToArgvW(L"a.exe \"hello world\" test", &argc)` → `argc==3`, `argv[0]=="a.exe"`, `argv[1]=="hello world"`, `argv[2]=="test"`.
-- [ ] **Security sanitization**: create elevated child process; parent sets `LD_PRELOAD=/evil.so`; child's `env_get("LD_PRELOAD")` returns `NULL` (stripped by `env_sanitize_for_elevation`).
+- [x] **Security sanitization** (§16): a High/System task reads `LD_PRELOAD` as absent and `env_build_block` omits it; `env_sanitize_for_elevation` strips blocklisted vars. Elevated-CHILD strip deferred (TODO-12 §7, TODO-15 §9).
 - [ ] **App Paths**: register `myapp.exe` in `HKLM\...\App Paths\myapp.exe` pointing to `C:\Programs\MyApp\myapp.exe`; type `myapp` in shell (not in PATH); App Paths fallback finds and launches it.
 - [ ] Commit: `"kernel/env: environment variables, argv, Win32 GetEnvironmentVariable, PATH lookup, .profile"`
 

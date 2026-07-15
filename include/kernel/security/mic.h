@@ -49,6 +49,14 @@
  * carries no subauthority (fail-safe default). */
 uint32_t SeGetTokenIntegrityLevel(const ACCESS_TOKEN *token);
 
+/* Like SeGetTokenIntegrityLevel but reports VALIDITY separately: returns 1 and
+ * writes *out_il only when the token carries a well-formed S-1-16 integrity
+ * label; returns 0 for a NULL or malformed token/IL (leaving *out_il untouched).
+ * A security caller that must FAIL CLOSED on a corrupt token uses this instead
+ * of the MEDIUM fallback -- MEDIUM is indistinguishable from a genuine Medium
+ * token through the plain getter. */
+int SeTryGetTokenIntegrityLevel(const ACCESS_TOKEN *token, uint32_t *out_il);
+
 /* Integrity level of an object's security descriptor: the RID of the
  * SYSTEM_MANDATORY_LABEL_ACE in the SACL. Returns MEDIUM when there is no SACL
  * or no label on an otherwise-valid SD; returns SYSTEM (fail closed) when the

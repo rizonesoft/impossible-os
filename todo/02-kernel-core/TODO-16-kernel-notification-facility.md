@@ -143,7 +143,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 **Test checkpoint:** `test_knf` builds a state with a DACL granting SUBSCRIBE but not PUBLISH to a user token, then asserts `knf_publish` under that token returns `STATUS_ACCESS_DENIED` while `knf_subscribe` succeeds; a kernel-only security state rejects a user-mode publish; the denied attempt increments the audit counter. Serial: `"[KNF] publish denied sid=%s"`. Test on: QEMU WHPX + TCG.
 
 > **Deferred:** [H] §4 not started -- the DACL access masks (query/subscribe/publish/create/delete), DACL-gated create-or-open, and access-denied auditing all require the `SeAccessCheck` engine, which is itself deferred/blocked -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck`" at line 364)
-> **Deferred:** [M] restricted-token create-gate fixture needs a restricted token, also deferred -> XREF: 02-kernel-core/TODO-15 §9 (item: "`NtFilterToken(ExistingToken, Flags, SidsToDisable" at line 508)
+> **Deferred:** [M] restricted-token create-gate fixture needs a restricted token, also deferred -> XREF: 02-kernel-core/TODO-15 §9 (item: "`NtFilterToken(ExistingToken, Flags, SidsToDisable" at line 509)
 
 ---
 
@@ -309,4 +309,3 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Bare-metal DPC validation (real DISPATCH_LEVEL, not WSL-unit-testable): `knf_reserve_payload` -> `STATUS_UNSUCCESSFUL`; publish within a pre-reserved cap succeeds alloc-free; publish over `payload_cap` -> `STATUS_INSUFFICIENT_RESOURCES`.
 
 > **Test runner:** `scripts\debug\kernel\run-knf-tests.bat` (SUITE=knf) | N suites, 0 failures
-
