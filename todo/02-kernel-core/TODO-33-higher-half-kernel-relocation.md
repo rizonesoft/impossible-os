@@ -10,6 +10,8 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 > **Validated:** 2026-07-15 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 
+> **Gap-audited:** 2026-07-15 | gap-audit + codex-gap-audit; 9 findings filed (6 Codex verified at file:line, 1 rejected as already-owned, 2 parity/edge)
+
 > **Goal:** Move the kernel image out of low memory into the upper canonical half of the 64-bit virtual address space (the Windows/Linux model), and give user space the entire private lower half via per-process page tables. This permanently eliminates the kernel-BSS-vs-`USER_BASE` collision class, retires the hardcoded `0x800000` user ceiling, and is the foundation that unblocks KASLR, a clean SMEP/SMAP split, and KPTI.
 
 > [!IMPORTANT]
@@ -39,7 +41,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 - Kernel text/data/bss live in the upper canonical half (Windows-style `0xFFFF800000000000` region / Linux-style `0xffffffff80000000`), mapped shared into every process.
 - User space owns the entire private lower half; the `0x800000` ceiling, the `user_range.h` constants, the `0x900000` guard, and the `scripts/build.sh` BSS-collision guard are retired.
 - A direct/physical map lets the kernel reach physical memory at a fixed high offset (HHDM-style) without identity-mapping low memory.
-- KASLR, SMEP/SMAP, and KPTI are unblocked (owned by `03-memory-concurrency/TODO-02`); this TODO is their prerequisite.
+- KASLR, SMEP/SMAP, KPTI, and PCID are unblocked; this TODO is their prerequisite. The LIVE owner is `02-kernel-core/TODO-10-kernel-security-hardening` (§2 SMEP/SMAP, §4-§6 KPTI, §7 PCID, §14 KASLR -- all `[/]` + Deferred-stamped on this TODO); `03-memory-concurrency/TODO-02` carries a parallel all-`[ ]` plan for the same features. See the ownership note under §6.
 
 ## Implementation Order
 
@@ -49,7 +51,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | 💎   |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1             |  [ ]   |
 | 💎   |   3   | Higher-half bring-up + direct map (site pinned by §1)   | §1, §2         |  [ ]   |
 | 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3             |  [ ]   |
-| 💎   |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §3, D01 T01 §8 |  [ ]   |
+| 💎   |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §1, §3, D01 T01 §8 |  [ ]   |
 | 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8 |  [ ]   |
 | 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6             |  [ ]   |
 | ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3         |  [ ]   |
@@ -66,8 +68,9 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 - [ ] Choose `KERNEL_VIRT_BASE`. **Default: Linux-style `0xffffffff80000000` + `-mcmodel=kernel`** (direct clang/ld.lld support, smallest correct change); Windows-style high-canonical only if `codex-design-review` finds a blocker. Record rationale.
 - [ ] Pin the bring-up SITE (no `entry.asm` exists): (a) bootloader maps kernel high + calls `kernel_main` high, or (b) a new `src/kernel/entry.asm` stub switches CR3 + jumps. (a) pulls §5 ahead of §3 -- record it and resequence
 - [ ] Pin the ELF handoff: once §2 links high, `kernel_main`s `st_value` IS a high VA -- `load_kernel()` must copy PT_LOAD by `p_paddr`, and `jump_to_kernel()` must call an address the live CR3 maps. Record which
-- [ ] Define the full canonical map in one header (`include/kernel/mm/memmap.h`): kernel image window, direct/physical map base + extent, fixmap/MMIO window, per-CPU window, user lower-half extent.
-- [ ] Decide the physical→virtual scheme (fixed direct-map offset / HHDM) so the kernel reaches physical memory without identity-mapping low memory after the switch.
+- [ ] Define the full canonical map in one header (`include/kernel/mm/memmap.h`): kernel image window, direct-map base + extent, fixmap/MMIO window, per-CPU window, user lower-half extent; `_Static_assert` each base/extent + canonicality
+- [ ] Decide the physical->virtual scheme (fixed direct-map offset / HHDM) so the kernel reaches physical memory without identity-mapping low memory after the switch
+- [ ] Pin the direct-map ALIAS policy: sparse RAM-only from validated UEFI memory types; exclude MMIO/runtime (`vmm_map_mmio_uc` owns those); omit kernel-image aliases or mirror final RO/NX -- a writable alias silently defeats W^X
 - [ ] Document the transition plan: transient identity map during the jump, then its teardown; canonical-address (sign-extension) constraints for the chosen base.
 - [ ] Write `docs/infrastructure/kernel-address-space.md` (the canonical layout reference) and run `codex-design-review` on it before any later section starts.
 - [ ] Commit: `"docs: kernel address-space design -- higher-half layout + direct map"`
@@ -83,6 +86,8 @@ Relink the kernel at the high virtual base while still loading at the physical a
 - [ ] Set the kernel linker script VMA to `KERNEL_VIRT_BASE`; keep LMA at the physical load address (`AT(...)`), so symbols resolve high but the image loads low.
 - [ ] Build with `-mcmodel=kernel` (or PIE if chosen in §1); resolve any absolute-address assumptions and relocation-type (`R_X86_64_*`) errors.
 - [ ] Update any tool that reads the kernel ELF (bootloader ELF parser in `bootx64.c`, `scripts/build.sh` BSS check) to handle high VMA + low LMA.
+- [ ] Export LMA-derived `__kernel_phys_start` / `__kernel_phys_end` from `linker.ld`: `pmm.c:173` does `kernel_end_phys = (uintptr_t)__kernel_end` and places the PMM bitmap there -- a high VMA turns that into a bogus physical address
+- [ ] Repoint PMM bitmap placement, the 1 MiB -> kernel-end reservation, and the overlap checks at the PHYSICAL bounds; reach the bitmap through the direct map. Test the exact reserved physical interval
 - [ ] Confirm `readelf -l` shows kernel `LOAD` at the high virtual base with the physical address preserved.
 - [ ] Commit: `"build: kernel linker VMA/LMA split -- high virtual base, low load address"`
 
@@ -101,8 +106,10 @@ Build the boot page tables that map the kernel high and the physical memory it n
 > **The site is §1's decision, not a given.** There is no `entry.asm` in the tree: `bootx64.c` builds the only early page tables (4 GiB identity map) and calls `kernel_main` directly via ELF-symbol lookup, so the switch runs EITHER in the bootloader (before the call) OR in a new `src/kernel/entry.asm` stub the bootloader calls at a low physical address. If §1 picks the bootloader, that section's `boot_info`/framebuffer translation work (§5) partly precedes §3 rather than following it; resequence at §1 time.
 
 - [ ] In early boot, build page tables that map: (a) the kernel image physical pages -> `KERNEL_VIRT_BASE`, (b) the direct/physical map window, (c) a **transient** identity map of the current EIP region so the `mov cr3` does not fault mid-stream.
-- [ ] Enable the new CR3, then far-jump/`lretq` to a label resolved at the high virtual address (the canonical higher-half handoff).
+- [ ] Enable the new CR3, then transfer to a high-VA label. A far-jump/`lretq` is one valid form, but CS is already a long-mode selector at handoff, so a RIP-relative indirect `jmp` (Linux `head_64.S`) suffices -- record which and why
 - [ ] After the jump, switch the stack to a high-virtual address and tear down the transient identity map (or hand a clean kernel PML4 to the first task).
+- [ ] Do NOT tear down the AP bootstrap envelope: `ap_trampoline.asm` is `[ORG 0x8000]`, `AP_DATA 0x8E00` (`smp.c:305`, SIPI vector 0x08). Keep trampoline + data + temp stack identity-mapped in EVERY bring-up CR3 until all APs ack high entry (§4)
+- [ ] The direct map must be live BEFORE any code walks physical memory through it (pmm/vmm init, ACPI/framebuffer reads); order the switch ahead of those consumers
 - [ ] Replace any post-switch physical-memory access with direct-map (`phys_to_virt`) accessors; update `vmm` phys<->virt helpers to the fixed offset.
 - [ ] Add `POST16` entry/exit codes around CR3-enable, the high-half jump, and identity-map teardown.
 - [ ] Commit: `"boot: higher-half page-table bring-up + direct map + high-half jump"`
@@ -121,6 +128,7 @@ Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, a
 - [ ] Relocate GDT/IDT/TSS pointers (`lgdt`/`lidt`/`ltr`) to high-virtual addresses after the §3 switch; verify the GDT user-segment order (SYSRET) constraint still holds (`gdt.h` static asserts).
 - [ ] Set `GS_BASE`/`KERNEL_GS_BASE` and per-CPU data to high-virtual addresses before any interrupt fires (bare-metal-gotcha: GS_BASE before first interrupt).
 - [ ] AP trampoline: APs start in the low real/protected-mode trampoline, then load the shared kernel page tables and far-jump into the high half (mirror §3 for each AP).
+- [ ] Own the AP low envelope: reserve + identity-map the trampoline (0x8000), shared data (0x8E00), temp stack, and every table an AP reads, in each bring-up CR3; retire it only after all APs ack, with a timeout policy + TLB invalidation
 - [ ] Re-point the IST stacks (DF/NMI/MCE) and their guard pages to high-virtual addresses.
 - [ ] Add `POST16` codes around AP high-half entry.
 - [ ] Commit: `"boot: descriptor tables + per-CPU + AP startup in the higher half"`
@@ -132,6 +140,9 @@ Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, a
 ## 5. Bootloader / `boot_info` / Framebuffer High Handoff
 
 The bootloader runs identity-mapped and hands the kernel physical/low pointers; translate them across the switch and record the ABI change.
+
+> [!WARNING]
+> **Ordering hazard: this section is NOT strictly after §3.** If §1 picks bring-up site (a) (the bootloader maps the kernel high and calls `kernel_main` at its high VA), then `kernel_main` executes high from its first instruction, and there is no "low kernel boots, then reinterprets `boot_info` later" phase to defer this work into. The same bootloader code that builds the high mapping must already hand over pointers in their final form, so the pointer audit below is CO-DESIGNED with §3 (ship them together, as §2+§3 already do) rather than following it. If §1 picks site (b), the listed order stands. Resequence at §1 time.
 
 - [ ] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
 - [ ] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
@@ -148,6 +159,8 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 Layer the high-half kernel onto the existing per-process page tables: every process PML4 shares the kernel's upper-half entries and owns a private lower half.
 
 - [ ] On PML4 creation (`TODO-10 §8` path), copy/alias the kernel's upper-half PML4 entries into every new process PML4 (shared, supervisor-only).
+- [ ] Prepopulate + permanently own the kernel upper-half hierarchy so a later kernel mapping never needs a NEW top-level entry propagated into live PML4s; otherwise implement synchronized propagation to every process PML4
+- [ ] Pin shared-frame ownership: process PML4 teardown must never free kernel upper-half tables; require a cross-CPU TLB-shootdown test for a kernel mapping added after processes exist
 - [ ] User mappings go in the lower half only; remove the assumption that user pages live just above the kernel.
 - [ ] Ensure kernel upper-half entries are marked supervisor (no User bit) -- this is the clean split that unblocks SMEP/SMAP and KPTI.
 - [ ] Verify TLB/CR3 switch semantics: switching to a user process keeps the kernel mapped (high half) while swapping the lower half.
@@ -156,7 +169,9 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 **Test checkpoint:** `cmd.exe` and a second user process run in separate PML4s, each with a private lower half and the shared kernel high half; a user pointer in process A is not valid in process B. Test on: QEMU WHPX + TCG; **bare metal**.
 
 > [!NOTE]
-> **Unblocks:** with the kernel high (supervisor-only) and user low (user-only), `03-memory-concurrency/TODO-02 §3/§4` (SMEP / SMAP) and `§6` (KPTI) become implementable. This section is their structural prerequisite.
+> **Unblocks:** with the kernel high (supervisor-only) and user low (user-only), the whole Meltdown/ret2user isolation stack becomes implementable. This section is its structural prerequisite.
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- the LIVE owner, whose sections are Deferred-stamped on this TODO: §2 (item: "Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path`"), §6 (item: "Commit: `\"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active\"`"), §7 (item: "Commit: `\"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush\"`"), §14 (item: "Commit: `\"kernel/security: KASLR: bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info\"`").
+> → XREF: `03-memory-concurrency/TODO-02-memory-security.md §3/§4` (SMEP / SMAP) + `§6` (KPTI) -- a PARALLEL all-`[ ]` plan for the same features, with no cross-reference to D02 T10 in either direction. Ownership is FORKED; resolving it is a cross-domain call filed for the operator (`overnight-todo.md`), not this TODO's to make. PCID is already owned by D02 T10 §7 -- do not re-file it here.
 
 ---
 
@@ -186,9 +201,14 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 Optional competitive edge: support 57-bit virtual addresses on capable hardware. Linux made LA57 unconditional in 6.10; Windows does not support 5-level paging at all.
 
 > [!TIP]
-> Supporting LA57 lets Impossible OS address 128 PiB of virtual space and surpass Windows 11, which is stuck at 48-bit (256 TiB). Gate on `CPUID` (LA57 leaf) + `CR4.LA57`; fall back to 4-level cleanly.
+> Supporting LA57 lets Impossible OS address 128 PiB of virtual space and surpass Windows 11, which is stuck at 48-bit (256 TiB). Gate on `CPUID` leaf 7 subleaf 0 ECX bit 16, fall back to 4-level cleanly.
 
-- [ ] Detect LA57 via `CPUID` and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent.
+> [!WARNING]
+> **`CR4.LA57` CANNOT be set from the running kernel.** x86 forbids modifying `CR4.LA57` while `CR0.PG=1`, and UEFI hands off with paging + Long Mode already enabled (`bootx64.c:8522`), so "detect LA57 then set `CR4.LA57`" implemented literally raises `#GP`, not a 5-level boot. Enablement must happen in a pre-paging window (the bootloader, which builds our page tables, drops to a PML5 root before enabling paging) or via a full architectural transition that exits paging, installs PML5, sets LA57, and re-enters Long Mode. §1 pins which; this section is BLOCKED on that decision.
+
+- [ ] Detect LA57 via `CPUID` leaf 7 subleaf 0 ECX bit 16 and (optionally) honor a `boot.conf` opt-in; default to 4-level if absent
+- [ ] Place enablement in a pre-paging window (see WARNING): the paging-mode choice must be made where `CR0.PG` can legally be cleared, not from `kernel_main`
+- [ ] Negative tests: unsupported CPU falls back to 4-level cleanly; an already-LA57 firmware handoff is detected rather than re-enabled
 - [ ] Parameterize the page-table walk and `KERNEL_VIRT_BASE`/direct-map for 5-level (sign extension at bit 56 vs 47).
 - [ ] Boot identically on 4-level and 5-level hosts; log the active paging mode.
 - [ ] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
@@ -204,11 +224,13 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 | 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⬜ Planned -- §1-§3 (now low `0x100000`)      |
 | 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⬜ Planned -- §1, §7                          |
 | 💎   | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
-| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D03 T02 §6)               |
-| 💎   | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D03 T02 §2)               |
-| 💎   | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D03 T02 §3/§4)            |
+| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)               |
+| 💎   | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)              |
+| 💎   | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)               |
+| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow       | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)               |
 | 💎   | No hardcoded user ceiling         | ✅ no low ceiling        | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                      |
 | ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported         | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)            |
+| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest   | ⬜ §1 `memmap.h` + `_Static_assert` gate      |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.

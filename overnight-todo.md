@@ -26,6 +26,40 @@ check-when-I-sit-down list. Add an item when:
 
 ## Waiting on a human answer
 
+### Forked ownership: SMEP/SMAP + KPTI + KASLR claimed by two TODOs
+
+Found during the higher-half-relocation gap audit (2026-07-15). Two TODOs plan
+the same capabilities with **no cross-reference in either direction**:
+
+- [Kernel Security Hardening](todo/02-kernel-core/TODO-10-kernel-security-hardening.md)
+  -- owns SMEP/SMAP CR4 activation (partial), the KPTI trampoline (shipped:
+  `src/kernel/kpti_trampoline.asm`, commit ad2d05e2), KPTI SYSCALL/IDT/user-CR3
+  (partial), PCID TLB tagging (partial), and KASLR (partial). Its blocked
+  sections carry Deferred stamps pointing at higher-half relocation.
+- [Memory Security Hardening](todo/03-memory-concurrency/TODO-02-memory-security.md)
+  -- plans SMEP, SMAP, KASLR, and KPTI as unstarted work, zero stamps, marked
+  `status: active`.
+
+The kernel-security TODO is demonstrably the live owner (it has the code and the
+stamps); the memory-security one reads as the stale duplicate. **The decision
+needed:** supersede the memory-security TODO's SMEP/SMAP/KASLR/KPTI sections in
+favor of the kernel-security TODO (leaving it to own user-space ASLR, NX/DEP,
+CET, and the security layout report), or the reverse. This is a cross-domain
+roadmap call touching two TODO files, so the runner did not make it
+unilaterally; the
+[higher-half relocation TODO](todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md)
+meanwhile cross-references both and names the kernel-security TODO as live.
+
+### Bare-metal sign-off: higher-half kernel relocation (per-section)
+
+The [higher-half relocation TODO](todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md)
+defers bare-metal validation to a human pass per its runner-autonomy policy.
+Needing real-hardware sign-off once they ship: the higher-half bring-up (early
+paging + the CR3 switch differ on real CPUs), AP high-half bring-up (GS_BASE
+ordering), the framebuffer high handoff (real GOP), the per-process PML4 split,
+and the user-base move. The optional 5-level paging (LA57) section needs an
+Arrow Lake / Zen 5 host.
+
 ### UKI SBAT incremental-rebuild bug (Secure Boot signing path)
 
 `bash scripts/build.sh` run twice without `clean` fails the second time at
