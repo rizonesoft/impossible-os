@@ -19,7 +19,8 @@
 #include "kernel/boot_init.h"    /* kernel_subsystem_ready(), SUBSYS_REGISTRY */
 #include "kernel/klog.h"         /* klog() */
 #include "kernel/nt/nls_cp.h"    /* nls_cp_utf8_to_utf16 (env block build) */
-#include "registry.h"            /* RegOpenKeyEx / RegEnumValue / RegGet* */
+#include "kernel/ob/teb.h"       /* TEB LastErrorValue (CommandLineToArgvW) */
+#include "registry.h"            /* RegOpenKeyEx / RegEnumValue / RegGet* + ERROR_* */
 
 #define ENV_PAGE_SIZE 4096u
 
@@ -941,6 +942,257 @@ uint32_t argv_frame_bytes(int argc, const char *const *argv)
     qwords += 1u;                           /* argc slot */
     return qwords * 8u;
 }
+
+/* ===========================================================================
+ * CommandLineToArgvW command-line decode (TODO-22 s15)
+ *
+ * The exact inverse of argv_to_cmdline (above). A single self-describing block
+ * holds the whole result: a {magic,total_bytes} header, then the (argc+1)
+ * NUL-terminated element-pointer array, then the argument strings. The returned
+ * pointer is the pointer array so callers index it like argv[]; cmdline_free_argv
+ * recovers the header (like env_create_block / env_destroy_block) since this
+ * kernel has no LocalAlloc size bookkeeping.
+ *
+ * The parser body is macro-generated for both element widths (char and uint16_t)
+ * so the UTF-8 core and the wide W form share ONE implementation with zero drift.
+ * Because every SYNTAX character (space, tab, '"', '\\') is ASCII, the wide form
+ * parses UTF-16 code units DIRECTLY and preserves every other WCHAR verbatim -- a
+ * UTF-16<->UTF-8 transcode would mutate lone surrogates and mis-cap multibyte
+ * scripts.
+ * =========================================================================== */
+
+#define CMDL_BLK_MAGIC 0x4C444D43u   /* 'CMDL' little-endian; header sentinel */
+
+struct cmdl_hdr {
+    uint32_t magic;        /* CMDL_BLK_MAGIC -- validated on free */
+    uint32_t total_bytes;  /* whole-block size for env_str_free recovery */
+};
+
+/* An 8-byte header keeps the following pointer array 8-byte aligned: env_str_alloc
+ * returns >=16-byte-aligned (kmalloc) or page-aligned (PMM) storage, so hdr+1 is
+ * 8-aligned and every char or uint16_t pointer slot lands naturally aligned. */
+_Static_assert(sizeof(struct cmdl_hdr) == 8,
+               "cmdl_hdr must be 8 bytes so the pointer array stays 8-aligned");
+
+/* Free a whole cmdl block by its recovered total_bytes; poison the magic first so
+ * an immediate double free is a no-op (best effort, not a lifetime guarantee). */
+static void cmdl_free_block(struct cmdl_hdr *hdr)
+{
+    uint32_t tb = hdr->total_bytes;
+    hdr->magic = 0u;
+    env_str_free((char *)hdr, tb);
+}
+
+/* Emit one element to `strbuf` (or just count when strbuf==NULL), honoring the
+ * per-width unit cap. Used only inside the generated parser bodies, where `pos`,
+ * `cap`, `strbuf` and `out_units` are locals; on overflow it records the count so
+ * far and returns -1 from the enclosing parser (both passes agree on the cap). */
+#define CMDL_PUT(c) do {                                   \
+        unsigned _cv = (unsigned)(c);   /* evaluate side effects even when */  \
+        if (pos >= cap) { if (out_units) *out_units = pos; return -1; }        \
+        if (strbuf) strbuf[pos] = _cv;  /* sizing (strbuf==NULL) skips store */ \
+        pos++;                                             \
+    } while (0)
+
+/* Generate a width-specific parser. cmd is the command line; arg0!=NULL forces
+ * argv[0] to that string (the empty-cmdline module-path case) and stops. strbuf
+ * and argv are NULL for the sizing pass and non-NULL for the fill pass; on the
+ * fill pass argv[i] receives &strbuf[start-of-arg-i]. Returns argc, or -1 if the
+ * decoded strings would exceed the cap. Windows parse rules (see the header). */
+#define CMDL_GEN_PARSER(SUF, CH)                                               \
+static int cmdl_parse_##SUF(const CH *cmd, const CH *arg0, CH *strbuf,          \
+                            CH **argv, uint32_t cap, uint32_t *out_units)       \
+{                                                                              \
+    uint32_t pos = 0;                                                          \
+    int argc = 0;                                                             \
+    int in_q;                                                                \
+    const CH *p = cmd;                                                        \
+    if (arg0) {                                                               \
+        const CH *s = arg0;                                                   \
+        if (argv) argv[argc] = &strbuf[pos];                                 \
+        while (*s) CMDL_PUT(*s++);                                            \
+        CMDL_PUT((CH)0);                                                      \
+        argc++;                                                              \
+        if (out_units) *out_units = pos;                                     \
+        return argc;                                                          \
+    }                                                                         \
+    /* argv[0]: quote-delimited if it opens with '"', else whitespace, and     \
+     * backslashes are literal inside it (no escape processing). */            \
+    if (argv) argv[argc] = &strbuf[pos];                                     \
+    if (*p == (CH)'"') {                                                      \
+        p++;                                                                 \
+        while (*p && *p != (CH)'"') CMDL_PUT(*p++);                          \
+        if (*p == (CH)'"') p++;                                              \
+    } else {                                                                 \
+        while (*p && *p != (CH)' ' && *p != (CH)'\t') CMDL_PUT(*p++);        \
+    }                                                                        \
+    CMDL_PUT((CH)0);                                                          \
+    argc++;                                                                  \
+    /* argv[1..]: backslash/quote state machine. */                           \
+    for (;;) {                                                                \
+        while (*p == (CH)' ' || *p == (CH)'\t') p++;                         \
+        if (*p == 0) break;                                                  \
+        if (argv) argv[argc] = &strbuf[pos];                                \
+        in_q = 0;                                                            \
+        for (;;) {                                                            \
+            uint32_t nbs = 0, k;                                             \
+            while (*p == (CH)'\\') { p++; nbs++; }                           \
+            if (*p == (CH)'"') {                                             \
+                for (k = 0; k < nbs / 2u; k++) CMDL_PUT((CH)'\\');           \
+                if (nbs & 1u) {                                              \
+                    CMDL_PUT((CH)'"'); p++;      /* 2n+1: literal quote */   \
+                } else if (in_q && p[1] == (CH)'"') {                        \
+                    CMDL_PUT((CH)'"'); p += 2;   /* "" in quotes: literal */ \
+                } else {                                                     \
+                    in_q = !in_q; p++;           /* 2n: toggle in-quotes */  \
+                }                                                            \
+            } else if (*p == 0) {                                            \
+                for (k = 0; k < nbs; k++) CMDL_PUT((CH)'\\');                \
+                break;                                                       \
+            } else if (!in_q && (*p == (CH)' ' || *p == (CH)'\t')) {         \
+                for (k = 0; k < nbs; k++) CMDL_PUT((CH)'\\');                \
+                break;                                                       \
+            } else {                                                         \
+                for (k = 0; k < nbs; k++) CMDL_PUT((CH)'\\');                \
+                CMDL_PUT(*p++);                                              \
+            }                                                                \
+        }                                                                    \
+        CMDL_PUT((CH)0);                                                      \
+        argc++;                                                              \
+    }                                                                        \
+    if (out_units) *out_units = pos;                                        \
+    return argc;                                                             \
+}
+
+CMDL_GEN_PARSER(u8,  char)
+CMDL_GEN_PARSER(u16, uint16_t)
+
+/* Build a width-specific argv block: size (pass 1, capped at MAXCAP), allocate one
+ * self-describing block, fill (pass 2, capped at the EXACT pass-1 unit count so it
+ * is independently capacity-safe -- a divergent pass 2 returns -1 rather than
+ * overrunning strbuf), and cross-check that pass 2 reproduced pass 1 exactly. */
+#define CMDL_GEN_BUILD(SUF, CH, MAXCAP)                                        \
+static CH **cmdl_build_##SUF(const CH *cmd, const CH *arg0, int *out_argc)      \
+{                                                                             \
+    int argc, argc2;                                                         \
+    uint32_t units = 0, units2 = 0, ptr_bytes;                              \
+    uint64_t total64;                                                        \
+    uint32_t total;                                                          \
+    struct cmdl_hdr *hdr;                                                    \
+    char *base;                                                             \
+    CH **argv;                                                              \
+    CH *strbuf;                                                             \
+    argc = cmdl_parse_##SUF(cmd, arg0, (CH *)0, (CH **)0, (MAXCAP), &units);  \
+    if (argc < 0)                                                            \
+        return (CH **)0;                    /* over the unit cap */          \
+    ptr_bytes = ((uint32_t)argc + 1u) * (uint32_t)sizeof(CH *);             \
+    total64 = (uint64_t)sizeof(struct cmdl_hdr) + (uint64_t)ptr_bytes       \
+            + (uint64_t)units * (uint64_t)sizeof(CH);                       \
+    if (total64 > 0xFFFFFF00ull)                                            \
+        return (CH **)0;                    /* keep total under UINT32 */    \
+    total = (uint32_t)total64;                                              \
+    hdr = (struct cmdl_hdr *)env_str_alloc(total);                          \
+    if (!hdr)                                                                \
+        return (CH **)0;                                                     \
+    hdr->magic = CMDL_BLK_MAGIC;                                            \
+    hdr->total_bytes = total;                                               \
+    base = (char *)(hdr + 1);                                               \
+    argv = (CH **)base;                                                     \
+    strbuf = (CH *)(base + ptr_bytes);                                      \
+    argc2 = cmdl_parse_##SUF(cmd, arg0, strbuf, argv, units, &units2);       \
+    if (argc2 != argc || units2 != units) {                                 \
+        cmdl_free_block(hdr);                                              \
+        return (CH **)0;                                                     \
+    }                                                                       \
+    argv[argc] = (CH *)0;                   /* NULL-terminate the vector */  \
+    if (out_argc) *out_argc = argc;                                        \
+    return argv;                                                            \
+}
+
+CMDL_GEN_BUILD(u8,  char,     CMDL_ARGV_MAX_BYTES)
+CMDL_GEN_BUILD(u16, uint16_t, CMDL_ARGV_MAX_WCHARS)
+
+char **cmdline_to_argv(struct task *caller, const char *cmdline, int *out_argc)
+{
+    const char *arg0;
+
+    if (out_argc)
+        *out_argc = 0;
+    if (!cmdline)
+        return (char **)0;
+    /* Empty command line -> a single argument that is the caller's module
+     * identity (Win32 returns the executable path). The full kernel-owned
+     * ImagePathName is deferred with SearchPathW (see env_searchpath.h); the
+     * stable caller->name is the identity available today and is returned to the
+     * caller itself, not used as any privileged path. */
+    arg0 = (cmdline[0] == '\0')
+             ? ((caller && caller->name) ? caller->name : "")
+             : (const char *)0;
+    return cmdl_build_u8(cmdline, arg0, out_argc);
+}
+
+/* Set the executing thread's TEB LastErrorValue when a live TEB exists (a fixture
+ * test task has none -> no-op). Mirrors env_searchpath.c's propagation. */
+static void cmdl_set_last_error(uint32_t code)
+{
+    struct thread *thr = thread_current();
+    if (thr && thr->teb)
+        ((TEB *)thr->teb)->LastErrorValue = code;
+}
+
+uint16_t **CommandLineToArgvW(struct task *caller, const uint16_t *lpCmdLine,
+                              int *pNumArgs)
+{
+    uint16_t **argv;
+
+    if (pNumArgs)
+        *pNumArgs = 0;
+    if (!lpCmdLine)
+        return (uint16_t **)0;   /* Win32: NULL command line -> NULL result */
+
+    if (lpCmdLine[0] == 0) {
+        /* Empty -> argv[0] = caller module identity widened to UTF-16. */
+        uint16_t namew[256];
+        int nl = 0;
+        static const uint16_t empty_w[1] = { 0 };
+        if (caller && caller->name) {
+            uint32_t nb = env_strlen(caller->name);
+            nl = nls_cp_utf8_to_utf16((const uint8_t *)caller->name, nb,
+                                      namew, 255u, NLS_CP_REPLACE);
+            if (nl < 0)
+                nl = 0;
+        }
+        namew[nl] = 0;
+        argv = cmdl_build_u16(empty_w, namew, pNumArgs);
+    } else {
+        argv = cmdl_build_u16(lpCmdLine, (const uint16_t *)0, pNumArgs);
+    }
+
+    if (!argv)
+        cmdl_set_last_error(ERROR_OUTOFMEMORY);
+    return argv;
+}
+
+void cmdline_free_argv(void *argv)
+{
+    struct cmdl_hdr *hdr;
+
+    if (!argv)
+        return;
+    /* CONTRACT: `argv` MUST be a value returned by cmdline_to_argv /
+     * CommandLineToArgvW, freed exactly once. The checks below best-effort reject
+     * an obviously-bad header; they are not a foreign-pointer validator. */
+    hdr = (struct cmdl_hdr *)argv - 1;
+    if (hdr->magic != CMDL_BLK_MAGIC ||
+        hdr->total_bytes < sizeof(struct cmdl_hdr))
+        return;
+    cmdl_free_block(hdr);
+}
+
+#undef CMDL_PUT
+#undef CMDL_GEN_PARSER
+#undef CMDL_GEN_BUILD
+#undef CMDL_BLK_MAGIC
 
 /* ===========================================================================
  * %VAR% expansion (single-pass; cmd.exe / Win32 ExpandEnvironmentStrings)

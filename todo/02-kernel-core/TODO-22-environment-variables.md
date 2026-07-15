@@ -77,7 +77,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
-| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [ ]   |
+| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [x]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [ ]   |
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [ ]   |
 | 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
@@ -529,7 +529,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `SearchPathA` -- ANSI wrapper over the same UTF-8 core; lengths + `lpFilePart` in ACP bytes via `nls_cp_*_utf16` / `NLS_CP_ACP`; result identical to widening + `SearchPathW`.
 - [x] `NeedCurrentDirectoryForExePathW(caller, ExeName)` -- returns `TRUE` if `ExeName` contains a backslash; else `FALSE` when the `NoDefaultCurrentDirectoryInExePath` env var is present (even empty), else `TRUE` (security hardening).
 - [x] `SetSearchPathMode(caller, mode)`: validate `BASE_SEARCH_PATH_*` bits; `PERMANENT` needs `ENABLE`, locks later changes; per-task `search_path_mode` via `__atomic` CAS; governs CWD ORDER only (`ERROR_INVALID_PARAMETER`/`ERROR_ACCESS_DENIED`).
-- [ ] Leg-1 (application-load directory) deferred: needs a kernel-owned canonical image path (PEB / `task->name` are caller-writable, unsafe) -> XREF: `TODO-21-process-model-extensions.md §2`.
+- [ ] Leg-1 (application-load directory) deferred: needs a kernel-owned canonical image path (PEB / `task->name` are caller-writable, unsafe); also unblocks §15 `CommandLineToArgvW("")` argv[0] -> XREF: `TODO-21-process-model-extensions.md §2`.
 - [ ] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (treated as a miss -> falls through to PATH/CWD); once `vfs_stat` returns a tri-state found/absent/error result, make `sp_probe` abort the search on a hard error.
 - [ ] Compose all install-path consumers from `ENV_SYSTEMROOT_DIR`/`ENV_SYSTEM32_DIR` (`ENV_DEF_PATH_BASE` done; still literal: bootstrap PATH `env.c` seed row + `registry.c` windir) and move the constants to a neutral install-path header.
 
@@ -553,23 +553,28 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## 15. CommandLineToArgvW Win32 API
 
-- [ ] `CommandLineToArgvW(LPCWSTR lpCmdLine, int *pNumArgs)` -- Win32 API from `shell32.dll`:
-  - Parses a Unicode command-line string into an argv-style array of pointers
-  - Backslash/quote escaping rules (must match Windows exactly):
-    - 2n backslashes + `"` → n backslashes + begin/end quote (toggle "in quotes" mode)
-    - (2n+1) backslashes + `"` → n backslashes + literal `"` (no toggle)
-    - n backslashes not followed by `"` → n backslashes verbatim
-  - Outside quotes: whitespace (space/tab) terminates the current argument
-  - Inside quotes: whitespace is part of the argument
-  - `argv[0]` has special parsing: if it starts with `"`, everything up to the closing `"` is argv[0]; otherwise, everything up to the first whitespace
-  - Return: pointer to `LPWSTR *` array, with `*pNumArgs` set to the count; the array and all strings are allocated as a single `LocalAlloc` block; caller must `LocalFree` the returned pointer
-- [ ] Edge case: empty string input → `*pNumArgs = 1`, `argv[0]` = path to the CURRENT EXECUTABLE (module path), NOT `""` (MS Learn `CommandLineToArgvW`)
-- [ ] Edge case: `NULL` input → return `NULL` (Windows behavior)
-- [ ] Round-trip test with §4's `argv_to_cmdline` encoder: encode `argv = {"a b", "c\"d", ""}` to a CommandLine, then `CommandLineToArgvW` returns the same three args (encoder owned by §4; §15 owns decode + the round-trip test)
+- [x] `CommandLineToArgvW(caller, lpCmdLine, pNumArgs)` -- shell32 API in `src/kernel/env.c`, the exact inverse of §4's `argv_to_cmdline`; a shared macro-generated parser body serves both a UTF-8 core (`cmdline_to_argv`) and the wide W form:
+  - Backslash/quote rules match Windows exactly: 2n backslashes + `"` → n backslashes + toggle "in quotes"; 2n+1 → n backslashes + literal `"`; a `"` inside quotes immediately followed by another `"` is one literal `"` (stays in quotes); backslashes not before `"` are verbatim
+  - Outside quotes, whitespace (space/tab) ends the argument; inside quotes it is kept
+  - `argv[0]` special parse: leading `"` → up to the closing `"`; else up to the first whitespace (backslashes literal)
+  - The W form parses UTF-16 code units DIRECTLY (all syntax chars are ASCII, so every other WCHAR is preserved verbatim -- no lossy UTF-16↔UTF-8 transcode); WCHAR cap `CMDL_ARGV_MAX_WCHARS`, byte cap `CMDL_ARGV_MAX_BYTES` for the core
+  - Returns one self-describing block ({magic,total} header + `(argc+1)` NUL-terminated pointer array + strings); `*pNumArgs` set; free the whole block with `cmdline_free_argv` (this kernel has no `LocalAlloc` size bookkeeping)
+- [x] Edge case: empty string → `*pNumArgs = 1`, `argv[0]` = caller module identity (`caller->name`, widened for the W form), NOT `""`; full kernel-owned ImagePathName deferred with SearchPathW (`env_searchpath.h`)
+- [x] Edge case: `NULL` input → return `NULL` (Windows behavior); `*pNumArgs` zeroed
+- [x] Round-trip with §4's `argv_to_cmdline`: encode `argv = {"a b", "c\"d", ""}` then `cmdline_to_argv` returns the same three args (`test_env_cmdline_roundtrip`)
 
-- [ ] Commit: `"kernel/env: CommandLineToArgvW Win32 API (shell32)"`
+- [x] Commit: `"kernel/env: CommandLineToArgvW Win32 API (shell32)"`
 
 **Test checkpoint:** `CommandLineToArgvW` quote rules match Windows samples. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1841 suites, 0 failures, 0 leaked (8 `test_env_cmdline_*` cases: quotes, 2n+1 backslash, round-trip, empty→module-path core+W, NULL, wide lone-surrogate verbatim, wide quotes, PMM allocator crossover)
+
+> **Notes:**
+> - **What shipped** -- `cmdline_to_argv` / `CommandLineToArgvW` / `cmdline_free_argv` in `src/kernel/env.c`: one macro-generated backslash/quote parser over `char`/`uint16_t`, single `{magic,total}`-header block; 8 `test_env.c` cases.
+> - **How it runs** -- plain kernel functions taking an explicit `struct task *caller` (like SearchPathW), NOT SSDT syscalls and NOT `pe.c` exports; unit-testable against a fixture task; `caller->name` read lock-free (stable field).
+> - **Design review adoption** -- the W form parses UTF-16 units directly instead of transcoding through UTF-8 (a transcode mutates lone surrogates and mis-caps multibyte scripts); adoption detail in the commit message.
+> - **Canonical doc** -- the `include/kernel/env.h` contract block above `cmdline_to_argv`.
+> - **Scope boundary** -- §4 owns the `argv_to_cmdline` encoder; §15 owns decode + the round-trip test; the kernel-owned ImagePathName for the empty-cmdline argv[0] is owned by SearchPathW (`env_searchpath.h`).
 
 ---
 
@@ -682,7 +687,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⚠️ §13 NULL token    |
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ✅ env_searchpath.c   |
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ✅ safe-search CAS    |
-| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⬜ §15                |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ✅ §15 direct UTF-16  |
 | 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16                |
 | ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |

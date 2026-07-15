@@ -156,6 +156,60 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count);
  * (truncation sentinel). `out` is always NUL-terminated when max>0. */
 uint32_t argv_to_cmdline(int argc, const char *const *argv, char *out, uint32_t max);
 
+/* --- CommandLineToArgvW command-line decode (TODO-22 s15) ------------------
+ * The exact inverse of argv_to_cmdline: parse a Windows command line into an
+ * argv vector. Two parallel forms share ONE macro-generated parser body; the
+ * W form parses UTF-16 code units DIRECTLY (all syntax characters -- space,
+ * tab, '"', '\\' -- are ASCII, so every other WCHAR is preserved verbatim,
+ * unlike a UTF-16<->UTF-8 transcode that would mutate lone surrogates). Parse
+ * rules match Windows exactly: argv[0] is quote-delimited if it begins with '"'
+ * else whitespace-delimited (backslashes literal); argv[1+] run the
+ * backslash/quote state machine (2n backslashes + '"' -> n backslashes + toggle
+ * "in quotes"; 2n+1 + '"' -> n backslashes + a literal '"'; a '"' inside quotes
+ * immediately followed by another '"' is a single literal '"' that stays in
+ * quotes; backslashes not before a '"' are literal; unquoted whitespace ends the
+ * argument).
+ *
+ * Each returns ONE self-describing block: a hidden {magic,total_bytes} header
+ * precedes a (argc+1) NUL-terminated element-pointer array (last entry NULL),
+ * followed by the argument strings. The RETURNED pointer is the pointer array
+ * (so it indexes like argv[]); free the whole block with cmdline_free_argv()
+ * (Win32 callers LocalFree the CommandLineToArgvW result -- this kernel has no
+ * LocalAlloc bookkeeping, hence the header). Pure and reentrant: no shared
+ * mutable state, only a lock-free read of the caller's stable name field. */
+
+/* Caps on total argument-string units (bounds the single-block allocation and
+ * keeps the sizing arithmetic well under UINT32_MAX). The W cap is in WCHARs
+ * (the Windows command-line ceiling); the UTF-8 core cap is in bytes, sized so
+ * any input under the WCHAR ceiling fits without a transcode penalty. */
+#define CMDL_ARGV_MAX_WCHARS  32767u
+#define CMDL_ARGV_MAX_BYTES   131072u
+
+/* UTF-8 core: decode `cmdline` into a single-block char** argv; `*out_argc` gets
+ * the count. cmdline==NULL -> NULL. An empty cmdline ("") yields argc==1 with
+ * argv[0] = the caller's module identity (caller->name, or "" if unavailable) --
+ * matching Win32 CommandLineToArgvW(L"") returning the executable path. A cmdline
+ * whose decoded strings exceed CMDL_ARGV_MAX_BYTES returns NULL. Free with
+ * cmdline_free_argv(). `caller` may be NULL (module-path case falls back to ""). */
+char **cmdline_to_argv(struct task *caller, const char *cmdline, int *out_argc);
+
+/* Win32 shell32 CommandLineToArgvW: wide form. Parses lpCmdLine UTF-16 code units
+ * directly into a single-block uint16_t** (LPWSTR*), sets *pNumArgs. lpCmdLine==
+ * NULL -> NULL. Empty -> *pNumArgs==1, argv[0] = caller module identity widened to
+ * UTF-16. Over CMDL_ARGV_MAX_WCHARS or on allocation failure -> NULL (and the
+ * executing thread's TEB LastErrorValue is set when a live TEB exists). A plain
+ * kernel function taking an explicit caller (like SearchPathW), NOT an SSDT
+ * syscall and NOT a pe.c export. Free with cmdline_free_argv(). */
+uint16_t **CommandLineToArgvW(struct task *caller, const uint16_t *lpCmdLine,
+                              int *pNumArgs);
+
+/* Free a block returned by cmdline_to_argv or CommandLineToArgvW (or NULL). The
+ * argument MUST be a value one of those returned, freed EXACTLY once; the hidden
+ * header is magic-checked and poisoned so an immediate double free is a no-op
+ * (the single-free contract is the real guarantee). Works for both widths -- the
+ * header layout is width-independent. */
+void cmdline_free_argv(void *argv);
+
 /* Pure sizing helper: EXACT number of user-stack bytes the initial argv frame
  * consumes, matching the task_exec builder byte-for-byte -- qword-rounded string
  * bytes + string-area parity pad + argc parity pad + the argv[] pointer array

@@ -2763,6 +2763,183 @@ static void test_env_searchpath_path_oom(void)
     env_free(&s_env_fixture);
 }
 
+/* ---- s15 CommandLineToArgvW command-line decode --------------------------- */
+
+static uint32_t cmdl_w_len(const uint16_t *w)
+{
+    uint32_t n = 0;
+    while (w[n])
+        n++;
+    return n;
+}
+
+/* Compare a UTF-16 argument to an ASCII expectation, unit by unit. */
+static int cmdl_w_eq_ascii(const uint16_t *w, const char *a)
+{
+    uint32_t i = 0;
+    while (a[i]) {
+        if (w[i] != (uint16_t)(unsigned char)a[i])
+            return 0;
+        i++;
+    }
+    return w[i] == 0;
+}
+
+static void test_env_cmdline_basic_quotes(void)
+{
+    int argc = -1;
+    char **argv = cmdline_to_argv((struct task *)0, "foo \"bar baz\" qux", &argc);
+    TEST_ASSERT(argv != (char **)0, "cmdline_to_argv returns a block");
+    TEST_ASSERT_EQ(argc, 3, "three arguments parsed");
+    TEST_ASSERT(env_streq(argv[0], "foo"), "argv[0] == foo");
+    TEST_ASSERT(env_streq(argv[1], "bar baz"), "quoted argv[1] keeps its space");
+    TEST_ASSERT(env_streq(argv[2], "qux"), "argv[2] == qux");
+    TEST_ASSERT(argv[3] == (char *)0, "vector is NULL-terminated");
+    cmdline_free_argv(argv);
+}
+
+static void test_env_cmdline_backslash_quote(void)
+{
+    /* argv[1] source bytes: a \ \ \ " b -- 3 backslashes + quote -> 1 backslash
+     * + a literal quote (the 2n+1 rule), yielding a \ " b. */
+    int argc = -1;
+    char **argv = cmdline_to_argv((struct task *)0, "prog a\\\\\\\"b", &argc);
+    TEST_ASSERT(argv != (char **)0, "cmdline_to_argv returns a block");
+    TEST_ASSERT_EQ(argc, 2, "two arguments parsed");
+    TEST_ASSERT(env_streq(argv[0], "prog"), "argv[0] == prog");
+    TEST_ASSERT(env_streq(argv[1], "a\\\"b"), "2n+1 backslash rule yields a backslash-quote-b");
+    cmdline_free_argv(argv);
+}
+
+static void test_env_cmdline_roundtrip(void)
+{
+    /* Encode with s4's argv_to_cmdline, decode with s15, expect the same args. */
+    static const char *const in[] = { "a b", "c\"d", "" };
+    char cmd[128];
+    int argc = -1;
+    char **argv;
+    uint32_t n = argv_to_cmdline(3, in, cmd, sizeof(cmd));
+    TEST_ASSERT(n > 0 && n < sizeof(cmd), "encode fits the buffer");
+    argv = cmdline_to_argv((struct task *)0, cmd, &argc);
+    TEST_ASSERT(argv != (char **)0, "decode returns a block");
+    TEST_ASSERT_EQ(argc, 3, "round-trip preserves the argument count");
+    TEST_ASSERT(env_streq(argv[0], "a b"), "round-trip argv[0]");
+    TEST_ASSERT(env_streq(argv[1], "c\"d"), "round-trip argv[1] (embedded quote)");
+    TEST_ASSERT(env_streq(argv[2], ""), "round-trip argv[2] (empty argument)");
+    cmdline_free_argv(argv);
+}
+
+static void test_env_cmdline_empty_module_path(void)
+{
+    int argc = -1;
+    int n = -1;
+    char **argv;
+    uint16_t **wargv;
+    static const uint16_t empty_w[1] = { 0 };
+
+    env_fixture_reset();
+    s_env_fixture.name = "C:\\Test\\prog.exe";
+
+    argv = cmdline_to_argv(&s_env_fixture, "", &argc);
+    TEST_ASSERT(argv != (char **)0, "empty cmdline still returns a block");
+    TEST_ASSERT_EQ(argc, 1, "empty cmdline -> one argument");
+    TEST_ASSERT(env_streq(argv[0], "C:\\Test\\prog.exe"),
+                "argv[0] is the module path, not empty");
+    cmdline_free_argv(argv);
+
+    wargv = CommandLineToArgvW(&s_env_fixture, empty_w, &n);
+    TEST_ASSERT(wargv != (uint16_t **)0, "wide empty cmdline returns a block");
+    TEST_ASSERT_EQ(n, 1, "wide empty cmdline -> one argument");
+    TEST_ASSERT(cmdl_w_eq_ascii(wargv[0], "C:\\Test\\prog.exe"),
+                "wide argv[0] is the widened module path");
+    cmdline_free_argv(wargv);
+
+    env_free(&s_env_fixture);
+}
+
+static void test_env_cmdline_null(void)
+{
+    int argc = 5;
+    int n = 5;
+    TEST_ASSERT(cmdline_to_argv((struct task *)0, (const char *)0, &argc) == (char **)0,
+                "NULL cmdline -> NULL");
+    TEST_ASSERT_EQ(argc, 0, "NULL cmdline zeroes the count");
+    TEST_ASSERT(CommandLineToArgvW((struct task *)0, (const uint16_t *)0, &n)
+                == (uint16_t **)0, "NULL wide cmdline -> NULL");
+    TEST_ASSERT_EQ(n, 0, "NULL wide cmdline zeroes the count");
+}
+
+static void test_env_cmdline_wide_verbatim(void)
+{
+    /* A lone high surrogate must survive verbatim: the W path parses UTF-16 code
+     * units directly, so it is never rewritten to U+FFFD by a transcode. */
+    static const uint16_t cmd[] = { 'a', 0xD800u, 'b', 0 };
+    int n = -1;
+    uint16_t **wargv = CommandLineToArgvW((struct task *)0, cmd, &n);
+    TEST_ASSERT(wargv != (uint16_t **)0, "wide parse returns a block");
+    TEST_ASSERT_EQ(n, 1, "single argument");
+    TEST_ASSERT_EQ(cmdl_w_len(wargv[0]), 3u, "argv[0] keeps all three code units");
+    TEST_ASSERT(wargv[0][0] == 'a' && wargv[0][1] == 0xD800u && wargv[0][2] == 'b',
+                "lone surrogate preserved verbatim (no transcode mutation)");
+    cmdline_free_argv(wargv);
+}
+
+static void test_env_cmdline_wide_quotes(void)
+{
+    static const uint16_t cmd[] = { '"','x','"',' ','"','y',' ','z','"', 0 };
+    int n = -1;
+    uint16_t **wargv = CommandLineToArgvW((struct task *)0, cmd, &n);
+    TEST_ASSERT(wargv != (uint16_t **)0, "wide quoted parse returns a block");
+    TEST_ASSERT_EQ(n, 2, "two arguments");
+    TEST_ASSERT(cmdl_w_eq_ascii(wargv[0], "x"), "wide argv[0] == x");
+    TEST_ASSERT(cmdl_w_eq_ascii(wargv[1], "y z"), "wide quoted argv[1] keeps its space");
+    cmdline_free_argv(wargv);
+}
+
+static void test_env_cmdline_quote_runs(void)
+{
+    /* Consecutive-quote runs per the documented algorithm: a bare "" is an empty
+     * quoted argument; a "" while already inside quotes is one literal '"'. */
+    int argc = -1;
+    char **argv;
+
+    argv = cmdline_to_argv((struct task *)0, "prog \"\"", &argc);
+    TEST_ASSERT(argv != (char **)0, "empty quoted arg decodes");
+    TEST_ASSERT_EQ(argc, 2, "prog + empty quoted arg");
+    TEST_ASSERT(env_streq(argv[1], ""), "\"\" is an empty argument");
+    cmdline_free_argv(argv);
+
+    argv = cmdline_to_argv((struct task *)0, "prog \"\"\"\"", &argc);
+    TEST_ASSERT(argv != (char **)0, "four-quote run decodes");
+    TEST_ASSERT_EQ(argc, 2, "four quotes -> one argument");
+    TEST_ASSERT(env_streq(argv[1], "\""), "open + \"\" literal + close -> one quote");
+    cmdline_free_argv(argv);
+
+    argv = cmdline_to_argv((struct task *)0, "prog \"a\"\"b\"", &argc);
+    TEST_ASSERT(argv != (char **)0, "in-quotes literal decodes");
+    TEST_ASSERT_EQ(argc, 2, "one argument");
+    TEST_ASSERT(env_streq(argv[1], "a\"b"), "\"\" inside quotes is a literal quote");
+    cmdline_free_argv(argv);
+}
+
+static void test_env_cmdline_large_alloc_crossover(void)
+{
+    /* A decoded block over ENV_STR_KMALLOC_MAX (4 KiB) rides the PMM allocator;
+     * decode + free must stay heap/PMM-neutral. One ~5000-char argument. */
+    static char big[5001];
+    uint32_t i;
+    int argc = -1;
+    char **argv;
+    for (i = 0; i < 5000u; i++)
+        big[i] = 'x';
+    big[5000] = '\0';
+    argv = cmdline_to_argv((struct task *)0, big, &argc);
+    TEST_ASSERT(argv != (char **)0, "large cmdline decodes");
+    TEST_ASSERT_EQ(argc, 1, "one big argument");
+    TEST_ASSERT_EQ(env_test_strlen(argv[0]), 5000u, "argument length preserved");
+    cmdline_free_argv(argv);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -2985,6 +3162,24 @@ void test_register_env(void)
                             test_env_searchpath_oom, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath PATH-leg OOM fails closed (no CWD)",
                             test_env_searchpath_path_oom, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv quoted args + NUL-term",
+                            test_env_cmdline_basic_quotes, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv 2n+1 backslash-quote rule",
+                            test_env_cmdline_backslash_quote, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv round-trips argv_to_cmdline",
+                            test_env_cmdline_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv empty -> module path",
+                            test_env_cmdline_empty_module_path, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv NULL -> NULL",
+                            test_env_cmdline_null, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgvW preserves lone surrogate",
+                            test_env_cmdline_wide_verbatim, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgvW quoted args (wide path)",
+                            test_env_cmdline_wide_quotes, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv consecutive-quote runs",
+                            test_env_cmdline_quote_runs, TEST_CAT_ABI);
+    test_suite_register_cat("Env: CommandLineToArgv PMM allocator crossover",
+                            test_env_cmdline_large_alloc_crossover, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
