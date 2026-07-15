@@ -186,7 +186,7 @@ Wire the SYSCALL entry/exit path to swap CR3 via the trampoline page. LSTAR is r
 
 **Test checkpoint:** Syscall from ring 3 works with CR3 swap active. Serial shows `[KPTI] SYSCALL path active`. A syscall with user_cr3 = kernel_cr3 (no isolation yet) doesn't regress. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
-> **Deferred:** [H] blocked on the per-process clean kernel PML4 + higher-half relocation -- a user_cr3 that excludes kernel space (but keeps the trampoline + entry text) requires the higher-half memory model; §3 trampoline infra is the only ready piece. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+> **Deferred:** [H] blocked on the per-process clean kernel PML4 + higher-half relocation -- a user_cr3 that excludes kernel space (but keeps the trampoline + entry text) requires the higher-half memory model; §3 trampoline infra is the only ready piece. TODO-33 §1 pinned the layout (`MM_KERNEL_VIRT_BASE`), but the supervisor-only split this needs lands in §6. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §6 (item: "Commit: `\"mm: per-process PML4 -- kernel high-half shared, user low-half private\"`")
 
 ---
 
@@ -204,7 +204,7 @@ Wire all interrupt/exception entry stubs to swap CR3 via the trampoline. Unlike 
 
 **Test checkpoint:** Timer IRQ from ring 3 works with CR3 swap. Page fault from ring 3 works. NMI during syscall doesn't double-swap. #DF handler survives. Test on: QEMU WHPX, QEMU TCG; bare metal is critical (IST behavior differs under EPT vs native paging).
 
-> **Deferred:** [H] blocked with §4 -- IDT delivery on all 256 vectors pushes the exception frame onto CR3-resident stacks before software runs; the dual-CR3 model it tags requires the higher-half clean PML4 (§4/§6 path). -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+> **Deferred:** [H] blocked with §4 -- IDT delivery on all 256 vectors pushes the exception frame onto CR3-resident stacks before software runs; the dual-CR3 model it tags requires the higher-half clean PML4 (§4/§6 path). -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §6 (item: "Commit: `\"mm: per-process PML4 -- kernel high-half shared, user low-half private\"`")
 
 ---
 
@@ -221,7 +221,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 **Test checkpoint:** `vmm_create_user_cr3()` returns valid PML4; user CR3 has no kernel text VA (`PML4[256..511]` entries absent except trampoline/stacks); Meltdown probe read of kernel VA from ring 3 faults. Context switch updates per-CPU CR3 pair. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-> **Deferred:** [H] blocked on higher-half relocation -- a user_cr3 with `PML4[256..511]` kernel entries absent is only meaningful once the kernel lives in the upper half (today it links low, so kernel + user share the lower half). This is THE Meltdown-isolation section; it also unblocks §2 SMEP/SMAP + §7 PCID. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+> **Deferred:** [H] blocked on higher-half relocation -- a user_cr3 with `PML4[256..511]` kernel entries absent is only meaningful once the kernel lives in the upper half (today it links low, so kernel + user share the lower half). This is THE Meltdown-isolation section; it also unblocks §2 SMEP/SMAP + §7 PCID. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §6 (item: "Ensure kernel upper-half entries are marked supervisor (no User bit)")
 
 ---
 
@@ -492,7 +492,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 **Test checkpoint:** Two boots produce different `boot_info.kaslr_slide`; `kernel.sym` / module bases match slide; dump shows slide in vendor stream. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-> **Deferred:** [H] blocked on higher-half relocation (see section WARNING) -- sliding the current low-linked layout mixes relocation + address-space migration + KASLR in the wrong owner and risks a non-bootable image. The base-slide mechanics belong to TODO-33; KASLR policy lands on that foundation. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+> **Deferred:** [H] blocked on higher-half relocation (see section WARNING) -- sliding the current low-linked layout mixes relocation + address-space migration + KASLR in the wrong owner and risks a non-bootable image. The base-slide mechanics belong to TODO-33; KASLR policy lands on that foundation. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §3 (item: "Commit: `\"boot: higher-half page-table bring-up + direct map + high-half jump\"`")
 
 ---
 

@@ -1,8 +1,11 @@
 /* ============================================================================
  * vmm.c -- Virtual Memory Manager (x86-64 4-level paging)
  *
- * Takes over the boot-time page tables from entry.asm and provides
- * fine-grained 4 KiB page mapping via the PML4 → PDPT → PD → PT hierarchy.
+ * Takes over the boot-time page tables built by the UEFI bootloader
+ * (setup_page_tables() in src/boot/uefi/bootx64.c) and provides fine-grained
+ * 4 KiB page mapping via the PML4 -> PDPT -> PD -> PT hierarchy. There is no
+ * assembly entry stub in the kernel; the bootloader loads CR3 and calls
+ * kernel_main directly.
  *
  * The boot page tables already identity-map the first 4 GiB with 2 MiB pages.
  * This VMM adds the ability to map individual 4 KiB pages for dynamic use
@@ -11,10 +14,15 @@
  * Page table structure (x86-64):
  *   Virtual address: [PML4 idx][PDPT idx][PD idx][PT idx][offset]
  *                     9 bits    9 bits    9 bits   9 bits  12 bits
+ *
+ * The canonical virtual layout this VMM will move to lives in
+ * include/kernel/mm/memmap.h (docs/infrastructure/kernel-address-space.md).
+ * Including it here keeps its _Static_assert layout gate live in every build.
  * ============================================================================ */
 
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/memmap.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
 #include "kernel/idt.h"
@@ -1403,7 +1411,12 @@ void vmm_promote_to_1g(void)
 
 boot_result_t vmm_init(void)
 {
-    /* Take over the PML4 created by entry.asm */
+    /* Take over the PML4 the UEFI bootloader built and loaded into CR3
+     * (setup_page_tables() in src/boot/uefi/bootx64.c). It is adopted, never
+     * rebuilt, so that table is the kernel's page table for the life of the
+     * system. NOTE: this dereferences a raw physical address and is therefore
+     * only valid while the bootloader's identity map is live; it moves to
+     * mm_phys_to_hhdm() when the direct map lands. */
     kernel_pml4 = (pte_t *)(read_cr3() & PTE_ADDR_MASK);
 
     /* Register the page fault handler (ISR 14) */

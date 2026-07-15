@@ -959,6 +959,19 @@ else
     t_pass "lint Check 15 clean on clean tree"
 fi
 
+# --- memmap layout gate (host) ----------------------------------------------
+# include/kernel/mm/memmap.h pins the address-space layout with _Static_assert,
+# but an assert cannot evaluate a static-inline call, so the translation
+# helpers have no compile-time net. Worse, clang-19 (the kernel compiler) does
+# NOT diagnose the wraparound that bites at the top of the address space -- not
+# under -Wall -Wextra -Werror, and not even under -Weverything -- while host gcc
+# catches it via -Wtype-limits. This gate is therefore the ONLY automated net
+# for that bug class, and it runs on the host at zero kernel-image cost (which
+# is what lets it run while the BSS ceiling blocks the in-kernel suite).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[memmap_layout_gate]${NC}"
+assert_exit_zero "memmap layout gate: constants + translation helpers" \
+    bash "$REPO_ROOT/tools/memmap-check/check.sh"
+
 # --- Check 16 tracked-secret guard ------------------------------------------
 # Fake keys are GENERATED at runtime inside a throwaway git repo so this
 # file's own source never carries a live-looking key pattern.
