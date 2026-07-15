@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     427 |     117185 |
+| **Markdown** (`.md`)        |     427 |     117206 |
 | **JSON** (`.json`)          |      14 |       1132 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1465 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **477** | **195985** |
+| **Subtotal**                | **477** | **196006** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
 | **Core code + tooling**        | **1420** | **658535** |
-| **Supporting text + metadata** |  **477** | **195985** |
-| **All counted text files**     | **1897** | **854520** |
+| **Supporting text + metadata** |  **477** | **196006** |
+| **All counted text files**     | **1897** | **854541** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -79,13 +79,13 @@
 | ----------------------------- | ------------: | ----------: | --------------------: |
 | **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               658,535 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
-| **Time span**                 |      33 years |    40 years | 4 month(s), 10 day(s) |
+| **Time span**                 |      33 years |    40 years | 4 month(s), 11 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 658,535
-> lines of core code and tooling would take **184 developers** working for **4 month(s), 10 day(s)**.
+> lines of core code and tooling would take **183 developers** working for **4 month(s), 11 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-15 17:09 · commit `f0e5a5de`*
+*Last updated: 2026-07-15 17:37 · commit `52d40bbd`*

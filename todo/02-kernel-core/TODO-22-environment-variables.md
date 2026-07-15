@@ -85,8 +85,9 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
 | 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
 | 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
-| 💎   |  23   | Remaining ntdll env export surface (after §24)     | §20, §21, §24              |  [ ]   |
+| 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21                   |  [ ]   |
 | 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [ ]   |
+| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21                   |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -137,7 +138,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `49335ede` | 10/10 items | build OK | tests 1193/1193 PASS
 > **Accepted:** [H] task_cleanup reap barrier lacks all-CPU quiescence for env_free (single-CPU scheduler today) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "task_cleanup reap barrier" at line 122)
 > **Accepted:** [M] environ_lock inherits the mutex_t waiter-queue SMP race (unreachable on single-CPU) -> XREF: 03-memory-concurrency/TODO-08-advanced-sync.md §11 (item: "Wait-queue protection" at line 275)
-> **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 140)
+> **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 141)
 > **Accepted:** [L] env_copy has no live caller yet (§1 is storage+API only) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
 > **Quality reviewed:** 2026-07-13 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3M+2L fixed, 1H+2M+1L accepted-XREF | scope: kernel-code-quality
 
@@ -280,7 +281,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
-> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 283)
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 284)
 > **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
 > **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
@@ -431,7 +432,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Scope: full NLS folding is TODO-13's (deferred `[/]`); child-env `env_copy` wiring is solely TODO-12 §7 (TODO-21 §2 is standard-handle pre-wiring, not inheritance); the NULL-env RtlExpand 128 KiB cap is §19's.
 
 > **Verified:** 2026-07-14 | commit `90a3b1fa` (+review) | 11/12 items | build OK | tests 1653/1653 abi PASS + smoke PASS
-> **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 434)
+> **Accepted:** [M] NULL-environment `RtlExpandEnvironmentStrings_U` caps at 128 KiB while storage allows 1 MiB (raising it safely needs a uint64 expansion-length count) -> XREF: 02-kernel-core/TODO-22 §19 (item: "Raise the NULL-env expansion cap above 128 KiB" at line 435)
 > **Quality reviewed:** 2026-07-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 2H+4M+1L fixed, 1M accepted-XREF, 1 rejected | scope: kernel-code-quality
 
 ---
@@ -517,7 +518,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Canonical doc:** `include/kernel/env.h` (`env_create_block` contract) + `include/kernel/nt/nt_rtlenv.h`.
 > - **Scope boundary:** §13 owns the caller-env block build/free (environ_lock snapshot) + NULL-token expand; per-user token identity is TODO-15 §5 + profile-load infra; runtime Registry snapshot is TODO-14 §14.
 > **Verified:** 2026-07-15 | commit `b39fe250` | 2/7 items | build OK | tests 1727/1727 PASS
-> **Accepted:** [M] UTF-16 `%=X:%` expansion cannot resolve hidden `=X:` drive vars (Rtl lookup uses the first `=` as separator) -> XREF: 02-kernel-core/TODO-22 §19 (item: "UTF-16 `%=X:%` expansion parity" at line 520)
+> **Accepted:** [M] UTF-16 `%=X:%` expansion cannot resolve hidden `=X:` drive vars (Rtl lookup uses the first `=` as separator) -> XREF: 02-kernel-core/TODO-22 §19 (item: "UTF-16 `%=X:%` expansion parity" at line 521)
 > **Quality reviewed:** 2026-07-15 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 7H+2M fixed, 0 open, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -551,8 +552,8 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §14 owns SearchPath ordering; leg-1 (app-load dir) needs a kernel-owned image path owned by `TODO-21 §2`; PATH+PATHEXT shell iteration stays `shell_find_command` (§7).
 > **Verified:** 2026-07-15 | commit `2953e5ce` | 4/7 items | build OK | tests 1804/1804 PASS
 > **Accepted:** [H] SearchPathW non-ASCII CWD leg limited by the ASCII-only NT-path/cwd narrowing (`nt_process.c`) -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §1` (item: "Non-ASCII CWD: NtSetCurrentDirectory narrows..." at line 97)
-> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 554)
-> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 555)
+> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 555)
+> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 556)
 > **Quality reviewed:** 2026-07-15 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 2H+7M fixed, 2H+1M deferred/accepted, 1M rejected | scope: kernel-code-quality
 
 ---
@@ -745,7 +746,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 > - **Scope boundary:** §21 owns the exports; §24 owns the probe+copy boundary, budget measurement, and cache; §6 owns the kernel32 wrappers; the PMM bitmap is `03-memory-concurrency/TODO-03` §1.
 > **Verified:** 2026-07-15 | commit `7495aec9` + review fixes | 11/12 items | build OK | tests 21383 kernel + 16 user-mode PASS
 > **Deferred:** [blocked] routing kernel32 `GetEnvironmentVariable`/`SetEnvironmentVariable` through these exports is blocked twice over: §6 itself is deferred on user-mode runtime prereqs (no kernel32 env wrapper exists to route), and this section's own reachability gate forbids adding a kernel32 caller while §20's PMM item is open -- doing it now would make the exports user-reachable over an unsynchronized PMM bitmap -> XREF: 02-kernel-core/TODO-22 §6 (item: "Route the env wrappers through §21's Rtl exports") + 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
-> **Accepted:** [M] `RtlSetCurrentEnvironment` is unimplemented, so a `RtlCreateEnvironment` block can never become the live environment -- the create/destroy pair is a round-trip until it lands (reason: scope -- it is a new export with a kernel-resident-vs-PEB adoption design of its own, not part of this section's four entries) -> XREF: 02-kernel-core/TODO-22 §23 (item: "`RtlSetCurrentEnvironment(NewEnvironment, OldEnvironment)`")
+> **Accepted:** [M] `RtlSetCurrentEnvironment` is unimplemented, so a `RtlCreateEnvironment` block can never become the live environment -- the create/destroy pair is a round-trip until it lands (reason: scope -- it is a new export with a kernel-resident-vs-PEB adoption design of its own, not part of this section's four entries) -> XREF: 02-kernel-core/TODO-22 §23 (item: "`RtlSetCurrentEnvironment(PVOID Environment, PVOID *PreviousEnvironment)` over it")
 > **Accepted:** [M] `RtlSetEnvironmentVariable`'s non-NULL `Environment` stays refused after §24 restores Query/Expand: its `void **` ABI may realloc and write back, which a read-only snapshot cannot serve (reason: scope -- needs its own ownership contract, not the same probe+copy) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Extend the boundary to `RtlSetEnvironmentVariable`'s non-NULL `Environment`")
 > **Accepted:** [L] every small query pays a 4 KiB heap round-trip before the value size is known (reason: scope -- the kmalloc-first shape is deliberate and shared with `NtQueryEnvironmentVariable_handler`, whose comment records it as the fix for a worse contiguous-PMM bug; changing one entry alone would diverge the two) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Drop the per-query 4 KiB heap round-trip")
 > **Quality reviewed:** 2026-07-15 | Codex 9x (design, adversarial x2, test-coverage, consistency x2, perf, re-adversarial x2) | 4H+5M+9L fixed, 4 accepted-XREF, 2 rejected | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst
@@ -783,18 +784,20 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 
 ---
 
-## 23. Remaining ntdll Env Export Surface
+## 23. Live-Environment Adoption: SetCurrentEnvironment, SetEnvironmentStrings, CreateEnvironmentEx
 
-§21 shipped the four Rtl env entries the CRT and a typical importer reach for; real ntdll exports more, and the gap only bites when the ntdll export table is actually wired (which §21's gate defers until §20's PMM item closes). Filed now so it is not rediscovered at export-table time. The load-bearing one is `RtlSetCurrentEnvironment`: without it a block from `RtlCreateEnvironment` can never become the live environment, so §21 + §22 could both close with the create/destroy pair still a pure round-trip. Sources: ReactOS `sdk/lib/rtl/env.c`, the WRK, and the ntdll export index.
+§21 shipped the four Rtl env entries the CRT reaches for, but `RtlCreateEnvironment` is still a pure alloc/free round-trip: nothing adopts a created block as the live environment, so §21 + §22 could both close with the create/destroy pair never becoming real. This section closes that with the block-LIFECYCLE family. Split from the counted READ forms (§25) on the seam the design review drew: adoption is a store-ownership + atomicity lens over `env.c`, while the counted forms are an ABI-length + integer-narrowing lens over `nt_rtlenv.c`'s expansion engine. Signatures + flags pinned VERBATIM from winsiderss/phnt `ntrtl.h` (2026-07-15), cross-read against the WRK and ReactOS `sdk/lib/rtl/env.c`.
 
-- [ ] `RtlSetCurrentEnvironment(NewEnvironment, OldEnvironment)`: installs a block as the live env. Without it `RtlCreateEnvironment` (§21) is a pure alloc/free round-trip -- nothing adopts its block. Maps to `env_adopt_block` (env.h:217) + decode
-- [ ] Kernel-resident divergence for the above: Windows swaps a PEB pointer; here it must adopt into `task->environ` under `environ_lock`. Decide replace-whole-store vs per-entry merge, and who owns the caller's block afterwards
-- [ ] Non-`_U` counted forms `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw ptr+len, no `UNICODE_STRING`): in ReactOS the `_U` entries §21 shipped are thin wrappers over these, and a real PE import table may name either
-- [ ] `RtlSetEnvironmentStrings` + `RtlCreateEnvironmentEx`: confirm each is real and pin its signature BEFORE implementing -- ReactOS stubs `RtlSetEnvironmentStrings` as `STATUS_NOT_IMPLEMENTED` and `RtlCreateEnvironmentEx` flags are unconfirmed
-- [ ] Gate: same reachability rule as §21 -- no export row until §20's PMM BLOCKING item closes. Wiring the ntdll export table is what makes this whole family user-reachable, so it lands with that gate, not before
-- [ ] Commit: `"ntdll: remaining Rtl environment exports"`
+- [ ] `env_exchange_block(t, entries, count, void **out_old)` (env.c): ONE `environ_lock` span serializes the exact old store AND swaps the prepared new one; two acquisitions can return an environ that was never replaced
+- [ ] `RtlSetCurrentEnvironment(PVOID Environment, PVOID *PreviousEnvironment)` over it; NTSTATUS + PVOID per phnt/WRK (ReactOS's VOID/PWSTR is the outlier), §21's `RtlDestroyEnvironment` tie-break. NULL out-param skips the old build
+- [ ] REPLACE-whole-store, never per-entry merge: ntdll swaps a PEB pointer under `RtlAcquirePebLock`, so one atomic exchange is the faithful mapping. The caller keeps its block (we decode+copy) -- an ntdll-ownership divergence
+- [ ] Provenance gate: accept ONLY a `RtlCreateEnvironment`/`Ex` block (hidden `{magic,wchars}` header -> extent), `RtlDestroyEnvironment`'s shipped contract; else `STATUS_NOT_SUPPORTED`. An extent is not a safe deref
+- [ ] `RtlSetEnvironmentStrings(PCWSTR NewEnvironment, SIZE_T NewEnvironmentSize)`: size is BYTES, bounds the SCAN not the deref -- rides nt_rtlenv.h's kernel-resident input contract; a user pointer needs §24's probe+copy
+- [ ] `RtlCreateEnvironmentEx(Source, Environment, Flags)`: flags pinned from raw phnt -- TRANSLATE 0x1, TRANSLATE_FROM_OEM 0x2, EMPTY 0x4. Non-NULL source -> `STATUS_NOT_SUPPORTED` (§24); EMPTY -> empty; else clone; unknown bit -> refused
+- [ ] Gate (split in two): implementation lands BEFORE §24; reachability does NOT -- no export row until BOTH §24's probe+copy and §20's PMM item close. Extend §21's `pe_ntdll_export_ssdt == -1` test
+- [ ] Commit: `"ntdll: live-environment adoption over an atomic env exchange"`
 
-**Test checkpoint:** `RtlSetCurrentEnvironment` installs a `RtlCreateEnvironment(1)` clone and a subsequent `RtlQueryEnvironmentVariable_U` reads a variable only that block carried; the old-environment out-pointer returns the previous block; the non-`_U` forms agree value-for-value with their `_U` counterparts. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+**Test checkpoint:** `RtlSetCurrentEnvironment` installs a `RtlCreateEnvironment(1)` clone and the store then reads a variable only that block carried; `PreviousEnvironment` returns a block whose content is the pre-swap environ and which `RtlDestroyEnvironment` frees; a NULL `PreviousEnvironment` still swaps and allocates no old block; a non-provenanced pointer is refused with `STATUS_NOT_SUPPORTED` and the store is untouched; an adoption failure leaves the prior environ intact and leaks no snapshot. `RtlSetEnvironmentStrings` replaces the store from a counted block and refuses a size past `ENV_BLOCK_MAX`. `RtlCreateEnvironmentEx` honors EMPTY, clones on 0, and refuses each unknown flag bit. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
 ---
 
@@ -817,6 +820,24 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
 > **Deferred:** [blocked] the three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378)
+
+---
+
+## 25. Counted (non-`_U`) Rtl Env Read Forms
+
+The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw ptr+len, no `UNICODE_STRING`) that a real PE import table may name instead of the `_U` entries §21 shipped. In ReactOS the `_U` forms are thin wrappers over these, so the counted form is the PRIMITIVE and `_U` should delegate DOWN -- but §23's design review proved the shipped engine cannot become that primitive unchanged, which is why this is its own section rather than a bullet in §23: the lens here is ABI length conventions + integer narrowing, not store ownership. Both entries take `_In_opt_ PVOID Environment`, so they inherit §21's non-NULL refusal until §24 lands the boundary. Signatures pinned verbatim from winsiderss/phnt `ntrtl.h` (2026-07-15).
+
+- [ ] `rtl_env_expand_pass`/`_core` are `uint32_t`-indexed and `_core` is `UNICODE_STRING`-shaped (nt_rtlenv.c:279, 396), so a `SIZE_T` `SourceLength` truncates on narrowing. Restructure to raw ptr+len, or refuse past a cap BEFORE narrowing
+- [ ] `rtl_env_ranges_overlap` takes `uint32_t alen/blen` (nt_rtlenv.c:356): a length above 4 GiB truncates and EVADES overlap detection. Whatever bound the item above picks must be enforced before this is reached
+- [ ] The work budget charges lookups, not the outer source scan -- bounded today only because `UNICODE_STRING.Length` is `USHORT` (<= 32767 WCHARs). A `SIZE_T` source removes that implicit bound and needs an explicit one
+- [ ] `RtlQueryEnvironmentVariable(Environment, Name, NameLength, Value, ValueLength, ReturnLength)`: lengths in WCHARs. Keep the WRK exact-fit-SUCCEEDS rule §21 chose (nt_rtlenv.h:284-304), NOT ReactOS's strict-less-than
+- [ ] ReactOS's counted `ReturnLength` convention is inconsistent (EXCLUDES the NUL on success, INCLUDES it on `STATUS_BUFFER_TOO_SMALL`); its `_U` wrapper corrects with `ReturnLength -= 1`. Pin ours deliberately and name the source it follows
+- [ ] `RtlExpandEnvironmentStrings(Environment, Source, SourceLength, Destination, DestinationLength, ReturnLength)`: `ReturnLength` INCLUDES the NUL on BOTH paths (ReactOS `TotalLength = 1`), unlike Query. Do not unify the two by accident
+- [ ] Refactor `_U` to delegate DOWN once the core is safe: `_U` keeps the USHORT check, `STATUS_UNSUCCESSFUL` past `RTL_ENV_MAX_RESULT_WCHARS`, the `>= Length + 2` NUL guard, overlap rejection; the core carries NO `UNICODE_STRING` ceiling
+- [ ] Gate: same as §23 -- implementation may land before §24, but no export row until §24's probe+copy and §20's PMM item both close
+- [ ] Commit: `"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core"`
+
+**Test checkpoint:** the counted Query and Expand agree value-for-value with their `_U` counterparts on the shared cases; exact fit SUCCEEDS on Query (WRK rule) and the `_U` wrapper still reports Length in bytes excluding the NUL; Expand's `ReturnLength` includes the NUL on both the success and too-small paths; a `SourceLength` past the documented cap is refused rather than narrowed; a result above `RTL_ENV_MAX_RESULT_WCHARS` is `STATUS_UNSUCCESSFUL` through `_U` but expressible through the counted form; a non-NULL `Environment` is refused pending §24. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
 ---
 
