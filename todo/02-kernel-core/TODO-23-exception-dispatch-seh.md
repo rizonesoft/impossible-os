@@ -8,10 +8,12 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 # TODO-23 -- Exception Dispatch & SEH
 
+> **Validated:** 2026-07-15 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+
 > **Goal:** Replace the current "all CPU exceptions → `panic_screen()`" model with a proper Windows-style exception dispatch pipeline. That means: a captured `CONTEXT` record, an `EXCEPTION_RECORD` with fault address and exception code, a page-fault triage layer that separates recoverable faults from hard kills, debugger first-chance/second-chance notification, a `KiUserExceptionDispatcher` path that delivers faults to user-mode SEH handlers via the TEB chain, x64 table-based unwind (`RtlVirtualUnwind`), kernel-mode stack walking (`RtlCaptureStackBackTrace`), Vectored Exception Handlers (VEH), Vectored Continue Handlers (VCH), `__C_specific_handler` for SEH scope-table dispatch, an unhandled exception filter, kernel-mode safe probing (`ProbeForRead`/`ProbeForWrite`), kernel-driver `__try`/`__except` support, POSIX signal delivery for Linux-compat processes (including `sigaltstack`), and exception dispatch telemetry. Without this, every access violation -- whether in a driver or a user app -- crashes the whole OS rather than being caught and reported correctly.
 
 > [!IMPORTANT]
-> **Current state:** `vmm.c` has a `page_fault_handler` (vector 14) that chains to the swap and mmap handlers for kernel-mode recoverable faults, then falls through to `panic_screen()`. All other CPU exception vectors (0–13, 15–31) dispatch directly to `panic_screen()` via `idt.c`. No `EXCEPTION_RECORD` or `CONTEXT` is captured, no user-mode fault delivery path exists, and there is no kernel safe-probing API. The POSIX signal machinery (`signals` field in `struct task`) is wired but not exercised.
+> **Current state:** `vmm.c` has a `page_fault_handler` (vector 14) that chains to the swap and mmap handlers for kernel-mode recoverable faults, then falls through to `panic_screen()`. All other CPU exception vectors (0-13, 15-31) dispatch directly to `panic_screen()` via `idt.c`. No `EXCEPTION_RECORD` or `CONTEXT` is captured, no user-mode fault delivery path exists, and there is no kernel safe-probing API. The POSIX signal machinery (`signals` field in `struct task`) is wired but not exercised.
 
 ---
 
@@ -26,15 +28,15 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 - `include/kernel/idt.h` -- `interrupt_frame` struct (frame pointer, error code, rip, cs, rflags, rsp, ss)
 - `src/kernel/sched/task.c` -- `struct task`, `signals` field, `task_exec` ring-3 entry
 - → XREF: `TODO-11-peb-teb-user-abi.md §6` (TEB `ExceptionList` pointer and struct layout)
-- → XREF: `TODO-14-registry-completion.md §4.2` -- NtXxx registry syscalls use `ProbeForRead` / `ProbeForWrite` (§13) for user-mode pointer validation
-- → XREF: `TODO-11-peb-teb-user-abi.md §2` (initial user stack frame -- KiUserExceptionDispatcher target)
+- → XREF: `TODO-14-registry-completion.md §4` -- NtXxx registry syscalls use `ProbeForRead` / `ProbeForWrite` (§13) for user-mode pointer validation
+- → XREF: `TODO-11-peb-teb-user-abi.md §7` (initial user stack frame -- KiUserExceptionDispatcher target)
 - → XREF: `TODO-12-native-api-ssdt.md §1` (NTSTATUS -- `NtRaiseException`/`NtContinue` return values)
 - → XREF: `TODO-07-irql-model-dpcs.md §3` (interrupt entry/exit IRQL -- fault occurs at hardware IRQL)
 - → XREF: `TODO-07-irql-model-dpcs.md §12` -- KiDeliverApc sets up user-mode trap frame for user APC delivery; KiUserApcDispatcher parallels KiUserExceptionDispatcher (§5) and should be implemented alongside it
-- → XREF: `TODO-10-kernel-security-hardening.md §7` -- CET shadow stack; §3 of this TODO handles the resulting `#CP` exception (vector 21)
-- → XREF: `TODO-29-kernel-debugger-kd-protocol.md §4` -- #DB/#BP exception handlers; §3–4 of this TODO integrate with KD for first/second-chance notification
-- → XREF: `TODO-04-system-logging.md §8` -- JSON structured event log; §16 of this TODO emits exception dispatch telemetry
-- → XREF: `10-platform-services/TODO-10-linux-compat.md §9` -- `rt_sigaction` handler registration for Linux compat signal delivery (§15)
+- → XREF: `TODO-10-kernel-security-hardening.md §9` -- CET shadow stack; §3 of this TODO handles the resulting `#CP` exception (vector 21)
+- → XREF: `TODO-29-kernel-debugger-kd-protocol.md §5` -- #DB/#BP exception routing to KD; §3-§4 of this TODO integrate with KD for first/second-chance notification
+- → XREF: `TODO-04-system-logging.md §6` -- structured JSON log events; §16 of this TODO emits exception dispatch telemetry
+- → XREF: `10-platform-services/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration for Linux compat signal delivery (§15)
 
 ## Outcome
 
@@ -53,24 +55,24 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                              | Depends On                 | Status |
-| --- | :---: | -------------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS            | TODO-12 §1                 |  [ ]   |
-| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth  | §1, TODO-17 §3             |  [ ]   |
-| 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP) | §1, TODO-23 §9, TODO-29 §4 |  [ ]   |
-| 💎   |   4   | Debugger first-chance / second-chance notification       | §1–§3, TODO-29 §4          |  [ ]   |
-| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery             | §4, TODO-11 §2             |  [ ]   |
-| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)        | §1                         |  [ ]   |
-| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                 | §6, TODO-17 §3             |  [ ]   |
-| 💎   |   8   | SEH chain walk + `__C_specific_handler`                  | §5, §6, TODO-11 §6         |  [ ]   |
-| 💎   |   9   | RtlUnwindEx -- unwind to target frame                    | §6, §8                     |  [ ]   |
-| 💎   |  10   | Vectored Exception Handlers (VEH)                        | §4, TODO-05 §2             |  [ ]   |
-| 💎   |  11   | Vectored Continue Handlers (VCH)                         | §4, §10                    |  [ ]   |
-| 💎   |  12   | Unhandled exception filter + WER hook                    | §7, §8, §10                |  [ ]   |
-| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                 | §2                         |  [ ]   |
-| 💎   |  14   | Kernel-mode `__try`/`__except` for drivers               | §6, §9, §13                |  [ ]   |
-| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)     | §3, §5, D10T10 §8          |  [ ]   |
-| ⭐   |  16   | Exception dispatch telemetry                             | §4, TODO-11 §1             |  [ ]   |
+| ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
+| --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
+| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1                 |  [ ]   |
+| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
+| 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
+| 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
+| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                     | §4, TODO-11 §7             |  [ ]   |
+| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                | §1                         |  [ ]   |
+| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                         | §6, TODO-07 §3             |  [ ]   |
+| 💎   |   8   | SEH chain walk + `__C_specific_handler`                          | §5, §6, TODO-11 §6         |  [ ]   |
+| 💎   |   9   | RtlUnwindEx -- unwind to target frame                            | §6, §8                     |  [ ]   |
+| 💎   |  10   | Vectored Exception Handlers (VEH)                                | §4, TODO-05 §3             |  [ ]   |
+| 💎   |  11   | Vectored Continue Handlers (VCH)                                 | §4, §10                    |  [ ]   |
+| 💎   |  12   | Unhandled exception filter + WER hook                            | §7, §8, §10                |  [ ]   |
+| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                         | §2                         |  [ ]   |
+| 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                       | §6, §9, §13                |  [ ]   |
+| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [ ]   |
+| ⭐   |  16   | Exception dispatch telemetry                                     | §4, TODO-04 §6             |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -80,7 +82,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 ## 1. EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS Types
 
 **Prompt:** Define the three canonical Windows exception types in a new header `include/kernel/except.h`. `EXCEPTION_RECORD` holds the exception code (`EXCEPTION_ACCESS_VIOLATION`, `EXCEPTION_ILLEGAL_INSTRUCTION`, etc.), exception flags (`EXCEPTION_CONTINUABLE`), a nested-exception pointer, the fault address, and up to `EXCEPTION_MAXIMUM_PARAMETERS` (15) information parameters.
-`CONTEXT` holds the full x86-64 register file (all GP registers, RIP, RFLAGS, CS/DS/ES/FS/GS/SS, XMM0–15, FPU control/status). `EXCEPTION_POINTERS` pairs the two. Add NTSTATUS codes for the common faults (`STATUS_ACCESS_VIOLATION 0xC0000005`, `STATUS_ILLEGAL_INSTRUCTION 0xC000001D`, `STATUS_INTEGER_DIVIDE_BY_ZERO 0xC0000094`, etc.).
+`CONTEXT` holds the full x86-64 register file (all GP registers, RIP, RFLAGS, CS/DS/ES/FS/GS/SS, XMM0-15, FPU control/status). `EXCEPTION_POINTERS` pairs the two. Add NTSTATUS codes for the common faults (`STATUS_ACCESS_VIOLATION 0xC0000005`, `STATUS_ILLEGAL_INSTRUCTION 0xC000001D`, `STATUS_INTEGER_DIVIDE_BY_ZERO 0xC0000094`, etc.).
 Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a CONTEXT from the ISR frame.
 
 > [!IMPORTANT]
@@ -94,7 +96,7 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 - [ ] `src/kernel/except.c` -- `context_from_frame()`, `frame_from_context()`
 - [ ] Add to `Makefile` and verify it compiles clean
 
-**Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` includes all GP registers + XMM0–15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- all fields match. Serial log: `"except: types compiled, CONTEXT size=<N>"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` includes all GP registers + XMM0-15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- all fields match. Serial log: `"except: types compiled, CONTEXT size=<N>"`. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types"`
 
@@ -112,8 +114,8 @@ Decode `CR2` (fault address) and the error code bits (P=present, W=write, U=user
 Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavior (always panic) as the unreachable final clause.
 
 > [!IMPORTANT]
-> → XREF: `TODO-17 §3` -- interrupt entry raises IRQL; fault handler runs at device IRQL.
-> → XREF: `TODO-11 §9` -- `task->peb` needed to find user-mode VMM range boundary.
+> → XREF: `TODO-07 §3` -- interrupt entry raises IRQL; fault handler runs at device IRQL.
+> → XREF: `TODO-11 §5` -- `task->peb` needed to find user-mode VMM range boundary.
 > → XREF: `D03 T04 §4` -- lazy mapped-file and swap-backed page-in live in the pager TODO; this section routes eligible not-present faults there rather than re-implementing pager policy in the exception layer.
 
 - [ ] Decode error-code bits; distinguish user vs. kernel fault cleanly
@@ -132,21 +134,21 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 
 **Prompt:** Add per-exception ISR handlers for the CPU fault vectors that should not always panic. Register handlers via `idt_register_handler()` in a new `except_init()` called from `kernel_main`. Mapping:
 - Vector 0 (`#DE`) → `STATUS_INTEGER_DIVIDE_BY_ZERO` if user-mode, panic if kernel.
-- Vector 1 (`#DB`) → `STATUS_SINGLE_STEP`. Route through `ki_dispatch_exception()` (§4) which notifies the debugger first-chance; if no debugger or debugger declines, deliver to user-mode as `STATUS_SINGLE_STEP` via `KiUserExceptionDispatcher` (§5). Kernel-mode `#DB` routes to KD (→ XREF: `TODO-29 §4`).
-- Vector 3 (`#BP`) → `STATUS_BREAKPOINT`. Adjust `frame->rip -= 1` (INT3 is 1 byte). Route through `ki_dispatch_exception()` (§4) for debugger first-chance; if unhandled, deliver to user-mode. Kernel-mode `#BP` routes to KD (→ XREF: `TODO-29 §4`).
+- Vector 1 (`#DB`) → `STATUS_SINGLE_STEP`. Route through `ki_dispatch_exception()` (§4) which notifies the debugger first-chance; if no debugger or debugger declines, deliver to user-mode as `STATUS_SINGLE_STEP` via `KiUserExceptionDispatcher` (§5). Kernel-mode `#DB` routes to KD (→ XREF: `TODO-29 §5`).
+- Vector 3 (`#BP`) → `STATUS_BREAKPOINT`. Adjust `frame->rip -= 1` (INT3 is 1 byte). Route through `ki_dispatch_exception()` (§4) for debugger first-chance; if unhandled, deliver to user-mode. Kernel-mode `#BP` routes to KD (→ XREF: `TODO-29 §5`).
 - Vector 4 (`#OF`) → `STATUS_INTEGER_OVERFLOW` if user.
 - Vector 6 (`#UD`) → `STATUS_ILLEGAL_INSTRUCTION` if user.
 - Vector 11 (`#NP`) → `STATUS_ACCESS_VIOLATION` (segment not present) if user.
 - Vector 12 (`#SS`) → `STATUS_STACK_OVERFLOW` if user.
 - Vector 13 (`#GP`) → `STATUS_ACCESS_VIOLATION` if user; kernel = probe check first, then panic.
-- Vector 21 (`#CP`) → `STATUS_CONTROL_STACK_VIOLATION` (CET shadow-stack mismatch). User-mode: deliver via `KiUserExceptionDispatcher` (§5). Kernel-mode: `KeBugCheckEx(KERNEL_CET_SHADOW_STACK_VIOLATION)`. Only register this handler if `cpu_has(CPU_FEATURE_CET_SS)` returns true (→ XREF: `TODO-23 §9`).
+- Vector 21 (`#CP`) → `STATUS_CONTROL_STACK_VIOLATION` (CET shadow-stack mismatch). User-mode: deliver via `KiUserExceptionDispatcher` (§5). Kernel-mode: `KeBugCheckEx(KERNEL_CET_SHADOW_STACK_VIOLATION)`. Only register this handler if `cpu_has(CPU_FEATURE_CET_SS)` returns true (→ XREF: `TODO-10 §9`).
 Kernel-mode faults for vectors 0, 4, 6 always call `panic_screen()` (no recovery).
 Each handler builds an `EXCEPTION_RECORD` (§1) and routes through `ki_dispatch_exception()` (§4) which orchestrates debugger notification and handler dispatch based on CPL in the saved CS.
 
 > [!IMPORTANT]
-> → XREF: `TODO-17 §3` -- ISR entry/exit must preserve IRQL contract.
-> → XREF: `TODO-29 §4` -- #DB/#BP handlers must coexist with KD. If KD is attached, `ki_dispatch_exception()` calls `KiDebugRoutine` first-chance. If KD is not present or declines, dispatch continues to VEH/SEH. TODO-29 §4 registers raw handlers; when TODO-23 §3 lands, those handlers must be adapted to call through `ki_dispatch_exception()` instead.
-> → XREF: `TODO-23 §9` -- #CP (vector 21) is generated by CET shadow stack violations. Only register the handler if `cpu_has(CPU_FEATURE_CET_SS)` returns true.
+> → XREF: `TODO-07 §3` -- ISR entry/exit must preserve IRQL contract.
+> → XREF: `TODO-29 §5` -- #DB/#BP handlers must coexist with KD. If KD is attached, `ki_dispatch_exception()` calls `KiDebugRoutine` first-chance. If KD is not present or declines, dispatch continues to VEH/SEH. TODO-29 §5 registers raw handlers; when TODO-23 §3 lands, those handlers must be adapted to call through `ki_dispatch_exception()` instead.
+> → XREF: `TODO-10 §9` -- #CP (vector 21) is generated by CET shadow stack violations. Only register the handler if `cpu_has(CPU_FEATURE_CET_SS)` returns true.
 
 - [ ] `src/kernel/except.c` -- handlers for vectors 0, 1, 3, 4, 6, 11, 12, 13
 - [ ] `src/kernel/except.c` -- conditional handler for vector 21 (`#CP`) if CET is supported
@@ -172,8 +174,8 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and routes through `ki_dispatch_
 For kernel-mode: if no handler → `KeBugCheckEx` with the exception code.
 
 > [!IMPORTANT]
-> → XREF: `TODO-29 §4` -- KD is the kernel debugger; `KiDebugRoutine` is the function pointer that `ki_dispatch_exception` calls for kernel-mode first/second-chance. If KD is not attached, `KiDebugRoutine` is NULL and the notification is skipped.
-> → XREF: `TODO-29 §13` -- User-mode debug port is `NtDebugActiveProcess`; `DbgkForwardException()` sends the exception to the debug port. Stub `DbgkForwardException` to return FALSE until TODO-29 §13 lands.
+> → XREF: `TODO-29 §5` -- KD is the kernel debugger; `KiDebugRoutine` is the function pointer that `ki_dispatch_exception` calls for kernel-mode first/second-chance. If KD is not attached, `KiDebugRoutine` is NULL and the notification is skipped.
+> → XREF: `TODO-29 §14` -- User-mode debug port is `NtDebugActiveProcess`; `DbgkForwardException()` sends the exception to the debug port. Stub `DbgkForwardException` to return FALSE until TODO-29 §14 lands.
 
 > [!WARNING]
 > `KPROCESSOR_MODE` does not exist yet. Define locally in `include/kernel/except.h`: `typedef enum { KernelMode = 0, UserMode = 1 } KPROCESSOR_MODE;`. Canonical definition moves to a shared NT types header when TODO-12 matures.
@@ -182,12 +184,12 @@ For kernel-mode: if no handler → `KeBugCheckEx` with the exception code.
 - [ ] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (local; moved to shared header later)
 - [ ] `src/kernel/except.c`: include `panic.h`; call `KeBugCheckEx(...)` for terminal kernel-mode dispatch (no duplicate body)
 - [ ] `src/kernel/except.c` -- `ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher
-- [ ] `KiDebugRoutine` function pointer -- defaults to NULL (no debugger); set by KD attach (→ XREF: TODO-29 §4)
-- [ ] `DbgkForwardException(rec, ctx, first_chance)` -- stub returning FALSE; sends exception to user-mode debug port when TODO-29 §13 lands
+- [ ] `KiDebugRoutine` function pointer -- defaults to NULL (no debugger); set by KD attach (→ XREF: TODO-29 §5)
+- [ ] `DbgkForwardException(rec, ctx, first_chance)` -- stub returning FALSE; sends exception to user-mode debug port when TODO-29 §14 lands
 - [ ] For user-mode: orchestrate VEH → SEH → second-chance → VCH → unhandled filter
 - [ ] For kernel-mode: call `KiDebugRoutine` first-chance → kernel SEH (§14) → `KiDebugRoutine` second-chance → `KeBugCheckEx`
 
-**Test checkpoint:** With `KiDebugRoutine == NULL`: user-mode access violation routes through VEH → SEH → unhandled filter path (stubs return FALSE until §8–§12 land). With `KiDebugRoutine` set to a test function: first-chance notification fires before VEH. Kernel-mode unhandled exception calls `KeBugCheckEx`. Serial log shows `"except: dispatch user exception code=0x<code>, first_chance=1"`. `POST16(0xDE40)` on dispatcher entry, `POST16(0xDE41)` after dispatch decision. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** With `KiDebugRoutine == NULL`: user-mode access violation routes through VEH → SEH → unhandled filter path (stubs return FALSE until §8-§12 land). With `KiDebugRoutine` set to a test function: first-chance notification fires before VEH. Kernel-mode unhandled exception calls `KeBugCheckEx`. Serial log shows `"except: dispatch user exception code=0x<code>, first_chance=1"`. `POST16(0xDE40)` on dispatcher entry, `POST16(0xDE41)` after dispatch decision. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
 
@@ -203,10 +205,10 @@ This function must:
 4. Patch `frame->rip` to `ntdll!KiUserExceptionDispatcher` (address stored in TEB or PEB).
 5. Patch `frame->rsp` to the new user stack pointer.
 6. Return from the ISR -- the IRET will land in `KiUserExceptionDispatcher` with `EXCEPTION_POINTERS *` in RCX per the Microsoft x64 ABI.
-Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(CONTEXT *, BOOLEAN)` syscall stubs to `SSDT` (→ XREF: `TODO-12 §5`): `NtRaiseException` calls `ki_dispatch_exception` (§5) directly; `NtContinue` restores the `CONTEXT` onto the current thread frame and returns to user-mode.
+Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(CONTEXT *, BOOLEAN)` syscall stubs to `SSDT` (→ XREF: `TODO-12 §5`): `NtRaiseException` calls `ki_dispatch_exception` (§4) directly; `NtContinue` restores the `CONTEXT` onto the current thread frame and returns to user-mode.
 
 > [!IMPORTANT]
-> → XREF: `TODO-11 §2` -- user stack frame layout must match for IRET to succeed.
+> → XREF: `TODO-11 §7` -- user stack frame layout must match for IRET to succeed.
 > → XREF: `TODO-12 §5` -- SSDT must be extended with NtRaiseException/NtContinue entries.
 
 - [ ] `ki_deliver_user_exception()` -- push CONTEXT+EXCEPTION_RECORD on user stack, redirect IRET
@@ -246,7 +248,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [ ] `include/kernel/rtl/unwind.h` -- declare `RtlCaptureStackBackTrace(skip, count, buffer, hash)`, `RtlWalkFrameChain(callers, count, flags)`
 - [ ] `src/kernel/rtl/unwind.c` -- implement `RtlCaptureStackBackTrace`: call `RtlVirtualUnwind` (§6) in a loop, skip `skip` frames, record up to `count` return addresses into `buffer`, compute optional `hash`; max 0xFE frames
 - [ ] `src/kernel/rtl/unwind.c` -- implement `RtlWalkFrameChain`: thin wrapper; `flags & 1` = user-mode stack walk (read user RSP/RBP via safe probe §13)
-- [ ] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` (→ XREF: `TODO-17 §3`)
+- [ ] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` (→ XREF: `TODO-07 §3`)
 
 **Test checkpoint:** `RtlCaptureStackBackTrace(0, 10, buf, NULL)` called from a 4-deep call chain returns ≥4 frames. `RtlCaptureStackBackTrace(2, 10, buf, NULL)` skips 2 frames -- first captured RIP differs from skip=0 case. Hash output is non-zero and deterministic for the same call site. Serial log: `"rtl: captured <N> stack frames"`. Test on: QEMU WHPX + TCG.
 
@@ -306,7 +308,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 Store the VEH list head in `struct task` (process-level, not thread-level).
 
 > [!IMPORTANT]
-> → XREF: `TODO-05 §2` -- VEH handles are not Win32 kernel handles; use a simple opaque pointer. No overlap with the Object Manager handle table.
+> → XREF: `TODO-05 §3` -- VEH handles are not Win32 kernel handles; use a simple opaque pointer. No overlap with the Object Manager handle table.
 
 - [ ] `include/kernel/except.h` -- `VECTORED_EXCEPTION_ENTRY`, VEH list head in `struct task`
 - [ ] `src/kernel/rtl/veh.c` -- `RtlAddVectoredExceptionHandler`, `RtlRemoveVectoredExceptionHandler`, `ki_call_veh_list`
@@ -344,16 +346,16 @@ Store the VEH list head in `struct task` (process-level, not thread-level).
 
 **Prompt:** Implement the terminal path reached when `ki_dispatch_exception()` (§4) exhausts all handlers (VEH declined, SEH returned FALSE, debugger second-chance declined, VCH had no effect). The dispatch reaches this section only if no handler claimed the exception. Steps:
 1. Per-process unhandled exception filter set by `SetUnhandledExceptionFilter` (stored in PEB).
-2. Default filter -- terminate the process with the exception code as exit status and emit a structured log entry (→ XREF: `TODO-11 §1`) with the full `EXCEPTION_RECORD` and first 8 frames of the stack trace via `RtlCaptureStackBackTrace` (§2).
+2. Default filter -- terminate the process with the exception code as exit status and emit a structured log entry (→ XREF: `TODO-04 §6`) with the full `EXCEPTION_RECORD` and first 8 frames of the stack trace via `RtlCaptureStackBackTrace` (§7).
 Add `RtlSetUnhandledExceptionFilter(handler)` -- stores handler in `PEB.UnhandledExceptionFilter`.
 Add `UnhandledExceptionFilter(EXCEPTION_POINTERS *)` -- calls the per-process filter or default.
 Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a future `werfault.exe` process via a named pipe (leave as a no-op stub for now, log to serial).
 
 > [!IMPORTANT]
-> → XREF: `TODO-11 §7` -- `PEB.UnhandledExceptionFilter` field must be reserved in the PEB struct.
+> → XREF: `TODO-11 §2` -- `PEB.UnhandledExceptionFilter` field must be reserved in the PEB struct.
 
 - [ ] `src/kernel/rtl/seh.c` -- `UnhandledExceptionFilter`, default fatal handler
-- [ ] `PEB.UnhandledExceptionFilter` field (→ XREF: `TODO-11 §7`)
+- [ ] `PEB.UnhandledExceptionFilter` field (→ XREF: `TODO-11 §2`)
 - [ ] Structured crash log: exception code, fault address, top-8 frames via `RtlCaptureStackBackTrace` (§7)
 - [ ] `WerpReportFault()` stub -- serial log only for now
 - [ ] Process termination with exception code as exit status
@@ -372,7 +374,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 - `try_copy_from_user(dst, src, n)` / `try_copy_to_user(dst, src, n)` -- equivalent of Linux `copy_from_user`/`copy_to_user`. Uses a per-CPU `safe_return_rip` slot in CPU-local storage; the #PF handler checks it (§2) and redirects to the safe-return path if a fault occurs inside a guarded copy.
 
 > [!IMPORTANT]
-> → XREF: `TODO-17 §4` -- the per-CPU safe_return_rip slot is CPU-local data, co-located with the IRQL tracking fields.
+> → XREF: `TODO-07 §2` -- the per-CPU safe_return_rip slot is CPU-local data, co-located with the IRQL tracking fields.
 
 - [ ] `include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`
 - [ ] `src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area
@@ -394,7 +396,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 4. Guard against re-entrancy: if a kernel exception occurs inside a kernel exception handler, escalate directly to `KeBugCheckEx` (panic with structured code).
 
 > [!IMPORTANT]
-> → XREF: `TODO-17 §3` -- kernel `__try` must only be used at `PASSIVE_LEVEL` or `APC_LEVEL`; add `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` assertion at the start of `ki_raise_kernel_exception`.
+> → XREF: `TODO-07 §3` -- kernel `__try` must only be used at `PASSIVE_LEVEL` or `APC_LEVEL`; add `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` assertion at the start of `ki_raise_kernel_exception`.
 
 - [ ] `include/kernel/except.h` -- `KI_EXCEPTION_REGISTRATION`, kernel exception chain head in `struct task`
 - [ ] `src/kernel/except.c` -- `ki_raise_kernel_exception()`
@@ -416,13 +418,13 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 - `STATUS_INTEGER_DIVIDE_BY_ZERO` → `SIGFPE`
 - `STATUS_STACK_OVERFLOW` → `SIGSEGV` (with `si_code = SEGV_ACCERR`)
 - `STATUS_BREAKPOINT` → `SIGTRAP`
-Deliver via the existing `task->signals` mechanism. If the signal has a handler registered via `rt_sigaction` (→ XREF: `10-platform-services/TODO-10-linux-compat.md §9`), set up a signal frame on the user stack with a `siginfo_t` containing fault details and redirect execution to the handler. If the signal has no handler (default disposition), terminate the task with an appropriate `NTSTATUS` exit code.
+Deliver via the existing `task->signals` mechanism. If the signal has a handler registered via `rt_sigaction` (→ XREF: `10-platform-services/TODO-10-linux-compat.md §8`), set up a signal frame on the user stack with a `siginfo_t` containing fault details and redirect execution to the handler. If the signal has no handler (default disposition), terminate the task with an appropriate `NTSTATUS` exit code.
 If the process has set up a `sigaltstack`, deliver `SIGSEGV` on the alternate stack to handle stack overflow correctly.
 This section is gated on the Linux compat layer existing -- stub it out with a compile-time flag `CONFIG_LINUX_COMPAT` for now.
 
 > [!IMPORTANT]
 > → XREF: `TODO-21 §6` (process capabilities) -- compat mode is a process flag.
-> → XREF: `10-platform-services/TODO-10-linux-compat.md §9` -- `rt_sigaction` handler registration. This section handles the kernel-side fault-to-signal mapping and signal frame setup; the compat layer TODO handles the `rt_sigaction`/`rt_sigprocmask` API surface.
+> → XREF: `10-platform-services/TODO-10-linux-compat.md §8` -- `rt_sigaction` handler registration. This section handles the kernel-side fault-to-signal mapping and signal frame setup; the compat layer TODO handles the `rt_sigaction`/`rt_sigprocmask` API surface.
 > Delivery path hooks into §12 (unhandled exception filter) as a pre-termination step.
 
 - [ ] `include/kernel/compat.h` -- `CONFIG_LINUX_COMPAT` guard, fault-to-signal table
@@ -447,7 +449,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 - [ ] `src/kernel/except.c` -- `except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition)` -- log each handler invocation with disposition
 - [ ] Log entries: exception code, fault address, handler type (VEH/SEH/VCH/filter/unhandled), handler address, disposition returned, frame count unwound
-- [ ] JSON format compatible with TODO-11 §1 structured events; event type `"exception_dispatch"`
+- [ ] JSON format compatible with TODO-04 §6 structured events; event type `"exception_dispatch"`
 - [ ] Rate limiting: max 100 exception dispatch logs per second per process to prevent log flooding from intentional exceptions (e.g., guard page probing)
 - [ ] Compile-time `CONFIG_EXCEPT_TELEMETRY` guard (default: enabled in debug builds, disabled in release)
 
@@ -490,6 +492,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > Wire into `test_runner_init()` via `test_register_except()`.
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
+- [ ] Add `TEST_CAT_EXCEPT` + its `"except"` short name to `include/kernel/test/test.h`; register every case below via `test_suite_register_cat(..., TEST_CAT_EXCEPT)`
 - [ ] Create `src/kernel/test/test_except.c` with:
   - `context_from_frame` populates all GP registers from an `interrupt_frame` correctly
   - `frame_from_context` restores registers back; round-trip preserves RIP, RSP, RFLAGS
@@ -519,6 +522,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 - [ ] Register in `test_runner_init()`: `test_register_except()`
 - [ ] Commit: `"test: add exception dispatch and SEH test suite"`
 
+---
+
 ## Verification
 
 - [ ] Trigger a deliberate user-mode `NULL` dereference; verify the process terminates with `STATUS_ACCESS_VIOLATION` and a log entry -- not a kernel panic.
@@ -532,3 +537,5 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 - [ ] Verify `RtlCaptureStackBackTrace(0, 10, buf, NULL)` returns ≥4 frames from a known call depth.
 - [ ] Verify exception dispatch telemetry: trigger a fault, check serial log for JSON `exception_dispatch` event with handler chain.
 - [ ] Commit: `"kernel/rtl: exception dispatch, SEH, VEH, VCH, safe probing, debugger notification, and kernel __try/__except complete"`
+
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | N suites, 0 failures
