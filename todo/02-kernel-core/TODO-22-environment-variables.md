@@ -80,7 +80,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
-| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
+| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [/]   |
 | 💎   |  19   | ntdll Rtl environment layer                        | §5, §6                     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -647,10 +647,12 @@ cmd exposes computed-at-expansion pseudo-variables (never stored in `environ[]`)
 - [ ] `%ERRORLEVEL%` tracks the last command's exit code; the shell updates it after each command
 - [ ] Delayed expansion: `setlocal enabledelayedexpansion` / `cmd /V:ON` enables `!VAR!` re-read at execution time (needed inside `FOR`/`IF` blocks where `%VAR%` is fixed at parse time per §3)
 - [ ] `SET` enforces cmd's tighter documented per-var / total caps (fidelity beyond §10's Win32 API-level limits)
-- [ ] Batch `%~` modifiers (`%~dp0`, `%~nx1`) extend D12 T02's `%1..%9` (→ XREF `12-user-platform-sdk/TODO-02-env-vars-process-abi.md`); `FOR`/`IF`/`setlocal` batch semantics need a batch-processor TODO
+- [ ] Batch `%~` modifiers (`%~dp0`, `%~nx1`) extend D12 T02 §8's `%1..%9`; `FOR`/`IF`/`setlocal` batch semantics are owned there (item: "**cmd.exe batch interpreter**") → XREF `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8
 - [ ] Commit: `"shell: cmd.exe dynamic pseudo-variables + delayed !VAR! expansion"`
 
 **Test checkpoint:** `echo %RANDOM%` varies across calls; `%ERRORLEVEL%` reflects the last exit code; `!VAR!` re-reads a var set earlier in the same `enabledelayedexpansion` block. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+
+> **Deferred:** [blocked] §18 pseudo-vars + delayed `!VAR!` are cmd-parser features layered on the shell `%VAR%`/`SET` expansion that §7 owns, and §7 is itself deferred-blocked: the shell is user-mode (`user/cmd.c`, which has no `%VAR%` expansion, no `SET` built-in, and no `ERRORLEVEL` tracking), `src/shell/` is empty, and the §6 user-mode env wrappers those built-ins would call are all `[/]`. Every §18 item needs that missing layer: pseudo-vars and `!VAR!` need shell expansion; `%ERRORLEVEL%` needs the shell to write env after each command; "SET enforces cmd's caps" needs the `SET` built-in; `%~` modifiers + `FOR`/`IF`/`setlocal` additionally need a batch interpreter, which had no owner and is now filed as a concrete item. -> XREF: §7 (item: "Shell uses `shell_find_command` before any `exec` call") + §6 (Win32 env wrappers, all `[/]`) + `12-user-platform-sdk/TODO-02-env-vars-process-abi.md` §8 (items: "**`set NAME=VALUE`**", "**`echo`**", "**cmd.exe batch interpreter**").
 
 ---
 

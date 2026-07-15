@@ -244,6 +244,7 @@ int         env_expand_path(struct task *t, const char *templ,
 - [ ] **`echo off` / `echo on`**: set shell `g_echo_mode` flag; when off, commands are not echoed before execution (used in batch scripts)
 - [ ] **`env`** (alias for `set` no args): identical output; added for Unix familiarity
 - [ ] **`where <name>`**: delegates to `shell_find_command` (§5) with "print all matches" mode; exit code 0 if found, 1 if not found
+- [ ] **cmd.exe batch interpreter**: `FOR`/`IF`/`setlocal enabledelayedexpansion`/`CALL`/`GOTO`, `%~dp0` modifiers, delayed `!VAR!`, `.CMD`/`.BAT` exec; needs its own TODO when picked up (← XREF `02-kernel-core/TODO-22 §18`)
 
 ---
 
