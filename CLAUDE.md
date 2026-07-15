@@ -29,7 +29,7 @@ make test-security                # Security suites
 make test-ipc                     # IPC suites (pipe, shmem, semaphore)
 make test-sched                   # Scheduler suites
 make test-boot                    # Boot init + klog suites
-make test-abi                     # PEB/TEB + Registry suites
+make test-abi                     # PEB/TEB, Registry, env vars/process-ABI suites
 make test-storage                 # AHCI, VirtIO suites
 make test-exec                    # Binary system suites (exec, EIF, modules)
 ```
