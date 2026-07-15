@@ -61,33 +61,33 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                        | Depends On                 | Status |
-| --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
-| 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
-| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
-| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
-| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
-| 💎   |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
-| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
-| 💎   |   8   | `.profile` startup script                          | §7                         |  [/]   |
-| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
-| 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
-| 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
-| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
-| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
-| 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
-| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
-| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
-| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
-| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [/]   |
-| 💎   |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                         |  [x]   |
-| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
-| 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
-| 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
-| 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §7           |  [/]   |
-| 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [ ]   |
-| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21                   |  [ ]   |
+| ⭐   | Order | Deliverable                                        | Depends On                    | Status |
+| --- | :---: | -------------------------------------------------- | ----------------------------- | :----: |
+| 💎   |   1   | Per-process environ storage & kernel API           | --                            |  [x]   |
+| 💎   |   2   | System default variables from Registry             | §1, T14 §4                    |  [x]   |
+| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                            |  [x]   |
+| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                            |  [x]   |
+| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4    |  [x]   |
+| 💎   |   6   | Win32 API wrappers                                 | §5                            |  [/]   |
+| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                        |  [/]   |
+| 💎   |   8   | `.profile` startup script                          | §7                            |  [/]   |
+| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                        |  [/]   |
+| 💎   |  10   | Environment block sorting & size limits            | §1                            |  [x]   |
+| 💎   |  11   | PATHEXT variable & extension search order          | §7                            |  [/]   |
+| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                       |  [/]   |
+| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4          |  [/]   |
+| 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                        |  [/]   |
+| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                        |  [/]   |
+| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                    |  [/]   |
+| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                    |  [/]   |
+| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                        |  [/]   |
+| 💎   |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                            |  [x]   |
+| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                           |  [x]   |
+| 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20              |  [/]   |
+| 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                   |  [x]   |
+| 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §7              |  [/]   |
+| 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13, T33 §7 |  [/]   |
+| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §7              |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -826,7 +826,7 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
-> **Deferred:** [blocked] the three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378)
+> **Deferred:** [blocked] TWO independent blockers, either one sufficient. (1) The three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: 02-kernel-core/TODO-23 §13 (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378). (2) The REMAINING items (measured budget, lookup cache, stack probe, right-sized retry, CAS-serialized free, sentinel contract) each add `.text` to a kernel with ZERO pages of headroom: at HEAD the highest `.bss` symbol `__kernel_end` is `0x7ff000`, exactly one page below `USER_BASE` (`0x800000`), and `scripts/build.sh`'s BSS-collision guard fails at `>=` (re-verified 2026-07-15 via `llvm-nm-19 -n build/kernel.exe`). Not a defect in this section: it blocks EVERY kernel section that adds code, and spending the last page here would block the relocation work that retires the ceiling. Carries a real latent SMP defect (the non-atomic `env_buf_free` magic check, item above) that rides along when the ceiling lifts; it is NOT user-reachable today (§20's BLOCKING PMM item gates the export row) -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Retire `0x800000` USER_BASE ceiling + BSS guard" at line 51)
 
 ---
 
@@ -845,6 +845,8 @@ The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw p
 - [ ] Commit: `"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core"`
 
 **Test checkpoint:** the counted Query and Expand agree value-for-value with their `_U` counterparts on the shared cases; exact fit SUCCEEDS on Query (WRK rule) and the `_U` wrapper still reports Length in bytes excluding the NUL; Expand's `ReturnLength` includes the NUL on both the success and too-small paths; a `SourceLength` past the documented cap is refused rather than narrowed; a result above `RTL_ENV_MAX_RESULT_WCHARS` is `STATUS_UNSUCCESSFUL` through `_U` but expressible through the counted form; a non-NULL `Environment` is refused pending §24. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
+
+> **Deferred:** [blocked] this section adds a new exported API surface (two counted entries plus a `SIZE_T`-safe restructure of `rtl_env_expand_pass`/`_core`, nt_rtlenv.c:279,396) to a kernel with ZERO pages of headroom: at HEAD the highest `.bss` symbol `__kernel_end` is `0x7ff000`, exactly one page below `USER_BASE` (`0x800000`), and `scripts/build.sh`'s BSS-collision guard fails at `>=` (verified 2026-07-15 via `llvm-nm-19 -n build/kernel.exe`). This is the CEILING blocker, distinct from this section's own §24/§20 export gate: the implementation was cleared to land before §24, so the design above is settled and the re-attempt is implementation-only. It blocks EVERY kernel section that adds code, exactly as predicted at TODO-33's Current-state note; the two local "fixes" (clawing back `.text`, or raising `USER_BASE` piecemeal) both paper over it and edit the single-source-of-truth user range that the owner TODO retires wholesale -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Retire `0x800000` USER_BASE ceiling + BSS guard" at line 51)
 
 ---
 
