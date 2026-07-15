@@ -57,6 +57,16 @@ struct task;
 #define ENV_BLOCK_MAX       (1u * 1024u * 1024u)   /* 1 MiB hard cap */
 #define ENV_BLOCK_WARN      (256u * 1024u)         /* warn threshold */
 
+/* Immutable kernel install root and system directory. SINGLE SOURCE OF TRUTH:
+ * env_synth_base seeds SYSTEMROOT/WINDIR from ENV_SYSTEMROOT_DIR, and SearchPathW
+ * (env_searchpath.c) derives its trusted system/Windows search legs from these
+ * compile-time constants -- NEVER from the caller-mutable %SYSTEMROOT% env var,
+ * which NtSetEnvironmentVariable lets a process rewrite (a DLL-hijack vector if
+ * it steered a trusted search leg). Impossible OS roots at C:\Impossible, not
+ * C:\Windows (deliberate branding divergence). */
+#define ENV_SYSTEMROOT_DIR  "C:\\Impossible"
+#define ENV_SYSTEM32_DIR    ENV_SYSTEMROOT_DIR "\\System32"
+
 /* Return codes: 0 on success, negative on error. */
 #define ENV_OK             0
 #define ENV_ERR_INVAL     (-1)     /* bad args / invalid name */

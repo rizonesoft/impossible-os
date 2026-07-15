@@ -754,6 +754,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
+    tasks[pid].search_path_mode = 0;  /* unset -> default safe SearchPathW ordering; clear stale bits on slot reuse */
     tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
     tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
     tasks[pid].unveil_locked = 0;
@@ -961,6 +962,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].syscall_filter = (struct syscall_filter *)0;  /* no filter; clear stale tenant ptr on slot reuse */
     tasks[pid].syscall_filter_counted = 0;
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
+    tasks[pid].search_path_mode = 0;  /* unset -> default safe SearchPathW ordering; clear stale bits on slot reuse */
     tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
     tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
     tasks[pid].unveil_locked = 0;
@@ -1949,6 +1951,12 @@ int task_fork(struct interrupt_frame *frame)
      * committed before num_tasks++ publishes the child so it can never run with
      * weaker mitigations than its parent (monotonic-restriction inheritance). */
     tasks[child_pid].mitigation_flags = parent_mit;
+
+    /* SearchPathW ordering policy is NOT inherited: a fork child resets to the
+     * safe default (0). Unlike the monotonic mitigation mask above, search_path_mode
+     * can express an UNSAFE CWD-first ordering (BASE_SEARCH_PATH_DISABLE_SAFE_SEARCHMODE),
+     * and inheriting that would silently downgrade the child's DLL-search security. */
+    tasks[child_pid].search_path_mode = 0;
 
     /* Fresh accounting for the child: its own times/I/O/ctxsw start at zero and
      * CreateTime is stamped at fork (a fork child is a distinct process, not a

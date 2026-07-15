@@ -308,6 +308,16 @@ struct task {
      * parent at task_fork (a spawn via NtCreateProcess starts fresh). See
      * include/kernel/nt/mitigation_policy.h for the MIT_* bit definitions. */
     uint64_t mitigation_flags;
+    /* --- SearchPathW current-directory ordering policy (SetSearchPathMode) ---
+     * Holds the applied BASE_SEARCH_PATH_* bits that decide whether SearchPathW
+     * consults the current directory before or after the system directories, and
+     * whether the choice is permanent (locked). 0 = unset -> default SAFE ordering
+     * (CWD searched after PATH). Updated ONLY via SetSearchPathMode's __atomic CAS
+     * loop (a plain store would drop a concurrent set and could downgrade a
+     * PERMANENT enable on SMP); read via an ACQUIRE load. Zeroed on slot
+     * (re)creation and reset to the safe default at fork (an unsafe CWD-first
+     * ordering must never be inherited). See include/kernel/env_searchpath.h. */
+    uint32_t search_path_mode;
     /* --- OpenBSD-style process restriction (pledge / unveil) ---
      * pledge_mask holds ALLOWED syscall-category bits with a sentinel (bit 63)
      * marking "has pledged"; 0 = never pledged (all allowed). Tighten-only via a

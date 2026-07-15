@@ -1633,7 +1633,7 @@ int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size)
 #define ENV_DEF_COMPUTERNAME "IMPOSSIBLE-PC"
 #define ENV_DEF_USERNAME     "Default"
 #define ENV_DEF_SYSTEMDRIVE  "C:"
-#define ENV_DEF_SYSTEMROOT   "C:\\Impossible"
+#define ENV_DEF_SYSTEMROOT   ENV_SYSTEMROOT_DIR   /* single source of truth: include/kernel/env.h */
 #define ENV_DEF_TEMP         "C:\\Temp"
 #define ENV_DEF_PROC_ARCH    "AMD64"
 #define ENV_DEF_OS           "Impossible_OS"

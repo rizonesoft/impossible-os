@@ -11,6 +11,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/env.h"
+#include "kernel/env_searchpath.h" /* SearchPathW/A, SetSearchPathMode (s14) */
+#include "kernel/fs/vfs.h"         /* vfs_create/vfs_stat/vfs_unlink for probes */
 #include "kernel/nt/nt_rtlenv.h" /* RtlExpandEnvironmentStrings_U (UTF-16 path) */
 #include "kernel/nt/ssdt.h"      /* ssdt_dispatch (s5 syscall route) */
 #include "kernel/nt/service_numbers.h" /* SSDT_Nt{Query,Set}EnvironmentVariable */
@@ -55,6 +57,8 @@ static void env_fixture_reset(void)
     s_env_fixture.environ_count = 0;
     s_env_fixture.argv = NULL;
     s_env_fixture.argc = 0;
+    s_env_fixture.search_path_mode = 0;  /* s14: fresh SearchPath ordering per test */
+    s_env_fixture.cwd[0] = '\0';         /* s14: no stale cwd into a SearchPath probe */
     mutex_init(&s_env_fixture.environ_lock, "test-env");
 }
 
@@ -2240,6 +2244,381 @@ static void test_env_expand_for_user_over_cap(void)
     env_free(&s_env_fixture);
 }
 
+/* ---- s14: SearchPathW / SearchPathA / SetSearchPathMode -------------------
+ * These probe the live VFS. When the harness build has no writable C: drive the
+ * setup helpers fail and the case TEST_SKIPs rather than false-failing. */
+
+/* Ensure a directory exists (tolerates pre-existing). 0 = present afterward. */
+static int sp_test_mkdir(const char *path)
+{
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) == 0)
+        return (st.type == VFS_DIRECTORY) ? 0 : -1;
+    return vfs_create(path, VFS_DIRECTORY);
+}
+
+/* Ensure an empty regular file exists at path (parent must exist). 0 = present. */
+static int sp_test_touch(const char *path)
+{
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) == 0)
+        return (st.type == VFS_FILE) ? 0 : -1;
+    return vfs_create(path, VFS_FILE);
+}
+
+static void test_env_searchpath_finds_system32(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_mkdir("C:\\Impossible\\System32") != 0 ||
+        sp_test_touch("C:\\Impossible\\System32\\sp_sys.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    rc = env_search_path(&s_env_fixture, (const char *)0, "sp_sys.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0, "SearchPath finds a System32 binary");
+    TEST_ASSERT(env_streq(out, "C:\\Impossible\\System32\\sp_sys.exe"),
+                "returns the System32 path");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_SUCCESS, "no error on success");
+    vfs_unlink("C:\\Impossible\\System32\\sp_sys.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_missing(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    rc = env_search_path(&s_env_fixture, (const char *)0,
+                         "sp_no_such_file_zzz.exe", (const char *)0,
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "missing file returns 0");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_FILE_NOT_FOUND,
+                   "missing file sets ERROR_FILE_NOT_FOUND");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_explicit_ext(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\sp_expl") != 0 ||
+        sp_test_touch("C:\\sp_expl\\tool.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    /* "tool" (no extension) + ".exe" -> tool.exe, found only in the explicit dir. */
+    rc = env_search_path(&s_env_fixture, "C:\\sp_expl", "tool", ".exe",
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 && env_streq(out, "C:\\sp_expl\\tool.exe"),
+                "explicit lpPath + appended .exe finds tool.exe");
+    vfs_unlink("C:\\sp_expl\\tool.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_qualified(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_touch("C:\\Impossible\\sp_q.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    /* A qualified name is probed directly, no directory iteration. */
+    rc = env_search_path(&s_env_fixture, (const char *)0,
+                         "C:\\Impossible\\sp_q.exe", (const char *)0,
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 && env_streq(out, "C:\\Impossible\\sp_q.exe"),
+                "qualified path probed directly");
+    rc = env_search_path(&s_env_fixture, (const char *)0,
+                         "C:\\Impossible\\sp_q_absent.exe", (const char *)0,
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "qualified missing path -> 0");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_FILE_NOT_FOUND,
+                   "qualified missing -> FILE_NOT_FOUND");
+    vfs_unlink("C:\\Impossible\\sp_q.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_mode_precedence(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_mkdir("C:\\Impossible\\System32") != 0 ||
+        sp_test_mkdir("C:\\sp_cwd") != 0 ||
+        sp_test_touch("C:\\Impossible\\System32\\dup.exe") != 0 ||
+        sp_test_touch("C:\\sp_cwd\\dup.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    task_set_cwd(&s_env_fixture, "C:\\sp_cwd");
+
+    /* Safe/unset ordering: the system directory precedes the current directory. */
+    rc = env_search_path(&s_env_fixture, (const char *)0, "dup.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 && env_streq(out, "C:\\Impossible\\System32\\dup.exe"),
+                "safe mode: System32 precedes CWD");
+
+    /* Unsafe ordering: the current directory wins. */
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture,
+                       BASE_SEARCH_PATH_DISABLE_SAFE_SEARCHMODE), 1,
+                   "SetSearchPathMode(DISABLE) succeeds");
+    rc = env_search_path(&s_env_fixture, (const char *)0, "dup.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 && env_streq(out, "C:\\sp_cwd\\dup.exe"),
+                "unsafe mode: CWD precedes System32");
+
+    vfs_unlink("C:\\Impossible\\System32\\dup.exe");
+    vfs_unlink("C:\\sp_cwd\\dup.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_setsearchpathmode(void)
+{
+    env_fixture_reset();
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture,
+                       BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE |
+                       BASE_SEARCH_PATH_DISABLE_SAFE_SEARCHMODE),
+                   0, "enable+disable -> invalid");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture, BASE_SEARCH_PATH_PERMANENT),
+                   0, "PERMANENT without ENABLE -> invalid");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture, 0x4u),
+                   0, "unknown bit -> invalid");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture, 0u),
+                   0, "no mode bits -> invalid");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture,
+                       BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE),
+                   1, "enable -> ok");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture,
+                       BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE |
+                       BASE_SEARCH_PATH_PERMANENT),
+                   1, "permanent enable -> ok");
+    TEST_ASSERT_EQ(SetSearchPathMode(&s_env_fixture,
+                       BASE_SEARCH_PATH_DISABLE_SAFE_SEARCHMODE),
+                   0, "change after PERMANENT -> denied");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_need_current_dir(void)
+{
+    env_fixture_reset();
+    TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "dir\\app.exe"),
+                   1, "backslash name -> current dir needed");
+    TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "app.exe"),
+                   1, "bare name, var absent -> current dir needed");
+    env_set(&s_env_fixture, "NoDefaultCurrentDirectoryInExePath", "");
+    TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "app.exe"),
+                   0, "var present (empty) -> current dir excluded");
+    TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "dir\\app.exe"),
+                   1, "backslash overrides the exclusion var");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_a_sizing(void)
+{
+    char buf[64];
+    const char *expect = "C:\\Impossible\\sp_a.exe";
+    uint32_t elen = 0, rc, i;
+
+    while (expect[elen])
+        elen++;                                 /* ASCII: ACP bytes == char count */
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_touch("C:\\Impossible\\sp_a.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+
+    /* EXACT fit (capacity == elen + 1): returns length excl NUL, buffer filled. */
+    for (i = 0; i < sizeof(buf); i++)
+        buf[i] = '#';
+    rc = SearchPathA(&s_env_fixture, (const char *)0, "C:\\Impossible\\sp_a.exe",
+                     (const char *)0, elen + 1u, buf, (char **)0);
+    TEST_ASSERT_EQ(rc, elen, "SearchPathA exact fit returns length excl NUL");
+    TEST_ASSERT(env_streq(buf, expect), "SearchPathA exact fit fills the buffer");
+
+    /* ONE SHORT (capacity == elen, one below the elen+1 needed): returns required
+     * size INCL NUL and leaves EVERY byte of the buffer untouched. */
+    for (i = 0; i < sizeof(buf); i++)
+        buf[i] = '#';
+    rc = SearchPathA(&s_env_fixture, (const char *)0, "C:\\Impossible\\sp_a.exe",
+                     (const char *)0, elen, buf, (char **)0);
+    TEST_ASSERT_EQ(rc, elen + 1u, "SearchPathA one-short returns required incl NUL");
+    for (i = 0; i < elen; i++)
+        if (buf[i] != '#')
+            break;
+    TEST_ASSERT_EQ(i, elen, "SearchPathA one-short leaves the whole buffer untouched");
+
+    vfs_unlink("C:\\Impossible\\sp_a.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_w_filepart(void)
+{
+    static const uint16_t wname[] = {
+        'C', ':', '\\', 'I', 'm', 'p', 'o', 's', 's', 'i', 'b', 'l', 'e',
+        '\\', 's', 'p', '_', 'w', '.', 'e', 'x', 'e', 0
+    };
+    uint16_t out16[64];
+    uint16_t *filepart = (uint16_t *)0;
+    uint32_t need, rc, i;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_touch("C:\\Impossible\\sp_w.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+
+    /* Sizing pass (NULL buffer) -> required UTF-16 units INCL NUL. */
+    need = SearchPathW(&s_env_fixture, (const uint16_t *)0, wname,
+                       (const uint16_t *)0, 0, (uint16_t *)0, (uint16_t **)0);
+    TEST_ASSERT(need > 1 && need <= sizeof(out16) / sizeof(out16[0]),
+                "SearchPathW sizing returns required units incl NUL");
+
+    /* ONE SHORT (capacity == need - 1): returns required incl NUL, buffer untouched. */
+    for (i = 0; i < sizeof(out16) / sizeof(out16[0]); i++)
+        out16[i] = 0xAAAA;
+    rc = SearchPathW(&s_env_fixture, (const uint16_t *)0, wname,
+                     (const uint16_t *)0, need - 1u, out16, (uint16_t **)0);
+    TEST_ASSERT_EQ(rc, need, "SearchPathW one-short returns required incl NUL");
+    for (i = 0; i < need - 1u; i++)
+        if (out16[i] != 0xAAAA)
+            break;
+    TEST_ASSERT_EQ(i, need - 1u, "SearchPathW one-short leaves the buffer untouched");
+
+    /* EXACT fit (capacity == need): returns length excl NUL and sets lpFilePart. */
+    rc = SearchPathW(&s_env_fixture, (const uint16_t *)0, wname,
+                     (const uint16_t *)0, need, out16, &filepart);
+    TEST_ASSERT_EQ(rc, need - 1u, "SearchPathW exact fit returns length excl NUL");
+    TEST_ASSERT(filepart != (uint16_t *)0 &&
+                filepart[0] == (uint16_t)'s' && filepart[1] == (uint16_t)'p',
+                "lpFilePart points at the file-name component");
+    vfs_unlink("C:\\Impossible\\sp_w.exe");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_ext_containment(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    /* A separator-bearing extension is rejected before any probe, so a bare
+     * filename cannot append traversal to escape the trusted search dirs. */
+    rc = env_search_path(&s_env_fixture, (const char *)0, "probe",
+                         ".\\..\\..\\Temp\\hit.exe", out, sizeof(out),
+                         (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "separator-bearing extension rejected");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
+                   "bad extension -> ERROR_INVALID_PARAMETER");
+    /* A drive-colon in the extension is likewise rejected. */
+    rc = env_search_path(&s_env_fixture, (const char *)0, "probe", ".e:x",
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "drive-colon extension rejected");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
+                   "drive-colon extension -> ERROR_INVALID_PARAMETER");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_oom(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc, i;
+
+    env_fixture_reset();
+    for (i = 0; i < sizeof(out); i++)
+        out[i] = '#';
+    /* Force the work-buffer allocation to fail: SearchPath must report
+     * ERROR_OUTOFMEMORY and leave the output buffer untouched (no fail-open). */
+    kmalloc_fail_next();
+    rc = env_search_path(&s_env_fixture, (const char *)0, "anything.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    kmalloc_fail_countdown_clear();
+    TEST_ASSERT_EQ(rc, 0u, "allocation failure returns 0");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_OUTOFMEMORY,
+                   "allocation failure -> ERROR_OUTOFMEMORY");
+    TEST_ASSERT(out[0] == '#', "allocation failure leaves output untouched");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_path_oom(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err, rc, i, cd;
+    int saw_oom = 0;
+
+    env_fixture_reset();
+    /* Target exists ONLY in the CWD. In safe mode the CWD leg runs LAST (after
+     * PATH), so a fail-open PATH-buffer allocation failure would incorrectly
+     * return the CWD hit. The C: drive is a real filesystem whose probe
+     * `vfs_stat`s allocate a non-deterministic number of times, so we cannot
+     * target the PATH buffer by a fixed kmalloc index; instead we SWEEP the
+     * failure point and assert the fail-closed invariant. env_search_path only
+     * returns ERROR_OUTOFMEMORY from the PATH-leg -1 (the work buffer is
+     * kmalloc #1, never hit at cd>=2), so any OUTOFMEMORY here proves the
+     * PATH-leg failed closed rather than falling through to CWD. */
+    if (sp_test_mkdir("C:\\sp_oom_cwd") != 0 ||
+        sp_test_touch("C:\\sp_oom_cwd\\oomtgt.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    task_set_cwd(&s_env_fixture, "C:\\sp_oom_cwd");
+    env_set(&s_env_fixture, "PATH", "C:\\sp_oom_path");   /* real dir, misses */
+
+    for (cd = 2; cd <= 20; cd++) {
+        for (i = 0; i < sizeof(out); i++)
+            out[i] = '#';
+        kmalloc_fail_countdown_set(cd);
+        err = 0;
+        rc = env_search_path(&s_env_fixture, (const char *)0, "oomtgt.exe",
+                             (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+        kmalloc_fail_countdown_clear();
+        if (rc == 0) {
+            /* Either the PATH buffer failed (-> OUTOFMEMORY, fail closed) or a
+             * probe/CWD `vfs_stat` alloc failed (that leg misses -> FILE_NOT_FOUND).
+             * Never a wrong success, and the output is untouched either way. */
+            TEST_ASSERT(err == (uint32_t)ERROR_OUTOFMEMORY ||
+                        err == (uint32_t)ERROR_FILE_NOT_FOUND,
+                        "PATH-leg alloc failure fails closed (OUTOFMEMORY/NOT_FOUND)");
+            TEST_ASSERT(out[0] == '#', "alloc failure leaves output untouched");
+            if (err == (uint32_t)ERROR_OUTOFMEMORY)
+                saw_oom = 1;
+        } else {
+            /* A non-critical (probe) alloc failed; the search still resolves the
+             * only real copy of the file, in CWD -- never a stale/garbage path. */
+            TEST_ASSERT(env_streq(out, "C:\\sp_oom_cwd\\oomtgt.exe"),
+                        "probe-alloc failure still returns the correct CWD hit");
+        }
+    }
+    /* A fail-OPEN regression (PATH -1 treated as not-found) would fall through
+     * to CWD for every countdown, so no sweep point would ever yield OUTOFMEMORY. */
+    TEST_ASSERT(saw_oom, "PATH-leg OOM reachable and fails closed (no CWD fallthrough)");
+
+    vfs_unlink("C:\\sp_oom_cwd\\oomtgt.exe");
+    env_free(&s_env_fixture);
+}
+
 void test_register_env(void)
 {
     test_suite_register_cat("Env: drive-cwd =X: round-trip",
@@ -2432,6 +2811,30 @@ void test_register_env(void)
                             test_env_expand_for_user_refusals, TEST_CAT_ABI);
     test_suite_register_cat("Env: ExpandForUser over-cap -> INVALID_PARAMETER",
                             test_env_expand_for_user_over_cap, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath finds System32 binary",
+                            test_env_searchpath_finds_system32, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath missing -> FILE_NOT_FOUND",
+                            test_env_searchpath_missing, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath explicit path + extension append",
+                            test_env_searchpath_explicit_ext, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath qualified name bypasses iteration",
+                            test_env_searchpath_qualified, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath mode reorders CWD precedence",
+                            test_env_searchpath_mode_precedence, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SetSearchPathMode validation + PERMANENT lock",
+                            test_env_setsearchpathmode, TEST_CAT_ABI);
+    test_suite_register_cat("Env: NeedCurrentDirectoryForExePath rules",
+                            test_env_need_current_dir, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPathA buffer sizing (untouched on small)",
+                            test_env_searchpath_a_sizing, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPathW lpFilePart component pointer",
+                            test_env_searchpath_w_filepart, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath rejects traversal via extension",
+                            test_env_searchpath_ext_containment, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath OOM -> OUTOFMEMORY, untouched",
+                            test_env_searchpath_oom, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath PATH-leg OOM fails closed (no CWD)",
+                            test_env_searchpath_path_oom, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */
