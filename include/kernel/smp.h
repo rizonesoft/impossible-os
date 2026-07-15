@@ -18,6 +18,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/mm/memmap.h"   /* MM_AP_ENVELOPE_* -- canonical AP low window */
 #include "kernel/sched/irql.h"
 #include "kernel/acpi.h"    /* MAX_CPUS */
 #include "kernel/cpuid.h"   /* cpu_feature_mask_t */
@@ -56,6 +57,11 @@
 
 #define AP_CANARY_MAGIC        0xDEADC0DE
 
+/* Total bytes the AP data area occupies, derived from its last field (CANARY
+ * at +0x3C, 4 bytes) rather than hardcoded -- add a field past the canary and
+ * this grows with it, and the envelope-containment assert below re-checks. */
+#define AP_DATA_FOOTPRINT      (AP_OFF_CANARY + 4)
+
 /* AP bringup handshake states (TODO-09-boot S10), CAS-transitioned in
  * per_cpu_data.ap_bringup_state. STARTING is the initial value the BSP sets
  * before SIPI; the AP CASes it to ONLINE (winner publishes is_online + goes
@@ -78,6 +84,20 @@ _Static_assert(AP_OFF_CPUID   == 0x28, "AP trampoline: CPUID must be at +0x28 --
 _Static_assert(AP_OFF_IDT_PTR == 0x30, "AP trampoline: IDT_PTR must be at +0x30 -- asm uses [AP_DATA+0x30]");
 _Static_assert(AP_DATA_BASE   == AP_TRAMPOLINE_ADDR + 0xE00,
     "AP data base must be trampoline + 0xE00 (phys 0x8E00)");
+
+/* Bind the AP low envelope to the canonical memory map. These addresses are
+ * the ONLY low-memory region the higher-half kernel must keep identity-mapped
+ * (the AP stub loads CR3 with a 32-bit `mov` and cannot reach a high VA), so
+ * memmap.h reserves an envelope for them. Without these asserts the two
+ * headers can drift apart silently: the retained identity mapping would cover
+ * one interval while SIPI and smp.c use another, and AP startup would fail at
+ * runtime with no compile-time warning. */
+_Static_assert(AP_TRAMPOLINE_ADDR == MM_AP_ENVELOPE_BASE,
+    "AP trampoline must start at the canonical AP envelope base (memmap.h)");
+_Static_assert(AP_DATA_BASE >= MM_AP_ENVELOPE_BASE,
+    "AP data area must lie inside the canonical AP envelope (memmap.h)");
+_Static_assert(AP_DATA_BASE + AP_DATA_FOOTPRINT <= MM_AP_ENVELOPE_END,
+    "AP data area must END inside the canonical AP envelope (memmap.h)");
 
 /* Non-overlap verification: each field must not stomp its neighbors.
  * IDT_PTR is 10 bytes (IDTR = 2B limit + 8B base), so it spans

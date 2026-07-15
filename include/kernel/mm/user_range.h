@@ -19,6 +19,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/mm/memmap.h"   /* canonical windows these ranges live inside */
 
 /* User ELF load range: 0x800000 .. 0x900000 (8 MiB .. 9 MiB)
  * Must be above kernel BSS end (~0x4C0000) to avoid collision.
@@ -63,3 +64,21 @@ _Static_assert(USER_PT_WINDOW_BASE == 0x800000 &&
     "User PT window must span the full 2 MiB PD entry (0x800000-0xA00000)");
 _Static_assert(USER_ELF_END < USER_PT_WINDOW_END,
     "0x900000 guard page must lie inside the reserved PT window");
+
+/* Containment against the canonical map (memmap.h). These ranges are
+ * sub-regions carved inside the user window, not independent windows, so they
+ * must provably sit inside it. Without these the two headers -- included on
+ * adjacent lines by vmm.c -- could drift apart with nothing to catch it, and
+ * memmap.h's single-source-of-truth claim would be aspirational rather than
+ * enforced. The higher-half relocation retires these constants; until then,
+ * containment is what keeps them honest. */
+_Static_assert(USER_ELF_BASE >= MM_USER_BASE && USER_ELF_END <= MM_USER_END,
+    "User ELF range must lie inside the canonical user window (memmap.h)");
+_Static_assert(USER_PT_WINDOW_END <= MM_USER_END,
+    "User PT window must lie inside the canonical user window (memmap.h)");
+_Static_assert(SECTION_VIEW_BASE >= MM_USER_BASE &&
+               SECTION_VIEW_LIMIT <= MM_USER_END,
+    "Section-view range must lie inside the canonical user window (memmap.h)");
+_Static_assert(USER_ELF_END <= SECTION_VIEW_BASE ||
+               SECTION_VIEW_LIMIT <= USER_ELF_BASE,
+    "User ELF range and section-view range must not overlap");

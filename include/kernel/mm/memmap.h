@@ -1,9 +1,16 @@
 /* ============================================================================
  * memmap.h -- Canonical kernel virtual address-space layout
  *
- * SINGLE SOURCE OF TRUTH for the 64-bit virtual memory map. Every window base
- * and extent in the system is defined here and pinned by _Static_assert; no
- * other file may invent an address-space constant.
+ * SINGLE SOURCE OF TRUTH for the 64-bit virtual memory map: every top-level
+ * WINDOW base and extent is defined here and pinned by _Static_assert. No
+ * other file may invent a window.
+ *
+ * Sub-regions carved INSIDE a window may live with their owner (the user-half
+ * ELF range and section-view range stay in user_range.h until the low-memory
+ * ceiling is retired), but they are not free-floating: this header asserts
+ * they are CONTAINED by the window they claim, so the two cannot drift apart
+ * silently. A constant that is neither a window here nor a contained
+ * sub-region asserted against one is drift.
  *
  * ARCH: x86-64 -- 4-level (and optional 5-level) paging, canonical-form rules,
  * and PDE reserved-bit behavior are Intel SDM Vol. 3A ch. 4 semantics. This
@@ -66,7 +73,12 @@
 #define MM_CANONICAL_SHIFT_4LVL   47
 #define MM_CANONICAL_SHIFT_5LVL   56
 
-/* True when bits [63:shift] are all copies of bit [shift] (sign-extended). */
+/* True when bits [63:shift] are all copies of bit [shift] (sign-extended).
+ *
+ * Must stay a MACRO, not an inline function: it is used inside _Static_assert,
+ * which requires an integer constant expression that a function call is not.
+ * Consequence: 'a' is EVALUATED TWICE -- pass a constant or a simple lvalue,
+ * never an expression with side effects (MM_IS_CANONICAL(*p++, 47) misbehaves). */
 #define MM_IS_CANONICAL(a, shift) \
     ((((uint64_t)(a)) >> (shift)) == 0ULL || \
      (((uint64_t)(a)) >> (shift)) == ((1ULL << (64 - (shift))) - 1ULL))
@@ -121,13 +133,24 @@
 #define MM_KERNEL_IMAGE_LAST  (MM_KERNEL_VIRT_BASE + (MM_KERNEL_IMAGE_SIZE - 1ULL))
 #define MM_KERNEL_PHYS_LAST   (MM_KERNEL_IMAGE_SIZE - 1ULL)
 
-/* Physical load address of the kernel image (linker LMA). 2 MiB-aligned so a
- * PS=1 (2 MiB) PDE may legally map the image window: a huge PDE requires a
- * 2 MiB-aligned physical frame, and a 1 MiB base (the historical 0x100000)
- * sets PDE bit 20 -- a reserved bit -- which faults before kernel_main can
- * report it. Section 3 maps the image with 4 KiB pages for per-section W^X;
- * this alignment keeps the huge-page option legal and removes the
- * reserved-bit hazard class permanently. */
+/* TARGET physical load address of the kernel image (linker LMA).
+ *
+ * NOT YET LIVE: the kernel still links at 1 MiB (`. = 1M` in src/boot/linker.ld)
+ * and pmm.c still reserves the image from 0x100000. The linker-split section
+ * moves the LMA here; until it lands, this constant states the DESIGN target,
+ * not the current tree.
+ *
+ * WARNING: a linker script cannot #include this header, so src/boot/linker.ld
+ * must be updated BY HAND to match, exactly as user/user.ld must track
+ * user_range.h. A mismatch means the bootloader copies PT_LOAD segments to one
+ * physical base while the kernel's mapping assumes another.
+ *
+ * 2 MiB-aligned so a PS=1 (2 MiB) PDE may legally map the image window: a huge
+ * PDE requires a 2 MiB-aligned physical frame, and a 1 MiB base sets PDE bit
+ * 20 -- a reserved bit -- which faults before kernel_main can report it. The
+ * bring-up section maps the image with 4 KiB pages for per-section W^X; this
+ * alignment keeps the huge-page option legal and removes the reserved-bit
+ * hazard class permanently. */
 #define MM_KERNEL_PHYS_BASE   0x0000000000200000ULL   /* 2 MiB */
 
 /* Virtual address the kernel image is linked at (linker.ld VMA). */
@@ -257,15 +280,28 @@ static inline int mm_phys_in_image(uint64_t phys)
     return phys >= MM_KERNEL_PHYS_BASE && phys <= MM_KERNEL_PHYS_LAST;
 }
 
-/* True when 'v' is a direct-map virtual address. */
+/* True when 'v' is a direct-map virtual address.
+ *
+ * STRICT lower bound. MM_HHDM_BASE is the alias of physical 0, which the
+ * forward relation rejects (see mm_phys_in_hhdm), so admitting it here would
+ * make the two domains disagree: mm_hhdm_to_phys(MM_HHDM_BASE) would return 0
+ * -- the failure sentinel -- for an address this predicate had just called
+ * valid. The forward and inverse domains must exclude exactly the same page. */
 static inline int mm_virt_in_hhdm(uint64_t virt)
 {
-    return virt >= MM_HHDM_BASE && virt < MM_HHDM_END;
+    return virt > MM_HHDM_BASE && virt < MM_HHDM_END;
 }
 
 /* HHDM relation: physical RAM -> direct-map virtual address. Returns NULL for
- * a physical address the direct map cannot alias, so a caller that forgets to
- * check faults on a NULL dereference instead of scribbling on a wrong page. */
+ * a physical address the direct map cannot alias.
+ *
+ * CALLERS MUST CHECK THE RETURN. Do NOT assume a missed check "just faults":
+ * the bring-up identity map marks the whole low 4 GiB Present+Writable+User
+ * (bootx64.c setup_page_tables), so while it is live -- which is exactly the
+ * window in which these helpers become the page-table walkers' hot path -- a
+ * NULL dereference silently reads/writes physical page 0 (IVT/BDA) instead of
+ * faulting. The same "NULL is not a fault here" trap already cost this repo
+ * once; see the GS_BASE entry in docs/infrastructure/bare-metal-gotchas.md. */
 static inline void *mm_phys_to_hhdm(uint64_t phys)
 {
     if (!mm_phys_in_hhdm(phys))
@@ -315,7 +351,14 @@ static inline void *mm_image_phys_to_virt(uint64_t phys)
 static inline uint64_t mm_canonical_from_indices(uint64_t pml4i, uint64_t pdpti,
                                                  uint64_t pdi, uint64_t pti)
 {
-    uint64_t v = (pml4i << 39) | (pdpti << 30) | (pdi << 21) | (pti << 12);
+    /* Mask each index to its 9 bits FIRST. Without this the canonical
+     * guarantee is only conditional: an out-of-range pml4i (say 512) sets bit
+     * 48 while leaving bit 47 clear, so the sign-extension below does not fire
+     * and the function returns a NON-canonical value while its name promises
+     * otherwise -- and an over-range lower index would bleed into the field
+     * above it. Masking makes the guarantee hold for any input. */
+    uint64_t v = ((pml4i & 0x1ffULL) << 39) | ((pdpti & 0x1ffULL) << 30) |
+                 ((pdi   & 0x1ffULL) << 21) | ((pti   & 0x1ffULL) << 12);
     /* Sign-extend bit 47 across [63:48]. */
     if (v & (1ULL << MM_CANONICAL_SHIFT_4LVL))
         v |= ~((1ULL << (MM_CANONICAL_SHIFT_4LVL + 1)) - 1ULL);

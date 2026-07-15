@@ -120,30 +120,56 @@ static void test_zero_sentinel_is_unambiguous(void)
         "physical 0 is not an HHDM-aliasable frame");
     check(mm_phys_to_hhdm(0ULL) == NULL,
         "mm_phys_to_hhdm(0) is rejected, not translated");
+
+    /* The forward and inverse domains must exclude exactly the same page.
+     * Asserting only that mm_hhdm_to_phys(MM_HHDM_BASE) == 0 is NOT enough --
+     * that passes whether the base was rejected or "successfully" translated
+     * to 0, so it would codify the ambiguity instead of detecting it. Assert
+     * the PREDICATE rejects it, which is what makes the 0 a rejection. */
+    check(!mm_virt_in_hhdm(MM_HHDM_BASE),
+        "HHDM base (alias of phys 0) is OUTSIDE the valid inverse domain");
     check(mm_hhdm_to_phys((const void *)(uintptr_t)MM_HHDM_BASE) == 0ULL,
-        "HHDM base translates to the sentinel ONLY as a rejection");
+        "HHDM base yields the sentinel because it was rejected");
+    check(mm_virt_in_hhdm(MM_HHDM_BASE + 1ULL),
+        "the address just above the HHDM base IS in the valid domain");
+    check(mm_hhdm_to_phys((const void *)(uintptr_t)(MM_HHDM_BASE + 1ULL)) == 1ULL,
+        "first valid direct-map address translates to phys 1, not the sentinel");
     check(!mm_phys_in_image(0ULL),
         "physical 0 is not an image address");
     check(mm_image_phys_to_virt(0ULL) == NULL,
         "mm_image_phys_to_virt(0) is rejected, not translated");
 
-    /* The property that matters: sweep the low frames and the boundaries, and
-     * assert no ACCEPTED input ever yields the failure value. */
-    uint64_t probes[] = { 0x1000ULL, 0x200000ULL, MM_KERNEL_PHYS_BASE,
-                          MM_KERNEL_PHYS_LAST, MM_HHDM_SIZE - 1ULL };
+    /* The property that matters, swept from BOTH directions: no input that a
+     * range predicate ACCEPTS may translate to the failure value. */
+    uint64_t phys_probes[] = { 1ULL, 0x1000ULL, 0x200000ULL, MM_KERNEL_PHYS_BASE,
+                               MM_KERNEL_PHYS_LAST, MM_HHDM_SIZE - 1ULL };
+    uint64_t virt_probes[] = { MM_HHDM_BASE + 1ULL, MM_HHDM_BASE + 0x1000ULL,
+                               MM_HHDM_END - 1ULL, MM_KERNEL_IMAGE_BASE,
+                               MM_KERNEL_IMAGE_LAST };
     unsigned i;
     int collisions = 0;
 
-    for (i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
-        void *h = mm_phys_to_hhdm(probes[i]);
+    for (i = 0; i < sizeof(phys_probes) / sizeof(phys_probes[0]); i++) {
+        void *h = mm_phys_to_hhdm(phys_probes[i]);
         if (h != NULL && mm_hhdm_to_phys(h) == 0ULL)
             collisions++;
-        void *g = mm_image_phys_to_virt(probes[i]);
+        void *g = mm_image_phys_to_virt(phys_probes[i]);
         if (g != NULL && mm_image_virt_to_phys(g) == 0ULL)
             collisions++;
     }
     check(collisions == 0,
-        "no accepted input in either relation produces the 0 sentinel");
+        "no accepted physical input in either relation produces the 0 sentinel");
+
+    collisions = 0;
+    for (i = 0; i < sizeof(virt_probes) / sizeof(virt_probes[0]); i++) {
+        uint64_t v = virt_probes[i];
+        if (mm_virt_in_hhdm(v) && mm_hhdm_to_phys((const void *)(uintptr_t)v) == 0ULL)
+            collisions++;
+        if (mm_virt_in_image(v) && mm_image_virt_to_phys((const void *)(uintptr_t)v) == 0ULL)
+            collisions++;
+    }
+    check(collisions == 0,
+        "no accepted virtual input in either relation produces the 0 sentinel");
 }
 
 static void test_relations_are_disjoint(void)
@@ -213,9 +239,12 @@ static void test_window_layout(void)
     /* A PS=1 PDE needs a 2 MiB-aligned frame; 1 MiB would set reserved bit 20. */
     check((MM_KERNEL_PHYS_BASE & MM_MASK_2MIB) == 0ULL,
         "kernel LMA is 2 MiB-aligned (PS=1 PDE reserved-bit rule)");
-    /* The AP stub loads CR3 with a 32-bit mov -- the PML4 must stay < 4 GiB. */
+    /* NOTE: this checks the IMAGE base, not the PML4 root. The actual CR3 root
+     * is the bootloader's PT_PML4 constant, which this host gate cannot see;
+     * binding PT_PML4 to MM_PML4_PHYS_LIMIT is owned by the bring-up section.
+     * Labelled precisely so the gate does not overclaim what it verifies. */
     check(MM_KERNEL_PHYS_BASE < MM_PML4_PHYS_LIMIT,
-        "kernel image loads below the 4 GiB AP CR3 ceiling");
+        "kernel image LMA is below 4 GiB (NOT a check of the AP-loaded PML4 root)");
     check(MM_KERNEL_PHYS_BASE >= MM_AP_ENVELOPE_END,
         "kernel LMA does not overlap the AP bring-up envelope");
 }

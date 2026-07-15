@@ -77,16 +77,21 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 
 **Test checkpoint:** Design doc exists and passed `codex-design-review` with no unresolved High findings (all 4 adopted). `MM_KERNEL_VIRT_BASE` and the HHDM base are canonical -- verified by mutating each layout constant and confirming its `_Static_assert` trips. No runtime change: `__kernel_end` stays byte-identical to baseline at `0x7ff000`. Test on: N/A (design section).
 
-> **Test runner:** `bash tools/memmap-check/check.sh` (host gate, also wired into `scripts/test-tooling.sh`) | 48 checks, 0 failures
+> **Test runner:** `bash tools/memmap-check/check.sh` (host gate, also wired into `scripts/test-tooling.sh`) | 52 checks, 0 failures
 
 > **Notes:**
 >
-> - Shipped `include/kernel/mm/memmap.h` (5 windows, 20 `_Static_assert`s, HHDM + image translation helpers) and `docs/infrastructure/kernel-address-space.md` (7 pinned decisions with measured evidence).
+> - Shipped `include/kernel/mm/memmap.h` (5 windows, 22 `_Static_assert`s, HHDM + image translation helpers) and `docs/infrastructure/kernel-address-space.md` (7 pinned decisions with measured evidence).
 > - Zero image cost: `vmm.c` includes `memmap.h` so the assert gate compiles every build, but only asserts + unused inlines are emitted -- `__kernel_end` unchanged at `0x7ff000`, which is why §1 ships despite the BSS ceiling.
-> - Behavioral gate `tools/memmap-check/check.sh` (48 host checks, wired into `test-tooling.sh`): asserts cannot evaluate a static-inline call, and clang-19 does NOT diagnose the top-of-space wraparound even under `-Weverything` -- host gcc does.
-> - `codex-design-review` (4 High) + adversarial (1 High: image range wrapped to 0, rejecting every valid symbol) adoptions are in the commit message; each design finding produced a concrete `[ ]` item in §2/§3/§4.
-> - Canonical doc: [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md).
-> - Scope boundary: §1 owns the layout decision + constants; §2 the linker split, §3 bring-up + walker conversion, §4 AP-envelope retirement, §7 the `USER_BASE` retirement that unblocks `test_highhalf.c`.
+> - Behavioral gate `tools/memmap-check/check.sh` (52 host checks, wired into `test-tooling.sh`): asserts cannot evaluate a static-inline call, and clang-19 does NOT diagnose the top-of-space wraparound even under `-Weverything` -- host gcc does.
+> - The SSOT claim is ENFORCED, not aspirational: `user_range.h` and `smp.h` now include `memmap.h` and assert their sub-ranges sit inside the canonical windows; both assert sets are mutation-tested.
+> - Canonical doc: [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md); CLAUDE.md Safety Gates carries the two binding rules (the relations are not interchangeable; never an exclusive image-window bound).
+> - Scope boundary: §1 owns the layout decision + constants; §2 the linker split, §3 bring-up + walker conversion + the `PT_PML4` binding, §4 AP-envelope retirement, §7 the `USER_BASE` retirement that unblocks `test_highhalf.c`.
+
+> **Verified:** 2026-07-15 | commit `99d70510` | 8/8 items | build OK | smoke PASS (KVM 3.23s) | tests 21408/21408 PASS | host gate 52/52
+> **Deferred:** [M] `PT_PML4` (`bootx64.c:10621`) is not bound to `MM_PML4_PHYS_LIMIT`; the AP's 32-bit CR3 load truncates a >4 GiB root silently (reason: needs bootloader-TU work) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §3 (item: "Bind `PT_PML4` (`bootx64.c:10621`) to `MM_PML4_PHYS_LIMIT`" at line 129)
+> **Deferred:** [M] the in-kernel `test_highhalf.c` suite cannot ship -- it tripped the BSS guard with zero headroom (reason: the ceiling this TODO exists to retire) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Re-add `src/kernel/test/test_highhalf.c`" at line 200)
+> **Quality reviewed:** 2026-07-15 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 5H+8M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -126,6 +131,7 @@ Build the boot page tables that map the kernel high and the physical memory it n
 - [ ] After the jump, switch the stack to a high-virtual address, then SHRINK the identity map to the AP envelope only and CLEAR the User bit on what remains -- retaining the broad 4 GiB map would keep a writable+User+exec low alias of kernel text
 - [ ] Do NOT tear down the AP bootstrap envelope yet: `ap_trampoline.asm` is `[ORG 0x8000]`, `AP_DATA 0x8E00` (`smp.c:305`, SIPI vector 0x08). Keep trampoline + data + temp stack identity-mapped in EVERY bring-up CR3 until all APs ack high entry (§4)
 - [ ] Keep the kernel PML4 frame below `MM_PML4_PHYS_LIMIT` (4 GiB) forever: the AP stub loads CR3 with a 32-bit `mov eax, [AP_DATA]; mov cr3, eax` (`ap_trampoline.asm:73`) and cannot express more
+- [ ] Bind `PT_PML4` (`bootx64.c:10621`) to `MM_PML4_PHYS_LIMIT` with a compile-time assert: the AP stub loads CR3 with a 32-bit `mov`, so a PML4 root above 4 GiB truncates silently. No gate reaches that constant today
 - [ ] The direct map must be live BEFORE any code walks physical memory through it (pmm/vmm init, ACPI/framebuffer reads); order the switch ahead of those consumers
 - [ ] Replace any post-switch physical-memory access with direct-map (`phys_to_virt`) accessors; update `vmm` phys<->virt helpers to the fixed offset.
 - [ ] Add `POST16` entry/exit codes around CR3-enable, the high-half jump, and identity-map teardown.
