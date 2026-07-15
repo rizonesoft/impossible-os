@@ -1637,7 +1637,9 @@ int env_get_drive_cwd(struct task *t, char drive, char *out, uint32_t out_size)
 #define ENV_DEF_TEMP         "C:\\Temp"
 #define ENV_DEF_PROC_ARCH    "AMD64"
 #define ENV_DEF_OS           "Impossible_OS"
-#define ENV_DEF_PATH_BASE    "C:\\Impossible\\Bin;C:\\Impossible\\System32;C:\\Programs"
+/* Composed from the immutable install-root constants (env.h) so a future root
+ * move never leaves the live PATH pointing at an obsolete System32 tree. */
+#define ENV_DEF_PATH_BASE    ENV_SYSTEMROOT_DIR "\\Bin;" ENV_SYSTEM32_DIR ";C:\\Programs"
 /* PATHEXT: only .EXE is seeded because exec.c (src/kernel/exec.c exec_init)
  * registers loaders for PE32+/ELF/EIF binaries only -- there is no .CMD/.BAT
  * batch interpreter, so advertising those extensions would let a future PATHEXT

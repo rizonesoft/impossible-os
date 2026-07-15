@@ -521,7 +521,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `SearchPathW(caller, lpPath, lpFileName, lpExtension, nBufferLength, lpBuffer, lpFilePart)` -- kernel32 API wrapping a shared UTF-8 core `env_search_path` (`src/kernel/env_searchpath.c`):
   - `lpPath == NULL`: order is (1) current directory, (2) system dir `%SYSTEMROOT%\System32`, (3) Windows dir `%SYSTEMROOT%`, (4) `PATH` dirs. System/Windows dirs derive from the IMMUTABLE `ENV_SYSTEM32_DIR`/`ENV_SYSTEMROOT_DIR` kernel constants, NEVER the caller-mutable `SYSTEMROOT` env var (DLL-hijack hardening). Safe-search mode REORDERS the current directory (safe: after `PATH`; unsafe: before system dirs); it never removes it. A `PATH`-buffer allocation failure fails closed with `ERROR_OUTOFMEMORY` (never falls through to the CWD leg).
   - `lpPath != NULL`: search only its semicolon-delimited dirs.
-  - A `lpFileName` that is already qualified (absolute `X:\`, root-relative `\`, `.\`, `..\`, drive-relative `X:tail`) bypasses directory iteration and is probed directly.
+  - A `lpFileName` that is already qualified (rooted `\`, drive `X:`, or explicitly CWD-relative `.\`/`..\`) bypasses directory iteration and is probed directly. An ORDINARY relative subpath (`plugins\tool.exe`) is searched BENEATH each leg; an unqualified name with a `..` component is REJECTED (`ERROR_INVALID_PARAMETER`), since it would canonicalize out of the selected directory.
   - Probes are caller-aware: each candidate resolves via `task_resolve_path_for(caller,...)` then `unveil_check(caller, ., UNVEIL_R)` under `pledge_user_mode()`; denied paths read as absent; only a regular file (not a directory) matches.
   - `lpExtension`: appended when the final path component has no extension; first char must be `.`; ignored when the name already has one; a separator- or drive-bearing extension is REJECTED (`ERROR_INVALID_PARAMETER`) so it cannot smuggle traversal past qualification.
   - `lpFilePart`: receives a pointer to the file-name component in the returned buffer (target-encoding units; offset 0 when no separator).
@@ -530,17 +530,24 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `NeedCurrentDirectoryForExePathW(caller, ExeName)` -- returns `TRUE` if `ExeName` contains a backslash; else `FALSE` when the `NoDefaultCurrentDirectoryInExePath` env var is present (even empty), else `TRUE` (security hardening).
 - [x] `SetSearchPathMode(caller, mode)`: validate `BASE_SEARCH_PATH_*` bits; `PERMANENT` needs `ENABLE`, locks later changes; per-task `search_path_mode` via `__atomic` CAS; governs CWD ORDER only (`ERROR_INVALID_PARAMETER`/`ERROR_ACCESS_DENIED`).
 - [ ] Leg-1 (application-load directory) deferred: needs a kernel-owned canonical image path (PEB / `task->name` are caller-writable, unsafe) -> XREF: `TODO-21-process-model-extensions.md §2`.
+- [ ] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (treated as a miss -> falls through to PATH/CWD); once `vfs_stat` returns a tri-state found/absent/error result, make `sp_probe` abort the search on a hard error.
+- [ ] Compose all install-path consumers from `ENV_SYSTEMROOT_DIR`/`ENV_SYSTEM32_DIR` (`ENV_DEF_PATH_BASE` done; still literal: bootstrap PATH `env.c` seed row + `registry.c` windir) and move the constants to a neutral install-path header.
 
 - [x] Commit: `"kernel/env: SearchPathW/A Win32 API, NeedCurrentDirectoryForExePathW"`
 
 **Test checkpoint:** `env_search_path` / `SearchPathA` finds a `vfs_create`d binary in `C:\Impossible\System32\`; a missing name returns 0 + `ERROR_FILE_NOT_FOUND`; a `\`-qualified name bypasses iteration; a duplicate name in CWD and System32 returns the System32 path under safe mode and the CWD path under unsafe mode (precedence, not participation); `SetSearchPathMode` rejects bad flags (`ERROR_INVALID_PARAMETER`) and locks after `PERMANENT` (`ERROR_ACCESS_DENIED`); A/W exact-fit returns length excl NUL and one-short returns required incl NUL with the buffer untouched. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1766 kernel suites, 0 failures (11 SearchPath/`SetSearchPathMode`/`NeedCurrentDir` cases)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1804 kernel suites, 0 failures (16 SearchPath/`SetSearchPathMode`/`NeedCurrentDir` cases)
 > **Notes:**
-> - **What shipped** -- `src/kernel/env_searchpath.c` + header: UTF-8 `env_search_path` core behind `SearchPathW`/`A`, `NeedCurrentDirectoryForExePathW`, `SetSearchPathMode`; new `struct task` `search_path_mode` field; 11 ABI tests.
+> - **What shipped** -- `src/kernel/env_searchpath.c` + header: UTF-8 `env_search_path` core behind `SearchPathW`/`A`, `NeedCurrentDirectoryForExePathW`, `SetSearchPathMode`; new `struct task` `search_path_mode` field; 16 ABI tests.
 > - **How it integrates** -- plain kernel functions taking `struct task *caller` (like `ExpandEnvironmentStringsForUser`); NOT SSDT/`pe.c` exports; probes reuse `task_resolve_path_for` + `unveil_check`; last-error to the executing thread's TEB.
-> - **Security** -- trusted legs from immutable constants (not `%SYSTEMROOT%`); safe-search reorders (never removes) CWD; separator-bearing `lpExtension` + PATH-leg OOM fail closed; PERMANENT lock is an `__atomic` CAS. Adoptions in the commit message.
+> - **Security** -- trusted legs from immutable constants (not `%SYSTEMROOT%`); safe-search reorders (never removes) CWD; `..`/separator/OOM fail closed; PERMANENT lock is an `__atomic` CAS.
 > - **Scope boundary** -- §14 owns SearchPath ordering; leg-1 (app-load dir) needs a kernel-owned image path owned by `TODO-21 §2`; PATH+PATHEXT shell iteration stays `shell_find_command` (§7).
+> **Verified:** 2026-07-15 | commit `2953e5ce` | 4/7 items | build OK | tests 1804/1804 PASS
+> **Accepted:** [H] SearchPathW non-ASCII CWD leg limited by the ASCII-only NT-path/cwd narrowing (`nt_process.c`) -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §1` (item: "Non-ASCII CWD: NtSetCurrentDirectory narrows..." at line 97)
+> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 548)
+> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 549)
+> **Quality reviewed:** 2026-07-15 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 2H+7M fixed, 2H+1M deferred/accepted, 1M rejected | scope: kernel-code-quality
 
 ---
 

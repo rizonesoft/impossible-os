@@ -2353,6 +2353,54 @@ static void test_env_searchpath_qualified(void)
     env_free(&s_env_fixture);
 }
 
+static void test_env_searchpath_relative_subpath(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    /* An ORDINARY relative subpath is searched BENEATH each directory, NOT probed
+     * directly against the CWD -- so it cannot bypass an explicit lpPath or the
+     * trusted default-search legs. The file exists only under System32\plug, and
+     * the fixture CWD is empty, so finding it proves the beneath-each-dir search. */
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_mkdir("C:\\Impossible\\System32") != 0 ||
+        sp_test_mkdir("C:\\Impossible\\System32\\plug") != 0 ||
+        sp_test_touch("C:\\Impossible\\System32\\plug\\tool.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    rc = env_search_path(&s_env_fixture, (const char *)0, "plug\\tool.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 &&
+                env_streq(out, "C:\\Impossible\\System32\\plug\\tool.exe"),
+                "relative subpath searched beneath the System32 leg (not against CWD)");
+    /* Explicit lpPath: the subpath is honored beneath the given directory. */
+    err = 0;
+    rc = env_search_path(&s_env_fixture, "C:\\Impossible\\System32", "plug\\tool.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 &&
+                env_streq(out, "C:\\Impossible\\System32\\plug\\tool.exe"),
+                "relative subpath honored beneath explicit lpPath");
+    /* An interior ".." in an unqualified name is REFUSED -- it would canonicalize
+     * out of the trusted/explicit directory. Both separator forms, default + explicit. */
+    err = 0;
+    rc = env_search_path(&s_env_fixture, (const char *)0, "x\\..\\..\\..\\Temp\\evil.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "interior .. (default search) refused");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
+                   "interior .. -> ERROR_INVALID_PARAMETER (no escape from trusted leg)");
+    err = 0;
+    rc = env_search_path(&s_env_fixture, "C:\\Impossible\\System32", "a/../../evil.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "interior .. under explicit lpPath refused (forward-slash)");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
+                   "interior .. under explicit lpPath -> INVALID_PARAMETER");
+    vfs_unlink("C:\\Impossible\\System32\\plug\\tool.exe");
+    env_free(&s_env_fixture);
+}
+
 static void test_env_searchpath_mode_precedence(void)
 {
     char out[SP_PATH_MAX];
@@ -2428,6 +2476,34 @@ static void test_env_need_current_dir(void)
                    0, "var present (empty) -> current dir excluded");
     TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "dir\\app.exe"),
                    1, "backslash overrides the exclusion var");
+    env_free(&s_env_fixture);
+}
+
+static void test_env_searchpath_cwd_not_gated_by_exe_var(void)
+{
+    char out[SP_PATH_MAX];
+    uint32_t err = 0, rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\sp_cwd2") != 0 ||
+        sp_test_touch("C:\\sp_cwd2\\cwdonly.exe") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    task_set_cwd(&s_env_fixture, "C:\\sp_cwd2");
+    /* NoDefaultCurrentDirectoryInExePath governs NeedCurrentDirectoryForExePath,
+     * NOT SearchPath ordering: SearchPath still consults the CWD with the var set
+     * (Win32 keeps the two behaviors distinct; the mode only reorders the CWD). */
+    env_set(&s_env_fixture, "NoDefaultCurrentDirectoryInExePath", "");
+    rc = env_search_path(&s_env_fixture, (const char *)0, "cwdonly.exe",
+                         (const char *)0, out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT(rc > 0 && env_streq(out, "C:\\sp_cwd2\\cwdonly.exe"),
+                "SearchPath includes CWD regardless of NoDefaultCurrentDirectoryInExePath");
+    /* ...while the standalone helper still reports FALSE for the same variable. */
+    TEST_ASSERT_EQ(env_need_current_dir_for_exe(&s_env_fixture, "cwdonly.exe"), 0,
+                   "NeedCurrentDirectoryForExePath stays a separate policy (FALSE)");
+    vfs_unlink("C:\\sp_cwd2\\cwdonly.exe");
     env_free(&s_env_fixture);
 }
 
@@ -2517,6 +2593,50 @@ static void test_env_searchpath_w_filepart(void)
     env_free(&s_env_fixture);
 }
 
+static void test_env_searchpath_w_ignored_bad_ext(void)
+{
+    static const uint16_t wname[] = {
+        'C', ':', '\\', 'I', 'm', 'p', 'o', 's', 's', 'i', 'b', 'l', 'e', '\\',
+        'h', 'a', 's', 'e', 'x', 't', '.', 'd', 'l', 'l', 0
+    };
+    static const uint16_t wbadext[] = { 0xD800, 0 };   /* unpaired high surrogate */
+    uint16_t out16[64];
+    uint32_t rc;
+
+    env_fixture_reset();
+    if (sp_test_mkdir("C:\\Impossible") != 0 ||
+        sp_test_touch("C:\\Impossible\\hasext.dll") != 0) {
+        env_free(&s_env_fixture);
+        TEST_SKIP("VFS unavailable for SearchPath probe");
+        return;
+    }
+    /* lpFileName already has an extension, so lpExtension is IGNORED. A malformed
+     * (unconvertible) extension must NOT be converted or fail the W wrapper --
+     * the file is found regardless. */
+    rc = SearchPathW(&s_env_fixture, (const uint16_t *)0, wname, wbadext,
+                     sizeof(out16) / sizeof(out16[0]), out16, (uint16_t **)0);
+    TEST_ASSERT(rc > 0, "malformed ignored extension does not fail SearchPathW");
+    vfs_unlink("C:\\Impossible\\hasext.dll");
+
+    /* A LEADING-dot filename also counts as having an extension: the malformed
+     * lpExtension must be ignored (not converted) by the W wrapper. */
+    {
+        static const uint16_t wdot[] = {
+            'C', ':', '\\', 'I', 'm', 'p', 'o', 's', 's', 'i', 'b', 'l', 'e',
+            '\\', '.', 'p', 'r', 'o', 'f', 'i', 'l', 'e', 0
+        };
+        if (sp_test_touch("C:\\Impossible\\.profile") == 0) {
+            rc = SearchPathW(&s_env_fixture, (const uint16_t *)0, wdot, wbadext,
+                             sizeof(out16) / sizeof(out16[0]), out16,
+                             (uint16_t **)0);
+            TEST_ASSERT(rc > 0,
+                        "leading-dot filename ignores malformed extension in SearchPathW");
+            vfs_unlink("C:\\Impossible\\.profile");
+        }
+    }
+    env_free(&s_env_fixture);
+}
+
 static void test_env_searchpath_ext_containment(void)
 {
     char out[SP_PATH_MAX];
@@ -2537,6 +2657,30 @@ static void test_env_searchpath_ext_containment(void)
     TEST_ASSERT_EQ(rc, 0u, "drive-colon extension rejected");
     TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
                    "drive-colon extension -> ERROR_INVALID_PARAMETER");
+    /* An extension WITHOUT the required leading period (used because the bare
+     * filename has none) is rejected per the documented contract. */
+    err = 0;
+    rc = env_search_path(&s_env_fixture, (const char *)0, "probe", "exe",
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_INVALID_PARAMETER,
+                   "extension without leading period -> ERROR_INVALID_PARAMETER");
+    /* When lpFileName already has an extension, lpExtension is IGNORED -- even a
+     * malformed one does not trigger rejection (contract: ignored in that case);
+     * the search simply proceeds and misses. */
+    err = 0;
+    rc = env_search_path(&s_env_fixture, (const char *)0, "haveext.dll", ".\\bad",
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "filename-with-extension + bad ext -> not rejected, just misses");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_FILE_NOT_FOUND,
+                   "malformed extension ignored when filename already has one");
+    /* A LEADING-dot filename (".profile") counts as HAVING an extension per Win32,
+     * so lpExtension is ignored -- a malformed one is not rejected/converted. */
+    err = 0;
+    rc = env_search_path(&s_env_fixture, (const char *)0, ".profile", ".\\bad",
+                         out, sizeof(out), (uint32_t *)0, &err);
+    TEST_ASSERT_EQ(rc, 0u, "leading-dot filename + bad ext -> not rejected, just misses");
+    TEST_ASSERT_EQ(err, (uint32_t)ERROR_FILE_NOT_FOUND,
+                   "leading-dot filename treated as having an extension (ext ignored)");
     env_free(&s_env_fixture);
 }
 
@@ -2819,16 +2963,22 @@ void test_register_env(void)
                             test_env_searchpath_explicit_ext, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath qualified name bypasses iteration",
                             test_env_searchpath_qualified, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath relative subpath searched beneath legs",
+                            test_env_searchpath_relative_subpath, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath mode reorders CWD precedence",
                             test_env_searchpath_mode_precedence, TEST_CAT_ABI);
     test_suite_register_cat("Env: SetSearchPathMode validation + PERMANENT lock",
                             test_env_setsearchpathmode, TEST_CAT_ABI);
     test_suite_register_cat("Env: NeedCurrentDirectoryForExePath rules",
                             test_env_need_current_dir, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPath CWD not gated by exe-path var",
+                            test_env_searchpath_cwd_not_gated_by_exe_var, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPathA buffer sizing (untouched on small)",
                             test_env_searchpath_a_sizing, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPathW lpFilePart component pointer",
                             test_env_searchpath_w_filepart, TEST_CAT_ABI);
+    test_suite_register_cat("Env: SearchPathW ignores malformed unused extension",
+                            test_env_searchpath_w_ignored_bad_ext, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath rejects traversal via extension",
                             test_env_searchpath_ext_containment, TEST_CAT_ABI);
     test_suite_register_cat("Env: SearchPath OOM -> OUTOFMEMORY, untouched",

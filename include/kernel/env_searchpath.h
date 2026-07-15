@@ -51,13 +51,19 @@ struct task;
  * with the current directory REORDERED (not removed) per the caller's
  * search_path_mode: unsafe = current directory first; safe/unset = after PATH.
  * When lpPath != NULL only its ';'-delimited directories are searched. A
- * qualified lpFileName (containing a separator or "X:" drive spec) bypasses
- * directory iteration and is probed directly.
+ * QUALIFIED lpFileName -- one anchored by its own location: rooted/UNC ("\..",
+ * "/.."), drive-qualified ("X:.."), or explicitly CWD-relative (".\", "./",
+ * "..", "..\", "../") -- bypasses directory iteration and is probed directly. An
+ * ORDINARY relative subpath ("plugins\tool.exe") is NOT qualified: it is searched
+ * BENEATH every configured/default directory. An unqualified name that contains a
+ * ".." path component is REJECTED (ERROR_INVALID_PARAMETER) -- it would otherwise
+ * canonicalize out of the selected directory.
  *
- * lpExtension (first char must be '.') is appended only when lpFileName's final
- * component has no extension. Every probe is resolved via task_resolve_path_for()
- * and gated by unveil_check(UNVEIL_R)/pledge_user_mode(); only a regular file
- * matches.
+ * lpExtension is consulted only when lpFileName's final component has no extension
+ * (a component with ANY '.', including a leading one, counts as having one); it
+ * then must begin with '.' (else ERROR_INVALID_PARAMETER) and carry no separator
+ * or drive char. Every probe is resolved via task_resolve_path_for() and gated by
+ * unveil_check(UNVEIL_R)/pledge_user_mode(); only a regular file matches.
  *
  * Returns, on the found UTF-8 absolute path:
  *   - length in bytes excluding NUL when it fits (out filled, NUL-terminated,

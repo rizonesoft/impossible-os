@@ -82,36 +82,63 @@ static void sp_set_last_error(uint32_t code)
 
 /* ---- name classification ------------------------------------------------- */
 
-/* A name is "qualified" (bypasses directory iteration) when it carries its own
- * location: a "X:" drive spec or any path separator. */
+/* A name is "qualified" (probed directly, bypassing directory iteration) ONLY
+ * when it carries its own anchor: rooted/UNC (`\...`, `/...`), drive-qualified
+ * (`X:...`), or explicitly CWD-relative (`.\`, `./`, `..`, `..\`, `../`). An
+ * ORDINARY relative subpath such as `plugins\tool.exe` is NOT qualified -- it is
+ * searched BENEATH every configured/default directory, so it cannot bypass an
+ * explicit lpPath or the trusted default-search legs (Win32/Wine classification).*/
 static int sp_is_qualified(const char *name)
 {
-    uint32_t i;
-    if (name[0] && name[1] == ':')
+    if (name[0] == '\\' || name[0] == '/')          /* rooted or UNC */
         return 1;
-    for (i = 0; name[i]; i++)
-        if (name[i] == '\\' || name[i] == '/')
+    if (name[0] && name[1] == ':')                  /* "X:..." drive-qualified */
+        return 1;
+    if (name[0] == '.') {                           /* explicitly CWD-relative */
+        char c1 = name[1];
+        if (c1 == '\\' || c1 == '/')                /* ".\" or "./" */
             return 1;
+        if (c1 == '.' &&
+            (name[2] == '\\' || name[2] == '/' || name[2] == '\0'))
+            return 1;                               /* "..", "..\", or "../" */
+    }
     return 0;
 }
 
-/* The final path component has an extension when it contains a '.' after at
- * least one non-dot character (so ".bashrc" is treated as extension-less). */
+/* True if any path component of `name` is exactly "..". An unqualified name is
+ * searched BENEATH a trusted/explicit directory, and vfs_resolve_path collapses
+ * ".." toward the drive root without a descendant check -- so an interior ".."
+ * would let the joined candidate canonicalize OUT of the selected directory.
+ * Such names are rejected before iteration (a "." component is harmless -- it
+ * collapses in place -- so only ".." is caught). */
+static int sp_has_parent_component(const char *name)
+{
+    uint32_t i = 0, cs = 0;
+    for (;;) {
+        char c = name[i];
+        if (c == '\\' || c == '/' || c == '\0') {
+            if (i - cs == 2 && name[cs] == '.' && name[cs + 1] == '.')
+                return 1;
+            cs = i + 1;
+            if (c == '\0')
+                return 0;
+        }
+        i++;
+    }
+}
+
+/* The final path component has an extension when it contains ANY '.', including
+ * a leading one: Win32 classifies ".gitignore"/".bashrc" as having extension
+ * ".gitignore"/".bashrc", so lpExtension is not appended to such names. */
 static int sp_final_has_ext(const char *name)
 {
-    uint32_t i, comp_start = 0, j;
-    int seen_nondot = 0;
+    uint32_t i, comp_start = 0;
     for (i = 0; name[i]; i++)
         if (name[i] == '\\' || name[i] == '/')
             comp_start = i + 1;
-    for (j = comp_start; name[j]; j++) {
-        if (name[j] == '.') {
-            if (seen_nondot)
-                return 1;
-        } else {
-            seen_nondot = 1;
-        }
-    }
+    for (i = comp_start; name[i]; i++)
+        if (name[i] == '.')
+            return 1;
     return 0;
 }
 
@@ -125,7 +152,10 @@ static uint32_t sp_build_search_name(const char *filename, const char *ext,
     uint32_t el = 0, i;
     int append = 0;
 
-    if (ext && ext[0] == '.' && !sp_final_has_ext(filename)) {
+    /* Filename-has-extension check FIRST: lpExtension is consulted only when the
+     * final component has none (Win32 contract); the leading '.' is then required
+     * (the core rejects a non-dot extension before reaching here). */
+    if (!sp_final_has_ext(filename) && ext && ext[0] == '.') {
         el = sp_strlen(ext);
         append = 1;
     }
@@ -261,11 +291,14 @@ static int sp_search_default(struct task *caller, const char *name,
     int have_cwd = 0;
     int r;
 
-    if (env_need_current_dir_for_exe(caller, name)) {
-        task_get_cwd(caller, cwd, SP_PATH_MAX);
-        if (cwd[0] != '\0')
-            have_cwd = 1;
-    }
+    /* SearchPath ALWAYS includes the current directory in its default order;
+     * SetSearchPathMode only REORDERS it (safe: after PATH; unsafe: first).
+     * NoDefaultCurrentDirectoryInExePath / NeedCurrentDirectoryForExePathW is a
+     * SEPARATE policy helper for CreateProcess-style executable resolution and
+     * deliberately does NOT gate SearchPath here (Win32 keeps the two distinct). */
+    task_get_cwd(caller, cwd, SP_PATH_MAX);
+    if (cwd[0] != '\0')
+        have_cwd = 1;
 
     /* Unsafe ordering places the current directory FIRST (DLL-hijack-prone). */
     if (unsafe && have_cwd &&
@@ -342,12 +375,17 @@ uint32_t env_search_path(struct task *caller, const char *lpPath,
         return 0;
     }
 
-    /* A separator- or drive-bearing extension would let a caller append
-     * traversal to a bare filename and, after canonicalization, escape the
-     * trusted/explicit search directories (containment violation). An extension
-     * is only ever a suffix like ".exe". */
-    if (lpExtension && lpExtension[0] == '.') {
+    /* lpExtension is consulted ONLY when lpFileName's final component has no
+     * extension (Win32 contract; ignored otherwise). When it WILL be used it
+     * must be a proper suffix: a leading '.' and no separator/drive char --
+     * otherwise it could append traversal to a bare filename and, after
+     * canonicalization, escape the trusted/explicit search dirs. */
+    if (lpExtension && !sp_final_has_ext(lpFileName)) {
         uint32_t e;
+        if (lpExtension[0] != '.') {
+            *out_err = ERROR_INVALID_PARAMETER;   /* must include the leading period */
+            return 0;
+        }
         for (e = 0; lpExtension[e]; e++)
             if (lpExtension[e] == '\\' || lpExtension[e] == '/' ||
                 lpExtension[e] == ':') {
@@ -368,12 +406,21 @@ uint32_t env_search_path(struct task *caller, const char *lpPath,
         return 0;
     }
 
-    if (sp_is_qualified(lpFileName))
+    if (sp_is_qualified(lpFileName)) {
+        /* Caller-anchored (rooted/drive/`.\`/`..\`): probed directly, and the
+         * unveil check still guards the resolved path. */
         found = sp_probe(caller, w->name, w->resolved);
-    else if (lpPath)
+    } else if (sp_has_parent_component(w->name)) {
+        /* Unqualified name with an interior ".." would canonicalize out of the
+         * trusted/explicit search directory -- refuse it (containment). */
+        *out_err = ERROR_INVALID_PARAMETER;
+        kfree(w);
+        return 0;
+    } else if (lpPath) {
         found = sp_search_explicit(caller, lpPath, w->name, w->candidate, w->resolved);
-    else
+    } else {
         found = sp_search_default(caller, w->name, w->candidate, w->resolved, w->cwd);
+    }
 
     if (found < 0) {                            /* allocation failure in the PATH leg */
         *out_err = ERROR_OUTOFMEMORY;
@@ -428,23 +475,28 @@ int env_need_current_dir_for_exe(struct task *caller, const char *exe_name)
  * Returns the buffer (NUL-terminated) and stores its allocation size in *out_cap
  * for sp_free. Returns NULL on conversion error or OOM. A NULL src yields an
  * empty string. */
-static char *sp_w_to_u8(const uint16_t *src, uint32_t *out_cap)
+static char *sp_w_to_u8(const uint16_t *src, uint32_t *out_cap, uint32_t *out_err)
 {
     uint32_t wlen = src ? sp_wcslen(src) : 0;
     int need;
     char *buf;
 
     need = nls_cp_utf16_to_utf8(src, wlen, (uint8_t *)0, 0, NLS_CP_STRICT);
-    if (need < 0)
+    if (need < 0) {
+        *out_err = ERROR_INVALID_PARAMETER;     /* bad encoding, not OOM */
         return (char *)0;
+    }
     *out_cap = (uint32_t)need + 1;
     buf = sp_alloc(*out_cap);
-    if (!buf)
+    if (!buf) {
+        *out_err = ERROR_OUTOFMEMORY;
         return (char *)0;
+    }
     if (need > 0 &&
         nls_cp_utf16_to_utf8(src, wlen, (uint8_t *)buf, (uint32_t)need,
                              NLS_CP_STRICT) < 0) {
         sp_free(buf, *out_cap);
+        *out_err = ERROR_INVALID_PARAMETER;
         return (char *)0;
     }
     buf[need] = '\0';
@@ -467,18 +519,22 @@ uint32_t SearchPathW(struct task *caller, const uint16_t *lpPath,
         return 0;
     }
 
-    u8file = sp_w_to_u8(lpFileName, &cap_file);
+    u8file = sp_w_to_u8(lpFileName, &cap_file, &err);
     if (!u8file) {
-        sp_set_last_error(ERROR_INVALID_PARAMETER);
+        sp_set_last_error(err);
         return 0;
     }
     if (lpPath) {
-        u8path = sp_w_to_u8(lpPath, &cap_path);
-        if (!u8path) { err = ERROR_INVALID_PARAMETER; goto done; }
+        u8path = sp_w_to_u8(lpPath, &cap_path, &err);
+        if (!u8path) goto done;                 /* err set by sp_w_to_u8 */
     }
-    if (lpExtension) {
-        u8ext = sp_w_to_u8(lpExtension, &cap_ext);
-        if (!u8ext) { err = ERROR_INVALID_PARAMETER; goto done; }
+    /* Convert lpExtension ONLY when it will actually be used (the filename has no
+     * extension). A malformed or oversized extension that the core would IGNORE
+     * (filename already has one) must not fail the call -- matching the core's
+     * ignore-when-filename-has-extension rule. */
+    if (lpExtension && !sp_final_has_ext(u8file)) {
+        u8ext = sp_w_to_u8(lpExtension, &cap_ext, &err);
+        if (!u8ext) goto done;
     }
 
     u8out = sp_alloc(SP_PATH_MAX);
@@ -525,7 +581,7 @@ done_no_err:
 
 /* Convert a NUL-terminated ACP string to UTF-8 (via UTF-16). Same contract as
  * sp_w_to_u8. */
-static char *sp_a_to_u8(const char *src, uint32_t *out_cap)
+static char *sp_a_to_u8(const char *src, uint32_t *out_cap, uint32_t *out_err)
 {
     uint32_t alen = src ? sp_strlen(src) : 0;
     int nu16, nu8;
@@ -535,30 +591,44 @@ static char *sp_a_to_u8(const char *src, uint32_t *out_cap)
 
     nu16 = nls_cp_to_utf16(NLS_CP_ACP, (const uint8_t *)src, alen, (uint16_t *)0,
                            0, NLS_CP_STRICT);
-    if (nu16 < 0)
+    if (nu16 < 0) {
+        *out_err = ERROR_INVALID_PARAMETER;
         return (char *)0;
+    }
     cap16 = ((uint32_t)nu16 + 1) * (uint32_t)sizeof(uint16_t);
     u16 = (uint16_t *)sp_alloc(cap16);
-    if (!u16)
+    if (!u16) {
+        *out_err = ERROR_OUTOFMEMORY;
         return (char *)0;
+    }
     if (nu16 > 0 &&
         nls_cp_to_utf16(NLS_CP_ACP, (const uint8_t *)src, alen, u16,
                         (uint32_t)nu16, NLS_CP_STRICT) < 0) {
         sp_free((char *)u16, cap16);
+        *out_err = ERROR_INVALID_PARAMETER;
         return (char *)0;
     }
     u16[nu16] = 0;
 
     nu8 = nls_cp_utf16_to_utf8(u16, (uint32_t)nu16, (uint8_t *)0, 0, NLS_CP_STRICT);
-    if (nu8 < 0) { sp_free((char *)u16, cap16); return (char *)0; }
+    if (nu8 < 0) {
+        sp_free((char *)u16, cap16);
+        *out_err = ERROR_INVALID_PARAMETER;
+        return (char *)0;
+    }
     *out_cap = (uint32_t)nu8 + 1;
     buf = sp_alloc(*out_cap);
-    if (!buf) { sp_free((char *)u16, cap16); return (char *)0; }
+    if (!buf) {
+        sp_free((char *)u16, cap16);
+        *out_err = ERROR_OUTOFMEMORY;
+        return (char *)0;
+    }
     if (nu8 > 0 &&
         nls_cp_utf16_to_utf8(u16, (uint32_t)nu16, (uint8_t *)buf, (uint32_t)nu8,
                              NLS_CP_STRICT) < 0) {
         sp_free(buf, *out_cap);
         sp_free((char *)u16, cap16);
+        *out_err = ERROR_INVALID_PARAMETER;
         return (char *)0;
     }
     buf[nu8] = '\0';
@@ -581,18 +651,20 @@ uint32_t SearchPathA(struct task *caller, const char *lpPath,
         return 0;
     }
 
-    u8file = sp_a_to_u8(lpFileName, &cap_file);
+    u8file = sp_a_to_u8(lpFileName, &cap_file, &err);
     if (!u8file) {
-        sp_set_last_error(ERROR_INVALID_PARAMETER);
+        sp_set_last_error(err);
         return 0;
     }
     if (lpPath) {
-        u8path = sp_a_to_u8(lpPath, &cap_path);
-        if (!u8path) { err = ERROR_INVALID_PARAMETER; goto done; }
+        u8path = sp_a_to_u8(lpPath, &cap_path, &err);
+        if (!u8path) goto done;                 /* err set by sp_a_to_u8 */
     }
-    if (lpExtension) {
-        u8ext = sp_a_to_u8(lpExtension, &cap_ext);
-        if (!u8ext) { err = ERROR_INVALID_PARAMETER; goto done; }
+    /* Convert lpExtension ONLY when it will be used (filename has no extension),
+     * so an ignorable malformed/oversized extension cannot fail the call. */
+    if (lpExtension && !sp_final_has_ext(u8file)) {
+        u8ext = sp_a_to_u8(lpExtension, &cap_ext, &err);
+        if (!u8ext) goto done;
     }
 
     u8out = sp_alloc(SP_PATH_MAX);
