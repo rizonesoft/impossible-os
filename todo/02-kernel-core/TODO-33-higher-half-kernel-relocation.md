@@ -18,7 +18,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 > **Current state:** The kernel links and loads **low** -- `readelf -l build/kernel.exe` shows the first `LOAD` at virtual `0x100000` (1 MiB), and the image grows upward. User-mode ELF is **pinned at `0x800000`** (8 MiB) by `include/kernel/mm/user_range.h` (single source of truth; included by `vmm.c`, `pmm.c`, `task.c`), with a guard page at `0x900000` and a manual `user/user.ld` mirror. Because kernel and user share one low layout, kernel static growth (`.bss`) presses up against `0x800000`; `scripts/build.sh` has a hard guard (`✗ BSS COLLISION` when BSS end >= `USER_BASE`). As of 2026-07-15 the ceiling is REACHED: the kernel `.bss` ends at `0x7fee58`, and `__kernel_end` page-aligns to `0x7ff000` -- the LAST page before `USER_BASE`, i.e. **zero pages of headroom**. Measured during TODO-22 s22: adding ~600 bytes of `.text` pushed `.rodata`/`.data`/`.bss` each up one page (they are page-aligned and chain), landing `__kernel_end` exactly on `0x800000` and tripping the guard; that section only shipped by consolidating redundant tests to claw back 609 bytes of `.text`. The next section that adds code WILL fail the guard. This is no longer a medium-term cleanup -- it blocks kernel growth now. **CONFIRMED 2026-07-15: the prediction landed.** TODO-22 §23 (live-environment adoption, ~4 KiB of new `.text` in `env.c`) tripped the guard on its first build -- BSS end exactly `0x800000` -- and is now deferred `[/]` on this TODO; a clean HEAD build immediately before it passed, so the section's own code was the entire delta. §23 is the first section this TODO has actually stalled, and every kernel section behind it is in the same position: this TODO is now the critical path for the kernel queue, not a parallel track. Per-process page tables already exist (`01-boot-platform/TODO-10 §8`: each task has its own PML4, CR3 switches on context switch), but the kernel itself is still mapped low and shared into every address space, so per-process isolation does not relieve the low-memory contention. SMEP/SMAP are blocked because the boot PML4 carries the User bit on all kernel 2 MiB pages.
 
 > [!WARNING]
-> **Foundational -- riskiest paging change in the system.** It touches the linker, `entry.asm`, boot page-table bring-up, descriptor tables, the bootloader handoff ABI, and the per-process memory model. §1 MUST pass `codex-design-review` before §2 starts. Sequence the sections strictly; each must be independently bootable on KVM/TCG before the next begins, or it is not done.
+> **Foundational -- riskiest paging change in the system.** It touches the linker, the early bring-up path (site pinned by §1; there is no `entry.asm` today), boot page-table construction, descriptor tables, the bootloader handoff ABI, the PMM's physical bounds, and the per-process memory model. §1 MUST pass `codex-design-review` before §2 starts. Sequence the sections strictly; each must be independently bootable on KVM/TCG before the next begins, or it is not done.
 
 > [!IMPORTANT]
 > **Runner autonomy + bare-metal sign-off policy (applies to EVERY section below).** The overnight runner DOES implement this TODO autonomously. For each section: implement it, then **verify on QEMU KVM + TCG** (`scripts/test-smoke.sh` boots to `C:\>` + the relevant unit tests pass). That KVM/TCG-green result IS the runner's "Verified" -- mark the section `[x]` with the Verified (KVM/TCG) + Quality-reviewed stamps and advance. **Bare-metal verification is a DEFERRED human sign-off, NOT an implementation prerequisite.** Wherever a section's Test checkpoint says "bare metal", that is the deferred sign-off: file it as a one-line item in [`overnight-todo.md`](../../overnight-todo.md) under "Waiting on a human answer" (e.g. "TODO-33 §3 higher-half bring-up: bare-metal SB-chain + early-paging sign-off") and continue -- do not block, defer, or stop the section on the absence of bare metal. **Risk accepted by the operator (2026-06-21):** a real-hardware-only paging bug may pass KVM/TCG and ship as green until the deferred bare-metal pass; the per-section sign-off items are the backstop. If a section cannot reach KVM/TCG-green (not merely bare-metal-unverified), THAT is a real blocker -- defer it `[/]` + Deferred + XREF as usual.
@@ -45,16 +45,16 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                             | Depends On     | Status |
-| --- | :---: | ------------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Memory-map design + canonical layout decision           | --             |  [ ]   |
-| 💎   |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1             |  [ ]   |
-| 💎   |   3   | Higher-half bring-up + direct map (site pinned by §1)   | §1, §2         |  [ ]   |
-| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3             |  [ ]   |
+| ⭐   | Order | Deliverable                                             | Depends On         | Status |
+| --- | :---: | ------------------------------------------------------- | ------------------ | :----: |
+| 💎   |   1   | Memory-map design + canonical layout decision           | --                 |  [ ]   |
+| 💎   |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1                 |  [ ]   |
+| 💎   |   3   | Higher-half bring-up + direct map (site pinned by §1)   | §1, §2             |  [ ]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                 |  [ ]   |
 | 💎   |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §1, §3, D01 T01 §8 |  [ ]   |
-| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8 |  [ ]   |
-| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6             |  [ ]   |
-| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3         |  [ ]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8     |  [ ]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                 |  [ ]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3             |  [ ]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -219,18 +219,18 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 
 ## OS Comparison
 
-| ⭐   | Feature                           | 🪟 Win11                 | 🐧 Linux                         | 🚀 Impossible OS                              |
-| --- | --------------------------------- | ----------------------- | ------------------------------- | -------------------------------------------- |
-| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+ | ✅ `0xffffffff80000000` (-2 GiB) | ⬜ Planned -- §1-§3 (now low `0x100000`)      |
-| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split          | ✅ 48-bit split                  | ⬜ Planned -- §1, §7                          |
-| 💎   | Per-process address space         | ✅ per-process           | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
-| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow            | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)               |
-| 💎   | KASLR                             | ✅ kernel ASLR           | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)              |
-| 💎   | SMEP / SMAP clean split           | ✅ enforced              | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)               |
-| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow       | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)               |
-| 💎   | No hardcoded user ceiling         | ✅ no low ceiling        | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                      |
-| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported         | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)            |
-| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest   | ⬜ §1 `memmap.h` + `_Static_assert` gate      |
+| ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                              |
+| --- | --------------------------------- | ------------------------ | ------------------------------- | -------------------------------------------- |
+| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⬜ Planned -- §1-§3 (now low `0x100000`)      |
+| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⬜ Planned -- §1, §7                          |
+| 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
+| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)               |
+| 💎   | KASLR                             | ✅ kernel ASLR            | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)              |
+| 💎   | SMEP / SMAP clean split           | ✅ enforced               | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)               |
+| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)               |
+| 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                      |
+| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)            |
+| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ⬜ §1 `memmap.h` + `_Static_assert` gate      |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.
