@@ -77,7 +77,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
 | 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
 | 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
-| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [x]   |
+| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
 | 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [ ]   |
 | ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [ ]   |
 | 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [ ]   |
@@ -231,6 +231,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
   - `task_exec` frame builder reads `task->argv`, pushes argv (16-byte `&argc` alignment), FAILS the exec on unfit/OOM (never silently diverges from the PEB); `crt0` loads `argc`/`argv` into RDI/RSI for `main`
 - [x] `argv_to_cmdline(argc, argv, out, max)` **encode** (Windows quoting rules, `src/kernel/env.c`) wired into the PEB `CommandLine` builder (bounded to the RTLPP page) so `GetCommandLineW()` (§6) reflects full argv; decode + round-trip owned by §15
 - [ ] Follow-up: make SYS_EXEC argv/env commit transactional -- stage `task_set_argv`/`env_adopt_block` inside `task_exec` at its no-return point (after `exec_load_fmt`) so a loader failure leaves old argv/env intact; terminate on post-commit OOM
+- [ ] Follow-up: give `argv_to_cmdline` a Windows program-name encoder for `argv[0]` (today it over-escapes argv[0], so an embedded-quote argv[0] does not round-trip through §15's special argv[0] decode) -> XREF `02-kernel-core/TODO-22 §15`
 
 - [x] Commit: `"kernel/env: argv array in task, shell tokenizer, exec argument handoff"`
 
@@ -275,7 +276,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-13 | commit `ec1df5dd` | 3/3 items | build OK | tests 1343/1343 PASS, smoke PASS (boot 3.18s)
 > **Accepted:** [C] range-only `ProbeForWrite`/`ProbeForRead` + non-fault-recoverable `copy_to_user`/`copy_from_user` is a kernel-crash / kernel-write exposure for the ring-3 path (systemic to every Probe + `copy_*_user` syscall, incl. the reviewed `NtQueryCurrentDirectory`; not new in this class). -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 378) -- re-enters when fault-recoverable `try_copy_*_user` lands.
 > **Accepted:** [M] name/value size limits are enforced in UTF-8 BYTES (`ENV_NAME_MAX`/`ENV_VALUE_MAX`, matching the UTF-8 storage layer), so a UTF-16 input within the Windows CHARACTER limit but over the byte cap is cleanly rejected (`STATUS_NAME_TOO_LONG`), not corrupted. -> XREF: §10 (item: "reconcile UTF-16 character-count limits with UTF-8 storage byte caps").
-> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 278)
+> **Accepted:** [H] aggregate 1 MiB per-process env quota not enforced; §5 makes it user-reachable via `NtSetEnvironmentVariable` (env is already bounded to ~16 MiB/process by `ENV_MAX_ENTRIES`, so not unbounded) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §10 (item: "enforce a 1 MiB per-process sanity cap" at line 279)
 > **Accepted:** [M] user-reachable env syscalls add a per-call caller to the unlocked `pmm_alloc_contiguous` for values > 4 KiB (mitigated: query/set now size to the value, so only genuinely-large values hit PMM) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md` §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Accepted:** [L] user-mode `ProbeForWrite`/`copy_*_user` branches are unit-tested only via KernelMode `ssdt_dispatch` (user pages are awkward in-kernel) -> XREF: `02-kernel-core/TODO-22-environment-variables.md` §6 (item: "`GetEnvironmentVariableW` ... calls `NtQueryEnvironmentVariable` directly")
 > **Quality reviewed:** 2026-07-13 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
@@ -545,18 +546,19 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §14 owns SearchPath ordering; leg-1 (app-load dir) needs a kernel-owned image path owned by `TODO-21 §2`; PATH+PATHEXT shell iteration stays `shell_find_command` (§7).
 > **Verified:** 2026-07-15 | commit `2953e5ce` | 4/7 items | build OK | tests 1804/1804 PASS
 > **Accepted:** [H] SearchPathW non-ASCII CWD leg limited by the ASCII-only NT-path/cwd narrowing (`nt_process.c`) -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §1` (item: "Non-ASCII CWD: NtSetCurrentDirectory narrows..." at line 97)
-> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 548)
-> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 549)
+> **Deferred:** [H] `sp_probe` fails open on a trusted-leg VFS I/O/OOM error (needs `vfs_stat` tri-state) -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "`sp_probe` fails open on a trusted-leg VFS..." at line 549)
+> **Deferred:** [M] install-path consumers (`registry.c` windir, bootstrap PATH) not composed from the constants -> XREF: `02-kernel-core/TODO-22-environment-variables.md §14` (item: "Compose all install-path consumers..." at line 550)
 > **Quality reviewed:** 2026-07-15 | Codex 14x (adversarial, consistency, perf, re-adversarial) | 2H+7M fixed, 2H+1M deferred/accepted, 1M rejected | scope: kernel-code-quality
 
 ---
 
 ## 15. CommandLineToArgvW Win32 API
 
-- [x] `CommandLineToArgvW(caller, lpCmdLine, pNumArgs)` -- shell32 API in `src/kernel/env.c`, the exact inverse of §4's `argv_to_cmdline`; a shared macro-generated parser body serves both a UTF-8 core (`cmdline_to_argv`) and the wide W form:
-  - Backslash/quote rules match Windows exactly: 2n backslashes + `"` → n backslashes + toggle "in quotes"; 2n+1 → n backslashes + literal `"`; a `"` inside quotes immediately followed by another `"` is one literal `"` (stays in quotes); backslashes not before `"` are verbatim
+- [x] `CommandLineToArgvW(caller, lpCmdLine, pNumArgs)` -- kernel primitive in `src/kernel/env.c` (behind the future shell32 export); inverse of §4's `argv_to_cmdline` for argv[1+]:
+  - Backslash/quote rules match Windows exactly: 2n backslashes + `"` → n backslashes + toggle "in quotes"; 2n+1 → n backslashes + literal `"`; a `"` inside quotes immediately followed by another `"` emits one literal `"` and CLOSES the quoted region (modulo-3 rule); backslashes not before `"` are verbatim
   - Outside quotes, whitespace (space/tab) ends the argument; inside quotes it is kept
-  - `argv[0]` special parse: leading `"` → up to the closing `"`; else up to the first whitespace (backslashes literal)
+  - `argv[0]` special parse: leading `"` → up to the closing `"`; else up to the first whitespace (backslashes literal) -- NOT a general inverse (§4 follow-up owns a program-name encoder)
+  - A shared macro parser body serves both a UTF-8 core (`cmdline_to_argv`) and the wide W form
   - The W form parses UTF-16 code units DIRECTLY (all syntax chars are ASCII, so every other WCHAR is preserved verbatim -- no lossy UTF-16↔UTF-8 transcode); WCHAR cap `CMDL_ARGV_MAX_WCHARS`, byte cap `CMDL_ARGV_MAX_BYTES` for the core
   - Returns one self-describing block ({magic,total} header + `(argc+1)` NUL-terminated pointer array + strings); `*pNumArgs` set; free the whole block with `cmdline_free_argv` (this kernel has no `LocalAlloc` size bookkeeping)
 - [x] Edge case: empty string → `*pNumArgs = 1`, `argv[0]` = caller module identity (`caller->name`, widened for the W form), NOT `""`; full kernel-owned ImagePathName deferred with SearchPathW (`env_searchpath.h`)
@@ -567,14 +569,20 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 **Test checkpoint:** `CommandLineToArgvW` quote rules match Windows samples. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1841 suites, 0 failures, 0 leaked (8 `test_env_cmdline_*` cases: quotes, 2n+1 backslash, round-trip, empty→module-path core+W, NULL, wide lone-surrogate verbatim, wide quotes, PMM allocator crossover)
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 1860 suites, 0 failures, 0 leaked (9 `test_env_cmdline_*` cases: quotes, 2n+1 backslash, round-trip, empty→module-path core+W, NULL + NULL-pNumArgs, wide lone-surrogate verbatim, wide quotes, consecutive-quote modulo-3, PMM allocator crossover)
 
 > **Notes:**
-> - **What shipped** -- `cmdline_to_argv` / `CommandLineToArgvW` / `cmdline_free_argv` in `src/kernel/env.c`: one macro-generated backslash/quote parser over `char`/`uint16_t`, single `{magic,total}`-header block; 8 `test_env.c` cases.
+> - **What shipped** -- `cmdline_to_argv` / `CommandLineToArgvW` / `cmdline_free_argv` in `src/kernel/env.c`: one macro-generated backslash/quote parser over `char`/`uint16_t`, single `{magic,total}`-header block; 9 `test_env.c` cases.
 > - **How it runs** -- plain kernel functions taking an explicit `struct task *caller` (like SearchPathW), NOT SSDT syscalls and NOT `pe.c` exports; unit-testable against a fixture task; `caller->name` read lock-free (stable field).
-> - **Design review adoption** -- the W form parses UTF-16 units directly instead of transcoding through UTF-8 (a transcode mutates lone surrogates and mis-caps multibyte scripts); adoption detail in the commit message.
+> - **Safety design** -- W form parses UTF-16 directly (no lossy transcode); input snapshotted into kernel memory so both parse passes consume the SAME bytes (no pass-divergence overrun); caller must keep the command line valid + NUL-terminated for the call, as Win32 requires.
 > - **Canonical doc** -- the `include/kernel/env.h` contract block above `cmdline_to_argv`.
-> - **Scope boundary** -- §4 owns the `argv_to_cmdline` encoder; §15 owns decode + the round-trip test; the kernel-owned ImagePathName for the empty-cmdline argv[0] is owned by SearchPathW (`env_searchpath.h`).
+> - **Scope boundary** -- kernel primitive only; the user-callable shell32 export + LocalFree-compatible stub are deferred (owned by TODO-C / TODO-12-02); §4 owns the `argv_to_cmdline` encoder; the empty-cmdline argv[0] image path is owned by SearchPathW.
+> **Verified:** 2026-07-15 | commit `1d3ba8f4` | 4/4 items | build OK | tests 1860/1860 PASS | [/] Win32 export deferred
+> **Accepted:** [H] not a user-callable shell32 API -- kernel primitive only (extra `caller` param, `cmdline_free_argv` not `LocalFree`), like SearchPathW §14 -> XREF: 10-platform-services/TODO-C §"Tier 1" (item: "`CommandLineToArgvW`" at line 68)
+> **Accepted:** [H] LocalAlloc/LocalFree-compatible user Win32 stub not implemented -> XREF: 12-user-platform-sdk/TODO-02 §6 (item: "`CommandLineToArgvW(lpCmdLine, pNumArgs)` Win32 stub" at line 206)
+> **Accepted:** [M] `argv_to_cmdline` is not a general inverse for a special `argv[0]` (encoder over-escapes the program name) -> XREF: 02-kernel-core/TODO-22 §4 (item: "give `argv_to_cmdline` a Windows program-name encoder for `argv[0]`" at line 234)
+> **Accepted:** [M] blocks > 4 KiB ride `pmm_alloc_contiguous`, which mutates the frame bitmap unsynchronized (pre-existing exposure, not new to §15) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "PMM bitmap SMP locking" at line 103)
+> **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+6M fixed, 4M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -687,7 +695,7 @@ Real Win11 resolves env access entirely in user-mode via ntdll `Rtl*Environment*
 | 💎   | ExpandForUser              | ✅ userenv             | ❌ none               | ⚠️ §13 NULL token    |
 | 💎   | SearchPathW                | ✅ kernel32            | ⚠️ execvp libc       | ✅ env_searchpath.c   |
 | 💎   | SetSearchPathMode          | ✅ kernel32            | ❌ N/A                | ✅ safe-search CAS    |
-| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ✅ §15 direct UTF-16  |
+| 💎   | CmdLineToArgvW             | ✅ shell32             | ❌ wordexp diff       | ⚠️ §15 kernel prim    |
 | 💎   | Elevated env strip         | ✅ restricted          | ✅ AT_SECURE          | ⬜ §16                |
 | ⭐   | App Paths                  | ✅ HKLM App Paths      | ❌ none               | ⬜ §17                |
 | 💎   | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%   | ⚠️ $PWD/$?/$RANDOM   | ⬜ §18                |

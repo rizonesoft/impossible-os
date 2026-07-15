@@ -2867,6 +2867,13 @@ static void test_env_cmdline_null(void)
     TEST_ASSERT(CommandLineToArgvW((struct task *)0, (const uint16_t *)0, &n)
                 == (uint16_t **)0, "NULL wide cmdline -> NULL");
     TEST_ASSERT_EQ(n, 0, "NULL wide cmdline zeroes the count");
+    /* Windows requires pNumArgs: a valid command line with a NULL count returns
+     * NULL (not an allocated, un-sizable vector). */
+    {
+        static const uint16_t cmd[] = { 'a', ' ', 'b', 0 };
+        TEST_ASSERT(CommandLineToArgvW((struct task *)0, cmd, (int *)0)
+                    == (uint16_t **)0, "NULL pNumArgs with a valid cmdline -> NULL");
+    }
 }
 
 static void test_env_cmdline_wide_verbatim(void)
@@ -2919,6 +2926,28 @@ static void test_env_cmdline_quote_runs(void)
     TEST_ASSERT(argv != (char **)0, "in-quotes literal decodes");
     TEST_ASSERT_EQ(argc, 2, "one argument");
     TEST_ASSERT(env_streq(argv[1], "a\"b"), "\"\" inside quotes is a literal quote");
+    cmdline_free_argv(argv);
+
+    /* Mid-argument quote run: `exe "two"" next` -> exe, two", next (the ""
+     * closes the quoted region, so the following space delimits -- Windows
+     * modulo-3 conformance, not the "stay in quotes" merge). */
+    argv = cmdline_to_argv((struct task *)0, "exe \"two\"\" next", &argc);
+    TEST_ASSERT(argv != (char **)0, "mid-argument quote run decodes");
+    TEST_ASSERT_EQ(argc, 3, "\"\" closes quotes -> three arguments, not two");
+    TEST_ASSERT(env_streq(argv[0], "exe"), "argv[0] == exe");
+    TEST_ASSERT(env_streq(argv[1], "two\""), "argv[1] == two + literal quote");
+    TEST_ASSERT(env_streq(argv[2], "next"), "argv[2] == next (not merged)");
+    cmdline_free_argv(argv);
+
+    /* argv[0] special parse: an argv[0] not opening with '"' runs to the first
+     * whitespace with embedded quotes taken LITERALLY (Windows program-name
+     * rule), so it is NOT a general inverse of argv_to_cmdline -- documents the
+     * accepted asymmetry (the program-name encoder follow-up owns closing it). */
+    argv = cmdline_to_argv((struct task *)0, "exe\"x\" foo", &argc);
+    TEST_ASSERT(argv != (char **)0, "embedded-quote argv[0] decodes");
+    TEST_ASSERT_EQ(argc, 2, "argv[0] runs to whitespace, then foo");
+    TEST_ASSERT(env_streq(argv[0], "exe\"x\""), "argv[0] keeps embedded quotes literal");
+    TEST_ASSERT(env_streq(argv[1], "foo"), "argv[1] == foo");
     cmdline_free_argv(argv);
 }
 

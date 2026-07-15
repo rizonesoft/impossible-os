@@ -157,26 +157,36 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count);
 uint32_t argv_to_cmdline(int argc, const char *const *argv, char *out, uint32_t max);
 
 /* --- CommandLineToArgvW command-line decode (TODO-22 s15) ------------------
- * The exact inverse of argv_to_cmdline: parse a Windows command line into an
- * argv vector. Two parallel forms share ONE macro-generated parser body; the
+ * Parse a Windows command line into an argv vector -- the inverse of
+ * argv_to_cmdline for argv[1+] (see the argv[0] NOTE below). Two parallel forms
+ * share ONE macro-generated parser body; the
  * W form parses UTF-16 code units DIRECTLY (all syntax characters -- space,
  * tab, '"', '\\' -- are ASCII, so every other WCHAR is preserved verbatim,
- * unlike a UTF-16<->UTF-8 transcode that would mutate lone surrogates). Parse
- * rules match Windows exactly: argv[0] is quote-delimited if it begins with '"'
- * else whitespace-delimited (backslashes literal); argv[1+] run the
- * backslash/quote state machine (2n backslashes + '"' -> n backslashes + toggle
- * "in quotes"; 2n+1 + '"' -> n backslashes + a literal '"'; a '"' inside quotes
- * immediately followed by another '"' is a single literal '"' that stays in
- * quotes; backslashes not before a '"' are literal; unquoted whitespace ends the
- * argument).
+ * unlike a UTF-16<->UTF-8 transcode that would mutate lone surrogates). argv[1+]
+ * follow the Windows backslash/quote rules: 2n backslashes + '"' -> n backslashes
+ * + toggle "in quotes"; 2n+1 + '"' -> n backslashes + a literal '"'; a '"' inside
+ * quotes immediately followed by another '"' is a single literal '"' that CLOSES
+ * the quoted region (the modulo-3 consecutive-quote rule); backslashes not before
+ * a '"' are literal; unquoted whitespace ends the argument. argv[0] uses the
+ * Windows program-name rule (quote-delimited if it opens with '"', else
+ * whitespace-delimited, backslashes literal). NOTE: this is the exact inverse of
+ * argv_to_cmdline for argv[1+]; argv[0] is NOT a general inverse because Windows
+ * parses the program name specially and the generic encoder does not (an argv[0]
+ * carrying quotes/backslashes round-trips imperfectly -- see s15 follow-up / s4).
  *
  * Each returns ONE self-describing block: a hidden {magic,total_bytes} header
  * precedes a (argc+1) NUL-terminated element-pointer array (last entry NULL),
  * followed by the argument strings. The RETURNED pointer is the pointer array
  * (so it indexes like argv[]); free the whole block with cmdline_free_argv()
  * (Win32 callers LocalFree the CommandLineToArgvW result -- this kernel has no
- * LocalAlloc bookkeeping, hence the header). Pure and reentrant: no shared
- * mutable state, only a lock-free read of the caller's stable name field. */
+ * LocalAlloc bookkeeping, hence the header). The command line is SNAPSHOTTED into
+ * kernel memory so BOTH parse passes consume the same bytes (a concurrent write
+ * cannot make pass 2 diverge from pass 1 and overrun the block); the caller must
+ * still keep the command line valid and NUL-terminated for the duration of the
+ * call, exactly as Win32 requires. Reentrant for the kmalloc path (blocks <= 4 KiB); a
+ * block over 4 KiB rides pmm_alloc_contiguous, which shares the pre-existing
+ * unlocked-PMM-bitmap exposure (owner: 03-memory-concurrency/TODO-03), not a new
+ * hazard. No shared mutable state beyond that; caller->name is read lock-free. */
 
 /* Caps on total argument-string units (bounds the single-block allocation and
  * keeps the sizing arithmetic well under UINT32_MAX). The W cap is in WCHARs
