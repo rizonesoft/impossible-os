@@ -43,7 +43,30 @@ if [ -z "${TARGET:-}" ]; then
   done
 fi
 
-echo "monitoring $TARGET"
-# -F follows by name: survives the latest.log symlink being repointed to a new
-# run-*.log on each watchdog relaunch.
-exec tail -n "$LINES" -F "$TARGET"
+# Rollover-aware follow. `tail -F latest.log` does NOT survive rollover on GNU
+# coreutils 9.x: -F follows the symlink's RESOLVED inode and does not re-resolve
+# when the symlink is repointed to the new run-*.log (empirically verified on
+# coreutils 9.4). Instead, tail the resolved file directly and poll the symlink;
+# when it repoints (watchdog relaunch / rollover), kill the old tail and re-follow
+# the new target, printing a marker so the transition is visible.
+echo "monitoring $(readlink -f "$LATEST" 2>/dev/null || echo "$TARGET") (rollover-aware; Ctrl-C to stop)"
+prev=""
+cleanup() { [ -n "${tp:-}" ] && kill "$tp" 2>/dev/null; exit 0; }
+trap cleanup INT TERM
+while true; do
+  tgt="$(readlink -f "$LATEST" 2>/dev/null || true)"
+  [ -z "$tgt" ] || [ ! -e "$tgt" ] && { tgt="$(resolve_target)"; }
+  if [ -z "${tgt:-}" ] || [ ! -e "$tgt" ]; then sleep 1; continue; fi
+  if [ "$tgt" != "$prev" ]; then
+    [ -n "$prev" ] && printf '\n=== rollover -> %s ===\n' "$(basename "$tgt")"
+    prev="$tgt"
+    tail -n "$LINES" -f "$tgt" &
+    tp=$!
+  fi
+  # Poll until the symlink repoints or the current tail dies, then re-follow.
+  while [ "$(readlink -f "$LATEST" 2>/dev/null || true)" = "$tgt" ]; do
+    kill -0 "$tp" 2>/dev/null || break
+    sleep 2
+  done
+  kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null || true
+done
