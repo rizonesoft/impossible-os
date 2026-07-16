@@ -96,7 +96,34 @@ def test_lifecycle_routing_block_and_override():
         assert r.returncode == 0
 
 
+def test_self_teardown_word_boundary():
+    # _is_self_teardown must not let the substring "kill " alias inside the
+    # word "skill ": a headless Bash command mentioning a skill and a .claude/
+    # path was blocked 4x live (2026-07-16), yet the real pkill/killall/kill
+    # teardown must stay blocked. Both directions pinned here.
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        _guard(fx, "start", "2026-07-16")
+
+        def bash(cmd):
+            return _guard(fx, "pretool", env_extra=HEADLESS,
+                          stdin=json.dumps({"tool_name": "Bash",
+                                            "tool_input": {"command": cmd}}))
+
+        # "skill " + a .claude/ path is innocuous -> allowed even headless.
+        r = bash('echo "the skill still documents X" && ls .claude/hooks')
+        assert r.returncode == 0, r.stderr
+        r = bash('git commit -m "docs: fix the sequencer skill doctrine" .claude/skills/x')
+        assert r.returncode == 0, r.stderr
+
+        # Real teardown of the headless claude must still be blocked.
+        for cmd in ("pkill -f claude", "killall claude", "kill $(pgrep claude)"):
+            r = bash(cmd)
+            assert r.returncode == 2 and "SEQ-TEARDOWN" in r.stderr, (cmd, r.stderr)
+
+
 if __name__ == "__main__":
     test_rollover_refused_on_dirty_or_unpushed()
     test_lifecycle_routing_block_and_override()
-    print("PASS: phase-guard rollover/lifecycle")
+    test_self_teardown_word_boundary()
+    print("PASS: phase-guard rollover/lifecycle/self-teardown")

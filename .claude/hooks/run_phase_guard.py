@@ -148,7 +148,7 @@ def _is_self_teardown(cmd):
     # Stopping/disabling the systemd units or killing the headless claude.
     if "systemctl" in c and any(op in c for op in ("stop", "disable", "kill")) and "overnight" in c:
         return True
-    if any(k in c for k in ("pkill", "killall", "kill ")) and "claude" in c:
+    if re.search(r"\b(pkill|killall|kill)\b", c) and "claude" in c:
         return True
     return False
 
