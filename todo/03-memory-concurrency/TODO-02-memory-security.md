@@ -43,11 +43,11 @@ title: "TODO-02 -- Memory Security Hardening"
 | ⭐   | Order | Deliverable                                  | Depends On                                                     | Status |
 | --- | :---: | -------------------------------------------- | -------------------------------------------------------------- | :----: |
 | 💎   |   1   | §5 NX/DEP -- data mapping audit + enforce    | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, TODO-01 §2 |  [ ]   |
-| 💎   |   2   | §3 SMEP -- enable + test coverage            | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2         |  [ ]   |
-| 💎   |   3   | §4 SMAP + `copy_from_user` / `copy_to_user`  | §3 (CR4 baseline), D02 T11 §3                                  |  [ ]   |
+| 💎   |   2   | §3 SMEP -- enable + test coverage            | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2         |  [~]   |
+| 💎   |   3   | §4 SMAP + `copy_from_user` / `copy_to_user`  | §3 (CR4 baseline), D02 T11 §3                                  |  [~]   |
 | ⭐   |   4   | §1 User-space ASLR (mandatory for all procs) | TODO-01 §3 demand paging                                       |  [ ]   |
-| 💎   |   5   | §2 KASLR -- bootloader offset + kernel reloc | --                                                             |  [ ]   |
-| 💎   |   6   | §6 KPTI basic -- per-mode page table split   | §2, VMM page table work                                        |  [ ]   |
+| 💎   |   5   | §2 KASLR -- bootloader offset + kernel reloc | --                                                             |  [~]   |
+| 💎   |   6   | §6 KPTI basic -- per-mode page table split   | §2, VMM page table work                                        |  [~]   |
 | 💎   |   7   | §7 CET shadow stack stub                     | §3, §4 (CR4 baseline)                                          |  [ ]   |
 | ⭐   |   8   | §8 Security layout report                    | §1, §2                                                         |  [ ]   |
 
@@ -76,6 +76,8 @@ Randomize stack, heap, and mmap base addresses for every user process at launch 
 
 ## 2. KASLR -- Kernel Address Space Randomization `[Opus]`
 
+> **Superseded by TODO-10 §14** (KASLR: RDRAND Kernel Load Address). Kernel-security-hardening is the live owner of the SMEP/SMAP/KASLR/KPTI capability set (it holds the shipped code and review stamps; forked-ownership resolved 2026-07-16). This section is retained as the memory-subsystem view only; do not implement it here -- track KASLR under TODO-10 §14.
+
 Randomize the kernel's virtual load base at each boot so a kernel pointer leak cannot predict layout across reboots. The bootloader picks a 2 MiB-aligned physical offset via RDRAND and passes it through `boot_info`; the kernel adjusts its page table base accordingly.
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`, `src/kernel/mm/vmm.c`
@@ -94,6 +96,8 @@ Randomize the kernel's virtual load base at each boot so a kernel pointer leak c
 
 ## 3. SMEP `[Opus]`
 
+> **Superseded by TODO-10 §2** (SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers). Kernel-security-hardening owns SMEP/SMAP enablement (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §2.
+
 Supervisor Mode Execution Prevention: the CPU faults if the kernel attempts to execute a page with `U/S=1` (user-accessible), blocking ret2user exploit chains.
 
 **Files:** `src/kernel/main/boot_hw.c`, `include/kernel/cpuid.h`
@@ -109,6 +113,8 @@ Supervisor Mode Execution Prevention: the CPU faults if the kernel attempts to e
 - [ ] Commit: `"mm: SMEP -- set CR4.SMEP, boot log, AP parity"`
 
 ## 4. SMAP + `copy_from_user` / `copy_to_user` `[Opus]`
+
+> **Superseded by TODO-10 §2** (SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers). Kernel-security-hardening owns SMAP enablement and the `copy_from_user`/`copy_to_user` wrappers (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §2.
 
 Supervisor Mode Access Prevention: the CPU faults on any kernel access to a user-space page unless the kernel explicitly sets `RFLAGS.AC` (`stac`/`clac`). This forces all legitimate user-data reads and writes to go through audited wrappers.
 
@@ -146,6 +152,8 @@ Confirm `EFER.NXE` is set and audit every kernel and user data mapping to ensure
 - [ ] Commit: `"mm: NX/DEP audit -- confirm EFER.NXE, NX on all data pages"`
 
 ## 6. KPTI Basic `[Opus]`
+
+> **Superseded by TODO-10 §3-§6** (KPTI trampoline page, SYSCALL CR3 swap, IDT CR3 swap, user CR3 allocation). Kernel-security-hardening is the live owner of KPTI and holds `src/kernel/kpti_trampoline.asm` (forked-ownership resolved 2026-07-16); do not implement it here -- track under TODO-10 §3-§6.
 
 Maintain a minimal user-visible page table that maps only the syscall entry trampoline, severing the kernel virtual address space from user-mode speculation -- the kernel-side mitigation for Meltdown-class side-channel leaks.
 

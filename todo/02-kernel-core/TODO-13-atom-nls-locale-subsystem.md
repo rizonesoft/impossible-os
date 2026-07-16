@@ -71,7 +71,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nt_unicode.h`](../../include/kernel/nt/nt_unicode.h).
 > - **Scope boundary:** UTF-16 <-> UTF-8/code-page transcoding is §5, not §1; §1 provides validated UTF-16 + an ASCII-range narrow bridge only.
 > **Verified:** 2026-07-03 | commit `0584317f` | 4/4 items | build OK | tests 13719 kernel + 16 user PASS | smoke PASS
-> **Accepted:** [M] `copy_from_user` copies byte-at-a-time (kernel-wide implementation in `cpu_security.c`, not §1 code -- §1 issues one `copy_from_user` for Length bytes) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Bulk-copy path in `copy_from_user`/`copy_to_user`" at line 128)
+> **Accepted:** [M] `copy_from_user` copies byte-at-a-time (kernel-wide implementation in `cpu_security.c`, not §1 code -- §1 issues one `copy_from_user` for Length bytes) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Bulk-copy path in `copy_from_user`/`copy_to_user`" at line 134)
 > **Quality reviewed:** 2026-07-03 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) | 4H fixed (probe keyed to explicit prev_mode, `_pad` leak, encode capacity vs overstated MaximumLength, validate now probes Buffer), 1M accepted-XREF | scope: kernel-code-quality
 
 ---

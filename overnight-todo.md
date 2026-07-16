@@ -26,29 +26,22 @@ check-when-I-sit-down list. Add an item when:
 
 ## Waiting on a human answer
 
-### Forked ownership: SMEP/SMAP + KPTI + KASLR claimed by two TODOs
-
-Found during the higher-half-relocation gap audit (2026-07-15). Two TODOs plan
-the same capabilities with **no cross-reference in either direction**:
-
-- [Kernel Security Hardening](todo/02-kernel-core/TODO-10-kernel-security-hardening.md)
-  -- owns SMEP/SMAP CR4 activation (partial), the KPTI trampoline (shipped:
-  `src/kernel/kpti_trampoline.asm`, commit ad2d05e2), KPTI SYSCALL/IDT/user-CR3
-  (partial), PCID TLB tagging (partial), and KASLR (partial). Its blocked
-  sections carry Deferred stamps pointing at higher-half relocation.
-- [Memory Security Hardening](todo/03-memory-concurrency/TODO-02-memory-security.md)
-  -- plans SMEP, SMAP, KASLR, and KPTI as unstarted work, zero stamps, marked
-  `status: active`.
-
-The kernel-security TODO is demonstrably the live owner (it has the code and the
-stamps); the memory-security one reads as the stale duplicate. **The decision
-needed:** supersede the memory-security TODO's SMEP/SMAP/KASLR/KPTI sections in
-favor of the kernel-security TODO (leaving it to own user-space ASLR, NX/DEP,
-CET, and the security layout report), or the reverse. This is a cross-domain
-roadmap call touching two TODO files, so the runner did not make it
-unilaterally; the
-[higher-half relocation TODO](todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md)
-meanwhile cross-references both and names the kernel-security TODO as live.
+> **Resolved 2026-07-16 (operator decisions):**
+> - **Forked SMEP/SMAP/KASLR/KPTI ownership** ->
+>   [kernel-security-hardening](todo/02-kernel-core/TODO-10-kernel-security-hardening.md)
+>   is the sole owner (it holds the shipped code + stamps). The overlapping sections
+>   in [memory-security](todo/03-memory-concurrency/TODO-02-memory-security.md) (SMEP,
+>   SMAP, KASLR, KPTI) are superseded and marked `[~]` with `> **Superseded by**`
+>   notes; a reciprocal cross-reference was added in kernel-security-hardening.
+>   Memory-security retains user-space ASLR, NX/DEP, CET, and the security-layout report.
+> - **UKI SBAT incremental-rebuild bug** -> already fixed by commit `aa3c20db`
+>   (2026-06-21, approach A: distinct signed-output paths in `scripts/sign-efi.sh`,
+>   wired through the Makefile). The punch-list entry was stale; verified by a double
+>   `bash scripts/build.sh` here (both runs `=== BUILD OK ===` + `[sbat] OK`, signing
+>   active via `keys/MOK.{key,cer}`). The owning section in
+>   [uefi-hardening-secureboot](todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md)
+>   is stamped done; its two open follow-ups (bare-metal SB-chain acceptance, unify
+>   signed-artifact predicate) are deferred there with cross-references.
 
 ### Bare-metal sign-off: higher-half kernel relocation (per-section)
 
@@ -60,31 +53,9 @@ ordering), the framebuffer high handoff (real GOP), the per-process PML4 split,
 and the user-base move. The optional 5-level paging (LA57) section needs an
 Arrow Lake / Zen 5 host.
 
-### UKI SBAT incremental-rebuild bug (Secure Boot signing path)
-
-`bash scripts/build.sh` run twice without `clean` fails the second time at
-`[sbat] FATAL: cannot dump .sbat`. Root cause: the UKI pack step runs
-`objcopy --add-section` on `build/tools/BOOTX64.EFI`, which an incremental build
-leaves in the *signed* state from the prior build; objcopy corrupts the signed
-PE's section table so `.sbat` can no longer be dumped. Dormant unless Secure Boot
-signing is active (which is why dev/runner builds currently pass). Fully
-diagnosed and reproduced; human-gated (SB trust chain + bare-metal verification
-per CLAUDE.md Safety Gates). Tracked in
-`todo/01-boot-platform/TODO-02-uefi-hardening-secureboot.md`, section 18.
-
-- [ ] Decide the fix shape and record the rationale:
-      - (A) sign to a distinct path, keep `build/tools/BOOTX64.EFI` unsigned (most correct)
-      - (B) strip the signature from a temp stub copy (`sbattach --remove`) before packing
-      - (C) `rm` the stub + UKI before the link step to force an unsigned relink (smallest, defeats incremental caching)
-- [ ] Implement without changing what is signed, key material, or SB policy;
-      incremental output must byte-match the clean-build output.
-- [ ] Verify BOTH modes reach `=== BUILD OK ===` with `[sbat] OK`, and `sbverify`
-      passes for `BOOTX64.EFI` and `BOOTX64.UKI.efi`.
-- [ ] Verify the signed UKI boots and the SB chain validates on bare metal or a
-      Secure-Boot-enrolled VM (cannot be validated in WSL TCG/KVM).
-- [ ] Workaround until fixed:
-      `rm -f build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi` before a build
-      (or `bash scripts/build.sh clean`).
+> Acknowledged 2026-07-16 (operator): accepted as a standing gate. Nothing to
+> validate yet -- the named bring-up sections are unshipped (only the memory-map
+> design section has landed); this re-activates when they reach real hardware.
 
 ## Unblockable once the runner is stopped
 

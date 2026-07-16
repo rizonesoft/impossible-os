@@ -42,6 +42,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 - -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, §5`: Phase 0 activation order (§2) calls `cpu_efer_harden()`/`cpu_cr4_harden()` from this TODO; AP hardening (§5) replicates the same features on each AP via `ap_cpu_harden()`
 - -> XREF: `TODO-31-kernel-bulletproofing.md §10`: guard pages, split huge pages, and VM layout invariants; NX/SMEP/SMAP policy here must stay consistent with those checks
 - -> XREF: `TODO-09-x86-64-architecture.md §5`: UMIP and PKU (`CR4.UMIP`, `PKRU`) are scoped there; keep Spectre swapgs/`gs:` sequencing aligned with this TODO and T11 §4
+- -> XREF: `03-memory-concurrency/TODO-02-memory-security.md §2, §3, §4, §6`: forked-ownership resolved 2026-07-16 -- this TODO is the SOLE owner of SMEP/SMAP (§2 here), KPTI (§3-§6 here), and KASLR (§14 here). Those TODO-02 sections are superseded (marked `[~]` with `> **Superseded by**` notes); TODO-02 retains user-space ASLR, NX/DEP, CET, and the security-layout report.
 
 ---
 
