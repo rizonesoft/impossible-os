@@ -322,11 +322,27 @@ ${impossibility_table}
 *Last updated: ${commit_date} · commit \`${commit_hash}\`*
 EOF
 
+# Rewrite the README lines-of-code badge from the live core count, so the
+# README total is never hand-maintained or stale (it drifted to "84k+" while
+# the real count was 6x that). Marker-delimited + idempotent: the block between
+# COUNT-BADGE:START and COUNT-BADGE:END is regenerated in place.
+README_FILE="$ROOT/README.md"
+if [ -f "$README_FILE" ] && grep -q 'COUNT-BADGE:START' "$README_FILE"; then
+    loc_k=$(( core_total_lines / 1000 ))
+    badge_url="https://img.shields.io/badge/lines-${loc_k}k-blueviolet?style=flat-square"
+    awk -v url="$badge_url" '
+        /COUNT-BADGE:START/ { print; inblk=1; next }
+        /COUNT-BADGE:END/   { print "  <img src=\"" url "\" alt=\"Lines of Code\" />"; print; inblk=0; next }
+        inblk { next }
+        { print }
+    ' "$README_FILE" > "$README_FILE.tmp" && mv "$README_FILE.tmp" "$README_FILE"
+fi
+
 [ "${COUNT_ONLY:-}" = "1" ] && exit 0
 
-# Amend the commit to include the updated COUNT.md
+# Amend the commit to include the updated COUNT.md + README badge
 # Use SKIP_COUNT to prevent infinite recursion
-SKIP_COUNT=1 git add "$COUNT_FILE" 2>/dev/null
+SKIP_COUNT=1 git add "$COUNT_FILE" "$README_FILE" 2>/dev/null
 SKIP_COUNT=1 git commit --amend --no-edit --no-verify 2>/dev/null
 
 exit 0
