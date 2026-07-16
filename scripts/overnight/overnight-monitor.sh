@@ -13,7 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REPORT_DIR="$REPO_ROOT/.claude/overnight/reports"
+# OVERNIGHT_REPORT_DIR override exists for the rollover test harness; the run
+# itself always uses the default path.
+REPORT_DIR="${OVERNIGHT_REPORT_DIR:-$REPO_ROOT/.claude/overnight/reports}"
 LATEST="$REPORT_DIR/latest.log"
 LINES="${OVERNIGHT_MONITOR_LINES:-80}"
 WAIT=1

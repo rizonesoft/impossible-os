@@ -14,8 +14,10 @@
 # someone deliberately downgrades it here AFTER it has real test coverage.
 #
 # NOT eligible (kept flow-critical on purpose, even where a test exists):
-#   - arm / launch / watchdog lifecycle (overnight-arm/launch/monitor.sh,
+#   - arm / launch / watchdog lifecycle (overnight-arm.sh, overnight-launch.sh,
 #     pre-arm-check.sh, lifecycle-unblocked.sh, arm-sequencer.sh)
+#     [overnight-monitor.sh is NOT lifecycle: it is a read-only, operator-only
+#      log tailer never invoked by launch/watchdog/guard -- tiered below.]
 #   - the phase machine, triage, status brief, and every blocking gate hook
 #     (.claude/hooks/*) -- their failure mode is emergent/live
 #   - section-manifest.py (drives the SPLIT verdict -> live flow)
@@ -36,6 +38,10 @@ scripts/overnight/section-cost-report.py
 scripts/overnight/offload-report.py
 scripts/overnight/run-status.py
 scripts/overnight/run-outcome.py
+# Operator-only log tailer: read-only, never invoked by the run itself; a
+# breakage only blinds the operator, it cannot corrupt a section ship or
+# rollover. Backed by test_monitor_rollover.py.
+scripts/overnight/overnight-monitor.sh
 
 # Receipts / ledgers / typed evidence (pure data, test-backed)
 scripts/overnight/receipts.py
