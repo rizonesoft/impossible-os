@@ -31,7 +31,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 - [`scripts/build-eif.py`](../../scripts/build-eif.py) -- `USER_ELF_BASE = 0x800000`
 - [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) -- bootloader: loads kernel ELF, sets up identity map, hands off `boot_info`
 - [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) -- handoff ABI (pointers translated across the high-half switch; `BOOT_INFO_VERSION`)
-- [`src/boot/linker.ld`](../../src/boot/linker.ld) -- the kernel linker script (`. = 1M` load base, `ENTRY(kernel_main)`); §2 rebases its VMA
+- [`src/boot/linker.ld`](../../src/boot/linker.ld) -- the kernel linker script (`. = 1M` load base, `ENTRY(kernel_main)`); §3 rebases its VMA
 - **There is no `entry.asm`** -- the kernel has no assembly entry stub. `bootx64.c` resolves `kernel_main` from the ELF symbol table (`load_kernel()`, `:8520`) and `jump_to_kernel()` (`:10658`) calls it directly as a C function already in Long Mode; the kernel then reads its PML4 back from CR3 (`vmm.c:116`). The bootloader owns the only early page-table build (4 GiB identity map), so §1 must pin WHERE the high-half switch runs before §3 can name a file.
 - -> XREF: `01-boot-platform/TODO-10-bare-metal-hardening.md §8` -- per-process page tables (the base §6 builds on; STRUCTURAL dependency)
 - -> XREF: `01-boot-platform/TODO-01-boot-protocol-abi-handoff.md §8` -- boot protocol schema changelog (records the high-half handoff ABI change)
@@ -48,10 +48,10 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | ⭐   | Order | Deliverable                                             | Depends On         | Status |
 | --- | :---: | ------------------------------------------------------- | ------------------ | :----: |
 | 💎   |   1   | Memory-map design + canonical layout decision           | --                 |  [x]   |
-| 💎   |   2   | Linker VMA/LMA split (kernel high virtual base)         | §1                 |  [ ]   |
-| 💎   |   3   | Higher-half bring-up + direct map (bootloader site)     | §1, §2             |  [ ]   |
+| 💎   |   2   | Direct map + VMM walker conversion (kernel still low)   | §1                 |  [ ]   |
+| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)      | §1, §2             |  [ ]   |
 | 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                 |  [ ]   |
-| 💎   |   5   | Bootloader / `boot_info` / framebuffer high handoff     | §1, §3, D01 T01 §8 |  [ ]   |
+| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown   | §1, §3, D01 T01 §8 |  [ ]   |
 | 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8     |  [ ]   |
 | 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                 |  [ ]   |
 | ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3             |  [ ]   |
@@ -86,61 +86,74 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 > - Behavioral gate `tools/memmap-check/check.sh` (52 host checks, wired into `test-tooling.sh`): asserts cannot evaluate a static-inline call, and clang-19 does NOT diagnose the top-of-space wraparound even under `-Weverything` -- host gcc does.
 > - The SSOT claim is ENFORCED, not aspirational: `user_range.h` and `smp.h` now include `memmap.h` and assert their sub-ranges sit inside the canonical windows; both assert sets are mutation-tested.
 > - Canonical doc: [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md); CLAUDE.md Safety Gates carries the two binding rules (the relations are not interchangeable; never an exclusive image-window bound).
-> - Scope boundary: §1 owns the layout decision + constants; §2 the linker split, §3 bring-up + walker conversion + the `PT_PML4` binding, §4 AP-envelope retirement, §7 the `USER_BASE` retirement that unblocks `test_highhalf.c`.
+> - Scope boundary: §1 owns the layout decision + constants; §2 the direct map + walker conversion + the `PT_PML4` binding (all while the kernel still links low), §3 the linker split + high-half jump as one atomic unit, §4 AP-envelope retirement, §7 the `USER_BASE` retirement that unblocks `test_highhalf.c`.
+> - §2/§3 were resequenced 2026-07-16: the original §2 (linker split) could not ship alone -- it links high with nothing mapped there, so it does not boot, and the runner ships+pushes per section. The additive direct-map work was pulled ahead of the flip instead, which `vmm.c:1417-1419` already anticipated ("moves to `mm_phys_to_hhdm()` when the direct map lands"). Each section is now independently bootable, per this TODO's own sequencing rule.
 
 > **Verified:** 2026-07-15 | commit `99d70510` | 8/8 items | build OK | smoke PASS (KVM 3.23s) | tests 21408/21408 PASS | host gate 52/52
-> **Deferred:** [M] `PT_PML4` (`bootx64.c:10621`) is not bound to `MM_PML4_PHYS_LIMIT`; the AP's 32-bit CR3 load truncates a >4 GiB root silently (reason: needs bootloader-TU work) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §3 (item: "Bind `PT_PML4` (`bootx64.c:10621`) to `MM_PML4_PHYS_LIMIT`" at line 129)
+> **Deferred:** [M] `PT_PML4` (`bootx64.c:10621`) is not bound to `MM_PML4_PHYS_LIMIT`; the AP's 32-bit CR3 load truncates a >4 GiB root silently (reason: needs bootloader-TU work) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` with a compile-time assert" at line 109)
 > **Deferred:** [M] the in-kernel `test_highhalf.c` suite cannot ship -- it tripped the BSS guard with zero headroom (reason: the ceiling this TODO exists to retire) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Re-add `src/kernel/test/test_highhalf.c`" at line 200)
 > **Quality reviewed:** 2026-07-15 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 5H+8M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
-## 2. Linker VMA/LMA Split
+## 2. Direct Map + VMM Walker Conversion (kernel still low)
 
-Relink the kernel at the high virtual base while still loading at the physical address the bootloader places it at.
+Build the HHDM direct map and move every page-table walker onto it while the kernel still links and boots LOW. Purely ADDITIVE: it changes no address the kernel executes from, so it is independently bootable and shrinks §3 to the flip itself.
 
-- [ ] Set the kernel linker script VMA to `MM_KERNEL_VIRT_BASE`; keep LMA at the physical load address (`AT(...)`), so symbols resolve high but the image loads low.
-- [ ] Set the kernel LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`, 2 MiB) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
-- [ ] `-mcmodel=kernel` is ALREADY in `Makefile:25` -- no codegen flag change is needed; the VMA move keeps the same `R_X86_64_32S` relocs valid (they cover the top 2 GiB as well as the low range they resolve to today)
-- [ ] Update any tool that reads the kernel ELF (`scripts/build.sh` BSS check) to handle high VMA + low LMA. `load_kernel()` in `bootx64.c` needs NO change -- it already copies by `p_paddr` (`bootx64.c:8506`)
-- [ ] Export LMA-derived `__kernel_phys_start` / `__kernel_phys_end` from `linker.ld`: `pmm.c:173` does `kernel_end_phys = (uintptr_t)__kernel_end` and places the PMM bitmap there -- a high VMA turns that into a bogus physical address
-- [ ] Repoint PMM bitmap placement, the 1 MiB -> kernel-end reservation, and the overlap checks at the PHYSICAL bounds; reach the bitmap through the direct map. Test the exact reserved physical interval
-- [ ] Confirm `readelf -l` shows kernel `LOAD` at the high virtual base with the physical address preserved.
-- [ ] Commit: `"build: kernel linker VMA/LMA split -- high virtual base, low load address"`
-
-**Test checkpoint:** `bash scripts/build.sh clean` -> `=== BUILD OK ===`; `readelf -l build/kernel.exe` shows VirtAddr `KERNEL_VIRT_BASE`, PhysAddr at the load address. (Kernel does not boot yet -- §3 establishes the mapping.) Test on: WSL TCG (build only).
+> [!IMPORTANT]
+> **Why this precedes the linker split.** §1's own bring-up comment pins the order: `vmm.c:1417-1419` says the raw-physical CR3 takeover "moves to `mm_phys_to_hhdm()` when the direct map lands". The HHDM is a NEW window in an unused PML4 slot, so installing it does not move any address the kernel executes from. The kernel-IMAGE mapping is deliberately NOT here: pre-split the image's physical base is still `0x100000`, not `MM_KERNEL_PHYS_BASE` (`0x200000`), so mapping the image window belongs with the split that moves it (§3).
 
 > [!WARNING]
-> **Regression risk:** After this section the kernel links high but nothing maps it there yet, so it will NOT boot until §3 lands. §2 and §3 must ship together or §2 stays on a branch. Rollback: revert the linker VMA change to the identity base.
+> **"Additive" does NOT mean low-risk -- design review (2026-07-16) found three ways this section breaks boot, and the items above encode the fixes.** (1) `kernel_pml4` is NOT pointer-only: `vmm_get_kernel_cr3()` (`vmm.c:1051`) returns it as a PHYSICAL address per its `vmm.h:146` contract and `task.c:1158` loads it straight into CR3, so a blanket HHDM conversion triple-faults at the next kernel-task switch -- the root MUST stay split phys-vs-walk. (2) NX HHDM leaves are traversed long before `cpu_enable_nx()` (`boot_hw.c:493` vs `:612`; `bootx64.c` never touches EFER), and with NXE=0 bit 63 is RESERVED. (3) A fixed sub-`0x80000` arena cannot express the 64 TiB sparse HHDM. This is the exact "the two relations are NOT interchangeable" hazard `memmap.h` exists to enforce.
+
+- [ ] Size and reserve the HHDM page-table arena from the validated UEFI memory map BEFORE `ExitBootServices`, then reserve those frames in the PMM -- a fixed sub-`0x80000` block holds ~10 pages, capping HHDM near 9 GiB with 2 MiB leaves
+- [ ] `MM_HHDM_SIZE` is 64 TiB of sparse RAM-wide alias, so a fixed arena would leave valid PMM frames with no HHDM leaf on a large machine. Add a test reaching the HIGHEST usable frame, not just low RAM
+- [ ] `setup_page_tables()` runs POST-`ExitBootServices` (no firmware allocator), so the arena must be sized and reserved in the pre-EBS window and handed to it; the six pages at `0x70000`-`0x75fff` are fully consumed by the identity map
+- [ ] Enable EFER.NXE (CPUID-gated) in the bootloader BEFORE any NX HHDM leaf is traversable: `vmm_init()` runs at `boot_hw.c:493` but `cpu_harden()`/`cpu_enable_nx()` only at `:612`, and `bootx64.c` never touches EFER
+- [ ] If NXE cannot be enabled early, install HHDM leaves non-NX and apply NX after `cpu_enable_nx()` but before exposing the map. With NXE=0 bit 63 is RESERVED and the first HHDM walk faults. Test from an NXE-cleared boot state
+- [ ] Install the HHDM window (`MM_HHDM_BASE`, 2 MiB pages, NX + writable, never User) ALONGSIDE the existing identity map, which stays live and unchanged -- the kernel still executes low from it
+- [ ] Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` with a compile-time assert (closes §1 Deferred). `src/boot/` has no prior art including `include/kernel/*`; use the mirror-header convention (`boot_info_mirror.h`), not a direct include
+- [ ] Split the root: `kernel_pml4_phys` (PHYSICAL, what `vmm_get_kernel_cr3()` returns) vs an HHDM `kernel_pml4` used only to WALK. `vmm.h:146` contracts that getter physical and `task.c:1158` loads it into CR3 -- HHDM there triple-faults
+- [ ] Inventory EVERY function receiving/returning/extracting a physical table address: `vmm_get_kernel_cr3()` (`vmm.c:1051`), `vmm_set_user_page()` (`:698`), `map_user_page_impl()` (`:779`), `vmm_promote_to_1g()` (`:1343`)
+- [ ] Convert `vmm_init()` CR3 takeover (`vmm.c:1420`), `zero_page()` (`vmm.c:184`), `get_or_create_table()` (`vmm.c:199-247`, returns physical-as-pointer twice), and `vmm_create_user_pml4()` (`vmm.c:629`) to HHDM WALK pointers
+- [ ] Test that every value STORED into a PTE or CR3 stays physical after the conversion; a walk-vs-load mix-up is silent until the next context switch
+- [ ] Route `vmm_apply_nx_policy()` reconstruction (`vmm.c:1488`) through `mm_canonical_from_indices()`: the naive shift is non-canonical for `pml4i >= 256`, dormant today, load-bearing once the high half exists
+- [ ] Leave the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) alone -- correct while the kernel links low; it moves to image-window bounds in §3
+- [ ] Add `POST16` entry/exit codes around direct-map construction (assign from a free block; verify against `boot_init.h`)
+- [ ] Commit: `"boot: HHDM direct map + VMM walker conversion (kernel still low)"`
+
+**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map -- this section adds the direct map and moves the walkers onto it WITHOUT moving the kernel, so behavior is unchanged and the section is independently bootable. Assert the HHDM resolves a known physical page to the same bytes read through the identity map. Test on: QEMU KVM + TCG.
+
+> [!NOTE]
+> **Regression risk: LOW by construction** -- the section adds a mapping and re-expresses existing derefs through it; no executing address moves. Rollback: revert the HHDM install (the physical values in PTEs are unchanged -- only the pointers used to reach them). This section is what makes §3 a small focused flip instead of a 22-item leap.
 
 ---
 
-## 3. Higher-Half Bring-Up + Direct Map
+## 3. Linker VMA/LMA Split + Higher-Half Jump
 
-Build the boot page tables that map the kernel high and the physical memory it needs, jump into the high half, then drop the transient identity map. Boot-path; POST16 codes assigned from a free block (verify against `boot_init.h`).
+Relink the kernel at the high virtual base, map the image there, and make the existing bootloader call the low->high transition. **This section is the atomic unit: the linker split and the jump CANNOT be separated** -- after the split the kernel links high, and nothing maps it there until the jump lands. §2 has already built the direct map and moved the walkers onto it, so what remains here is the flip itself.
 
 > [!IMPORTANT]
-> **The site is §1's decision, not a given.** There is no `entry.asm` in the tree: `bootx64.c` builds the only early page tables (4 GiB identity map) and calls `kernel_main` directly via ELF-symbol lookup, so the switch runs EITHER in the bootloader (before the call) OR in a new `src/kernel/entry.asm` stub the bootloader calls at a low physical address. If §1 picks the bootloader, that section's `boot_info`/framebuffer translation work (§5) partly precedes §3 rather than following it; resequence at §1 time.
+> **Site (a) is pinned by §1: the bootloader.** There is no `entry.asm` in the tree -- `bootx64.c` builds the only early page tables and calls `kernel_main` via ELF-symbol lookup, so `setup_page_tables()` installs the high mapping and the EXISTING call at `bootx64.c:10675` becomes the transition. No far jump, no `lretq`, no CS reload. Consequently §5's `boot_info`/framebuffer translation is CO-DESIGNED with this section rather than following it: `kernel_main` executes high from its first instruction, so there is no "boots low, reinterprets `boot_info` later" phase to defer into.
 
-- [ ] In `setup_page_tables()` (site (a), pinned by §1), map: (a) the kernel image -> `MM_KERNEL_IMAGE_BASE`, (b) the HHDM window, (c) a **transient** identity map of the bootloader RIP + stack so the `mov cr3` does not fault mid-stream
-- [ ] No far jump / `lretq` / CS reload: the EXISTING call at `bootx64.c:10675` IS the transition once CR3 carries both maps (RIP low+identity at the call, `kernel_main`s high `st_value` mapped, CS already a long-mode selector)
-- [ ] Map the image window with 4 KiB pages so W^X is per-section: a 2 MiB page forces `.text` and `.rodata` to share permissions. Reserve the extra PDPT/PD/PT pages in the fixed low block BEFORE ExitBootServices
-- [ ] Route every page-table walker through `mm_canonical_from_indices()`: the naive `(pml4i << 39) | ...` in `vmm_apply_nx_policy` (`vmm.c:1475`) is non-canonical for `pml4i >= 256`, so it silently skips the high half while reporting NX enabled
-- [ ] Convert raw-physical derefs to `mm_phys_to_hhdm()` -- `zero_page` (`vmm.c:178`), `get_or_create_table` (`vmm.c:213`), `vmm_init` CR3 takeover (`vmm.c:1407`); PTE/CR3 values stay physical. A <4 GiB PML4 root does NOT make these valid
-- [ ] Replace the hardcoded `kernel_base = 0x100000` NX bound (`vmm.c:1439`) with image-window bounds; add tests asserting `.text` is executable and `.rodata`/`.data`/`.bss` are NX at their real high VAs
-- [ ] After the jump, switch the stack to a high-virtual address, then SHRINK the identity map to the AP envelope only and CLEAR the User bit on what remains -- retaining the broad 4 GiB map would keep a writable+User+exec low alias of kernel text
-- [ ] Do NOT tear down the AP bootstrap envelope yet: `ap_trampoline.asm` is `[ORG 0x8000]`, `AP_DATA 0x8E00` (`smp.c:305`, SIPI vector 0x08). Keep trampoline + data + temp stack identity-mapped in EVERY bring-up CR3 until all APs ack high entry (§4)
-- [ ] Keep the kernel PML4 frame below `MM_PML4_PHYS_LIMIT` (4 GiB) forever: the AP stub loads CR3 with a 32-bit `mov eax, [AP_DATA]; mov cr3, eax` (`ap_trampoline.asm:73`) and cannot express more
-- [ ] Bind `PT_PML4` (`bootx64.c:10621`) to `MM_PML4_PHYS_LIMIT` with a compile-time assert: the AP stub loads CR3 with a 32-bit `mov`, so a PML4 root above 4 GiB truncates silently. No gate reaches that constant today
-- [ ] The direct map must be live BEFORE any code walks physical memory through it (pmm/vmm init, ACPI/framebuffer reads); order the switch ahead of those consumers
-- [ ] Replace any post-switch physical-memory access with direct-map (`phys_to_virt`) accessors; update `vmm` phys<->virt helpers to the fixed offset.
-- [ ] Add `POST16` entry/exit codes around CR3-enable, the high-half jump, and identity-map teardown.
-- [ ] Commit: `"boot: higher-half page-table bring-up + direct map + high-half jump"`
+- [ ] Set the linker VMA to `MM_KERNEL_VIRT_BASE` and keep the LMA at the load address via `AT(...)`, so symbols resolve high but the image still loads low. `linker.ld:25` is `. = 1M` with no `AT()` today
+- [ ] Move the LMA to `MM_KERNEL_PHYS_BASE` (`0x200000`) -- NOT the historical `0x100000`: a `PS=1` PDE needs a 2 MiB-aligned frame, and 1 MiB sets reserved PDE bit 20, faulting before `kernel_main` can report it
+- [ ] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
+- [ ] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
+- [ ] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
+- [ ] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
+- [ ] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
+- [ ] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
+- [ ] After the jump switch the stack to a high VA. Do NOT shrink the identity map here: early code still derefs handoff pointers physically (`boot_progress.c:137`), and that translation is §5. Teardown moves to §5
+- [ ] Keep the AP envelope: `ap_trampoline.asm` is `[ORG 0x8000]` with `AP_DATA 0x8E00`, and `smp.c:317` hands each AP the BSP live CR3, so trampoline + data + temp stack stay identity-mapped in EVERY bring-up CR3 until all APs ack (§4)
+- [ ] Confirm `readelf -l build/kernel.exe` shows VirtAddr `MM_KERNEL_VIRT_BASE` with PhysAddr preserved at the LMA
+- [ ] Add `POST16` entry/exit codes around CR3-enable and the high-half jump (teardown codes land with the teardown in §5)
+- [ ] Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`
 
-**Test checkpoint:** Serial shows the high-half POST16 sequence in order; kernel reaches its existing Phase-1 banner from a high virtual RIP (`llvm-addr2line` on a logged RIP resolves to a `KERNEL_VIRT_BASE` address). `=== BUILD OK ===` and the smoke test boots to `C:\>`. Test on: QEMU WHPX + TCG; **bare metal (mandatory -- early paging differs on real CPUs)**.
+**Test checkpoint:** Serial shows the high-half POST16 sequence in order; the kernel reaches its existing Phase-1 banner from a high virtual RIP (`llvm-addr2line` on a logged RIP resolves to a `MM_KERNEL_VIRT_BASE` address). `=== BUILD OK ===` and the smoke test boots to `C:\>`. Test on: QEMU KVM + TCG; **bare metal (deferred human sign-off per the policy above -- NOT an implementation prerequisite)**.
 
 > [!WARNING]
-> **Regression risk:** Highest-risk section. A wrong transient identity map or a non-canonical base triple-faults at the CR3 load with no serial output. Rollback: revert to the identity-mapped low kernel (§2+§3 as a unit). Keep `scripts/test-smoke.sh` green at every step.
+> **Regression risk: HIGHEST in the system.** A wrong transient identity map or a non-canonical base triple-faults at the CR3 load with NO serial output. The split and the jump ship as ONE commit -- an intermediate commit that links high without mapping high does not boot, so it must never be pushed alone. Rollback: revert to the identity-mapped low kernel (this whole section as a unit); §2's direct map is independent and stays. Keep `scripts/test-smoke.sh` green at every step.
 
 ---
 
@@ -165,15 +178,20 @@ Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, a
 The bootloader runs identity-mapped and hands the kernel physical/low pointers; translate them across the switch and record the ABI change.
 
 > [!WARNING]
-> **Ordering hazard: this section is NOT strictly after §3.** If §1 picks bring-up site (a) (the bootloader maps the kernel high and calls `kernel_main` at its high VA), then `kernel_main` executes high from its first instruction, and there is no "low kernel boots, then reinterprets `boot_info` later" phase to defer this work into. The same bootloader code that builds the high mapping must already hand over pointers in their final form, so the pointer audit below is CO-DESIGNED with §3 (ship them together, as §2+§3 already do) rather than following it. If §1 picks site (b), the listed order stands. Resequence at §1 time.
+> **Ordering hazard: site (a) is pinned, so this section is NOT strictly after §3.** `kernel_main` executes high from its first instruction, so there is no "low kernel boots, then reinterprets `boot_info` later" phase to defer this work into: the same bootloader code that builds the high mapping must hand over pointers in their final form. The pointer audit below is CO-DESIGNED with §3.
+
+> [!IMPORTANT]
+> **This section OWNS the identity-map teardown** (moved out of §3 by the 2026-07-16 design review). §3 makes the jump but deliberately leaves the identity map live, because early code still derefs handoff pointers physically -- `boot_progress.c:137` reads `g_boot_info.fb.addr` directly. Shrinking the map before those pointers are translated faults early boot with no output. The map staying live through §3/§4 is the status quo (it is already live and User-mapped today), so this is a not-yet-fixed hazard, never a new regression.
 
 - [ ] Audit every `boot_info` pointer (memory map, ACPI tables, framebuffer base, command line, initrd/UKI sections) for physical vs virtual; access them via the direct map after §3.
 - [ ] Decide framebuffer mapping: map the GOP framebuffer into the kernel's high MMIO window (WC) rather than touching its physical address directly.
+- [ ] Once every handoff pointer above is translated, SHRINK the identity map to the AP envelope and CLEAR the User bit on what remains -- a retained 4 GiB map is a writable+User+exec low alias of kernel text (§1 Decision 6)
+- [ ] Teardown lands HERE, not in §3: `boot_progress.c:137` derefs `g_boot_info.fb.addr` physically, so shrinking the map before this section faults early boot. Add the `POST16` teardown codes with it
 - [ ] Bump `BOOT_INFO_VERSION` if the handoff contract changes (mirror header + kernel header together per the boot_info ABI rules); update the drift manifest.
 - [ ] Record the high-half handoff in the boot protocol schema changelog (`D01 T01 §8`).
 - [ ] Commit: `"boot: boot_info + framebuffer handoff translated for higher-half kernel"`
 
-**Test checkpoint:** Desktop renders (framebuffer reachable via the high MMIO window); ACPI tables parse; `boot_info` validation passes. `boot-info-manifest` compare gate passes. Test on: QEMU WHPX + TCG; **bare metal** (real GOP framebuffer).
+**Test checkpoint:** Desktop renders (framebuffer reachable via the high MMIO window); ACPI tables parse; `boot_info` validation passes; the identity map is gone except the AP envelope, and what remains carries no User bit. `boot-info-manifest` compare gate passes. Test on: QEMU KVM + TCG; **bare metal** (real GOP framebuffer, deferred human sign-off).
 
 ---
 
