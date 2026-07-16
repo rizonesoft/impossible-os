@@ -104,6 +104,48 @@ back to 79 passed / 0 failed. Held because the runner was committing concurrentl
 - [ ] Confirm the "AI workflow regression" check goes green on `main`.
 - [ ] (Optional) Commit this `overnight-todo.md` too if you want it tracked.
 
+### Fix the `_is_self_teardown` "skill "/"kill " false positive (run_phase_guard.py:151)
+
+`_is_self_teardown()` matches the bare substring `"kill "`, which also matches
+inside the word **"skill "**. Combined with its `and "claude" in c` condition, ANY
+Bash command that mentions a "skill " and touches a `.claude/` path is blocked as
+self-teardown. Hit 4x live on 2026-07-16 -- it blocked read-only greps and a
+`git commit` whose MESSAGE merely said "the sequencer skill documented ...". The
+guard is right to exist (the real `pkill`/`killall`/`kill ` cases must stay
+blocked); only the word boundary is wrong.
+
+Reproduce (both should be `allowed`, both currently `BLOCKED`):
+
+```
+echo "the skill still documents X" && ls .claude/hooks
+git commit -m "docs: fix the sequencer skill doctrine" .claude/skills/x
+```
+
+Proposed fix at `.claude/hooks/run_phase_guard.py:151` -- word-boundary the
+match so `skill` cannot alias `kill`, keeping `pkill`/`killall`/`kill` blocked:
+
+```python
+if re.search(r"\b(pkill|killall|kill)\b", c) and "claude" in c:
+    return True
+```
+
+Why the runner did NOT self-apply it: `.claude/hooks/*` is a blocking gate hook,
+which `scripts/overnight/control-plane-deterministic.txt` deliberately keeps
+FLOW-CRITICAL ("their failure mode is emergent/live"), so the change re-arms the
+watched attended canary. Patching the phase machine that is currently governing
+the run, with its validating canary impossible mid-run, is the exact hazard the
+guardrails exist to prevent. Deferred rather than forced.
+
+- [ ] Apply the boundary fix; add a `_is_self_teardown` case to
+      `scripts/overnight/tests/test_phase_guard_wait.py` pinning BOTH directions
+      (a "skill " + `.claude` command allowed; `pkill -f claude` still blocked).
+- [ ] Run `bash scripts/overnight/tests/run-all.sh` (expect 42+ passed, 0 failed).
+- [ ] Re-arm the attended canary per the guardrail Layer 4 tiering, since this is
+      a flow-critical control-plane change.
+
+> Runner workaround until then: keep the word "skill " and a `.claude/` path out
+> of the SAME Bash command (split them, or use the Grep/Read tools instead).
+
 ### Review the vendored third-party libraries
 
 LZ4, miniz, and Mbed TLS source were vendored (commit `38525b91`) to unblock the

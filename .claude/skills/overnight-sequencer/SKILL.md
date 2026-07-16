@@ -112,7 +112,8 @@ bash scripts/overnight/wait-for-codex-verdict.sh <logFile>
 # 3. On exit 3, just call it AGAIN (the review runs detached; nothing is lost) --
 #    a 16-min review is a handful of clean re-invokes, not a killed 2m call + a
 #    recovery turn. For a single long wait in ONE turn, pass a larger bound WITH
-#    an explicit Bash `timeout:`, e.g. `... <logFile> 540` + tool `timeout: 600000`.
+#    an explicit Bash `timeout:`, e.g. `--max 540 <logFile>` + tool `timeout: 600000`
+#    (it is `--max <secs>`; a bare trailing number is REJECTED as a stray arg).
 #    Then read the verdict and continue -- SAME session.
 ```
 
