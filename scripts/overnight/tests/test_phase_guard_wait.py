@@ -34,7 +34,14 @@ def _mk_fixture(d: pathlib.Path) -> pathlib.Path:
 
 
 def _guard(fx, *args, env_extra=None, stdin=None):
-    env = {**os.environ, **(env_extra or {})}
+    # Strip the launcher's headless marker from the inherited env: a case must
+    # opt IN to headless via HEADLESS, never inherit it. Running this suite from
+    # inside a live run (the pre-arm health check does exactly that) otherwise
+    # leaks OVERNIGHT_SEQUENCER_RUN=1 into the interactive cases, which the
+    # guard then correctly blocks -- failing the test on a working guard.
+    env = {k: v for k, v in os.environ.items()
+           if k != "OVERNIGHT_SEQUENCER_RUN"}
+    env.update(env_extra or {})
     return subprocess.run(
         [sys.executable, str(fx / ".claude/hooks/run_phase_guard.py"), *args],
         capture_output=True, text=True, env=env, input=stdin, cwd=str(fx))
