@@ -88,78 +88,32 @@ per CLAUDE.md Safety Gates). Tracked in
 
 ## Unblockable once the runner is stopped
 
-### Land the skill-catalog CI fix
+All prior items in this section were completed on 2026-07-16 (runner disarmed):
 
-`.claude/skills/README.md` has a verified, uncommitted fix: the 5 specialist-agent
-rows were changed from the skill-row backtick-link form `| [`name`](path) |` to
-`| [name](path) |` so the AI-workflow catalog check stops counting them as skills
-(it was reading 36 vs 31 dirs -> "README.md rows without a dir"). Regression is
-back to 79 passed / 0 failed. Held because the runner was committing concurrently.
+- **Skill-catalog CI fix** -- already landed; `scripts/test-ai-system.sh` reports
+  79 passed / 0 failed. (Was already committed before the sweep; the entry was
+  stale.)
+- **`_is_self_teardown` "skill "/"kill " false positive** -- fixed with a
+  word-boundary regex + a both-directions regression test in
+  `test_phase_guard_wait.py`. Committed `a8417a43`; `run-all.sh` 42 passed / 0
+  failed.
+- **Vendored third-party libraries** -- LZ4 1.10.0 (BSD-2-Clause), miniz 11.0.2
+  (MIT), Mbed TLS 3.6.2 (Apache-2.0 OR GPL-2.0-or-later), cJSON 1.7.18 (MIT)
+  reviewed and approved as load-bearing (all GPL-3.0-only compatible).
+  `src/libs/PROVENANCE.md` records upstream + version + license per lib; added
+  the missing cJSON `LICENSE`. Committed with the provenance record.
+- **COUNT.md auto-gen + README count** -- `core.hooksPath` confirmed `.githooks`
+  (no srclight hijack); the README lines badge is now regenerated from
+  `core_total_lines` by `.githooks/post-commit` into a `COUNT-BADGE` marker
+  block, amended alongside COUNT.md in one commit. Committed `fa6e7d0a`.
 
-- [ ] With the runner stopped AND a lint-clean tree (no in-progress
-      `src/kernel/lz4.c` / `Makefile` shorthand left mid-section), run:
-      `git add .claude/skills/README.md`
-      `git commit -m "fix(catalog): keep specialist-agent rows out of the skills README skill-set"`
-      `git push`
-- [ ] Confirm the "AI workflow regression" check goes green on `main`.
-- [ ] (Optional) Commit this `overnight-todo.md` too if you want it tracked.
+### Re-record the attended canary before the next unattended arm
 
-### Fix the `_is_self_teardown` "skill "/"kill " false positive (run_phase_guard.py:151)
+The `_is_self_teardown` fix touched `.claude/hooks/run_phase_guard.py`, a
+FLOW-CRITICAL control-plane file. Per guardrail Layer 4, the next unattended arm
+will REFUSE until the canary is re-recorded against the new HEAD (or overridden
+with `--force`).
 
-`_is_self_teardown()` matches the bare substring `"kill "`, which also matches
-inside the word **"skill "**. Combined with its `and "claude" in c` condition, ANY
-Bash command that mentions a "skill " and touches a `.claude/` path is blocked as
-self-teardown. Hit 4x live on 2026-07-16 -- it blocked read-only greps and a
-`git commit` whose MESSAGE merely said "the sequencer skill documented ...". The
-guard is right to exist (the real `pkill`/`killall`/`kill ` cases must stay
-blocked); only the word boundary is wrong.
-
-Reproduce (both should be `allowed`, both currently `BLOCKED`):
-
-```
-echo "the skill still documents X" && ls .claude/hooks
-git commit -m "docs: fix the sequencer skill doctrine" .claude/skills/x
-```
-
-Proposed fix at `.claude/hooks/run_phase_guard.py:151` -- word-boundary the
-match so `skill` cannot alias `kill`, keeping `pkill`/`killall`/`kill` blocked:
-
-```python
-if re.search(r"\b(pkill|killall|kill)\b", c) and "claude" in c:
-    return True
-```
-
-Why the runner did NOT self-apply it: `.claude/hooks/*` is a blocking gate hook,
-which `scripts/overnight/control-plane-deterministic.txt` deliberately keeps
-FLOW-CRITICAL ("their failure mode is emergent/live"), so the change re-arms the
-watched attended canary. Patching the phase machine that is currently governing
-the run, with its validating canary impossible mid-run, is the exact hazard the
-guardrails exist to prevent. Deferred rather than forced.
-
-- [ ] Apply the boundary fix; add a `_is_self_teardown` case to
-      `scripts/overnight/tests/test_phase_guard_wait.py` pinning BOTH directions
-      (a "skill " + `.claude` command allowed; `pkill -f claude` still blocked).
-- [ ] Run `bash scripts/overnight/tests/run-all.sh` (expect 42+ passed, 0 failed).
-- [ ] Re-arm the attended canary per the guardrail Layer 4 tiering, since this is
-      a flow-critical control-plane change.
-
-> Runner workaround until then: keep the word "skill " and a `.claude/` path out
-> of the SAME Bash command (split them, or use the Grep/Read tools instead).
-
-### Review the vendored third-party libraries
-
-LZ4, miniz, and Mbed TLS source were vendored (commit `38525b91`) to unblock the
-kernel-libraries wiring the runner is now doing. Third-party dependency additions
-are a CLAUDE.md stop-and-ask gate -- they need a human pass before they are
-load-bearing.
-
-- [ ] Review the vendored source (`src/libs/lz4/`, `src/libs/miniz/`, `src/libs/mbedtls/`): license compatibility, upstream version pinned + recorded, no unexpected or modified files vs upstream.
-- [ ] Confirm the vendoring + wiring is committed cleanly (no stray untracked `src/libs/...` / `include/libs/...` / `src/kernel/lz4.c` working-tree files left from a mid-section build).
-
-### Fix COUNT.md auto-generation + auto-display the count in README.md
-
-COUNT.md drifted stale (had to be hand-refreshed via `COUNT_ONLY=1 bash .githooks/post-commit`), so the post-commit auto-generation is not reliably keeping it current, and the project `README.md` line-count is not wired to it. Two pieces:
-
-- [ ] Make COUNT.md generation reliable: confirm `.githooks/post-commit` fires on every kernel/source commit (the srclight `core.hooksPath` hijack has silently disabled this chain before; see memory `srclight-hooks-hijack`), and decide whether the count should also refresh outside commits (it only updates post-commit today, so the working tree drifts until the next commit).
-- [ ] Auto-display the count in the project `README.md`: pull the Grand Total from COUNT.md into a generated, marker-delimited block the post-commit hook rewrites, so the README count is never hand-maintained or stale.
-- [ ] Verify: a fresh commit updates BOTH COUNT.md and the README count block in one step, with no manual touch.
+- [ ] Run an attended session; watch >=1 section ship + a rollover -> relaunch.
+- [ ] `bash .claude/skills/overnight-sequencer/arm-sequencer.sh --record-canary "<note>"`
+- [ ] Then arm normally. (Or, accepting the risk, arm now with `--force`.)
