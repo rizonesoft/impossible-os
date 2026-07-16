@@ -48,16 +48,18 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | ⭐   | Order | Deliverable                                             | Depends On         | Status |
 | --- | :---: | ------------------------------------------------------- | ------------------ | :----: |
 | 💎   |   1   | Memory-map design + canonical layout decision           | --                 |  [x]   |
-| 💎   |   2   | Direct map + VMM walker conversion (kernel still low)   | §1                 |  [ ]   |
-| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)      | §1, §2             |  [ ]   |
-| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                 |  [ ]   |
-| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown   | §1, §3, D01 T01 §8 |  [ ]   |
-| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8     |  [ ]   |
-| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                 |  [ ]   |
-| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3             |  [ ]   |
+| 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                    |  [ ]   |
+| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper    | §2                     |  [ ]   |
+| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)      | §1, §2, §9             |  [ ]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                     |  [ ]   |
+| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown   | §1, §3, §9, D01 T01 §8 |  [ ]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8         |  [ ]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                     |  [ ]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3                 |  [ ]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
+> **Ship order note:** the row order above IS the ship order; the number column is the section-heading id. Original §2 (direct map + walker conversion) was SPLIT 2026-07-16 on the design review's SPLIT-CONFIRMED verdict (2+ worker contexts) into §2 (HHDM construction, additive, kernel still walks identity) and a new §9 (walker conversion) appended at file end to keep the §5/§6/§7 external XREF anchors stable. §9 ships between §2 and §3; §3 and §5 both depend on it.
 
 ---
 
@@ -96,9 +98,9 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 
 ---
 
-## 2. Direct Map + VMM Walker Conversion (kernel still low)
+## 2. Direct Map Construction (kernel still low)
 
-Build the HHDM direct map and move every page-table walker onto it while the kernel still links and boots LOW. Purely ADDITIVE: it changes no address the kernel executes from, so it is independently bootable and shrinks §3 to the flip itself.
+Build the HHDM direct map and install it in an unused PML4 slot while the kernel still links and boots LOW and still WALKS page tables via the identity map. Purely ADDITIVE: it changes no address the kernel executes from and touches no existing walker, so it is independently bootable. The walker conversion that moves every deref onto this map is split out to §9 (design review SPLIT-CONFIRMED, 2026-07-16, 2+ worker contexts); together §2 + §9 shrink §3 to the flip itself.
 
 > [!IMPORTANT]
 > **Why this precedes the linker split.** §1's own bring-up comment pins the order: `vmm.c:1417-1419` says the raw-physical CR3 takeover "moves to `mm_phys_to_hhdm()` when the direct map lands". The HHDM is a NEW window in an unused PML4 slot, so installing it does not move any address the kernel executes from. The kernel-IMAGE mapping is deliberately NOT here: pre-split the image's physical base is still `0x100000`, not `MM_KERNEL_PHYS_BASE` (`0x200000`), so mapping the image window belongs with the split that moves it (§3).
@@ -110,30 +112,23 @@ Build the HHDM direct map and move every page-table walker onto it while the ker
 - [ ] [Q1] Size the arena from the FINAL normalized map: count occupied 512 GiB + 1 GiB buckets + partial 2 MiB buckets. Test every range boundary, interior hole, and the HIGHEST usable frame
 - [ ] INSTALL-SITE FORK (open; implementer mini-design-reviews the pick): (a) bootloader pre-EBS arena + post-EBS install, or (b) kernel-side `vmm_init()` install (PMM ready first; no boot_info ABI change; `vmm.c:1414-1419` anticipates it)
 - [ ] [Q2] Enable EFER.NXE EARLY (CPUID-gated, EFER read-back) before any NX HHDM leaf is installed/walked; `cpu_enable_nx()` stays idempotent. Mirror it in the AP path before each AP first HHDM walk
-- [ ] Split the root: rename the physical global to `kernel_pml4_phys` (what `vmm_get_kernel_cr3()` returns, loaded raw into CR3) and set `kernel_pml4 = mm_phys_to_hhdm(...)` as the WALK pointer only
-- [ ] Add ONE checked walk helper (e.g. `pt_walk(phys)` over `mm_phys_to_hhdm`) that HARD-ERRORS on NULL -- NULL silently reads/writes phys page 0 while the identity map is live (`memmap.h:298-304`), not a fault
-- [ ] [H2] Route EVERY page-table deref through the checked helper REPO-WIDE -- 13 sites incl. `get_or_create_table`, the `*_user_page` family, `vmm_promote_to_1g`, `vmm_split_huge_page`, `vmm_apply_nx_policy`, `swap.c` (full list in commit)
-- [ ] [H2] Keep `*_phys` for every value STORED into a PTE/CR3 and every `pmm_free_frame()` arg -- never free an HHDM VA (`vmm_destroy_user_pml4`); a walk-vs-load mix-up is silent until the next context switch
 - [ ] [H3] Exclude the kernel-image physical range `[__kernel_start..__kernel_end]` from the WRITABLE HHDM alias (skip it, or map read-only mirroring `kernel_wx_protect`) so the HHDM cannot defeat W^X -- §1 Decision 6
-- [ ] Route `vmm_apply_nx_policy()` VA reconstruction (`vmm.c:1488`, naive shift) through `mm_canonical_from_indices()` -- non-canonical for `pml4i >= 256`
 - [ ] Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` with a compile-time assert via a mirrored literal in the bootloader (`boot_info_mirror.h` convention; add a local `_Static_assert`). Closes §1 Deferred
-- [ ] Leave the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) alone -- correct while the kernel links low; it moves to image-window bounds in §3
-- [ ] Add the identity-map-disabled runtime test the design review requires (remap/unmap/destroy/split/NX-traverse/swap with the broad identity map OFF) -- BSS-ceiling-gated in-kernel, so land it host-side or defer to §7 with `test_highhalf.c`
 - [ ] Add `POST16` entry/exit around HHDM install (kernel free block `0x0032`-`0x003F` after `POST16_VMM_OK` if kernel-side; bootloader `0xB0xx` if boot-side)
-- [ ] Commit: `"boot: HHDM direct map + VMM walker conversion (kernel still low)"`
+- [ ] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
 
-**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map -- this section adds the direct map and moves the walkers onto it WITHOUT moving the kernel, so behavior is unchanged and the section is independently bootable. Assert the HHDM resolves a known physical page to the same bytes read through the identity map, AND exercise the converted walkers with the broad identity map disabled (design review requirement). Test on: QEMU KVM + TCG.
+**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in an unused PML4 slot, so behavior is unchanged and the section is independently bootable. Assert the HHDM resolves a known physical page to the same bytes read through the identity map (the read exercises an installed NX leaf, so it also proves EFER.NXE landed). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
 
 > [!NOTE]
-> **Regression risk: HIGH (revised from "LOW by construction" after the 2026-07-16 design review).** The section adds a mapping and re-expresses derefs through it, but the design review found 3 boot-break modes the naive version hits: a sparse-map hole leaves a PMM frame with no leaf (silent phys-page-0 write), a writable kernel-image alias defeats W^X, and an incomplete walker inventory faults once the identity map is retired (§5). Rollback: revert the HHDM install (PTE physical values are unchanged -- only the pointers used to reach them). **SPLIT-CONFIRMED:** the corrected scope (mixed-granularity construction + repo-wide 13-site walker conversion + W^X carve-out + BSP/AP NXE) is 2+ worker contexts -- the implementer should split into "HHDM construction" and "walker conversion" (each independently bootable) or budget accordingly.
+> **Regression risk: MEDIUM (construction only; the HIGH-risk walker conversion is §9).** This section adds a mapping in an unused slot and touches no address the kernel executes from or walks through, so its failure modes are contained to the install itself: the design review found a sparse-map hole leaves a PMM frame with no leaf (silent phys-page-0 write on any later HHDM read) and a writable kernel-image alias defeats W^X. Both are construction-time invariants tested here. Rollback: revert the HHDM install (no existing PTE or pointer changes). The repo-wide 13-site deref conversion, the root phys-vs-walk split, and the identity-map-disabled test all live in §9.
 
-> **Design reviewed:** 2026-07-16 | Codex `[review-kind: design]` NO-SHIP -> revised in place. 3 HIGH adopted (H1 mixed 2 MiB/4 KiB granularity over sparse UEFI ranges; H2 repo-wide walker inventory incl. `swap.c` + `pmm_free`-stays-physical; H3 kernel-image W^X carve-out) + Q1-Q4 (arena bucket-counting, early CPUID-gated NXE + per-AP, root phys-vs-walk split, WB-alias/NX coherence). Kernel-explorer mapped the full walker surface at file:line. Implementation PENDING a fresh full worker context (SPLIT-CONFIRMED, 2+ contexts) -- items above are the corrected, implementation-ready spec.
+> **Design reviewed:** 2026-07-16 | Codex `[review-kind: design]` NO-SHIP -> revised in place, then SPLIT 2026-07-16 into §2 (this, HHDM construction) + §9 (walker conversion) on the review's SPLIT-CONFIRMED verdict. 3 HIGH adopted (H1 mixed 2 MiB/4 KiB granularity over sparse UEFI ranges; H2 repo-wide walker inventory incl. `swap.c` + `pmm_free`-stays-physical -> §9; H3 kernel-image W^X carve-out -> this section) + Q1-Q4 (arena bucket-counting + early CPUID-gated NXE + per-AP + WB-alias/NX coherence here; root phys-vs-walk split -> §9). Kernel-explorer mapped the full walker surface at file:line. §2 items are the corrected, implementation-ready construction spec; §9 carries the conversion.
 
 ---
 
 ## 3. Linker VMA/LMA Split + Higher-Half Jump
 
-Relink the kernel at the high virtual base, map the image there, and make the existing bootloader call the low->high transition. **This section is the atomic unit: the linker split and the jump CANNOT be separated** -- after the split the kernel links high, and nothing maps it there until the jump lands. §2 has already built the direct map and moved the walkers onto it, so what remains here is the flip itself.
+Relink the kernel at the high virtual base, map the image there, and make the existing bootloader call the low->high transition. **This section is the atomic unit: the linker split and the jump CANNOT be separated** -- after the split the kernel links high, and nothing maps it there until the jump lands. §2 has already built the direct map and §9 has moved the walkers onto it, so what remains here is the flip itself. (Depends on §9: the flip keeps the identity map live, but the walkers must resolve through the HHDM before §5 retires that map.)
 
 > [!IMPORTANT]
 > **Site (a) is pinned by §1: the bootloader.** There is no `entry.asm` in the tree -- `bootx64.c` builds the only early page tables and calls `kernel_main` via ELF-symbol lookup, so `setup_page_tables()` installs the high mapping and the EXISTING call at `bootx64.c:10675` becomes the transition. No far jump, no `lretq`, no CS reload. Consequently §5's `boot_info`/framebuffer translation is CO-DESIGNED with this section rather than following it: `kernel_main` executes high from its first instruction, so there is no "boots low, reinterprets `boot_info` later" phase to defer into.
@@ -260,6 +255,30 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 - [ ] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
 
 **Test checkpoint:** On a 4-level host the kernel boots in 4-level mode; on an LA57-capable host (or QEMU `-cpu ...,la57=on`) it boots in 5-level mode. Serial logs the active mode. Test on: QEMU TCG (la57 toggled); **bare metal (Arrow Lake / Zen 5)**.
+
+---
+
+## 9. VMM Walker Conversion -- Route Every Deref Through the HHDM Helper
+
+Move every page-table walker off the identity map and onto the §2 HHDM, while the kernel still links and boots LOW. Additive-behavior: the identity map stays live as the fallback, so this section is independently bootable, but it is the prerequisite that lets §5 retire that map. **Split out of the original §2 on the 2026-07-16 design review's SPLIT-CONFIRMED verdict** (2+ worker contexts); §2 built and installed the HHDM, this section re-expresses the derefs through it. Ships between §2 and §3 in the Implementation Order.
+
+> [!WARNING]
+> **HIGH RISK -- the riskiest paging change in the system.** The kernel root is physical-as-pointer TODAY (`kernel_pml4` at `vmm.c:125`, set from `read_cr3()` at `:1420`); `vmm_get_kernel_cr3()` (`:1051`) returns it PHYSICAL and `task.c:1158/1423/3346` load it raw into CR3, so a blanket HHDM conversion triple-faults at the next kernel-task switch -- the root MUST stay split phys-vs-walk. An INCOMPLETE walker inventory is silent while the identity map is live and faults the instant §5 retires it: `mm_phys_to_hhdm()` only range-checks (nonzero, <64 TiB), so a NULL/missed walk is a phys-page-0 read/write (`memmap.h:298-304`), not a fault.
+
+- [ ] Split the root: rename the physical global to `kernel_pml4_phys` (what `vmm_get_kernel_cr3()` returns, loaded raw into CR3) and set `kernel_pml4 = mm_phys_to_hhdm(...)` as the WALK pointer only
+- [ ] Add ONE checked walk helper (e.g. `pt_walk(phys)` over `mm_phys_to_hhdm`) that HARD-ERRORS on NULL -- NULL silently reads/writes phys page 0 while the identity map is live (`memmap.h:298-304`), not a fault
+- [ ] [H2] Route EVERY page-table deref through the checked helper REPO-WIDE -- 13 sites incl. `get_or_create_table`, the `*_user_page` family, `vmm_promote_to_1g`, `vmm_split_huge_page`, `vmm_apply_nx_policy`, `swap.c` (full list in commit)
+- [ ] [H2] Keep `*_phys` for every value STORED into a PTE/CR3 and every `pmm_free_frame()` arg -- never free an HHDM VA (`vmm_destroy_user_pml4`); a walk-vs-load mix-up is silent until the next context switch
+- [ ] Route `vmm_apply_nx_policy()` VA reconstruction (`vmm.c:1488`, naive shift) through `mm_canonical_from_indices()` -- non-canonical for `pml4i >= 256`
+- [ ] Leave the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) alone -- correct while the kernel links low; it moves to image-window bounds in §3
+- [ ] Add the identity-map-disabled runtime test the design review requires (remap/unmap/destroy/split/NX-traverse/swap with the broad identity map OFF) -- BSS-ceiling-gated in-kernel, so land it host-side or defer to §7 with `test_highhalf.c`
+- [ ] Add `POST16` entry/exit around the walker-conversion cutover
+- [ ] Commit: `"boot: VMM walker conversion -- page-table derefs through the HHDM helper"`
+
+**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW; this section flips the WALK pointer to the HHDM while the identity map stays live as a fallback, so behavior is unchanged and the section is independently bootable. Exercise the converted walkers (remap/unmap/destroy/split/NX-traverse/swap) with the broad identity map disabled (design review requirement) -- either host-side or, if the BSS ceiling blocks the in-kernel suite, deferred to §7's `test_highhalf.c` with a reciprocal XREF. Test on: QEMU KVM + TCG.
+
+> [!NOTE]
+> **Regression risk: HIGH.** An incomplete deref inventory or a walk-vs-load (`*_phys`) mix-up is silent until §5 retires the identity map or the next kernel-task CR3 load. Rollback: revert to walking via the identity map (the §2 HHDM install is independent and stays). Keep `scripts/test-smoke.sh` green at every step. The repo-wide 13-site inventory MUST be complete before §5 (identity teardown).
 
 ---
 
