@@ -74,7 +74,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [/]   |
 | 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
 | 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
-| 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [ ]   |
+| 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [ ]   |
 | 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [ ]   |
 | ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [ ]   |
@@ -394,7 +394,10 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 9. NtAlpc QueryInformation, SetInformation & CancelMessage
 
-- [ ] NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):
+> [!IMPORTANT]
+> **BLOCKED on the USER_BASE / BSS ceiling (2026-07-17) -- no code ships from this section today.** Every item here adds handler `.text` and there is no room: `build/kernel.map` ends at `0x7fe000` vs `USER_BASE` `0x800000` = **8 KiB**, and `scripts/build.sh:356` hard-fails when `BSS_END >= USER_BASE`. This is measured, not predicted -- §7 is fully implemented and Codex-reviewed yet already drives the `-DKERNEL_TESTS` BSS end to exactly `0x800000` (stash `TODO-24-s7-wip-bss-ceiling`), so §9 would stack onto an image that is already at the line. Nearer unblock, no ABI change and no operator decision -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)"). Two items are blocked a SECOND time over, independently of the ceiling: `NtAlpcQueryInformationMessage` takes 7 args against the 6-word `SSDT_HANDLER` cap (`ssdt.h:30-31`, the operator-reserved transport that deferred §8), and the SID / server classes read `server_comm->ClientToken`, which lives in the §7 stash and is not in tree.
+
+- [/] NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):
   - `AlpcBasicInformation` (0) → `{Flags, SequenceNo, PortContext}`
   - `AlpcPortInformation` (1) → full `ALPC_PORT_ATTRIBUTES` readback
   - `AlpcAssociateCompletionPortInformation` (2) → read back associated completion port (writeable via `NtAlpcSetInformation` in this section)
@@ -402,22 +405,33 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `AlpcServerInformation` (4) → `{ThreadBlocked, ConnectedProcessId, ConnectionNtPath}`
   - `AlpcMessageZoneInformation` (5) → message zone status (→ §11)
   - `AlpcRegisterCompletionListInformation` (6) / `AlpcUnregisterCompletionListInformation` (7) / `AlpcAdjustCompletionListConcurrencyCountInformation` (8) / `AlpcRegisterCallbackInformation` (9) / `AlpcCompletionListRundownInformation` (10) -- these are completion-LIST lifecycle operations issued via `NtAlpcSetInformation` (NOT queries). The user-VA mapped completion-list ring was NOT built (§5 chose the IOCP-notify channel instead). Return `STATUS_NOT_IMPLEMENTED` with rationale -- do NOT alias to IOCP: IOCP posts metadata while the payload stays on `MessageQueue` and has no shared-list registration / concurrency / rundown semantics, so aliasing would silently break async consumers. If a real mapped completion-list ring is ever needed, it lands as a new section, not an alias.
-- [ ] Return `STATUS_INVALID_INFO_CLASS` for unknown classes
-- [ ] `NtAlpcQueryInformationMessage(PortHandle, Flags, Message, MessageInformationClass, Buffer, Length, ReturnLength)`:
+- [/] Return `STATUS_INVALID_INFO_CLASS` for unknown classes -- retires the `ALPC_STUB_BODY` sentinel at `nt_alpc.c:457` (SSDT `0x011C`); ceiling-blocked
+- [/] `NtAlpcQueryInformationMessage` (7 args) -- exceeds the 6-word `SSDT_HANDLER` cap; blocked by the transport decision, not just the ceiling -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC" at line 364):
   - `AlpcMessageSidInformation` (0) → returns the SID of the sender of the specified message (derived from captured client token at send time)
   - `AlpcMessageTokenModifiedIdInformation` (1) → returns the `ModifiedId` LUID of the sender's token at send time; allows detecting if the token changed between send and receive
 
-- [ ] NtAlpcSetInformation: `AlpcPortAssociateCompletionPortInformation` (2); set completion port (§5 completion list)
-- [ ] `AlpcBasicInformation` (0); update `MaxMessageLength`, `MemoryBandwidth` (only if no messages are pending)
-- [ ] `AlpcDirectMessageAttribute` (3); set default message type for datagrams
-- [ ] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)`:
+- [x] NtAlpcSetInformation: `AlpcPortAssociateCompletionPortInformation` (2) -- ALREADY SHIPPED by §8 (`nt_alpc.c:473` → `AlpcAssociateCompletionPort`, SSDT `0x011D`); the classes below are this section's open work
+- [/] `AlpcBasicInformation` (0); update `MaxMessageLength`, `MemoryBandwidth` (only if no messages are pending) -- ceiling-blocked
+- [/] `AlpcDirectMessageAttribute` (3); default message type for datagrams -- needs the `ALPC_MESSAGE_ATTRIBUTES` ABI owned by the NO-SHIP-deferred §6; also ceiling-blocked -> XREF: this file §6 (item: "Message attributes dispatcher" at line 278)
+- [/] `NtAlpcCancelMessage(PortHandle, Flags, MessageContext)` -- fits the transport (3 args); retires the `nt_alpc.c:394` sentinel (SSDT `0x0115`); ceiling-blocked only:
   - Find entry on `port->PendingQueue` or `port->MessageQueue` matching `MessageContext->MessageId`
   - Remove from queue; wake any blocked sender with `STATUS_CANCELLED`
   - Used by timeout path in `NtAlpcConnectPort` and `NtAlpcSendWaitReceivePort`
 
 - [ ] Commit: `"kernel/ipc/alpc: NtAlpc* SSDT wiring, QueryInformation, SetInformation, CancelMessage"`
 
-**Test checkpoint:** Every `NtAlpc*` entry point listed in the §8 syscall list plus any §8 gap items (OpenSender*, RevokeSecurityContext) is registered in the SSDT and callable from user mode (or kernel-mode `Zw*` alias). `NtAlpcQueryInformation(AlpcBasicInformation)` returns valid `{Flags, SequenceNo, PortContext}`. `NtAlpcQueryInformation` with unknown class → `STATUS_INVALID_INFO_CLASS`. `NtAlpcQueryInformationMessage(AlpcMessageSidInformation)` returns sender SID. `NtAlpcCancelMessage` cancels a pending request → blocked sender wakes with `STATUS_CANCELLED`. Serial log: `"[ALPC] SSDT wired: %u NtAlpc* entries"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Every `NtAlpc*` entry point listed in the §8 syscall list plus any §8 gap items (OpenSender*, RevokeSecurityContext) is registered in the SSDT and callable from user mode (or kernel-mode `Zw*` alias). `NtAlpcQueryInformation(AlpcBasicInformation)` returns valid `{Flags, SequenceNo, PortContext}`. `NtAlpcQueryInformation` with unknown class → `STATUS_INVALID_INFO_CLASS`. `NtAlpcQueryInformationMessage(AlpcMessageSidInformation)` returns sender SID. `NtAlpcCancelMessage` cancels a pending request → blocked sender wakes with `STATUS_CANCELLED`. Serial log: `"[ALPC] SSDT wired: %u NtAlpc* entries"`. No new test surface lands with this section (no code shipped); the deferred contract is already held by `"OB: NT ALPC pending features"` (`test_nt_alpc_pending_features`), which `TEST_PENDING`s every slot still returning `STATUS_NOT_IMPLEMENTED` -- including `0x0115` / `0x011C` / `0x011E`. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | unchanged by this section -- no code shipped; the pending-features sweep already gates the three stubs this section owns
+
+> **Notes:**
+> - **What shipped** -- no code: every item adds handler `.text` and the 8 KiB `USER_BASE` headroom cannot take it, so this pass recorded the blocker set instead of shipping a partial subset.
+> - **Correction** -- `AlpcPortAssociateCompletionPortInformation` was NOT open work: §8 already shipped it (`nt_alpc.c:486-500`, probe + bounds + `AlpcAssociateCompletionPort`); it is now `[x]` and the section's real scope is the other classes.
+> - **Downstream effects** -- §10/§11/§12 all declare a `§9` dependency in the Implementation Order, so they inherit this block; the whole tail of this file unparks when `TODO-33 §10` lands.
+> - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling that gates every `.text`-adding item here.
+> - **Scope boundary** -- §9 owns the Query/Set/Cancel info-class bodies; the SSDT slots + transport belong to §8, the message-attribute ABI to §6, the captured token to §7, and the headroom to `TODO-33 §10`.
+
+> **Deferred:** [High] 2026-07-17 -- no code ships from §9. Every item adds handler `.text` against an 8 KiB ceiling (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`; `scripts/build.sh:356` fails closed). Proven binding, not predicted: §7 is fully implemented + Codex-reviewed and already drives the `-DKERNEL_TESTS` BSS end to exactly `0x800000` -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)" at line 354). `NtAlpcQueryInformationMessage` is blocked a second time by the 6-word `SSDT_HANDLER` cap (`ssdt.h:30-31`) -> XREF: this file §8 (item: "**Choose the >6-arg SSDT transport for ALPC (ABI decision -- operator-reserved).**" at line 364). `AlpcConnectedSIDInformation` / `AlpcServerInformation` read `server_comm->ClientToken`, which is in the §7 stash and not in tree -> XREF: this file §7 (item: "Security context capture at CONNECT time (`AlpcConnectPort`)" at line 302). `AlpcDirectMessageAttribute` needs the §6 attribute ABI -> XREF: this file §6 (item: "Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES`" at line 278).
 
 ---
 

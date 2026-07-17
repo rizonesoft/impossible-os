@@ -357,7 +357,7 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 - [ ] **Do NOT convert `klog_ring`** (281 KiB) blind -- klog logs BEFORE `pmm_init`. Keep a small static early ring + migrate later, or leave static -> XREF: `01-boot-platform/TODO-04 §1` (item: "Boot-Phase Aware klog Init")
 - [ ] Keep pure test-data fixtures out of the measured image (`test_env_value_too_long.big` 32 KiB, `s_bls_fixture` 36 KiB) -- the gate measures the `-DKERNEL_TESTS` image, so test statics count against the ceiling
 - [ ] Re-measure the `scripts/build.sh` BSS gate after each conversion and record the new headroom in the Notes -- the gate output is the acceptance evidence for this section
-- [ ] Un-defer the ceiling-parked queue once headroom exists: TODO-24 §7 (stash `TODO-24-s7-wip-bss-ceiling`), TODO-23 §1-§16, TODO-22 §23-§25 -> XREF: this file §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone")
+- [ ] Un-defer the ceiling-parked queue once headroom exists: TODO-24 §7 (stash `TODO-24-s7-wip-bss-ceiling`) + §8-§12 (no stash), TODO-23 §1-§16, TODO-22 §23-§25 -> XREF: this file §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16")
 - [ ] Commit: `"kernel/mm: convert large static pools to dynamic -- tactical BSS headroom"`
 
 **Test checkpoint:** `bash scripts/build.sh` prints `✓ BSS check` with a materially lower BSS end (expect >= 700 KiB headroom after the registry pools alone, vs 8 KiB today). Full `scripts/test.sh` green -- registry suites especially, since the pool-index allocator semantics must not change. `scripts/test-smoke.sh` boots to `C:\>`: the registry is on the boot path, so an allocation-failure regression surfaces as a boot hang, not a test failure. Test on: QEMU KVM + TCG; **bare metal**.
