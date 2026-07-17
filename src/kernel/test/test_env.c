@@ -2940,6 +2940,247 @@ static void test_rtlenv_query_length_convention(void)
     env_unset(t, "RTLENV_LEN");
 }
 
+/* ==== s25: counted (non-_U) Rtl env read forms ===========================
+ * RtlExpandEnvironmentStrings / RtlQueryEnvironmentVariable take raw ptr + WCHAR
+ * counts (not UNICODE_STRINGs) and sit on the SAME SIZE_T-safe engine the _U forms
+ * now delegate down to. The two forms' ReturnLength conventions DIFFER by design:
+ * Expand includes the NUL on both paths, Query excludes it on success. */
+
+/* Counted Expand: NULL Environment, %VAR% from the calling process, ReturnLength
+ * in WCHARs INCLUDING the NUL on success. */
+static void test_rtlexp_counted_expand(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], src[24], dst[64];
+    UNICODE_STRING name, val;
+    uint64_t srclen, ret = 0;
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLEXPC_A");
+    env_mk_us(&val, vbuf, 24, "World");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLEXPC_A%=World");
+
+    srclen = (uint64_t)env_test_wfill("Hi %RTLEXPC_A%!", src);
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, dst, 64u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "counted RtlExpandEnvironmentStrings succeeds");
+    TEST_ASSERT(env_test_weq_ascii(dst, env_test_strlen("Hi World!"), "Hi World!"),
+                "counted expand result matches %RTLEXPC_A%");
+    TEST_ASSERT_EQ((uint32_t)ret, (uint32_t)(env_test_strlen("Hi World!") + 1u),
+                   "counted Expand ReturnLength is WCHARs INCLUDING the NUL");
+    TEST_ASSERT_EQ((uint32_t)dst[env_test_strlen("Hi World!")], 0u,
+                   "counted Expand NUL-terminates on success");
+    env_unset(t, "RTLEXPC_A");
+}
+
+/* Counted Expand: an undersized buffer and a size query (DestinationLength 0)
+ * both report the required size in WCHARs INCLUDING the NUL, writing no output. */
+static void test_rtlexp_counted_too_small(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], src[24], dst[64];
+    UNICODE_STRING name, val;
+    uint64_t srclen, ret = 0;
+    uint32_t want = env_test_strlen("Hi World!") + 1u;   /* incl NUL */
+    NTSTATUS st;
+
+    env_mk_us(&name, nbuf, 24, "RTLEXPC_B");
+    env_mk_us(&val, vbuf, 24, "World");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLEXPC_B%=World");
+    srclen = (uint64_t)env_test_wfill("Hi %RTLEXPC_B%!", src);
+
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, dst, 4u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "undersized Destination -> STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)ret, want,
+                   "too-small ReturnLength is required WCHARs INCLUDING the NUL");
+
+    ret = 0;
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, (uint16_t *)0, 0u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "size query (DestinationLength 0) -> STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)ret, want,
+                   "size-query ReturnLength is required WCHARs INCLUDING the NUL");
+    env_unset(t, "RTLEXPC_B");
+}
+
+/* Counted Expand: a non-NULL Environment (foreign block) is refused, as for _U. */
+static void test_rtlexp_counted_foreign(void)
+{
+    uint16_t src[8], dst[16], dummy = 0;
+    uint64_t srclen, ret = 0;
+    NTSTATUS st;
+
+    srclen = (uint64_t)env_test_wfill("x", src);
+    st = RtlExpandEnvironmentStrings((void *)&dummy, src, srclen, dst, 16u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_SUPPORTED,
+                   "counted Expand refuses a non-NULL Environment");
+    TEST_ASSERT_EQ((uint32_t)ret, 0u, "refused counted Expand publishes no length");
+}
+
+/* Counted Query: round-trip against the calling process, ReturnLength in WCHARs
+ * EXCLUDING the NUL on success, plus the WRK exact-fit rule (fits with no NUL). */
+static void test_rtlqry_counted_roundtrip(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], name[24], out[24];
+    UNICODE_STRING uname, uval;
+    uint64_t namelen, ret = 0;
+    NTSTATUS st;
+
+    env_mk_us(&uname, nbuf, 24, "RTLQRYC_A");
+    env_mk_us(&uval, vbuf, 24, "hello");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &uname, &uval),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLQRYC_A%=hello");
+    namelen = (uint64_t)env_test_wfill("RTLQRYC_A", name);
+
+    out[5] = 0xBEEFu;                                    /* sentinel past content */
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen, out, 5u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "counted Query exact fit (5 WCHARs) SUCCEEDS (WRK rule)");
+    TEST_ASSERT_EQ((uint32_t)ret, 5u,
+                   "counted Query ReturnLength EXCLUDES the NUL on success");
+    TEST_ASSERT(env_test_weq_ascii(out, 5, "hello"), "counted Query value matches");
+    TEST_ASSERT_EQ((uint32_t)out[5], 0xBEEFu,
+                   "exact fit writes no NUL past the content");
+
+    /* Room to spare: the NUL IS written. */
+    ret = 0;
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen, out, 8u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS, "oversized buffer succeeds");
+    TEST_ASSERT_EQ((uint32_t)out[5], 0u, "NUL written when there is room");
+    env_unset(t, "RTLQRYC_A");
+}
+
+/* Counted Query: an undersized buffer reports the required size in WCHARs
+ * INCLUDING the NUL (the ReactOS counted convention, deliberately pinned). */
+static void test_rtlqry_counted_too_small(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], name[24], out[24];
+    UNICODE_STRING uname, uval;
+    uint64_t namelen, ret = 0;
+    NTSTATUS st;
+
+    env_mk_us(&uname, nbuf, 24, "RTLQRYC_S");
+    env_mk_us(&uval, vbuf, 24, "abcd");                 /* 4 WCHARs */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &uname, &uval),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLQRYC_S%=abcd");
+    namelen = (uint64_t)env_test_wfill("RTLQRYC_S", name);
+
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen, out, 3u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "undersized counted Query -> STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)ret, 5u,
+                   "too-small ReturnLength is required WCHARs INCLUDING the NUL");
+    env_unset(t, "RTLQRYC_S");
+}
+
+/* Counted Query: absent name, foreign block, and an over-ENV_NAME_MAX name are
+ * each refused with the documented status. */
+static void test_rtlqry_counted_errors(void)
+{
+    uint16_t name[24], big[ENV_NAME_MAX + 4], out[16], dummy = 0;
+    uint64_t namelen, ret = 0;
+    uint32_t i;
+    NTSTATUS st;
+
+    namelen = (uint64_t)env_test_wfill("RTLQRYC_NOPE", name);
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen, out, 16u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_VARIABLE_NOT_FOUND,
+                   "absent counted Query -> STATUS_VARIABLE_NOT_FOUND");
+
+    st = RtlQueryEnvironmentVariable((void *)&dummy, name, namelen, out, 16u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NOT_SUPPORTED,
+                   "counted Query refuses a non-NULL Environment");
+
+    for (i = 0; i < ENV_NAME_MAX + 4u; i++)
+        big[i] = (uint16_t)'A';
+    st = RtlQueryEnvironmentVariable((void *)0, big, (uint64_t)(ENV_NAME_MAX + 4u),
+                                     out, 16u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_NAME_TOO_LONG,
+                   "a name past ENV_NAME_MAX WCHARs -> STATUS_NAME_TOO_LONG");
+    TEST_ASSERT_EQ((uint32_t)ret, 0u, "a refused counted Query publishes no length");
+}
+
+/* Counted Expand SIZE_T-safety boundaries: the source resource ceiling, the
+ * DestinationLength byte-span overflow, and a ReturnLength aliasing Source
+ * (rejected WITHOUT corrupting the caller's template). */
+static void test_rtlexp_counted_boundaries(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], src[24], dst[64];
+    UNICODE_STRING name, val;
+    uint64_t srclen, ret = 0;
+    NTSTATUS st;
+
+    /* A SourceLength past the resource ceiling is refused without narrowing. */
+    srclen = (uint64_t)RTL_ENV_SOURCE_MAX_WCHARS + 1u;
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, dst, 64u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "SourceLength past RTL_ENV_SOURCE_MAX_WCHARS -> INSUFFICIENT_RESOURCES");
+
+    /* A DestinationLength whose byte span overflows is a clean INVALID_PARAMETER,
+     * never a wrapped overlap endpoint. */
+    srclen = (uint64_t)env_test_wfill("x", src);
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, dst,
+                                     0x8000000000000000ull, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "DestinationLength overflowing the byte span -> INVALID_PARAMETER");
+
+    /* A ReturnLength aliasing the Source is rejected and leaves Source unchanged. */
+    env_mk_us(&name, nbuf, 24, "RTLEXPC_AL");
+    env_mk_us(&val, vbuf, 24, "World");
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &name, &val),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLEXPC_AL%");
+    srclen = (uint64_t)env_test_wfill("Hi %RTLEXPC_AL%", src);
+    st = RtlExpandEnvironmentStrings((void *)0, src, srclen, dst, 64u,
+                                     (uint64_t *)&src[0]);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "ReturnLength aliasing Source rejected");
+    TEST_ASSERT(env_test_weq_ascii(src, env_test_strlen("Hi %RTLEXPC_AL%"),
+                                   "Hi %RTLEXPC_AL%"),
+                "rejected aliased call left Source byte-for-byte unchanged");
+    env_unset(t, "RTLEXPC_AL");
+}
+
+/* Counted Query boundaries: a zero-capacity size query, and a ReturnLength
+ * aliasing the Value output range (rejected WITHOUT writing into Value). */
+static void test_rtlqry_counted_boundaries(void)
+{
+    struct task *t = task_current();
+    uint16_t nbuf[24], vbuf[24], name[24], out[24];
+    UNICODE_STRING uname, uval;
+    uint64_t namelen, ret = 0;
+    NTSTATUS st;
+
+    env_mk_us(&uname, nbuf, 24, "RTLQRYC_B");
+    env_mk_us(&uval, vbuf, 24, "hello");                 /* 5 WCHARs */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentVariable((void **)0, &uname, &uval),
+                   (uint32_t)STATUS_SUCCESS, "seed %RTLQRYC_B%=hello");
+    namelen = (uint64_t)env_test_wfill("RTLQRYC_B", name);
+
+    /* Zero-capacity size query: NULL Value, cap 0 -> required size INCLUDING NUL. */
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen,
+                                     (uint16_t *)0, 0u, &ret);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_BUFFER_TOO_SMALL,
+                   "zero-capacity size query -> STATUS_BUFFER_TOO_SMALL");
+    TEST_ASSERT_EQ((uint32_t)ret, 6u,
+                   "size query reports required WCHARs INCLUDING the NUL");
+
+    /* A ReturnLength aliasing the Value range is rejected and writes no output. */
+    out[0] = 0xBEEFu;
+    st = RtlQueryEnvironmentVariable((void *)0, name, namelen,
+                                     out, 8u, (uint64_t *)&out[0]);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INVALID_PARAMETER,
+                   "ReturnLength aliasing the Value range rejected");
+    TEST_ASSERT_EQ((uint32_t)out[0], 0xBEEFu,
+                   "rejected aliased Query left the Value buffer unchanged");
+    env_unset(t, "RTLQRYC_B");
+}
+
 /* A foreign (non-NULL) Environment is refused UNIFORMLY across the layer, and for
  * Set the refusal happens BEFORE *Environment is dereferenced -- so all three
  * pointer shapes are refused, including the distinct `*Environment == NULL` form
@@ -3565,6 +3806,12 @@ static void test_rtlenv_exports_not_user_reachable(void)
                    (uint32_t)-1, "RtlSetEnvironmentStrings is not ntdll-exported");
     TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlCreateEnvironmentEx"),
                    (uint32_t)-1, "RtlCreateEnvironmentEx is not ntdll-exported");
+    /* s25 counted (non-_U) read forms: gated identically -- their block/expansion
+     * path is the same ~2 MiB PMM allocator, so no export row until s24 + s20 close. */
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlExpandEnvironmentStrings"),
+                   (uint32_t)-1, "RtlExpandEnvironmentStrings (counted) is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlQueryEnvironmentVariable"),
+                   (uint32_t)-1, "RtlQueryEnvironmentVariable (counted) is not ntdll-exported");
 }
 
 /* env_create_block: deferred Win32 branches are refused, never fabricated. */
@@ -5223,6 +5470,22 @@ void test_register_env(void)
                             test_rtlenv_query_not_found, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl query length convention",
                             test_rtlenv_query_length_convention, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Expand %VAR%",
+                            test_rtlexp_counted_expand, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Expand too-small + size query",
+                            test_rtlexp_counted_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Expand foreign block refused",
+                            test_rtlexp_counted_foreign, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Query roundtrip + exact fit",
+                            test_rtlqry_counted_roundtrip, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Query too-small (incl NUL)",
+                            test_rtlqry_counted_too_small, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Query not-found/foreign/name-too-long",
+                            test_rtlqry_counted_errors, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Expand boundaries (cap/overflow/alias)",
+                            test_rtlexp_counted_boundaries, TEST_CAT_ABI);
+    test_suite_register_cat("Env: s25 counted Query boundaries (zero-cap/alias)",
+                            test_rtlqry_counted_boundaries, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl foreign block refused",
                             test_rtlenv_foreign_block_refused, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl set(NULL) deletes",

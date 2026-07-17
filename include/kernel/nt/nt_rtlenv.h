@@ -81,6 +81,26 @@
  * TODO-22 s24 (item: "Measure RTL_ENV_EXPAND_WORK_MAX"). */
 #define RTL_ENV_EXPAND_WORK_MAX    8388608u
 
+/* Resource-policy ceiling on the COUNTED RtlExpandEnvironmentStrings Source
+ * template, in WCHARs (see the counted entry below). Native ntdll takes an
+ * unbounded SIZE_T SourceLength; a kernel cannot, because the outer source scan
+ * is NOT charged against RTL_ENV_EXPAND_WORK_MAX (that budget bounds the
+ * O(refs * block) LOOKUP product, not the linear template walk), and the inner
+ * pass indexes the template with a uint32. The UNICODE_STRING (`_U`) forms are
+ * implicitly bounded because Length is a USHORT (<= 32767 WCHARs); the counted
+ * SIZE_T form removes that bound and needs an explicit one (TODO-22 s25 item 3).
+ *
+ * This is a RESOURCE-POLICY refusal (STATUS_INSUFFICIENT_RESOURCES), NOT a
+ * malformed-input one (STATUS_INVALID_PARAMETER): a structurally valid template
+ * larger than this is a resource the kernel declines to scan, mirroring the
+ * work-budget refusal, and is a DELIBERATE, DOCUMENTED divergence from native's
+ * unbounded SIZE_T -- named a source-policy constant of its own rather than
+ * reusing RTL_ENV_BLOCK_MAX_WCHARS, whose meaning is the block-scan bound, not a
+ * template bound. 1 MiWCHAR templates are admitted (far past any real cmdline);
+ * the value stays <= UINT32_MAX so the post-check narrowing to the pass index is
+ * exact. */
+#define RTL_ENV_SOURCE_MAX_WCHARS  1048576u
+
 /* Expand `%VAR%` references in `Source` using `Environment` (a double-NUL-
  * terminated UTF-16 "NAME=VALUE\0"... block), writing the expanded UTF-16 result
  * into `Destination->Buffer`.
@@ -184,6 +204,44 @@ NTSTATUS rtl_env_expand_block_budget(const uint16_t *block, uint32_t block_exten
                                      UNICODE_STRING *Source,
                                      UNICODE_STRING *Destination,
                                      uint32_t *ReturnedLength, uint64_t budget);
+
+/* ntdll RtlExpandEnvironmentStrings(PVOID Environment, PWSTR Source,
+ * SIZE_T SourceLength, PWSTR Destination, SIZE_T DestinationLength,
+ * PSIZE_T ReturnLength) -- the COUNTED (raw ptr + WCHAR count) form a PE import
+ * table may name in place of the UNICODE_STRING `_U` entry (phnt ntrtl.h,
+ * winsiderss 2026-07-15). All lengths are in WCHARs. `RtlExpandEnvironmentStrings_U`
+ * delegates DOWN to the same SIZE_T-safe engine (TODO-22 s25).
+ *
+ *   Environment       MUST be NULL (the calling process's own environment,
+ *                     synthesized from task_current()'s environ). A non-NULL
+ *                     bare pointer carries no allocation extent and is refused
+ *                     STATUS_NOT_SUPPORTED -- the foreign-block boundary that
+ *                     probes + copies it is owned by TODO-22 s24.
+ *   Source/SourceLength   the UTF-16 template and its WCHAR count. A template
+ *                     longer than RTL_ENV_SOURCE_MAX_WCHARS is a RESOURCE-POLICY
+ *                     refusal (STATUS_INSUFFICIENT_RESOURCES), a deliberate
+ *                     documented divergence from native's unbounded SIZE_T.
+ *   Destination/DestinationLength   the output buffer and its WCHAR capacity.
+ *   ReturnLength      optional; set to the required buffer size in WCHARs
+ *                     INCLUDING the terminating NUL, on BOTH success and
+ *                     STATUS_BUFFER_TOO_SMALL. (This is the ReactOS `TotalLength`
+ *                     convention, which starts at 1 for the NUL; it deliberately
+ *                     DIFFERS from RtlQueryEnvironmentVariable below, whose count
+ *                     excludes the NUL on success -- do not unify them.)
+ *
+ * The result count has NO UNICODE_STRING USHORT ceiling (the _U wrapper adds
+ * that). The only refusals are saturation of the output counter or a required
+ * size that cannot be expressed as `required + 1` WCHARs (STATUS_UNSUCCESSFUL,
+ * ReturnLength 0), both unreachable under the current caps. `%%`-preservation,
+ * literal-copy of unknown/oversize names, the no-alias matrix, the two-pass
+ * agreement check, and the per-pass work budget are exactly as documented for
+ * the engine above. Returns STATUS_SUCCESS, STATUS_BUFFER_TOO_SMALL,
+ * STATUS_INVALID_PARAMETER, STATUS_UNSUCCESSFUL, STATUS_INSUFFICIENT_RESOURCES,
+ * STATUS_NO_MEMORY, or STATUS_NOT_SUPPORTED. Thread context only. */
+NTSTATUS RtlExpandEnvironmentStrings(void *Environment,
+                                     const uint16_t *Source, uint64_t SourceLength,
+                                     uint16_t *Destination, uint64_t DestinationLength,
+                                     uint64_t *ReturnLength);
 
 struct task;
 
@@ -308,6 +366,41 @@ NTSTATUS ExpandEnvironmentStringsForUser(struct task *caller, const void *htoken
  * STATUS_NO_MEMORY, or STATUS_NOT_SUPPORTED. Thread context only. */
 NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
                                        UNICODE_STRING *Value);
+
+/* ntdll RtlQueryEnvironmentVariable(PVOID Environment, PCWSTR Name,
+ * SIZE_T NameLength, PWSTR Value, SIZE_T ValueLength, PSIZE_T ReturnLength) --
+ * the COUNTED (raw ptr + WCHAR count) read form (phnt ntrtl.h, winsiderss
+ * 2026-07-15). `RtlQueryEnvironmentVariable_U` delegates DOWN to the shared
+ * value-copy core after its own descriptor validation (TODO-22 s25).
+ *
+ *   Environment      MUST be NULL (calling process's own environment). Non-NULL
+ *                    is refused STATUS_NOT_SUPPORTED, as for the _U form.
+ *   Name/NameLength  the UTF-16 name and its WCHAR count. Case-insensitive ASCII
+ *                    fold. `=` is rejected except at index 0 (the hidden "=X:"
+ *                    drive-cwd form). A name longer than ENV_NAME_MAX WCHARs
+ *                    cannot name a storable variable and is STATUS_NAME_TOO_LONG.
+ *   Value/ValueLength  the output buffer and its WCHAR capacity.
+ *   ReturnLength     the value's WCHAR count. On SUCCESS it EXCLUDES the NUL; on
+ *                    STATUS_BUFFER_TOO_SMALL it INCLUDES the NUL (the required
+ *                    buffer size). This is ReactOS's counted convention, pinned
+ *                    deliberately -- its `_U` wrapper corrects the too-small
+ *                    value with `ReturnLength -= 1` to reach the _U's
+ *                    excludes-NUL-on-both-paths rule, which is exactly how
+ *                    RtlQueryEnvironmentVariable_U maps this count to
+ *                    Value->Length.
+ *
+ * EXACT FIT (ValueLength == content WCHARs, excluding the NUL) SUCCEEDS -- the
+ * WRK rule (base/ntos/rtl/environ.c), NOT ReactOS's strict-less-than -- because
+ * the target is Win11 binary compatibility. The NUL is written only when
+ * ValueLength leaves room for a whole extra WCHAR; at exact fit SUCCESS does NOT
+ * imply NUL-termination (read ReturnLength). Returns STATUS_SUCCESS,
+ * STATUS_VARIABLE_NOT_FOUND, STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER,
+ * STATUS_NAME_TOO_LONG, STATUS_NO_MEMORY, or STATUS_NOT_SUPPORTED. Thread
+ * context only. */
+NTSTATUS RtlQueryEnvironmentVariable(void *Environment,
+                                     const uint16_t *Name, uint64_t NameLength,
+                                     uint16_t *Value, uint64_t ValueLength,
+                                     uint64_t *ReturnLength);
 
 /* ntdll RtlSetEnvironmentVariable(PVOID *Environment, PUNICODE_STRING Name,
  * PUNICODE_STRING Value). Sets or deletes a variable.

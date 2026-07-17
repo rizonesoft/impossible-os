@@ -87,7 +87,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 | 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
 | 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §10          |  [x]   |
 | 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [/]   |
-| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §10          |  [ ]   |
+| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §10          |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -827,6 +827,7 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 - [/] Apply the same probe+copy to `RtlQueryEnvironmentVariable_U`'s non-NULL `Environment` (§21 refuses it): one trusted-snapshot helper serves both the query and expansion paths, so the two cannot drift → XREF `02-kernel-core/TODO-23` §13
 - [/] Extend the boundary to `RtlSetEnvironmentVariable`'s non-NULL `Environment` (§21 refuses it). A read-only snapshot is NOT enough: the ABI takes `void **` because ntdll may REALLOC the block and write it back -- needs its own ownership contract
 - [ ] Even WITH fault-recoverable usercopy, an unterminated block scanned to a coincidental double NUL reads adjacent memory; user pages share identity-mapped frames today, so refusing it needs per-process isolation
+- [ ] Snapshot `Source` into a private kernel buffer before the two-pass expansion once these forms are user-reachable: the two-pass check misses an equal-length, equal-cost concurrent Source mutation. Same probe+copy boundary owns it → XREF §25
 - [ ] **Measure `RTL_ENV_EXPAND_WORK_MAX`**: the 8388608 ceiling is reasoned (~8 ms at ~1e9 compares/s), not measured. Derive it from worst-case bare-metal timing and record the method next to the constant
 - [ ] Lookup cache for repeated `%NAME%` misses: a bounded (<= 4 KiB `kmalloc`, no PMM) per-call name cache shared by both passes would cut the O(refs x block) constant. The §20 budget is the hard bound; this is the optimization under it
 - [ ] Drop the per-query heap round-trip: `RtlQueryEnvironmentVariable_U` + `NtQueryEnvironmentVariable_handler` both `env_buf_alloc(ENV_BUF_PAYLOAD_MAX)` before knowing the size. A 256B stack probe keeps grow-once; fix BOTH or they diverge
@@ -851,15 +852,15 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 
 The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw ptr+len, no `UNICODE_STRING`) that a real PE import table may name instead of the `_U` entries §21 shipped. In ReactOS the `_U` forms are thin wrappers over these, so the counted form is the PRIMITIVE and `_U` should delegate DOWN -- but §23's design review proved the shipped engine cannot become that primitive unchanged, which is why this is its own section rather than a bullet in §23: the lens here is ABI length conventions + integer narrowing, not store ownership. Both entries take `_In_opt_ PVOID Environment`, so they inherit §21's non-NULL refusal until §24 lands the boundary. Signatures pinned verbatim from winsiderss/phnt `ntrtl.h` (2026-07-15).
 
-- [ ] `rtl_env_expand_pass`/`_core` are `uint32_t`-indexed and `_core` is `UNICODE_STRING`-shaped (nt_rtlenv.c:279, 396), so a `SIZE_T` `SourceLength` truncates on narrowing. Restructure to raw ptr+len, or refuse past a cap BEFORE narrowing
-- [ ] `rtl_env_ranges_overlap` takes `uint32_t alen/blen` (nt_rtlenv.c:356): a length above 4 GiB truncates and EVADES overlap detection. Whatever bound the item above picks must be enforced before this is reached
-- [ ] The work budget charges lookups, not the outer source scan -- bounded today only because `UNICODE_STRING.Length` is `USHORT` (<= 32767 WCHARs). A `SIZE_T` source removes that implicit bound and needs an explicit one
-- [ ] `RtlQueryEnvironmentVariable(Environment, Name, NameLength, Value, ValueLength, ReturnLength)`: lengths in WCHARs. Keep the WRK exact-fit-SUCCEEDS rule §21 chose (nt_rtlenv.h:284-304), NOT ReactOS's strict-less-than
-- [ ] ReactOS's counted `ReturnLength` convention is inconsistent (EXCLUDES the NUL on success, INCLUDES it on `STATUS_BUFFER_TOO_SMALL`); its `_U` wrapper corrects with `ReturnLength -= 1`. Pin ours deliberately and name the source it follows
-- [ ] `RtlExpandEnvironmentStrings(Environment, Source, SourceLength, Destination, DestinationLength, ReturnLength)`: `ReturnLength` INCLUDES the NUL on BOTH paths (ReactOS `TotalLength = 1`), unlike Query. Do not unify the two by accident
-- [ ] Refactor `_U` to delegate DOWN once the core is safe: `_U` keeps the USHORT check, `STATUS_UNSUCCESSFUL` past `RTL_ENV_MAX_RESULT_WCHARS`, the `>= Length + 2` NUL guard, overlap rejection; the core carries NO `UNICODE_STRING` ceiling
-- [ ] Gate: same as §23 -- implementation may land before §24, but no export row until §24's probe+copy and §20's PMM item both close
-- [ ] Commit: `"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core"`
+- [x] Extracted `rtl_env_expand_counted` (nt_rtlenv.c): raw ptr + `size_t` lengths, no `UNICODE_STRING` ceiling. `rtl_env_expand_core` is now its thin US adapter. A `SourceLength` past the cap is refused BEFORE the uint32 pass-index narrowing
+- [x] `rtl_env_ranges_overlap` widened to `size_t alen/blen` + an endpoint-wrap guard (a range whose `base + len` wraps is treated as overlapping -> rejected), so a > 4 GiB byte length can neither truncate nor wrap past detection
+- [x] `RTL_ENV_SOURCE_MAX_WCHARS` (1 MiWCHAR) is the explicit source bound the SIZE_T form needs; over it is `STATUS_INSUFFICIENT_RESOURCES` (resource-policy, a documented divergence from native's unbounded SIZE_T), not a malformed-input status
+- [x] `RtlQueryEnvironmentVariable(Env, Name, NameLength, Value, ValueLength, ReturnLength)`: WCHAR lengths, WRK exact-fit-SUCCEEDS (not ReactOS strict), over a shared `rtl_env_query_value` core; a name past `ENV_NAME_MAX` is `NAME_TOO_LONG`
+- [x] Query `ReturnLength` pinned to the ReactOS counted convention (WCHARs EXCLUDING the NUL on success, INCLUDING it on `BUFFER_TOO_SMALL`); the `_U` wrapper applies the `ReturnLength -= 1` correction to reach its bytes-excl-NUL Length
+- [x] `RtlExpandEnvironmentStrings(Env, Source, SourceLength, Destination, DestinationLength, ReturnLength)`: `ReturnLength` INCLUDES the NUL on BOTH paths (distinct from Query, not unified); result ceiling is saturation-only, no USHORT limit
+- [x] Both `_U` forms delegate DOWN: expand `_U` keeps the USHORT `RTL_ENV_MAX_RESULT_WCHARS` -> `UNSUCCESSFUL` map + descriptor overlaps; query `_U` keeps descriptor validation + the `MaximumLength / 2` floor (== the `>= Length + 2` NUL guard)
+- [x] Gate honored: NO ntdll export row added; the counted forms stay non-user-reachable pending §24 probe+copy and §20's PMM item (`03-memory-concurrency/TODO-03 §1`); the §21 `pe_ntdll_export_ssdt == -1` test pins both counted names absent
+- [x] Commit: `"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core"`
 
 **Test checkpoint:** the counted Query and Expand agree value-for-value with their `_U` counterparts on the shared cases; exact fit SUCCEEDS on Query (WRK rule) and the `_U` wrapper still reports Length in bytes excluding the NUL; Expand's `ReturnLength` includes the NUL on both the success and too-small paths; a `SourceLength` past the documented cap is refused rather than narrowed; a result above `RTL_ENV_MAX_RESULT_WCHARS` is `STATUS_UNSUCCESSFUL` through `_U` but expressible through the counted form; a non-NULL `Environment` is refused pending §24. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
@@ -902,6 +903,7 @@ The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw p
 | 💎   | Delayed `!VAR!` expansion  | ✅ cmd /V              | ❌ N/A                | ⬜ §18                |
 | 💎   | ntdll Rtl env exports      | ✅ ntdll usermode      | ❌ none               | ⚠️ §21 kernel-side   |
 | 💎   | Rtl live-env adoption      | ✅ ntdll usermode      | ❌ none               | ⚠️ §23 kernel-side   |
+| 💎   | Counted Rtl env reads      | ✅ phnt ntrtl.h        | ❌ none               | ⚠️ §25 SIZE_T-safe   |
 | ⭐   | Rtl expansion hardening    | ⚠️ uint32 len fields  | ❌ n/a                | ✅ §19 u64 + `%=X:%`  |
 | ⭐   | Rtl lookup work bound      | ❌ O(n) scan per ref   | ❌ n/a                | ✅ §20 work budget    |
 | 💎   | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX   |

@@ -79,6 +79,16 @@ _Static_assert(RTL_ENV_MAX_RESULT_WCHARS <= (0xFFFFu / 2u) - 1u,
 _Static_assert(RTL_ENV_EXPAND_WORK_MAX >= RTL_ENV_BLOCK_MAX_WCHARS,
                "the expansion work budget must afford at least one full-block miss");
 
+/* The counted source ceiling must (1) be exactly representable as the uint32 the
+ * inner pass indexes with, so the post-check narrowing cannot truncate, and (2)
+ * admit every UNICODE_STRING (`_U`) source, whose Length is a USHORT byte count
+ * (<= 32767 WCHARs). Delegating the _U forms down to the counted engine must not
+ * start refusing a source the _U ABI used to accept (TODO-22 s25). */
+_Static_assert(RTL_ENV_SOURCE_MAX_WCHARS <= 0xFFFFFFFFu,
+               "counted source ceiling must narrow to the uint32 pass index exactly");
+_Static_assert(RTL_ENV_SOURCE_MAX_WCHARS >= 0xFFFFu / 2u,
+               "counted source ceiling must admit every USHORT-bounded _U source");
+
 /* Per-PASS lookup-work accounting. `left` is the remaining budget, `used` the
  * consumed total (compared between the two passes to detect concurrent input
  * mutation), and `exhausted` a sticky flag meaning the pass is INVALID and its
@@ -352,17 +362,32 @@ static uint64_t rtl_env_expand_pass(const uint16_t *block, uint32_t block_wchars
 
 /* True if the byte ranges [a, a+alen) and [b, b+blen) overlap. Empty or NULL
  * ranges never overlap. Used to reject an aliased Destination (defined behavior;
- * the pass clamp already guarantees memory safety regardless). */
-static int rtl_env_ranges_overlap(const void *a, uint32_t alen,
-                                  const void *b, uint32_t blen)
+ * the pass clamp already guarantees memory safety regardless).
+ *
+ * Lengths are `size_t`: the counted SIZE_T forms (TODO-22 s25) can present a
+ * WCHAR count whose BYTE length exceeds 4 GiB, which a uint32 parameter would
+ * TRUNCATE, letting a genuinely aliased range slip past detection. Widening the
+ * type removes the truncation but not the endpoint hazard: a base near
+ * UINTPTR_MAX plus even a small length wraps `a0 + alen`, so `a0 < b1 && b0 < a1`
+ * could read false for an overlapping pair. A range whose end wraps is malformed
+ * regardless, so treat it as OVERLAPPING (return 1) -- the only caller rejects on
+ * overlap, so a wrapped range is refused rather than trusted, matching how
+ * ProbeForRead treats base+len overflow. */
+static int rtl_env_ranges_overlap(const void *a, size_t alen,
+                                  const void *b, size_t blen)
 {
     uintptr_t a0, a1, b0, b1;
     if (!a || !b || alen == 0u || blen == 0u)
         return 0;
     a0 = (uintptr_t)a;
-    a1 = a0 + alen;
     b0 = (uintptr_t)b;
-    b1 = b0 + blen;
+    /* Reject (as overlapping) any range whose end address wraps the pointer
+     * width; the endpoint arithmetic below is only meaningful when it does not. */
+    if (alen > (uintptr_t)(~(uintptr_t)0) - a0 ||
+        blen > (uintptr_t)(~(uintptr_t)0) - b0)
+        return 1;
+    a1 = a0 + (uintptr_t)alen;
+    b1 = b0 + (uintptr_t)blen;
     return a0 < b1 && b0 < a1;
 }
 
@@ -382,84 +407,83 @@ static int rtl_env_us_valid(const UNICODE_STRING *us)
     return 1;
 }
 
-/* The expansion engine proper. Takes the block's bound + extent ALREADY
- * established (either verified by rtl_env_block_validate for a caller-supplied
- * block, or known by construction for a builder-produced one) and the work
- * `budget` to spend per pass.
+/* The SIZE_T-safe counted expansion engine. Takes the block's bound + extent
+ * ALREADY established (either verified by rtl_env_block_validate for a caller-
+ * supplied block, or known by construction for a builder-produced one), a RAW
+ * (ptr + WCHAR count) Source and Destination rather than a UNICODE_STRING, and
+ * the work `budget` to spend per pass. All lengths are WCHAR counts.
  *
- * Splitting this out keeps two costs off the paths that do not owe them: a
- * builder-produced block does not pay a re-scan to re-derive a length its
- * builder already reported, and the budget is a policy INPUT rather than a
- * baked-in constant, so a caller with a tighter tolerance (and the tests, which
- * must reach the fit/overshoot boundary without burning the production ceiling)
- * can supply its own. */
-static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars,
-                                    uint32_t verified_extent,
-                                    UNICODE_STRING *Source,
-                                    UNICODE_STRING *Destination,
-                                    uint32_t *ReturnedLength, uint64_t budget)
+ * This is the primitive both ABIs sit on: the counted RtlExpandEnvironmentStrings
+ * calls it directly, and the UNICODE_STRING rtl_env_expand_core wraps it (adding
+ * the descriptor-overlap checks and the USHORT result ceiling its ABI needs).
+ * Keeping the engine free of any UNICODE_STRING ceiling is what lets the SIZE_T
+ * form report a result larger than a USHORT can hold; the wrapper re-imposes the
+ * ceiling for its own callers (TODO-22 s25).
+ *
+ * `*ret_wchars` is the required buffer size in WCHARs INCLUDING the terminating
+ * NUL, set on BOTH success and STATUS_BUFFER_TOO_SMALL; it is 0 on every other
+ * status. On success `dst` holds `*ret_wchars - 1` content WCHARs plus a NUL. */
+static NTSTATUS rtl_env_expand_counted(const uint16_t *block, uint32_t block_wchars,
+                                       uint32_t verified_extent,
+                                       const uint16_t *src, uint64_t src_wchars_in,
+                                       uint16_t *dst, uint64_t dst_wchars,
+                                       uint64_t *ret_wchars, uint64_t budget)
 {
-    const uint16_t *src;
-    uint32_t src_wchars, src_bytes;
-    uint16_t *dst_buf;                /* SNAPSHOT of Destination->Buffer */
-    uint32_t dst_max;                 /* SNAPSHOT of Destination->MaximumLength */
+    uint32_t src_wchars;              /* narrowed AFTER the source ceiling check */
+    uint64_t src_bytes, dst_bytes;
+    uint64_t block_bytes;
     uint64_t required;                /* output WCHARs excluding NUL (saturating) */
-    uint64_t needed_bytes;            /* wide accumulator (incl NUL), avoids u16 wrap */
+    uint64_t needed_wchars;           /* required + NUL, wide (avoids wrap) */
     uint64_t pass1_work;              /* lookup work pass 1 consumed */
     struct rtl_env_work work;
-    NTSTATUS status = STATUS_SUCCESS;
 
-    if (!rtl_env_us_valid(Source) || !rtl_env_us_valid(Destination))
+    /* NOTHING is stored through ret_wchars until the overlap matrix below has
+     * PROVEN it aliases neither the Source data nor the block: a caller may aim
+     * ReturnLength into its own Source, and an early "*ret_wchars = 0" default
+     * would corrupt that input before the alias is even detected. Every ret store
+     * therefore lives past the matrix. */
+    if (src_wchars_in != 0u && !src)
+        return STATUS_INVALID_PARAMETER;
+    if (dst_wchars != 0u && !dst)
         return STATUS_INVALID_PARAMETER;
 
-    /* Snapshot every scalar we later write through or compare against into LOCALS
-     * up front. A caller may point Destination->Buffer into the Destination
-     * descriptor itself, or aim ReturnedLength at Destination->Buffer's pointer
-     * field; if we re-read those fields after any store the write pointer could
-     * be corrupted mid-flight. Using locals (and the descriptor-overlap rejection
-     * below) makes every write target fixed at entry. */
-    src = Source->Buffer;
-    src_bytes = Source->Length;
-    src_wchars = (uint32_t)(src_bytes / 2u);        /* Length is an even byte count */
-    dst_buf = Destination->Buffer;
-    dst_max = Destination->MaximumLength;
+    /* Resource-policy source ceiling BEFORE the narrowing to the uint32 pass
+     * index: the UNICODE_STRING forms are implicitly bounded by a USHORT Length,
+     * the counted SIZE_T form is not, and the outer template scan is uncharged
+     * work. A template past the ceiling is declined as a resource, not rejected
+     * as malformed. The ceiling keeps src_wchars <= UINT32_MAX so the cast is
+     * exact. */
+    if (src_wchars_in > (uint64_t)RTL_ENV_SOURCE_MAX_WCHARS)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    src_wchars = (uint32_t)src_wchars_in;
+    src_bytes = (uint64_t)src_wchars * 2u;
 
-    /* Reject any overlap between the output range [dst_buf, dst_buf+dst_max) and
-     * (a) the Source DATA, (b) the Environment block, (c)/(d) the Source and
-     * Destination DESCRIPTORS, (e) the ReturnedLength cell. (a)/(b) prevent a
-     * two-pass count/write tear; (c)-(e) prevent a store from corrupting a
-     * pointer/length we still need. An empty output range (dst_max == 0, the
-     * size-query form) overlaps nothing and falls through to BUFFER_TOO_SMALL. */
-    if (rtl_env_ranges_overlap(dst_buf, dst_max, src, src_bytes) ||
-        rtl_env_ranges_overlap(dst_buf, dst_max, block, verified_extent * 2u) ||
-        rtl_env_ranges_overlap(dst_buf, dst_max, Destination,
-                               (uint32_t)sizeof(*Destination)) ||
-        rtl_env_ranges_overlap(dst_buf, dst_max, Source,
-                               (uint32_t)sizeof(*Source)) ||
-        (ReturnedLength &&
-         rtl_env_ranges_overlap(dst_buf, dst_max, ReturnedLength,
-                                (uint32_t)sizeof(*ReturnedLength)))) {
-        status = STATUS_INVALID_PARAMETER;
-        goto done;
-    }
+    /* A WCHAR count whose byte length would overflow the range math is a buffer
+     * no caller can really own; reject it rather than wrap the overlap endpoints
+     * (rtl_env_ranges_overlap also guards the wrap, so this is defense in depth
+     * and a clean status for an absurd DestinationLength). RTL_ENV_COUNT_SAT is
+     * the all-ones uint64 (this tree defines no UINT64_MAX); size_t is uint64. */
+    if (dst_wchars > (RTL_ENV_COUNT_SAT / 2u))
+        return STATUS_INVALID_PARAMETER;
+    dst_bytes = dst_wchars * 2u;
+    block_bytes = (uint64_t)verified_extent * 2u;
 
-    /* ReturnedLength is stored BETWEEN the two passes; if it aliases any input
-     * (Source data or the Environment block) or either descriptor, that store
-     * would mutate state pass 2 still reads (yielding stale output that Length
-     * would misreport) or corrupt metadata. Reject those aliases too -- the
-     * output-range case is already covered by the matrix above. */
-    if (ReturnedLength &&
-        (rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
-                                src, src_bytes) ||
-         rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
-                                block, verified_extent * 2u) ||
-         rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
-                                Source, (uint32_t)sizeof(*Source)) ||
-         rtl_env_ranges_overlap(ReturnedLength, (uint32_t)sizeof(*ReturnedLength),
-                                Destination, (uint32_t)sizeof(*Destination)))) {
-        status = STATUS_INVALID_PARAMETER;
-        goto done;
-    }
+    /* Reject any overlap between the output range [dst, dst+dst_bytes) and (a) the
+     * Source DATA, (b) the Environment block, (c) the ret_wchars cell; and the
+     * ret_wchars cell against (a)/(b). (a)/(b) prevent a two-pass count/write
+     * tear; (c) prevents the size store from corrupting output the caller reads.
+     * DESCRIPTOR overlaps are the UNICODE_STRING wrapper's concern -- this engine
+     * has no descriptors. An empty output range (dst_bytes == 0, the size-query
+     * form) overlaps nothing and falls through to BUFFER_TOO_SMALL. */
+    if (rtl_env_ranges_overlap(dst, dst_bytes, src, src_bytes) ||
+        rtl_env_ranges_overlap(dst, dst_bytes, block, block_bytes) ||
+        (ret_wchars &&
+         rtl_env_ranges_overlap(dst, dst_bytes, ret_wchars, sizeof(*ret_wchars))))
+        return STATUS_INVALID_PARAMETER;
+    if (ret_wchars &&
+        (rtl_env_ranges_overlap(ret_wchars, sizeof(*ret_wchars), src, src_bytes) ||
+         rtl_env_ranges_overlap(ret_wchars, sizeof(*ret_wchars), block, block_bytes)))
+        return STATUS_INVALID_PARAMETER;
 
     /* Pass 1: count the required output length (no write). */
     work.left = budget;
@@ -467,62 +491,44 @@ static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars
     work.exhausted = 0;
     required = rtl_env_expand_pass(block, block_wchars, src, src_wchars, NULL, 0u,
                                    &work);
-    /* Refuse BEFORE any store. Pass 1 both counts and pays the full lookup cost,
-     * so an over-budget expansion is rejected here, with nothing written and no
-     * length published -- a budget refusal can never land mid-write. */
+    /* Refuse BEFORE the output-length store. Pass 1 both counts and pays the full
+     * lookup cost, so an over-budget expansion is rejected here, with nothing
+     * written -- a budget refusal can never land mid-write. The ret_wchars store
+     * is safe now: the overlap matrix above proved it aliases no input. */
     if (work.exhausted) {
-        if (ReturnedLength)
-            *ReturnedLength = 0;
+        if (ret_wchars)
+            *ret_wchars = 0;
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     pass1_work = work.used;
 
-    /* CHECKED-CONVERSION ORDER (TODO-22 s19). Every narrowing below is guarded
-     * BEFORE it happens, so no caller can ever receive a truncated required size
-     * and under-allocate on the retry:
-     *   1. a saturated count is not a length -- refuse it outright;
-     *   2. a result over RTL_ENV_MAX_RESULT_WCHARS cannot be expressed in a
-     *      UNICODE_STRING at ANY buffer size, so it is STATUS_UNSUCCESSFUL, not
-     *      STATUS_BUFFER_TOO_SMALL (which would loop a grow-and-retry caller
-     *      forever). Both refusals precede the *ReturnedLength store, so a
-     *      truncated value is never published;
-     *   3. only then is needed_bytes (<= 65535 by step 2) narrowed to uint32 for
-     *      ReturnedLength and compared against the uint16 MaximumLength snapshot.
-     */
-    if (required == RTL_ENV_COUNT_SAT ||
-        required > (uint64_t)RTL_ENV_MAX_RESULT_WCHARS) {
-        /* Publish 0, never the real (unrepresentable) size: real ntdll zeroes its
-         * ResultLength on this branch and then stores it unconditionally, so a
-         * caller with an uninitialized ReturnedLength local reads 0 rather than
-         * stack garbage. 0 is not a truncated length -- it is "no length" -- so
-         * the no-truncated-size-published rule is kept, not weakened. The overlap
-         * matrix above already proved ReturnedLength aliases no input. */
-        if (ReturnedLength)
-            *ReturnedLength = 0;
-        status = STATUS_UNSUCCESSFUL;
-        goto done;
+    /* A saturated count is not a length: RTL_ENV_COUNT_SAT is the all-ones uint64
+     * (== SIZE_MAX here), so `required` can never exceed it and `required + 1`
+     * wraps only AT it. Refuse STATUS_UNSUCCESSFUL (never STATUS_BUFFER_TOO_SMALL,
+     * which would loop a grow-and-retry caller forever), BEFORE the ret_wchars
+     * store so no truncated size is ever published. The current caps make this
+     * unreachable; the guard keeps the +1 below honest if a cap ever moves. */
+    if (required == RTL_ENV_COUNT_SAT) {
+        if (ret_wchars)
+            *ret_wchars = 0;
+        return STATUS_UNSUCCESSFUL;
     }
-    needed_bytes = (required + 1u) * 2u;             /* include the WCHAR NUL */
+    needed_wchars = required + 1u;                    /* include the WCHAR NUL */
 
-    /* needed_bytes <= (32766 + 1) * 2 = 65534 here, so this narrowing is exact. */
-    if (ReturnedLength)
-        *ReturnedLength = (uint32_t)needed_bytes;
+    if (ret_wchars)
+        *ret_wchars = needed_wchars;
 
-    if (needed_bytes > (uint64_t)dst_max) {
-        /* No partial output on overflow; Destination->Length left unchanged. */
-        status = STATUS_BUFFER_TOO_SMALL;
-        goto done;
-    }
+    if (needed_wchars > dst_wchars)
+        /* No partial output on overflow. ret_wchars reports the required size. */
+        return STATUS_BUFFER_TOO_SMALL;
 
     /* The result fits; a NULL output buffer here is a caller error (a size query
-     * uses MaximumLength == 0, which takes the BUFFER_TOO_SMALL path above). */
-    if (!dst_buf) {
-        status = STATUS_INVALID_PARAMETER;
-        goto done;
-    }
+     * uses dst_wchars == 0, which took the BUFFER_TOO_SMALL path above). */
+    if (!dst)
+        return STATUS_INVALID_PARAMETER;
 
-    /* Pass 2: write to the SNAPSHOT buffer, clamped to `required` WCHARs (room
-     * for `required` + the NUL; the clamp defends against any aliasing tear). */
+    /* Pass 2: write to the buffer, clamped to `required` WCHARs (room for
+     * `required` + the NUL; the clamp defends against any aliasing tear). */
     {
         uint64_t written;
 
@@ -536,7 +542,7 @@ static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars
         work.used = 0u;
         work.exhausted = 0;
         written = rtl_env_expand_pass(block, block_wchars, src, src_wchars,
-                                      dst_buf, required, &work);
+                                      dst, required, &work);
         /* The two passes must agree, in output AND in the work they took. They
          * only differ if the caller-owned Source or Environment was mutated by
          * another CPU between passes (the inputs are kernel-resident but not
@@ -550,20 +556,111 @@ static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars
          * written. (The Win32 boundary that passes a private per-call snapshot
          * never trips this.) */
         if (work.exhausted || written != required || work.used != pass1_work) {
-            if (ReturnedLength)
-                *ReturnedLength = 0;
-            status = work.exhausted ? STATUS_INSUFFICIENT_RESOURCES
-                                    : STATUS_INVALID_PARAMETER;
-            goto done;
+            if (ret_wchars)
+                *ret_wchars = 0;
+            return work.exhausted ? STATUS_INSUFFICIENT_RESOURCES
+                                  : STATUS_INVALID_PARAMETER;
         }
     }
-    /* Both narrowings are exact: `required` <= RTL_ENV_MAX_RESULT_WCHARS (32766)
-     * by the step-2 check above, so required * 2 <= 65532 fits the USHORT Length
-     * and the index cannot overflow. */
-    dst_buf[(uint32_t)required] = 0;
-    Destination->Length = (uint16_t)(required * 2u);  /* bytes, excluding NUL */
+    /* `required` < needed_wchars <= dst_wchars, so this index is within the
+     * caller's buffer. */
+    dst[required] = 0;
+    return STATUS_SUCCESS;
+}
 
-done:
+/* The UNICODE_STRING (`_U`-ABI) adapter over the counted engine. Validates the
+ * descriptors, performs the descriptor-overlap rejections the raw engine cannot
+ * (its Source/Destination are bare ptr+len), delegates the expansion, then
+ * re-imposes the USHORT result ceiling and reports ReturnedLength in BYTES
+ * including the NUL -- the convention this ABI's callers (and its tests) expect.
+ *
+ * Splitting the engine out keeps two costs off the paths that do not owe them: a
+ * builder-produced block does not pay a re-scan to re-derive a length its builder
+ * already reported, and the budget is a policy INPUT rather than a baked-in
+ * constant, so a caller with a tighter tolerance (and the tests, which must reach
+ * the fit/overshoot boundary without burning the production ceiling) can supply
+ * its own. */
+static NTSTATUS rtl_env_expand_core(const uint16_t *block, uint32_t block_wchars,
+                                    uint32_t verified_extent,
+                                    UNICODE_STRING *Source,
+                                    UNICODE_STRING *Destination,
+                                    uint32_t *ReturnedLength, uint64_t budget)
+{
+    const uint16_t *src;
+    uint16_t *dst_buf;                /* SNAPSHOT of Destination->Buffer */
+    uint32_t src_bytes, dst_max;      /* SNAPSHOTs (Source->Length, Dest->MaxLen) */
+    uint64_t ret_wchars = 0;          /* engine output: WCHARs incl NUL */
+    uint64_t content;                 /* WCHARs excl NUL */
+    NTSTATUS status;
+
+    if (!rtl_env_us_valid(Source) || !rtl_env_us_valid(Destination))
+        return STATUS_INVALID_PARAMETER;
+
+    /* Snapshot every scalar we later write through or compare against into LOCALS
+     * up front. A caller may point Destination->Buffer into the Destination
+     * descriptor itself, or aim ReturnedLength at Destination->Buffer's pointer
+     * field; if we re-read those fields after any store the write pointer could
+     * be corrupted mid-flight. Using locals (and the descriptor-overlap rejection
+     * below) makes every write target fixed at entry. */
+    src = Source->Buffer;
+    src_bytes = Source->Length;
+    dst_buf = Destination->Buffer;
+    dst_max = Destination->MaximumLength;
+
+    /* Overlaps the raw engine cannot see for THIS ABI: the output range vs the
+     * Source/Destination descriptors, and -- because the engine is handed a stack
+     * LOCAL ret_wchars, never this caller's ReturnedLength cell -- the caller's
+     * ReturnedLength vs the output range, Source data, Environment block, and
+     * either descriptor. The engine itself covers the output range vs Source data
+     * and block. */
+    if (rtl_env_ranges_overlap(dst_buf, dst_max, Destination, sizeof(*Destination)) ||
+        rtl_env_ranges_overlap(dst_buf, dst_max, Source, sizeof(*Source)))
+        return STATUS_INVALID_PARAMETER;
+    if (ReturnedLength &&
+        (rtl_env_ranges_overlap(dst_buf, dst_max,
+                                ReturnedLength, sizeof(*ReturnedLength)) ||
+         rtl_env_ranges_overlap(ReturnedLength, sizeof(*ReturnedLength),
+                                src, src_bytes) ||
+         rtl_env_ranges_overlap(ReturnedLength, sizeof(*ReturnedLength),
+                                block, (uint64_t)verified_extent * 2u) ||
+         rtl_env_ranges_overlap(ReturnedLength, sizeof(*ReturnedLength),
+                                Source, sizeof(*Source)) ||
+         rtl_env_ranges_overlap(ReturnedLength, sizeof(*ReturnedLength),
+                                Destination, sizeof(*Destination))))
+        return STATUS_INVALID_PARAMETER;
+
+    status = rtl_env_expand_counted(block, block_wchars, verified_extent,
+                                    src, (uint64_t)(src_bytes / 2u),
+                                    dst_buf, (uint64_t)(dst_max / 2u),
+                                    &ret_wchars, budget);
+
+    /* Re-impose the UNICODE_STRING result ceiling on top of the counted result.
+     * On SUCCESS or BUFFER_TOO_SMALL the engine set ret_wchars (incl NUL); the
+     * content length excl NUL is ret_wchars - 1. A content over
+     * RTL_ENV_MAX_RESULT_WCHARS is unrepresentable in a UNICODE_STRING at ANY
+     * buffer size, so it is STATUS_UNSUCCESSFUL with *ReturnedLength 0 (never a
+     * truncated size) -- matching real ntdll, which zeroes its ResultLength on
+     * this branch. On SUCCESS content is bounded by the USHORT dst_max and can
+     * never exceed the ceiling, so this only ever fires on the too-small path,
+     * where nothing was written. */
+    if (status == STATUS_SUCCESS || status == STATUS_BUFFER_TOO_SMALL) {
+        content = ret_wchars - 1u;
+        if (content > (uint64_t)RTL_ENV_MAX_RESULT_WCHARS) {
+            if (ReturnedLength)
+                *ReturnedLength = 0;
+            return STATUS_UNSUCCESSFUL;
+        }
+        /* ret_wchars <= 32767 here, so ret_wchars * 2 <= 65534 fits uint32. */
+        if (ReturnedLength)
+            *ReturnedLength = (uint32_t)(ret_wchars * 2u);
+        if (status == STATUS_SUCCESS)
+            Destination->Length = (uint16_t)(content * 2u);  /* bytes, excl NUL */
+        return status;
+    }
+
+    /* Every other status: the engine published no size; mirror that. */
+    if (ReturnedLength)
+        *ReturnedLength = 0;
     return status;
 }
 
@@ -637,6 +734,49 @@ NTSTATUS RtlExpandEnvironmentStrings_U(void *Environment, UNICODE_STRING *Source
     status = rtl_env_expand_core(synth, synth_wchars, synth_wchars, Source,
                                  Destination, ReturnedLength,
                                  RTL_ENV_EXPAND_WORK_MAX);
+    env_free_block_utf16(synth, synth_wchars);
+    return status;
+}
+
+NTSTATUS RtlExpandEnvironmentStrings(void *Environment,
+                                     const uint16_t *Source, uint64_t SourceLength,
+                                     uint16_t *Destination, uint64_t DestinationLength,
+                                     uint64_t *ReturnLength)
+{
+    struct task *cur;
+    uint16_t *synth = NULL;
+    uint32_t synth_wchars = 0;
+    NTSTATUS status;
+    int rc;
+
+    /* Same foreign-block refusal as RtlExpandEnvironmentStrings_U: a bare pointer
+     * carries no allocation extent, so the double-NUL scan cannot be bounded. The
+     * probe+copy boundary that would restore the explicit-block form is owned by
+     * TODO-22 s24; until then only the NULL (calling-process) form is served. */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+
+    /* NULL Environment: synthesize the current process's block from the
+     * authoritative UTF-8 environ, exactly as the _U form does. env_build_block_utf16
+     * reports the block's EXACT total wchar length including terminators, which is
+     * the bound and extent the engine needs -- no re-scan. */
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+    rc = env_build_block_utf16(cur, &synth, &synth_wchars,
+                               RTL_ENV_BLOCK_MAX_WCHARS);
+    if (rc == ENV_ERR_NOMEM)
+        return STATUS_NO_MEMORY;
+    if (rc != ENV_OK)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Straight to the counted engine: no UNICODE_STRING ceiling (ReturnLength is
+     * SIZE_T here), ReturnLength in WCHARs including the NUL on both success and
+     * BUFFER_TOO_SMALL. */
+    status = rtl_env_expand_counted(synth, synth_wchars, synth_wchars,
+                                    Source, SourceLength,
+                                    Destination, DestinationLength,
+                                    ReturnLength, RTL_ENV_EXPAND_WORK_MAX);
     env_free_block_utf16(synth, synth_wchars);
     return status;
 }
@@ -723,29 +863,29 @@ static NTSTATUS rtl_env_status_from_env(int rc)
     }
 }
 
-/* Validate an ntdll env NAME and convert it to NUL-terminated UTF-8 in `name8`,
- * which MUST have room for ENV_NAME_MAX + 1 bytes. Enforces ntdll's own name rule;
- * the storage layer applies its (stricter) one afterwards. */
-static NTSTATUS rtl_env_name_to_utf8(const UNICODE_STRING *Name, char *name8)
+/* Validate a counted (raw ptr + WCHAR count) ntdll env NAME and convert it to
+ * NUL-terminated UTF-8 in `name8`, which MUST have room for ENV_NAME_MAX + 1
+ * bytes. Enforces ntdll's own name rule; the storage layer applies its (stricter)
+ * one afterwards. Shared by the counted RtlQueryEnvironmentVariable and, via the
+ * UNICODE_STRING wrapper below, by the `_U` form. */
+static NTSTATUS rtl_env_name_wchars_to_utf8(const uint16_t *name, uint32_t wchars,
+                                            char *name8)
 {
-    uint32_t wchars, i;
+    uint32_t i;
     int cvt;
 
-    if (!rtl_env_us_valid(Name))
-        return STATUS_INVALID_PARAMETER;
-    wchars = (uint32_t)(Name->Length / 2u);
-    if (wchars == 0u)
-        return STATUS_INVALID_PARAMETER;            /* empty name */
+    if (wchars == 0u || !name)
+        return STATUS_INVALID_PARAMETER;            /* empty / absent name */
     for (i = 0; i < wchars; i++) {
-        if (Name->Buffer[i] == 0u)
+        if (name[i] == 0u)
             return STATUS_INVALID_PARAMETER;        /* embedded NUL */
         /* ntdll rejects '=' everywhere EXCEPT position 0, which is what admits the
          * hidden "=X:" drive-cwd name (TODO-22 s12). Checking from index 1 is
          * exactly that rule -- not an oversight. */
-        if (i > 0u && Name->Buffer[i] == RTL_ENV_WEQ)
+        if (i > 0u && name[i] == RTL_ENV_WEQ)
             return STATUS_INVALID_PARAMETER;
     }
-    cvt = nls_cp_utf16_to_utf8(Name->Buffer, wchars, (uint8_t *)name8,
+    cvt = nls_cp_utf16_to_utf8(name, wchars, (uint8_t *)name8,
                                ENV_NAME_MAX, NLS_CP_STRICT);
     if (cvt < 0)
         return (cvt == NLS_CP_ERR_TOO_SMALL) ? STATUS_NAME_TOO_LONG
@@ -754,52 +894,45 @@ static NTSTATUS rtl_env_name_to_utf8(const UNICODE_STRING *Name, char *name8)
     return STATUS_SUCCESS;
 }
 
-NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
-                                       UNICODE_STRING *Value)
+/* UNICODE_STRING adapter: validate the descriptor, then defer to the counted
+ * name validator on its Buffer/Length. */
+static NTSTATUS rtl_env_name_to_utf8(const UNICODE_STRING *Name, char *name8)
 {
-    char name8[ENV_NAME_MAX + 1u];
+    if (!rtl_env_us_valid(Name))
+        return STATUS_INVALID_PARAMETER;
+    return rtl_env_name_wchars_to_utf8(Name->Buffer, (uint32_t)(Name->Length / 2u),
+                                       name8);
+}
+
+/* Shared value-fetch core for the counted and `_U` query forms. Copies the value
+ * of the already-validated UTF-8 `name8` into `value` (capacity `value_cap_wchars`
+ * WCHARs) from the calling process's authoritative environ. Sets `*ret_wchars` to
+ * the value length in WCHARs -- EXCLUDING the NUL on STATUS_SUCCESS, INCLUDING it
+ * (the required buffer size) on STATUS_BUFFER_TOO_SMALL. It is written ONLY once
+ * the value buffer has been validated and proven not to alias the ret cell, so on
+ * an early (pre-validation) failure `*ret_wchars` is left UNTOUCHED -- a caller
+ * whose ReturnLength aliases its own Name/Value is never corrupted before the
+ * alias is detected. EXACT FIT (value_cap_wchars == content) SUCCEEDS (WRK); the
+ * NUL is written only
+ * when the buffer leaves room for a whole extra WCHAR past the content, so at
+ * exact fit SUCCESS does not imply NUL-termination. `value` may be NULL only when
+ * value_cap_wchars is 0 (a size query). No UNICODE_STRING ceiling is applied here
+ * -- the `_U` wrapper adds its own. */
+static NTSTATUS rtl_env_query_value(const char *name8, uint16_t *value,
+                                    uint64_t value_cap_wchars, uint64_t *ret_wchars)
+{
     char *val8;
     struct task *cur;
-    uint16_t *vbuf;
-    uint32_t vmax;
     /* ENV_BUF_PAYLOAD_MAX, not ENV_STR_KMALLOC_MAX: the latter bounds the
      * header+payload TOTAL (s22), so asking for it exactly would push this common
      * query onto the unlocked-PMM path (03-memory-concurrency/TODO-03 s1). */
     uint32_t vcap = ENV_BUF_PAYLOAD_MAX;
-    uint32_t val_len8, need_wchars, need_bytes;
-    NTSTATUS st;
+    uint32_t val_len8, need_wchars;
     int r, cvt;
 
-    /* A foreign block is a bare pointer with no extent -- refused for the same
-     * reason RtlExpandEnvironmentStrings_U refuses it (see the header). */
-    if (Environment)
-        return STATUS_NOT_SUPPORTED;
-    /* Value is IN/OUT, and only MaximumLength + Buffer are INPUTS: Length is written
-     * by this call, so the value a caller happens to arrive with is meaningless and
-     * MUST NOT be validated (rtl_env_us_valid would reject an odd or over-long
-     * incoming Length -- a descriptor real ntdll accepts, since it overwrites the
-     * field anyway). Validate exactly the two fields that bound the write. */
-    if (!Value)
+    if (value_cap_wchars != 0u && !value)
         return STATUS_INVALID_PARAMETER;
 
-    /* Snapshot the two INPUT fields into locals before any store, exactly as
-     * rtl_env_expand_core does above and for the same reason: this function writes
-     * Value->Length and then writes THROUGH Value->Buffer, so a caller whose Buffer
-     * points into its own descriptor could otherwise have the write target mutate
-     * mid-call. With locals, every write target is fixed at entry. */
-    vbuf = Value->Buffer;
-    vmax = Value->MaximumLength;
-    if (vmax != 0u && !vbuf)
-        return STATUS_INVALID_PARAMETER;
-    /* ...and reject the alias outright rather than merely surviving it: an output
-     * range covering the descriptor would have the Length store below corrupt the
-     * content the caller is about to read. The sibling NtQueryEnvironmentVariable
-     * handler rejects the identical overlap. */
-    if (rtl_env_ranges_overlap(vbuf, vmax, Value, (uint32_t)sizeof(*Value)))
-        return STATUS_INVALID_PARAMETER;
-    st = rtl_env_name_to_utf8(Name, name8);
-    if (st != STATUS_SUCCESS)
-        return st;
     cur = task_current();
     if (!cur)
         return STATUS_INVALID_PARAMETER;
@@ -839,48 +972,163 @@ NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
         env_buf_free(val8, vcap);
         return STATUS_INVALID_PARAMETER;            /* corrupt stored value */
     }
-    need_wchars = (uint32_t)cvt;
-    need_bytes  = need_wchars * 2u;                 /* excl the WCHAR NUL */
-    /* Length is a uint16 byte count. A stored value is <= ENV_VALUE_MAX (32767)
-     * UTF-8 bytes, which is at most 32767 WCHARs = 65534 bytes, so this cannot trip
-     * today; it is the explicit guard that keeps the cast below honest if either cap
-     * ever moves. */
-    if (need_bytes > 0xFFFEu) {
-        env_buf_free(val8, vcap);
-        return STATUS_INVALID_PARAMETER;
+    need_wchars = (uint32_t)cvt;                    /* content, excl NUL */
+
+    /* BEFORE any ret_wchars store, reject a ret cell that aliases the value bytes
+     * this call will touch: the size store would otherwise land in the caller's
+     * value buffer. The touched span is the content + the NUL (only when written)
+     * on the fit path, or the declared capacity on the too-small path (nothing is
+     * written there, but the caller's buffer still must not receive the size
+     * store). need_wchars <= ENV_VALUE_MAX (32767) and, on too-small,
+     * value_cap_wchars < need_wchars, so the byte span never overflows. Harmless
+     * for the `_U` wrapper (its ret cell is a stack local aliasing nothing);
+     * load-bearing for the counted form, whose ReturnLength is a caller out-param. */
+    {
+        uint32_t guard_wchars;
+        if ((uint64_t)need_wchars > value_cap_wchars)
+            guard_wchars = (uint32_t)value_cap_wchars;
+        else
+            guard_wchars = need_wchars +
+                           (value_cap_wchars > (uint64_t)need_wchars ? 1u : 0u);
+        if (ret_wchars &&
+            rtl_env_ranges_overlap(value, (size_t)guard_wchars * 2u,
+                                   ret_wchars, sizeof(*ret_wchars))) {
+            env_buf_free(val8, vcap);
+            return STATUS_INVALID_PARAMETER;
+        }
     }
 
-    /* Publish the required CONTENT size EXCLUDING the NUL on BOTH paths -- ntdll's
-     * convention, which its kernel32 caller relies on (it appends the NUL itself).
-     * The buffer FITS at MaximumLength == Length; the NUL is written only when there
-     * is room for a whole WCHAR. Every field below is the entry snapshot, never a
-     * re-read of the descriptor this store just touched. */
-    Value->Length = (uint16_t)need_bytes;
-    if (vmax < need_bytes) {
+    /* value_cap_wchars is a SIZE_T; need_wchars <= ENV_VALUE_MAX (32767). */
+    if ((uint64_t)need_wchars > value_cap_wchars) {
+        /* Too small: no partial output; report the required size INCLUDING NUL. */
         env_buf_free(val8, vcap);
+        if (ret_wchars)
+            *ret_wchars = (uint64_t)need_wchars + 1u;
         return STATUS_BUFFER_TOO_SMALL;
     }
-    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, vbuf,
+
+    cvt = nls_cp_utf8_to_utf16((const uint8_t *)val8, val_len8, value,
                                need_wchars, NLS_CP_STRICT);
     env_buf_free(val8, vcap);
-    if (cvt < 0 || (uint32_t)cvt != need_wchars) {
-        /* Retract the published length: it described content that was never
-         * written. Defensive -- the sizing pass above already succeeded over these
-         * same private bytes, so a disagreeing second pass means the converter is
-         * inconsistent -- but the expansion path retracts on its analogous branch
-         * and a published length that outlives its content is exactly the kind of
-         * asymmetry a later change turns into a real read-past. */
-        Value->Length = 0u;
-        return STATUS_INVALID_PARAMETER;
-    }
-    /* The NUL is a WCHAR: it needs TWO spare bytes, not one. `vmax > need_bytes`
-     * would be true for an ODD vmax of exactly need_bytes + 1 and write a 2-byte
-     * unit into 1 byte of space. The two tests agree for every even vmax (the only
-     * shape a UTF-16 caller should present), so this costs well-formed callers
-     * nothing and closes the odd-length overflow. */
-    if (vmax >= need_bytes + 2u)
-        vbuf[need_wchars] = 0u;
+    if (cvt < 0 || (uint32_t)cvt != need_wchars)
+        return STATUS_INVALID_PARAMETER;            /* inconsistent converter */
+    /* The NUL is a WCHAR: written only when the buffer has room for a whole extra
+     * unit past the content. For an odd byte capacity floored to WCHARs this is
+     * exactly the `>= content + 2 bytes` guard the _U form needs. */
+    if (value_cap_wchars > (uint64_t)need_wchars)
+        value[need_wchars] = 0u;
+    if (ret_wchars)
+        *ret_wchars = (uint64_t)need_wchars;        /* excl NUL on success */
     return STATUS_SUCCESS;
+}
+
+NTSTATUS RtlQueryEnvironmentVariable_U(void *Environment, UNICODE_STRING *Name,
+                                       UNICODE_STRING *Value)
+{
+    char name8[ENV_NAME_MAX + 1u];
+    uint16_t *vbuf;
+    uint32_t vmax;
+    uint64_t ret_wchars = 0;
+    uint64_t content;                 /* WCHARs excl NUL */
+    uint32_t need_bytes;
+    NTSTATUS st;
+
+    /* A foreign block is a bare pointer with no extent -- refused for the same
+     * reason RtlExpandEnvironmentStrings_U refuses it (see the header). */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+    /* Value is IN/OUT, and only MaximumLength + Buffer are INPUTS: Length is written
+     * by this call, so the value a caller happens to arrive with is meaningless and
+     * MUST NOT be validated (rtl_env_us_valid would reject an odd or over-long
+     * incoming Length -- a descriptor real ntdll accepts, since it overwrites the
+     * field anyway). Validate exactly the two fields that bound the write. These
+     * DESCRIPTOR-level invariants stay in this wrapper: the shared value core takes
+     * a raw ptr + WCHAR count and cannot see them. */
+    if (!Value)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Snapshot the two INPUT fields into locals before any store: this function
+     * writes Value->Length and the core writes THROUGH Value->Buffer, so a caller
+     * whose Buffer points into its own descriptor could otherwise have the write
+     * target mutate mid-call. With locals, every write target is fixed at entry. */
+    vbuf = Value->Buffer;
+    vmax = Value->MaximumLength;
+    if (vmax != 0u && !vbuf)
+        return STATUS_INVALID_PARAMETER;
+    /* Reject the self-aliasing descriptor outright: an output range covering the
+     * descriptor would have the Length store below corrupt the content the caller
+     * is about to read. The sibling NtQueryEnvironmentVariable handler rejects the
+     * identical overlap. */
+    if (rtl_env_ranges_overlap(vbuf, vmax, Value, sizeof(*Value)))
+        return STATUS_INVALID_PARAMETER;
+    st = rtl_env_name_to_utf8(Name, name8);
+    if (st != STATUS_SUCCESS)
+        return st;
+
+    /* Delegate the fetch/convert/copy to the shared core. Flooring the byte
+     * capacity to whole WCHARs (vmax / 2u) is exactly the `>= Length + 2` NUL
+     * guard for every odd capacity: the core writes the NUL only when the WCHAR
+     * capacity strictly exceeds the content. */
+    st = rtl_env_query_value(name8, vbuf, (uint64_t)(vmax / 2u), &ret_wchars);
+    /* The core reports WCHARs -- EXCLUDING the NUL on success, INCLUDING it on
+     * too-small. Subtract the counted NUL on the too-small path BEFORE the USHORT
+     * check so a 32767-WCHAR value (65534-byte content, still representable) does
+     * not spuriously fail the guard. */
+    if (st == STATUS_SUCCESS)
+        content = ret_wchars;
+    else if (st == STATUS_BUFFER_TOO_SMALL)
+        content = ret_wchars - 1u;
+    else
+        return st;                                  /* Length left untouched */
+
+    need_bytes = (uint32_t)(content * 2u);          /* excl NUL */
+    /* Length is a uint16 byte count. A stored value is <= ENV_VALUE_MAX (32767)
+     * WCHARs = 65534 bytes, so this cannot trip today; it keeps the cast honest if
+     * either cap ever moves. */
+    if (need_bytes > 0xFFFEu)
+        return STATUS_INVALID_PARAMETER;
+    /* Publish the CONTENT size EXCLUDING the NUL on BOTH the success and too-small
+     * paths -- ntdll's convention (its kernel32 caller appends the NUL and sizes
+     * from this). */
+    Value->Length = (uint16_t)need_bytes;
+    return st;
+}
+
+NTSTATUS RtlQueryEnvironmentVariable(void *Environment,
+                                     const uint16_t *Name, uint64_t NameLength,
+                                     uint16_t *Value, uint64_t ValueLength,
+                                     uint64_t *ReturnLength)
+{
+    char name8[ENV_NAME_MAX + 1u];
+    NTSTATUS st;
+
+    /* ReturnLength is NOT pre-zeroed: it may alias Name (or Value), and a store
+     * before Name is consumed / the buffers are validated would corrupt the very
+     * input this call still needs. rtl_env_query_value publishes it only after the
+     * value buffer is validated; on an early refusal it is left untouched (a
+     * caller reads it only after a success/too-small status). */
+    /* Same foreign-block refusal as the _U form. */
+    if (Environment)
+        return STATUS_NOT_SUPPORTED;
+
+    /* A name longer than ENV_NAME_MAX WCHARs cannot name a storable variable;
+     * refuse BEFORE narrowing NameLength to the uint32 the validator takes (an
+     * unchecked cast could otherwise wrap a huge count to a small one). */
+    if (NameLength > (uint64_t)ENV_NAME_MAX)
+        return STATUS_NAME_TOO_LONG;
+    st = rtl_env_name_wchars_to_utf8(Name, (uint32_t)NameLength, name8);
+    if (st != STATUS_SUCCESS)
+        return st;
+
+    /* ReturnLength carries the shared core's convention verbatim -- content WCHARs
+     * EXCLUDING the NUL on success, the required size INCLUDING the NUL on
+     * STATUS_BUFFER_TOO_SMALL. This deliberately differs from the counted
+     * RtlExpandEnvironmentStrings (which includes the NUL on both paths); the two
+     * are not unified. The counted form has no UNICODE_STRING descriptor, so no
+     * descriptor-overlap check applies; Name is fully consumed into name8 before
+     * any write to Value, so a Name/Value alias is harmless, and the core rejects
+     * a ReturnLength cell that aliases the output range. */
+    return rtl_env_query_value(name8, Value, ValueLength, ReturnLength);
 }
 
 NTSTATUS RtlSetEnvironmentVariable(void **Environment, UNICODE_STRING *Name,
