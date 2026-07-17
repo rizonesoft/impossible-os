@@ -19,6 +19,11 @@
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 #include "kernel/nt/nt_file.h"         /* io_completion_post, validate */
+#include "kernel/security/token.h"     /* Section 7: token capture/duplication */
+#include "kernel/security/sid.h"       /* Section 7: RequiredServerSid / OwnerSid */
+#include "kernel/security/privileges.h" /* Section 7: SeImpersonatePrivilege gate */
+#include "kernel/security/mic.h"       /* Section 7: IL non-amplification gate */
+#include "kernel/nt/zw.h"              /* Section 7: SSDT_{KERNEL,USER}_MODE */
 #include "libc/string.h"               /* canonical kernel memcpy */
 
 const OBJECT_TYPE *ObpAlpcPortType;
@@ -43,6 +48,12 @@ struct alpc_connection_request {
     ALPC_PORT                      *ClientCommPort;
     ALPC_PORT                      *ServerCommPort;
     struct task                    *RequesterTask;
+    /* Section 7: the connecting thread's effective token, captured + Ob-
+     * referenced at connect time (in the client's own context) and owned by
+     * this request. The accept path DUPLICATES from it; the client releases it
+     * on every path that frees the request. NULL when the listener QoS is
+     * below SecurityIdentification or the client had no token. */
+    struct access_token            *CapturedToken;
     NTSTATUS                        ReplyStatus;
     event_t                         ReplyEvent;
 };
@@ -166,6 +177,8 @@ static void alpc_port_on_delete(void *body)
     p->ConnectionPort  = (ALPC_PORT *)0;
     struct access_token *tok = p->ClientToken;
     p->ClientToken = (struct access_token *)0;
+    SID *owner_sid = p->OwnerSid;
+    p->OwnerSid = (SID *)0;
     p->Disconnected = 1;
 
     /* Wake every pending sync waiter under the lock. Contract violation
@@ -220,12 +233,19 @@ static void alpc_port_on_delete(void *body)
     if (listen)
         ObDereferenceObject(listen);                  /* drop ConnectionPort ref */
 
-    /* ClientToken is owned by the process (tied to task lifetime), not
-     * refcount-owned by the port -- see token.h notes. Just NULL it out
-     * here; do not call ObDereferenceObject on it. Future may
-     * capture a duplicated token that IS refcount-owned, at which
-     * point the drop path becomes ObDereferenceObject. */
-    (void)tok;
+    /* Section 7: ClientToken is now an Ob-refcounted duplicate captured at
+     * accept (NtDuplicateToken produced it with refcount 1, owned solely by
+     * this port). Drop that reference here; a port that captured nothing has
+     * tok == NULL and the deref is skipped. Any thread still impersonating
+     * this token holds its OWN reference (AlpcImpersonateClientOfPort takes a
+     * fresh ref before installing it), so the object survives until both the
+     * port and the impersonating thread release it. */
+    if (tok)
+        ObDereferenceObject(tok);
+
+    /* Section 7: free the owned OwnerSid snapshot captured at create. */
+    if (owner_sid)
+        kfree(owner_sid);
 
     /* MessageZone is NULL until; the drop path is a no-op today. */
     /* SectionList is empty until; no traversal needed. */
@@ -389,6 +409,30 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
     port->Lock.flag     = 0;                    /* SPINLOCK_INIT */
     port->OwnerTask     = task_current();
     port->NextMessageId = 1;
+
+    /* Section 7: snapshot the creator's primary-token UserSid into an owned
+     * bounded copy so a later RequiredServerSid check compares against an
+     * immutable creation-time identity rather than the reusable OwnerTask
+     * slot (OwnerTask is an unreferenced raw pointer -- after the creator
+     * exits and the slot is recycled it could name an unrelated process).
+     * Best-effort: a creator with no primary token leaves OwnerSid NULL, and
+     * the connect-side check fails closed when RequiredServerSid is supplied.
+     * Freed in alpc_port_on_delete. */
+    {
+        ACCESS_TOKEN *creator_tok = PsReferencePrimaryToken(task_current());
+        if (creator_tok && creator_tok->UserSid) {
+            uint32_t sid_len = RtlLengthSid(creator_tok->UserSid);
+            if (sid_len && sid_len <= SID_MAX_SIZE) {
+                SID *copy = (SID *)kmalloc(sid_len);
+                if (copy) {
+                    memcpy(copy, creator_tok->UserSid, sid_len);
+                    port->OwnerSid = copy;
+                }
+            }
+        }
+        if (creator_tok)
+            PsDereferencePrimaryToken(creator_tok);
+    }
     event_init(&port->WaitQueue, "alpc_port_wait", EVENT_AUTO_RESET, 0);
     /*: SignalledEvent is manual-reset so NtWaitForSingleObject on
      * the port sees "queue non-empty" until the consumer explicitly
@@ -535,7 +579,8 @@ static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type,
 /* ---- AlpcConnectPort --------------------------------------------------- */
 
 NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
-                         uint32_t timeout_ms, HANDLE *out_handle)
+                         uint32_t timeout_ms, const SID *required_server_sid,
+                         HANDLE *out_handle)
 {
     void *server_body = (void *)0;
     ALPC_PORT *server_conn, *client_comm;
@@ -559,6 +604,20 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
     if (server_conn->PortType != AlpcServerConnectionPort) {
         ObDereferenceObject(server_body);
         return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
+    /* Section 7: RequiredServerSid verification. When the client supplied a
+     * required server SID (already probed + bounded-copied into kernel memory
+     * + RtlValidSid-checked by the syscall handler), it must match the
+     * listener's creation-time OwnerSid so a client cannot be tricked into
+     * connecting to a hijacked / slot-reused port. Fail closed if the listener
+     * captured no owner identity. */
+    if (required_server_sid) {
+        if (!server_conn->OwnerSid ||
+            !RtlEqualSid(required_server_sid, server_conn->OwnerSid)) {
+            ObDereferenceObject(server_body);
+            return STATUS_SERVER_SID_MISMATCH;
+        }
     }
 
     /* SCOPE-GAP-ALLOWED: SeAccessCheck on server DACL with
@@ -603,10 +662,35 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
     req->ReplyStatus    = STATUS_PORT_CONNECTION_REFUSED;  /* safe default */
     event_init(&req->ReplyEvent, "alpc_conn_reply", EVENT_AUTO_RESET, 0);
 
+    /* Section 7: capture the CONNECTING THREAD's effective token now, in the
+     * client's own running context, so the identity that INITIATED the
+     * connection is the one the server later impersonates. Capturing at accept
+     * from RequesterTask's primary token would (a) ignore an active client
+     * impersonation and (b) race the requester's teardown on SMP. Take an owned
+     * Ob reference the request holds for its whole lifetime; every path that
+     * frees `req` releases it. Only when the listener QoS is
+     * identification-or-higher. */
+    req->CapturedToken = (struct access_token *)0;
+    if (server_conn->Attributes.SecurityQos.ImpersonationLevel
+            >= SecurityIdentification) {
+        struct thread *cthr = thread_current();
+        struct task   *ctask = task_current();
+        ACCESS_TOKEN  *eff =
+            (cthr && cthr->impersonation_token)
+                ? (ACCESS_TOKEN *)cthr->impersonation_token
+                : (ACCESS_TOKEN *)(ctask ? ctask->token : (void *)0);
+        if (eff) {
+            ObReferenceObject(eff);
+            req->CapturedToken = eff;
+        }
+    }
+
     /* 5. Publish to server + wake it. */
     spin_lock_irqsave(&server_conn->Lock, &irqf);
     if (server_conn->Disconnected) {
         spin_unlock_irqrestore(&server_conn->Lock, irqf);
+        if (req->CapturedToken)
+            ObDereferenceObject(req->CapturedToken);
         kfree(req);
         ObpFreeHandle(ht, h);
         ObDereferenceObject(server_conn);
@@ -666,6 +750,11 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
         st = req->ReplyStatus;
     }
 
+    /* Section 7: release the connect-time captured token ref the request
+     * owned (the accept path only DUPLICATED from it; it never took ownership).
+     * This is the sole release site for a request that reached the wait. */
+    if (req->CapturedToken)
+        ObDereferenceObject(req->CapturedToken);
     kfree(req);
 
     /* Only STATUS_SUCCESS means the server accepted and cross-linked
@@ -808,6 +897,48 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
+    /* Section 7: stamp the server-side comm port with a duplicate of the
+     * client's connect-time captured effective token (req->CapturedToken,
+     * already Ob-referenced by the request, so no teardown race and any active
+     * client impersonation is honored). The dup is an Ob-refcounted
+     * impersonation token owned by the port until teardown
+     * (alpc_port_on_delete dereferences it). Runs OUTSIDE any port lock (token
+     * duplication allocates). On duplication failure the whole handshake
+     * unwinds -- the connection is refused rather than completed without the
+     * promised security context. */
+    if (req->CapturedToken) {
+        /* desired_access is ignored by NtDuplicateToken today (matches
+         * ImpersonateSelf); EffectiveOnly strips disabled attrs per the
+         * negotiated QoS. */
+        ACCESS_TOKEN *captured = NtDuplicateToken(
+            req->CapturedToken, 0,
+            server_conn->Attributes.SecurityQos.EffectiveOnly,
+            TokenImpersonation);
+        if (!captured) {
+            /* Unwind the accepted handshake (mirror the handle-alloc-failure
+             * path above): free the server handle, undo cross-links + refs,
+             * signal the client with failure, drop the listener pin. */
+            ObpFreeHandle(ht, h);
+            ObDereferenceObject(server_comm);             /* client's ref */
+            client_comm->ConnectedPort = (ALPC_PORT *)0;
+            ObDereferenceObject(client_comm);             /* server_comm's ref */
+            server_comm->ConnectedPort = (ALPC_PORT *)0;
+            ObDereferenceObject(server_conn);             /* ConnectionPort ref */
+            server_comm->ConnectionPort = (ALPC_PORT *)0;
+            ObDereferenceObject(server_comm);             /* creation ref */
+            req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
+            event_set(&req->ReplyEvent);
+            ObDereferenceObject(server_conn);             /* listener pin */
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        /* Stamp the captured token with the negotiated impersonation level so
+         * AlpcImpersonateClientOfPort's level gate is meaningful -- the source
+         * primary token's level is not the negotiated connection level. */
+        captured->ImpersonationLevel =
+            server_conn->Attributes.SecurityQos.ImpersonationLevel;
+        server_comm->ClientToken = captured;
+    }
+
     /* Snapshot any field we want to log BEFORE signalling the client:
      * once event_set fires, the client thread is free to return from
      * event_wait and kfree(req), so req pointers cease to be valid on
@@ -828,6 +959,205 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
 
     if (out_server_comm_handle)
         *out_server_comm_handle = h;
+    return STATUS_SUCCESS;
+}
+
+/* ---- AlpcImpersonateClientOfPort -------------------------------------- */
+
+/*
+ * alpc_authority_is_subset -- does `client` convey NO authority that `server`
+ * does not already hold? Used only to authorize a no-privilege
+ * self-impersonation; a false return means SeImpersonatePrivilege is required,
+ * so every uncertain case MUST return 0 (fail closed).
+ *
+ * Equal UserSid + integrity is not enough: two tokens of one principal can
+ * still differ in privileges, groups, deny-only state, and restrictions, and
+ * later access checks read the INSTALLED thread token. So compare the authority
+ * itself:
+ *   - privileges: every LUID present on the client must be present on the
+ *     server. Presence (not the enabled bit) is the bar -- a holder can enable
+ *     its own disabled privilege at will, so a present privilege IS authority.
+ *   - groups: every enabled, non-deny-only client group must be enabled and
+ *     non-deny-only on the server. A group the server holds deny-only is
+ *     authority the server does NOT have.
+ *   - restriction: a restricted server may not borrow an unrestricted client.
+ */
+static int alpc_authority_is_subset(const ACCESS_TOKEN *client,
+                                    const ACCESS_TOKEN *server)
+{
+    uint32_t i, j;
+
+    if (!client || !server)
+        return 0;
+    if (client->PrivilegeCount > TOKEN_MAX_PRIVS ||
+        server->PrivilegeCount > TOKEN_MAX_PRIVS ||
+        client->GroupCount > TOKEN_MAX_GROUPS ||
+        server->GroupCount > TOKEN_MAX_GROUPS)
+        return 0;                       /* malformed counts -> fail closed */
+
+    /* Restriction is NEGATIVE authority, and equal counts prove nothing about
+     * equal contents -- two restricted-SID sets of the same size can restrict
+     * entirely different things, which the planned restricted-token DACL walk
+     * would resolve differently. Rather than pretend a count comparison is a
+     * proof, fail closed on ANY restricted token on either side: such a server
+     * must hold SeImpersonatePrivilege to impersonate at all. Revisit only
+     * when RestrictedSids can be enumerated and compared for authority
+     * equivalence -> XREF: `02-kernel-core/TODO-15` (restricted-token
+     * SeAccessCheck). */
+    if ((client->Flags & TOKEN_IS_RESTRICTED) ||
+        (server->Flags & TOKEN_IS_RESTRICTED) ||
+        client->RestrictedSidCount || server->RestrictedSidCount)
+        return 0;
+
+    for (i = 0; i < client->PrivilegeCount; i++) {
+        int held = 0;
+        for (j = 0; j < server->PrivilegeCount; j++) {
+            if (client->Privileges[i].Luid.LowPart ==
+                    server->Privileges[j].Luid.LowPart &&
+                client->Privileges[i].Luid.HighPart ==
+                    server->Privileges[j].Luid.HighPart) {
+                held = 1;
+                break;
+            }
+        }
+        if (!held)
+            return 0;
+    }
+
+    for (i = 0; i < client->GroupCount; i++) {
+        uint32_t ca = client->Groups[i].Attributes;
+        int held = 0;
+
+        /* Integrity groups are covered by the IL comparison; a disabled or
+         * deny-only client group conveys no authority to gain. */
+        if (ca & (SE_GROUP_INTEGRITY | SE_GROUP_USE_FOR_DENY_ONLY))
+            continue;
+        if (!(ca & SE_GROUP_ENABLED))
+            continue;
+
+        if (!client->Groups[i].Sid)
+            return 0;                   /* NULL SID -> unprovable, fail closed */
+
+        /* Scan ALL server entries: the same SID may appear more than once, and
+         * any qualifying (enabled, non-deny-only) entry grants the server that
+         * authority. */
+        for (j = 0; j < server->GroupCount; j++) {
+            uint32_t sa = server->Groups[j].Attributes;
+            if (!server->Groups[j].Sid)
+                continue;
+            if (!RtlEqualSid(client->Groups[i].Sid, server->Groups[j].Sid))
+                continue;
+            if ((sa & SE_GROUP_ENABLED) && !(sa & SE_GROUP_USE_FOR_DENY_ONLY))
+                held = 1;
+        }
+        if (!held)
+            return 0;
+    }
+
+    /* Deny-only groups are NEGATIVE authority: a SID the server carries
+     * deny-only makes deny ACEs match it. If the client dropped that SID, or
+     * carries it as a normal grant instead, the client ESCAPES a denial the
+     * server is subject to -- an amplification the positive scan above cannot
+     * see, because it only walks client groups. */
+    for (j = 0; j < server->GroupCount; j++) {
+        uint32_t sa = server->Groups[j].Attributes;
+        int still_denied = 0;
+
+        if (!(sa & SE_GROUP_USE_FOR_DENY_ONLY))
+            continue;
+        if (!server->Groups[j].Sid)
+            return 0;                   /* unprovable -> fail closed */
+
+        for (i = 0; i < client->GroupCount; i++) {
+            if (!client->Groups[i].Sid)
+                continue;
+            if (!RtlEqualSid(server->Groups[j].Sid, client->Groups[i].Sid))
+                continue;
+            if (client->Groups[i].Attributes & SE_GROUP_USE_FOR_DENY_ONLY)
+                still_denied = 1;
+            else
+                return 0;               /* same SID, but no longer deny-only */
+        }
+        if (!still_denied)
+            return 0;                   /* denial dropped entirely */
+    }
+
+    return 1;
+}
+
+NTSTATUS AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)
+{
+    struct thread *thr = thread_current();
+    struct task   *cur = task_current();
+    ACCESS_TOKEN  *client_tok, *old;
+
+    if (!port || !thr || !cur)
+        return STATUS_INVALID_PARAMETER;
+    if (port->PortType != AlpcServerCommunicationPort)
+        return STATUS_INVALID_PORT_HANDLE;
+
+    client_tok = port->ClientToken;
+    if (!client_tok)
+        return STATUS_NO_TOKEN;          /* QoS was below SecurityIdentification */
+
+    /* Trust boundary 1: an identification-only token conveys identity but not
+     * the right to ACT as the client. Reject it until effective-token checks
+     * support identification-only impersonation. */
+    if (client_tok->ImpersonationLevel < SecurityImpersonation)
+        return STATUS_BAD_IMPERSONATION_LEVEL;
+
+    /* Trust boundary 2: impersonating at SecurityImpersonation or above lets
+     * this thread ACT with the client's groups and privileges. Integrity level
+     * does NOT establish that two tokens are the same principal, so it cannot
+     * authorize impersonation on its own -- but a matching UserSid does NOT
+     * establish equal AUTHORITY either. Under the split-token model one user
+     * owns both a filtered TokenElevationTypeLimited token (medium IL) and a
+     * TokenElevationTypeFull one (high IL): same UserSid, different elevation,
+     * groups, and enabled privileges. So the no-privilege path is open only to
+     * a NON-AMPLIFYING self-impersonation -- same principal AND the client
+     * conveys no authority the server does not already hold: IL no higher, not
+     * elevated while the server is not, and its privileges/groups/restriction
+     * a subset of the server's (alpc_authority_is_subset -- UserSid parity
+     * alone would still let a reduced server borrow a stronger same-user
+     * token). Everything else demands SeImpersonatePrivilege. A KernelMode
+     * caller (SSDT_KERNEL_MODE) is trusted and bypasses the gate. */
+    if (access_mode != SSDT_KERNEL_MODE) {
+        ACCESS_TOKEN *server_eff =
+            thr->impersonation_token ? (ACCESS_TOKEN *)thr->impersonation_token
+                                     : (ACCESS_TOKEN *)cur->token;
+        uint32_t client_il = 0, server_il = 0;
+        int same_principal =
+            server_eff && server_eff->UserSid && client_tok->UserSid &&
+            RtlEqualSid(client_tok->UserSid, server_eff->UserSid);
+        /* Fail closed: an absent or malformed IL label on either side means
+         * non-amplification cannot be PROVEN, so fall through to the privilege
+         * check rather than assuming a default level. */
+        int levels_known = same_principal &&
+                           SeTryGetTokenIntegrityLevel(client_tok, &client_il) &&
+                           SeTryGetTokenIntegrityLevel(server_eff, &server_il);
+        int no_amplification =
+            levels_known &&
+            SeCompareMandatoryLevels(client_il, server_il) <= 0 &&
+            !(client_tok->IsElevated && !server_eff->IsElevated) &&
+            alpc_authority_is_subset(client_tok, server_eff);
+        if (!no_amplification &&
+            !SeSinglePrivilegeCheck(&SeImpersonatePrivilege, access_mode))
+            return STATUS_PRIVILEGE_NOT_HELD;
+    }
+
+    /* Take a fresh reference the thread slot owns, independent of the port's
+     * reference, so a concurrent port teardown or a RevertToSelf cannot free a
+     * token still installed on this thread (and repeated impersonation of the
+     * same token stays safe). Atomic-exchange mirrors ImpersonateSelf; the
+     * displaced token (if any) is dereferenced. */
+    ObReferenceObject(client_tok);
+    old = (ACCESS_TOKEN *)__atomic_exchange_n(&thr->impersonation_token,
+                                              client_tok, __ATOMIC_ACQ_REL);
+    if (old)
+        ObDereferenceObject(old);
+
+    klog(LOG_DEBUG, "alpc", "impersonating client on thread %u",
+         (uint64_t)thr->id);
     return STATUS_SUCCESS;
 }
 

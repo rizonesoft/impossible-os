@@ -180,6 +180,14 @@ typedef struct alpc_port {
                                                  * arrived); auto-reset */
     struct access_token *ClientToken; /* captured on accept -- */
 
+    /* Section 7: owned snapshot of the creator's primary-token UserSid,
+     * captured at AlpcCreatePort and freed in alpc_port_on_delete. Used by
+     * the RequiredServerSid connect-time check so a client cannot be
+     * fooled by task-slot reuse after the creator exits (OwnerTask alone is
+     * an unreferenced raw pointer and is NOT a safe identity source). NULL
+     * if the creator had no primary token. */
+    SID                   *OwnerSid; /* kmalloc'd bounded copy; freed on delete */
+
     /* Future extensions: keep these at the end so adding to them does
      * not disturb earlier field offsets. Section 6 grows SectionList,
      * section 11 fills MessageZone, section 12 populates Stats. */
@@ -289,18 +297,45 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
  *   ht          -- handle table to receive the new client-comm handle
  *   port_name   -- full path, typically "\\RPC Control\\<name>"
  *   timeout_ms  -- 0 = block indefinitely, otherwise bounded wait
+ *   required_server_sid -- optional (NULL = no check); when non-NULL, an
+ *                  already-validated kernel-resident SID snapshot compared
+ *                  against the listener's creation-time OwnerSid. Section 7.
  *   out_handle  -- on success, receives the client communication-port
  *                  handle; on failure untouched
  *
  * Returns STATUS_SUCCESS on accept, STATUS_PORT_CONNECTION_REFUSED
  * on server reject, STATUS_OBJECT_NAME_NOT_FOUND if no port at
  * port_name, STATUS_OBJECT_TYPE_MISMATCH if the path resolves to a
- * non-server-connection port, STATUS_TIMEOUT if the server did not
- * accept/reject within timeout_ms, STATUS_INSUFFICIENT_RESOURCES on
- * allocation failure. Rolls back every partial state on failure.
+ * non-server-connection port, STATUS_SERVER_SID_MISMATCH if
+ * required_server_sid does not match the listener owner, STATUS_TIMEOUT if
+ * the server did not accept/reject within timeout_ms,
+ * STATUS_INSUFFICIENT_RESOURCES on allocation failure. Rolls back every
+ * partial state on failure.
  */
 NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
-                         uint32_t timeout_ms, HANDLE *out_handle);
+                         uint32_t timeout_ms, const SID *required_server_sid,
+                         HANDLE *out_handle);
+
+/*
+ * AlpcImpersonateClientOfPort -- server-side impersonation of a captured
+ * client token (Section 7). Installs `port->ClientToken` as the CURRENT
+ * THREAD's impersonation token (per-thread, atomic-exchange -- same discipline
+ * as ImpersonateSelf/RevertToSelf), after enforcing the impersonation-level
+ * and SeImpersonatePrivilege trust-boundary checks.
+ *
+ *   port        -- a pinned server communication port (caller owns the ref)
+ *   access_mode -- SSDT_KERNEL_MODE (trusted, bypasses the privilege gate) or
+ *                  SSDT_USER_MODE (the server must hold SeImpersonatePrivilege
+ *                  to impersonate a higher-integrity client)
+ *
+ * Returns STATUS_SUCCESS; STATUS_INVALID_PORT_HANDLE if `port` is not a server
+ * communication port; STATUS_NO_TOKEN if no client token was captured (the
+ * connection's QoS was below SecurityIdentification); STATUS_BAD_IMPERSONATION_LEVEL
+ * if the captured token is identification-only; STATUS_PRIVILEGE_NOT_HELD if a
+ * UserMode server lacks SeImpersonatePrivilege for a higher-integrity client.
+ * The SSDT syscall wrapper (NtAlpcImpersonateClientOfPort) is wired in section 8.
+ */
+NTSTATUS AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode);
 
 /*
  * AlpcAcceptConnectPort -- server-side connection completion.

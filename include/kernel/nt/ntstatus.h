@@ -72,6 +72,12 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_PORT_CONNECTION_REFUSED       ((NTSTATUS)0xC0000041)  /* ALPC connection rejected by server */
 /* handle is not an ALPC port / wrong port subtype */
 #define STATUS_INVALID_PORT_HANDLE           ((NTSTATUS)0xC0000042)
+/* ALPC RequiredServerSid did not match the listener owner (MS-ERREF canonical) */
+#define STATUS_SERVER_SID_MISMATCH           ((NTSTATUS)0xC00002A0)
+/* malformed SID (bad revision / sub-authority count) */
+#define STATUS_INVALID_SID                   ((NTSTATUS)0xC0000078)
+/* no impersonation token available on the port/thread */
+#define STATUS_NO_TOKEN                      ((NTSTATUS)0xC000007C)
 #define STATUS_REPLY_MESSAGE_MISMATCH       ((NTSTATUS)0xC000021F)  /* ALPC reply MessageId not in PendingQueue */
 #define STATUS_NOT_FOUND                    ((NTSTATUS)0xC0000225)  /* generic not-found (UEFI vars etc.) */
 #define STATUS_INVALID_IMAGE_FORMAT         ((NTSTATUS)0xC000007B)  /* on-disk blob format/bounds/CRC fail */

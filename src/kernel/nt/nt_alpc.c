@@ -29,6 +29,9 @@
 #include "kernel/ipc/alpc.h"
 #include "kernel/ipc/alpc_port.h"
 #include "kernel/sched/task.h"
+#include "kernel/security/sid.h"       /* Section 7: RequiredServerSid snapshot */
+#include "kernel/cpu_security.h"       /* Section 7: copy_from_user */
+#include "libc/string.h"               /* Section 7: memcpy (kernel-mode path) */
 #include "kernel/klog.h"
 
 /* ---- OBJECT_ATTRIBUTES probe + \RPC Control path split ----------------
@@ -206,9 +209,22 @@ static NTSTATUS NtAlpcCreatePort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
 /* ---- 0x0110 NtAlpcConnectPort ------------------------------------------- */
 /* Real implementation wired by the ALPC ConnectPort handler. SCOPE-GAP-ALLOWED:
- * optional OBJECT_ATTRIBUTES.SecurityDescriptor, RequiredServerSid, ConnMsg,
- * SendMsgAttr, RecvMsgAttr all deferred to later ALPC items -- the path parse
- * plus leaf extraction reuses the `alpc_probe_and_split` pattern. */
+ * optional OBJECT_ATTRIBUTES.SecurityDescriptor, ConnMsg, SendMsgAttr,
+ * RecvMsgAttr all deferred to later ALPC items -- the path parse plus leaf
+ * extraction reuses the `alpc_probe_and_split` pattern.
+ *
+ * RING-3 REACHABILITY (do not mistake this for a live user-mode check): the
+ * RequiredServerSid snapshot+compare below is REACHABLE ONLY from KernelMode
+ * callers and direct AlpcConnectPort() calls. The SYSCALL transport carries at
+ * most four caller arguments -- syscall_entry.asm zeroes r9 ("arg5 = 0") and
+ * syscall_dispatch_fast passes a6 as a literal 0 (syscall_fast.c) -- so a ring-3
+ * caller CANNOT deliver a5 (timeout_ms) or a6 (RequiredServerSid) at all; both
+ * arrive as 0 and this branch never runs. The kernel cannot fail closed on it
+ * either, because a NULL a6 is indistinguishable from "caller passed nothing".
+ * Widening the 6-word SSDT_HANDLER transport is an operator-reserved ABI
+ * decision -> XREF: `02-kernel-core/TODO-24` section 8 (item: "Choose the >6-arg
+ * SSDT transport for ALPC"). Until that lands, no user-mode wrapper may
+ * advertise RequiredServerSid as an enforced authentication check. */
 static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
                                           uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -223,7 +239,6 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     HANDLE h;
 
     (void)a4; /* Flags -- + */
-    (void)a6;
 
     if (!out_handle)
         return STATUS_INVALID_PARAMETER;
@@ -259,8 +274,53 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         full_path[pi] = '\0';
     }
 
+    /* Section 7: snapshot + validate the optional RequiredServerSid (a6) into
+     * kernel memory before it reaches AlpcConnectPort. A caller-controlled
+     * variable-length SID must never be compared in place: copy the 8-byte
+     * header, derive a bounded length from SubAuthorityCount, copy exactly
+     * that many bytes, then validate the immutable snapshot -- otherwise a
+     * short mapping causes an out-of-bounds kernel read and a live user buffer
+     * creates validate/use skew. */
+    uint8_t sid_storage[SID_MAX_SIZE] = {0};
+    const SID *required_sid = (const SID *)0;
+    if (a6) {
+        const SID *user_sid = (const SID *)a6;
+        SID hdr;
+        uint32_t sid_len;
+        if (ssdt_previous_mode() == SSDT_USER_MODE) {
+            st = ProbeForReadIfUser(user_sid, (uint32_t)sizeof(SID), 1);
+            if (!NT_SUCCESS(st))
+                return st;
+            if (copy_from_user(&hdr, user_sid, (uint32_t)sizeof(SID)) != 0)
+                return STATUS_ACCESS_VIOLATION;
+        } else {
+            memcpy(&hdr, user_sid, sizeof(SID));
+        }
+        if (hdr.Revision != SID_REVISION ||
+            hdr.SubAuthorityCount > SID_MAX_SUB_AUTHORITIES)
+            return STATUS_INVALID_SID;
+        sid_len = (uint32_t)sizeof(SID) + 4u * (uint32_t)hdr.SubAuthorityCount;
+        if (ssdt_previous_mode() == SSDT_USER_MODE) {
+            st = ProbeForReadIfUser(user_sid, sid_len, 1);
+            if (!NT_SUCCESS(st))
+                return st;
+            if (copy_from_user(sid_storage, user_sid, sid_len) != 0)
+                return STATUS_ACCESS_VIOLATION;
+        } else {
+            memcpy(sid_storage, user_sid, sid_len);
+        }
+        /* Guard against a TOCTOU where the user mutates SubAuthorityCount
+         * between the two reads: the snapshot's own bounded length must equal
+         * the number of bytes actually copied (sid_len). Otherwise a grown
+         * count would let RtlEqualSid consume uninitialized trailing bytes. */
+        if (!RtlValidSid((const SID *)sid_storage) ||
+            RtlLengthSidBounded((const SID *)sid_storage, sid_len) != sid_len)
+            return STATUS_INVALID_SID;
+        required_sid = (const SID *)sid_storage;
+    }
+
     st = AlpcConnectPort(&task_current()->handle_table, full_path,
-                         timeout_ms, &h);
+                         timeout_ms, required_sid, &h);
     /* STATUS_TIMEOUT and other non-error-severity informational values
      * are NOT success here -- NT_SUCCESS(STATUS_TIMEOUT) is true because
      * its severity bit is 0, but the connection did not complete. Only
