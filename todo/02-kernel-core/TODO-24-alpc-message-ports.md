@@ -512,11 +512,11 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply)  |
 | 💎   | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)   |
 | 💎   | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                 |
-| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7 (done, stashed; BSS-blocked)     |
+| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7 (done, stashed; BSS-blocked)    |
 | 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                 |
 | 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10                                |
 | 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                         |
-| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (done, stashed; BSS-blocked)     |
+| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (done, stashed; BSS-blocked)    |
 | 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (NtAlpcQueryInformationMessage) |
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                       |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                       |

@@ -343,13 +343,13 @@ Buy kernel-image headroom NOW, without the higher-half move. **Depends on nothin
 
 Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `USER_BASE` `0x800000` = **8 KiB headroom**):
 
-| Symbol | Size | Home | Init phase | Safe to convert? |
-| --- | ---: | --- | --- | --- |
+| Symbol           |    Size | Home            | Init phase                               | Safe to convert? |
+| ---------------- | ------: | --------------- | ---------------------------------------- | ---------------- |
 | `reg_value_pool` | 784 KiB | `registry.c:64` | `registry_init` (late, `boot_storage.c`) | yes -- PMM is up |
-| `s_atoms` | 274 KiB | `nt_misc.c:47` | lazy / NT init | yes -- PMM is up |
-| `devices` | 271 KiB | `blkdev.c:13` | driver registration | yes -- PMM is up |
-| `reg_key_pool` | 228 KiB | `registry.c:61` | `registry_init` (late) | yes -- PMM is up |
-| `klog_ring` | 281 KiB | `klog.c:78` | **pre-PMM** (boot-phase aware) | NO -- see below |
+| `s_atoms`        | 274 KiB | `nt_misc.c:47`  | lazy / NT init                           | yes -- PMM is up |
+| `devices`        | 271 KiB | `blkdev.c:13`   | driver registration                      | yes -- PMM is up |
+| `reg_key_pool`   | 228 KiB | `registry.c:61` | `registry_init` (late)                   | yes -- PMM is up |
+| `klog_ring`      | 281 KiB | `klog.c:78`     | **pre-PMM** (boot-phase aware)           | NO -- see below  |
 
 - [ ] Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB) in `registry.c` to `pmm_alloc_contiguous` at `registry_init`; keep the pool-index allocator, fail `registry_init` closed on allocation failure -- this alone clears the ceiling
 - [ ] Convert `s_atoms` (274 KiB, `nt_misc.c`) to a dynamic table behind its existing lookup helpers; allocate at NT init or first use, never on the atom fast path
