@@ -357,8 +357,20 @@ Three properties the mechanism guarantees:
   [Test-Only Translation Units Outside src/kernel/test/](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#28-test-only-translation-units-outside-srckerneltest).
 
 `scripts/test-tooling.sh` asserts this contract. Proving that a *shipped* image was built
-with the release flavor is a separate gate, owned by
+with the release flavor is `scripts/check-release-symbols.sh`: it (A) compiles every kernel
+translation unit twice (`-D`/`-U KERNEL_TESTS`) to derive the test-seam inventory
+independently of the link and asserts `build/kernel.map` carries none of it; (B) reads the
+`ld.lld --trace` input list emitted as a byproduct of the kernel link (`kernel.link-trace.txt`,
+sha-bound to the shipped `kernel.exe`) to prove no `src/kernel/test/` object linked; and (C)
+verifies the non-alloc `.ipos.provenance` marker (`src/kernel/provenance_release.c`, linked
+only at `KERNEL_TESTS=off`). Both packaging paths -- `.github/workflows/release.yml` and
+`scripts/release/build-image.sh` -- run it (release.yml also rebinds the kernel extracted from
+`system-disk.img` to the gated hash) and refuse an unstamped kernel. Design + the flavor-diff's
+known limitation are in
 [Release-Flavor Proof: Seam-Inventory Gate and CI Attestation](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#27-release-flavor-proof-seam-inventory-gate-and-ci-attestation).
+A residual class -- test-only helper functions defined unconditionally in production TUs, which
+the flavor-diff cannot see -- is tracked by
+[Guard Unguarded Test-Only Helper Functions in Production TUs](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#29-guard-unguarded-test-only-helper-functions-in-production-tus).
 
 ### Build Script
 

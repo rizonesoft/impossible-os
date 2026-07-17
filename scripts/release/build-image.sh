@@ -249,6 +249,19 @@ ESP_STAGE="$WORK_DIR/esp_stage"
 mkdir -p "$ESP_STAGE/EFI/BOOT" "$ESP_STAGE/EFI/ImpossibleOS" "$ESP_STAGE/boot" \
          "$ESP_STAGE/IPOS"
 cp "$BL_PATH" "$ESP_STAGE/EFI/BOOT/BOOTX64.EFI"
+# Release-flavor proof: run the FULL A+B+C gate before packaging, not just the
+# provenance sub-check. The .ipos.provenance marker alone only proves Make chose
+# the off branch; an off-flavor kernel contaminated by a stale or accidentally
+# added test object still carries the marker. PART A (seam symbols) + PART B
+# (link inputs) + PART C (provenance) together prove the kernel is clean. This
+# packaging path is INDEPENDENT of .github/workflows/release.yml (which never
+# invokes build-image.sh), so it must enforce the whole proof itself. The gate
+# fails closed if compile_commands.json or any proof input is missing.
+if ! bash scripts/check-release-symbols.sh; then
+    err "$KR_PATH failed the release-flavor proof -- refusing to package a test-flavor or contaminated kernel."
+    err "Rebuild the pruned flavor with: KERNEL_TESTS=off bash scripts/build.sh clean"
+    exit 1
+fi
 cp "$KR_PATH" "$ESP_STAGE/boot/kernel.exe"
 cp "$BOOT_CONF" "$ESP_STAGE/EFI/ImpossibleOS/boot.conf"
 

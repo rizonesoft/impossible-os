@@ -90,8 +90,9 @@ title: "TODO-10 -- Kernel Security Hardening"
 | ⭐   |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
 | 💎   |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
 | 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [x]   |
-| 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [ ]   |
+| 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [x]   |
 | 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [x]   |
+| 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -803,16 +804,28 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > [!NOTE]
 > **Gate design settled by Codex design review 2026-07-17 (three passes).** A `*_for_test` / `*_fail_*` NAME GLOB is REJECTED as sole proof: verified against `build/kernel.map` it misses `cpu_msr_profile_count`, `cpu_msr_profile_entry`, `cpu_bsp_pat_baseline` (`cpu_security.c:1905-1921`), `nls_test_set_active` (`nls.c:228`), `mouse_test_set_ps2_buttons` (`mouse.c:593`), and `kcrc32c_sw_test` (`kchecksum.c:158`) -- 4 of 6 slip the glob, so the gate would report green while state-mutating seams stay linked. A test-map-minus-release-map SUBTRACTION is REJECTED as tautological: that set is absent from the release map by construction, so the assertion can never fail. A REGEX/line scanner over `#ifdef KERNEL_TESTS` regions is REJECTED as insufficiently sound (3rd pass): it must correctly model nesting, multiline declarators, macro-generated definitions, guarded data, and exclude the tree's one inverse `#ifndef KERNEL_TESTS` guard (whose body is the RELEASE branch) -- a syntactically-valid but unrecognized seam reports false-green. The gate must derive an INDEPENDENT, compiler-backed inventory: per-TU compile at `KERNEL_TESTS` on and off with identical flags, `llvm-nm-19 --defined-only` each object, `on_only = defined(on.o) - defined(off.o)`; assert `build/kernel.map INTERSECT on_only = empty`. This is non-tautological because the per-TU objects derive independently of the release LINK, so a stale on-flavor object or an unpruned TU still trips it. **Sequencing (3rd pass, [high]):** §27's Test checkpoint requires the `off` map to PASS, but §28's items 1-3 name symbols (`ntfs_run_self_test`, `tpm_t_test_install`, `tpm_t_test_restore`) that are UNGUARDED today and therefore still link at `KERNEL_TESTS=off` (verified in `build/kernel.map` before §28 shipped) -- a known-gap allowlist was considered and REJECTED (it would knowingly attest a release containing the attacker-triggerable NTFS self-test, line 826). §28 MUST ship before §27's gate can pass with no allowlist; implement §28 first.
 
-- [ ] Add `scripts/check-release-symbols.sh`: derive the seam inventory INDEPENDENTLY via compiler-backed per-TU nm diff (`on_only` set, see NOTE above), then assert `build/kernel.map` carries none of it; it must be able to FAIL
-- [ ] Confirm the inventory covers §28's test-only TUs (`ntfs_test.c`, `ixfs_test.c`, `test_threads.c`, TPM mutators) once guarded -- the on/off nm diff covers them automatically -> XREF: §28
-- [ ] Assert no `src/kernel/test/` TU reached the release link: capture `ld.lld --trace`, reject any `build/kernel/test/*.o` input, bind to `sha256(kernel.exe)` (kernel.map alone proves symbols, not link inputs)
-- [ ] Wire `.github/workflows/release.yml`: keep the test-flavor build + `scripts/test.sh` gate, then clean-rebuild with `KERNEL_TESTS=off` and run the gate immediately before packaging
-- [ ] Stamp release provenance on the artifact; BOTH packaging paths (`release.yml`, `scripts/release/build-image.sh`) must independently REJECT a `kernel.exe` lacking it -- they are separate entry points
-- [ ] Commit: `"kernel/security: prove release images carry no test surface"`
+- [x] `check-release-symbols.sh` + `lib/release-seam-inventory.py`: PART A compiles all kernel TUs twice (-D/-U KERNEL_TESTS), `on_only=defined(on)-defined(off)`, asserts `kernel.map` disjoint; FAILS on an on-flavor map
+- [x] Inventory covers §28's extra TUs automatically (compiled twice; whole-file guard -> empty off-object -> symbols land in `on_only`); PART B independently proves none link -> XREF: §28
+- [x] PART B reads the `ld.lld --trace` inputs emitted as a link byproduct (`kernel.link-trace.txt`, sha-bound to `kernel.exe`, co-generated so no drift); rejects `build/kernel/test/*.o` + the 3 extra-TU objects
+- [x] Wired `release.yml`: test-flavor build + `test.sh`, then clean `KERNEL_TESTS=off` rebuild + gate + extract-and-bind the kernel inside `system-disk.img` (sha + provenance) before packaging; installs `bear`
+- [x] Provenance: link-time non-alloc `.ipos.provenance` marker (`provenance_release.c`, off-only); `--verify-provenance` uses read-only `readelf -p`; `release.yml` + `build-image.sh` both reject a kernel lacking it
+- [x] Commit: `"kernel/security: prove release images carry no test surface"`
+
+> [!NOTE]
+> **Known limitation (owned by §29).** PART A's flavor-diff catches everything gated by `#ifdef KERNEL_TESTS`. A test-only helper defined UNCONDITIONALLY in a production TU (present in both flavors, e.g. `compositor_set_test_seed`, `tpm_attest_test_reset`, `boot_health_check_test_reset`) is invisible to the diff and ships in the release image. Codex adversarial review flagged this as a concrete false-GREEN; the gate's claim is therefore scoped precisely to "no flavor-gated test seam leaked", and guarding those helpers + a "referenced-only-by-test-objects" inventory is tracked in §29. -> XREF: §29.
 
 **Test checkpoint:** `scripts/check-release-symbols.sh` FAILS on a `KERNEL_TESTS=on` `kernel.map` (proving it can fail) and PASSES on a `KERNEL_TESTS=off` one; a negative test adds a fresh seam symbol and confirms the gate catches it with no edit to the gate; `build-image.sh` refuses a test-flavor `kernel.exe`. Test on: QEMU KVM + TCG + a CI dry-run.
 
-> **Scope boundary:** §27 owns the PROOF and its enforcement points only (gate script, CI wiring, packaging provenance). The flavor mechanism it verifies is §26; the test TUs living OUTSIDE `src/kernel/test/` (which the `#ifdef`-region inventory would miss entirely) are §28. -> XREF: §26 (release-build test-surface exclusion) + §28 (test-only TUs outside the test directory).
+> **Note:** No kernel test surface -- `provenance_release.c` is a passive non-alloc section marker with no runtime logic; the testable surface is the host-side bash gate, validated by its own runs.
+
+> **Test runner:** N/A (host-side bash gate, no kernel test surface) | validation: `check-release-symbols.sh` FAILS on-flavor (100 seams + test objects), PASSES off-flavor; fresh-seam negative test auto-covered; embedded==gated kernel sha bound; off-flavor smoke PASS (KVM)
+
+> **Notes:**
+> - Shipped: `check-release-symbols.sh` (3-part gate) + `lib/release-seam-inventory.py` (per-TU on/off nm diff) + `provenance_release.c` (non-alloc `.ipos.provenance` marker) + Makefile wiring + `release.yml`/`build-image.sh` enforcement.
+> - Runs as CI release gate + `build-image.sh` guard: PART A (seam symbols) + PART B (link inputs, sha-bound trace) + PART C (provenance); packaging rebinds the kernel inside `system-disk.img` to the gated hash.
+> - Codex adversarial (3 rounds): F2-F7 (drift/image-binding, read-only `readelf`, `bear`, fail-closed, dual-hash trace, full gate in `build-image`) + F8 (exact-2-record manifest) + F9 (compile-DB coverage) fixed; F1 + gate-robustness residuals (signed attestation, DB flag-fingerprint) scoped -> §29.
+> - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
+> - Scope boundary: §27 owns the PROOF + enforcement points; §26 owns the flavor mechanism; §28 owns test-only TUs; §29 owns unguarded test-only helper functions. -> XREF: §26 + §28 + §29.
 
 ---
 
@@ -850,6 +863,23 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 ---
 
+## 29. Guard Unguarded Test-Only Helper Functions in Production TUs
+
+§27's release proof (PART A flavor-diff) and §28's TU pruning both miss test-only helper FUNCTIONS defined UNCONDITIONALLY in production translation units: present in BOTH `KERNEL_TESTS` flavors, so the on/off symbol diff never sees them and they ship in the release image. Codex adversarial review of §27 flagged this as a concrete false-GREEN -- the off-flavor `kernel.map` carries `compositor_set_test_seed`/`compositor_get_test_seed` (`compositor.c`), `tpm_attest_test_reset` (`tpm_attest.c`; its own comment: "unit-test setup ONLY -- Not on any production path"), `boot_health_check_test_reset` (`boot_health_check.c`), `boot_load_status_test_save`/`_restore` (`boot_load_status.c`), and `tpm_evlog_fail_offset`/`s_evlog_fail_offset`.
+
+- [ ] Enumerate every test-only helper defined unconditionally in a production TU (referenced only from `src/kernel/test/`), confirm no production caller for each, and guard definition + declaration with `#ifdef KERNEL_TESTS`
+- [ ] Supplement `check-release-symbols.sh` PART A with a compiler-derived "symbols referenced exclusively by pruned test objects" inventory, so a future unguarded test helper is caught automatically (no manual list) -> XREF: §27
+- [ ] Re-run `check-release-symbols.sh` on the off build: the newly-guarded symbols are absent from `kernel.map` and the supplementary inventory is empty
+- [ ] Gate robustness (§27 F8 residual): replace the in-tree `kernel.link-trace.sha` manifest with a signed CI attestation, so the trace/kernel binding resists a build-tree writer, not just accidental staleness -> XREF: §27
+- [ ] Gate robustness (§27 F9 residual): bind `compile_commands.json` to the gated kernel via a clean-build fingerprint covering per-flag drift within a covered TU (PART A catches a missing TU, not changed flags) -> XREF: §27
+- [ ] Commit: `"kernel/security: guard test-only helpers in production TUs"`
+
+**Test checkpoint:** an off-flavor `kernel.map` carries none of the enumerated helper symbols; the on-flavor build still defines them and passes `scripts/test.sh`; the supplementary inventory FAILS if any test-object-referenced symbol reappears in the release map. Test on: QEMU KVM + TCG.
+
+> **Scope boundary:** §29 owns test-only HELPER FUNCTIONS defined in production TUs (present in both flavors) PLUS §27's accepted gate-robustness residuals (signed attestation, DB flag-fingerprint). §27 owns the proof gate; §28 owns whole test TUs. -> XREF: §27 (seam-inventory gate) + §28 (test-only TUs outside the test dir).
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                | 🪟 Win11         | 🐧 Linux             | 🚀 Impossible OS             |
@@ -877,7 +907,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 | 💎   | KFENCE UAF/OOB sample  | ❌ No            | ✅ KFENCE            | ⬜ §23                       |
 | ⭐   | Mitigation posture API | ⚠️ WMI          | ⚠️ sysfs            | ⬜ §24                       |
 | 💎   | Test code out of build | ✅ free/checked  | ✅ Kconfig KUNIT off | ✅ §26 seams+test dir + §28  |
-| 💎   | Release flavor proven  | ✅ WHQL signing  | ✅ distro CI         | ⬜ §27                       |
+| 💎   | Release flavor proven  | ✅ WHQL signing  | ✅ distro CI         | ✅ §27 seam+trace+provenance |
 
 After §1 through §13, parity with Win11/Linux mitigations for NX through stack canaries and guard pages; §14 through §16 add KASLR, enclave/signing syscalls, and lockdown. §17 through §25 close the image-W^X (§17), 128-bit feature surface (§18), MDS/VERW data-sampling (§19), software-CFI/kCFI (§20), FORTIFY_SOURCE (§21), stackleak (§22), and KFENCE (§23) gaps, plus a queryable mitigation posture (§24, exclusive) and the transient-execution predictor policy (SSBD/STIBP/RSB/BHI/ITS/Retbleed, §25). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.
 

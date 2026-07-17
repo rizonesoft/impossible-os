@@ -76,6 +76,7 @@ jobs:
             ovmf \
             qemu-system-x86 \
             gcc \
+            bear \
             qemu-utils \
             python3-yaml
 
@@ -114,6 +115,61 @@ jobs:
             exit 1
           fi
           echo "✅ Build succeeded"
+
+      # ── Release-flavor rebuild + seam-inventory gate ────────────────────
+      # The build + unit tests above ran the TEST flavor (KERNEL_TESTS=on) so
+      # the suite could execute. A SHIPPED image must not carry that surface,
+      # so clean-rebuild the pruned release flavor and PROVE it is clean before
+      # anything is packaged. build.sh reads KERNEL_TESTS from the environment;
+      # a clean rebuild also regenerates the release-flavor system-disk.img that
+      # the packaging steps below consume. (Release-flavor proof gate.)
+      - name: Rebuild release flavor (KERNEL_TESTS=off)
+        run: KERNEL_TESTS=off bash scripts/build.sh clean
+
+      - name: Verify release build sentinel
+        run: |
+          LAST_LINE=$(tail -1 build/build.log)
+          echo "Release build log last line: $LAST_LINE"
+          if [ "$LAST_LINE" != "=== BUILD OK ===" ]; then
+            echo "::error::Release-flavor build did not complete successfully"
+            tail -30 build/build.log
+            exit 1
+          fi
+          echo "✅ Release-flavor build succeeded"
+
+      # Prove no test symbol, no test link input, and a provenance stamp. This
+      # gate runs A+B+C (including --verify-provenance on build/kernel.exe), so
+      # release.yml independently REFUSES to package an unattested kernel. The
+      # gate's PART A needs compile_commands.json (bear-generated during the
+      # clean build); assert it exists so a missing Bear fails loudly here rather
+      # than silently skipping the proof.
+      - name: Prove release image carries no test surface
+        run: |
+          if [ ! -s compile_commands.json ]; then
+            echo "::error::compile_commands.json missing -- Bear did not run; the seam gate cannot derive its inventory"
+            exit 1
+          fi
+          bash scripts/check-release-symbols.sh
+
+      # Bind the gate to the SHIPPED image: extract every kernel copy from
+      # system-disk.img and prove it is byte-identical to the gated kernel.exe
+      # and carries the provenance stamp. Without this, the gate could pass on a
+      # detached build/kernel.exe while a stale or substituted kernel rides
+      # inside the packaged image. (Release-flavor proof, image binding.)
+      - name: Bind gated kernel to the packaged disk image
+        run: |
+          set -euo pipefail
+          EFI_OFFSET=$(grep -oP 'EFI_OFFSET\s*:=\s*\K\d+' Makefile 2>/dev/null || echo 1048576)
+          GATED_SHA=$(sha256sum build/kernel.exe | awk '{print $1}')
+          echo "Gated kernel.exe sha256=$GATED_SHA (ESP offset $EFI_OFFSET)"
+          mcopy -i "build/system-disk.img@@${EFI_OFFSET}" ::/boot/kernel.exe /tmp/embedded-kernel.exe
+          EMB_SHA=$(sha256sum /tmp/embedded-kernel.exe | awk '{print $1}')
+          if [ "$EMB_SHA" != "$GATED_SHA" ]; then
+            echo "::error::Embedded /boot/kernel.exe ($EMB_SHA) != gated build/kernel.exe ($GATED_SHA)"
+            exit 1
+          fi
+          bash scripts/check-release-symbols.sh --verify-provenance /tmp/embedded-kernel.exe
+          echo "✅ Packaged disk image ships the gated, provenance-stamped kernel"
 
       # ── Verify disk image ──────────────────────────────────────────────
       - name: Verify disk image

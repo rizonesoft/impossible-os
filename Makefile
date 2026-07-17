@@ -204,6 +204,17 @@ ifeq ($(KERNEL_TESTS),off)
     C_SRCS := $(filter-out $(KERNEL_DIR)/test/%, $(C_SRCS))
     C_SRCS := $(filter-out $(KERNEL_TESTS_EXTRA_TUS), $(C_SRCS))
 endif
+# Release-flavor provenance marker: provenance_release.c emits a non-alloc ELF
+# section stamping kernel.exe as the pruned (KERNEL_TESTS=off) flavor. Excluded
+# from the auto-glob UNCONDITIONALLY so the test (on) flavor never carries the
+# marker, then re-added ONLY for the release (off) flavor. Packaging paths
+# (scripts/release/build-image.sh, .github/workflows/release.yml) reject a
+# kernel.exe lacking it via scripts/check-release-symbols.sh --verify-provenance.
+PROVENANCE_TU := $(KERNEL_DIR)/provenance_release.c
+C_SRCS := $(filter-out $(PROVENANCE_TU), $(C_SRCS))
+ifeq ($(KERNEL_TESTS),off)
+    C_SRCS += $(PROVENANCE_TU)
+endif
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
 # Vendored LZ4 block compressor (kernel embedded libraries). Built block-only with
@@ -408,8 +419,23 @@ kernel: $(KERNEL_BIN)
 
 $(KERNEL_BIN): os-logo bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
-	@echo "[LD] Linked $@"
+	@# `--trace` emits the linker's input-file list to stdout (captured to
+	@# kernel.link-trace.txt) as a byproduct of the SAME link that produces
+	@# kernel.exe. It does not change the emitted binary, and being co-generated
+	@# it can never drift from the shipped kernel -- the release seam gate
+	@# (scripts/check-release-symbols.sh Part B) reads it to prove no
+	@# src/kernel/test/ object reached this exact link. A separate relink would
+	@# re-run build_info.h (.FORCE) and mint a new BUILD_TIMESTAMP, orphaning the
+	@# gated binary from the shipped one.
+	$(LD) $(LDFLAGS) --trace -T $(LINKER_SCRIPT) -o $@ $(OBJS) > $(BUILD_DIR)/kernel.link-trace.txt
+	@# Bind BOTH the shipped bytes AND the trace that describes them: record
+	@# sha256 of kernel.exe *and* kernel.link-trace.txt in one checksum file. The
+	@# seam gate runs `sha256sum -c` on it, so a stale/rebuilt kernel.exe OR a
+	@# truncated/replaced trace (test objects silently dropped) fails the check --
+	@# authenticating kernel.exe alone would let a forged trace pass while the
+	@# real link included test objects.
+	@sha256sum $@ $(BUILD_DIR)/kernel.link-trace.txt > $(BUILD_DIR)/kernel.link-trace.sha
+	@echo "[LD] Linked $@ (link trace: $(BUILD_DIR)/kernel.link-trace.txt)"
 	@llvm-nm-19 -n $@ > $(BUILD_DIR)/kernel.map
 	@python3 tools/convert_symmap.py $(BUILD_DIR)/kernel.map $(BUILD_DIR)/kernel.sym
 	@echo "[NM] Symbol map: $(BUILD_DIR)/kernel.map"
