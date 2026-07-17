@@ -68,10 +68,30 @@ READELF="${LLVM_READELF:-llvm-readelf-19}"
 
 # Test-only translation units that live OUTSIDE src/kernel/test/ (pruned via the
 # Makefile KERNEL_TESTS_EXTRA_TUS list); their objects must never reach the link.
-EXTRA_TEST_OBJS=(
+# Single-sourced from the Makefile so a 4th out-of-tree test TU added there is
+# covered here automatically (Codex consistency 2026-07-17). A pinned FLOOR keeps
+# the known three always checked even if the parse yields nothing -- drift can
+# only ADD coverage to this security gate, never silently drop it.
+EXTRA_TEST_OBJS_FLOOR=(
     "$BUILD_DIR/kernel/fs/ntfs/ntfs_test.o"
     "$BUILD_DIR/kernel/fs/ixfs/ixfs_test.o"
     "$BUILD_DIR/kernel/main/test_threads.o"
+)
+# Join Make line-continuations, pick every KERNEL_TESTS_EXTRA_TUS assignment
+# (:= / += / =), drop trailing comments, map each `$(KERNEL_DIR)/PATH.c` (i.e.
+# src/kernel/PATH.c) to `$BUILD_DIR/kernel/PATH.o`, then union with the floor.
+mapfile -t EXTRA_TEST_OBJS < <(
+    {
+        awk '{ while (sub(/\\[[:space:]]*$/,"")) { if ((getline nxt) > 0) $0=$0" "nxt; else break } print }' \
+            "$REPO_ROOT/Makefile" 2>/dev/null \
+          | grep -E '^[[:space:]]*KERNEL_TESTS_EXTRA_TUS[[:space:]]*(:=|\+=|=)' \
+          | sed -E 's/^[[:space:]]*KERNEL_TESTS_EXTRA_TUS[[:space:]]*(:=|\+=|=)//; s/#.*$//' \
+          | tr ' \t' '\n\n' \
+          | grep -E '\.c$' \
+          | sed -E 's@^\$\(KERNEL_DIR\)/@@; s@^src/kernel/@@' \
+          | sed -E "s@^@$BUILD_DIR/kernel/@; s/\\.c\$/.o/"
+        printf '%s\n' "${EXTRA_TEST_OBJS_FLOOR[@]}"
+    } | sort -u
 )
 
 err()  { printf '[check-release-symbols] ERROR: %s\n' "$*" >&2; }

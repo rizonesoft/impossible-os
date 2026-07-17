@@ -150,7 +150,10 @@ int boot_health_check_in_subset(const char *name,
                                  const char (*subset_names)[BOOT_HEALTH_CHECK_NAME_LEN],
                                  unsigned int subset_count);
 
-/* Count of registered checks. Test-only oracle. */
+/* Count of registered checks. Test-only oracle; guarded out of release builds
+ * (release test-surface exclusion). */
+#ifdef KERNEL_TESTS
 unsigned int boot_health_check_registered_count(void);
+#endif
 
 #endif /* KERNEL_BOOT_HEALTH_CHECK_H */

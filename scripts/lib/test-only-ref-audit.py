@@ -39,6 +39,7 @@ once a tree is known-clean and the caller accepts the false-positive risk).
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -68,17 +69,25 @@ def read_extra_test_basenames(repo):
               f"extra-test-TU fallback {sorted(_FALLBACK_EXTRA_TEST_BASENAMES)}",
               file=sys.stderr)
         return set(_FALLBACK_EXTRA_TEST_BASENAMES)
-    # KERNEL_TESTS_EXTRA_TUS := <path> <path> ... (single logical line here; the
-    # Makefile defines it on one line -- no continuation handling needed).
+    # Collect every KERNEL_TESTS_EXTRA_TUS assignment (:= / = / +=), joining
+    # backslash line-continuations first so a multi-line or += -appended list is
+    # captured in full (Codex consistency 2026-07-17: a 4th TU added via a
+    # continuation or += must not slip the parse).
+    joined = re.sub(r"\\\n", " ", text)
     names = set()
-    for line in text.splitlines():
+    for line in joined.splitlines():
         stripped = line.strip()
-        if stripped.startswith("KERNEL_TESTS_EXTRA_TUS"):
-            _, _, rhs = stripped.partition(":=")
-            for tok in rhs.split():
-                if tok.endswith(".c"):
-                    names.add(os.path.basename(tok))
-            break
+        if not stripped.startswith("KERNEL_TESTS_EXTRA_TUS"):
+            continue
+        m = re.match(r"KERNEL_TESTS_EXTRA_TUS\s*(?::=|\+=|=)(.*)$", stripped)
+        if not m:
+            continue
+        rhs = m.group(1)
+        if "#" in rhs:            # strip a trailing Make comment
+            rhs = rhs.split("#", 1)[0]
+        for tok in rhs.split():
+            if tok.endswith(".c"):
+                names.add(os.path.basename(tok))
     if not names:
         print("[test-ref-audit] WARNING: KERNEL_TESTS_EXTRA_TUS not found in "
               f"Makefile; using pinned fallback "

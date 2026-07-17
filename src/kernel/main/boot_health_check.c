@@ -162,11 +162,13 @@ boot_health_check_register(const char *name,
     return 1;
 }
 
+#ifdef KERNEL_TESTS
 unsigned int
 boot_health_check_registered_count(void)
 {
     return s_check_count;
 }
+#endif
 
 #ifdef KERNEL_TESTS
 void

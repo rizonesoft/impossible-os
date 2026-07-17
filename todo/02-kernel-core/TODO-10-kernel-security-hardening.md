@@ -871,7 +871,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 §27's release proof (PART A flavor-diff) and §28's TU pruning both miss test-only helper FUNCTIONS defined UNCONDITIONALLY in production translation units: present in BOTH `KERNEL_TESTS` flavors, so the on/off symbol diff never sees them and they ship in the release image. Codex adversarial review of §27 flagged this as a concrete false-GREEN -- the off-flavor `kernel.map` carries `compositor_set_test_seed`/`compositor_get_test_seed` (`compositor.c`), `tpm_attest_test_reset` (`tpm_attest.c`; its own comment: "unit-test setup ONLY -- Not on any production path"), `boot_health_check_test_reset` (`boot_health_check.c`), `boot_load_status_test_save`/`_restore` (`boot_load_status.c`), and `tpm_evlog_fail_offset`/`s_evlog_fail_offset`.
 
-- [x] Guarded all 7 test-only helpers (def+decl) with `#ifdef KERNEL_TESTS` (compositor seed pair, `tpm_attest_test_reset`, `boot_health_check_test_reset`, `boot_load_status_test_{save,restore}`, `tpm_evlog_fail_offset`); off map clean
+- [x] Guarded all 8 test-only helpers with `#ifdef KERNEL_TESTS` (compositor seed pair, `tpm_attest_test_reset`, `boot_health_check_{test_reset,registered_count}`, `boot_load_status_test_{save,restore}`, `tpm_evlog_fail_offset`); off map clean
 - [x] `check-release-symbols.sh` PART A2 + `lib/test-only-ref-audit.py`: compiler-derived "referenced-only-by-test-objects" inventory. ADVISORY only (design review: raw set over-reports, cannot be empty-asserted)
 - [x] Re-ran on the off build: PART A now catches all 7 (flavor-gated); PART A2 advisory runs (584 legit un-wired candidates, the 7 absent). `release.yml` preserves the ON-flavor compile DB for A2
 - [/] Gate robustness (§27 F8 + perf residual): signed CI attestation replacing the forgeable in-tree `kernel.link-trace.sha` + validate-not-recompute receipt; needs crypto signing -> XREF: §30
@@ -884,15 +884,17 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 > **Note:** No kernel test surface -- the guards remove symbols, they add no behavior; validation is the host-side release-symbol gate (off-flavor `kernel.map` seam-free) + both-flavor `-Werror` builds.
 
-> **Test runner:** N/A (host-side release gate, no new kernel test surface) | validation: both KERNEL_TESTS={on,off} builds `-Werror` clean; off `kernel.map` carries none of the 9 guarded symbols; PART A + advisory A2 run.
+> **Test runner:** N/A (host-side release gate, no new kernel test surface) | validation: both KERNEL_TESTS={on,off} builds `-Werror` clean; off `kernel.map` carries none of the 10 guarded symbols; PART A + advisory A2 run.
 
 > **Notes:**
-> - Shipped: `#ifdef KERNEL_TESTS` guards on 7 test-only helpers across 5 production TUs + headers; new `scripts/lib/test-only-ref-audit.py` advisory auditor + `check-release-symbols.sh` PART A2.
+> - Shipped: `#ifdef KERNEL_TESTS` guards on 8 test-only helpers across 5 production TUs + headers; new `scripts/lib/test-only-ref-audit.py` advisory auditor + `check-release-symbols.sh` PART A2.
 > - How it runs: the guards make all 7 flavor-gated so PART A's diff catches any regression; PART A2 is an ADVISORY audit (needs the ON-flavor compile DB `release.yml` preserves), writes `build/test-only-ref-audit.txt`, never blocks.
 > - Downstream: closes §27's accepted [H] unguarded-helper residual (stamp swept); F8/F9 gate-robustness residuals rehomed to the new §30. Codex design + adversarial adoptions in the commit message.
 > - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
 > - Scope boundary: §29 owns the helper guards + advisory audit; §27 owns the proof gate; §28 owns whole test TUs; §30 owns the signed attestation + DB fingerprint.
+> **Verified:** 2026-07-17 | commit `04d4cbd3` | 3/5 items ([x]; 2 [/] deferred to §30) | build OK (both flavors) | smoke PASS (KVM 2.97s), off gate PASS, 21504+16 tests PASS
 > **Deferred:** [M] F8/F9 gate-robustness residuals (signed CI attestation + per-flag compile-DB fingerprint + validate-not-recompute receipt) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), so they are operator-reserved. Rehomed as concrete items -> XREF: §30 (F8/F9/Perf items).
+> **Quality reviewed:** 2026-07-17 | Codex 5x (design, adversarial, consistency, perf) | 1H+6M fixed | scope: kernel-code-quality
 
 ---
 
