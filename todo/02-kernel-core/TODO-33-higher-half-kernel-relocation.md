@@ -47,7 +47,8 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 | ⭐   | Order | Deliverable                                              | Depends On             | Status |
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
-| 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [ ]   |
+| 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
+| 🔥   |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [ ]   |
 | 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -60,7 +61,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
-> 🔥 = unblocks the stalled kernel queue; depends on nothing and ships FIRST (see §10).
+> 🔥 = unblocks the stalled kernel queue; depends on nothing and ships FIRST (see §10, then the §11 sweep that collects on it).
 > **Ship order note:** the row order above IS the ship order; the number column is the section-heading id. Original §2 (direct map + walker conversion) was SPLIT 2026-07-16 on the design review's SPLIT-CONFIRMED verdict (2+ worker contexts) into §2 (HHDM construction, additive, kernel still walks identity) and a new §9 (walker conversion) appended at file end to keep the §5/§6/§7 external XREF anchors stable. §9 ships between §2 and §3; §3 and §5 both depend on it.
 
 ---
@@ -343,26 +344,60 @@ Buy kernel-image headroom NOW, without the higher-half move. **Depends on nothin
 
 Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `USER_BASE` `0x800000` = **8 KiB headroom**):
 
-| Symbol           |    Size | Home            | Init phase                               | Safe to convert? |
-| ---------------- | ------: | --------------- | ---------------------------------------- | ---------------- |
-| `reg_value_pool` | 784 KiB | `registry.c:64` | `registry_init` (late, `boot_storage.c`) | yes -- PMM is up |
-| `s_atoms`        | 274 KiB | `nt_misc.c:47`  | lazy / NT init                           | yes -- PMM is up |
-| `devices`        | 271 KiB | `blkdev.c:13`   | driver registration                      | yes -- PMM is up |
-| `reg_key_pool`   | 228 KiB | `registry.c:61` | `registry_init` (late)                   | yes -- PMM is up |
-| `klog_ring`      | 281 KiB | `klog.c:78`     | **pre-PMM** (boot-phase aware)           | NO -- see below  |
+| Symbol           |    Size | Home            | Init phase                               | Safe to convert?      |
+| ---------------- | ------: | --------------- | ---------------------------------------- | --------------------- |
+| `reg_value_pool` | 784 KiB | `registry.c:64` | `registry_init` (late, `boot_storage.c`) | yes -- PMM is up      |
+| `klog_ring`      | 281 KiB | `klog.c:78`     | **pre-PMM** (boot-phase aware)           | NO -- see below       |
+| `devices`        | 271 KiB | `xhci_dev.c:31` | `xhci_init` (phase 2) + hot-plug ISR     | not here -- see below |
+| `s_atoms`        | 268 KiB | `nt_misc.c:47`  | NT init (phase 3)                        | yes -- PMM is up      |
+| `reg_key_pool`   | 228 KiB | `registry.c:61` | `registry_init` (late)                   | yes -- PMM is up      |
+| `devices`        | 1.4 KiB | `blkdev.c:13`   | driver registration                      | not worth it          |
 
-- [ ] Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB) in `registry.c` to `pmm_alloc_contiguous` at `registry_init`; keep the pool-index allocator, fail `registry_init` closed on allocation failure -- this alone clears the ceiling
-- [ ] Convert `s_atoms` (274 KiB, `nt_misc.c`) to a dynamic table behind its existing lookup helpers; allocate at NT init or first use, never on the atom fast path
-- [ ] Convert `devices` (271 KiB, `blkdev.c`) to dynamic; `BLKDEV_MAX` is only 16, so the per-device struct is the cost -- shrinking the struct may be cheaper than an allocation
-- [ ] **Do NOT convert `klog_ring`** (281 KiB) blind -- klog logs BEFORE `pmm_init`. Keep a small static early ring + migrate later, or leave static -> XREF: `01-boot-platform/TODO-04 §1` (item: "Boot-Phase Aware klog Init")
-- [ ] Keep pure test-data fixtures out of the measured image (`test_env_value_too_long.big` 32 KiB, `s_bls_fixture` 36 KiB) -- the gate measures the `-DKERNEL_TESTS` image, so test statics count against the ceiling
-- [ ] Re-measure the `scripts/build.sh` BSS gate after each conversion and record the new headroom in the Notes -- the gate output is the acceptance evidence for this section
-- [ ] Un-defer the ceiling-parked queue once headroom exists: TODO-24 §7 (stash `TODO-24-s7-wip-bss-ceiling`) + §8-§12 (no stash), TODO-23 §1-§16, TODO-22 §23-§25 -> XREF: this file §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16")
-- [ ] Commit: `"kernel/mm: convert large static pools to dynamic -- tactical BSS headroom"`
+- [x] Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB) in `registry.c` to frame-backed pools via `pmm_alloc_pages_hhdm` at `registry_init`; pool-index allocator unchanged, fails closed on `BOOT_FATAL` -- cleared the ceiling alone
+- [x] Convert `s_atoms` (268 KiB, `nt_misc.c`) to a frame-backed table behind its existing lookup helpers; allocated once at the new `nt_misc_atoms_init()` boundary before handler publication, never lazily and never under `s_atom_lock`
+- [x] **Do NOT convert `klog_ring`** (281 KiB) blind -- klog logs BEFORE `pmm_init`. Left static; the early-ring migration is owned elsewhere -> XREF: `01-boot-platform/TODO-04 §1` (item: "Boot-Phase Aware klog Init")
+- [x] Re-measure the `scripts/build.sh` BSS gate and record the new headroom in the Notes -- the gate output is the acceptance evidence for this section
+- [x] Leave the 1.4 KiB `blkdev.c` `devices` static -- measured `0x580`, far below the large-static bar, so converting it would add a boot-path failure mode to buy nothing (Codex design review concurred)
+- [x] Leave the test fixtures (`test_env_value_too_long.big` 32 KiB, `s_bls_fixture` 36 KiB) in the measured image -- at 1280 KiB headroom the 68 KiB is immaterial, and excluding them would measure an image nobody boots
+- [x] Commit: `"kernel/mm: convert large static pools to dynamic -- tactical BSS headroom"`
+
+> [!NOTE]
+> **The `devices` row was FALSE and is corrected above (2026-07-17).** This section originally attributed the 271 KiB `devices` array to `blkdev.c` and directed the conversion there. Measured from `build/kernel.map` by address delta: `blkdev.c`'s `devices[BLKDEV_MAX=16]` is **1.4 KiB** (`0x580`), while the 271 KiB symbol is a **same-named static in `xhci_dev.c`** (`devices[XHCI_MAX_DEVICES=64]`, sited between `g_usb_ccs_count` and `xhci_hid_start_polling.registered`). Following the original text would have edited the wrong subsystem and reclaimed ~0 -- the same false-claim class as the §7 Note this section was filed to correct. The xHCI table is deliberately NOT converted here: `xhci_enumerate_device()` writes `devices[]` **unlocked from ISR context** on hot-plug (`xhci.c:720-733`, already flagged INTERIM HAZARD there), so making it a pointer adds an ISR-reachable NULL window to a known-hazardous path -> XREF: `04-drivers-hardware/TODO-10-usb-stack.md §1` (item: "Convert the 271 KiB `devices[XHCI_MAX_DEVICES]` static to a frame-backed table")
 
 **Test checkpoint:** `bash scripts/build.sh` prints `✓ BSS check` with a materially lower BSS end (expect >= 700 KiB headroom after the registry pools alone, vs 8 KiB today). Full `scripts/test.sh` green -- registry suites especially, since the pool-index allocator semantics must not change. `scripts/test-smoke.sh` boots to `C:\>`: the registry is on the boot path, so an allocation-failure regression surfaces as a boot hang, not a test failure. Test on: QEMU KVM + TCG; **bare metal**.
 
-> **Scope boundary:** §10 buys headroom by removing large statics; it does NOT touch the address-space layout. §7 owns retiring the `USER_BASE` ceiling permanently and, once it lands, retires §10's *headroom* justification -- but not the conversions, which stay correct on the no-large-static rule.
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | 196 kernel tests, 0 failures (atom fail-closed case: SUITE=abi)
+
+> **Notes:**
+>
+> - Shipped `pmm_alloc_pages_hhdm()` + `pmm_free_contiguous()` (`pmm.c`) and `mm_phys_extent_in_hhdm()` (`memmap.h`), then moved `reg_value_pool`/`reg_key_pool`, and `s_atoms` off static BSS to frame-backed storage; 9 new MM tests.
+> - Allocation happens only at single-CPU init boundaries -- `registry_init` and the new `nt_misc_atoms_init()` (before the atom handlers publish) -- never lazily, never under a spinlock; boot log shows `pool: 10/512 keys` + `Atom table initialized`.
+> - **Acceptance evidence:** BSS end `0x7fe000` -> `0x6c0000`, headroom **8 KiB -> 1280 KiB** (160x); BUILD OK, 21460 kernel + 16 user tests, smoke boots to `C:\>` in 2.87s. Codex adoptions in the commit message.
+> - Unparks the ceiling-stalled kernel queue (TODO-22/23/24); the sweep collecting on it is §11, the only remaining consumer of this headroom.
+> - Canonical doc: [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
+> - **Scope boundary:** §10 removes large statics only, not address-space layout (§7 owns the `USER_BASE` retirement). `klog_ring` stays static (`01-boot-platform/TODO-04 §1`); the 271 KiB xHCI `devices` table is `04-drivers-hardware/TODO-10 §1`.
+> - Adversarial review here found that `-DKERNEL_TESTS` is unconditional (`Makefile:29`), so every test seam ships; a proposed atom-table test seam was dropped and the repo-wide half filed -> `02-kernel-core/TODO-10 §26`.
+
+---
+
+## 11. Unpark the Ceiling-Stalled Kernel Queue
+
+§10 turned 8 KiB of headroom into 1280 KiB, retiring the blocker that four TODO files are parked behind. This section is the sweep that collects on it. **No kernel code ships here** -- it is a stamp/status sweep plus the re-apply of one already-reviewed stash; each unparked section then returns to its own TODO's normal pipeline.
+
+**This is NOT a blanket un-defer.** Several parked sections carry a SECOND, independent blocker that §10's headroom does not touch; those stay `[/]` with their remaining blocker restated. Verify each stamp before flipping it.
+
+- [ ] `TODO-24 §7` (ALPC client token): ceiling was the ONLY blocker and the reviewed diff survives -- re-apply stash `TODO-24-s7-wip-bss-ceiling` (9 IPC tests), rebuild, ship -> XREF: `02-kernel-core/TODO-24 §7`
+- [ ] `TODO-23 §1-§16` (exception/SEH): ceiling-parked with no second blocker -- un-defer and let its own Implementation Order drive -> XREF: `02-kernel-core/TODO-33 §7` (item: "Re-run `02-kernel-core/TODO-23` §2-§16")
+- [ ] `TODO-22 §23` + `§25`: ceiling-only -- un-defer; design is settled in-place, so each re-attempt is implementation-only -> XREF: `02-kernel-core/TODO-22 §23`
+- [ ] `TODO-22 §24`: KEEP `[/]` -- the ceiling was only blocker (1) of 2; fault-recoverable usercopy remains -> XREF: `02-kernel-core/TODO-23 §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area")
+- [ ] `TODO-24 §8`: KEEP `[/]` -- the 6-word `SSDT_HANDLER` transport cannot carry the 8-11-arg ALPC ABI; widening it is operator-reserved -> XREF: `02-kernel-core/TODO-24 §8` (item: "**Choose the >6-arg SSDT transport for ALPC")
+- [ ] `TODO-24 §9-§12`: un-defer the ceiling half only; restate any residual `SSDT_HANDLER`-cap or §7-stash dependency per section instead of flipping wholesale
+- [ ] Re-add `test_highhalf.c` (authored in §1, reverted when it tripped the guard at `0x801000`) now that the image has room -> XREF: this file §7
+- [ ] Commit: `"todo: unpark the ceiling-stalled kernel queue -- TODO-22/23/24"`
+
+**Test checkpoint:** `bash scripts/build.sh` -> `=== BUILD OK ===` with the BSS gate still passing after the §7 stash re-applies (that section is what previously tripped it). Full `scripts/test.sh` green including the 9 restored ALPC IPC cases. Test on: QEMU KVM + TCG.
+
+> **Scope boundary:** §11 only changes parked STATUS and re-applies one reviewed stash; implementing each unparked section stays with its owning TODO. It does not touch the address-space layout (§3/§7) and does not re-litigate a second blocker (SSDT transport width, usercopy) that the headroom never addressed.
 
 ---
 
@@ -380,6 +415,7 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 | 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                                |
 | 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                                       |
 | ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)                             |
+| 💎   | Kernel pools dynamic, not static  | ✅ `ExAllocatePool*`      | ✅ slab / `kmem_cache`           | ✅ §10 registry + atom pools frame-backed (1.25 MiB reclaimed) |
 | ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ✅ §1 `memmap.h` + 20-assert gate (live)                       |
 | ⭐   | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair    | ✅ §1 HHDM vs image, range-checked + rejecting                 |
 

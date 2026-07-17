@@ -15,6 +15,7 @@
  * ============================================================================ */
 
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/memmap.h"           /* HHDM extent check + phys->virt alias */
 #include "kernel/mm/user_range.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_info.h"
@@ -470,6 +471,60 @@ uintptr_t pmm_alloc_contiguous(uint64_t count)
     }
 
     return 0;   /* no contiguous block large enough */
+}
+
+/* Symmetric counterpart to pmm_alloc_contiguous(). Frees each frame in the run
+ * individually: pmm_free_frame() releases exactly one frame, so a caller
+ * rolling back an N-frame pool with a single call leaks N-1 frames. */
+void pmm_free_contiguous(uintptr_t base, uint64_t count)
+{
+    uint64_t i;
+
+    if (!base || count == 0)
+        return;
+
+    for (i = 0; i < count; i++)
+        pmm_free_frame(base + i * PMM_FRAME_SIZE);
+}
+
+/* Back a large kernel pool with contiguous frames reached through the HHDM.
+ * Validates the WHOLE extent (mm_phys_extent_in_hhdm), not just the base: a
+ * multi-frame run can start inside the direct-map window and end past its top,
+ * which would leave the pool's tail aliasing nothing. On any failure after the
+ * frames are taken, the full run is released -- never a single pmm_free_frame. */
+void *pmm_alloc_pages_hhdm(uint64_t bytes, uintptr_t *out_phys,
+                           uint64_t *out_pages)
+{
+    uint64_t pages;
+    uintptr_t phys;
+    void *virt;
+
+    if (bytes == 0)
+        return (void *)0;
+
+    /* Round up to whole frames; reject a size whose rounding would wrap. */
+    if (bytes > (uint64_t)-1 - (PMM_FRAME_SIZE - 1))
+        return (void *)0;
+    pages = (bytes + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+
+    phys = pmm_alloc_contiguous(pages);
+    if (!phys)
+        return (void *)0;
+
+    if (!mm_phys_extent_in_hhdm((uint64_t)phys, pages * PMM_FRAME_SIZE)) {
+        pmm_free_contiguous(phys, pages);
+        return (void *)0;
+    }
+
+    virt = mm_phys_to_hhdm((uint64_t)phys);
+    if (!virt) {
+        pmm_free_contiguous(phys, pages);
+        return (void *)0;
+    }
+
+    if (out_phys)  *out_phys  = phys;
+    if (out_pages) *out_pages = pages;
+    return virt;
 }
 
 void pmm_free_frame(uintptr_t addr)

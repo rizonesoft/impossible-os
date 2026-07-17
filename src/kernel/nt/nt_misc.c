@@ -18,6 +18,7 @@
  * ============================================================================ */
 
 #include "kernel/nt/nt_misc.h"
+#include "kernel/mm/pmm.h"         /* frame-backed atom table via the HHDM */
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/zw.h"
 #include "kernel/nt/ntstatus.h"
@@ -44,7 +45,17 @@ typedef struct atom_slot {
     uint16_t name[NT_MAX_ATOM_LEN + 1];  /* NUL-terminated wide name */
 } atom_slot_t;
 
-static atom_slot_t     s_atoms[NT_ATOM_TABLE_CAP];
+/* Frame-backed, reached through its HHDM alias -- NOT a static array. At
+ * NT_ATOM_TABLE_CAP slots the table is ~268 KiB, far past the 4 KiB kmalloc bar
+ * and one of the kernel image's largest static consumers (CLAUDE.md:
+ * pmm_alloc_contiguous() for anything larger than 4 KiB). NULL until
+ * nt_misc_atoms_init() runs; every public atom entry point fails closed on NULL
+ * rather than dereferencing it, because while the bring-up identity map is live
+ * a NULL dereference does not fault -- it silently writes physical page 0.
+ * Allocation happens ONCE at that init boundary, never lazily under s_atom_lock
+ * (allocating under a spinlock is forbidden, and the PMM bitmap is not itself
+ * SMP-locked). */
+static atom_slot_t    *s_atoms;
 static DEFINE_SPINLOCK(s_atom_lock);
 
 /* ---- Locale / UI-language globals ---------------------------------------- */
@@ -107,6 +118,8 @@ static NTSTATUS nt_atom_add_ex(const uint16_t *name, uint32_t len_chars,
 {
     if (!name || !out_atom || len_chars == 0 || len_chars > NT_MAX_ATOM_LEN)
         return STATUS_INVALID_PARAMETER;
+    if (!s_atoms)
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     /* Fold + hash the name OUTSIDE the lock so the irq-disabled hold time never
      * covers the per-char fold; reused for the slot's stored hash on insert. */
@@ -164,7 +177,7 @@ NTSTATUS nt_atom_add(const uint16_t *name, uint32_t len_chars, uint16_t *out_ato
  * ID-reused slot is left untouched. */
 static void nt_atom_release(uint16_t atom, uint64_t gen)
 {
-    if (atom < NT_STRING_ATOM_BASE)
+    if (atom < NT_STRING_ATOM_BASE || !s_atoms)
         return;
     uint32_t slot = (uint32_t)(atom - NT_STRING_ATOM_BASE);
     if (slot >= NT_ATOM_TABLE_CAP)
@@ -188,6 +201,8 @@ NTSTATUS nt_atom_find(const uint16_t *name, uint32_t len_chars, uint16_t *out_at
 {
     if (!name || !out_atom || len_chars == 0 || len_chars > NT_MAX_ATOM_LEN)
         return STATUS_INVALID_PARAMETER;
+    if (!s_atoms)
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     uint32_t qh = atom_name_hash(name, len_chars);   /* fold+hash outside the lock */
 
@@ -211,6 +226,8 @@ NTSTATUS nt_atom_delete(uint16_t atom)
         return STATUS_SUCCESS;
     if (atom < NT_STRING_ATOM_BASE)
         return STATUS_INVALID_HANDLE;   /* atom == 0 */
+    if (!s_atoms)
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     uint32_t slot = (uint32_t)(atom - NT_STRING_ATOM_BASE);
     if (slot >= NT_ATOM_TABLE_CAP)
@@ -248,6 +265,8 @@ NTSTATUS nt_atom_query_basic(uint16_t atom, uint16_t *out_usage,
     }
     if (atom < NT_STRING_ATOM_BASE)
         return STATUS_INVALID_HANDLE;
+    if (!s_atoms)
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     uint32_t slot = (uint32_t)(atom - NT_STRING_ATOM_BASE);
     if (slot >= NT_ATOM_TABLE_CAP)
@@ -277,6 +296,9 @@ NTSTATUS nt_atom_query_basic(uint16_t atom, uint16_t *out_usage,
 
 void nt_atom_reset_for_test(void)
 {
+    if (!s_atoms)
+        return;
+
     uint64_t flags;
     spin_lock_irqsave(&s_atom_lock, &flags);
     for (uint32_t i = 0; i < NT_ATOM_TABLE_CAP; i++) {
@@ -754,6 +776,45 @@ static NTSTATUS NtRaiseHardError_handler(uint64_t error_status, uint64_t num_par
         if (copy_to_user((void *)response_out, &response, sizeof(uint32_t)) != 0)
             return STATUS_ACCESS_VIOLATION;
     }
+    return STATUS_SUCCESS;
+}
+
+/* ---- Atom table initialization ------------------------------------------- */
+
+/* Allocate and zero the global atom table. Call ONCE, from a single-CPU boot
+ * boundary, BEFORE nt_misc_register_ssdt() publishes the atom syscall handlers
+ * -- otherwise an allocation failure would leave callable handlers backed by a
+ * NULL table. Idempotent: a second call over a live table is a no-op.
+ *
+ * On failure the atom syscalls stay registered and every one of them returns
+ * STATUS_INSUFFICIENT_RESOURCES. The registrations are deliberately NOT dropped:
+ * a registered service number is a promise to future callers, so the correct
+ * degraded behavior is a deterministic error, not a vanished syscall. */
+NTSTATUS nt_misc_atoms_init(void)
+{
+    if (s_atoms)
+        return STATUS_SUCCESS;
+
+    s_atoms = (atom_slot_t *)pmm_alloc_pages_hhdm(
+        (uint64_t)NT_ATOM_TABLE_CAP * sizeof(atom_slot_t),
+        (uintptr_t *)0, (uint64_t *)0);
+    if (!s_atoms) {
+        klog(LOG_ERROR, "nt",
+             "Atom table allocation failed -- atom syscalls degraded");
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    for (uint32_t i = 0; i < NT_ATOM_TABLE_CAP; i++) {
+        s_atoms[i].atom       = 0;
+        s_atoms[i].refcount   = 0;
+        s_atoms[i].name_len   = 0;
+        s_atoms[i].hash       = 0;
+        s_atoms[i].generation = 0;
+        s_atoms[i].name[0]    = 0;
+    }
+
+    klog(LOG_DEBUG, "nt", "Atom table initialized (%u slots)",
+         (uint64_t)NT_ATOM_TABLE_CAP);
     return STATUS_SUCCESS;
 }
 

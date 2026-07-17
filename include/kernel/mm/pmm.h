@@ -26,6 +26,30 @@ uintptr_t pmm_alloc_contiguous(uint64_t count);
 /* Free a previously allocated frame */
 void pmm_free_frame(uintptr_t addr);
 
+/* Free N contiguous frames previously obtained from pmm_alloc_contiguous().
+ * pmm_free_frame() releases exactly ONE frame, so rolling back a multi-frame
+ * allocation with it leaks every frame but the first; this is the symmetric
+ * counterpart. Takes the PHYSICAL base -- never an HHDM alias. */
+void pmm_free_contiguous(uintptr_t base, uint64_t count);
+
+/* Allocate 'bytes' (rounded up to whole frames) of contiguous physical memory
+ * and return its direct-map (HHDM) alias, or NULL on failure.
+ *
+ * This is the sanctioned way to back a large kernel pool that would otherwise
+ * be a static BSS array (CLAUDE.md: kmalloc() for <= 4 KB, pmm_alloc_contiguous()
+ * for everything larger). It validates the FULL extent against the direct-map
+ * window -- not just the base -- and frees the frames again if the alias cannot
+ * be formed, so no caller has to re-derive that rollback. The memory is NOT
+ * zeroed; the caller owns initialization.
+ *
+ * On success 'out_phys'/'out_pages' receive the physical base and frame count
+ * to hand to pmm_free_contiguous() later. Both are optional (may be NULL).
+ * The PMM bitmap is not yet SMP-locked (the PMM bitmap SMP-locking work in
+ * todo/03-memory-concurrency/TODO-03-advanced-allocator.md owns that), so
+ * callers must allocate from a single-CPU init boundary, never lazily. */
+void *pmm_alloc_pages_hhdm(uint64_t bytes, uintptr_t *out_phys,
+                           uint64_t *out_pages);
+
 /* Mark a physical address range as used (e.g. for ELF segment reservations) */
 void pmm_mark_region_used(uintptr_t base, uint64_t length);
 

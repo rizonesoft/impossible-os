@@ -93,6 +93,13 @@ _Static_assert(__builtin_offsetof(ATOM_BASIC_INFORMATION, Name) == 6,
 
 /* ---- SSDT registration --------------------------------------------------- */
 
+/* Allocate + zero the global atom table. MUST be called once, from a
+ * single-CPU boot boundary, BEFORE nt_misc_register_ssdt() publishes the atom
+ * syscall handlers. Returns STATUS_INSUFFICIENT_RESOURCES if the table could
+ * not be backed, in which case the atom syscalls stay registered but every one
+ * of them fails closed with that status. Idempotent. */
+NTSTATUS nt_misc_atoms_init(void);
+
 void nt_misc_register_ssdt(void);
 
 /* ---- Pure helpers exposed for unit tests --------------------------------- *

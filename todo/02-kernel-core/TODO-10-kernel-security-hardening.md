@@ -89,6 +89,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  23   | KFENCE sampling UAF/OOB detector                                | §11, §13                   |  [/]   |
 | ⭐   |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
 | 💎   |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
+| 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -752,6 +753,24 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 **Test checkpoint:** Each mitigation verified via its REAL path: SPEC_CTRL bits for STIBP / Intel SSBD / BHI_DIS_S read back set; AMD SSBD reflected in `LS_CFG`; the RSB-fill counter increments on cross-domain switch; ITS/Retbleed posture matches the affected-model gate. APs match BSP. A CPU lacking a feature takes no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
 
 > **Deferred:** [M] 7-mitigation control-path unit (STIBP, Intel SSBD, AMD SSBD/LS_CFG, BHI_DIS_S + BHB-loop fallback, RSB stuffing asm, ITS, Retbleed), each on a distinct mechanism that needs its own gate + AP-replay + test. Specified + surface-mapped, not blocked: §18 feature surface is done; §8 already built the `s_bsp_msr_profile[]` SPEC_CTRL replay (STIBP/Intel-SSBD/BHI_DIS_S join it), the `s_ibpb_active` writability-latch pattern (RSB stuffing mirrors it), and `sched_cross_domain_ibpb` (the RSB-fill invocation site). Deferred from this pass as a focused fresh-context implementation: the §17-§19 work consumed this window, and a 7-mechanism unit + its design/adversarial/consistency/perf/re-adversarial convergence loop is too large to land correctly at the tail of a long session. Each `[ ]` item above is already control-path-correct (named real mechanism, tested against THAT path) from the §18/§25 restructure, so the next window implements directly. -> XREF: §18 (feature bits, done), §8 (IBRS/IBPB/retpoline + profile-replay scaffolding), `D02 T09 §11` (MSR-profile AP replay).
+
+---
+
+## 26. Release-Build Test-Surface Exclusion
+
+Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, because `Makefile:29` defines `-DKERNEL_TESTS` **unconditionally** and no build path omits it. The guards therefore gate nothing: `build/kernel.map` carries `pmm_alloc_fail_next`, `pmm_alloc_fail_countdown_set`, and `nt_atom_reset_for_test`. These are not inert debug helpers -- `pmm_alloc_fail_next()` forces the next physical allocation to FAIL, and `nt_atom_reset_for_test()` wipes the global atom table. None is SSDT-registered, so none is user-reachable today; the exposure is ROP/gadget surface plus the standing risk that a future seam is reachable.
+
+> [!NOTE]
+> **Found 2026-07-17 during `02-kernel-core/TODO-33 §10`** (Codex adversarial, [high], verified at `Makefile:29` + `build/kernel.map`). That section proposed a `KERNEL_TESTS`-gated atom-table mutator; the review showed the gate does not exist in practice, so the seam was dropped rather than shipped. The docstring in `include/kernel/mm/pmm.h` asserting "Released builds compile the entire surface out via `KERNEL_TESTS`" is FALSE against the Makefile and must be corrected or made true.
+
+- [ ] Split the build: make `-DKERNEL_TESTS` conditional in `Makefile` (test target only) so a release kernel compiles the test surface out; keep `scripts/build.sh` defaulting to the test image for local iteration
+- [ ] Add a release symbol-absence gate asserting no `*_for_test` / `*_fail_*` symbol survives in `build/kernel.map`; the claim in `pmm.h` that "Released builds compile the entire surface out via KERNEL_TESTS" is false against `Makefile:29`
+- [ ] Audit every existing `#ifdef KERNEL_TESTS` seam for what it would expose if reachable, and pick per-seam: keep test-only, or promote to a real gated API
+- [ ] Commit: `"kernel/security: exclude the test surface from release builds"`
+
+**Test checkpoint:** A release build links with no `*_for_test` / `*_fail_*` symbol in `build/kernel.map` (the new gate fails if any survives); the test build still passes the full `scripts/test.sh` suite, which depends on those seams. Test on: QEMU KVM + TCG.
+
+> **Scope boundary:** §26 owns the build-level exclusion + the symbol gate only. It does not redesign any individual seam's API; a seam that must survive into release is promoted by its own owning TODO.
 
 ---
 

@@ -32,6 +32,7 @@
 #include "kernel/boot_status.h"
 #include "kernel/config.h"
 #include "kernel/nt/ssdt.h"
+#include "kernel/nt/nt_misc.h"   /* nt_misc_atoms_init -- atom table backing */
 #include "kernel/pe.h"
 #include "kernel/boot_halt.h"
 #include "kernel/etw.h"
@@ -263,6 +264,14 @@ void boot_phase3(void)
         nt_token_register_ssdt();
         nt_namespace_register_ssdt();
         nt_timer_register_ssdt();
+        /* Back the atom table BEFORE publishing the atom syscall handlers just
+         * below: nt_misc_register_ssdt() registers them unconditionally, so an
+         * unbacked table would leave callable handlers over a NULL pointer.
+         * A failure here is not fatal to boot -- the handlers stay registered
+         * and fail closed with STATUS_INSUFFICIENT_RESOURCES -- but it is a
+         * real degradation, so say so on the log. */
+        if (nt_misc_atoms_init() != STATUS_SUCCESS)
+            klog(LOG_ERROR, "boot", "Atom table unbacked -- atom syscalls degraded");
         nt_misc_register_ssdt();
         pledge_register_ssdt();
         nt_job_register_ssdt();

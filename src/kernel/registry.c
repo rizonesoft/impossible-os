@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "registry.h"
+#include "kernel/mm/pmm.h"          /* frame-backed key/value pools via the HHDM */
 #include "kernel/nt/nls_cp.h"
 #include "kernel/nt/nls_locale.h"
 #include "kernel/nt/nt_rtlstr.h"   /* rtl_upcase_char_inline -- canonical compiled fold */
@@ -56,13 +57,26 @@ static void reg_memset(void *dst, uint8_t val, uint32_t n)
         d[i] = val;
 }
 
-/* ---- Static pools ---- */
-
-static reg_key_t    reg_key_pool[REG_KEY_POOL_SIZE];
+/* ---- Key/value pools ----
+ *
+ * Frame-backed, reached through their HHDM aliases -- NOT static arrays. At
+ * REG_KEY_POOL_SIZE keys and REG_VALUE_POOL_SIZE values these are ~228 KiB and
+ * ~784 KiB, far past the 4 KiB kmalloc bar, and as BSS they were the kernel
+ * image's two largest static consumers (CLAUDE.md: pmm_alloc_contiguous() for
+ * anything larger than 4 KiB). Both are NULL until registry_init() allocates
+ * them; every pool access is downstream of the NULL-root gate in
+ * reg_resolve_predefined(), which rejects work before registry_init() has run.
+ * The pool-index allocator on top is unchanged -- reg_key_pool[i] indexes a
+ * pointer exactly as it indexed an array. */
+static reg_key_t   *reg_key_pool;
 static uint32_t     reg_key_pool_next = 0;
+static uintptr_t    reg_key_pool_phys;
+static uint64_t     reg_key_pool_pages;
 
-static reg_value_t  reg_value_pool[REG_VALUE_POOL_SIZE];
+static reg_value_t *reg_value_pool;
 static uint32_t     reg_value_pool_next = 0;
+static uintptr_t    reg_value_pool_phys;
+static uint64_t     reg_value_pool_pages;
 
 /* ---- Root key pointers ---- */
 
@@ -299,9 +313,42 @@ boot_result_t registry_init(void)
 {
     reg_key_t *sw;
 
+    /* Back the key/value pools with frames reached through the HHDM. PMM is up
+     * long before this (pmm_init runs in phase 0; registry_init is called from
+     * phase 2), and this is the single-CPU boundary the PMM's unlocked bitmap
+     * requires -- no registry pool allocation ever happens lazily. Allocation
+     * failure is fatal: without pools there is no tree to serve, so the caller
+     * branches to boot recovery on BOOT_FATAL.
+     *
+     * NOTE: the byte counts are explicit. These are pointers now, so
+     * sizeof(reg_key_pool) would silently collapse to the size of a pointer
+     * and zero only the first 8 bytes of a 228 KiB pool. */
+    if (!reg_key_pool) {
+        reg_key_pool = (reg_key_t *)pmm_alloc_pages_hhdm(
+            (uint64_t)REG_KEY_POOL_SIZE * sizeof(reg_key_t),
+            &reg_key_pool_phys, &reg_key_pool_pages);
+        if (!reg_key_pool) {
+            klog(LOG_ERROR, "registry", "Registry: failed to allocate key pool");
+            return BOOT_FATAL;
+        }
+    }
+    if (!reg_value_pool) {
+        reg_value_pool = (reg_value_t *)pmm_alloc_pages_hhdm(
+            (uint64_t)REG_VALUE_POOL_SIZE * sizeof(reg_value_t),
+            &reg_value_pool_phys, &reg_value_pool_pages);
+        if (!reg_value_pool) {
+            klog(LOG_ERROR, "registry", "Registry: failed to allocate value pool");
+            pmm_free_contiguous(reg_key_pool_phys, reg_key_pool_pages);
+            reg_key_pool = (reg_key_t *)0;
+            return BOOT_FATAL;
+        }
+    }
+
     /* Zero pools */
-    reg_memset(reg_key_pool, 0, sizeof(reg_key_pool));
-    reg_memset(reg_value_pool, 0, sizeof(reg_value_pool));
+    reg_memset(reg_key_pool, 0,
+               (uint32_t)((uint64_t)REG_KEY_POOL_SIZE * sizeof(reg_key_t)));
+    reg_memset(reg_value_pool, 0,
+               (uint32_t)((uint64_t)REG_VALUE_POOL_SIZE * sizeof(reg_value_t)));
     reg_key_pool_next = 0;
     reg_value_pool_next = 0;
 
@@ -3112,9 +3159,11 @@ void registry_populate_defaults(void)
  * Uses PMM for the serialization buffer (can be > 4 KiB).
  * ============================================================================ */
 
-/* External: PMM contiguous allocation */
-extern uintptr_t pmm_alloc_contiguous(uint32_t num_pages);
-extern void      pmm_free_frame(uintptr_t addr);
+/* PMM contiguous allocation comes from kernel/mm/pmm.h (included above). The
+ * hand-rolled externs that used to sit here declared pmm_alloc_contiguous()
+ * with a uint32_t page count while the real definition takes uint64_t -- a
+ * silent prototype mismatch that only surfaced once the real header was
+ * included. Never re-add a local extern for it. */
 
 /* External: PIT ticks for timestamp */
 

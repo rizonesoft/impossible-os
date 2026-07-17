@@ -264,6 +264,24 @@ static inline int mm_phys_in_hhdm(uint64_t phys)
     return phys != 0 && phys < MM_HHDM_SIZE;
 }
 
+/* True when the ENTIRE physical extent [phys, phys + bytes) can be aliased
+ * through the direct map.
+ *
+ * mm_phys_in_hhdm() validates a SINGLE address, so a multi-frame allocation
+ * whose base sits inside the window can still run off its top: the base passes
+ * while the tail aliases nothing. Any caller that dereferences a RANGE through
+ * the direct map (a converted static pool, a multi-page buffer) must gate on
+ * this, not on the base alone. Rejects a zero-length request and an extent
+ * that wraps the 64-bit space, so neither can defeat the upper bound. */
+static inline int mm_phys_extent_in_hhdm(uint64_t phys, uint64_t bytes)
+{
+    if (!mm_phys_in_hhdm(phys) || bytes == 0)
+        return 0;
+    if (phys + bytes < phys)
+        return 0;
+    return phys + bytes <= MM_HHDM_SIZE;
+}
+
 /* True when 'v' is a kernel-image (linker-symbol) virtual address. Uses the
  * INCLUSIVE last address: an exclusive bound wraps to 0 here (see
  * MM_KERNEL_IMAGE_LAST) and would make this a constant false. */

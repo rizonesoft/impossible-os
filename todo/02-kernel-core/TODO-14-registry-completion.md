@@ -651,6 +651,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 - [/] DEFERRED: `RegSetValueEx`, `RegDeleteValue` under the lock (both fire notify -> need the deferred-dispatch redesign first).
 - [/] DEFERRED: read-path entry points `RegQueryValueEx`, `RegGetValue`, `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` under the lock (single spinlock v1).
 - [/] DEFERRED: pool allocators (`reg_alloc_key`/`reg_alloc_value`/`reg_alloc_handle`/`reg_free_handle`) + `reg_create_child`/`reg_walk_path` called lock-held; non-recursive, never self-lock.
+- [ ] Extract the `registry_init` two-pool allocation into a pure transaction helper with injectable alloc/free, so the partial-rollback branch (value pool fails after key pool succeeds) gets coverage -> XREF: `02-kernel-core/TODO-33 §10`
 - [/] DEFERRED: cross-call hazards -- `RegRenameKey` locks its FULL body (pre-callee walk is a TOCTOU race); `Reg{Set,Get}{Dword,String}` wrappers stay lock-free, lock in the `RegSetValueEx`/`RegQueryValueEx` callee.
 - [/] DEFERRED: `reg_dispatch_notify` -> deferred dispatch (snapshot payload under lock, fire lock-free) + watcher refcount/epoch (RegUnregisterNotify frees = UAF) + per-CPU depth. -> XREF: 02-kernel-core/TODO-14 §3
 - [/] DEFERRED: `hive_save`/`hive_load`/`registry_flush`/`registry_save_all`/`registry_load_hives` -- lock only the tree-walk portion, release before PMM+VFS I/O (ISR must not spin behind disk I/O).
