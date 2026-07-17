@@ -90,6 +90,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | ⭐   |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
 | 💎   |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
 | 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [ ]   |
+| 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -763,14 +764,37 @@ Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, beca
 > [!NOTE]
 > **Found 2026-07-17 during `02-kernel-core/TODO-33 §10`** (Codex adversarial, [high], verified at `Makefile:29` + `build/kernel.map`). That section proposed a `KERNEL_TESTS`-gated atom-table mutator; the review showed the gate does not exist in practice, so the seam was dropped rather than shipped. The docstring in `include/kernel/mm/pmm.h` asserting "Released builds compile the entire surface out via `KERNEL_TESTS`" is FALSE against the Makefile and must be corrected or made true.
 
-- [ ] Split the build: make `-DKERNEL_TESTS` conditional in `Makefile` (test target only) so a release kernel compiles the test surface out; keep `scripts/build.sh` defaulting to the test image for local iteration
-- [ ] Add a release symbol-absence gate asserting no `*_for_test` / `*_fail_*` symbol survives in `build/kernel.map`; the claim in `pmm.h` that "Released builds compile the entire surface out via KERNEL_TESTS" is false against `Makefile:29`
+- [ ] Add a validated `KERNEL_TESTS ?= on` knob to `Makefile` mirroring `BUILD_ALT_BOOT` at `Makefile:52-62` (`$(error ...)` outside `{on,off}`); `on` keeps `-DKERNEL_TESTS`, `off` omits it
+- [ ] When `off`, prune `$(KERNEL_DIR)/test/` from the `C_SRCS` find at `Makefile:142`; it globs every `.c` unconditionally, so the define alone still compiles and links every test TU
+- [ ] Add `build/.kernel-tests.stamp` (content = the flavor) regenerated via the `.FORCE` + `cmp -s` idiom at `Makefile:100-123` so its mtime moves ONLY on a real flavor change
+- [ ] Make that stamp a REAL (not order-only) prereq of EVERY C object rule: the pattern rule at `Makefile:1540` AND the 8 explicit rules at `Makefile:1420-1475`, which declare their own prereqs and bypass it (a flip otherwise rebuilds nothing)
+- [ ] Guard `include/kernel/test/test_usermode.h` with `#ifdef KERNEL_TESTS` + a no-op `static inline` `#else` mirroring `test.h:225-253`; `boot_tests.c:130` calls `test_usermode_run()` unguarded, so a pruned release build fails to link
 - [ ] Audit every existing `#ifdef KERNEL_TESTS` seam for what it would expose if reachable, and pick per-seam: keep test-only, or promote to a real gated API
+- [ ] Correct the FALSE docstring at `include/kernel/mm/pmm.h:94` claiming released builds compile the surface out via `KERNEL_TESTS` -- untrue against `Makefile:29` until this section lands
 - [ ] Commit: `"kernel/security: exclude the test surface from release builds"`
 
-**Test checkpoint:** A release build links with no `*_for_test` / `*_fail_*` symbol in `build/kernel.map` (the new gate fails if any survives); the test build still passes the full `scripts/test.sh` suite, which depends on those seams. Test on: QEMU KVM + TCG.
+**Test checkpoint:** `make KERNEL_TESTS=off` links a kernel with no `src/kernel/test/` TU; `make KERNEL_TESTS=bogus` fails fast on the `$(error ...)`; an `on -> off -> on` incremental sequence rebuilds the EXPLICIT-rule TU `build/kernel/icon_store.o` (it carries a seam at `icon_store.c:671`) on each flip, proving the stamp reaches the non-pattern rules; the default `on` build still passes the full `scripts/test.sh` suite, which depends on those seams. Test on: QEMU KVM + TCG.
 
-> **Scope boundary:** §26 owns the build-level exclusion + the symbol gate only. It does not redesign any individual seam's API; a seam that must survive into release is promoted by its own owning TODO.
+> **Scope boundary:** §26 owns the build-level MECHANISM only (flavor knob, stamp invalidation, source pruning, release-side header guards). The PROOF that a shipped image is seam-free -- the seam-inventory gate and CI/packaging attestation -- is §27, a hard follow-on rather than an optional extra: the mechanism alone is a knob nobody turns. §26 does not redesign any individual seam's API; a seam that must survive into release is promoted by its own owning TODO. -> XREF: §27 (release-flavor proof).
+
+---
+
+## 27. Release-Flavor Proof: Seam-Inventory Gate and CI Attestation
+
+§26 gives the build a release flavor; it does not prove a shipped image uses it. Both release paths package whatever flavor happens to sit in `build/`: `.github/workflows/release.yml:96-104` builds, tests, and packages ONE default-flavor artifact with no `KERNEL_TESTS` override, and `scripts/release/build-image.sh:2-6` is an INDEPENDENT path (release.yml never invokes it) that copies `kernel.exe` into the ESP of `build/release/disk.img`. A `KERNEL_TESTS=off` knob nobody turns ships exactly the kernel §26 exists to prevent.
+
+> [!NOTE]
+> **Gate design settled by Codex design review 2026-07-17 (two passes).** A `*_for_test` / `*_fail_*` NAME GLOB is REJECTED as sole proof: verified against `build/kernel.map` it misses `cpu_msr_profile_count`, `cpu_msr_profile_entry`, `cpu_bsp_pat_baseline` (`cpu_security.c:1905-1921`), `nls_test_set_active` (`nls.c:228`), `mouse_test_set_ps2_buttons` (`mouse.c:593`), and `kcrc32c_sw_test` (`kchecksum.c:158`) -- 4 of 6 slip the glob, so the gate would report green while state-mutating seams stay linked. A test-map-minus-release-map SUBTRACTION is REJECTED as tautological: that set is absent from the release map by construction, so the assertion can never fail. The gate must derive an INDEPENDENT inventory from the sources.
+
+- [ ] Add `scripts/check-release-symbols.sh`: derive the seam inventory INDEPENDENTLY by parsing `#ifdef KERNEL_TESTS` regions for the symbols they define, then assert `build/kernel.map` carries none of them; it must be able to FAIL
+- [ ] Assert no `src/kernel/test/` TU contributed to the release link, covering the stale-object and accidental-inclusion cases a seam inventory alone would miss
+- [ ] Wire `.github/workflows/release.yml`: keep the test-flavor build + `scripts/test.sh` gate, then clean-rebuild with `KERNEL_TESTS=off` and run the gate immediately before packaging
+- [ ] Stamp release provenance on the artifact; BOTH packaging paths (`release.yml`, `scripts/release/build-image.sh`) must independently REJECT a `kernel.exe` lacking it -- they are separate entry points
+- [ ] Commit: `"kernel/security: prove release images carry no test surface"`
+
+**Test checkpoint:** `scripts/check-release-symbols.sh` FAILS on a `KERNEL_TESTS=on` `kernel.map` (proving it can fail) and PASSES on a `KERNEL_TESTS=off` one; a negative test adds a fresh seam symbol and confirms the gate catches it with no edit to the gate; `build-image.sh` refuses a test-flavor `kernel.exe`. Test on: QEMU KVM + TCG + a CI dry-run.
+
+> **Scope boundary:** §27 owns the PROOF and its enforcement points only (gate script, CI wiring, packaging provenance). The flavor mechanism it verifies is §26. -> XREF: §26 (release-build test-surface exclusion).
 
 ---
 
