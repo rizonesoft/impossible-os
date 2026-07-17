@@ -48,7 +48,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | ⭐   | Order | Deliverable                                              | Depends On             | Status |
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
 | 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
-| 🔥   |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [ ]   |
+| 🔥   |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [/]   |
 | 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -394,18 +394,30 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 
 **This is NOT a blanket un-defer.** Several parked sections carry a SECOND, independent blocker that §10's headroom does not touch; those stay `[/]` with their remaining blocker restated. Verify each stamp before flipping it.
 
-- [ ] `TODO-24 §7` (ALPC client token): ceiling was the ONLY blocker and the reviewed diff survives -- re-apply stash `TODO-24-s7-wip-bss-ceiling` (9 IPC tests), rebuild, ship -> XREF: `02-kernel-core/TODO-24 §7`
-- [ ] `TODO-23 §1-§16` (exception/SEH): ceiling-parked with no second blocker -- un-defer and let its own Implementation Order drive -> XREF: `02-kernel-core/TODO-33 §7` (item: "Re-run `02-kernel-core/TODO-23` §2-§16")
-- [ ] `TODO-22 §23` + `§25`: ceiling-only -- un-defer; design is settled in-place, so each re-attempt is implementation-only -> XREF: `02-kernel-core/TODO-22 §23`
-- [ ] `TODO-22 §24`: KEEP `[/]` -- the ceiling was only blocker (1) of 2; fault-recoverable usercopy remains -> XREF: `02-kernel-core/TODO-23 §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area")
-- [ ] `TODO-24 §8`: KEEP `[/]` -- the 6-word `SSDT_HANDLER` transport cannot carry the 8-11-arg ALPC ABI; widening it is operator-reserved -> XREF: `02-kernel-core/TODO-24 §8` (item: "**Choose the >6-arg SSDT transport for ALPC")
-- [ ] `TODO-24 §9-§12`: un-defer the ceiling half only; restate any residual `SSDT_HANDLER`-cap or §7-stash dependency per section instead of flipping wholesale
-- [ ] Re-add `test_highhalf.c` (authored in §1, reverted when it tripped the guard at `0x801000`) now that the image has room -> XREF: this file §7
-- [ ] Commit: `"todo: unpark the ceiling-stalled kernel queue -- TODO-22/23/24"`
+- [x] `TODO-24 §7` (ALPC client token): SHIPPED -- stash re-applied, re-reviewed vs the moved HEAD (4H+4M fixed incl. a same-SID impersonation escalation), 60 IPC tests, stash dropped -> XREF: `02-kernel-core/TODO-24 §7`
+- [x] `TODO-23 §1-§16` (exception/SEH): un-deferred -- file blocker cleared, 16 ceiling stamps swept, IO reset to `[ ]`; §1 stash `todo23-s1-wip` = apply-then-re-verify -> XREF: `02-kernel-core/TODO-23 §1`
+- [x] `TODO-22 §23` + `§25`: un-deferred -- ceiling-only stamps removed, IO rows `[/]` -> `[ ]`; design settled in-place, so each re-attempt is implementation-only -> XREF: `02-kernel-core/TODO-22 §23`
+- [x] `TODO-22 §24`: KEPT `[/]` -- stamp drops the cleared ceiling half; fault-recoverable usercopy remains, sufficient alone -> XREF: `02-kernel-core/TODO-23 §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot")
+- [x] `TODO-24 §8`: KEPT `[/]` -- ceiling half dropped; the 6-word `SSDT_HANDLER` transport still cannot carry the 8-11-arg ALPC ABI, and widening it stays operator-reserved -> XREF: `02-kernel-core/TODO-24 §8`
+- [x] `TODO-24 §9-§12`: ceiling half dropped per section, residual blockers restated individually -- §9 keeps the SSDT cap + §6 ABI (§7-stash dependency now satisfied); §10/§11 stay cascade-blocked; §12 carries a re-measure caveat
+- [/] Re-add `test_highhalf.c`: the ceiling cleared, but it is NOT the only blocker -- 3 of its 5 specced assertions need the higher-half kernel §3/§7 never shipped, and the other 2 are already covered -> XREF: this file §7
+  - Blocked assertions: a kernel symbol `>= KERNEL_VIRT_BASE` (the kernel still runs LOW -- §3's low->high jump is operator-deferred) and the retired `user_range.h` ceiling (§7, cascade-blocked on §3). Both would FAIL today, not pass
+  - Already covered, so re-adding buys nothing: `phys_to_virt`/`virt_to_phys` round-trip + canonical-`KERNEL_VIRT_BASE` are the host `tools/memmap-check` gate (54 checks, wired into `scripts/test-tooling.sh`), and the per-process PML4 kernel-half sharing is `test_vmm.c:278-332`
+  - This is exactly the second-blocker class this section warns about: §10 bought `.text` headroom, not an address-space move. Re-add it as §7's first work item, where it is already filed
+- [x] Commit: `"todo: unpark the ceiling-stalled kernel queue -- TODO-22/23/24"`
 
 **Test checkpoint:** `bash scripts/build.sh` -> `=== BUILD OK ===` with the BSS gate still passing after the §7 stash re-applies (that section is what previously tripped it). Full `scripts/test.sh` green including the 9 restored ALPC IPC cases. Test on: QEMU KVM + TCG.
 
-> **Scope boundary:** §11 only changes parked STATUS and re-applies one reviewed stash; implementing each unparked section stays with its owning TODO. It does not touch the address-space layout (§3/§7) and does not re-litigate a second blocker (SSDT transport width, usercopy) that the headroom never addressed.
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | 326 kernel tests, 0 failures -- the re-applied TODO-24 §7 diff is the only code this section landed
+
+> **Notes:**
+>
+> - **What shipped** -- a status sweep, plus the one reviewed stash: `TODO-24 §7` re-applied and SHIPPED (`992e2846` + review `abbc46a8`); TODO-23 (16 sections) and TODO-22 §23/§25 un-deferred; TODO-22 §24 and TODO-24 §8-§12 kept `[/]` with their surviving blockers restated.
+> - **How it integrates** -- each unparked file now returns to its own Implementation Order; the triage oracle re-picks them because the ceiling `Deferred` stamps are gone and the IO rows reset to `[ ]`.
+> - **Downstream effects** -- proves §10's headroom is real: the §7 diff that once pushed BSS to `0x801000` now builds at `0x6c2000` with ~1272 KiB spare. Two stashes remain to apply-and-re-verify: `todo23-s1-wip` (TODO-23 §1).
+> - **Not a blanket un-defer** -- `test_highhalf.c` stays `[/]`: the ceiling was only one of its blockers, and 3 of its 5 assertions still need the higher-half kernel §3 never shipped.
+> - **Canonical doc:** [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
+> - **Scope boundary** -- §11 only changes parked STATUS and re-applies one reviewed stash; implementing each unparked section stays with its owning TODO. It does not touch the address-space layout (§3/§7) and does not re-litigate a second blocker (SSDT transport width, usercopy) the headroom never addressed.
 
 ---
 
