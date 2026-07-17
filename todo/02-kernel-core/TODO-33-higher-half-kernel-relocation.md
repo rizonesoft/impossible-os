@@ -50,12 +50,12 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
-| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)       | §1, §2, §9             |  [ ]   |
-| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path  | §3                     |  [ ]   |
-| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown    | §1, §3, §9, D01 T01 §8 |  [ ]   |
-| 💎   |   6   | Per-process PML4: kernel high shared, user low private   | §3, D01 T10 §8         |  [ ]   |
-| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard          | §6                     |  [ ]   |
-| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11           | §1, §3                 |  [ ]   |
+| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)       | §1, §2, §9             |  [/]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path  | §3                     |  [/]   |
+| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown    | §1, §3, §9, D01 T01 §8 |  [/]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private   | §3, D01 T10 §8         |  [/]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard          | §6                     |  [/]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11           | §1, §3                 |  [/]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -169,6 +169,8 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 > [!WARNING]
 > **Regression risk: HIGHEST in the system.** A wrong transient identity map or a non-canonical base triple-faults at the CR3 load with NO serial output. The split and the jump ship as ONE commit -- an intermediate commit that links high without mapping high does not boot, so it must never be pushed alone. Rollback: revert to the identity-mapped low kernel (this whole section as a unit); §2's direct map is independent and stays. Keep `scripts/test-smoke.sh` green at every step.
 
+> **Deferred:** [Critical] 2026-07-17 -- awaiting-operator design decision. `codex-design-review` returned **NO-SHIP** (2 Critical + 2 High, all verified at file:line); §3 cannot ship standalone. **BLOCKER (crit #2): physical collision.** The image is 6.99 MiB (`__kernel_start` 0x100000 .. `__kernel_end` 0x7fe000); at LMA `MM_KERNEL_PHYS_BASE` 0x200000 it ends at phys 0x8fe000, overlapping `USER_PT_WINDOW` [0x800000, 0xa00000]. User exec still writes the launcher ELF + stack to identity-mapped phys 0x800000, overwriting the kernel `.bss` tail + PMM bitmap; PMM reservation cannot stop a direct user write, and the smoke test reaches `cmd.exe` so gating userspace fails the ship checkpoint. A 6.99 MiB image does not fit 2 MiB-aligned below 0x800000 (only 6 MiB free), so the fix is a SEQUENCING decision the runner will not make unattended: (a) relocate user processes to private physical frames BEFORE §3 (pull §6 ahead of the jump), or (b) re-base `MM_KERNEL_PHYS_BASE` above `USER_PT_WINDOW` in `memmap.h` (pinned-SSOT/layout change). Circular dep (§3 <-> §6/§7) the plan did not resolve. Re-attempt corrections captured: crit #1 -- checklist item "Set the linker VMA to `MM_KERNEL_VIRT_BASE`" is WRONG; VMA must be `MM_KERNEL_IMAGE_BASE` (0xffffffff80200000) or `kernel_main`'s `st_value` falls outside the image leaves and triple-faults. high #3 -- `boot_payload.c:152-153` also reads `__kernel_start`/`__kernel_end` as PHYSICAL bounds; after the split they are high VMAs, silently disabling payload-vs-image overlap detection (repoint to `__kernel_phys_start/end`). high #4 -- the post-load reservation must claim the image PLUS the max PMM bitmap extent before ANY post-load Boot Services alloc. Confirmed OK: `AT()` + LMA-derived symbols is valid, and the existing 4 GiB identity map already covers the transition RIP/stack (no second transient map needed). -> XREF: `todo/answers.md` Q3 (higher-half vs user-frame relocation sequencing -- operator decision); implementation owner for option (a) is this file §6 (item: "User mappings go in the lower half only; remove the assumption that user pages live just above the kernel").
+
 ---
 
 ## 4. Descriptor Tables + Per-CPU at High Addresses + AP Path
@@ -184,6 +186,8 @@ Move the GDT, IDT, TSS, and per-CPU/`GS_BASE` state to high virtual addresses, a
 - [ ] Commit: `"boot: descriptor tables + per-CPU + AP startup in the higher half"`
 
 **Test checkpoint:** All CPUs reach the scheduler from high-virtual RIPs; an intentional #DF still shows the guard-page label. Serial shows per-AP high-half POST16. Test on: QEMU WHPX (2 CPUs) + TCG; **bare metal**.
+
+> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -207,6 +211,8 @@ The bootloader runs identity-mapped and hands the kernel physical/low pointers; 
 
 **Test checkpoint:** Desktop renders (framebuffer reachable via the high MMIO window); ACPI tables parse; `boot_info` validation passes; the identity map is gone except the AP envelope, and what remains carries no User bit. `boot-info-manifest` compare gate passes. Test on: QEMU KVM + TCG; **bare metal** (real GOP framebuffer, deferred human sign-off).
 
+> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+
 ---
 
 ## 6. Per-Process PML4: Kernel High Shared, User Low Private
@@ -227,6 +233,8 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 > **Unblocks:** with the kernel high (supervisor-only) and user low (user-only), the whole Meltdown/ret2user isolation stack becomes implementable. This section is its structural prerequisite.
 > → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- the LIVE owner, whose sections are Deferred-stamped on this TODO: §2 (item: "Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path`"), §6 (item: "Commit: `\"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active\"`"), §7 (item: "Commit: `\"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush\"`"), §14 (item: "Commit: `\"kernel/security: KASLR: bootloader RDRAND slide, ELF relocation, kaslr_slide in boot_info\"`").
 > → XREF: `03-memory-concurrency/TODO-02-memory-security.md §3/§4` (SMEP / SMAP) + `§6` (KPTI) -- a PARALLEL all-`[ ]` plan for the same features, with no cross-reference to D02 T10 in either direction. Ownership is FORKED; resolving it is a cross-domain call filed for the operator (`overnight-todo.md`), not this TODO's to make. PCID is already owned by D02 T10 §7 -- do not re-file it here.
+
+> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
@@ -253,6 +261,8 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 > [!NOTE]
 > **Interim bridge superseded:** before this TODO lands, the headroom risk was mitigated tactically by converting large kernel static pools (IXFS `volumes` ~1.4 MB, registry `reg_key_pool`/`reg_value_pool` ~1 MB, `klog_ring`, `devices`) from static BSS to `pmm_alloc_contiguous`, and by keeping unit-test fixtures out of the shipped kernel image. Those conversions remain correct (freestanding-kernel rule: no large static), but they stop being *necessary for headroom* once the kernel lives in the high half.
 
+> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
+
 ---
 
 ## 8. 5-Level Paging (LA57) Support -- Exceeds Win11
@@ -275,6 +285,8 @@ Optional competitive edge: support 57-bit virtual addresses on capable hardware.
 - [ ] Commit: `"mm: optional 5-level paging (LA57) -- 57-bit address space on capable CPUs"`
 
 **Test checkpoint:** On a 4-level host the kernel boots in 4-level mode; on an LA57-capable host (or QEMU `-cpu ...,la57=on`) it boots in 5-level mode. Serial logs the active mode. Test on: QEMU TCG (la57 toggled); **bare metal (Arrow Lake / Zen 5)**.
+
+> **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
 ---
 
