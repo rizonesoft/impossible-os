@@ -71,7 +71,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   3   | Connection state machine (create/connect/accept)         | §2, T12 §4    |  [x]   |
 | 💎   |   4   | Synchronous send+wait+receive engine                     | §3, T07 §3    |  [x]   |
 | 💎   |   5   | Asynchronous delivery & completion list                  | §4            |  [x]   |
-| 💎   |   6   | Large data: port sections & view mapping                 | §2, T05 §7    |  [ ]   |
+| 💎   |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [/]   |
 | 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [ ]   |
 | 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [ ]   |
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [ ]   |
@@ -250,32 +250,31 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 6. Large Data: Port Sections & View Mapping
 
-- [ ] `ALPC_PORT_SECTION` node appended to `port->SectionList`:
-  ```c
-  typedef struct {
-      list_head_t           Link;
-      ALPC_SECTION_HANDLE   Handle;   /* opaque 64-bit ID, not a kernel HANDLE */
-      struct section_object *Section; /* kernel Section object (TODO-05 §7) */
-      uint64_t              Size;
-      bool                  DeleteOnClose;
-  } ALPC_PORT_SECTION;
-  ```
+> [!IMPORTANT]
+> **Design review 2026-07-17 (Codex needs-attention, 5 findings verified against the codebase) -- implement to THIS contract; the naive plan is NO-SHIP:**
+> - **Handle safety (D1):** resolve an existing `SectionHandle` via `ObpLookupHandle` + `OB_HEADER_FROM_BODY(...)->type == ObpSectionType` check + `ObReferenceObject` (there is NO `ObReferenceObjectByHandle`), holding the ref until DeletePortSection. The residual lookup-then-ref race + `SECTION_MAP_*` granted-access enforcement are the repo-wide gap -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle` primitive" at line 148).
+> - **Object-direct mapping (D3):** `ObMapViewOfSectionFull` takes a kernel HANDLE, but the port stores a `SECTION_OBJECT*`; add an object-direct `ObMapViewOfSectionObject(SECTION_OBJECT*, pid, offset, size)` + `ObUnmapViewOfSectionObject` (or per-task view-base index) so a registered section still maps after the creator closes its handle.
+> - **Cross-port capability (D2):** a port-local section ID is NOT resolvable on the peer's port. The send-path-with-view must pin the sender's `SECTION_OBJECT` into the queued message entry (own a ref), translate to a receiver-scoped ID under address-ordered endpoint locks on receive, and release the ref on every consume / drop / teardown path.
+> - **Attribute ABI + TOCTOU (D5):** the 6-arg `NtAlpcSendWaitReceivePort` SSDT slot is already full; define a probed packed extension carrying `SendMsgAttr` / `RecvMsgAttr` + explicit lengths. `AlpcpValidateMessageAttributes` must COPY each buffer once into kernel memory and validate the snapshot (subtraction-based bounds, reject unknown bits) -- never validate-then-deref a live user buffer.
+> - **Identity safety (D4):** REJECT `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` bits in §6 (define layout only); their provenance + reference lifetime is owned by §7. Marshalling spoofable identity before §7 lands is a trust-boundary hole.
+> - **Lock order:** take `port->Lock` ONLY for `SectionList` insert/remove; call `ObCreateSectionEx` / `ObMapViewOfSectionObject` / unmap OUTSIDE any port lock (no `ALPC_PORT.Lock` -> `SECTION_OBJECT.lk` nesting).
+
+- [ ] `ALPC_PORT_SECTION` node on `port->SectionList` (`{Head,Tail,Count}` + `Link_next` idiom, NOT `list_head_t`):
+  - `Link_next` (self ptr); `AlpcSectionHandle` (u64 opaque ID, per-port monotonic counter, reserve 0, fail at `UINT64_MAX`)
+  - `Section` (`SECTION_OBJECT*`, ref-held until delete); `Size`; `DeleteOnClose`
+- [ ] Prerequisite: object-direct `ObMapViewOfSectionObject` / `ObUnmapViewOfSectionObject` primitives in `ob_section.c` (D3) -- refactor `ObMapViewOfSectionFull` to split handle-resolution from object-map so ALPC can map a stored `SECTION_OBJECT*`.
+- [ ] Prerequisite: probed packed attribute-carrying syscall ABI for `NtAlpcSendWaitReceivePort` (D5) -- the 6-arg slot is full; carry `SendMsgAttr`/`RecvMsgAttr` + lengths, copy-once snapshot validation.
 - [ ] `NtAlpcCreatePortSection(PortHandle, Flags, SectionHandle, SectionSize, AlpcSectionHandle, ActualSectionSize)`:
-  - `ObReferenceObjectByHandle(SectionHandle)` -- get existing Section object, OR if `SectionHandle == NULL`: `NtCreateSection` internally to create an anonymous shared-memory section of `SectionSize`
-  - Allocate `ALPC_PORT_SECTION`, append to `port->SectionList`, assign unique `AlpcSectionHandle`
+  - Resolve an existing `SectionHandle` via `ObpLookupHandle` + `ObpSectionType` check + `ObReferenceObject` (D1), OR if `SectionHandle == NULL` call `ObCreateSectionEx` for an anonymous section of `SectionSize`
+  - Allocate `ALPC_PORT_SECTION`, append to `port->SectionList` under `port->Lock`, assign a unique per-port `AlpcSectionHandle`
 - [ ] `NtAlpcDeletePortSection(PortHandle, Flags, SectionHandle)` -- remove from list, dereference section object
-- [ ] View mapping: `ALPC_DATA_VIEW_ATTR` embedded in send/receive attributes:
-  ```c
-  typedef struct {
-      uint32_t Flags;
-      ALPC_SECTION_HANDLE SectionHandle;
-      void     *ViewBase;   /* base address in caller's VA space */
-      uint64_t  ViewSize;
-  } ALPC_DATA_VIEW_ATTR;
-  ```
-- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, DataView)` -- maps the registered section into the calling process's VA space (`NtMapViewOfSection`); `DataView->ViewBase` and `DataView->ViewSize` are filled in
-- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` -- unmaps the view
-- [ ] Send path with view: caller fills `ALPC_DATA_VIEW_ATTR`, includes it as a message attribute; kernel copies the `ALPC_DATA_VIEW_ATTR` metadata into the queued message entry; receiver maps the same section on its side using `NtAlpcCreateSectionView` with the received `SectionHandle`
+- [ ] View mapping: `ALPC_DATA_VIEW_ATTR` message attribute -- `Flags`, `SectionHandle` (`ALPC_SECTION_HANDLE` opaque ID), `ViewBase` (out, caller VA), `ViewSize`.
+- [ ] `NtAlpcCreateSectionView(PortHandle, Flags, DataView)` -- object-direct map (D3) into caller VA, outside the port lock; fills `ViewBase` / `ViewSize`.
+- [ ] `NtAlpcDeleteSectionView(PortHandle, Flags, ViewBase)` -- unmap via per-task view-base index; the view holds its own section ref (survives port-section delete).
+- [ ] Send path with view (connection-scoped capability, D2):
+  - Pin the sender's `SECTION_OBJECT` into the queued message entry (own a ref)
+  - On receive, translate to a receiver-scoped `AlpcSectionHandle` under address-ordered endpoint locks
+  - Release the message-held ref on every consume / drop / disconnect / teardown path (a port-local ID is NOT valid on the peer)
 - [ ] Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES` struct passed to send/receive:
   - Bitfield `ValidAttributes` selects which attribute structs are present
   - `ALPC_DATA_VIEW_ATTR` (bit 0x1) -- view for large data
@@ -284,10 +283,14 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `ALPC_SECURITY_ATTR` (bit 0x8) -- security context handle / QoS (for §7)
   - `ALPC_TOKEN_ATTR` (TOKEN) -- per-message sender token identity; define layout + marshalling here, token reference lifetime / impersonation / teardown owned by §7 (a ValidAttributes bit alone is NOT sufficient -- trust boundary)
   - `ALPC_WORK_ON_BEHALF_ATTR` (WORK_ON_BEHALF_OF) -- RPC caller work-ticket identity propagated across chained ALPC hops (priority-boost / deadlock-avoidance); layout here, provenance validation owned by §7
-- [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` -- bounds-check all present attribute structs (including TOKEN / WORK_ON_BEHALF layouts) against `buffer_len` before use
+- [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` (D4/D5):
+  - COPY attrs once into kernel memory; validate the SNAPSHOT (subtraction-based bounds), never a live user buffer
+  - Reject unknown bits; reject `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF` until §7 provenance lands
 - [ ] Commit: `"kernel/ipc/alpc: port sections, view mapping, message attributes dispatch"`
 
 **Test checkpoint:** `NtAlpcCreatePortSection(NULL, 64*1024)` creates anonymous 64 KiB section. `NtAlpcCreateSectionView` maps it into caller's VA; writing a pattern to `ViewBase` succeeds. Send message with `ALPC_DATA_VIEW_ATTR`; receiver calls `NtAlpcCreateSectionView` with received `SectionHandle`; reads back matching pattern; zero copies. `NtAlpcDeleteSectionView` unmaps without crash. `NtAlpcDeletePortSection` dereferences section. `AlpcpValidateMessageAttributes` rejects invalid `buffer_len`. Serial log: `"[ALPC] section view mapped: base=%p size=%llu"`. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [Critical] naive §6 plan is NO-SHIP per Codex design review 2026-07-17 (5 findings verified) -- needs an object-direct section-map primitive (D3), an attribute-carrying syscall ABI (D5), connection-scoped capability transfer with message-held refs (D2), spoof-safe identity handling (D4), and safe handle-ref -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle` primitive" at line 148). Full design contract captured in the §6 `[!IMPORTANT]` callout; implement in a focused session (design done, code deferred).
 
 ---
 
