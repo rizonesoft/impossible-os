@@ -76,7 +76,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
-| 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [ ]   |
+| 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
 | ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [ ]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
@@ -488,7 +488,10 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messages per second. The default per-message `kmalloc`/`kfree` cycle adds allocation pressure and cache misses. A message zone pre-allocates a contiguous buffer pool per port, and message allocations come from the zone via bump-pointer until full, falling back to `kmalloc` only when the zone is exhausted. Win11 uses `AlpcMessageZoneInformation` for this; Linux has no equivalent; Unix sockets allocate per-message `sk_buff` structs from the slab. Resource reserves (`NtAlpcCreateResourceReserve`) are a DISTINCT mechanism this section also owns: a per-creation, reference-counted, reusable single-message reservation a client pins by `ResourceId` for guaranteed-delivery repeated same-size sends, surviving the memory pressure that would starve the zone/kmalloc paths. Not an alias of the zone pool: the zone is one shared bump-allocator, a reserve is one dedicated reusable buffer with independent lifetime.
 
-- [ ] Define `ALPC_MESSAGE_ZONE` structure:
+> [!IMPORTANT]
+> **BLOCKED (2026-07-17) -- no code ships from this section today.** Three blocks. (1) The zone pool + `ALPC_RESERVE` + two syscalls are a large `.text` addition against 8 KiB of headroom (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`; `scripts/build.sh:356` fails closed) -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)"). (2) `AlpcMessageZoneInformation` (class 5) has to land in the `NtAlpcQueryInformation` / `NtAlpcSetInformation` bodies, which are §9-deferred. (3) The default-zone item targets `\Windows\ApiPort`, which §10 has not bootstrapped. The `NtAlpcCreateResourceReserve` / `NtAlpcDeleteResourceReserve` SSDT slots (`0x011A` / `0x011B`) are registered and stubbed today (`nt_alpc.c:439`/`448`), so this section retires those two sentinels when it ships.
+
+- [/] Define `ALPC_MESSAGE_ZONE` structure:
   ```c
   typedef struct {
       void    *ZoneBase;       /* contiguous allocation from pool */
@@ -498,23 +501,33 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
       spinlock_t Lock;
   } ALPC_MESSAGE_ZONE;
   ```
-- [ ] `AlpcCreateMessageZone(port, ZoneSize)` -- allocate a contiguous buffer of `ZoneSize` bytes via `pmm_alloc_contiguous()` (for zones > 4 KiB) or `kmalloc` (for smaller zones); attach to `port->MessageZone`
-- [ ] `AlpcAllocateFromZone(zone, DataLength)` → `PORT_MESSAGE_ENTRY*`:
+- [/] `AlpcCreateMessageZone(port, ZoneSize)` -- allocate a contiguous buffer of `ZoneSize` bytes via `pmm_alloc_contiguous()` (for zones > 4 KiB) or `kmalloc` (for smaller zones); attach to `port->MessageZone`
+- [/] `AlpcAllocateFromZone(zone, DataLength)` → `PORT_MESSAGE_ENTRY*`:
   - If `zone != NULL` and `zone->UsedBytes + alloc_size ≤ zone->ZoneSize`: bump-allocate from zone, increment `ActiveMessages`
   - Else: fall back to `AlpcAllocateMessage()` (§4 message pool kmalloc path)
-- [ ] `AlpcFreeToZone(zone, entry)`; decrement `ActiveMessages`; when `ActiveMessages == 0`, reset `UsedBytes = 0` (zone becomes fully reusable)
-- [ ] Wire `AlpcMessageZoneInformation` (info class 5) into `NtAlpcSetInformation`: set zone size; `NtAlpcQueryInformation`: read zone status
-- [ ] CSRSS bootstrap (§10): create `\Windows\ApiPort` with a 64 KiB message zone by default
-- [ ] Define `ALPC_RESERVE` (DISTINCT from `ALPC_MESSAGE_ZONE`) + create/delete syscalls:
+- [/] `AlpcFreeToZone(zone, entry)`; decrement `ActiveMessages`; when `ActiveMessages == 0`, reset `UsedBytes = 0` (zone becomes fully reusable)
+- [/] Wire `AlpcMessageZoneInformation` (info class 5) into `NtAlpcSetInformation`: set zone size; `NtAlpcQueryInformation`: read zone status -- both bodies are §9-deferred
+- [/] CSRSS bootstrap (§10): create `\Windows\ApiPort` with a 64 KiB message zone by default -- §10-deferred, so there is no ApiPort to zone yet
+- [/] Define `ALPC_RESERVE` (DISTINCT from `ALPC_MESSAGE_ZONE`) + create/delete syscalls:
   - Reference-counted, keyed by a per-creation `ResourceId`; holds `OwnerPort` / `HandleTable` / cached `PORT_MESSAGE_ENTRY` / `Size` / `Active` flag
   - `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` pins a reusable single-message buffer; `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` releases it
-- [ ] Reserve send-path + teardown:
+- [/] Reserve send-path + teardown:
   - A send referencing a valid `ResourceId` reuses the pinned reserve (no allocation, survives a `kmalloc` failure) instead of the zone / kmalloc path
   - On disconnect / port teardown, tear down all reserves; a refcount prevents freeing an in-flight reserve
   - Test: create a reserve, send repeatedly under a forced `kmalloc` failure -- delivery still succeeds; delete frees it
 - [ ] Commit: `"kernel/ipc/alpc: message zones + resource reserves (pre-allocated per-port buffers)"`
 
-**Test checkpoint:** Create port with 16 KiB message zone. Send 100 messages of 128 bytes each. Verify all allocate from zone (no `kmalloc` calls). Send messages until zone is full. Verify fallback to `kmalloc` succeeds. After all messages are freed, verify zone resets (`UsedBytes == 0`). `NtAlpcQueryInformation(AlpcMessageZoneInformation)` returns correct `ZoneSize` and `UsedBytes`. Resource reserve: `NtAlpcCreateResourceReserve` pins a buffer; repeated sends succeed under a forced `kmalloc` failure; `NtAlpcDeleteResourceReserve` frees it. Serial log: `"[ALPC] Zone alloc: port=%s size=%u used=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Create port with 16 KiB message zone. Send 100 messages of 128 bytes each. Verify all allocate from zone (no `kmalloc` calls). Send messages until zone is full. Verify fallback to `kmalloc` succeeds. After all messages are freed, verify zone resets (`UsedBytes == 0`). `NtAlpcQueryInformation(AlpcMessageZoneInformation)` returns correct `ZoneSize` and `UsedBytes`. Resource reserve: `NtAlpcCreateResourceReserve` pins a buffer; repeated sends succeed under a forced `kmalloc` failure; `NtAlpcDeleteResourceReserve` frees it. No test surface lands with this section (no code shipped); `0x011A` / `0x011B` stay covered by the `"OB: NT ALPC pending features"` sweep. Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | unchanged by this section -- no code shipped
+
+> **Notes:**
+> - **What shipped** -- no code: the zone pool, `ALPC_RESERVE`, and both syscall bodies are `.text` the 8 KiB `USER_BASE` headroom cannot take, so this pass recorded the blocker set instead.
+> - **Downstream effects** -- retires the `0x011A` / `0x011B` stub sentinels (`nt_alpc.c:439`/`448`) and closes two rows of §8's retrofit roll-up when it ships; unparks with the tail once `TODO-33 §10` lands.
+> - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling gating every `.text`-adding item here.
+> - **Scope boundary** -- §11 owns the zone bump-allocator AND the distinct reserve mechanism; the info-class plumbing is §9, the ApiPort default zone is §10, and the headroom is `TODO-33 §10`.
+
+> **Deferred:** [High] 2026-07-17 -- no code ships from §11, blocked three ways. The zone pool + `ALPC_RESERVE` + create/delete syscall bodies are a large `.text` addition against 8 KiB of headroom (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`; `scripts/build.sh:356` fails closed) -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)" at line 354). `AlpcMessageZoneInformation` (class 5) must land inside the `NtAlpcQueryInformation` / `NtAlpcSetInformation` bodies, which are deferred -> XREF: this file §9 (item: "NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):" at line 400). The 64 KiB default-zone item targets `\Windows\ApiPort`, which is not bootstrapped -> XREF: this file §10 (item: "`\Windows\ApiPort` must be resolvable in the Ob namespace" at line 451).
 
 ---
 
