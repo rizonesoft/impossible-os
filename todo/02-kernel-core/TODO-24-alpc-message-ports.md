@@ -75,7 +75,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
 | 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
-| 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [ ]   |
+| 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [ ]   |
 | ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [ ]   |
 
@@ -437,23 +437,26 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 10. CSRSS ApiPort Bootstrap
 
-- [ ] CSRSS as the first ALPC server: CSRSS (`src/apps/csrss/csrss.c`): the Win32 subsystem server process (→ XREF `12-user-platform-sdk/TODO-05-win32-subsystem.md`); it is the first real user-mode process that uses ALPC; this section defines only the kernel-side bootstrap contract
-- [ ] On kernel init Phase 3 (→ XREF `TODO-01-kernel-init-sequencing.md §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
+> [!IMPORTANT]
+> **BLOCKED (2026-07-17) -- no code ships from this section today.** Two independent blocks. (1) The Implementation Order declares `§3-§9` as this section's dependency and §6/§7/§8/§9 are all deferred: the bootstrap needs the connection-message negotiation (§8, transport-blocked) to carry `CsrClientConnectToServer`, and CSRSS runs on a `SYSTEM` token whose capture is §7 (stashed). (2) The section is a large `.text` addition (CSRSS server + `\Windows\` Ob directory + generalized named-port resolution) against 8 KiB of headroom -- `build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`, `scripts/build.sh:356` fails closed -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)"). The `\RPC Control` hard-coding named below is REAL and verified in tree (`nt_alpc.c` `alpc_probe_and_split`, `alpc_port.c` `AlpcCreatePort`), so the generalization item is accurate work, merely unbuildable today.
+
+- [/] CSRSS (`src/apps/csrss/csrss.c`, the Win32 subsystem server) is the first real user-mode ALPC client; this section defines only the kernel-side bootstrap contract → XREF `12-user-platform-sdk/TODO-05-win32-subsystem.md`
+- [/] On kernel init Phase 3 (→ XREF `TODO-01-kernel-init-sequencing.md §5`): spawn CSRSS as a `SYSTEM`-token process before any other user processes; CSRSS calls:
   ```c
   NtAlpcCreatePort(&ApiPort,
       &ObjAttr(L"\\Windows\\ApiPort"),
       &PortAttrs{ .MaxMessageLength = 512,
                   .Flags = ALPC_PORTFLG_SYSTEM_PROCESS });
   ```
-- [ ] `\Windows\ApiPort` must be resolvable in the Ob namespace (→ XREF `TODO-05-object-manager.md §3`); add `\Windows\` directory creation to Phase 1 Ob init
-- [ ] Generalize named-port path resolution beyond `\RPC Control\` (create + connect):
+- [/] `\Windows\ApiPort` must be resolvable in the Ob namespace (→ XREF `TODO-05-object-manager.md §3`); add `\Windows\` directory creation to Phase 1 Ob init
+- [/] Generalize named-port path resolution beyond `\RPC Control\` (create + connect):
   - `alpc_probe_and_split` (`nt_alpc.c`) + `AlpcCreatePort` (`alpc_port.c`) hard-code the `\RPC Control` root, so `\Windows\ApiPort` is rejected `STATUS_OBJECT_NAME_INVALID`
   - Accept an allowlist of authorized absolute roots (`\RPC Control\`, `\Windows\`), resolving the parent directory generically via `ObLookupObjectByName`
   - Test: user-mode create AND connect to `\Windows\ApiPort`
-- [ ] Win32 process creation notification: every new process calls `NtAlpcConnectPort(L"\\Windows\\ApiPort", ...)` at startup in its CRT0 path (→ XREF `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` *(planned)*); sends `CsrClientConnectToServer` message with `{ProcessId, ThreadId, WindowsVersion, SubsystemType=IMAGE_SUBSYSTEM_WINDOWS_GUI/CUI}`
-- [ ] CSRSS accepts, allocates a `CSR_PROCESS` record, stores `PortContext`, and replies with a session ID and the address of the CSR shared section
-- [ ] From this point, Win32 console I/O, `CreateProcess`, `CreateThread`, and exception notification all flow through this ALPC connection
-- [ ] Message format compatibility: CSRSS message format uses a fixed 32-byte opcode area before the variable payload; matches the NT 5.x LPC message format for compatibility with the existing ntdll stubs that will be ported from the Win32 layer:
+- [/] Process creation notification: each new process calls `NtAlpcConnectPort(L"\\Windows\\ApiPort")` in CRT0, sending `CsrClientConnectToServer` `{ProcessId, ThreadId, WindowsVersion, SubsystemType}` → XREF `12-user-platform-sdk/TODO-04 §5`
+- [/] CSRSS accepts, allocates a `CSR_PROCESS` record, stores `PortContext`, and replies with a session ID and the address of the CSR shared section
+- [/] From this point, Win32 console I/O, `CreateProcess`, `CreateThread`, and exception notification all flow through this ALPC connection
+- [/] Message format compatibility: CSRSS message format uses a fixed 32-byte opcode area before the variable payload; matches the NT 5.x LPC message format for compatibility with the existing ntdll stubs that will be ported from the Win32 layer:
   ```c
   typedef struct {
       PORT_MESSAGE Header;
@@ -466,7 +469,18 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 - [ ] Commit: `"kernel/ipc/alpc: CSRSS ApiPort bootstrap, Win32 process registration protocol"`
 
-**Test checkpoint:** After Phase 3 init, `\Windows\ApiPort` is resolvable in the Ob namespace. Test `hello.exe` calls `NtAlpcConnectPort("\\Windows\\ApiPort")` → connection accepted by CSRSS. CSRSS replies with session ID. `hello.exe` receives the reply with valid `CSRSS_API_MSG.ReturnValue == STATUS_SUCCESS`. Multiple test processes connect → each gets independent session. Serial log: `"[CSRSS] ApiPort created"`, `"[CSRSS] client connected: PID=%u SessionId=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** After Phase 3 init, `\Windows\ApiPort` is resolvable in the Ob namespace. Test `hello.exe` calls `NtAlpcConnectPort("\\Windows\\ApiPort")` → connection accepted by CSRSS. CSRSS replies with session ID. `hello.exe` receives the reply with valid `CSRSS_API_MSG.ReturnValue == STATUS_SUCCESS`. Multiple test processes connect → each gets independent session. Serial log: `"[CSRSS] ApiPort created"`, `"[CSRSS] client connected: PID=%u SessionId=%u"`. No test surface lands with this section (no code shipped). Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | unchanged by this section -- no code shipped
+
+> **Notes:**
+> - **What shipped** -- no code: §10 sits behind its own declared `§3-§9` dependency (§6/§7/§8/§9 all deferred) AND the 8 KiB `USER_BASE` ceiling, so this pass recorded the blocker set instead.
+> - **Verified-real work** -- the `\RPC Control` hard-coding is genuine tree state (`nt_alpc.c`, `alpc_port.c`), so `\Windows\ApiPort` is rejected today; the generalization item is accurate, merely unbuildable.
+> - **Downstream effects** -- CSRSS is the first real ALPC consumer, so this section is what turns the engine from tested-in-isolation into load-bearing; it unparks with the tail when `TODO-33 §10` lands.
+> - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling gating every `.text`-adding item here.
+> - **Scope boundary** -- §10 owns only the kernel-side bootstrap contract; the CSRSS server is `12-user-platform-sdk/TODO-05`, the CRT0 connect is `TODO-04 §5`, and the headroom is `TODO-33 §10`.
+
+> **Deferred:** [High] 2026-07-17 -- no code ships from §10, blocked twice over. Its own Implementation Order dependency is `§3-§9`, and §6/§7/§8/§9 are all deferred: the `CsrClientConnectToServer` handshake needs the full-width connection-message negotiation -> XREF: this file §8 (item: "Connection-message negotiation (full-width connect/accept ABI)" at line 374), and the `SYSTEM`-token capture it runs on is stashed -> XREF: this file §7 (item: "Security context capture at CONNECT time (`AlpcConnectPort`)" at line 302). Independently, the CSRSS server + `\Windows\` Ob directory + generalized port resolution are a large `.text` addition against 8 KiB of headroom (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`) -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)" at line 354).
 
 ---
 
