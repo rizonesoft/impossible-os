@@ -77,7 +77,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
-| ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [ ]   |
+| ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.
@@ -533,14 +533,17 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 
 ## 12. Live Port Monitor & IPC Profiler
 
-- [ ] Per-port message latency histogram (see callout below).
+> [!IMPORTANT]
+> **BLOCKED (2026-07-17) -- no code ships from this section today.** The `ALPC_PORT_STATS` block + the send-path histogram + `SystemAlpcPortInformation` + `alpcmon.exe` are a large `.text` addition against 8 KiB of headroom (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`; `scripts/build.sh:356` fails closed) -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)"). The Implementation Order also declares `§8-§9` as this section's dependency, and the monitor's headline demo (`\Windows\ApiPort` showing non-zero Msg/s) needs the §10 CSRSS bootstrap. The stats block adds per-port BSS to an image already at the ceiling, so this section is doubly ceiling-sensitive -- it must be re-measured, not merely un-deferred, once §10 lands.
+
+- [/] Per-port message latency histogram (see callout below).
 > [!TIP]
 > Neither Windows (no built-in per-port latency tracking) nor Linux (no kernel-level IPC profiling beyond `perf`/`ftrace`) provides a first-class, always-on message latency profiler for IPC. Impossible OS embeds a lightweight histogram directly in every `ALPC_PORT`, recording send-to-reply round-trip time in microsecond buckets. Developers see per-port P50/P95/P99 latencies in `alpcmon.exe` without attaching a debugger or running an ETW trace.
 
 > [!NOTE]
 > The histogram is designed for sub-1% steady-state overhead (per the 2026 low-overhead ring-tracer research bar): fixed-bucket atomic increments only, no per-message allocation, no lock on the record path.
 
-- [ ] Add to `ALPC_PORT`:
+- [/] Add to `ALPC_PORT`:
   ```c
   typedef struct {
       _Atomic(uint64_t) TotalSent;       /* messages sent through this port */
@@ -550,14 +553,14 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
       _Atomic(uint64_t) LatencyBuckets[8]; /* us: <10, <50, <100, <500, <1000, <5000, <10000, >=10000 */
   } ALPC_PORT_STATS;
   ```
-- [ ] On `NtAlpcSendWaitReceivePort` with `ALPC_MSGFLG_SYNC_REQUEST`: record `tsc_start` at send, `tsc_end` at reply wake; delta → microseconds → increment appropriate `LatencyBuckets[i]`
-- [ ] Expose via `NtQuerySystemInformation(SystemAlpcPortInformation)` alongside existing per-port stats
-- [ ] Kernel query API: `NtQuerySystemInformation(SystemAlpcPortInformation, ...)`:
+- [/] On `NtAlpcSendWaitReceivePort` with `ALPC_MSGFLG_SYNC_REQUEST`: record `tsc_start` at send, `tsc_end` at reply wake; delta → microseconds → increment appropriate `LatencyBuckets[i]`
+- [/] Expose via `NtQuerySystemInformation(SystemAlpcPortInformation)` alongside existing per-port stats
+- [/] Kernel query API: `NtQuerySystemInformation(SystemAlpcPortInformation, ...)`:
   - Walk all named ports in `\RPC Control\` and `\Windows\` Ob directories
   - Per-port: name, owner PID, pending message count, pending connection count, connected ports count, max message length, stats (total sent/received/bytes, latency histogram)
   - Return as array of `SYSTEM_ALPC_PORT_INFORMATION` structs
 
-- [ ] alpcmon.exe app `src/apps/alpcmon/alpcmon.c`: live view of active ALPC ports:
+- [/] alpcmon.exe app `src/apps/alpcmon/alpcmon.c`: live view of active ALPC ports:
   - Refreshes every 1 s via `NtQuerySystemInformation` poll
   - Table view: Port Name | Owner PID | Owner Image | Pending Msgs | Clients | Msg/s | Bytes/s | P50 us | P99 us
   - Click row → detail pane: full path, creation time, security descriptor (SDDL string), message history (last 16 message IDs + types), latency histogram bar chart
@@ -566,7 +569,18 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 
 - [ ] Commit: `"kernel/ipc/alpc: alpcmon.exe live port monitor with per-port latency profiler"`
 
-**Test checkpoint:** Create port, send 50 synchronous request+reply messages. Query `SystemAlpcPortInformation`. Verify `TotalSent == 50`, `TotalReceived == 50`, at least one `LatencyBuckets` entry > 0. Run `alpcmon.exe`. Verify `\Windows\ApiPort` shows in the table with non-zero Msg/s after CSRSS boot test. Serial log: `"[ALPC] Port stats: %s sent=%llu recv=%llu P50=%lluus"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Create port, send 50 synchronous request+reply messages. Query `SystemAlpcPortInformation`. Verify `TotalSent == 50`, `TotalReceived == 50`, at least one `LatencyBuckets` entry > 0. Run `alpcmon.exe`. Verify `\Windows\ApiPort` shows in the table with non-zero Msg/s after CSRSS boot test. Serial log: `"[ALPC] Port stats: %s sent=%llu recv=%llu P50=%lluus"`. No test surface lands with this section (no code shipped). Test on: QEMU WHPX + TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | unchanged by this section -- no code shipped
+
+> **Notes:**
+> - **What shipped** -- no code: the stats block, send-path histogram, `SystemAlpcPortInformation`, and `alpcmon.exe` are `.text` (plus per-port BSS) the 8 KiB `USER_BASE` headroom cannot take.
+> - **Re-measure, do not just un-defer** -- this is the only tail section that adds per-port BSS as well as `.text`, so its cost must be re-checked against the `scripts/build.sh` BSS gate after `TODO-33 §10` lands, not assumed to fit.
+> - **Downstream effects** -- ⭐ exclusive work: neither Win11 nor Linux ships an always-on per-port IPC latency profiler, so this is a differentiator that stays unbuilt until the ceiling moves.
+> - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) for the BSS/`USER_BASE` ceiling gating every `.text`-adding item here.
+> - **Scope boundary** -- §12 owns the stats/histogram + monitor; the send path it hooks is §4, the info classes are §9, the ApiPort it demos against is §10, and the headroom is `TODO-33 §10`.
+
+> **Deferred:** [High] 2026-07-17 -- no code ships from §12. The `ALPC_PORT_STATS` block, the `NtAlpcSendWaitReceivePort` histogram hook, `SystemAlpcPortInformation`, and `alpcmon.exe` are a large `.text` addition -- and, uniquely in this file's tail, per-port BSS too -- against 8 KiB of headroom (`build/kernel.map` end `0x7fe000` vs `USER_BASE` `0x800000`; `scripts/build.sh:356` fails closed) -> XREF: `02-kernel-core/TODO-33 §10` (item: "Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB)" at line 354). The Implementation Order declares `§8-§9` as the dependency and both are deferred -> XREF: this file §9 (item: "NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):" at line 400). The monitor's headline case needs the CSRSS ApiPort -> XREF: this file §10 (item: "`\Windows\ApiPort` must be resolvable in the Ob namespace" at line 451).
 
 ---
 
@@ -580,23 +594,25 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                 |
 | 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7 (done, stashed; BSS-blocked)    |
 | 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                 |
-| 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10                                |
+| 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10 (deferred; BSS + §8/§9)        |
 | 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                         |
 | 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (done, stashed; BSS-blocked)    |
-| 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (NtAlpcQueryInformationMessage) |
+| 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (7 args > 6-word SSDT cap)      |
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                       |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                       |
-| 💎   | Message zones                | ✅ AlpcMessageZone     | ❌ Per-msg sk_buff       | ⬜ §11                                |
+| 💎   | Message zones                | ✅ AlpcMessageZone     | ❌ Per-msg sk_buff       | ⬜ §11 (deferred; BSS-blocked)        |
 | 💎   | Completion list lifecycle    | ✅ Register/Unregister | ❌ N/A                   | ⬜ §9 not-impl (IOCP subst.)          |
 | 💎   | Message identity attrs       | ✅ TOKEN + WoB attr    | ⚠️ SCM_CREDENTIALS      | ⬜ §6 layout + §7 provenance          |
 | 💎   | Connection-msg negotiation   | ✅ Connect/accept msg  | ⚠️ connect() payload    | ⬜ §8 (full-width ABI)                |
-| 💎   | Resource reserves (per-msg)  | ✅ NtAlpcCreateReserve | ❌ N/A                   | ⬜ §11 (distinct from zones)          |
-| ⭐   | Per-port latency histogram   | ❌ ETW only            | ❌ ftrace only           | ⬜ §12 (histogram)                    |
-| ⭐   | Live port monitor + profiler | ❌ WinObj read-only    | ❌ N/A                   | ⬜ §12 (alpcmon)                      |
+| 💎   | Resource reserves (per-msg)  | ✅ NtAlpcCreateReserve | ❌ N/A                   | ⬜ §11 (distinct from zones; BSS)     |
+| ⭐   | Per-port latency histogram   | ❌ ETW only            | ❌ ftrace only           | ⬜ §12 (deferred; BSS-blocked)        |
+| ⭐   | Live port monitor + profiler | ❌ WinObj read-only    | ❌ N/A                   | ⬜ §12 (alpcmon; BSS-blocked)         |
 
 > **Deferred features (→ other TODOs):**
 > - Handle attribute marshalling and direct/indirect mode → `03-memory-concurrency/TODO-09-win32-ipc-extensions.md §9`
 > - LPC compatibility syscalls (`NtCreatePort`, `NtConnectPort`, etc.) → `03-memory-concurrency/TODO-09-win32-ipc-extensions.md §8`
+>
+> **Ceiling park (2026-07-17):** every unshipped row above (§6, §7, §8 gap items, §9-§12) is parked on ONE blocker, not on design debt -- the kernel image has 8 KiB left under `USER_BASE` (`build/kernel.map` end `0x7fe000` vs `0x800000`) and `scripts/build.sh:356` fails closed, so no new handler `.text` links. §7 is fully implemented and reviewed but stashed for exactly this reason. The engine itself (§1-§5) is shipped and tested. The whole tail unparks together once ~1 MB of static pools goes dynamic -> XREF: `02-kernel-core/TODO-33 §10`. `NtAlpcQueryInformationMessage` + the `ZwAlpc*` aliases carry a SECOND, independent blocker: the 6-word `SSDT_HANDLER` cap is an operator-reserved ABI decision -> XREF: this file §8.
 
 After §1-10, Impossible OS reaches full Windows 11 ALPC parity for hosting CSRSS, RPC local transport, COM local activation, and the Win32 subsystem server ecosystem. §11 adds message zones for high-throughput ports. Linux's closest equivalent (Unix domain sockets with `SOCK_SEQPACKET`) lacks typed reply routing, integrated impersonation, and section-based zero-copy data transfer. The live port monitor with latency profiler (§12) gives developers a real-time view of all active message ports with P50/P99 latency stats; a developer-experience exclusive that neither Windows (WinObj is read-only, ETW requires separate trace capture) nor Linux ship in their default tooling.
 
