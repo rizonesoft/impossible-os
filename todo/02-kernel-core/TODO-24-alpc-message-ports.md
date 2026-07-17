@@ -72,7 +72,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |   4   | Synchronous send+wait+receive engine                     | §3, T07 §3    |  [x]   |
 | 💎   |   5   | Asynchronous delivery & completion list                  | §4            |  [x]   |
 | 💎   |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [/]   |
-| 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [ ]   |
+| 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
 | 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [ ]   |
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [ ]   |
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [ ]   |
@@ -296,39 +296,40 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ## 7. Security: Client Token Capture & Impersonation
 
-- [ ] Security context capture at accept: in `NtAlpcAcceptConnectPort` (§3), if `AcceptConnection == TRUE` AND `port->Attributes.SecurityQos.ImpersonationLevel >= SecurityIdentification`:
-  1. Locate the client task from `connection_request->Header.ClientId`
-  2. `PsReferencePrimaryToken(client_task)` → `client_token`
-  3. `NtDuplicateToken(client_token, TOKEN_QUERY | TOKEN_IMPERSONATE, NULL, SecurityQos.EffectiveOnly, TokenImpersonation, &captured_token)` -- duplicate at the requested impersonation level; `EffectiveOnly` strips disabled attrs
-  4. Store `captured_token` in `server_comm_port->ClientToken`
-  5. `PsDereferencePrimaryToken(client_token)`
+> [!IMPORTANT]
+> **BLOCKED on the USER_BASE / BSS ceiling (2026-07-17).** §7 is fully implemented, Codex design-reviewed, and Codex adversarial-reviewed (5 findings verified + fixed: cross-user impersonation, wrong-token capture, requester-teardown race, SID snapshot TOCTOU, wrong `STATUS_SERVER_SID_MISMATCH` value). It cannot ship because the added kernel `.text` pushes the `-DKERNEL_TESTS` image's BSS end to exactly `0x800000`, colliding with `USER_BASE` (the `scripts/build.sh` BSS gate fails). Raising `USER_BASE` above the `0x800000-0x900000` user-ELF range is an ABI change owned by the higher-half work -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` (raises `USER_BASE` once the kernel moves to the higher half; §3 is itself deferred awaiting-operator). The reviewed diff is preserved in git stash `TODO-24-s7-wip-bss-ceiling` (alpc_port.c/.h, nt_alpc.c, ntstatus.h, test_alpc.c -- 9 IPC tests); re-apply and ship once the ceiling is raised. Item wording below reflects the stashed implementation, NOT tree state.
 
-- [ ] Server impersonation: `NtAlpcImpersonateClientOfPort(PortHandle, Message, Reserved)`:
-  1. `ObReferenceObjectByHandle(PortHandle)` → must be a server communication port
-  2. Retrieve `port->ClientToken`; check it is not NULL
-  3. `SeImpersonateClientEx(port->ClientToken, current_task)` sets `current_task->ImpersonationToken = port->ClientToken` (ref-counted copy) (→ XREF `TODO-15-security-reference-monitor.md §7`)
-  4. Requires `SeImpersonatePrivilege` on the server's token if the client's IL is higher than the server's IL (→ XREF `TODO-15-security-reference-monitor.md §3`)
+- [/] Security context capture at CONNECT time (`AlpcConnectPort`): when the listener QoS is `>= SecurityIdentification`, Ob-reference the connecting thread's effective token onto the request, released on every free path:
+  1. Effective token = `thread_current()->impersonation_token` else `task_current()->token` -- captured in the client's own context so an active client impersonation is honored and the requester-teardown SMP race is closed (not a raw `RequesterTask` deref at accept)
+  2. At accept, `NtDuplicateToken(req->CapturedToken, 0, SecurityQos.EffectiveOnly, TokenImpersonation)` -- Ob-refcounted dup (`desired_access` ignored by the impl, matches `ImpersonateSelf`)
+  3. Stamp `captured->ImpersonationLevel = SecurityQos.ImpersonationLevel` so the negotiated level gates later impersonation
+  4. Store in `server_comm->ClientToken`; on dup failure the whole handshake unwinds (free handle, undo cross-links/refs, signal client failure)
+- [/] Server impersonation: internal helper `AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)` shipped in `alpc_port.c` (SSDT slot + `NtAlpcImpersonateClientOfPort` syscall wrapper -> §8):
+  1. Non-`AlpcServerCommunicationPort` -> `STATUS_INVALID_PORT_HANDLE`; no captured token -> `STATUS_NO_TOKEN`
+  2. Identification-only captured token (`< SecurityImpersonation`) -> `STATUS_BAD_IMPERSONATION_LEVEL`
+  3. UserMode caller: allowed only when the captured client `UserSid` equals the server's effective `UserSid` (self-impersonation) OR it holds `SeImpersonatePrivilege` (`SeSinglePrivilegeCheck`), else `STATUS_PRIVILEGE_NOT_HELD` -- integrity level does NOT establish identity, so it is not the gate; KernelMode bypasses
+  4. Fresh `ObReferenceObject` + `__atomic_exchange_n` into `thread_current()->impersonation_token`, deref displaced (repeat/revert/thread-exit ref-safe)
+- [/] Client connection SID verification: `RequiredServerSid` (arg 6 of the compact `NtAlpcConnectPort` handler) compared via `RtlEqualSid` against the listener's creation-time `OwnerSid` -> `STATUS_SERVER_SID_MISMATCH` (fail closed):
+  - Handler probes + bounded-copies the caller SID into kernel memory (header, `SubAuthorityCount`-derived length, `RtlValidSid`) before the compare
+  - Source corrected to the immutable `OwnerSid`: raw `OwnerTask` is slot-reuse-unsafe; client-comm `ClientToken` is the wrong principal
+- [/] Security attribute in message: `ALPC_SECURITY_ATTR` (bit 0x8) -- on-send QoS + on-receive `ContextHandle` reuse; needs the `ALPC_MESSAGE_ATTRIBUTES` attribute ABI owned by the deferred §6.
+- [/] `NtAlpcCreateSecurityContext(PortHandle, Flags, SecurityAttribute)` -- pre-creates a context handle stored in `ALPC_SECURITY_ATTR.ContextHandle`; consumer is the §6 message attribute, needs a fresh §8 SSDT slot.
+- [/] `NtAlpcDeleteSecurityContext(PortHandle, Flags, ContextHandle)` -- revokes/frees a context handle; same §6 + §8 dependency as create.
+- [/] Token / work-on-behalf provenance: connection-scoped half shipped (token captured at accept, released on teardown). Per-message `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` marshalling + `ClientId` anti-spoof need the §6 dispatcher.
+- [/] `NtAlpcConnectPortEx` (SSDT 0x0111): security-descriptor variant -- bounded `ServerSecurityRequirements` + `SeAccessCheck` instead of SID equality; handler wired by the §8 retrofit.
+- [ ] Commit: `"kernel/ipc/alpc: client token capture, AlpcImpersonateClientOfPort, SID verification"`
 
-- [ ] Security attribute in message: `ALPC_SECURITY_ATTR` (bit 0x8 in `ValidAttributes`):
-  - On send: client includes its `SECURITY_QUALITY_OF_SERVICE` preferences
-  - On receive: server reads the `ContextHandle` to call `NtAlpcImpersonateClientOfPort` without needing a separate call
-- [ ] `NtAlpcCreateSecurityContext(PortHandle, Flags, SecurityAttribute)` -- pre-creates a security context handle to avoid repeated per-message token capture; stored in `ALPC_SECURITY_ATTR.ContextHandle`
-- [ ] `NtAlpcDeleteSecurityContext(PortHandle, Flags, ContextHandle)` -- revokes and frees the captured context
-- [ ] Client connection SID verification: `RequiredServerSid` parameter to `NtAlpcConnectPort`: if non-NULL, kernel reads the server port owner's `UserSid` from `port->ClientToken` (set when server was created) and compares it using `RtlEqualSid`; returns `STATUS_SERVER_SID_MISMATCH` if different; prevents clients from connecting to hijacked ports
-- [ ] Token / work-on-behalf provenance ownership (backs the §6 `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` layouts):
-  - Snapshot + reference the sender's token at send time; release the reference on message free and on port teardown
-  - Reject impersonation changes after enqueue; validate carried thread identity against `PORT_MESSAGE.ClientId` (anti-spoof at the trust boundary)
-  - Tests: impersonating-sender + stale-thread rejection
-- [ ] `NtAlpcConnectPortEx` (SSDT 0x0111): security-descriptor variant of the `RequiredServerSid` check:
-  - Import a bounded `PSECURITY_DESCRIPTOR ServerSecurityRequirements` and call `SeAccessCheck` (→ XREF `TODO-15-security-reference-monitor.md §5`) instead of simple SID equality
-  - Lower priority than the base SID check; handler wired by the §8 retrofit
-- [ ] Self-contained execution note (see callout below).
-> [!NOTE]
-> `SeImpersonateClientEx` (T15 §7) is not yet implemented. §7 (NtAlpcImpersonateClientOfPort) should implement a minimal inline version: `task->ImpersonationToken = ObReferenceObject(port->ClientToken)` with refcount management. Full privilege checks (`SeImpersonatePrivilege`, IL comparison) are deferred to T15 §7-§8; add `// TODO: SeImpersonatePrivilege check T15 §8` stub.
+> **Deferred:** [High] in-message `ALPC_SECURITY_ATTR`, `NtAlpcCreateSecurityContext` / `NtAlpcDeleteSecurityContext`, and per-message `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` provenance all need the message-attribute ABI -> XREF: `02-kernel-core/TODO-24 §6` (item: "Message attributes dispatcher: `ALPC_MESSAGE_ATTRIBUTES`" at line 278; §6 is itself NO-SHIP-deferred). The three security syscalls' SSDT slots + wrappers -> XREF: `02-kernel-core/TODO-24 §8` (item: "Retrofit the 16 ALPC SSDT stubs" at line 360). `NtAlpcConnectPortEx`'s `SeAccessCheck` -> XREF: `02-kernel-core/TODO-15 §5`. The §8 wrapper's handle-lookup close-race -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle` primitive" at line 148).
 
-- [ ] Commit: `"kernel/ipc/alpc: client token capture, NtAlpcImpersonateClientOfPort, SID verification"`
+**Test checkpoint:** Server accepts a connection at QoS `>= SecurityImpersonation`; `server_comm->ClientToken` is non-NULL, stamped at the negotiated level, refcount 1. `AlpcImpersonateClientOfPort` sets `thread_current()->impersonation_token` (refcount -> 2), `RevertToSelf` clears it (-> 1); identification-only -> `STATUS_BAD_IMPERSONATION_LEVEL`; anonymous (no capture) -> `STATUS_NO_TOKEN`; connection port -> `STATUS_INVALID_PORT_HANDLE`. `AlpcCreatePort` snapshots `OwnerSid`; wrong `RequiredServerSid` -> `STATUS_SERVER_SID_MISMATCH`, matching completes the handshake. Zero leaks. Test on: QEMU WHPX + TCG.
 
-**Test checkpoint:** Server accepts connection from client task. `server_comm->ClientToken` is non-NULL and points to a duplicate of client's primary token. `NtAlpcImpersonateClientOfPort` sets `task_current()->ImpersonationToken` to the captured token. `RequiredServerSid` mismatch → `STATUS_SERVER_SID_MISMATCH`. `NtAlpcCreateSecurityContext` returns valid `ContextHandle`. `NtAlpcDeleteSecurityContext` revokes it. Serial log: `"[ALPC] client token captured: SID=%s"`, `"[ALPC] impersonating client: SID=%s"`. Test on: QEMU WHPX + TCG.
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | BLOCKED -- passed at 316 kernel tests (9 §7 cases, 0 failures, 0 leaked) in the stashed build; not in tree (BSS ceiling)
+
+> **Notes:**
+> - **Staged (git stash `TODO-24-s7-wip-bss-ceiling`, NOT in tree)** -- `alpc_port.c` connect-time capture + `OwnerSid` + `AlpcImpersonateClientOfPort` + SID verify; `nt_alpc.c` bounded SID; 3 status codes; 9 IPC tests.
+> - **Blocker** -- the `-DKERNEL_TESTS` image BSS end hits `0x800000` == `USER_BASE`; `scripts/build.sh` BSS gate fails. Ship after the higher-half `USER_BASE` raise (TODO-33).
+> - **Scope boundary** -- §7 owns the connection-handshake security core; in-message attrs / security-context handles -> §6; the three security syscalls' SSDT slots -> §8; `NtAlpcConnectPortEx` `SeAccessCheck` -> TODO-15 §5.
+> - **Constraint** -- higher-IL-without-privilege + standalone thread-exit are not unit-tested (test task is SYSTEM, no lower-privilege token constructible in-harness; thread-exit release is scheduler-owned).
 
 ---
 
@@ -511,11 +512,11 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply)  |
 | 💎   | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)   |
 | 💎   | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                 |
-| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7                                 |
+| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7 (done, stashed; BSS-blocked)     |
 | 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                 |
 | 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10                                |
 | 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                         |
-| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (SID verify)                    |
+| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (done, stashed; BSS-blocked)     |
 | 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (NtAlpcQueryInformationMessage) |
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                       |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                       |
