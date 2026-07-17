@@ -44,9 +44,27 @@ void pmm_free_contiguous(uintptr_t base, uint64_t count);
  *
  * On success 'out_phys'/'out_pages' receive the physical base and frame count
  * to hand to pmm_free_contiguous() later. Both are optional (may be NULL).
- * The PMM bitmap is not yet SMP-locked (the PMM bitmap SMP-locking work in
- * todo/03-memory-concurrency/TODO-03-advanced-allocator.md owns that), so
- * callers must allocate from a single-CPU init boundary, never lazily. */
+ *
+ * CALLER CONTRACT: the PMM bitmap is not yet SMP-locked (the PMM bitmap
+ * SMP-locking work in todo/03-memory-concurrency/TODO-03-advanced-allocator.md
+ * owns that), so a caller must run where no other CPU is calling the PMM
+ * concurrently. Be precise about why the boot-time callers qualify, because two
+ * plausible-sounding reasons are BOTH WRONG: it is not "before APs exist" (APs
+ * are up from smp_init in phase 2, well before these callers), and it is not
+ * merely "the scheduler is disabled" (the scheduler is not what runs AP boot
+ * work). What actually holds on the normal path is that AP boot work is
+ * dispatched through boot_async_group, which BARRIERS until every AP reports
+ * done before the sequence proceeds, so no AP is mid-allocation later.
+ *
+ * That barrier has one documented hole: boot_async_group gives up after a 10s
+ * timeout and proceeds while the timed-out AP KEEPS RUNNING (see the "still
+ * running" note on its timeout path in boot_init.c). A timed-out storage worker
+ * can therefore race a later allocation. That is the unlocked-bitmap defect
+ * itself rather than something a caller can code around; it is owned by the PMM
+ * bitmap SMP-locking work above and only opens on an already-degraded boot.
+ *
+ * Never allocate lazily on a call path: a site reached once the scheduler is
+ * live races the bitmap unconditionally. */
 void *pmm_alloc_pages_hhdm(uint64_t bytes, uintptr_t *out_phys,
                            uint64_t *out_pages);
 

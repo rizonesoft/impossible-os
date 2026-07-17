@@ -6,7 +6,9 @@
  * the same root keys (HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, etc.), and
  * the same value types (REG_SZ, REG_DWORD, REG_BINARY, etc.).
  *
- * Storage: in-memory tree backed by static pools (512 keys, 1024 values).
+ * Storage: in-memory tree backed by two fixed-capacity, frame-backed pools
+ * (512 keys, 1024 values) reached through the HHDM -- not static arrays, so
+ * registry_init() requires a live PMM + direct map (see registry.c header).
  * Persistence: binary hive files with crash-safe journaling (future).
  *
  * Tree structure (examples):

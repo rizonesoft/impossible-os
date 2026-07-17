@@ -371,12 +371,20 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 > **Notes:**
 >
 > - Shipped `pmm_alloc_pages_hhdm()` + `pmm_free_contiguous()` (`pmm.c`) and `mm_phys_extent_in_hhdm()` (`memmap.h`), then moved `reg_value_pool`/`reg_key_pool`, and `s_atoms` off static BSS to frame-backed storage; 9 new MM tests.
-> - Allocation happens only at single-CPU init boundaries -- `registry_init` and the new `nt_misc_atoms_init()` (before the atom handlers publish) -- never lazily, never under a spinlock; boot log shows `pool: 10/512 keys` + `Atom table initialized`.
+> - Allocation happens only at `registry_init` and the new `nt_misc_atoms_init()` (before the atom handlers publish) -- never lazily, never under a spinlock; see the `pmm_alloc_pages_hhdm` caller contract for why that is safe.
 > - **Acceptance evidence:** BSS end `0x7fe000` -> `0x6c0000`, headroom **8 KiB -> 1280 KiB** (160x); BUILD OK, 21460 kernel + 16 user tests, smoke boots to `C:\>` in 2.87s. Codex adoptions in the commit message.
 > - Unparks the ceiling-stalled kernel queue (TODO-22/23/24); the sweep collecting on it is §11, the only remaining consumer of this headroom.
 > - Canonical doc: [docs/infrastructure/kernel-address-space.md](../../docs/infrastructure/kernel-address-space.md).
 > - **Scope boundary:** §10 removes large statics only, not address-space layout (§7 owns the `USER_BASE` retirement). `klog_ring` stays static (`01-boot-platform/TODO-04 §1`); the 271 KiB xHCI `devices` table is `04-drivers-hardware/TODO-10 §1`.
 > - Adversarial review here found that `-DKERNEL_TESTS` is unconditional (`Makefile:29`), so every test seam ships; a proposed atom-table test seam was dropped and the repo-wide half filed -> `02-kernel-core/TODO-10 §26`.
+
+> **Verified:** 2026-07-17 | commit `000e4745` | 6/6 items | build OK | smoke PASS (KVM 2.90s), 21460 kernel + 16 user tests, BSS `0x6c0000` (1280 KiB headroom, was 8 KiB)
+> **Accepted:** [H] PMM bitmap mutates without synchronization; this section adds 2 allocation sites to 10+ existing late callers (reason: pre-existing, repo-wide) -> XREF: `03-memory-concurrency/TODO-03 §1` (item: "**PMM bitmap SMP locking**" at line 103)
+> **Accepted:** [H] a timed-out `boot_async_group` worker keeps running and can race a later PMM allocation (reason: degraded-boot-only window; the unlocked bitmap owns it) -> XREF: `03-memory-concurrency/TODO-03 §1` (item: "Close the timed-out-async-worker window" at line 104)
+> **Accepted:** [H] `-DKERNEL_TESTS` is unconditional (`Makefile:29`), so every test seam ships in the release kernel (reason: pre-existing, build-level) -> XREF: `02-kernel-core/TODO-10 §26` (item: "Split the build: make `-DKERNEL_TESTS` conditional in `Makefile`" at line 766)
+> **Accepted:** [M] the real 271 KiB `devices` static is `xhci_dev.c`, not `blkdev.c`; converting it adds an ISR-reachable NULL window to a known hot-plug hazard (reason: scope) -> XREF: `04-drivers-hardware/TODO-10 §1` (item: "Convert the 271 KiB `devices[XHCI_MAX_DEVICES]` static" at line 83)
+> **Accepted:** [M] `registry_init`'s partial-rollback branch has no deterministic coverage; tests may not call subsystem init (reason: infra) -> XREF: `02-kernel-core/TODO-14 §14` (item: "Extract the `registry_init` two-pool allocation into a pure transaction helper" at line 654)
+> **Quality reviewed:** 2026-07-17 | Codex 5x (design + adversarial + consistency + perf + re-adversarial) | 3H+7M+2L fixed, 3H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
 

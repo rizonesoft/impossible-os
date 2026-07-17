@@ -1,19 +1,27 @@
 /* ============================================================================
  * registry.c -- Windows-Compatible Registry System: Core Data Structures
  *
- * Static pool allocators, FNV-1a hashing for child key lookup, and
+ * Fixed-capacity pool allocators, FNV-1a hashing for child key lookup, and
  * predefined root key initialization.
  *
- * Memory: all nodes come from fixed-size static pools (no heap pressure).
- * This allows the registry to be usable very early in boot, before the
- * heap is fully initialized.
+ * Memory: all nodes come from two fixed-capacity pools carved out of
+ * contiguous physical frames and reached through their HHDM aliases (they are
+ * NOT static arrays -- at ~228 KiB and ~784 KiB they are far past the 4 KiB
+ * kmalloc bar, and as BSS they were the kernel image's two largest static
+ * consumers). The index-bump allocator on top is unchanged: indexing the pool
+ * pointer is identical to indexing the old array.
+ *
+ * INIT-ORDER PREREQUISITE: because the pools are frame-backed, registry_init()
+ * REQUIRES a live PMM + direct map. It is called from phase 2, long after
+ * pmm_init in phase 0. This header previously claimed the registry was "usable
+ * very early in boot, before the heap is fully initialized" -- that is no
+ * longer true, and moving registry_init earlier on the strength of it would
+ * fail the boot. Before the pools exist, every entry point resolves through a
+ * NULL root key and refuses; reg_alloc_key/reg_alloc_value also NULL-check.
  *
  * Pool sizes:
- *   - 512 keys   (~166 KB with 16-bucket hash per key)
- *   - 1024 values (~785 KB with 512-byte data buffers)
- *
- * See rules.md: kmalloc is fine for these structs since they are part
- * of static arrays, not heap-allocated.
+ *   - 512 keys   (~228 KiB with 16-bucket hash per key)
+ *   - 1024 values (~784 KiB with 512-byte data buffers)
  * ============================================================================ */
 
 #include "registry.h"
@@ -132,6 +140,15 @@ static reg_key_t *reg_alloc_key(const char *name)
     reg_key_t *k;
     uint32_t i;
 
+    /* The pool is frame-backed now, so NULL is reachable in a way it was not
+     * when this was a BSS array. Callers only get here through an already-
+     * resolved non-NULL root key, which cannot exist before registry_init
+     * succeeds -- but that is a reachability argument, and under the bring-up
+     * identity map a missed NULL does not fault, it memsets physical page 0.
+     * One compare closes it. */
+    if (!reg_key_pool)
+        return (reg_key_t *)0;
+
     if (reg_key_pool_next >= REG_KEY_POOL_SIZE)
         return (reg_key_t *)0;
 
@@ -171,6 +188,11 @@ static reg_key_t *reg_alloc_key(const char *name)
 static reg_value_t *reg_alloc_value(const char *name, uint32_t type)
 {
     reg_value_t *v;
+
+    /* Same NULL close as reg_alloc_key: the pool is frame-backed, and a missed
+     * NULL memsets physical page 0 rather than faulting. */
+    if (!reg_value_pool)
+        return (reg_value_t *)0;
 
     if (reg_value_pool_next >= REG_VALUE_POOL_SIZE)
         return (reg_value_t *)0;
@@ -315,40 +337,69 @@ boot_result_t registry_init(void)
 
     /* Back the key/value pools with frames reached through the HHDM. PMM is up
      * long before this (pmm_init runs in phase 0; registry_init is called from
-     * phase 2), and this is the single-CPU boundary the PMM's unlocked bitmap
-     * requires -- no registry pool allocation ever happens lazily. Allocation
-     * failure is fatal: without pools there is no tree to serve, so the caller
-     * branches to boot recovery on BOOT_FATAL.
+     * phase 2). The PMM bitmap is unlocked, so this relies on the pmm.h caller
+     * contract. APs ARE already up here (smp_init runs earlier in phase 2); what
+     * makes it safe on the normal path is that the async storage workers joined
+     * their boot_async_group barrier before this runs, so no AP is mid-allocation.
+     * The one hole is a TIMED-OUT async worker, which keeps running -- that is
+     * the unlocked-bitmap defect, owned by the PMM bitmap SMP-locking work, and
+     * it only opens on an already-degraded boot. Never allocate a pool lazily.
+     * Allocation failure is fatal: without pools there is no tree to serve, so
+     * the caller branches to boot recovery on BOOT_FATAL.
+     *
+     * Each pool is zeroed through a LOCAL and published LAST: pmm_alloc_pages_hhdm
+     * does not zero, so assigning the global first would briefly expose a pool of
+     * stale frame contents. Unreachable today (nothing reaches a pool before the
+     * root keys exist, and x86 is TSO), but this file is arch-neutral and the
+     * planned ARM64 port has no such store ordering.
      *
      * NOTE: the byte counts are explicit. These are pointers now, so
      * sizeof(reg_key_pool) would silently collapse to the size of a pointer
      * and zero only the first 8 bytes of a 228 KiB pool. */
+    const uint32_t key_bytes =
+        (uint32_t)((uint64_t)REG_KEY_POOL_SIZE * sizeof(reg_key_t));
+    const uint32_t value_bytes =
+        (uint32_t)((uint64_t)REG_VALUE_POOL_SIZE * sizeof(reg_value_t));
+
     if (!reg_key_pool) {
-        reg_key_pool = (reg_key_t *)pmm_alloc_pages_hhdm(
-            (uint64_t)REG_KEY_POOL_SIZE * sizeof(reg_key_t),
-            &reg_key_pool_phys, &reg_key_pool_pages);
-        if (!reg_key_pool) {
+        uintptr_t phys = 0;
+        uint64_t  pages = 0;
+        reg_key_t *kp = (reg_key_t *)pmm_alloc_pages_hhdm(key_bytes, &phys, &pages);
+        if (!kp) {
             klog(LOG_ERROR, "registry", "Registry: failed to allocate key pool");
             return BOOT_FATAL;
         }
-    }
-    if (!reg_value_pool) {
-        reg_value_pool = (reg_value_t *)pmm_alloc_pages_hhdm(
-            (uint64_t)REG_VALUE_POOL_SIZE * sizeof(reg_value_t),
-            &reg_value_pool_phys, &reg_value_pool_pages);
-        if (!reg_value_pool) {
-            klog(LOG_ERROR, "registry", "Registry: failed to allocate value pool");
-            pmm_free_contiguous(reg_key_pool_phys, reg_key_pool_pages);
-            reg_key_pool = (reg_key_t *)0;
-            return BOOT_FATAL;
-        }
+        reg_memset(kp, 0, key_bytes);
+        reg_key_pool_phys  = phys;
+        reg_key_pool_pages = pages;
+        reg_key_pool = kp;
+    } else {
+        reg_memset(reg_key_pool, 0, key_bytes);
     }
 
-    /* Zero pools */
-    reg_memset(reg_key_pool, 0,
-               (uint32_t)((uint64_t)REG_KEY_POOL_SIZE * sizeof(reg_key_t)));
-    reg_memset(reg_value_pool, 0,
-               (uint32_t)((uint64_t)REG_VALUE_POOL_SIZE * sizeof(reg_value_t)));
+    if (!reg_value_pool) {
+        uintptr_t phys = 0;
+        uint64_t  pages = 0;
+        reg_value_t *vp = (reg_value_t *)pmm_alloc_pages_hhdm(value_bytes, &phys, &pages);
+        if (!vp) {
+            klog(LOG_ERROR, "registry", "Registry: failed to allocate value pool");
+            /* Roll back the key pool completely, and clear its bookkeeping with
+             * it -- leaving phys/pages set would park a double-free primitive in
+             * a static for whoever adds a registry teardown path. */
+            pmm_free_contiguous(reg_key_pool_phys, reg_key_pool_pages);
+            reg_key_pool       = (reg_key_t *)0;
+            reg_key_pool_phys  = 0;
+            reg_key_pool_pages = 0;
+            return BOOT_FATAL;
+        }
+        reg_memset(vp, 0, value_bytes);
+        reg_value_pool_phys  = phys;
+        reg_value_pool_pages = pages;
+        reg_value_pool = vp;
+    } else {
+        reg_memset(reg_value_pool, 0, value_bytes);
+    }
+
     reg_key_pool_next = 0;
     reg_value_pool_next = 0;
 

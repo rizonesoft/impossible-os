@@ -54,7 +54,8 @@ typedef struct atom_slot {
  * a NULL dereference does not fault -- it silently writes physical page 0.
  * Allocation happens ONCE at that init boundary, never lazily under s_atom_lock
  * (allocating under a spinlock is forbidden, and the PMM bitmap is not itself
- * SMP-locked). */
+ * SMP-locked -- see the caller contract on pmm_alloc_pages_hhdm for what actually
+ * makes the boot-time call safe; it is NOT that only one CPU exists). */
 static atom_slot_t    *s_atoms;
 static DEFINE_SPINLOCK(s_atom_lock);
 
@@ -781,8 +782,10 @@ static NTSTATUS NtRaiseHardError_handler(uint64_t error_status, uint64_t num_par
 
 /* ---- Atom table initialization ------------------------------------------- */
 
-/* Allocate and zero the global atom table. Call ONCE, from a single-CPU boot
- * boundary, BEFORE nt_misc_register_ssdt() publishes the atom syscall handlers
+/* Allocate and zero the global atom table. Call ONCE, from a boot boundary that
+ * satisfies the pmm_alloc_pages_hhdm caller contract (APs are up by phase 3;
+ * read that contract for what actually makes it safe), and BEFORE
+ * nt_misc_register_ssdt() publishes the atom syscall handlers
  * -- otherwise an allocation failure would leave callable handlers backed by a
  * NULL table. Idempotent: a second call over a live table is a no-op.
  *
@@ -795,23 +798,32 @@ NTSTATUS nt_misc_atoms_init(void)
     if (s_atoms)
         return STATUS_SUCCESS;
 
-    s_atoms = (atom_slot_t *)pmm_alloc_pages_hhdm(
+    /* Zero through a LOCAL and publish s_atoms last. pmm_alloc_pages_hhdm()
+     * does not zero, so assigning the global first would expose a table of
+     * stale frame contents -- arbitrary non-zero atom/name_len bytes that
+     * atom_find_slot_locked() would walk as live slots. Unreachable today (no
+     * handler is registered until nt_misc_register_ssdt(), and x86 is TSO), but
+     * this file is arch-neutral code and the planned ARM64 port has no such
+     * store ordering, where the pointer store could become visible first. */
+    atom_slot_t *table = (atom_slot_t *)pmm_alloc_pages_hhdm(
         (uint64_t)NT_ATOM_TABLE_CAP * sizeof(atom_slot_t),
         (uintptr_t *)0, (uint64_t *)0);
-    if (!s_atoms) {
+    if (!table) {
         klog(LOG_ERROR, "nt",
              "Atom table allocation failed -- atom syscalls degraded");
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     for (uint32_t i = 0; i < NT_ATOM_TABLE_CAP; i++) {
-        s_atoms[i].atom       = 0;
-        s_atoms[i].refcount   = 0;
-        s_atoms[i].name_len   = 0;
-        s_atoms[i].hash       = 0;
-        s_atoms[i].generation = 0;
-        s_atoms[i].name[0]    = 0;
+        table[i].atom       = 0;
+        table[i].refcount   = 0;
+        table[i].name_len   = 0;
+        table[i].hash       = 0;
+        table[i].generation = 0;
+        table[i].name[0]    = 0;
     }
+
+    s_atoms = table;   /* publish only after the table is safe to read */
 
     klog(LOG_DEBUG, "nt", "Atom table initialized (%u slots)",
          (uint64_t)NT_ATOM_TABLE_CAP);
