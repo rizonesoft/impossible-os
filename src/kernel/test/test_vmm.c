@@ -282,16 +282,24 @@ static void test_vmm_user_pml4_create_destroy(void)
     uintptr_t cr3 = vmm_create_user_pml4();
     TEST_ASSERT(cr3 != 0, "vmm_create_user_pml4 returns non-zero PML4 phys");
 
-    uint64_t *pml4 = (uint64_t *)cr3;
+    /* Walk the freshly created PML4 through the HHDM (section 9), the same
+     * translation the production walkers now use. Tests use mm_phys_to_hhdm()
+     * directly rather than pt_walk() because pt_walk() hard-errors via
+     * KeBugCheckEx on a bad frame, which test code must never invoke; a NULL
+     * alias is caught by an explicit TEST_ASSERT instead. */
+    uint64_t *pml4 = (uint64_t *)mm_phys_to_hhdm(cr3);
+    TEST_ASSERT(pml4 != (void *)0, "PML4 phys has an HHDM alias");
     /* PML4[0] and PDPT[0] are on the ring-3 path -- User bit required. */
     TEST_ASSERT((pml4[0] & (VMM_FLAG_PRESENT | VMM_FLAG_USER)) ==
                 (VMM_FLAG_PRESENT | VMM_FLAG_USER),
                 "PML4[0] is Present + User");
-    uint64_t *pdpt = (uint64_t *)(pml4[0] & TEST_PTE_ADDR_MASK);
+    uint64_t *pdpt = (uint64_t *)mm_phys_to_hhdm(pml4[0] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pdpt != (void *)0, "PDPT phys has an HHDM alias");
     TEST_ASSERT((pdpt[0] & (VMM_FLAG_PRESENT | VMM_FLAG_USER)) ==
                 (VMM_FLAG_PRESENT | VMM_FLAG_USER),
                 "PDPT[0] is Present + User");
-    uint64_t *pd = (uint64_t *)(pdpt[0] & TEST_PTE_ADDR_MASK);
+    uint64_t *pd = (uint64_t *)mm_phys_to_hhdm(pdpt[0] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pd != (void *)0, "PD phys has an HHDM alias");
 
     /* Cloned kernel PD entry (VA 0x0) is a kernel-only mapping with the User
      * bit CLEARED -- the "cloned per-process kernel pages don't have the User
@@ -308,7 +316,8 @@ static void test_vmm_user_pml4_create_destroy(void)
                 "user PD entry Present");
     TEST_ASSERT((pd[USER_PD_INDEX] & VMM_FLAG_HUGE) == 0,
                 "user PD entry split into 4 KiB PT (not huge)");
-    uint64_t *pt = (uint64_t *)(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    uint64_t *pt = (uint64_t *)mm_phys_to_hhdm(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pt != (void *)0, "PT phys has an HHDM alias");
     /* User-range pages default to kernel-only until set_user_page. */
     TEST_ASSERT((pt[0] & VMM_FLAG_PRESENT) != 0, "user PT[0] Present");
     TEST_ASSERT((pt[0] & VMM_FLAG_USER) == 0,
@@ -330,10 +339,16 @@ static void test_vmm_set_user_page_sets_bit(void)
     TEST_ASSERT(cr3 != 0, "vmm_create_user_pml4 returns non-zero PML4 phys");
 
     uintptr_t va = USER_ELF_BASE;  /* 0x800000, inside the split user PT */
-    uint64_t *pml4 = (uint64_t *)cr3;
-    uint64_t *pdpt = (uint64_t *)(pml4[0] & TEST_PTE_ADDR_MASK);
-    uint64_t *pd   = (uint64_t *)(pdpt[0] & TEST_PTE_ADDR_MASK);
-    uint64_t *pt   = (uint64_t *)(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    /* HHDM walk (section 9); mm_phys_to_hhdm not pt_walk -- see the note in
+     * test_vmm_user_pml4_create_destroy. */
+    uint64_t *pml4 = (uint64_t *)mm_phys_to_hhdm(cr3);
+    TEST_ASSERT(pml4 != (void *)0, "PML4 phys has an HHDM alias");
+    uint64_t *pdpt = (uint64_t *)mm_phys_to_hhdm(pml4[0] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pdpt != (void *)0, "PDPT phys has an HHDM alias");
+    uint64_t *pd   = (uint64_t *)mm_phys_to_hhdm(pdpt[0] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pd != (void *)0, "PD phys has an HHDM alias");
+    uint64_t *pt   = (uint64_t *)mm_phys_to_hhdm(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT(pt != (void *)0, "PT phys has an HHDM alias");
     uint64_t pti = (va >> 12) & 0x1FF;
 
     TEST_ASSERT((pt[pti] & VMM_FLAG_USER) == 0, "page starts kernel-only");

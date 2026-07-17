@@ -8,6 +8,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/mm/memmap.h"   /* mm_phys_to_hhdm: HHDM walk-pointer translation */
 
 /* Page flags (bits in page table entries) */
 #define VMM_FLAG_PRESENT    (1ULL << 0)
@@ -49,6 +50,30 @@
 
 /* Page size */
 #define VMM_PAGE_SIZE  4096
+
+/* A page-table entry: a 64-bit physical frame address ORed with flag bits. */
+typedef uint64_t pte_t;
+
+/* Mask for extracting the physical frame address from a PTE (bits 12-51).
+ * Shared between vmm.c and swap.c so both walkers strip exactly the same bits
+ * -- a walker that leaves high bits (e.g. NX bit 63) set would hand pt_walk a
+ * phys >= 64 TiB and trip its hard-error. */
+#define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
+
+/* Convert a physical page-table frame address to the HHDM virtual pointer the
+ * kernel WALKS through. This is the single sanctioned page-table dereference
+ * primitive (section 9 walker conversion): every walker derives its next-level
+ * pointer through pt_walk() rather than casting a physical address straight to
+ * a pointer, so the walks keep working once section 5 retires the bring-up
+ * identity map. HARD-ERRORS on a translation failure (mm_phys_to_hhdm() returns
+ * NULL for phys 0 or phys >= 64 TiB): while the identity map is still live a
+ * NULL deref silently reads/writes physical page 0 instead of faulting, so a
+ * NULL here is a corrupt PTE / walk-vs-load mix-up, routed to KeBugCheckEx.
+ * Deliberately NON-inline (one body, not one per ~30 call sites): the inlined
+ * form pushed the kernel image past the pre-section-7 user-base ceiling.
+ * NOTE: tests must NOT call this (KeBugCheckEx is forbidden in test code); a
+ * test that needs a walk pointer uses mm_phys_to_hhdm() + TEST_ASSERT instead. */
+pte_t *pt_walk(uintptr_t phys);
 
 /* Initialize the VMM (takes over the boot page tables, registers page fault handler).
  * Returns BOOT_OK on success, BOOT_FATAL on failure. */

@@ -32,6 +32,7 @@
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
 #include "kernel/boot_halt.h"           /* boot_halt: fatal NX-policy enforcement failure */
+#include "kernel/bugcheck.h"            /* KeBugCheckEx: pt_walk hard-error on a corrupt PTE */
 #include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
@@ -39,8 +40,7 @@
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 
-/* Page table entry -- 64-bit */
-typedef uint64_t pte_t;
+/* pte_t and PTE_ADDR_MASK now live in vmm.h (shared with swap.c walkers). */
 
 #ifdef KERNEL_TESTS
 /* Test-only vmm_map fault injection (kernel-test-harness roadmap). Same shape as the
@@ -114,14 +114,22 @@ uint32_t vmm_map_fail_fired_counter(void)
 /* Number of entries per page table level */
 #define PT_ENTRIES 512
 
-/* Mask for extracting physical address from a PTE (bits 12-51) */
-#define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
+/* PTE_ADDR_MASK moved to vmm.h (shared with swap.c). */
 
 /* 1 GiB page alignment: lower 30 bits must be zero */
 #define GIB_ALIGN_MASK  0x3FFFFFFFULL
 #define GIB_SIZE        (1ULL << 30)
 
-/* Kernel PML4 -- read from CR3 at init */
+/* Kernel root page table as the HHDM WALK pointer (section 9 walker
+ * conversion): the physical root translated through the direct map, so every
+ * walker dereferences it safely once the identity map is gone. Written ONCE in
+ * vmm_init on the BSP before any AP starts, read-only afterwards, so no lock is
+ * needed. The PHYSICAL root (the value loaded raw into CR3) is NOT stored as a
+ * second global -- it is derived on demand via mm_hhdm_to_phys(kernel_pml4) in
+ * vmm_get_kernel_cr3(). This keeps the phys-vs-walk split (spec item 1) at zero
+ * new BSS cost: a second static pointer trips the zero-headroom BSS ceiling
+ * that section 7 has not yet retired, which would break section 9's
+ * independent-bootability guarantee. */
 static pte_t *kernel_pml4;
 
 /* --- Address decomposition --- */
@@ -183,13 +191,28 @@ void vmm_flush_tlb_all(void)
 
 static void zero_page(uintptr_t phys_addr)
 {
-    uint64_t *page = (uint64_t *)phys_addr;
+    /* Write through the HHDM alias, not the raw physical address: a freshly
+     * allocated page-table frame is zeroed here before it is installed, and
+     * that write must land through a mapping that outlives the identity map. */
+    uint64_t *page = (uint64_t *)pt_walk(phys_addr);
     uint32_t i;
     for (i = 0; i < VMM_PAGE_SIZE / 8; i++)
         page[i] = 0;
 }
 
 /* --- Page table walking / creation --- */
+
+/* The single sanctioned page-table dereference primitive (see vmm.h). Kept
+ * non-inline so its body exists once rather than at every walk site -- the
+ * inlined form pushed the kernel image over the pre-section-7 user ceiling. */
+pte_t *pt_walk(uintptr_t phys)
+{
+    void *v = mm_phys_to_hhdm(phys);
+    if (!v)
+        KeBugCheckEx(BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION,
+                     (uint64_t)phys, 0, 0, 0);
+    return (pte_t *)v;
+}
 
 /*
  * Get or create a page table at the next level.
@@ -201,8 +224,9 @@ static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create,
 {
     pte_t entry = table[index];
 
-    /* If already present, return the physical address as a pointer --
-     * and propagate the User bit upward if the caller is installing a
+    /* If already present, return the next-level table as an HHDM walk
+     * pointer (pt_walk) -- and propagate the User bit upward if the caller
+     * is installing a
      * user-mode leaf PTE. Intermediate levels (PML4/PDPT/PD) must have
      * the User bit set at EVERY level for ring-3 page walks to
      * succeed; without this, a leaf PTE with VMM_FLAG_USER still
@@ -218,7 +242,7 @@ static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create,
         if (leaf_flags & VMM_FLAG_USER)
             table[index] = entry | VMM_FLAG_USER;
 
-        return (pte_t *)(entry & PTE_ADDR_MASK);
+        return pt_walk(entry & PTE_ADDR_MASK);
     }
 
     /* Not present -- create if requested */
@@ -243,7 +267,7 @@ static pte_t *get_or_create_table(pte_t *table, uint64_t index, int create,
         intermediate |= VMM_FLAG_USER;
     table[index] = new_frame | intermediate;
 
-    return (pte_t *)new_frame;
+    return pt_walk(new_frame);
 }
 
 /* --- Public API --- */
@@ -626,10 +650,10 @@ uintptr_t vmm_create_user_pml4(void)
         return 0;
     }
 
-    pml4 = (pte_t *)pml4_phys;
-    pdpt = (pte_t *)pdpt_phys;
-    pd   = (pte_t *)pd_phys;
-    pt   = (pte_t *)pt_phys;
+    pml4 = pt_walk(pml4_phys);
+    pdpt = pt_walk(pdpt_phys);
+    pd   = pt_walk(pd_phys);
+    pt   = pt_walk(pt_phys);
 
     /* Zero all new tables */
     zero_page(pml4_phys);
@@ -638,8 +662,8 @@ uintptr_t vmm_create_user_pml4(void)
     zero_page(pt_phys);
 
     /* Get kernel's PDPT and PD (via identity mapping) */
-    kern_pdpt = (pte_t *)(kernel_pml4[0] & PTE_ADDR_MASK);
-    kern_pd   = (pte_t *)(kern_pdpt[0] & PTE_ADDR_MASK);
+    kern_pdpt = pt_walk(kernel_pml4[0] & PTE_ADDR_MASK);
+    kern_pd   = pt_walk(kern_pdpt[0] & PTE_ADDR_MASK);
 
     /* Clone kernel PD entries into the new PD (all 512 entries).
      * These are 2 MiB huge pages -- kernel-only, no User bit. */
@@ -695,16 +719,20 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
     pte_t *pml4, *pdpt, *pd, *pt;
     uint64_t pml4i, pdpti, pdi, pti;
 
-    pml4 = (pte_t *)pml4_phys;
+    pml4 = pt_walk(pml4_phys);
     pml4i = pml4_index(virt);
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
     pti   = pt_index(virt);
 
-    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
-    if (!pdpt) return;
-    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
-    if (!pd) return;
+    /* Absent upper-level entry: nothing to set, return without touching it.
+     * Check PRESENT *before* pt_walk -- for an absent entry the masked frame is
+     * zero and pt_walk(0) would bugcheck (the pre-conversion cast produced NULL
+     * and the old `if (!pdpt) return` handled it; that idiom is now dead). */
+    if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
+    pdpt = pt_walk(pml4[pml4i] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
+    pd = pt_walk(pdpt[pdpti] & PTE_ADDR_MASK);
 
     /* Ensure User bit is set at all upper levels (PML4, PDPT, PD).
      * x86-64 requires User bit at EVERY level for ring-3 access. */
@@ -726,7 +754,7 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
                  (uint64_t)pdi);
             return;
         }
-        pt = (pte_t *)pt_frame;
+        pt = pt_walk(pt_frame);
         for (j = 0; j < PT_ENTRIES; j++)
             pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
         /* Tag PT_OWNED so vmm_destroy_user_pml4 can safely free this
@@ -735,8 +763,8 @@ void vmm_set_user_page(uintptr_t pml4_phys, uintptr_t virt)
                           | VMM_FLAG_USER | VMM_FLAG_PT_OWNED;
     }
 
-    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
-    if (!pt) return;
+    if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
+    pt = pt_walk(pd[pdi] & PTE_ADDR_MASK);
 
     /* Set User bit on the specific 4 KiB page */
     pt[pti] |= VMM_FLAG_USER;
@@ -776,7 +804,7 @@ static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
     virt &= ~((uintptr_t)0xFFF);
     phys &= ~((uintptr_t)0xFFF);
 
-    pml4  = (pte_t *)cr3;
+    pml4  = pt_walk(cr3);
     pml4i = pml4_index(virt);
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
@@ -791,26 +819,26 @@ static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
 
     /* --- Walk / create PML4 -> PDPT --- */
     if (pml4[pml4i] & VMM_FLAG_PRESENT) {
-        pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+        pdpt = pt_walk(pml4[pml4i] & PTE_ADDR_MASK);
         pml4[pml4i] |= VMM_FLAG_USER;  /* ensure User at PML4 level */
     } else {
         uintptr_t f = pmm_alloc_frame();
         if (!f) return -1;
         zero_page(f);
         pml4[pml4i] = f | user_rw;
-        pdpt = (pte_t *)f;
+        pdpt = pt_walk(f);
     }
 
     /* --- Walk / create PDPT -> PD --- */
     if (pdpt[pdpti] & VMM_FLAG_PRESENT) {
-        pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+        pd = pt_walk(pdpt[pdpti] & PTE_ADDR_MASK);
         pdpt[pdpti] |= VMM_FLAG_USER;
     } else {
         uintptr_t f = pmm_alloc_frame();
         if (!f) return -1;
         zero_page(f);
         pdpt[pdpti] = f | user_rw;
-        pd = (pte_t *)f;
+        pd = pt_walk(f);
     }
 
     /* --- Walk / create PD -> PT (handle huge page split) ---
@@ -827,12 +855,12 @@ static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
             uintptr_t pt_frame  = pmm_alloc_frame();
             uint32_t  j;
             if (!pt_frame) return -1;
-            pt = (pte_t *)pt_frame;
+            pt = pt_walk(pt_frame);
             for (j = 0; j < PT_ENTRIES; j++)
                 pt[j] = (huge_phys + (uintptr_t)j * VMM_PAGE_SIZE) | old_flags;
             pd[pdi] = pt_frame | user_rw | VMM_FLAG_PT_OWNED;
         } else {
-            pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+            pt = pt_walk(pd[pdi] & PTE_ADDR_MASK);
             pd[pdi] |= VMM_FLAG_USER;
         }
     } else {
@@ -840,7 +868,7 @@ static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
         if (!f) return -1;
         zero_page(f);
         pd[pdi] = f | user_rw | VMM_FLAG_PT_OWNED;
-        pt = (pte_t *)f;
+        pt = pt_walk(f);
     }
 
     /* --- Install final PTE ---
@@ -892,29 +920,27 @@ void vmm_remap_user_page(uintptr_t pml4_phys, uintptr_t virt,
     virt     &= ~((uintptr_t)0xFFF);
     new_phys &= ~((uintptr_t)0xFFF);
 
-    pml4  = (pte_t *)pml4_phys;
+    pml4  = pt_walk(pml4_phys);
     pml4i = pml4_index(virt);
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
     pti   = pt_index(virt);
 
     if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
-    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
-    if (!pdpt) return;
+    pdpt = pt_walk(pml4[pml4i] & PTE_ADDR_MASK);
 
     if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
-    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
-    if (!pd) return;
+    pd = pt_walk(pdpt[pdpti] & PTE_ADDR_MASK);
 
-    /* A huge page here would mean the PT hasn't been split yet. Caller is
-     * expected to have triggered a split (vmm_create_user_pml4 does this
-     * for USER_PD_INDEX). Silently bail rather than split on the fly --
-     * task_exec is the only caller today and operates exclusively on
-     * the already-split user ELF range. */
+    /* Absent PD entry: nothing mapped here, bail (check PRESENT before
+     * pt_walk -- a zero frame would bugcheck). A huge page would mean the PT
+     * hasn't been split yet; the caller (task_exec) is expected to have
+     * triggered a split (vmm_create_user_pml4 does this for USER_PD_INDEX),
+     * so silently bail rather than split on the fly. */
+    if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
     if (pd[pdi] & VMM_FLAG_HUGE) return;
 
-    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
-    if (!pt) return;
+    pt = pt_walk(pd[pdi] & PTE_ADDR_MASK);
 
     /* Tag PAGE_OWNED so vmm_destroy_user_pml4 will free the new frame on
      * process exit. Do NOT free the previous PTE's frame here: the caller
@@ -931,19 +957,19 @@ void vmm_unshare_user_page(uintptr_t cr3, uintptr_t virt)
 
     virt &= ~((uintptr_t)0xFFF);
 
-    pml4  = (pte_t *)cr3;
+    pml4  = pt_walk(cr3);
     pml4i = pml4_index(virt);
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
     pti   = pt_index(virt);
 
     if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
-    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+    pdpt = pt_walk(pml4[pml4i] & PTE_ADDR_MASK);
     if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
-    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+    pd = pt_walk(pdpt[pdpti] & PTE_ADDR_MASK);
     if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
     if (pd[pdi] & VMM_FLAG_HUGE) return;
-    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+    pt = pt_walk(pd[pdi] & PTE_ADDR_MASK);
 
     pt[pti] = 0;
     vmm_flush_tlb(virt);
@@ -959,7 +985,7 @@ void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)
 
     virt &= ~((uintptr_t)0xFFF);
 
-    pml4  = (pte_t *)cr3;
+    pml4  = pt_walk(cr3);
     pml4i = pml4_index(virt);
     pdpti = pdpt_index(virt);
     pdi   = pd_index(virt);
@@ -967,14 +993,14 @@ void vmm_unmap_user_page(uintptr_t cr3, uintptr_t virt)
 
     /* Walk without creating -- if any level is absent, nothing to unmap */
     if (!(pml4[pml4i] & VMM_FLAG_PRESENT)) return;
-    pdpt = (pte_t *)(pml4[pml4i] & PTE_ADDR_MASK);
+    pdpt = pt_walk(pml4[pml4i] & PTE_ADDR_MASK);
 
     if (!(pdpt[pdpti] & VMM_FLAG_PRESENT)) return;
-    pd = (pte_t *)(pdpt[pdpti] & PTE_ADDR_MASK);
+    pd = pt_walk(pdpt[pdpti] & PTE_ADDR_MASK);
 
     if (!(pd[pdi] & VMM_FLAG_PRESENT)) return;
     if (pd[pdi] & VMM_FLAG_HUGE) return;  /* don't unmap inside a huge page */
-    pt = (pte_t *)(pd[pdi] & PTE_ADDR_MASK);
+    pt = pt_walk(pd[pdi] & PTE_ADDR_MASK);
 
     if (!(pt[pti] & VMM_FLAG_PRESENT)) return;
 
@@ -994,11 +1020,17 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
 
     if (!pml4_phys) return;
 
-    pml4 = (pte_t *)pml4_phys;
-    pdpt = (pte_t *)(pml4[0] & PTE_ADDR_MASK);
-    if (pdpt) {
-        pd = (pte_t *)(pdpt[0] & PTE_ADDR_MASK);
-        if (pd) {
+    /* Walk pointers come from pt_walk(); the *_phys values are kept separately
+     * because pmm_free_frame() must be handed a PHYSICAL frame, never an HHDM
+     * walk pointer (section 9). Guard pt_walk() against a zero frame -- an
+     * absent PDPT/PD entry is a legal "nothing to free", not a corrupt PTE. */
+    pml4 = pt_walk(pml4_phys);
+    uintptr_t pdpt_phys = pml4[0] & PTE_ADDR_MASK;
+    if (pdpt_phys) {
+        pdpt = pt_walk(pdpt_phys);
+        uintptr_t pd_phys = pdpt[0] & PTE_ADDR_MASK;
+        if (pd_phys) {
+            pd = pt_walk(pd_phys);
             /* Free ONLY PT frames tagged PT_OWNED.
              *
              * vmm_create_user_pml4 clones kernel_pml4's 0-1 GiB PD
@@ -1027,7 +1059,7 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
                      * Identity-mapped PTEs (PAGE_OWNED=0) are kernel-owned
                      * and must NOT be freed. */
                     if (pt_phys) {
-                        pte_t *pt = (pte_t *)pt_phys;
+                        pte_t *pt = pt_walk(pt_phys);
                         uint32_t j;
                         for (j = 0; j < PT_ENTRIES; j++) {
                             if ((pt[j] & VMM_FLAG_PRESENT) &&
@@ -1041,16 +1073,20 @@ void vmm_destroy_user_pml4(uintptr_t pml4_phys)
                     }
                 }
             }
-            pmm_free_frame((uintptr_t)pd);
+            pmm_free_frame(pd_phys);
         }
-        pmm_free_frame((uintptr_t)pdpt);
+        pmm_free_frame(pdpt_phys);
     }
     pmm_free_frame(pml4_phys);
 }
 
 uintptr_t vmm_get_kernel_cr3(void)
 {
-    return (uintptr_t)kernel_pml4;
+    /* The PHYSICAL root, loaded raw into CR3 (task.c/smp.c). Derived from the
+     * HHDM walk pointer via the sanctioned inverse (section 9) rather than held
+     * as a second global: mm_hhdm_to_phys() undoes the direct-map offset that
+     * mm_phys_to_hhdm() applied in vmm_init, so this round-trips exactly. */
+    return mm_hhdm_to_phys(kernel_pml4);
 }
 
 /* --- MMIO mapping (UC -- Uncacheable) ------------------------------------ */
@@ -1195,7 +1231,7 @@ int vmm_split_huge_page(uintptr_t virt)
         uintptr_t pd_frame = pmm_alloc_frame();
         if (!pd_frame) return -1;
 
-        pte_t *new_pd = (pte_t *)pd_frame;
+        pte_t *new_pd = pt_walk(pd_frame);
         uint32_t j;
         for (j = 0; j < PT_ENTRIES; j++)
             new_pd[j] = (gib_phys + ((uintptr_t)j << 21)) | gib_flags | VMM_FLAG_HUGE;
@@ -1223,7 +1259,7 @@ int vmm_split_huge_page(uintptr_t virt)
     pt_frame = pmm_alloc_frame();
     if (!pt_frame) return -1;
 
-    pt = (pte_t *)pt_frame;
+    pt = pt_walk(pt_frame);
 
     /* Fill 512 x 4 KiB PTEs preserving the same mapping + flags */
     for (i = 0; i < PT_ENTRIES; i++)
@@ -1340,7 +1376,7 @@ void vmm_promote_to_1g(void)
     if (!kernel_pml4 || !(kernel_pml4[0] & VMM_FLAG_PRESENT))
         return;
 
-    pdpt = (pte_t *)(kernel_pml4[0] & PTE_ADDR_MASK);
+    pdpt = pt_walk(kernel_pml4[0] & PTE_ADDR_MASK);
 
     /* Promote PDPT entries 1-3 (GiB 1-3) from PD trees to 1 GiB pages.
      * Skip PDPT[0] (first GiB) because it contains kernel text and needs
@@ -1363,7 +1399,7 @@ void vmm_promote_to_1g(void)
          * flags. Skip promotion if any PDE has been split, has a guard
          * page, or has different flags (NX, RO, WC, etc.). */
         {
-            pte_t *pd = (pte_t *)(pdpte & PTE_ADDR_MASK);
+            pte_t *pd = pt_walk(pdpte & PTE_ADDR_MASK);
             uint32_t pdi;
             int safe = 1;
             /* Flag mask: all flag bits except address, accessed, dirty */
@@ -1414,18 +1450,35 @@ boot_result_t vmm_init(void)
     /* Take over the PML4 the UEFI bootloader built and loaded into CR3
      * (setup_page_tables() in src/boot/uefi/bootx64.c). It is adopted, never
      * rebuilt, so that table is the kernel's page table for the life of the
-     * system. NOTE: this dereferences a raw physical address and is therefore
-     * only valid while the bootloader's identity map is live; it moves to
-     * mm_phys_to_hhdm() when the direct map lands. */
-    kernel_pml4 = (pte_t *)(read_cr3() & PTE_ADDR_MASK);
+     * system.
+     *
+     * The root splits into its two roles here (section 9 walker conversion):
+     * the PHYSICAL value is what stays in CR3; the WALK pointer is that value
+     * translated through the section-2 HHDM direct map, which the bootloader
+     * installed before jumping to the kernel, so it is live at this point. Every
+     * page-table deref past this line goes through the walk pointer, so the
+     * walkers keep working once section 5 retires the bootloader identity map.
+     * This is the cutover point -- a bad HHDM root faults on the first deref
+     * (apply_nx_policy / first map) with POST16_HHDM_WALK as the last code. */
+    POST16(POST16_HHDM_WALK);
+    uintptr_t root_phys = read_cr3() & PTE_ADDR_MASK;
+    /* Do NOT use pt_walk() here: this is the earliest walk-pointer install and
+     * a NULL translation must degrade to BOOT_FATAL, not a bugcheck. */
+    kernel_pml4 = (pte_t *)mm_phys_to_hhdm(root_phys);
+    if (!kernel_pml4) {
+        klog(LOG_FATAL, "mm", "VMM init: kernel root phys %p has no HHDM alias",
+             (uint64_t)root_phys);
+        return BOOT_FATAL;
+    }
+    POST16(POST16_HHDM_WALK_OK);
 
     /* Register the page fault handler (ISR 14) */
     idt_register_handler(14, page_fault_handler);
 
-    klog(LOG_INFO, "mm", "VMM initialized (PML4 at %p, page fault handler registered)",
-           (uint64_t)(uintptr_t)kernel_pml4);
+    klog(LOG_INFO, "mm", "VMM initialized (PML4 phys %p, walk %p, page fault handler registered)",
+           (uint64_t)root_phys, (uint64_t)(uintptr_t)kernel_pml4);
 
-    return kernel_pml4 ? BOOT_OK : BOOT_FATAL;
+    return BOOT_OK;
 }
 
 /* ---- NX policy: mark all non-text pages as non-executable --------------- */
@@ -1461,7 +1514,7 @@ void vmm_apply_nx_policy(void)
         if (!(pml4e & VMM_FLAG_PRESENT))
             continue;
 
-        pdpt = (pte_t *)(pml4e & PTE_ADDR_MASK);
+        pdpt = pt_walk(pml4e & PTE_ADDR_MASK);
 
         for (pdpti = 0; pdpti < 512; pdpti++) {
             pte_t pdpte = pdpt[pdpti];
@@ -1474,7 +1527,7 @@ void vmm_apply_nx_policy(void)
             if (pdpte & VMM_FLAG_HUGE)
                 continue;
 
-            pd = (pte_t *)(pdpte & PTE_ADDR_MASK);
+            pd = pt_walk(pdpte & PTE_ADDR_MASK);
 
             for (pdi = 0; pdi < 512; pdi++) {
                 pte_t pde = pd[pdi];
@@ -1485,7 +1538,7 @@ void vmm_apply_nx_policy(void)
 
                 /* 2 MiB huge page -- the common case for boot mappings */
                 if (pde & VMM_FLAG_HUGE) {
-                    page_base     = (pml4i << 39) | (pdpti << 30) | (pdi << 21);
+                    page_base     = mm_canonical_from_indices(pml4i, pdpti, pdi, 0);
                     page_end_addr = page_base + (1UL << 21);
 
                     /* Only NX pages within the kernel's own range */
@@ -1536,14 +1589,14 @@ void vmm_apply_nx_policy(void)
 
                 /* 4 KiB page table -- walk PT entries */
                 {
-                    pte_t *pt = (pte_t *)(pde & PTE_ADDR_MASK);
+                    pte_t *pt = pt_walk(pde & PTE_ADDR_MASK);
                     uint32_t pti;
                     for (pti = 0; pti < 512; pti++) {
                         pte_t pte = pt[pti];
                         uintptr_t va;
                         if (!(pte & VMM_FLAG_PRESENT))
                             continue;
-                        va = (pml4i << 39) | (pdpti << 30) | (pdi << 21) | (pti << 12);
+                        va = mm_canonical_from_indices(pml4i, pdpti, pdi, pti);
                         if (va < kernel_base || va >= kernel_top)
                             continue;  /* outside kernel range */
                         if (va >= text_start && va < text_end)

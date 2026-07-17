@@ -35,7 +35,13 @@
 
 /* --- Swap slot storage (disk-backed via pagefile.sys) --- */
 static struct vfs_node *pagefile = (void *)0;  /* open file handle */
-static uint8_t   swap_temp_buf[SWAP_SLOT_SIZE] __attribute__((aligned(4096)));
+/* Page-copy staging buffer: one pmm page reached through its HHDM alias, NOT a
+ * 4 KiB static. The freestanding-kernel rule bans large statics, and freeing
+ * this page keeps the section-9 walker conversion under the pre-section-7 image
+ * ceiling. HHDM (not the raw identity address) so the buffer survives section
+ * 5's identity teardown -- ixfs copies it CPU-side (ixfs_file_write), so it is
+ * never DMA'd from this pointer. Allocated in swap_init; NULL until then. */
+static uint8_t  *swap_temp_buf = (void *)0;
 swap_slot_t  swap_slots[SWAP_MAX_SLOTS];
 static uint32_t     swap_num_slots = 0;
 uint32_t     swap_used = 0;
@@ -52,26 +58,28 @@ static uint32_t      clock_count = 0;
  * We walk the page tables manually to get the raw PTE. */
 static uint64_t swap_read_pte(uintptr_t virt)
 {
-    /* The VMM uses identity-mapped page tables.
-     * (PML4 → PDPT → PD → PT → Physical frame)
-     * We'll read CR3 then walk. */
+    /* Walk the live page tables (PML4 -> PDPT -> PD -> PT). Every table
+     * pointer is derived through pt_walk() (the HHDM walk helper), so the walk
+     * keeps working once section 5 retires the bootloader identity map. Mask
+     * with PTE_ADDR_MASK, NOT ~0xFFF: leaving high bits (e.g. NX) set would push
+     * the frame past the HHDM window and trip pt_walk's hard-error. */
     uint64_t cr3;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
 
-    uint64_t *pml4 = (uint64_t *)(cr3 & ~0xFFFULL);
+    uint64_t *pml4 = pt_walk(cr3 & PTE_ADDR_MASK);
     uint32_t pml4_idx = (uint32_t)((virt >> 39) & 0x1FF);
     uint32_t pdpt_idx = (uint32_t)((virt >> 30) & 0x1FF);
     uint32_t pd_idx   = (uint32_t)((virt >> 21) & 0x1FF);
     uint32_t pt_idx   = (uint32_t)((virt >> 12) & 0x1FF);
 
     if (!(pml4[pml4_idx] & 1)) return 0;
-    uint64_t *pdpt = (uint64_t *)(pml4[pml4_idx] & ~0xFFFULL);
+    uint64_t *pdpt = pt_walk(pml4[pml4_idx] & PTE_ADDR_MASK);
 
     if (!(pdpt[pdpt_idx] & 1)) return 0;
     /* Check for 1 GiB huge page */
     if (pdpt[pdpt_idx] & VMM_FLAG_HUGE) return pdpt[pdpt_idx];
 
-    uint64_t *pd = (uint64_t *)(pdpt[pdpt_idx] & ~0xFFFULL);
+    uint64_t *pd = pt_walk(pdpt[pdpt_idx] & PTE_ADDR_MASK);
     if (!(pd[pd_idx] & 1)) {
         /* PD entry not present -- but it might have swap bits.
          * However, swap is stored at PT level, so check if PD points to a PT. */
@@ -81,7 +89,7 @@ static uint64_t swap_read_pte(uintptr_t virt)
     /* Check for 2 MiB huge page */
     if (pd[pd_idx] & VMM_FLAG_HUGE) return pd[pd_idx];
 
-    uint64_t *pt = (uint64_t *)(pd[pd_idx] & ~0xFFFULL);
+    uint64_t *pt = pt_walk(pd[pd_idx] & PTE_ADDR_MASK);
     return pt[pt_idx];
 }
 
@@ -92,20 +100,21 @@ static void swap_write_pte(uintptr_t virt, uint64_t pte_val)
     uint64_t cr3;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
 
-    uint64_t *pml4 = (uint64_t *)(cr3 & ~0xFFFULL);
+    /* pt_walk + PTE_ADDR_MASK: same HHDM walk discipline as swap_read_pte. */
+    uint64_t *pml4 = pt_walk(cr3 & PTE_ADDR_MASK);
     uint32_t pml4_idx = (uint32_t)((virt >> 39) & 0x1FF);
     uint32_t pdpt_idx = (uint32_t)((virt >> 30) & 0x1FF);
     uint32_t pd_idx   = (uint32_t)((virt >> 21) & 0x1FF);
     uint32_t pt_idx   = (uint32_t)((virt >> 12) & 0x1FF);
 
     if (!(pml4[pml4_idx] & 1)) return;
-    uint64_t *pdpt = (uint64_t *)(pml4[pml4_idx] & ~0xFFFULL);
+    uint64_t *pdpt = pt_walk(pml4[pml4_idx] & PTE_ADDR_MASK);
 
     if (!(pdpt[pdpt_idx] & 1)) return;
-    uint64_t *pd = (uint64_t *)(pdpt[pdpt_idx] & ~0xFFFULL);
+    uint64_t *pd = pt_walk(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
     if (!(pd[pd_idx] & 1)) return;
-    uint64_t *pt = (uint64_t *)(pd[pd_idx] & ~0xFFFULL);
+    uint64_t *pt = pt_walk(pd[pd_idx] & PTE_ADDR_MASK);
 
     pt[pt_idx] = pte_val;
     vmm_flush_tlb(virt);
@@ -166,6 +175,20 @@ void swap_init(uint32_t num_slots)
     pagefile = vfs_open(PAGEFILE_PATH, VFS_O_READ | VFS_O_WRITE);
     if (!pagefile) {
         klog(LOG_WARN, "swap", "Failed to open pagefile -- swap disabled");
+        return;
+    }
+
+    /* Allocate the page-copy staging buffer (one page), reached via its HHDM
+     * alias. Without it there is no buffer to stage swap I/O through, so a
+     * failure disables swap. On an HHDM-translation failure the frame did
+     * allocate, so reclaim it before bailing. */
+    uintptr_t staging_phys = pmm_alloc_contiguous(1);
+    swap_temp_buf = (uint8_t *)mm_phys_to_hhdm(staging_phys);
+    if (!swap_temp_buf) {
+        klog(LOG_WARN, "swap", "Failed to allocate swap staging buffer -- swap disabled");
+        if (staging_phys)
+            pmm_free_frame(staging_phys);
+        pagefile = (void *)0;
         return;
     }
 

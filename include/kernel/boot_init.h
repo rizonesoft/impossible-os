@@ -304,6 +304,13 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_ASYNC_BARRIER    0xDD02  /* barrier wait */
 #define POST16_ASYNC_DONE       0xDD03  /* all complete */
 
+/* HHDM walker cutover (higher-half kernel relocation): the VMM stops walking
+ * page tables through the bootloader identity map and starts walking them
+ * through the HHDM direct map. A bad HHDM root here faults on the first walker
+ * deref with the exit code as the last-seen POST16. (0xDD10-0xDD11) */
+#define POST16_HHDM_WALK        0xDD10  /* kernel root -> HHDM walk pointer */
+#define POST16_HHDM_WALK_OK     0xDD11  /* walk pointer installed */
+
 /* IPI vector for async boot init work dispatch */
 #define IPI_VECTOR_ASYNC_INIT   0xFC
 

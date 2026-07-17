@@ -49,7 +49,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
 | 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
-| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [ ]   |
+| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
 | 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)       | §1, §2, §9             |  [ ]   |
 | 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path  | §3                     |  [ ]   |
 | 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown    | §1, §3, §9, D01 T01 §8 |  [ ]   |
@@ -235,6 +235,8 @@ Layer the high-half kernel onto the existing per-process page tables: every proc
 With user space owning the lower half, drop the hardcoded ceiling and all the bookkeeping that defended it.
 
 - [ ] Re-add `src/kernel/test/test_highhalf.c` + `test_register_highhalf()` (`TEST_CAT_MM`): authored in §1 but reverted because it tripped the BSS guard with zero headroom. Do this FIRST in §7 -- it is the regression net for the whole relocation
+- [ ] `test_highhalf.c` also covers the §9 identity-map-disabled walker exercise + absent-PML4/PDPT/PD `vmm_set_user_page`/`_remap` no-crash cases → XREF: §9
+- [ ] `scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts outside the bootloader + `pt_walk` (§9 design-review F1 hardening) → XREF: §9
 - [ ] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
 - [ ] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
 - [ ] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
@@ -282,39 +284,52 @@ Move every page-table walker off the identity map and onto the §2 HHDM, while t
 > [!WARNING]
 > **HIGH RISK -- the riskiest paging change in the system.** The kernel root is physical-as-pointer TODAY (`kernel_pml4` at `vmm.c:125`, set from `read_cr3()` at `:1420`); `vmm_get_kernel_cr3()` (`:1051`) returns it PHYSICAL and `task.c:1158/1423/3346` load it raw into CR3, so a blanket HHDM conversion triple-faults at the next kernel-task switch -- the root MUST stay split phys-vs-walk. An INCOMPLETE walker inventory is silent while the identity map is live and faults the instant §5 retires it: `mm_phys_to_hhdm()` only range-checks (nonzero, <64 TiB), so a NULL/missed walk is a phys-page-0 read/write (`memmap.h:298-304`), not a fault.
 
-- [ ] Split the root: rename the physical global to `kernel_pml4_phys` (what `vmm_get_kernel_cr3()` returns, loaded raw into CR3) and set `kernel_pml4 = mm_phys_to_hhdm(...)` as the WALK pointer only
-- [ ] Add ONE checked walk helper (e.g. `pt_walk(phys)` over `mm_phys_to_hhdm`) that HARD-ERRORS on NULL -- NULL silently reads/writes phys page 0 while the identity map is live (`memmap.h:298-304`), not a fault
-- [ ] [H2] Route EVERY page-table deref through the checked helper REPO-WIDE -- 13 sites incl. `get_or_create_table`, the `*_user_page` family, `vmm_promote_to_1g`, `vmm_split_huge_page`, `vmm_apply_nx_policy`, `swap.c` (full list in commit)
-- [ ] [H2] Keep `*_phys` for every value STORED into a PTE/CR3 and every `pmm_free_frame()` arg -- never free an HHDM VA (`vmm_destroy_user_pml4`); a walk-vs-load mix-up is silent until the next context switch
-- [ ] Route `vmm_apply_nx_policy()` VA reconstruction (`vmm.c:1488`, naive shift) through `mm_canonical_from_indices()` -- non-canonical for `pml4i >= 256`
-- [ ] Leave the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) alone -- correct while the kernel links low; it moves to image-window bounds in §3
-- [ ] Add the identity-map-disabled runtime test the design review requires (remap/unmap/destroy/split/NX-traverse/swap with the broad identity map OFF) -- BSS-ceiling-gated in-kernel, so land it host-side or defer to §7 with `test_highhalf.c`
-- [ ] Add `POST16` entry/exit around the walker-conversion cutover
-- [ ] Commit: `"boot: VMM walker conversion -- page-table derefs through the HHDM helper"`
+- [x] Root split: `kernel_pml4` is now the HHDM WALK pointer; the physical root (for CR3) is derived on demand via `mm_hhdm_to_phys(kernel_pml4)` in `vmm_get_kernel_cr3()`. NO second global -- a static tripped the pre-§7 image ceiling
+- [x] Added `pt_walk(phys)` (non-inline, `vmm.h`/`vmm.c`): `mm_phys_to_hhdm` + `KeBugCheckEx(BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION)` on NULL (design review F2: runtime-safe fatal, not `boot_halt`). Non-inline keeps the image under the ceiling
+- [x] [H2] Routed EVERY page-table deref through `pt_walk` REPO-WIDE -- 20 functions (18 in `vmm.c`, 2 in `swap.c`): `get_or_create_table`, `zero_page`, the `*_user_page` family, `vmm_promote_to_1g`/`_split_huge_page`/`_apply_nx_policy`
+- [x] [H2] Kept `*_phys` for every PTE/CR3 store + `pmm_free_frame()` arg; `vmm_destroy_user_pml4` captures `pdpt_phys`/`pd_phys` separately, freeing physical never the HHDM walk pointer
+- [x] `vmm_apply_nx_policy()` VA reconstruction routed through `mm_canonical_from_indices()` at both sites (2 MiB huge + 4 KiB); canonical for `pml4i >= 256`
+- [x] Absent-entry safety: `VMM_FLAG_PRESENT` check before every lookup-path `pt_walk` (`vmm_set_user_page`, `vmm_remap_user_page`) -- pt_walk bugchecks on a zero frame (design-review F1)
+- [x] Left the `kernel_base = 0x100000` NX bound (`vmm.c`) alone -- correct while the kernel links low; it moves to image-window bounds in §3
+- [x] Converted the existing test-side walkers (`test_vmm.c`, `test_cpu_security.c`) to `mm_phys_to_hhdm` + `TEST_ASSERT` (design review F1; not `pt_walk` -- `KeBugCheckEx` banned in test code)
+- [/] Dedicated identity-map-disabled runtime test + absent-entry no-crash cases: BSS-ceiling-gated in-kernel -> deferred to §7 → XREF: §7 (item: "`test_highhalf.c` also covers the §9 identity-map-disabled walker exercise")
+- [x] Reclaimed a page for the ceiling: `swap_temp_buf` 4 KiB static -> `pmm_alloc_contiguous(1)` via HHDM (`swap.c`, freestanding no-large-static rule); §7 retires the ceiling that forces this
+- [x] Added `POST16_HHDM_WALK`/`_OK` (0xDD10/0xDD11) around the `vmm_init` cutover
+- [ ] Lint check rejecting raw phys-as-pointer page-table casts outside the bootloader/`pt_walk` (design review F1 hardening) → XREF: §7 (item: "`scripts/lint.sh` check rejecting raw page-table phys-as-pointer casts")
+- [x] Commit: `"boot: VMM walker conversion -- page-table derefs through the HHDM helper"`
 
 **Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW; this section flips the WALK pointer to the HHDM while the identity map stays live as a fallback, so behavior is unchanged and the section is independently bootable. Exercise the converted walkers (remap/unmap/destroy/split/NX-traverse/swap) with the broad identity map disabled (design review requirement) -- either host-side or, if the BSS ceiling blocks the in-kernel suite, deferred to §7's `test_highhalf.c` with a reciprocal XREF. Test on: QEMU KVM + TCG.
 
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) + `run-security-tests.bat` | converted `test_vmm.c`/`test_cpu_security.c` walkers; full suite 21420 kernel + 16 user, 0 failures; smoke boots to `C:\>`.
+
+> **Notes:**
+> - **What shipped** -- `pt_walk()` (shared non-inline HHDM walk helper, `vmm.h`/`vmm.c`) + a 20-function repo-wide walker conversion; `kernel_pml4` is now the HHDM walk pointer, the CR3 root derived via `mm_hhdm_to_phys()`.
+> - **How it runs** -- cutover in `vmm_init` (POST16 `0xDD10`/`0xDD11`); the identity map stays live as a fallback so the section is independently bootable; verified KVM+TCG smoke + full `test.sh`.
+> - **Downstream effects** -- unblocks §3 (linker split) and §5 (identity teardown), both of which depend on §9; Codex design + 2 adversarial adoptions (F1 absent-entry PRESENT guards, F2 `KeBugCheckEx`) in the commit message.
+> - **Canonical doc** -- [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md) (HHDM window + phys-vs-walk relation).
+> - **Scope boundary** -- §9 owns the WALKER conversion; the dedicated identity-map-disabled test + the raw-cast lint are §7 (BSS-gated); §5 owns identity teardown + data-buffer HHDM migration.
+
 > [!NOTE]
-> **Regression risk: HIGH.** An incomplete deref inventory or a walk-vs-load (`*_phys`) mix-up is silent until §5 retires the identity map or the next kernel-task CR3 load. Rollback: revert to walking via the identity map (the §2 HHDM install is independent and stays). Keep `scripts/test-smoke.sh` green at every step. The repo-wide 13-site inventory MUST be complete before §5 (identity teardown).
+> **Regression risk: HIGH.** An incomplete deref inventory or a walk-vs-load (`*_phys`) mix-up is silent until §5 retires the identity map or the next kernel-task CR3 load. Rollback: revert to walking via the identity map (the §2 HHDM install is independent and stays). Keep `scripts/test-smoke.sh` green at every step. The repo-wide walker inventory (20 functions) MUST be complete before §5 (identity teardown).
 
 ---
 
 ## OS Comparison
 
-| ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                                 |
-| --- | --------------------------------- | ------------------------ | ------------------------------- | ----------------------------------------------- |
-| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it  |
-| 💎   | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 sparse NX/RW HHDM in PML4 273-400 (64 TiB) |
-| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling |
-| 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6    |
-| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                  |
-| 💎   | KASLR                             | ✅ kernel ASLR            | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)                 |
-| 💎   | SMEP / SMAP clean split           | ✅ enforced               | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)                  |
-| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                  |
-| 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                         |
-| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)               |
-| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ✅ §1 `memmap.h` + 20-assert gate (live)         |
-| ⭐   | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair    | ✅ §1 HHDM vs image, range-checked + rejecting   |
+| ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                                               |
+| --- | --------------------------------- | ------------------------ | ------------------------------- | ------------------------------------------------------------- |
+| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it                |
+| 💎   | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400, 64 TiB); §9 walkers route through it |
+| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling               |
+| 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6                  |
+| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                                |
+| 💎   | KASLR                             | ✅ kernel ASLR            | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)                               |
+| 💎   | SMEP / SMAP clean split           | ✅ enforced               | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)                                |
+| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                                |
+| 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                                       |
+| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)                             |
+| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ✅ §1 `memmap.h` + 20-assert gate (live)                       |
+| ⭐   | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair    | ✅ §1 HHDM vs image, range-checked + rejecting                 |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.

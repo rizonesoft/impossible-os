@@ -886,12 +886,15 @@ static void test_1g_page_pdpt_promoted(void)
      * remain promoted since nothing maps in those ranges. */
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-    uint64_t *pml4 = (uint64_t *)(cr3 & 0x000FFFFFFFFFF000ULL);
+    /* HHDM walk (section 9); mm_phys_to_hhdm not pt_walk in test code. */
+    uint64_t *pml4 = (uint64_t *)mm_phys_to_hhdm(cr3 & PTE_ADDR_MASK);
+    TEST_ASSERT(pml4 != (void *)0, "kernel PML4 phys has an HHDM alias");
     if (!(pml4[0] & 1)) {
         TEST_SKIP("PML4[0] not present");
         return;
     }
-    uint64_t *pdpt = (uint64_t *)(pml4[0] & 0x000FFFFFFFFFF000ULL);
+    uint64_t *pdpt = (uint64_t *)mm_phys_to_hhdm(pml4[0] & PTE_ADDR_MASK);
+    TEST_ASSERT(pdpt != (void *)0, "PDPT phys has an HHDM alias");
     /* PDPT[2] should be a 1 GiB page (PS=1, bit 7) */
     TEST_ASSERT(pdpt[2] & (1ULL << 7),
                 "PDPT[2] has PS=1 (promoted to 1 GiB page)");
@@ -906,12 +909,15 @@ static void test_1g_page_pdpt0_not_promoted(void)
     /* PDPT[0] should NOT be promoted (contains kernel text, needs NX) */
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-    uint64_t *pml4 = (uint64_t *)(cr3 & 0x000FFFFFFFFFF000ULL);
+    /* HHDM walk (section 9); mm_phys_to_hhdm not pt_walk in test code. */
+    uint64_t *pml4 = (uint64_t *)mm_phys_to_hhdm(cr3 & PTE_ADDR_MASK);
+    TEST_ASSERT(pml4 != (void *)0, "kernel PML4 phys has an HHDM alias");
     if (!(pml4[0] & 1)) {
         TEST_SKIP("PML4[0] not present");
         return;
     }
-    uint64_t *pdpt = (uint64_t *)(pml4[0] & 0x000FFFFFFFFFF000ULL);
+    uint64_t *pdpt = (uint64_t *)mm_phys_to_hhdm(pml4[0] & PTE_ADDR_MASK);
+    TEST_ASSERT(pdpt != (void *)0, "PDPT phys has an HHDM alias");
     /* PDPT[0] should be a PD pointer, NOT a 1 GiB page */
     if (pdpt[0] & 1) {
         TEST_ASSERT(!(pdpt[0] & (1ULL << 7)),

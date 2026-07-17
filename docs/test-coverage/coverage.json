@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-17T02:23:02+02:00",
+  "timestamp": "2026-07-17T02:55:38+02:00",
   "total_suites": 2128,
-  "total_assertions": 7829,
+  "total_assertions": 7842,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -30,7 +30,7 @@
     {"file": "test_boot_warm_update.c", "suites": 13, "assertions": 27},
     {"file": "test_bulletproof.c", "suites": 7, "assertions": 20},
     {"file": "test_ci.c", "suites": 14, "assertions": 81},
-    {"file": "test_cpu_security.c", "suites": 108, "assertions": 218},
+    {"file": "test_cpu_security.c", "suites": 108, "assertions": 222},
     {"file": "test_crashdump.c", "suites": 35, "assertions": 112},
     {"file": "test_desktop.c", "suites": 48, "assertions": 211},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
@@ -97,7 +97,7 @@
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 34, "assertions": 117},
     {"file": "test_vfs.c", "suites": 13, "assertions": 40},
-    {"file": "test_vmm.c", "suites": 17, "assertions": 64},
+    {"file": "test_vmm.c", "suites": 17, "assertions": 73},
     {"file": "test_vpd.c", "suites": 2, "assertions": 19},
     {"file": "test_watchdog.c", "suites": 16, "assertions": 17}
   ]
