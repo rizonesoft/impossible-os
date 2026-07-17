@@ -791,6 +791,11 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
 > - Scope boundary: §26 owns the MECHANISM; the proof a shipped image used it is §27, and test TUs outside `src/kernel/test/` (found by this section's review) are §28. -> XREF: §27 (release-flavor proof) + §28 (test-only TUs outside the test directory).
 
+> **Verified:** 2026-07-17 | commit `2c34e615` | 10/10 items | build OK | smoke PASS (KVM 3.10s), 21504 kernel + 16 user tests, both flavors build, off map seam-free
+> **Deferred:** [M] directory-only pruning leaves `ntfs_test.c` / `ixfs_test.c` / `test_threads.c` / `boot_tests.c` linked in the release flavor, and `ntfs_run_self_test()` is reachable via the attacker-controlled `NTFS_TEST` volume label (reason: scope -- 3 unrelated subsystems + production call sites) -> XREF: `02-kernel-core/TODO-10 §28` (item: "Guard `ntfs_run_self_test()`" at line 828)
+> **Deferred:** [L] `-Wmissing-prototypes` is not enabled, so nothing catches a source-local prototype drifting from its header (reason: tree-wide flag change under `-Werror` across 754 files) -> XREF: `02-kernel-core/TODO-10 §28` (item: "Evaluate enabling `-Wmissing-prototypes`" at line 834)
+> **Quality reviewed:** 2026-07-17 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 2H+6M+1L fixed, 1M+1L deferred-XREF | scope: kernel-code-quality
+
 ---
 
 ## 27. Release-Flavor Proof: Seam-Inventory Gate and CI Attestation
@@ -825,6 +830,8 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 - [ ] Guard the `tpm_t_test_install` / `tpm_t_test_restore` mutators (`tpm_transport.c:1188-1264`) that replace the live callback table and CRB buffers, plus their declarations
 - [ ] Decide per-TU whether `boot_tests.c` (called at `boot_desktop.c:357`, runtime-gated by `boot.conf test=1`) compiles out under the release flavor or stays as a config-gated launcher
 - [ ] Re-audit for test-only TUs by CONTENT (test harness structure, `test_pass`/`test_fail` helpers), not by filename or directory: the four above prove both heuristics miss real cases
+- [ ] Add an automated `KERNEL_TESTS=off` compile+link CI leg: `test-tooling.sh` proves the flavor contract via `make -n` text only, so nothing stops the release flavor bit-rotting between merges
+- [ ] Evaluate enabling `-Wmissing-prototypes` (NOT implied by `-Wall -Wextra` in C, so nothing today catches a source-local prototype drifting from its header); tree-wide under `-Werror` across 754 files, so weigh the fallout before flipping
 - [ ] Commit: `"kernel/security: exclude test TUs outside the test directory from release builds"`
 
 **Test checkpoint:** a `KERNEL_TESTS=off` build compiles none of `ntfs_test.c` / `ixfs_test.c` / `test_threads.c`; `build/kernel.map` carries no `ntfs_run_self_test` / `ixfs_test_*` / `tpm_t_test_*` symbol; mounting a volume labelled `NTFS_TEST` on a release build performs no writes; the default `on` build still runs the NTFS self-test on that label and passes the full `scripts/test.sh` suite. Test on: QEMU KVM + TCG.

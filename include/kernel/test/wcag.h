@@ -14,6 +14,14 @@
 
 #include "kernel/types.h"
 
+/* KERNEL_TESTS gate: every function below is defined only in src/kernel/test/,
+ * which `make KERNEL_TESTS=off` prunes from the build. The declarations are
+ * guarded so the release flavor never advertises an API with no definition
+ * behind it. Deliberately NO no-op `#else` arms: every caller today is itself
+ * a pruned test TU, so a release-flavor caller is a design error that should
+ * fail at compile time, not silently become a no-op. */
+#ifdef KERNEL_TESTS
+
 /* ---- Rule IDs --------------------------------------------------------- */
 
 /* Subset of WCAG 2.2 rules applicable to a compositor shell.
@@ -75,3 +83,5 @@ int wcag_provider_ready(void);
 
 /* Return a short ASCII description of the rule for log formatting. */
 const char *wcag_rule_name(wcag_rule_id_t id);
+
+#endif /* KERNEL_TESTS */

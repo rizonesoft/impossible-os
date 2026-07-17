@@ -364,8 +364,7 @@ uint32_t dtb_cpu_count(void)    { return s_dtb_cpu; }
 
 #ifdef KERNEL_TESTS
 /* Test-only reset hook so unit tests can re-run dtb_init against
- * fixture buffers. Not exposed in the public header. */
-void dtb_reset_for_test(void);
+ * fixture buffers. Prototype lives in kernel/dtb.h under the same guard. */
 void dtb_reset_for_test(void)
 {
     s_dtb_valid = 0;

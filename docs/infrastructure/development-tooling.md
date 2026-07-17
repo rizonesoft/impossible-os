@@ -587,7 +587,7 @@ Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `b
 ```
 
 > [!IMPORTANT]
-> All test code is inside `#ifdef KERNEL_TESTS`. `-DKERNEL_TESTS` is always in CFLAGS -- test code compiles unconditionally but only runs when `test=1` or `debug=1` is set in `boot.conf`.
+> The default `on` flavor puts `-DKERNEL_TESTS` in CFLAGS and compiles the guarded seams plus the `src/kernel/test/` suite, which then run only when `test=1` or `debug=1` is set in `boot.conf`. The release flavor (`KERNEL_TESTS=off`) undefines the macro and prunes that directory; see [Build Flavors](#build-flavors). Not all test code is guarded yet: translation units outside `src/kernel/test/` that carry no `#ifdef` still compile into the release flavor, tracked by [Test-Only Translation Units Outside src/kernel/test/](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#28-test-only-translation-units-outside-srckerneltest).
 
 ### Core Subsystem Tests
 

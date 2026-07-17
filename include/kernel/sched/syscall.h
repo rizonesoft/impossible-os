@@ -80,6 +80,14 @@
                               * drift generator guarantees the values match
                               * at build time; this is the runtime gate. */
 
+#ifdef KERNEL_TESTS
+/* Test-flavor only: the SYS_FAULT_INJECT dispatch behind syscall 44, exposed
+ * non-static so kernel unit tests can drive the gate logic directly. Declared
+ * here rather than privately in each consumer so a signature change is caught
+ * by the compiler instead of linking under an incompatible calling contract. */
+int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
+#endif /* KERNEL_TESTS */
+
 /* ---- SYS_FAULT_INJECT subcommand selectors ----
  * All fault-injection countdowns are per-CPU + task-filtered. The
  * `countdown` argument is the N-th call to fail (N=1 => next call).

@@ -66,6 +66,15 @@ void boot_tests_run(void)
          * suppressed exactly when the operator most needs to see why
          * a `test=1` boot ran zero suites. */
         if (g_boot_info.config.test) {
+#ifndef KERNEL_TESTS
+            /* Third zero-suite reason, and the only COMPILE-time one: the
+             * release flavor pruned src/kernel/test/ and stubbed the runner
+             * entry points, so every call below is a no-op. Without this the
+             * operator gets a silent `test=1` boot -- the same signature as
+             * the 2026-04-21 disk-sourced-config incident. */
+            klog(LOG_WARN, "TEST",
+                 "Test surface compiled out of this image (KERNEL_TESTS=off)");
+#endif
             if (!run_kernel_tests)
                 klog(LOG_WARN, "TEST",
                      "Kernel TEST_CAT_* sweep skipped (test_kernel_skip=1)");

@@ -298,7 +298,6 @@ static NTSTATUS sys_getprocs(uint64_t buf_ptr, uint64_t buf_size,
  * ------------------------------------------------------------------ */
 
 #ifdef KERNEL_TESTS
-int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
 {
     uint32_t pid;

@@ -38,8 +38,7 @@ int test_usermode_path_has_traversal(const char *p);
 int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap);
 int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
 
-/* Exposed by src/kernel/sched/syscall.c for gate regression tests. */
-int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
+/* sys_fault_inject_dispatch comes from kernel/sched/syscall.h. */
 
 /* taxonomy helpers -- integer-returning thin wrappers so the unit
  * test binds against a stable ABI without pulling in utest_type_t. */

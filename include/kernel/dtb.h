@@ -54,3 +54,10 @@ uint32_t dtb_total_size(void);
 uint32_t dtb_chosen_count(void);
 uint32_t dtb_memory_count(void);
 uint32_t dtb_cpu_count(void);
+
+#ifdef KERNEL_TESTS
+/* Test-flavor only: reset hook so unit tests can re-run dtb_init() against
+ * fixture buffers. Declared here rather than privately in each consumer so a
+ * signature change is caught by the compiler, not at link time. */
+void dtb_reset_for_test(void);
+#endif /* KERNEL_TESTS */

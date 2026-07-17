@@ -13,7 +13,7 @@
 #include "kernel/firmware_platform.h"
 #include "kernel/firmware_tables.h"
 
-extern void dtb_reset_for_test(void);
+/* dtb_reset_for_test comes from kernel/dtb.h. */
 
 /* Wrapper: bypass the firmware-region mmap oracle for the duration of
  * a single dtb_init call against a fixture buffer in kernel BSS. */

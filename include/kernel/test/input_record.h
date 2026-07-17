@@ -63,6 +63,14 @@ typedef struct {
     } payload;
 } input_event_t;
 
+
+/* KERNEL_TESTS gate: every function below is defined only in src/kernel/test/,
+ * which `make KERNEL_TESTS=off` prunes from the build. The declarations are
+ * guarded so the release flavor never advertises an API with no definition
+ * behind it. Deliberately NO no-op `#else` arms: every caller today is itself
+ * a pruned test TU, so a release-flavor caller is a design error that should
+ * fail at compile time, not silently become a no-op. */
+#ifdef KERNEL_TESTS
 /* ---- Record API ------------------------------------------------------- */
 
 /* Begin a new capture session. Allocates a ring buffer sized for
@@ -125,3 +133,5 @@ int input_replay_from_jsonl(const char *jsonl, int jsonl_len,
  * tests now exercise (see test_input_record_serialize_roundtrip in
  * src/kernel/test/test_desktop.c). Bring back direct replay only
  * with the same timing-safety helpers wired in. */
+
+#endif /* KERNEL_TESTS */
