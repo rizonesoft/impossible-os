@@ -61,33 +61,33 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                        | Depends On                    | Status |
-| --- | :---: | -------------------------------------------------- | ----------------------------- | :----: |
-| 💎   |   1   | Per-process environ storage & kernel API           | --                            |  [x]   |
-| 💎   |   2   | System default variables from Registry             | §1, T14 §4                    |  [x]   |
-| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                            |  [x]   |
-| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                            |  [x]   |
-| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4    |  [x]   |
-| 💎   |   6   | Win32 API wrappers                                 | §5                            |  [/]   |
-| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                        |  [/]   |
-| 💎   |   8   | `.profile` startup script                          | §7                            |  [/]   |
-| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                        |  [/]   |
-| 💎   |  10   | Environment block sorting & size limits            | §1                            |  [x]   |
-| 💎   |  11   | PATHEXT variable & extension search order          | §7                            |  [/]   |
-| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                       |  [/]   |
-| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4          |  [/]   |
-| 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                        |  [/]   |
-| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                        |  [/]   |
-| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                    |  [/]   |
-| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                    |  [/]   |
-| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                        |  [/]   |
-| 💎   |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                            |  [x]   |
-| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                           |  [x]   |
-| 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20              |  [/]   |
-| 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                   |  [x]   |
-| 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §7              |  [ ]   |
-| 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13, T33 §7 |  [/]   |
-| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §7              |  [ ]   |
+| ⭐   | Order | Deliverable                                        | Depends On                 | Status |
+| --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
+| 💎   |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
+| 💎   |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
+| 💎   |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
+| 💎   |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
+| 💎   |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
+| 💎   |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
+| 💎   |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
+| 💎   |   8   | `.profile` startup script                          | §7                         |  [/]   |
+| ⭐   |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
+| 💎   |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
+| 💎   |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
+| 💎   |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
+| 💎   |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
+| 💎   |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
+| 💎   |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
+| 💎   |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
+| ⭐   |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
+| 💎   |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [/]   |
+| 💎   |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                         |  [x]   |
+| 💎   |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
+| 💎   |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
+| 💎   |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
+| 💎   |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §10          |  [ ]   |
+| 💎   |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [/]   |
+| 💎   |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §10          |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -786,6 +786,9 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 
 ## 23. Live-Environment Adoption: SetCurrentEnvironment, SetEnvironmentStrings, CreateEnvironmentEx
 
+> [!IMPORTANT]
+> **UNPARKED 2026-07-17 -- and there is WIP to apply, do NOT rewrite from scratch.** This section was ceiling-parked; `02-kernel-core/TODO-33 §10` retired the ceiling (BSS end `0x7fe000` -> `0x6c2000`, ~1272 KiB headroom), so the design settled in the items below is now implementation-only. **An in-progress implementation is parked in `git stash` `s23-wip-bss-check`** (`include/kernel/env.h` + `src/kernel/env.c`, ~383 insertions). Apply it and RE-VERIFY against the moved HEAD rather than trusting its pre-park state -- `02-kernel-core/TODO-24 §7`'s stash needed exactly that treatment and its re-review found a High the original review missed -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §23` + `§25`").
+
 §21 shipped the four Rtl env entries the CRT reaches for, but `RtlCreateEnvironment` is still a pure alloc/free round-trip: nothing adopts a created block as the live environment, so §21 + §22 could both close with the create/destroy pair never becoming real. This section closes that with the block-LIFECYCLE family. Split from the counted READ forms (§25) on the seam the design review drew: adoption is a store-ownership + atomicity lens over `env.c`, while the counted forms are an ABI-length + integer-narrowing lens over `nt_rtlenv.c`'s expansion engine. Signatures + flags pinned VERBATIM from winsiderss/phnt `ntrtl.h` (2026-07-15), cross-read against the WRK and ReactOS `sdk/lib/rtl/env.c`.
 
 - [ ] `env_exchange_block(t, entries, count, void **out_old)` (env.c): ONE `environ_lock` span encodes the exact old store AND swaps the prepared new one; two acquisitions can return an environ that was never replaced
@@ -825,7 +828,11 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
-> **Deferred:** [blocked] blocker (2) of 2 is CLEARED; blocker (1) remains and is sufficient on its own. The three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: `02-kernel-core/TODO-23 §13` (item: "`src/kernel/probe.c` -- implementation; `safe_return_rip` slot in CPU-local area" at line 392). The ceiling half retired 2026-07-17: `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000` (~1272 KiB headroom), so the REMAINING items (measured budget, lookup cache, stack probe, right-sized retry, CAS-serialized free, sentinel contract) are now free to land -- they no longer wait on headroom, only on this section being reachable. Carries a real latent SMP defect (the non-atomic `env_buf_free` magic check, item above) that ships with them; it is NOT user-reachable today (§20's BLOCKING PMM item gates the export row) -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §24`: KEEP `[/]`")
+- [ ] **Split the section-level park.** Only the three boundary probe+copy items need fault-recoverable usercopy; the measured-budget, lookup-cache, CAS double-free and sentinel items are independent and shippable, but the terminal stamp parks them
+  - The oracle reads a stamped `[/]` section as DONE, so the documented non-atomic `env_buf_free` SMP double-free hardening stays stranded behind an unrelated usercopy project
+  - Move the three usercopy-bound items into their own deferred scope (or leave only those `[/]`), then implement the independent remainder -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §24`: KEPT `[/]`")
+
+> **Deferred:** [blocked] blocker (2) of 2 is CLEARED; blocker (1) remains and is sufficient on its own. The three boundary probe+copy items need bounded, fault-recoverable usercopy: `copy_from_user` has no fixup table or SEH, `ProbeForRead` never checks mapping, and a page-presence precheck cannot close it (no address-space lock exists; `vmm_query_flags` walks `kernel_pml4` while user unmaps take a `cr3`) -- so scanning an extent-less untrusted block for its terminator is a kernel-panic primitive reachable from user input -> XREF: `02-kernel-core/TODO-23 §13` (item: "Extend `include/kernel/nt/zw.h` + `src/kernel/nt/ssdt.c` in place: add `try_copy_from_user` / `try_copy_to_user`"). The ceiling half retired 2026-07-17: `02-kernel-core/TODO-33 §10` moved the BSS end to `0x6c2000` (~1272 KiB headroom), so the REMAINING items (measured budget, lookup cache, stack probe, right-sized retry, CAS-serialized free, sentinel contract) are now free to land -- they no longer wait on headroom, only on this section being reachable. Carries a real latent SMP defect (the non-atomic `env_buf_free` magic check, item above) that ships with them; it is NOT user-reachable today (§20's BLOCKING PMM item gates the export row) -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-22 §24`: KEEP `[/]`")
 
 ---
 

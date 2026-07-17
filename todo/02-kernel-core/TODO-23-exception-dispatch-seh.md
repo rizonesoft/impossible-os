@@ -15,7 +15,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 > **Goal:** Replace the current "all CPU exceptions → `panic_screen()`" model with a proper Windows-style exception dispatch pipeline. That means: a captured `CONTEXT` record, an `EXCEPTION_RECORD` with fault address and exception code, a page-fault triage layer that separates recoverable faults from hard kills, debugger first-chance/second-chance notification, a `KiUserExceptionDispatcher` path that delivers faults to user-mode SEH handlers via the TEB chain, x64 table-based unwind (`RtlVirtualUnwind`), kernel-mode stack walking (`RtlCaptureStackBackTrace`), Vectored Exception Handlers (VEH), Vectored Continue Handlers (VCH), `__C_specific_handler` for SEH scope-table dispatch, an unhandled exception filter, kernel-mode safe probing (`ProbeForRead`/`ProbeForWrite`), kernel-driver `__try`/`__except` support, POSIX signal delivery for Linux-compat processes (including `sigaltstack`), and exception dispatch telemetry. Without this, every access violation -- whether in a driver or a user app -- crashes the whole OS rather than being caught and reported correctly.
 
 > [!NOTE]
-> **WHOLE-FILE BLOCKER CLEARED 2026-07-17 -- this file is UNPARKED.** Every section here was gated on the kernel-BSS/`USER_BASE` ceiling: `.bss` ended at `0x7FEE55`, 4523 bytes under `USER_BASE` `0x800000`, so `scripts/build.sh`'s BSS-collision guard failed any section adding more than ~4 KiB of `.text`/`.rodata`. `02-kernel-core/TODO-33 §10` converted the large static pools to frame-backed storage and the BSS end moved to `0x6c2000` -- **~1272 KiB of headroom**, ~280x what this file's §1 needed. The 16 ceiling `Deferred` stamps were swept and the Implementation Order reset to `[ ]`; the file now runs on its own Implementation Order, §1 first -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-23 §1-§16` (exception/SEH)").
+> **WHOLE-FILE BLOCKER CLEARED 2026-07-17 -- this file is UNPARKED.** Every section here was gated on the kernel-BSS/`USER_BASE` ceiling: `.bss` ended at `0x7FEE55`, 4523 bytes under `USER_BASE` `0x800000`, so `scripts/build.sh`'s BSS-collision guard failed any section adding more than ~4 KiB of `.text`/`.rodata`. `02-kernel-core/TODO-33 §10` converted the large static pools to frame-backed storage and the BSS end moved to `0x6c2000` -- **~1272 KiB of headroom**, ~280x what this file's §1 needed. The 16 ceiling `Deferred` stamps were swept and 15 of 16 rows reset to `[ ]`; the file now runs on its own Implementation Order, §1 first. **§15 stays `[/]`** -- the ceiling was not its only blocker (its `D10T10 §8` Linux-compat signal prerequisite is open), and §3/§4 additionally depend on the open `TODO-29 §5`, so resolve each row's "Depends On" column before starting it -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-23 §1-§16` (exception/SEH)").
 >
 > **§1 is code-COMPLETE and parked in `git stash` `todo23-s1-wip` -- APPLY it, do not rewrite.** It was implemented and design-reviewed before the park; re-verify it against the moved HEAD (the tree advanced substantially) rather than trusting the old review, exactly as `TODO-24 §7` needed when its stash was re-applied.
 
@@ -67,7 +67,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §7     |  [ ]   |
+| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §10    |  [ ]   |
 | 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
@@ -81,7 +81,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |  12   | Unhandled exception filter + WER hook                            | §7, §8, §10                |  [ ]   |
 | ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                         | §2                         |  [ ]   |
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                       | §6, §9, §13                |  [ ]   |
-| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [ ]   |
+| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [/]   |
 | ⭐   |  16   | Exception dispatch telemetry                                     | §4, TODO-04 §6             |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
@@ -474,6 +474,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 **Test checkpoint:** Linux-compat process with `SIGSEGV` handler: NULL dereference delivers `SIGSEGV` with `si_code=SEGV_MAPERR`, `si_addr=0x0` -- handler fires, process continues. Linux-compat process without handler: NULL dereference terminates with `STATUS_ACCESS_VIOLATION`. `sigaltstack` set: stack overflow delivers `SIGSEGV` on alternate stack, not the overflowed stack. Compile guard: `#ifndef CONFIG_LINUX_COMPAT` → all compat code is excluded. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"kernel: map hardware faults to POSIX signals for Linux compat processes"`
+
+> **Deferred:** [H] the ceiling cleared, but it was never this section's only blocker: the Implementation Order declares `D10T10 §8` (Linux-compat signal delivery) as a hard prerequisite and that work is entirely open, so the Test checkpoint here -- working `rt_sigaction` / `sigaltstack` / `sigreturn` behavior -- cannot pass. `CONFIG_LINUX_COMPAT` stubbing would compile but not satisfy it (reason: external prerequisite) -> XREF: `10-platform-services/TODO-10 §8`
 
 
 ---
