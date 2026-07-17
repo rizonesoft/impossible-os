@@ -1051,42 +1051,74 @@ int task_set_argv(struct task *t, int argc, const char *const *argv)
     return ENV_OK;
 }
 
-int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
+/* Is `e` a storable "KEY=VALUE" entry? Must contain '=', carry a non-empty legal
+ * name, and fit the name and value byte caps. SINGLE definition of well-formedness
+ * for every path that publishes an entry: the lenient exec path skips what this
+ * rejects, the strict adoption path refuses the whole block on it. One predicate is
+ * what keeps "skipped by exec" and "refused for Rtl" the same set of inputs. */
+static int env_entry_is_wellformed(const char *e)
 {
-    char **arr;
-    char **old_env;
-    uint32_t old_count;
-    uint32_t n = 0;          /* count of accepted (well-formed) entries */
-    uint32_t new_bytes = 0;  /* SUM(strlen(entry)+1) of the published set */
-    uint32_t old_total = 0;  /* prior block bytes (for the warn crossing) */
+    uint32_t elen, eq;
+
+    if (!e)
+        return 0;
+    elen = env_strnlen(e, ENV_NAME_MAX + 1u + ENV_VALUE_MAX + 1u);
+    if (elen == 0 || elen > ENV_NAME_MAX + 1u + ENV_VALUE_MAX)
+        return 0;                       /* over-long or missing terminator */
+    /* Split the name honoring a leading '=' hidden drive var; reject a name that is
+     * empty, separator-less, or an illegal '='-name (only "=X:" is legal). */
+    if (env_entry_key_span(e, elen, &eq) != 0)
+        return 0;
+    /* Enforce the name and value byte caps SEPARATELY, exactly as env_set does: the
+     * combined-length check above still admits e.g. a 1-byte name with a 32,769-byte
+     * value (total < NAME_MAX+1+VALUE_MAX), which env_set would reject. Storing an
+     * over-ENV_VALUE_MAX value would let a reader (NtQueryEnvironmentVariable) walk
+     * past its ENV_VALUE_MAX-sized buffer. */
+    if (eq > ENV_NAME_MAX || (elen - eq - 1u) > ENV_VALUE_MAX)
+        return 0;                       /* name or value over its byte cap */
+    return 1;
+}
+
+/* Free an entry array built by env_prepare_entries, or an old store already detached
+ * from its task: `n` string slots plus the array itself. */
+static void env_free_entry_array(char **arr, uint32_t n)
+{
     uint32_t i;
 
-    if (!t)
-        return ENV_ERR_INVAL;
+    if (!arr)
+        return;
+    for (i = 0; i < n; i++)
+        if (arr[i])
+            env_str_free(arr[i], env_strlen(arr[i]) + 1u);
+    kfree(arr);
+}
 
-    /* Over-cap is a hard error, checked BEFORE the clear path so a malformed
-     * (entries==NULL, count>cap) call is rejected uniformly rather than silently
-     * clearing (SYS_EXEC already caps envc at this bound). */
-    if (count > ENV_MAX_ENTRIES)
-        return ENV_ERR_NOSPACE;
+/* Build the publishable entry array from a kernel-side "KEY=VALUE" vector: deep-copy
+ * every well-formed entry, sort by name, keep the last occurrence of each name, and
+ * enforce the block-size cap. Touches NO task state and takes NO lock -- the array is
+ * built completely before any caller acquires environ_lock, so a failure here cannot
+ * disturb a live store. On ENV_OK the caller owns *out_arr (release with
+ * env_free_entry_array); on failure nothing is allocated.
+ *
+ * POLICY: a malformed entry is SKIPPED, not rejected, so one bad envp entry cannot
+ * poison a whole exec. That leniency is sound ONLY for the SYS_EXEC contract, where
+ * the vector is assembled by the kernel and a skipped entry costs one variable. It is
+ * NOT sound for an adoption path whose contract is all-or-nothing: silently dropping
+ * entries from a caller-supplied block would replace a live environment with a
+ * partial subset and report success. Such a caller MUST validate its block strictly
+ * first (env_block_entries_strict), so no entry reaching here is ever malformed. */
+static int env_prepare_entries(const char *const *entries, uint32_t count,
+                               char ***out_arr, uint32_t *out_n,
+                               uint32_t *out_bytes)
+{
+    char **arr;
+    uint32_t n = 0;          /* count of accepted (well-formed) entries */
+    uint32_t new_bytes = 0;  /* SUM(strlen(entry)+1) of the published set */
+    uint32_t i;
 
-    /* Empty block (NULL entries or count 0) -> clear environ to empty. */
-    if (!entries || count == 0) {
-        mutex_lock(&t->environ_lock);
-        old_env = t->environ;
-        old_count = t->environ_count;
-        t->environ = NULL;
-        t->environ_count = 0;
-        t->environ_bytes = 0;              /* clearing MUST reset the cached total */
-        mutex_unlock(&t->environ_lock);
-        if (old_env) {
-            for (i = 0; i < old_count; i++)
-                if (old_env[i])
-                    env_str_free(old_env[i], env_strlen(old_env[i]) + 1);
-            kfree(old_env);
-        }
-        return ENV_OK;
-    }
+    *out_arr = NULL;
+    *out_n = 0;
+    *out_bytes = 0;
 
     arr = (char **)kmalloc((count + 1u) * sizeof(char *));
     if (!arr)
@@ -1094,35 +1126,16 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
     for (i = 0; i <= count; i++)
         arr[i] = NULL;
 
-    /* Deep-copy each well-formed "KEY=VALUE" entry (must contain '=', a non-empty
-     * key, and fit ENV_NAME_MAX+ENV_VALUE_MAX). Malformed entries are skipped so
-     * a bad envp cannot poison the whole exec. */
+
+    /* Deep-copy each well-formed "KEY=VALUE" entry. Malformed entries are skipped
+     * so a bad envp cannot poison the whole exec (see the POLICY note above). */
     for (i = 0; i < count; i++) {
         const char *e = entries[i];
-        uint32_t elen, eq;
-        if (!e)
+        if (!env_entry_is_wellformed(e))
             continue;
-        elen = env_strnlen(e, ENV_NAME_MAX + 1u + ENV_VALUE_MAX + 1u);
-        if (elen == 0 || elen > ENV_NAME_MAX + 1u + ENV_VALUE_MAX)
-            continue;                       /* over-long or missing terminator */
-        /* Split the name honoring a leading '=' hidden drive var; skip a name
-         * that is empty, separator-less, or an illegal '='-name (only "=X:"). */
-        if (env_entry_key_span(e, elen, &eq) != 0)
-            continue;
-        /* Enforce the name and value byte caps SEPARATELY, exactly as env_set
-         * does: the combined-length check above still admits e.g. a 1-byte name
-         * with a 32,769-byte value (total < NAME_MAX+1+VALUE_MAX), which env_set
-         * would reject. Storing an over-ENV_VALUE_MAX value would let a reader
-         * (NtQueryEnvironmentVariable) walk past its ENV_VALUE_MAX-sized buffer. */
-        if (eq > ENV_NAME_MAX || (elen - eq - 1u) > ENV_VALUE_MAX)
-            continue;                       /* name or value over its byte cap */
         arr[n] = env_strdup(e);
         if (!arr[n]) {
-            uint32_t j;
-            for (j = 0; j < n; j++)
-                if (arr[j])
-                    env_str_free(arr[j], env_strlen(arr[j]) + 1);
-            kfree(arr);
+            env_free_entry_array(arr, n);
             return ENV_ERR_NOMEM;
         }
         n++;
@@ -1136,12 +1149,8 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
      * sort. */
     if (n > 1u) {
         char **scratch = (char **)kmalloc(n * sizeof(char *));
-        uint32_t a;
         if (!scratch) {
-            for (a = 0; a < n; a++)
-                if (arr[a])
-                    env_str_free(arr[a], env_strlen(arr[a]) + 1u);
-            kfree(arr);
+            env_free_entry_array(arr, n);
             return ENV_ERR_NOMEM;
         }
         env_ptr_msort(arr, n, scratch);
@@ -1171,30 +1180,22 @@ int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
     for (i = 0; i < n; i++)
         new_bytes += env_strlen(arr[i]) + 1u;
     if (new_bytes + 1u > ENV_BLOCK_MAX) {
-        for (i = 0; i < n; i++)
-            if (arr[i])
-                env_str_free(arr[i], env_strlen(arr[i]) + 1u);
-        kfree(arr);
+        env_free_entry_array(arr, n);
         return ENV_ERR_NOSPACE;
     }
 
-    mutex_lock(&t->environ_lock);
-    old_env = t->environ;
-    old_count = t->environ_count;
-    old_total = env_block_bytes_locked(t);   /* prior block bytes (old cached total) */
-    t->environ = arr;
-    t->environ_count = n;
-    t->environ_bytes = new_bytes;
-    mutex_unlock(&t->environ_lock);
-
-    if (old_env) {
-        for (i = 0; i < old_count; i++)
-            if (old_env[i])
-                env_str_free(old_env[i], env_strlen(old_env[i]) + 1);
-        kfree(old_env);
-    }
-    env_warn_block_crossing(t, old_total, new_bytes + 1u);
+    *out_arr = arr;
+    *out_n = n;
+    *out_bytes = new_bytes;
     return ENV_OK;
+}
+
+int env_adopt_block(struct task *t, const char *const *entries, uint32_t count)
+{
+    /* Exactly the NULL-PreviousEnvironment exchange: same validation, same sort/dedup,
+     * same single-lock-span swap, old store freed here instead of handed back. Keeping
+     * one primitive is what stops the two paths' entry policy from drifting apart. */
+    return env_exchange_block(t, entries, count, NULL);
 }
 
 /* Does an argument need quoting? Windows quotes an arg that is empty or contains
@@ -1838,8 +1839,21 @@ over_budget:
  * NULL-Environment "calling process's own block" path)
  * =========================================================================== */
 
-int env_build_block_utf16(struct task *t, uint16_t **out_block,
-                          uint32_t *out_wchars, uint32_t max_wchars)
+/* Core of env_build_block_utf16: REQUIRES t->environ_lock to be HELD by the caller
+ * and never touches it, so a caller already inside an environ_lock span can encode
+ * the exact store it is about to replace. env_build_block_utf16 is the locking
+ * wrapper and the only other caller.
+ *
+ * WHY THE SPLIT: an encoder that takes the lock itself cannot serve a transactional
+ * exchange. The old-store snapshot would have to be built AFTER the swap released the
+ * lock, so an allocation failure there would leave the new environment published with
+ * no snapshot to return -- unwindable only by a second swap racing every other
+ * writer. Encoding inside the swap's own lock span keeps "capture the exact old store"
+ * and "publish the new one" a single serialized step, and lets a failed snapshot abort
+ * before anything is published. */
+static int env_build_block_utf16_locked(struct task *t, uint16_t **out_block,
+                                        uint32_t *out_wchars, uint32_t max_wchars,
+                                        int apply_secure_filter)
 {
     uint32_t total, i, w, nentries;
     char *raw;
@@ -1851,20 +1865,23 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
     *out_block = NULL;
     *out_wchars = 0;
 
-    /* Snapshot under the env mutex: size, allocate, and convert all while holding
-     * the lock so a sibling env_set/env_unset cannot change the block between the
-     * sizing and conversion passes (both feed nls_cp_utf8_to_utf16 the same
-     * bytes). Allocation under a MUTEX is permitted (env is a sleeping lock, not
-     * a spinlock). NOTE: for a block above ENV_STR_KMALLOC_MAX, env_str_alloc
-     * routes to pmm_alloc_contiguous, whose bitmap/accounting is NOT yet
-     * SMP-locked (a pre-existing kernel-wide gap; kmalloc's s_heap_lock covers
-     * the small-block path). Tracked for a real physical-allocator lock. */
-    mutex_lock(&t->environ_lock);
+    /* Size, allocate, and convert all inside the caller's lock span so a sibling
+     * env_set/env_unset cannot change the block between the sizing and conversion
+     * passes (both feed nls_cp_utf8_to_utf16 the same bytes). Allocation under a
+     * MUTEX is permitted (env is a sleeping lock, not a spinlock). NOTE: for a
+     * block above ENV_STR_KMALLOC_MAX, env_str_alloc routes to
+     * pmm_alloc_contiguous, whose bitmap/accounting is NOT yet SMP-locked (a
+     * pre-existing kernel-wide gap; kmalloc's s_heap_lock covers the small-block
+     * path). Tracked for a real physical-allocator lock. */
 
     /* AT_SECURE: an elevated task's serialized block omits blocklisted names, so
      * a child receiving this block (CreateEnvironmentBlock / Rtl expansion) cannot
-     * recover LD_PRELOAD et al. Constant for the whole build; both passes agree. */
-    secure = env_is_secure_context(t);
+     * recover LD_PRELOAD et al. Constant for the whole build; both passes agree.
+     * The filter is CALLER-SELECTED because it must NOT apply to a same-process
+     * PreviousEnvironment restore token: that snapshot goes back to the very task
+     * that already held those vars, so filtering it exposes nothing new and would
+     * silently drop physically-present entries when the token is restored. */
+    secure = apply_secure_filter ? env_is_secure_context(t) : 0;
 
     /* Sizing pass: UTF-8 entries convert to a variable number of WCHARs (a
      * multibyte UTF-8 char is one BMP WCHAR or a surrogate pair, never one WCHAR
@@ -1881,19 +1898,15 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
                 continue;
             need = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                         (uint16_t *)0, 0u, NLS_CP_REPLACE);
-            if (need < 0) {
-                mutex_unlock(&t->environ_lock);
+            if (need < 0)
                 return ENV_ERR_INVAL;             /* only on a bad mode/NULL -- guarded */
-            }
             total += (uint32_t)need + 1u;         /* entry WCHARs + its NUL */
             nentries++;
             /* Bail the instant the block exceeds the cap rather than sizing every
              * remaining entry under the lock (a pathological environ could be
              * tens of MiB); sibling env ops should not wait on a doomed build. */
-            if (total > max_wchars) {
-                mutex_unlock(&t->environ_lock);
+            if (total > max_wchars)
                 return ENV_ERR_NOSPACE;
-            }
         }
     }
     /* A non-empty block already ends "...\0\0" (last entry's NUL + the trailing
@@ -1901,16 +1914,12 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
      * NT double-NUL block contract -- emit two NULs so it is "\0\0". */
     if (nentries == 0u)
         total = 2u;
-    if (total > max_wchars) {
-        mutex_unlock(&t->environ_lock);
+    if (total > max_wchars)
         return ENV_ERR_NOSPACE;
-    }
 
     raw = env_str_alloc(total * 2u);              /* wchars -> bytes */
-    if (!raw) {
-        mutex_unlock(&t->environ_lock);
+    if (!raw)
         return ENV_ERR_NOMEM;
-    }
     blk = (uint16_t *)raw;
 
     w = 0;
@@ -1923,7 +1932,6 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
             got = nls_cp_utf8_to_utf16((const uint8_t *)e, env_strlen(e),
                                        &blk[w], total - w, NLS_CP_REPLACE);
             if (got < 0) {                        /* sizing guaranteed room; defensive */
-                mutex_unlock(&t->environ_lock);
                 env_str_free(raw, total * 2u);
                 return ENV_ERR_INVAL;
             }
@@ -1935,11 +1943,26 @@ int env_build_block_utf16(struct task *t, uint16_t **out_block,
     if (nentries == 0u)
         blk[w++] = 0;                             /* second NUL for the empty block */
 
-    mutex_unlock(&t->environ_lock);
-
     *out_block = blk;
     *out_wchars = w;                              /* == total */
     return ENV_OK;
+}
+
+int env_build_block_utf16(struct task *t, uint16_t **out_block,
+                          uint32_t *out_wchars, uint32_t max_wchars)
+{
+    int rc;
+
+    /* `t` is dereferenced by the lock itself, so it is checked before the acquire;
+     * the core re-checks the out params for its other caller. */
+    if (!t)
+        return ENV_ERR_INVAL;
+
+    mutex_lock(&t->environ_lock);
+    rc = env_build_block_utf16_locked(t, out_block, out_wchars, max_wchars,
+                                      1 /* child/inheritance block: apply AT_SECURE filter */);
+    mutex_unlock(&t->environ_lock);
+    return rc;
 }
 
 void env_free_block_utf16(uint16_t *block, uint32_t wchars)
@@ -2265,6 +2288,240 @@ static int env_wrap_block(const uint16_t *src, uint32_t wchars, void **out_block
      * ENV_CREATE_BLOCK_MAX_WCHARS (128 KiB), where a per-WCHAR loop is pure waste. */
     memcpy(body, src, (uint64_t)wchars * sizeof(*body));
     *out_block = (void *)body;
+    return ENV_OK;
+}
+
+/* Snapshot the CURRENT store into a wrapped block in the same form env_create_block
+ * hands out, so the result is freeable by env_destroy_block. REQUIRES environ_lock
+ * HELD: the snapshot must be the exact store the caller is about to replace. */
+static int env_snapshot_wrapped_locked(struct task *t, void **out_block)
+{
+    uint16_t *blk;
+    uint32_t wchars;
+    int rc;
+
+    /* apply_secure_filter = 0: an EXACT snapshot. This is a same-process restore token
+     * (env_exchange_block's out_old / RtlSetCurrentEnvironment's PreviousEnvironment),
+     * not a child-inheritance block, so the AT_SECURE filter must NOT strip entries the
+     * old store physically held -- else restoring the token permanently loses them. */
+    rc = env_build_block_utf16_locked(t, &blk, &wchars,
+                                      ENV_CREATE_BLOCK_MAX_WCHARS, 0);
+    if (rc != ENV_OK)
+        return rc;
+    rc = env_wrap_block(blk, wchars, out_block);
+    env_free_block_utf16(blk, wchars);
+    return rc;
+}
+
+int env_exchange_block(struct task *t, const char *const *entries,
+                       uint32_t count, void **out_old)
+{
+    char **arr = NULL;       /* prepared new store (NULL == clear to empty) */
+    char **old_env;
+    uint32_t old_count;
+    uint32_t n = 0;
+    uint32_t new_bytes = 0;
+    uint32_t old_total = 0;
+    int rc;
+
+    if (out_old)
+        *out_old = NULL;
+    if (!t)
+        return ENV_ERR_INVAL;
+
+    /* Over-cap is a hard error, checked BEFORE the clear path so a malformed
+     * (entries==NULL, count>cap) call is rejected uniformly rather than silently
+     * clearing (SYS_EXEC already caps envc at this bound). */
+    if (count > ENV_MAX_ENTRIES)
+        return ENV_ERR_NOSPACE;
+
+    /* Build the whole new store first. A NULL vector or a zero count clears the
+     * environment, which needs no preparation: arr stays NULL. */
+    if (entries && count > 0u) {
+        rc = env_prepare_entries(entries, count, &arr, &n, &new_bytes);
+        if (rc != ENV_OK)
+            return rc;
+    }
+
+    mutex_lock(&t->environ_lock);
+
+    /* The old-store snapshot is built INSIDE the span that publishes the swap, and
+     * BEFORE it: the block handed back is then provably the store this call replaced
+     * and not one a racing writer installed in between. Failing here aborts the whole
+     * exchange with the prior environment still live and published. */
+    if (out_old) {
+        rc = env_snapshot_wrapped_locked(t, out_old);
+        if (rc != ENV_OK) {
+            mutex_unlock(&t->environ_lock);
+            env_free_entry_array(arr, n);
+            return rc;
+        }
+    }
+
+    old_env = t->environ;
+    old_count = t->environ_count;
+    old_total = env_block_bytes_locked(t);   /* prior block bytes (old cached total) */
+    t->environ = arr;                        /* NULL on the clear path */
+    t->environ_count = n;
+    t->environ_bytes = new_bytes;            /* clearing MUST reset the cached total */
+    mutex_unlock(&t->environ_lock);
+
+    /* The old array is unreachable now, so it is freed outside the lock. */
+    env_free_entry_array(old_env, old_count);
+    env_warn_block_crossing(t, old_total, new_bytes + 1u);
+    return ENV_OK;
+}
+
+int env_replace_from_block_utf16(struct task *t, const uint16_t *body,
+                                 uint32_t wchars, void **out_old)
+{
+    const char **list;
+    char **owned;                          /* temp UTF-8 entry copies to free */
+    uint32_t n = 0, i;
+    uint32_t cum = 1u;                     /* cumulative block bytes (+ terminator) */
+    uint32_t p = 0;
+    int rc = ENV_OK;
+
+    if (out_old)
+        *out_old = NULL;
+    if (!t || !body)
+        return ENV_ERR_INVAL;
+
+    /* STRICT gate -- everything below is validated BEFORE a single entry is published,
+     * because this path's contract is all-or-nothing: it either installs the caller's
+     * block entire or leaves the live environment exactly as it was. A lenient scan
+     * (skip what does not parse, adopt the rest) would report success after replacing
+     * the environment with a silently truncated subset.
+     *
+     * The terminator check is what makes the decode loop below safe: a block whose
+     * last two WCHARs are NUL cannot have a final entry that runs to the extent, so
+     * the scan can never mistake "ran out of buffer" for "reached the block end". */
+    if (wchars < 2u)
+        return ENV_ERR_INVAL;              /* below the two-WCHAR "\0\0" empty form */
+    if (wchars > ENV_CREATE_BLOCK_MAX_WCHARS)
+        return ENV_ERR_NOSPACE;
+    if (body[wchars - 1u] != 0u || body[wchars - 2u] != 0u)
+        return ENV_ERR_INVAL;              /* no double-NUL terminator within the count */
+
+    /* list[] + owned[] hold one extra slot for the NULL terminator; (511+1)*8 ==
+     * 4096 bytes, at the kmalloc ceiling. */
+    list  = (const char **)kmalloc((ENV_MAX_ENTRIES + 1u) * sizeof(char *));
+    owned = (char **)kmalloc((ENV_MAX_ENTRIES + 1u) * sizeof(char *));
+    if (!list || !owned) {
+        if (list)  kfree(list);
+        if (owned) kfree(owned);
+        return ENV_ERR_NOMEM;
+    }
+
+    while (p < wchars) {
+        uint32_t q = p;
+        int need;
+        char *u8;
+
+        while (q < wchars && body[q] != 0)
+            q++;
+        if (q == p)
+            break;                         /* empty entry -> verified block end */
+        if (n >= ENV_MAX_ENTRIES) {
+            rc = ENV_ERR_NOSPACE;          /* too many entries -> refuse the block */
+            goto done;
+        }
+        /* STRICT decode, not REPLACE: an all-or-nothing decode+copy must REFUSE a
+         * malformed UTF-16 unit (unpaired surrogate), never silently rewrite it to
+         * U+FFFD -- that would publish an environment whose bytes differ from the
+         * counted block the caller handed in. A bad unit returns need < 0 here. */
+        need = nls_cp_utf16_to_utf8(&body[p], q - p, (uint8_t *)0, 0u,
+                                    NLS_CP_STRICT);
+        if (need < 0 || (uint32_t)need > ENV_PARSE_ENTRY_MAX) {
+            rc = ENV_ERR_INVAL;            /* malformed/over-cap entry -> refuse, never skip */
+            goto done;
+        }
+        if (cum + (uint32_t)need + 1u > ENV_BLOCK_MAX) {
+            rc = ENV_ERR_NOSPACE;          /* cumulative block cap -> refuse the block */
+            goto done;
+        }
+        u8 = env_str_alloc((uint32_t)need + 1u);
+        if (!u8) {
+            rc = ENV_ERR_NOMEM;
+            goto done;
+        }
+        /* Re-decode under STRICT must reproduce the measured size exactly; a mismatch
+         * means the unit stopped being decodable between the two passes -- refuse
+         * rather than adopt an altered entry. u8 is not yet tracked in owned[], so
+         * free it directly on this path. */
+        if (nls_cp_utf16_to_utf8(&body[p], q - p, (uint8_t *)u8, (uint32_t)need,
+                                 NLS_CP_STRICT) != need) {
+            env_str_free(u8, (uint32_t)need + 1u);
+            rc = ENV_ERR_INVAL;
+            goto done;
+        }
+        u8[need] = '\0';
+        owned[n] = u8;
+        list[n] = u8;
+        n++;
+        cum += (uint32_t)need + 1u;
+        if (!env_entry_is_wellformed(u8)) {
+            rc = ENV_ERR_INVAL;            /* malformed entry -> refuse, never skip */
+            goto done;
+        }
+        p = q + 1u;
+    }
+
+    /* All-or-nothing terminator discipline: the empty entry that ended the scan MUST be
+     * the block's FINAL terminator. The tail check above only proves the last two WCHARs
+     * are NUL, so a block with an interior double-NUL and trailing data (A=1\0\0B=2\0\0)
+     * would otherwise pass the gate yet adopt only the prefix and report success -- silent
+     * data loss under an all-or-nothing ABI. The 2-WCHAR "\0\0" empty block is the sole
+     * valid n==0 form; for a non-empty block the scan breaks with p pointing AT the final
+     * terminator WCHAR (index wchars-1). Anything else is trailing data -> refuse. */
+    if (n == 0u) {
+        if (wchars != 2u) {
+            rc = ENV_ERR_INVAL;
+            goto done;
+        }
+    } else if (p != wchars - 1u) {
+        rc = ENV_ERR_INVAL;
+        goto done;
+    }
+
+    /* Every entry validated: the exchange below cannot silently drop any of them. */
+    list[n] = NULL;
+    rc = env_exchange_block(t, list, n, out_old);
+
+done:
+    for (i = 0; i < n; i++)
+        if (owned[i])
+            env_str_free(owned[i], env_strlen(owned[i]) + 1u);
+    kfree(owned);
+    kfree(list);
+    return rc;
+}
+
+int env_block_extent(const void *block, uint32_t *out_wchars)
+{
+    const struct env_block_hdr *hdr;
+
+    if (!out_wchars)
+        return ENV_ERR_INVAL;
+    *out_wchars = 0;
+    if (!block)
+        return ENV_ERR_INVAL;
+
+    /* CONTRACT (identical to env_destroy_block's, and for the same reason): `block`
+     * MUST be a live pointer returned by env_create_block / env_create_empty_block.
+     * Reading the predecessor header of an arbitrary pointer is a caller error, not a
+     * supported input -- this is a BEST-EFFORT reject of an obviously-malformed header,
+     * NOT a foreign-pointer validator. It cannot be one: the check must dereference
+     * block-1 to run at all, so a wild pointer faults before any verdict, and an
+     * unrelated allocation whose predecessor bytes happen to match passes. Callers get
+     * their safety from the kernel-resident input contract, not from this function. */
+    hdr = (const struct env_block_hdr *)block - 1;
+    if (hdr->magic != ENV_BLK_MAGIC || hdr->wchars > ENV_CREATE_BLOCK_MAX_WCHARS)
+        return ENV_ERR_INVAL;
+    /* A wrapped block always carries at least the two-WCHAR "\0\0" empty form. */
+    if (hdr->wchars < 2u)
+        return ENV_ERR_INVAL;
+    *out_wchars = hdr->wchars;
     return ENV_OK;
 }
 

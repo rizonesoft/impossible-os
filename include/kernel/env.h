@@ -246,8 +246,67 @@ int task_set_argv(struct task *t, int argc, const char *const *argv);
  * array before freeing the old one (unwind on failure leaves the prior environ
  * intact). Malformed entries (no '=', over-long, empty name) are skipped.
  * `count` above ENV_MAX_ENTRIES is a hard error (ENV_ERR_NOSPACE), never a silent
- * truncation. Returns ENV_OK or a negative code. */
+ * truncation. Returns ENV_OK or a negative code.
+ *
+ * Exactly env_exchange_block(t, entries, count, NULL) -- see there for the swap
+ * semantics; this spelling is the one SYS_EXEC wants (no old block to hand back). */
 int env_adopt_block(struct task *t, const char *const *entries, uint32_t count);
+
+/* Replace t->environ with `count` "KEY=VALUE" UTF-8 entries and, when `out_old` is
+ * non-NULL, hand back the environment that was replaced as a wrapped UTF-16 block
+ * (the env_create_block form; free it with env_destroy_block). `out_old` NULL simply
+ * frees the old store -- that spelling is env_adopt_block.
+ *
+ * ATOMICITY: ONE environ_lock span both encodes the old store and publishes the new
+ * one, so the block returned is provably the store this call replaced, not one a
+ * racing writer installed between two acquisitions. The new store is built entirely
+ * before the lock is taken and the old snapshot entirely inside it, so ANY failure
+ * (including a failed snapshot) leaves the prior environment live and published and
+ * allocates nothing the caller must clean up. On failure *out_old is NULL.
+ *
+ * Entry policy is env_adopt_block's: malformed entries are SKIPPED. A caller whose
+ * own contract is all-or-nothing must validate strictly before calling in -- see
+ * env_replace_from_block_utf16, which does exactly that.
+ *
+ * Returns ENV_OK; ENV_ERR_INVAL (NULL task); ENV_ERR_NOSPACE (count over
+ * ENV_MAX_ENTRIES, or the entries exceed ENV_BLOCK_MAX); ENV_ERR_NOMEM. */
+int env_exchange_block(struct task *t, const char *const *entries,
+                       uint32_t count, void **out_old);
+
+/* Replace t->environ from a counted UTF-16 double-NUL block (`body`/`wchars`, the
+ * body form env_create_block hands out), optionally returning the replaced
+ * environment via `out_old` exactly as env_exchange_block does.
+ *
+ * STRICT, unlike env_parse_block: the block is fully validated BEFORE anything is
+ * published, and any defect refuses the whole call with the live environment
+ * untouched -- no double-NUL within `wchars`, an entry over ENV_PARSE_ENTRY_MAX, a
+ * malformed "KEY=VALUE", more than ENV_MAX_ENTRIES entries, or a decoded size past
+ * ENV_BLOCK_MAX. This is the adoption path for callers (the Rtl live-environment
+ * entries) whose contract forbids silently installing a partial subset. `wchars`
+ * counts WCHARs, not bytes: a caller holding a BYTE count must reject an odd one
+ * rather than floor it, or it would drop a byte and change the block it adopts.
+ *
+ * Returns ENV_OK; ENV_ERR_INVAL (NULL/short/unterminated/malformed);
+ * ENV_ERR_NOSPACE (over a cap); ENV_ERR_NOMEM. */
+int env_replace_from_block_utf16(struct task *t, const uint16_t *body,
+                                 uint32_t wchars, void **out_old);
+
+/* Report the body extent (in WCHARs) of a block returned by env_create_block or
+ * env_create_empty_block, reading the same hidden header env_destroy_block frees by.
+ *
+ * CONTRACT, identical to env_destroy_block's: `block` MUST be a LIVE pointer from one
+ * of those two entries. This is a BEST-EFFORT reject of an obviously-malformed header,
+ * NOT a foreign-pointer validator -- it cannot be one, because establishing provenance
+ * requires dereferencing block-1 to read the header at all. A wild pointer faults
+ * before any verdict is returned, and an unrelated allocation whose predecessor bytes
+ * happen to match the magic passes. Callers are kernel-resident by contract and that
+ * contract, not this check, is what makes the read safe. A true validator (an
+ * ownership registry keyed on the body pointer) is required before any of this becomes
+ * reachable from user mode.
+ *
+ * Returns ENV_OK + *out_wchars, or ENV_ERR_INVAL (NULL, or a header that fails the
+ * best-effort check). */
+int env_block_extent(const void *block, uint32_t *out_wchars);
 
 /* Encode an argv vector into a Windows command-line string in `out` (CommandLine
  * / GetCommandLineW format; exact inverse of CommandLineToArgvW decode): quote

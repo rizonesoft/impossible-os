@@ -3315,6 +3315,228 @@ static void test_rtlenv_status_mappings(void)
                 "a failed RtlCreateEnvironment leaves *out_env NULL, not the caller's value");
 }
 
+/* s23 finding-1 regression: env_exchange_block's out_old (the PreviousEnvironment restore
+ * token) MUST be an EXACT snapshot even in a secure context. A NULL token is a fail-closed
+ * secure context (env_is_secure_context), so the fixture is elevated here -- the AT_SECURE
+ * filter that strips LD_PRELOAD from a CHILD block must NOT strip it from this same-process
+ * restore token, or restoring it permanently drops a physically-present variable. */
+static void test_env_exchange_secure_snapshot_exact(void)
+{
+    void *old = (void *)0;
+    static const char *const newv[] = { "KEEP=1" };
+    env_fixture_reset();                         /* token == NULL -> secure (fail-closed) */
+    TEST_ASSERT_EQ((uint32_t)env_set(&s_env_fixture, "PATH", "sys"), (uint32_t)ENV_OK,
+                   "seed an ordinary var");
+    TEST_ASSERT_EQ((uint32_t)env_set(&s_env_fixture, "LD_PRELOAD", "evil"), (uint32_t)ENV_OK,
+                   "seed a privilege-sensitive var (filtered from CHILD blocks)");
+    TEST_ASSERT_EQ((uint32_t)env_exchange_block(&s_env_fixture, newv, 1u, &old),
+                   (uint32_t)ENV_OK, "secure-context exchange succeeds");
+    TEST_ASSERT(old != (void *)0, "out_old restore token returned");
+    TEST_ASSERT(env_test_block_has_ascii((const uint16_t *)old, "LD_PRELOAD=evil"),
+                "restore token is EXACT: the sensitive var is preserved, not filtered");
+    TEST_ASSERT(env_test_block_has_ascii((const uint16_t *)old, "PATH=sys"),
+                "restore token preserves ordinary vars too");
+    env_destroy_block(old);
+    env_free(&s_env_fixture);
+}
+
+/* s23 RtlSetCurrentEnvironment: adopt a provenanced block as the live environment,
+ * hand back the replaced store, and refuse NULL / non-provenanced pointers with the live
+ * store untouched. Wrapped in a snapshot save/restore so the destructive whole-store swap
+ * cannot leak into sibling tests (test-policy: save/restore around a mutating call). */
+static void test_rtlenv_set_current_environment(void)
+{
+    struct task *t = task_current();
+    void *saved = (void *)0, *block = (void *)0, *prev = (void *)0, *raw;
+    char out[64];
+
+    RtlCreateEnvironment(1u, &saved);          /* snapshot the real environ to restore */
+
+    env_unset(t, "RTLSCE_A");
+    env_unset(t, "RTLSCE_B");
+    TEST_ASSERT_EQ((uint32_t)env_set(t, "RTLSCE_A", "one"), (uint32_t)ENV_OK,
+                   "seed RTLSCE_A into the live store");
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(1u, &block),
+                   (uint32_t)STATUS_SUCCESS, "snapshot the seeded store into a block");
+
+    /* Mutate the live store AFTER the snapshot, so adopting it is observable and prev
+     * captures the mutation the snapshot predates. */
+    env_set(t, "RTLSCE_B", "two");
+    env_unset(t, "RTLSCE_A");
+
+    TEST_ASSERT_EQ((uint32_t)RtlSetCurrentEnvironment(block, &prev),
+                   (uint32_t)STATUS_SUCCESS, "adopt the snapshot block");
+    TEST_ASSERT(env_get_copy(t, "RTLSCE_A", out, sizeof(out)) >= 0,
+                "RTLSCE_A live again after the whole-store adopt");
+    TEST_ASSERT(env_streq(out, "one"), "RTLSCE_A restored to its snapshot value");
+    TEST_ASSERT_EQ((uint32_t)env_get_copy(t, "RTLSCE_B", out, sizeof(out)),
+                   (uint32_t)ENV_ERR_NOTFOUND,
+                   "RTLSCE_B gone: adopt REPLACES the whole store, never merges");
+    TEST_ASSERT(prev != (void *)0, "PreviousEnvironment returned the replaced store");
+    TEST_ASSERT(env_test_block_has_ascii((const uint16_t *)prev, "RTLSCE_B=two"),
+                "prev holds the pre-adopt RTLSCE_B=two");
+    RtlDestroyEnvironment(prev);
+    /* `block` was CONSUMED by the successful adopt (native transfer semantics) --
+     * freeing it here would double-free. */
+
+    /* NULL Environment -> INVALID_PARAMETER, clearing PreviousEnvironment. */
+    prev = (void *)0x1;
+    TEST_ASSERT_EQ((uint32_t)RtlSetCurrentEnvironment((void *)0, &prev),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL Environment refused");
+    TEST_ASSERT(prev == (void *)0, "a failed adopt clears PreviousEnvironment");
+
+    /* Non-provenanced pointer -> NOT_SUPPORTED. raw+16 keeps the 8-byte header read inside
+     * the mapped allocation; its bytes are not ENV_BLK_MAGIC, so provenance fails. */
+    raw = kmalloc(64);
+    TEST_ASSERT(raw != (void *)0, "scratch allocation for the non-provenance case");
+    TEST_ASSERT_EQ((uint32_t)RtlSetCurrentEnvironment((char *)raw + 16, (void **)0),
+                   (uint32_t)STATUS_NOT_SUPPORTED, "non-provenanced block refused");
+    kfree(raw);
+    TEST_ASSERT(env_get_copy(t, "RTLSCE_A", out, sizeof(out)) >= 0,
+                "live store untouched by the two refusals");
+
+    /* NULL PreviousEnvironment still swaps and builds no old block. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(1u, &block),
+                   (uint32_t)STATUS_SUCCESS, "second snapshot");
+    TEST_ASSERT_EQ((uint32_t)RtlSetCurrentEnvironment(block, (void **)0),
+                   (uint32_t)STATUS_SUCCESS, "adopt with NULL PreviousEnvironment");
+    /* `block` consumed by the successful adopt -- no free here. */
+
+    if (saved) {                               /* restore the real environ */
+        /* A successful adopt CONSUMES `saved` (native transfer) -- only free it if the
+         * restore fails and ownership stays with the test. */
+        if ((uint32_t)RtlSetCurrentEnvironment(saved, (void **)0) != (uint32_t)STATUS_SUCCESS)
+            RtlDestroyEnvironment(saved);
+    }
+}
+
+/* s23 RtlSetEnvironmentStrings: STRICT counted-UTF16-block adoption. Includes the
+ * finding-1 regression: an interior double-NUL with trailing data passes the tail
+ * terminator gate but MUST be refused, never silently truncated. Save/restore wrapped. */
+static void test_rtlenv_set_environment_strings(void)
+{
+    struct task *t = task_current();
+    void *saved = (void *)0;
+    char out[64];
+    /* "A=1\0B=2\0\0" -- a well-formed two-entry block. */
+    static const uint16_t good[]  = { 'A','=','1', 0, 'B','=','2', 0, 0 };
+    /* "A=1\0\0B=2\0\0" -- interior double-NUL then trailing data (finding 1). */
+    static const uint16_t trunc[] = { 'A','=','1', 0, 0, 'B','=','2', 0, 0 };
+    /* "A=1\0" -- single trailing NUL, no double-NUL terminator. */
+    static const uint16_t unterm[]= { 'A','=','1', 0 };
+
+    RtlCreateEnvironment(1u, &saved);
+
+    /* Happy path: the whole store becomes exactly {A=1, B=2}. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(good, sizeof(good)),
+                   (uint32_t)STATUS_SUCCESS, "well-formed counted block adopted");
+    TEST_ASSERT(env_get_copy(t, "A", out, sizeof(out)) >= 0, "A present after adopt");
+    TEST_ASSERT(env_streq(out, "1"), "A=1 adopted");
+    TEST_ASSERT(env_get_copy(t, "B", out, sizeof(out)) >= 0, "B present after adopt");
+    TEST_ASSERT(env_streq(out, "2"), "B=2 adopted");
+
+    /* Finding-1 regression: interior double-NUL + trailing data is REFUSED whole, and the
+     * live {A=1,B=2} store is untouched -- never silently truncated to {A=1}. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(trunc, sizeof(trunc)),
+                   (uint32_t)STATUS_INVALID_PARAMETER,
+                   "interior-double-NUL block refused (no silent truncation)");
+    TEST_ASSERT(env_get_copy(t, "B", out, sizeof(out)) >= 0,
+                "live store intact after the refused truncation block");
+
+    /* Odd byte size cannot describe a WCHAR block -> refuse, never floor. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(good, sizeof(good) - 1u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "odd byte size refused");
+    /* Zero size is malformed input, not the empty environment. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(good, 0u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "zero size refused");
+    /* NULL block. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings((const uint16_t *)0, 4u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL NewEnvironment refused");
+    /* Missing double-NUL terminator. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(unterm, sizeof(unterm)),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "unterminated block refused");
+    /* A WCHAR count past ENV_CREATE_BLOCK_MAX_WCHARS is refused at the cap BEFORE any
+     * body deref, so a tiny buffer with an over-cap size is safe and maps to QUOTA. */
+    TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(good,
+                       ((uint64_t)ENV_CREATE_BLOCK_MAX_WCHARS + 1u) * 2u),
+                   (uint32_t)STATUS_QUOTA_EXCEEDED, "over-cap size refused");
+    TEST_ASSERT(env_get_copy(t, "B", out, sizeof(out)) >= 0,
+                "live store intact after every refusal");
+
+    if (saved) {                               /* restore the real environ */
+        /* A successful adopt CONSUMES `saved` (native transfer) -- only free it if the
+         * restore fails and ownership stays with the test. */
+        if ((uint32_t)RtlSetCurrentEnvironment(saved, (void **)0) != (uint32_t)STATUS_SUCCESS)
+            RtlDestroyEnvironment(saved);
+    }
+}
+
+/* s23 RtlCreateEnvironmentEx: flag precedence pinned exactly (Codex design finding 3).
+ * Unknown and incompatible bits are rejected BEFORE EMPTY is honored; every defined bit
+ * is tested independently. Non-destructive (creates side blocks), so no save/restore. */
+static void test_rtlenv_create_environment_ex(void)
+{
+    struct task *t = task_current();
+    void *env = (void *)0;
+
+    /* EMPTY -> a valid empty block carrying no entries. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_EMPTY),
+                   (uint32_t)STATUS_SUCCESS, "EMPTY flag creates a block");
+    TEST_ASSERT(env != (void *)0, "EMPTY block pointer returned");
+    TEST_ASSERT(!env_test_block_has_ascii((const uint16_t *)env, "A=1"),
+                "EMPTY block carries no entries");
+    RtlDestroyEnvironment(env);
+    env = (void *)0;
+
+    /* Flags == 0 -> clone the current environment. */
+    env_unset(t, "RTLEX_CLONE");
+    env_set(t, "RTLEX_CLONE", "yes");
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env, 0u),
+                   (uint32_t)STATUS_SUCCESS, "Flags==0 clones the current environment");
+    TEST_ASSERT(env_test_block_has_ascii((const uint16_t *)env, "RTLEX_CLONE=yes"),
+                "clone carries the seeded variable");
+    RtlDestroyEnvironment(env);
+    env = (void *)0;
+    env_unset(t, "RTLEX_CLONE");
+
+    /* Non-NULL source needs s24's trusted snapshot -> NOT_SUPPORTED, never ignored. */
+    {
+        uint16_t dummy = 0u;
+        TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx(&dummy, &env, 0u),
+                       (uint32_t)STATUS_NOT_SUPPORTED, "non-NULL source refused");
+        TEST_ASSERT(env == (void *)0, "a refused create clears *Environment");
+    }
+
+    /* NULL out pointer. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, (void **)0, 0u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL Environment refused");
+
+    /* Either TRANSLATE bit is a valid-but-unimplemented request -> NOT_SUPPORTED. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_TRANSLATE),
+                   (uint32_t)STATUS_NOT_SUPPORTED, "TRANSLATE unimplemented");
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_TRANSLATE |
+                       RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM),
+                   (uint32_t)STATUS_NOT_SUPPORTED, "TRANSLATE|FROM_OEM unimplemented");
+    /* EMPTY must NOT mask an unsupported TRANSLATE. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_EMPTY | RTL_CREATE_ENVIRONMENT_TRANSLATE),
+                   (uint32_t)STATUS_NOT_SUPPORTED, "EMPTY|TRANSLATE still NOT_SUPPORTED");
+
+    /* FROM_OEM without TRANSLATE is an incompatible combination -> INVALID_PARAMETER. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "FROM_OEM alone is incompatible");
+    /* An unknown bit -> INVALID_PARAMETER, even alongside EMPTY. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env, 0x8u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "unknown flag bit refused");
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironmentEx((void *)0, &env,
+                       RTL_CREATE_ENVIRONMENT_EMPTY | 0x8u),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "EMPTY does not mask an unknown bit");
+}
+
 /* REACHABILITY GATE (s21): these exports must NOT be reachable from user mode while
  * s20's BLOCKING item is open (the expansion/block path allocates ~2 MiB on an
  * unsynchronized PMM bitmap -- 03-memory-concurrency/TODO-03 s1). Wiring an ntdll
@@ -3330,6 +3552,13 @@ static void test_rtlenv_exports_not_user_reachable(void)
                    (uint32_t)-1, "RtlCreateEnvironment is not ntdll-exported");
     TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlDestroyEnvironment"),
                    (uint32_t)-1, "RtlDestroyEnvironment is not ntdll-exported");
+    /* s23 live-environment entries: gated on the SAME s20 PMM item + s24 probe+copy. */
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlSetCurrentEnvironment"),
+                   (uint32_t)-1, "RtlSetCurrentEnvironment is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlSetEnvironmentStrings"),
+                   (uint32_t)-1, "RtlSetEnvironmentStrings is not ntdll-exported");
+    TEST_ASSERT_EQ(pe_ntdll_export_ssdt("RtlCreateEnvironmentEx"),
+                   (uint32_t)-1, "RtlCreateEnvironmentEx is not ntdll-exported");
 }
 
 /* env_create_block: deferred Win32 branches are refused, never fabricated. */
@@ -5010,6 +5239,18 @@ void test_register_env(void)
                             test_rtlenv_alloc_size_class_boundary, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl status mappings",
                             test_rtlenv_status_mappings, TEST_CAT_ABI);
+    /* create_ex FIRST: its single live env_set reuses the high-water-mark prewarm slot,
+     * so it stays heap-neutral. The set_* tests below REPLACE the whole live store (which
+     * reallocates the environ[] array to an exact size, stripping that slack), so they
+     * must run AFTER any live-task env_set-growth test. */
+    test_suite_register_cat("Env: Rtl create environment ex flags (s23)",
+                            test_rtlenv_create_environment_ex, TEST_CAT_ABI);
+    test_suite_register_cat("Env: exchange secure snapshot is exact (s23)",
+                            test_env_exchange_secure_snapshot_exact, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl set current environment (s23)",
+                            test_rtlenv_set_current_environment, TEST_CAT_ABI);
+    test_suite_register_cat("Env: Rtl set environment strings (s23)",
+                            test_rtlenv_set_environment_strings, TEST_CAT_ABI);
     test_suite_register_cat("Env: Rtl exports not user-reachable",
                             test_rtlenv_exports_not_user_reachable, TEST_CAT_ABI);
     /* s10: sorted block, caller-buffer build/parse, size caps. */

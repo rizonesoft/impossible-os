@@ -362,3 +362,64 @@ NTSTATUS RtlCreateEnvironment(uint8_t clone_current, void **out_env);
  * today (the free path is best-effort by env_destroy_block's own contract). */
 NTSTATUS RtlDestroyEnvironment(void *env);
 
+/* RtlCreateEnvironmentEx Flags (phnt ntrtl.h, winsiderss 2026-07-15). TRANSLATE_FROM_OEM
+ * MODIFIES TRANSLATE and is meaningless alone -- 0x2 without 0x1 is an incompatible
+ * combination, not an independent request. EMPTY selects an empty block over a clone. */
+#define RTL_CREATE_ENVIRONMENT_TRANSLATE            0x1u
+#define RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM   0x2u
+#define RTL_CREATE_ENVIRONMENT_EMPTY                0x4u
+
+/* ntdll RtlSetCurrentEnvironment(PVOID Environment, PVOID *PreviousEnvironment). Adopts
+ * `Environment` (a block from RtlCreateEnvironment / RtlCreateEnvironmentEx, in the
+ * env_create_block format) as the calling process's live environment, optionally handing
+ * back the replaced environment through `PreviousEnvironment` as a fresh block the caller
+ * frees with RtlDestroyEnvironment (NULL there simply frees the old store).
+ *
+ * OWNERSHIP TRANSFER on success, matching native ntdll (which installs the pointer as
+ * PEB ProcessParameters->Environment): on STATUS_SUCCESS the `Environment` block is
+ * CONSUMED -- the caller must NOT free it and frees `PreviousEnvironment` instead. This
+ * kernel has no PEB env pointer, so it copies the contents into the live store and frees
+ * the source, which is ownership-equivalent from the caller's view. On ANY failure the
+ * caller retains `Environment` (nothing is freed) and the prior environment stays live.
+ * The swap is atomic (one environ_lock span) and all-or-nothing. NTSTATUS + PVOID per
+ * phnt/WRK (ReactOS's VOID/PWSTR is the outlier, matching RtlDestroyEnvironment above).
+ *
+ * Environment MUST be provenanced (env_block_extent best-effort-rejects a malformed
+ * header): a NULL pointer is STATUS_INVALID_PARAMETER, a non-provenanced one is
+ * STATUS_NOT_SUPPORTED, and in both the live environment is untouched. Like the other Rtl
+ * env entries it is NOT user-reachable until TODO-22 s24's probe+copy + s20's PMM item
+ * close (no ntdll export row). Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER,
+ * STATUS_NOT_SUPPORTED, STATUS_NO_MEMORY, or STATUS_QUOTA_EXCEEDED. Thread context only. */
+NTSTATUS RtlSetCurrentEnvironment(void *Environment, void **PreviousEnvironment);
+
+/* ntdll RtlSetEnvironmentStrings(PCWSTR NewEnvironment, SIZE_T NewEnvironmentSize).
+ * Replaces the calling process's environment from a counted UTF-16 double-NUL block.
+ * `NewEnvironmentSize` is in BYTES and bounds the SCAN (not a single deref): an ODD count
+ * is refused rather than floored (flooring would drop a byte and adopt a different block),
+ * and 0 is STATUS_INVALID_PARAMETER (the empty environment is the 4-byte "\0\0" form, not
+ * a zero-length block).
+ *
+ * STRICT counted-block adoption (env_replace_from_block_utf16): a missing terminator, an
+ * over-cap or malformed entry, or trailing data past the terminator refuses the WHOLE
+ * block with the live environment untouched -- an all-or-nothing ABI never installs a
+ * silently truncated subset. Rides the nt_rtlenv kernel-resident input contract:
+ * NewEnvironment must be a mapped block of at least NewEnvironmentSize bytes (a user
+ * pointer needs TODO-22 s24's probe+copy). Returns STATUS_SUCCESS,
+ * STATUS_INVALID_PARAMETER, STATUS_QUOTA_EXCEEDED, or STATUS_NO_MEMORY. Thread context. */
+NTSTATUS RtlSetEnvironmentStrings(const uint16_t *NewEnvironment,
+                                  uint64_t NewEnvironmentSize);
+
+/* ntdll RtlCreateEnvironmentEx(PVOID SourceEnv, PVOID *Environment, ULONG Flags). Creates
+ * an environment block (env_create_block format, freed by RtlDestroyEnvironment). A
+ * non-NULL SourceEnv (translate a caller block) needs TODO-22 s24's trusted snapshot and
+ * is refused STATUS_NOT_SUPPORTED, never silently ignored.
+ *
+ * Flag precedence (validate BEFORE acting, so EMPTY cannot mask a malformed Flags):
+ * unknown bit -> STATUS_INVALID_PARAMETER; TRANSLATE_FROM_OEM without TRANSLATE ->
+ * STATUS_INVALID_PARAMETER (incompatible); either TRANSLATE bit -> STATUS_NOT_SUPPORTED
+ * (translation unimplemented, never accept-and-ignore); EMPTY -> an empty block; Flags==0
+ * -> a clone of the current environment. Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER,
+ * STATUS_NOT_SUPPORTED, STATUS_NO_MEMORY, or STATUS_BUFFER_TOO_SMALL (environ over the
+ * block cap on the clone path). Thread context only. */
+NTSTATUS RtlCreateEnvironmentEx(void *SourceEnv, void **Environment, uint32_t Flags);
+

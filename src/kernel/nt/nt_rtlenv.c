@@ -987,3 +987,127 @@ NTSTATUS RtlDestroyEnvironment(void *env)
     env_destroy_block(env);
     return STATUS_SUCCESS;
 }
+
+NTSTATUS RtlSetCurrentEnvironment(void *Environment, void **PreviousEnvironment)
+{
+    struct task *cur;
+    uint32_t wchars;
+    int rc;
+
+    if (PreviousEnvironment)
+        *PreviousEnvironment = NULL;
+    if (!Environment)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Provenance FIRST: Environment must be a block from RtlCreateEnvironment /
+     * RtlCreateEnvironmentEx (our env_create_block format). env_block_extent reads the
+     * hidden header (block - 1) and best-effort-rejects a malformed one; it CANNOT
+     * validate a truly foreign pointer (see env.h), so callers are kernel-resident by
+     * contract. A block that fails the check is a non-provenanced pointer -> refuse with
+     * STATUS_NOT_SUPPORTED and leave the live environment untouched. */
+    rc = env_block_extent(Environment, &wchars);
+    if (rc != ENV_OK)
+        return STATUS_NOT_SUPPORTED;
+
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Decode the caller block into our store, then CONSUME it on success -- native ntdll
+     * TRANSFERS ownership of Environment (it installs the pointer as PEB->Environment), so
+     * a compatible caller does NOT free it and instead frees PreviousEnvironment. We have
+     * no PEB env pointer, so we copy the contents and free the source, which is
+     * ownership-equivalent from the caller's view. On FAILURE the caller retains Environment
+     * (we free nothing), and the STRICT adoption leaves the prior environment live. */
+    rc = env_replace_from_block_utf16(cur, (const uint16_t *)Environment, wchars,
+                                      PreviousEnvironment);
+    if (rc == ENV_OK)
+        env_destroy_block(Environment);
+    return rtl_env_status_from_env(rc);
+}
+
+NTSTATUS RtlSetEnvironmentStrings(const uint16_t *NewEnvironment,
+                                  uint64_t NewEnvironmentSize)
+{
+    struct task *cur;
+    uint32_t wchars;
+    int rc;
+
+    if (!NewEnvironment)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Size is BYTES and bounds the SCAN, not a single deref. An ODD byte count cannot
+     * describe a WCHAR block -- refuse it rather than floor it (flooring would drop a byte
+     * and adopt a different block than the caller passed). Zero is not the empty
+     * environment (that is the 4-byte "\0\0" form), so size 0 is malformed input. */
+    if (NewEnvironmentSize == 0u || (NewEnvironmentSize & 1u) != 0u)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Bound the WCHAR count before narrowing to uint32 so a > 4 GiB size cannot wrap the
+     * cast. env_replace_from_block_utf16 applies the authoritative block cap; this only
+     * closes the narrowing overflow. */
+    if ((NewEnvironmentSize / 2u) > (uint64_t)RTL_ENV_BLOCK_MAX_WCHARS)
+        return STATUS_QUOTA_EXCEEDED;
+    wchars = (uint32_t)(NewEnvironmentSize / 2u);
+
+    cur = task_current();
+    if (!cur)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Rides the nt_rtlenv kernel-resident input contract: NewEnvironment is trusted to be
+     * a mapped block of at least NewEnvironmentSize bytes (a user pointer needs TODO-22
+     * s24's probe+copy first). STRICT, all-or-nothing: a missing terminator, an over-cap
+     * or malformed entry, or trailing data past the terminator refuses the WHOLE block
+     * with the live environment untouched. NULL out_old: the replaced store is freed. */
+    rc = env_replace_from_block_utf16(cur, NewEnvironment, wchars, NULL);
+    return rtl_env_status_from_env(rc);
+}
+
+NTSTATUS RtlCreateEnvironmentEx(void *SourceEnv, void **Environment, uint32_t Flags)
+{
+    struct task *cur;
+    int rc;
+
+    if (!Environment)
+        return STATUS_INVALID_PARAMETER;
+    *Environment = NULL;
+
+    /* Translating a caller-supplied source block needs the trusted-snapshot boundary
+     * TODO-22 s24 owns; refuse a non-NULL source rather than silently ignore it. */
+    if (SourceEnv != NULL)
+        return STATUS_NOT_SUPPORTED;
+
+    /* Flag precedence: validate BEFORE acting so EMPTY cannot mask a malformed Flags.
+     * (1) An unknown bit is STATUS_INVALID_PARAMETER. (2) TRANSLATE_FROM_OEM MODIFIES
+     * TRANSLATE and is meaningless alone, so 0x2 without 0x1 is an incompatible
+     * combination (STATUS_INVALID_PARAMETER), distinct from (3) a valid-but-unimplemented
+     * TRANSLATE request (STATUS_NOT_SUPPORTED, never accept-and-ignore). */
+    if ((Flags & ~(RTL_CREATE_ENVIRONMENT_TRANSLATE |
+                   RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM |
+                   RTL_CREATE_ENVIRONMENT_EMPTY)) != 0u)
+        return STATUS_INVALID_PARAMETER;
+    if ((Flags & RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM) != 0u &&
+        (Flags & RTL_CREATE_ENVIRONMENT_TRANSLATE) == 0u)
+        return STATUS_INVALID_PARAMETER;
+    if ((Flags & (RTL_CREATE_ENVIRONMENT_TRANSLATE |
+                  RTL_CREATE_ENVIRONMENT_TRANSLATE_FROM_OEM)) != 0u)
+        return STATUS_NOT_SUPPORTED;
+
+    if ((Flags & RTL_CREATE_ENVIRONMENT_EMPTY) != 0u) {
+        rc = env_create_empty_block(Environment);
+    } else {
+        cur = task_current();
+        if (!cur)
+            return STATUS_INVALID_PARAMETER;
+        rc = env_create_block(cur, NULL, 1, Environment);   /* Flags==0 -> clone current */
+    }
+
+    switch (rc) {
+    case ENV_OK:          return STATUS_SUCCESS;
+    case ENV_ERR_NOMEM:   return STATUS_NO_MEMORY;
+    /* The environ outgrew ENV_CREATE_BLOCK_MAX_WCHARS -- a size failure (nothing was
+     * rejected for policy), mapped as RtlCreateEnvironment maps the same case. */
+    case ENV_ERR_NOSPACE: return STATUS_BUFFER_TOO_SMALL;
+    default:              return rtl_env_status_from_env(rc);
+    }
+}
