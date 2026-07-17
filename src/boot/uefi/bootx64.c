@@ -117,6 +117,23 @@ static int   g_net_dhcp_raw_valid;
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
 
+/* Higher-half direct map (HHDM) construction state -- higher-half relocation section 2.
+ * The kernel-image PT_LOAD physical envelope [lo, hi) is captured by
+ * load_kernel() (loaded ELF p_paddr, NOT kernel symbols) so the writable
+ * HHDM alias can exclude it (W^X: a writable low alias of kernel text would
+ * defeat kernel_wx_protect()). The arena holds the extra PDPT/PD/PT frames
+ * the HHDM leaves need; it is AllocatePages'd pre-EBS (< 4 GiB) and filled
+ * post-EBS by setup_page_tables(). See docs/infrastructure/kernel-address-space.md.
+ *
+ * These are RESET AT RUNTIME (load_kernel for the envelope, bl_hhdm_reserve_arena
+ * for the arena) -- the bootloader does not zero .bss, so a static `= 0` would
+ * start at firmware pool-poison (0xAF...). The static initializers below are
+ * documentation only; correctness relies on the runtime resets. */
+static UINT64 g_kernel_img_lo    = ~0ULL;  /* min PT_LOAD p_paddr (page-aligned down at use) */
+static UINT64 g_kernel_img_hi    = 0;      /* max PT_LOAD p_paddr + p_memsz */
+static UINT64 g_hhdm_arena_base  = 0;      /* physical base of the HHDM page-table arena */
+static UINT64 g_hhdm_arena_pages = 0;      /* arena size in 4 KiB pages (0 = HHDM disabled) */
+
 /* UKI (Unified Kernel Image) embedded-section pointers per the UAPI Group
  * UKI specification. Populated by detect_uki_sections() if our LoadedImage's
  * PE/COFF section table carries a `.linux` section. When set, load_kernel()
@@ -851,7 +868,7 @@ static void nvram_write_boot_error(UINT32 code)
  * the public Impossible OS GUID).  Keep this in sync with the registry
  * in efi.h: highest currently-defined code is BOOT_ERR_FW_SETUP_RESET_RET
  * (0x0014). */
-#define BOOT_ERR_REGISTRY_MAX 0x0018  /* highest BOOT_ERR_* in efi.h (TFTP codes) */
+#define BOOT_ERR_REGISTRY_MAX 0x0019  /* highest BOOT_ERR_* in efi.h (BOOT_ERR_HHDM_FAIL) */
 
 static UINT32 nvram_read_boot_error(void)
 {
@@ -8354,6 +8371,13 @@ kernel_loaded:
 
     /* Load PT_LOAD segments with per-segment validation */
     phdr = (Elf64_Phdr *)(file_buf + ehdr->e_phoff);
+    /* Initialize the kernel-image envelope accumulators at RUNTIME. The
+     * bootloader does not zero .bss (firmware pool-poisons it with 0xAF), so a
+     * static `= 0` on g_kernel_img_hi would start at poison and the max below
+     * would never lower it -- the same 0xAF poison class the UKI/DHCP paths
+     * defend against. Reset both here so the sweep is deterministic. */
+    g_kernel_img_lo = ~0ULL;
+    g_kernel_img_hi = 0;
     for (i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type != PT_LOAD)
             continue;
@@ -8514,6 +8538,19 @@ kernel_loaded:
             /* Zero BSS portion (memsz > filesz) */
             if (mem_size > copy_size)
                 efi_memset(dst + copy_size, 0, mem_size - copy_size);
+        }
+
+        /* Higher-half section 2: record the loaded kernel-image physical
+         * envelope from the ACTUAL loaded ELF p_paddr (design finding F2:
+         * use loaded p_paddr, never kernel symbols). The HHDM writable
+         * alias excludes [g_kernel_img_lo, g_kernel_img_hi) so it cannot
+         * defeat W^X, and the arena disjointness check rejects an arena
+         * that would overlap it. */
+        if (phdr[i].p_memsz > 0) {
+            UINT64 seg_lo = phdr[i].p_paddr;
+            UINT64 seg_hi = phdr[i].p_paddr + phdr[i].p_memsz;
+            if (seg_lo < g_kernel_img_lo) g_kernel_img_lo = seg_lo;
+            if (seg_hi > g_kernel_img_hi) g_kernel_img_hi = seg_hi;
         }
     }
 
@@ -10622,6 +10659,537 @@ static void copy_config_tables(void)
 #define PT_PDPT  0x71000
 #define PT_PD0   0x72000  /* 4 PDs: 0x72000, 0x73000, 0x74000, 0x75000 */
 
+/* ============================================================================
+ * Higher-half direct map (HHDM) construction -- higher-half relocation
+ * section 2 (todo/02-kernel-core/TODO-33). Installs a fixed-offset,
+ * sparse, RAM-only alias of physical memory into PML4 slots 273-400 while
+ * the kernel still links and boots LOW and still walks page tables via the
+ * identity map. Purely ADDITIVE: it changes no address the kernel executes
+ * from and touches no existing walker (walker conversion is section 9).
+ *
+ * Split across ExitBootServices (EBS): the arena that holds the extra
+ * PDPT/PD/PT frames is AllocatePages'd PRE-EBS (bl_hhdm_reserve_arena), and
+ * the leaf install runs POST-EBS inside setup_page_tables (memory writes
+ * only). Design rationale: docs/infrastructure/kernel-address-space.md.
+ * ========================================================================== */
+
+/* POST16 codes (0xBxxx bootloader range) around the HHDM steps, before
+ * jump_to_kernel. Defined here (ahead of the 0xB060 block) because the HHDM
+ * functions below reference them. */
+#define POST16_BL_HHDM_PLAN     0xB061  /* pre-EBS: sized + reserved HHDM arena */
+#define POST16_BL_HHDM_ARENA_OK 0xB062  /* pre-EBS: arena AllocatePages + disjoint OK */
+#define POST16_BL_HHDM_NXE      0xB063  /* post-EBS: EFER.NXE enabled (CPUID-gated) */
+#define POST16_BL_HHDM_INSTALL  0xB064  /* post-EBS: installing HHDM leaves (PML4 273-400) */
+#define POST16_BL_HHDM_OK       0xB065  /* post-EBS: HHDM direct map complete */
+
+/* Bootloader-local mirror of the canonical HHDM constants
+ * (include/kernel/mm/memmap.h). bootx64.c cannot include memmap.h -- it
+ * pulls kernel/types.h, which the freestanding UEFI TU must not see (efi.h
+ * owns the integer types). Mirrored literals + local _Static_assert extend
+ * the boot_info_mirror.h convention; keep in sync with memmap.h. */
+#define BL_MM_HHDM_BASE        0xffff888000000000ULL  /* memmap.h MM_HHDM_BASE */
+#define BL_MM_HHDM_SIZE        0x0000400000000000ULL  /* MM_HHDM_SIZE (64 TiB) */
+#define BL_MM_PML4_PHYS_LIMIT  0x0000000100000000ULL  /* MM_PML4_PHYS_LIMIT (4 GiB) */
+
+/* PML4 slot the HHDM base lands in: (BASE >> 39) & 0x1ff = 273. The 64 TiB
+ * window occupies 128 slots (273..400 inclusive). */
+#define BL_HHDM_PML4_SLOT      ((UINT64)((BL_MM_HHDM_BASE >> 39) & 0x1ffULL))
+#define BL_HHDM_PML4_SLOT_LAST 400ULL
+_Static_assert(((BL_MM_HHDM_BASE >> 39) & 0x1ffULL) == 273ULL,
+    "HHDM base must live in PML4 slot 273 -- memmap.h mirror drift");
+_Static_assert(BL_HHDM_PML4_SLOT + (BL_MM_HHDM_SIZE >> 39) - 1 == BL_HHDM_PML4_SLOT_LAST,
+    "HHDM 64 TiB window must span PML4 slots 273..400");
+
+/* Page-table entry flags + sizes. */
+#define BL_PTE_P      (1ULL << 0)
+#define BL_PTE_RW     (1ULL << 1)
+#define BL_PTE_PS     (1ULL << 7)   /* 2 MiB leaf when set in a PDE */
+#define BL_PTE_NX     (1ULL << 63)  /* requires EFER.NXE; walk faults otherwise */
+#define BL_PAGE_4K    0x1000ULL
+#define BL_PAGE_2M    0x200000ULL
+#define BL_PADDR_MASK 0x000ffffffffff000ULL  /* 52-bit phys, 4 KiB aligned */
+
+/* Closes section 1's deferred item: the kernel PML4 frame (loaded into CR3 by
+ * the AP's 32-bit `mov cr3, eax`) MUST live below 4 GiB or the load truncates
+ * the root silently. PT_PML4 is a fixed low literal; pin it at compile time. */
+_Static_assert((UINT64)PT_PML4 < BL_MM_PML4_PHYS_LIMIT,
+    "kernel PML4 frame must load below 4 GiB (AP 32-bit CR3 load)");
+_Static_assert(((UINT64)PT_PML4 & (BL_PAGE_4K - 1ULL)) == 0ULL,
+    "PT_PML4 must be 4 KiB aligned");
+
+/* --- MSR / CPUID primitives. The bootloader has none (the kernel MSR
+ * helpers are kernel-only per the MSR-probe gotcha); long mode is already
+ * active here, so rdmsr/wrmsr/cpuid are safe. --- */
+static inline UINT64 bl_rdmsr(UINT32 msr)
+{
+    UINT32 lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((UINT64)hi << 32) | lo;
+}
+static inline void bl_wrmsr(UINT32 msr, UINT64 val)
+{
+    __asm__ volatile ("wrmsr" : : "c"(msr), "a"((UINT32)val),
+                       "d"((UINT32)(val >> 32)));
+}
+/* CPUID uses the existing bl_cpuid(leaf, subleaf, &a, &b, &c, &d) helper
+ * defined earlier in this file. */
+
+#define BL_MSR_EFER   0xC0000080u
+#define BL_EFER_NXE   (1ULL << 11)
+#define BL_UEFI_MMAP_RESERVED 0u  /* EfiReservedMemoryType (kernel UEFI_MMAP_RESERVED) */
+
+/* Enable EFER.NXE on the BSP: CPUID-gated read-modify-write with read-back,
+ * FATAL on failure. Must run before the kernel WALKS an NX HHDM leaf; writing
+ * the NX bit into a PTE is a plain memory store and needs no NXE, but any walk
+ * (incl. a data read) of an NX PTE with NXE=0 raises a reserved-bit #PF. NXE
+ * persists BSP -> kernel; cpu_enable_nx() re-asserts it idempotently, and APs
+ * enable NXE in the trampoline before paging. */
+static void bl_enable_nxe(void)
+{
+    UINT32 a = 0, b = 0, c = 0, d = 0;
+    bl_cpuid(0x80000001u, 0, &a, &b, &c, &d);
+    if (!(d & (1u << 20))) {              /* CPUID.80000001h:EDX.NX[20] */
+        boot_fatal(BOOT_ERR_HHDM_FAIL, "CPU lacks NX support",
+                   "CPUID.80000001h:EDX.NX is clear; the HHDM requires NX "
+                   "leaves. Cannot construct the higher-half direct map.");
+    }
+    UINT64 efer = bl_rdmsr(BL_MSR_EFER);
+    if (!(efer & BL_EFER_NXE)) {
+        bl_wrmsr(BL_MSR_EFER, efer | BL_EFER_NXE);
+        efer = bl_rdmsr(BL_MSR_EFER);
+        if (!(efer & BL_EFER_NXE)) {
+            boot_fatal(BOOT_ERR_HHDM_FAIL, "EFER.NXE did not latch",
+                       "wrmsr(EFER |= NXE) read back with NXE still clear.");
+        }
+    }
+}
+
+/* --- Usable-RAM interval model. Mirrors the memory types pmm_init() frees
+ * (Conventional, Loader{Code,Data}, BootServices{Code,Data}); everything
+ * else stays reserved and is never aliased into the writable direct map
+ * (Decision 5: sparse, RAM-only). --- */
+#define BL_HHDM_MAX_IV 640   /* >= BOOT_MMAP_MAX_ENTRIES(512) + arena; fail-closed */
+
+struct bl_hhdm_iv { UINT64 base; UINT64 end; };  /* [base,end) 4 KiB-aligned */
+static struct bl_hhdm_iv s_hhdm_iv[BL_HHDM_MAX_IV];
+static UINT32 s_hhdm_iv_n;
+static UINT64 s_hhdm_arena_next;   /* next free arena page index (FILL only) */
+
+static int bl_hhdm_type_usable(UINT32 uefi_type)
+{
+    return uefi_type == 7 ||   /* EfiConventionalMemory */
+           uefi_type == 1 ||   /* EfiLoaderCode */
+           uefi_type == 2 ||   /* EfiLoaderData */
+           uefi_type == 3 ||   /* EfiBootServicesCode */
+           uefi_type == 4;     /* EfiBootServicesData */
+}
+
+/* Collect page-aligned usable-RAM intervals from boot_info.mmap into
+ * s_hhdm_iv, clamped to the 64 TiB HHDM window, optionally splicing in the
+ * arena interval (used POST-EBS after the arena is retagged RESERVED so it
+ * is no longer a "usable" type -- F1/F2 "plus retained arena frames"). Sorts
+ * by base and coalesces adjacent/overlapping runs. Returns 0, or -1 on
+ * capacity overflow (caller FATALs). */
+static int bl_hhdm_collect_usable(int include_arena)
+{
+    UINT32 i;
+    s_hhdm_iv_n = 0;
+    for (i = 0; i < g_boot_info_ptr->mmap_count; i++) {
+        if (!bl_hhdm_type_usable(g_boot_info_ptr->mmap[i].uefi_memory_type))
+            continue;
+        UINT64 base = g_boot_info_ptr->mmap[i].base_addr;
+        UINT64 end  = base + g_boot_info_ptr->mmap[i].length;
+        base = (base + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);   /* align inward */
+        end &= ~(BL_PAGE_4K - 1);
+        if (end <= base) continue;
+        if (base >= BL_MM_HHDM_SIZE) continue;                /* beyond window */
+        if (end > BL_MM_HHDM_SIZE) end = BL_MM_HHDM_SIZE;
+        if (s_hhdm_iv_n >= BL_HHDM_MAX_IV) return -1;
+        s_hhdm_iv[s_hhdm_iv_n].base = base;
+        s_hhdm_iv[s_hhdm_iv_n].end  = end;
+        s_hhdm_iv_n++;
+    }
+    /* Retained fixed page tables (PT_PML4..PT_PD3 at 0x70000-0x75fff): the
+     * kernel keeps walking these as its live PML4 root, and section 9 will
+     * dereference them through the HHDM alias -- so they need a leaf even if
+     * bare-metal firmware labels the low range Reserved rather than
+     * Conventional (QEMU marks it Conventional, so this is bare-metal
+     * insurance). Added unconditionally; coalesces away when already covered. */
+    if (s_hhdm_iv_n >= BL_HHDM_MAX_IV) return -1;
+    s_hhdm_iv[s_hhdm_iv_n].base = (UINT64)PT_PML4 & ~(BL_PAGE_4K - 1);
+    s_hhdm_iv[s_hhdm_iv_n].end  =
+        (((UINT64)PT_PML4 + 6ULL * BL_PAGE_4K) + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);
+    s_hhdm_iv_n++;
+    if (include_arena && g_hhdm_arena_pages) {
+        UINT64 abase = g_hhdm_arena_base;
+        UINT64 aend  = g_hhdm_arena_base + g_hhdm_arena_pages * BL_PAGE_4K;
+        if (abase < BL_MM_HHDM_SIZE) {
+            if (aend > BL_MM_HHDM_SIZE) aend = BL_MM_HHDM_SIZE;
+            if (s_hhdm_iv_n >= BL_HHDM_MAX_IV) return -1;
+            s_hhdm_iv[s_hhdm_iv_n].base = abase;
+            s_hhdm_iv[s_hhdm_iv_n].end  = aend;
+            s_hhdm_iv_n++;
+        }
+    }
+    /* insertion sort by base (n small: <= mmap entries + 1) */
+    for (i = 1; i < s_hhdm_iv_n; i++) {
+        struct bl_hhdm_iv key = s_hhdm_iv[i];
+        UINT32 j = i;
+        while (j > 0 && s_hhdm_iv[j - 1].base > key.base) {
+            s_hhdm_iv[j] = s_hhdm_iv[j - 1];
+            j--;
+        }
+        s_hhdm_iv[j] = key;
+    }
+    /* coalesce adjacent/overlapping */
+    {
+        UINT32 w = 0;
+        for (i = 0; i < s_hhdm_iv_n; i++) {
+            if (w > 0 && s_hhdm_iv[i].base <= s_hhdm_iv[w - 1].end) {
+                if (s_hhdm_iv[i].end > s_hhdm_iv[w - 1].end)
+                    s_hhdm_iv[w - 1].end = s_hhdm_iv[i].end;
+            } else {
+                s_hhdm_iv[w++] = s_hhdm_iv[i];
+            }
+        }
+        s_hhdm_iv_n = w;
+    }
+    return 0;
+}
+
+/* True when phys page (4 KiB) is mappable into the WRITABLE HHDM: inside a
+ * collected usable interval AND outside the loaded kernel-image envelope
+ * (H3 / Decision 5 -- a writable alias of kernel text defeats W^X). */
+static int bl_hhdm_page_mapped(UINT64 phys)
+{
+    UINT32 i;
+    if (g_kernel_img_hi > g_kernel_img_lo) {
+        UINT64 elo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+        UINT64 ehi = (g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);
+        if (phys >= elo && phys < ehi) return 0;
+    }
+    for (i = 0; i < s_hhdm_iv_n; i++)
+        if (phys >= s_hhdm_iv[i].base && phys < s_hhdm_iv[i].end)
+            return 1;
+    return 0;
+}
+
+/* True when the whole 2 MiB bucket [base, base+2M) maps as one PS=1 leaf:
+ * fully inside a single usable interval AND disjoint from the kernel-image
+ * envelope. */
+static int bl_hhdm_bucket_whole(UINT64 base)
+{
+    UINT64 bend = base + BL_PAGE_2M;
+    UINT32 i;
+    if (g_kernel_img_hi > g_kernel_img_lo) {
+        UINT64 elo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+        UINT64 ehi = (g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);
+        if (base < ehi && bend > elo) return 0;
+    }
+    for (i = 0; i < s_hhdm_iv_n; i++)
+        if (base >= s_hhdm_iv[i].base && bend <= s_hhdm_iv[i].end)
+            return 1;
+    return 0;
+}
+
+/* Allocate one zeroed page-table frame from the arena. Bounds-checked: FATAL
+ * on overflow (the worst-case sizing must have undercounted). This is the hard
+ * safety net that makes any count/fill mismatch memory-safe, never a silent
+ * corruption. */
+static UINT64 bl_hhdm_arena_alloc(void)
+{
+    if (s_hhdm_arena_next >= g_hhdm_arena_pages) {
+        boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM arena exhausted",
+                   "leaf install needed more page-table frames than the "
+                   "pre-EBS worst-case sizing reserved.");
+    }
+    UINT64 p = g_hhdm_arena_base + s_hhdm_arena_next * BL_PAGE_4K;
+    s_hhdm_arena_next++;
+    efi_memset((void *)(UINTN)p, 0, (UINTN)BL_PAGE_4K);
+    return p;
+}
+
+/* Worst-case arena page-table frame count for the current usable map,
+ * independent of exact bucket geometry: the EBS retry can re-snapshot the map
+ * between sizing and fill, so the arena must be provably large enough for ANY
+ * usable map, not exactly the counted one:
+ *   PDPT frames <= occupied 512 GiB slots
+ *   PD   frames <= occupied 1 GiB regions
+ *   PT   frames <= 2 partial edge buckets per interval + envelope + slack. */
+static UINT64 bl_hhdm_worstcase_pages(EFI_MEMORY_DESCRIPTOR *raw,
+                                      UINTN raw_size, UINTN raw_dsize)
+{
+    UINT64 pdpt = 0, pd = 0, pt, env_buckets = 0;
+    UINTN off;
+    if (s_hhdm_iv_n == 0) return 0;
+    /* PDPT/PD count 512 GiB / 1 GiB region occupancy from the UNCAPPED RAW EFI
+     * descriptor array -- NOT boot_info.mmap. fill_memory_map() caps/evicts
+     * descriptors above BOOT_MMAP_MAX_ENTRIES (bootx64.c), so a region dropped
+     * from boot_info during sizing could reappear in the refreshed fill map and
+     * demand a PDPT/PD this snapshot never counted. The raw firmware map is the
+     * FULL, churn-stable physical layout (a type flip only relabels a
+     * descriptor in place; it never moves RAM into an uncounted region).
+     * Summing per-descriptor region spans over-counts shared boundaries (safe)
+     * and can never undercount the install's DISTINCT-USABLE-region demand,
+     * which is a subset of these descriptor-backed regions. */
+    for (off = 0; raw_dsize && off + raw_dsize <= raw_size; off += raw_dsize) {
+        EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)raw + off);
+        UINT64 base = d->PhysicalStart;
+        UINT64 end  = base + d->NumberOfPages * BL_PAGE_4K;
+        if (base >= BL_MM_HHDM_SIZE) continue;
+        if (end > BL_MM_HHDM_SIZE) end = BL_MM_HHDM_SIZE;
+        if (end <= base) continue;
+        pdpt += ((end - 1) >> 39) - (base >> 39) + 1;
+        pd   += ((end - 1) >> 30) - (base >> 30) + 1;
+    }
+    if (g_kernel_img_hi > g_kernel_img_lo)
+        env_buckets = ((g_kernel_img_hi - g_kernel_img_lo) >> 21) + 2;
+    /* PT frames are MAP-INDEPENDENT. The install recollects intervals from the
+     * FINAL post-EBS map, which the pre-EBS refresh makes fresher and possibly
+     * MORE fragmented than this snapshot -- new type-flip holes create new
+     * partial buckets. Any UEFI map carries at most BOOT_MMAP_MAX_ENTRIES
+     * entries, so it can express at most 2 partial edge buckets per entry (plus
+     * the retained-PT + arena splices); bound PT by that maximum so a refreshed
+     * fragmented fill can never exceed the reserved arena. */
+    pt = 2ULL * ((UINT64)BOOT_MMAP_MAX_ENTRIES + 2) + env_buckets + 8;
+    return pdpt + pd + pt + 16;                  /* +16 splice/rounding slack */
+}
+
+/* PRE-EBS (boot services still available): size + AllocatePages the HHDM
+ * arena. AllocateMaxAddress < 4 GiB keeps the arena firmware-identity-mapped
+ * (writable under the current CR3) and away from the low loaded kernel. */
+static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
+                                  UINTN raw_size, UINTN raw_dsize)
+{
+    /* Initialize the arena globals at RUNTIME: the bootloader does not zero
+     * .bss, so a static `= 0` would start at firmware poison (0xAF...). Leaving
+     * them poison would make setup_page_tables()'s `if (g_hhdm_arena_pages)`
+     * true on the no-usable-RAM early-return path and install from a garbage
+     * base. Default to "HHDM disabled" until AllocatePages succeeds below. */
+    g_hhdm_arena_base  = 0;
+    g_hhdm_arena_pages = 0;
+    post_code16(POST16_BL_HHDM_PLAN);
+    if (bl_hhdm_collect_usable(0) != 0) {
+        boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM interval overflow",
+                   "too many usable-RAM intervals to plan the direct map.");
+    }
+    UINT64 pages = bl_hhdm_worstcase_pages(raw, raw_size, raw_dsize);
+    if (pages == 0) {
+        serial_early_print("[BOOT] HHDM: no usable RAM to map (skipping)\n");
+        return;   /* g_hhdm_arena_pages stays 0 -> install is a no-op */
+    }
+
+    /* Low guard the arena must NOT overlap: the loaded kernel image envelope
+     * PLUS the PMM frame bitmap. pmm_init() writes that bitmap at a FIXED
+     * kernel_end_phys (= __kernel_end, just above the image), sized
+     * ceil(highest_usable_phys / 32768) with highest capped at 4 GiB
+     * (src/kernel/mm/pmm.c); neither the image (loaded to unclaimed
+     * EfiConventionalMemory by load_kernel) nor the bitmap is claimed. */
+    UINT64 kguard_lo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
+    /* pmm caps its bitmap coverage at 4 GiB (src/kernel/mm/pmm.c: highest_addr
+     * clamped to 0x100000000), so the frame bitmap is NEVER larger than
+     * 4 GiB / 4 KiB / 8 = 128 KiB, regardless of how large or fragmented the
+     * map is. Use that FIXED maximum -- truncation-proof and churn-proof, no
+     * dependence on the sizing snapshot. Guard = kernel image + max bitmap +
+     * 1 page for any linker padding between page_up(image end) and the real
+     * __kernel_end where pmm actually places the bitmap. */
+    UINT64 bitmap_max = BL_MM_PML4_PHYS_LIMIT / 32768ULL;   /* 128 KiB, page-aligned */
+    UINT64 kguard_hi = ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1))
+                       + bitmap_max + BL_PAGE_4K;
+
+    /* Claim the FREE (EfiConventionalMemory) pages inside the guard so firmware
+     * cannot hand them back for the arena REGARDLESS of its AllocatePages
+     * placement policy -- the UEFI spec does not require AllocateMaxAddress to
+     * be top-down, so relying on a high placement to dodge the low kernel is
+     * not portable. The free pages inside the guard are exactly the loaded-
+     * kernel pages load_kernel copied into UNCLAIMED conventional memory (the
+     * only guard pages an arena could legally land on; firmware-reserved pages
+     * it already will not reallocate). Claimed per-conventional-range because
+     * AllocateAddress is all-or-nothing and the guard spans mixed types. pmm
+     * re-reserves the image + bitmap, so the EfiLoaderData tag is harmless. */
+    if (g_kernel_img_hi > g_kernel_img_lo && kguard_hi > kguard_lo) {
+        UINTN goff;
+        for (goff = 0; raw_dsize && goff + raw_dsize <= raw_size; goff += raw_dsize) {
+            EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)raw + goff);
+            UINT64 db = d->PhysicalStart;
+            UINT64 de = db + d->NumberOfPages * BL_PAGE_4K;
+            UINT64 clo = db > kguard_lo ? db : kguard_lo;
+            UINT64 che = de < kguard_hi ? de : kguard_hi;
+            if (d->Type != EfiConventionalMemory || che <= clo) continue;
+            {
+                EFI_PHYSICAL_ADDRESS g = clo;
+                UINTN gp = (UINTN)((che - clo) / BL_PAGE_4K);
+                (void)gBS->AllocatePages(AllocateAddress, EfiLoaderData, gp, &g);
+            }
+        }
+    }
+
+    EFI_PHYSICAL_ADDRESS arena = BL_MM_PML4_PHYS_LIMIT - 1;  /* max addr < 4 GiB */
+    EFI_STATUS st = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
+                                       (UINTN)pages, &arena);
+    if (EFI_ERROR(st)) {
+        boot_fatal(BOOT_ERR_ALLOC_FAIL, "HHDM arena AllocatePages failed",
+                   "could not reserve page-table frames for the direct map.");
+    }
+
+    /* Disjointness safety net: with the guard claimed above, the arena cannot
+     * overlap the kernel image or the PMM bitmap; this catches the residual
+     * case where the guard claim failed. Also rejects the low 1 MiB (IVT/BDA,
+     * PT_PML4 at 0x70000, boot_info at 0x10000, the AP envelope). */
+    {
+        UINT64 alo = (UINT64)arena;
+        UINT64 ahi = alo + pages * BL_PAGE_4K;
+        int overlap = (kguard_hi > kguard_lo &&
+                       alo < kguard_hi && ahi > kguard_lo) ||
+                      (alo < 0x100000ULL);
+        if (overlap) {
+            boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM arena overlaps reserved memory",
+                       "AllocatePages returned an arena overlapping the loaded "
+                       "kernel image, the PMM bitmap region, or the low "
+                       "bring-up region.");
+        }
+        g_hhdm_arena_base  = alo;
+        g_hhdm_arena_pages = pages;
+    }
+    post_code16(POST16_BL_HHDM_ARENA_OK);
+    serial_early_print("[BOOT] HHDM: arena reserved\n");
+}
+
+/* Retag the arena interval to EfiReservedMemoryType (UEFI_MMAP_RESERVED) in
+ * boot_info.mmap so pmm_init() keeps it USED (it frees Loader/BootServices).
+ * POST-EBS memory-only edit: a pre-EBS retag would be clobbered by the
+ * EBS-retry loop's fill_memory_map() re-snapshot. Splits the covering entry
+ * into up to three; capacity-checked, fail-closed. */
+static void bl_hhdm_retag_arena_reserved(void)
+{
+    struct boot_mmap_entry *m = g_boot_info_ptr->mmap;
+    UINT64 alo, ahi;
+    UINT32 i;
+    if (!g_hhdm_arena_pages) return;
+    alo = g_hhdm_arena_base;
+    ahi = g_hhdm_arena_base + g_hhdm_arena_pages * BL_PAGE_4K;
+    for (i = 0; i < g_boot_info_ptr->mmap_count; i++) {
+        UINT64 ebase = m[i].base_addr;
+        UINT64 eend  = ebase + m[i].length;
+        UINT64 olo, ohi;
+        UINT32 want_left, want_right, extra, idx;
+        UINT32 orig_type, orig_utype;
+        UINT64 orig_attr;
+        if (ahi <= ebase || alo >= eend) continue;   /* disjoint */
+        olo = alo > ebase ? alo : ebase;
+        ohi = ahi < eend ? ahi : eend;
+        want_left  = (olo > ebase) ? 1u : 0u;
+        want_right = (ohi < eend) ? 1u : 0u;
+        extra = want_left + want_right;
+        if (g_boot_info_ptr->mmap_count + extra > BOOT_MMAP_MAX_ENTRIES) {
+            boot_fatal(BOOT_ERR_MMAP_OVERFLOW, "HHDM retag overflow",
+                       "no room to split the mmap for the arena reservation.");
+        }
+        orig_type  = m[i].type;
+        orig_utype = m[i].uefi_memory_type;
+        orig_attr  = m[i].attribute;
+        if (extra) {                 /* open a gap of `extra` after entry i */
+            UINT32 k;
+            for (k = g_boot_info_ptr->mmap_count; k > i + 1; k--)
+                m[k + extra - 1] = m[k - 1];
+        }
+        idx = i;
+        if (want_left) {
+            m[idx].base_addr        = ebase;
+            m[idx].length           = olo - ebase;
+            m[idx].type             = orig_type;
+            m[idx].uefi_memory_type = orig_utype;
+            m[idx].attribute        = orig_attr;
+            idx++;
+        }
+        m[idx].base_addr        = olo;                /* reserved middle */
+        m[idx].length           = ohi - olo;
+        m[idx].type             = 2;                  /* simplified: reserved */
+        m[idx].uefi_memory_type = BL_UEFI_MMAP_RESERVED;
+        m[idx].attribute        = orig_attr;
+        idx++;
+        if (want_right) {
+            m[idx].base_addr        = ohi;
+            m[idx].length           = eend - ohi;
+            m[idx].type             = orig_type;
+            m[idx].uefi_memory_type = orig_utype;
+            m[idx].attribute        = orig_attr;
+            idx++;
+        }
+        g_boot_info_ptr->mmap_count += extra;
+        i = idx - 1;   /* resume after the inserted block (defensive: arena
+                        * may span a coalesced boundary) */
+    }
+}
+
+/* Install HHDM leaves into PT_PML4 slots 273..400. Sweeps the collected
+ * usable intervals in ascending physical order, emitting a PS=1 2 MiB PDE for
+ * a whole bucket and a 4 KiB PT for a partial one, NX + Writable + supervisor
+ * (never User). PDPT/PD/PT frames come from the arena. */
+static void bl_hhdm_install_leaves(void)
+{
+    UINT64 *pml4 = (UINT64 *)(UINTN)PT_PML4;
+    UINT64 cur_slot = ~0ULL;
+    UINT64 cur_gib  = ~0ULL;
+    UINT64 last_bucket = ~0ULL;
+    UINT64 *cur_pdpt = (void *)0;
+    UINT64 *cur_pd   = (void *)0;
+    UINT32 iv;
+
+    for (iv = 0; iv < s_hhdm_iv_n; iv++) {
+        UINT64 ivend = s_hhdm_iv[iv].end;
+        UINT64 b;
+        for (b = s_hhdm_iv[iv].base & ~(BL_PAGE_2M - 1); b < ivend; b += BL_PAGE_2M) {
+            UINT64 slot = BL_HHDM_PML4_SLOT + (b >> 39);
+            UINT64 pdpt_i = (b >> 30) & 0x1ffULL;
+            UINT64 pd_i   = (b >> 21) & 0x1ffULL;
+            if (b == last_bucket) continue;   /* bucket shared by two intervals */
+
+            if (slot > BL_HHDM_PML4_SLOT_LAST) {
+                boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM slot out of window",
+                           "physical RAM exceeds the 64 TiB HHDM window.");
+            }
+            if (slot != cur_slot) {
+                UINT64 pdpt_phys = (pml4[slot] & BL_PTE_P)
+                    ? (pml4[slot] & BL_PADDR_MASK) : bl_hhdm_arena_alloc();
+                if (!(pml4[slot] & BL_PTE_P))
+                    pml4[slot] = pdpt_phys | BL_PTE_P | BL_PTE_RW;  /* table: no NX/User */
+                cur_pdpt = (UINT64 *)(UINTN)pdpt_phys;
+                cur_slot = slot;
+                cur_gib  = ~0ULL;
+            }
+            if ((b >> 30) != cur_gib) {
+                UINT64 pd_phys = (cur_pdpt[pdpt_i] & BL_PTE_P)
+                    ? (cur_pdpt[pdpt_i] & BL_PADDR_MASK) : bl_hhdm_arena_alloc();
+                if (!(cur_pdpt[pdpt_i] & BL_PTE_P))
+                    cur_pdpt[pdpt_i] = pd_phys | BL_PTE_P | BL_PTE_RW;
+                cur_pd  = (UINT64 *)(UINTN)pd_phys;
+                cur_gib = b >> 30;
+            }
+            last_bucket = b;
+
+            if (bl_hhdm_bucket_whole(b)) {
+                cur_pd[pd_i] = b | BL_PTE_P | BL_PTE_RW | BL_PTE_PS | BL_PTE_NX;
+            } else {
+                UINT64 pt_phys;
+                UINT64 pg;
+                if ((cur_pd[pd_i] & BL_PTE_P) && !(cur_pd[pd_i] & BL_PTE_PS)) {
+                    pt_phys = cur_pd[pd_i] & BL_PADDR_MASK;
+                } else {
+                    pt_phys = bl_hhdm_arena_alloc();
+                    cur_pd[pd_i] = pt_phys | BL_PTE_P | BL_PTE_RW;
+                }
+                UINT64 *pt = (UINT64 *)(UINTN)pt_phys;
+                for (pg = 0; pg < 512; pg++) {
+                    UINT64 phys = b + pg * BL_PAGE_4K;
+                    if (bl_hhdm_page_mapped(phys))
+                        pt[pg] = phys | BL_PTE_P | BL_PTE_RW | BL_PTE_NX;
+                }
+            }
+        }
+    }
+}
+
 static void setup_page_tables(void)
 {
     boot_set_section(BOOT_SECTION_BL_PAGETABLES);
@@ -10648,6 +11216,25 @@ static void setup_page_tables(void)
             pd[i] = addr | 0x87;  /* Present + Writable + User + PageSize(2MiB) */
         }
     }
+
+    /* Higher-half direct map (section 2): additive install into PML4 slots
+     * 273-400 while the kernel still runs LOW from the identity map above.
+     * POST-EBS: memory writes only (no boot services). Enable EFER.NXE first
+     * (NX leaves), retag the pre-EBS arena RESERVED, then install the leaves. */
+    bl_enable_nxe();
+    post_code16(POST16_BL_HHDM_NXE);
+    bl_hhdm_retag_arena_reserved();
+    post_code16(POST16_BL_HHDM_INSTALL);
+    if (g_hhdm_arena_pages) {
+        s_hhdm_arena_next = 0;
+        if (bl_hhdm_collect_usable(1) != 0) {
+            boot_fatal(BOOT_ERR_HHDM_FAIL, "HHDM interval overflow (install)",
+                       "too many usable-RAM intervals to install the direct map.");
+        }
+        bl_hhdm_install_leaves();
+    }
+    post_code16(POST16_BL_HHDM_OK);
+    serial_early_print("[BOOT] HHDM: direct map installed\n");
 }
 
 /* ============================================================================
@@ -10668,6 +11255,29 @@ static void jump_to_kernel(UINT64 entry_point)
         : "r"((UINT64)PT_PML4)
         : "memory"
     );
+
+    /* Higher-half direct map verify (section 2): now that CR3 carries the HHDM
+     * (PML4 slots 273-400), prove it RESOLVES to the same physical bytes as the
+     * identity map before handoff -- section 9 will route every kernel
+     * page-table dereference through it. Read-only (mutates nothing): compare
+     * the arena's first word read via the identity map (slot 0) against the
+     * same frame read through its HHDM alias. The arena is < 4 GiB
+     * (identity-mapped) and HHDM-mapped by construction, and its first page
+     * holds a live PDPT (non-zero). The HHDM leaf is NX, so a successful read
+     * also proves EFER.NXE latched. A misinstalled map either mismatches (halt
+     * below) or #PFs with no IDT -> reset -> the smoke test's missing C:\>
+     * prompt catches it. */
+    if (g_hhdm_arena_pages) {
+        volatile UINT64 *id = (volatile UINT64 *)(UINTN)g_hhdm_arena_base;
+        volatile UINT64 *hh =
+            (volatile UINT64 *)(UINTN)(BL_MM_HHDM_BASE + g_hhdm_arena_base);
+        if (*id != *hh) {
+            serial_early_print("[FAIL] HHDM: identity vs direct-map readback "
+                               "mismatch -- halting\n");
+            for (;;) __asm__ volatile ("cli; hlt");
+        }
+        serial_early_print("[BOOT] HHDM: direct map verified (identity == alias)\n");
+    }
 
     /* Call kernel -- pass Multiboot2 magic + boot_info address.
      * We pass the UEFI-specific magic 0x55454649 ("UEFI") so the kernel
@@ -15571,6 +16181,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     fill_memory_map(mmap, map_size, desc_size);
     fill_runtime_map(mmap, map_size, desc_size);
 
+    /* Higher-half direct map (section 2): PRE-EBS, size + AllocatePages the
+     * HHDM page-table arena from the just-normalized usable map. This
+     * allocation stales map_key (handled by the ExitBootServices retry loop
+     * below); the leaves themselves are installed POST-EBS in
+     * setup_page_tables(). Skips cleanly (arena_pages stays 0) on a machine
+     * with no usable RAM to map. Sizes PDPT/PD from the UNCAPPED raw firmware
+     * descriptor array (mmap), not the capped boot_info map. */
+    bl_hhdm_reserve_arena(mmap, map_size, desc_size);
+
     /* Step 5b: Preserve Runtime Services pointer + descriptor metadata */
     g_boot_info_ptr->uefi_runtime_services = (UINTN)gST->RuntimeServices;
     g_boot_info_ptr->uefi_rt_available     = (gST->RuntimeServices != (void *)0) ? 1 : 0;
@@ -15620,6 +16239,37 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             } else {
                 serial_early_print("[WARN] Watchdog: disarm retry FAILED -- proceeding with caution\n");
             }
+        }
+    }
+
+    /* Refresh the memory map immediately before the first ExitBootServices
+     * attempt. bl_hhdm_reserve_arena() AllocatePages'd the arena AFTER the
+     * snapshot above, which deterministically stales map_key; without this
+     * refresh the first EBS attempt would ALWAYS fail on the stale key and burn
+     * one of the EBS_MAX_ATTEMPTS retries meant for genuine firmware map churn.
+     * No boot-services allocation occurs between here and the call below, so
+     * this key stays valid for attempt 1. A refresh failure is non-fatal -- the
+     * retry loop re-acquires on its own -- so fall through with the old key. */
+    {
+        EFI_STATUS rk = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
+                                       &desc_version);
+        if (!EFI_ERROR(rk)) {
+            mmap_geometry_validate(map_size, desc_size, "pre-EBS arena refresh");
+            /* Propagate the refreshed map into boot_info: without this the
+             * kernel would receive the stale pre-arena snapshot and could
+             * reclaim or HHDM-map a region that became reserved/runtime since.
+             * fill_memory_map/fill_runtime_map do NOT allocate (the EBS retry
+             * loop below runs them between its own get_memory_map and the next
+             * ExitBootServices with the same key), so map_key stays valid for
+             * attempt 1. The arena is retagged RESERVED post-EBS regardless of
+             * how the refreshed map now labels it. */
+            fill_memory_map(mmap, map_size, desc_size);
+            fill_runtime_map(mmap, map_size, desc_size);
+            g_boot_info_ptr->uefi_mmap_desc_size    = (UINT32)desc_size;
+            g_boot_info_ptr->uefi_mmap_desc_version = desc_version;
+        } else {
+            serial_early_print("[WARN] pre-EBS map refresh failed; "
+                               "relying on EBS retry loop\n");
         }
     }
 

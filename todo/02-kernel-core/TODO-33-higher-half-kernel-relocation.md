@@ -45,17 +45,17 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                             | Depends On         | Status |
-| --- | :---: | ------------------------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | Memory-map design + canonical layout decision           | --                 |  [x]   |
-| 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                    |  [ ]   |
-| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper    | §2                     |  [ ]   |
-| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)      | §1, §2, §9             |  [ ]   |
-| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                     |  [ ]   |
-| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown   | §1, §3, §9, D01 T01 §8 |  [ ]   |
-| 💎   |   6   | Per-process PML4: kernel high shared, user low private  | §3, D01 T10 §8         |  [ ]   |
-| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard         | §6                     |  [ ]   |
-| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11          | §1, §3                 |  [ ]   |
+| ⭐   | Order | Deliverable                                              | Depends On             | Status |
+| --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
+| 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
+| 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
+| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [ ]   |
+| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)       | §1, §2, §9             |  [ ]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path  | §3                     |  [ ]   |
+| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown    | §1, §3, §9, D01 T01 §8 |  [ ]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private   | §3, D01 T10 §8         |  [ ]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard          | §6                     |  [ ]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11           | §1, §3                 |  [ ]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -92,7 +92,6 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 > - §2/§3 were resequenced 2026-07-16: the original §2 (linker split) could not ship alone -- it links high with nothing mapped there, so it does not boot, and the runner ships+pushes per section. The additive direct-map work was pulled ahead of the flip instead, which `vmm.c:1417-1419` already anticipated ("moves to `mm_phys_to_hhdm()` when the direct map lands"). Each section is now independently bootable, per this TODO's own sequencing rule.
 
 > **Verified:** 2026-07-15 | commit `99d70510` | 8/8 items | build OK | smoke PASS (KVM 3.23s) | tests 21408/21408 PASS | host gate 52/52
-> **Deferred:** [M] `PT_PML4` (`bootx64.c:10621`) is not bound to `MM_PML4_PHYS_LIMIT`; the AP's 32-bit CR3 load truncates a >4 GiB root silently (reason: needs bootloader-TU work) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` with a compile-time assert" at line 95)
 > **Deferred:** [M] the in-kernel `test_highhalf.c` suite cannot ship -- it tripped the BSS guard with zero headroom (reason: the ceiling this TODO exists to retire) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Re-add `src/kernel/test/test_highhalf.c`" at line 200)
 > **Quality reviewed:** 2026-07-15 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 5H+8M+2L fixed, 0 open | scope: kernel-code-quality
 
@@ -108,21 +107,32 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
 > [!WARNING]
 > **HIGH RISK -- the riskiest paging change in the system. Codex design review (2026-07-16, `[review-kind: design]`) returned NO-SHIP on the original 2 MiB-only / fixed-pre-EBS-arena plan; the 3 HIGH findings + Q1-Q4 are adopted into the items below.** (1) The kernel root is physical-as-pointer TODAY (`kernel_pml4` at `vmm.c:125`, set from `read_cr3()` at `:1420`); `vmm_get_kernel_cr3()` (`:1051`) returns it PHYSICAL and `task.c:1158/1423/3346` load it raw into CR3, so a blanket HHDM conversion triple-faults at the next kernel-task switch -- the root MUST stay split phys-vs-walk. (2) NX HHDM leaves are walked before `cpu_enable_nx()` (`boot_hw.c:493` vs `:612`; `bootx64.c` never touches EFER); with NXE=0 bit 63 is RESERVED, so the first HHDM walk faults on the BSP AND every AP. (3) [H1] 2 MiB-only leaves cannot express the sparse RAM-only map: UEFI usable ranges are 4 KiB-aligned (`bootx64.c:9120`), so a partial 2 MiB bucket at any edge/hole either aliases reserved/MMIO WB (forbidden) or leaves a PMM frame with no leaf -- `mm_phys_to_hhdm()` only range-checks (nonzero, <64 TiB), so the miss is a silent phys-page-0 write (`memmap.h:298-304`), not a fault. (4) [H3] a WRITABLE HHDM alias of the kernel image (loaded into EfiConventionalMemory) defeats `kernel_wx_protect()` (`boot_interrupts.c:195-211`) -- §1 Decision 6 / `kernel-address-space.md:143-145` forbid it.
 
-- [ ] INSTALL-SITE = (a) bootloader (resolved 2026-07-16 design review): kernel ceiling + bootloader `.text` uncounted; `vmm_init` precedes NXE; `AllocatePages` is pre-EBS-only; `setup_page_tables` owns slot 0, 1-511 free
-- [ ] [F2] Build ONE final leaf-eligibility plan before sizing: usable RAM minus reserved/MMIO minus the loaded kernel PT_LOAD envelope plus retained page-table/arena frames; use loaded ELF `p_paddr`, not kernel symbols
-- [ ] [Q1/F2] Size the arena from that plan (PDPT/512 GiB, PD/1 GiB, PT/partial bucket incl. carve-out partials); `AllocatePages` pre-EBS; bounds-check every arena write
-- [ ] [F1] Reserve the arena: retag its exact interval `UEFI_MMAP_RESERVED` in the normalized mmap (split entry, capacity-check, fail-closed) so `pmm_init` keeps it used; map arena frames in the HHDM plan (§9 walks via it)
-- [ ] [Q1/H1/F3] Install into EVERY occupied HHDM PML4 slot (slot = 273 + (phys>>39); window 273-400); assert each target zero + last index in-window; 2 MiB whole-bucket + 4 KiB partial-bucket leaves; NX+Writable, never User
-- [ ] [Q2/Q3] Enable EFER.NXE early in the bootloader (CPUID-gated RMW, read-back, FATAL on failure) before writing any NX leaf; no BSP path clears NXE afterward
-- [ ] [H3] Exclude the loaded kernel-image PT_LOAD envelope from the WRITABLE HHDM alias (skip or map read-only mirroring `kernel_wx_protect`) so the HHDM cannot defeat W^X -- §1 Decision 6
-- [ ] Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` with a mirrored literal + local `_Static_assert` in the bootloader (extends the `boot_info_mirror.h` convention). Closes §1 Deferred
-- [ ] Add `POST16` bootloader codes (0xB061-0xB06F) around the HHDM install, near `setup_page_tables`, before `jump_to_kernel`
-- [ ] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
+- [x] INSTALL-SITE = (a) bootloader: `bl_hhdm_reserve_arena()` sizes+allocates the arena PRE-EBS; `setup_page_tables()` installs leaves POST-EBS (memory writes only); it owns PML4 slot 0, 273-400 free
+- [x] [F2] `bl_hhdm_collect_usable`: page-aligned, coalesced usable-RAM intervals (the types `pmm_init` frees), clamped to the 64 TiB window; adds the retained fixed PT frames `0x70000-0x75fff`; kernel-image envelope excluded at emit
+- [x] [Q1/F2] `bl_hhdm_worstcase_pages()`: occupancy-based PDPT/PD (holes cost nothing) + envelope-aware PT budget; `AllocatePages(AllocateMaxAddress, <4 GiB)`; every arena frame bounds-checked (fail-closed)
+- [x] [F1] `bl_hhdm_retag_arena_reserved()`: POST-EBS splits the covering mmap entry, retags the exact arena interval `UEFI_MMAP_RESERVED` (capacity-checked) so `pmm_init` keeps it used; arena re-added to the plan for §9
+- [x] [Q1/H1/F3] `bl_hhdm_install_leaves()`: PML4 slots 273+(phys>>39) (273-400, bound-checked); 2 MiB whole-bucket PS=1 PDEs + 4 KiB partial PTs; leaves NX+Writable+supervisor, tables P|RW, never User
+- [x] [Q2/Q3] `bl_enable_nxe()`: CPUID.NX-gated EFER.NXE RMW + read-back + FATAL, before any NX leaf is WALKED; NXE persists BSP->kernel, APs enable it in the trampoline
+- [x] [H3] kernel-image PT_LOAD envelope `[g_kernel_img_lo,g_kernel_img_hi)` excluded from the writable HHDM alias AND from the arena location (disjointness assert) so the HHDM cannot defeat W^X -- §1 Decision 6
+- [x] Bind `PT_PML4` to `MM_PML4_PHYS_LIMIT` via mirrored literal + local `_Static_assert(PT_PML4 < 4 GiB)` in `bootx64.c`. Closes §1 Deferred (AP 32-bit CR3 truncation)
+- [x] `POST16` 0xB061-0xB065 around the HHDM steps (PLAN/ARENA_OK pre-EBS, NXE/INSTALL/OK post-EBS), classified in `tools/post16-manifest`; smoke-verified in order
+- [x] Commit: `"boot: HHDM direct map construction (kernel still walks identity)"`
 
-**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in an unused PML4 slot, so behavior is unchanged and the section is independently bootable. Assert the HHDM resolves a known physical page to the same bytes read through the identity map (the read exercises an installed NX leaf, so it also proves EFER.NXE landed). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
+**Test checkpoint:** `=== BUILD OK ===`; `scripts/test-smoke.sh` boots to `C:\>`; full `scripts/test.sh` green. The kernel still runs LOW from the identity map AND still walks page tables physically -- this section only INSTALLS the HHDM in unused PML4 slots, so behavior is unchanged and the section is independently bootable. The readback proof runs in the BOOTLOADER (`jump_to_kernel`, after CR3 loads the HHDM): a frame read through its HHDM alias must equal the identity read (aliasing) and the walk of an NX leaf proves EFER.NXE landed -- an in-kernel test is BSS-blocked until §7 (same ceiling as `test_highhalf.c`). The walker conversion and its identity-map-disabled test are §9. Test on: QEMU KVM + TCG.
 
 > [!NOTE]
-> **Regression risk: MEDIUM (construction only; the HIGH-risk walker conversion is §9).** This section adds a mapping in an unused slot and touches no address the kernel executes from or walks through, so its failure modes are contained to the install itself: the design review found a sparse-map hole leaves a PMM frame with no leaf (silent phys-page-0 write on any later HHDM read) and a writable kernel-image alias defeats W^X. Both are construction-time invariants tested here. Rollback: revert the HHDM install (no existing PTE or pointer changes). The repo-wide 13-site deref conversion, the root phys-vs-walk split, and the identity-map-disabled test all live in §9.
+> **Regression risk: MEDIUM (construction only; the HIGH-risk walker conversion is §9).** This section adds a mapping in unused slots and touches no address the kernel executes from or walks through, so its failure modes are contained to the install itself: the design review found a sparse-map hole leaves a PMM frame with no leaf (silent phys-page-0 write on any later HHDM read) and a writable kernel-image alias defeats W^X. Both are construction-time invariants tested here. Rollback: revert the HHDM install (no existing PTE or pointer changes). The repo-wide 13-site deref conversion, the root phys-vs-walk split, and the identity-map-disabled test all live in §9.
+
+> **Test runner:** `bash tools/memmap-check/check.sh` (host, PML4-slot math) + `scripts/test-smoke.sh` (bootloader readback "HHDM: direct map verified" + boot to `C:\>`) | 0 failures. In-kernel suite BSS-blocked -> §7.
+
+> **Notes:**
+>
+> - Shipped the HHDM constructor `bl_hhdm_*` in `src/boot/uefi/bootx64.c`: pre-EBS arena sizing + `AllocateMaxAddress`, post-EBS `UEFI_MMAP_RESERVED` retag + multi-slot leaf install (2 MiB PS=1 + 4 KiB partial, NX/RW) into PML4 273-400, plus EFER.NXE.
+> - Additive only: installs into unused PML4 slots, enables NXE on the BSP, touches no address the kernel executes from; smoke boot unchanged (`C:\>`, POST16 0xB061-0xB065 + `jump_to_kernel` identity-vs-alias readback verified).
+> - Root cause fixed: the bootloader does NOT zero `.bss` (firmware poisons it 0xAF), so `g_kernel_img_hi`/`g_hhdm_arena_*` are reset at RUNTIME; without it the disjointness check false-fataled on poison.
+> - Added `mm_hhdm_pml4_slot()` + `MM_HHDM_PML4_SLOT`(273)/`_LAST`(400) to `memmap.h` (host-tested in `tools/memmap-check`); §9 reuses them. Codex design + adversarial adoptions in the commit message.
+> - Canonical doc: [`docs/infrastructure/kernel-address-space.md`](../../docs/infrastructure/kernel-address-space.md).
+> - Scope boundary: §2 owns HHDM CONSTRUCTION only; §9 owns walker conversion + root phys-vs-walk split + identity-map-disabled test; §7 retires the BSS ceiling blocking the in-kernel suite.
 
 > **Design reviewed:** 2026-07-16 | TWO Codex `[review-kind: design]` rounds. Round 1 NO-SHIP -> SPLIT into §2 (HHDM construction) + §9 (walker conversion). Round 2 (post-split, install-site (a) plan) NO-SHIP -> 3 HIGH adopted into the items above and VERIFIED at file:line: F1 the PMM reclaims an EfiLoaderData arena (pmm.c:203-219 frees Loader/BootServices, reserves only 1 MiB+image) -> retag the arena interval `UEFI_MMAP_RESERVED` in the normalized mmap; F2 sizing must consume the FINAL post-carve plan (W^X carve makes a whole bucket partial) + use the loaded ELF `p_paddr` envelope, not kernel symbols; F3 HHDM spans PML4 slots 273-400 (64 TiB), not one slot -> multi-slot install loop. Q3 NXE safe if CPUID-gated RMW + read-back + FATAL; Q4 no TLB hazard (inactive root, slot 0 untouched). **Design DONE + adopted; §2 items are the implementation-ready spec -- a fresh context implements DIRECTLY (skip re-review, cite this stamp).** Install-site RESOLVED to (a) bootloader.
 
@@ -140,6 +150,7 @@ Relink the kernel at the high virtual base, map the image there, and make the ex
 - [ ] No codegen flag change: `-mcmodel=kernel` is already in `Makefile:25` and its `R_X86_64_32S` relocs resolve in the top 2 GiB
 - [ ] Export LMA-derived `__kernel_phys_start`/`__kernel_phys_end` from `linker.ld`, then repoint `pmm.c` kernel_end_phys, bitmap placement, the 1 MiB reservation, and the disjointness checks at PHYSICAL bounds
 - [ ] Teach the `scripts/build.sh` BSS check to read high VMA + low LMA. `load_kernel()` needs NO change -- it already copies by `p_paddr`
+- [ ] Claim loaded kernel-image pages (`AllocatePages(AllocateAddress)`) right after `load_kernel()`, before any post-load alloc, so none lands on the unclaimed image (pre-existing; §2 guards only its arena). ← XREF: §2
 - [ ] Map the kernel image to `MM_KERNEL_IMAGE_BASE` with 4 KiB pages (per-section W^X; a 2 MiB page forces `.text` and `.rodata` to share permissions), plus a TRANSIENT identity map of the bootloader RIP + stack
 - [ ] No far jump / `lretq` / CS reload: the existing call at `bootx64.c:10675` IS the transition once CR3 carries both maps and `kernel_main` high `st_value` is mapped (CS is already a long-mode selector)
 - [ ] Replace the `kernel_base = 0x100000` NX bound (`vmm.c:1452`) with image-window bounds; assert `.text` executable and `.rodata`/`.data`/`.bss` NX at their real high VAs
@@ -289,6 +300,7 @@ Move every page-table walker off the identity map and onto the §2 HHDM, while t
 | ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                                 |
 | --- | --------------------------------- | ------------------------ | ------------------------------- | ----------------------------------------------- |
 | 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it  |
+| 💎   | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 sparse NX/RW HHDM in PML4 273-400 (64 TiB) |
 | 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling |
 | 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6    |
 | 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                  |

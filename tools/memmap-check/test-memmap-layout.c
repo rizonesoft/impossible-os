@@ -249,6 +249,38 @@ static void test_window_layout(void)
         "kernel LMA does not overlap the AP bring-up envelope");
 }
 
+/* HHDM PML4-slot math (section 2): the bootloader installs direct-map leaves
+ * per PML4 slot, and the section-9 walker uses mm_hhdm_pml4_slot() to find the
+ * right slot. Verify the slot the helper reports equals the PML4 index of the
+ * actual HHDM virtual alias, across the 273..400 window. */
+static void test_hhdm_pml4_slot(void)
+{
+    const uint64_t gib512 = 1ULL << 39;
+    uint64_t sample[] = { 1ULL, 0x200000ULL, gib512 - 1ULL, gib512,
+                          gib512 + 1ULL, MM_HHDM_SIZE - 1ULL };
+    unsigned i;
+
+    printf("HHDM PML4-slot math:\n");
+
+    check(MM_HHDM_PML4_SLOT == 273ULL,
+        "HHDM base lands in PML4 slot 273");
+    check(MM_HHDM_PML4_SLOT_LAST == 400ULL,
+        "HHDM 64 TiB window ends at PML4 slot 400");
+    check(mm_hhdm_pml4_slot(0ULL) == 273ULL,
+        "phys 0 alias sits in slot 273");
+    check(mm_hhdm_pml4_slot(gib512) == 274ULL,
+        "phys at 512 GiB crosses into slot 274");
+    check(mm_hhdm_pml4_slot(MM_HHDM_SIZE - 1ULL) == 400ULL,
+        "last aliasable phys sits in slot 400");
+
+    for (i = 0; i < sizeof(sample) / sizeof(sample[0]); i++) {
+        void *v = mm_phys_to_hhdm(sample[i]);
+        uint64_t va_slot = ((uint64_t)(uintptr_t)v >> 39) & 0x1ffULL;
+        check(v != NULL && mm_hhdm_pml4_slot(sample[i]) == va_slot,
+            "mm_hhdm_pml4_slot matches the real HHDM alias PML4 index");
+    }
+}
+
 int main(void)
 {
     printf("memmap layout gate (host)\n\n");
@@ -256,6 +288,7 @@ int main(void)
     test_image_window_bounds();
     test_image_relation();
     test_hhdm_relation();
+    test_hhdm_pml4_slot();
     test_zero_sentinel_is_unambiguous();
     test_relations_are_disjoint();
     test_canonical_reconstruction();

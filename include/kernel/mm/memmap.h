@@ -323,6 +323,23 @@ static inline uint64_t mm_hhdm_to_phys(const void *virt)
     return v - MM_HHDM_BASE;
 }
 
+/* PML4 slot (bits 47:39) that the direct-map alias of physical 'phys' lands
+ * in. The HHDM base sits in slot MM_HHDM_PML4_SLOT (273); the 64 TiB window
+ * occupies 128 slots (273..400 inclusive). The bootloader installs leaves per
+ * slot (bootx64.c setup_page_tables); the walker conversion (section 9) uses
+ * this to find the right PML4 entry. Assumes 'phys' is a mapped RAM address
+ * (phys < MM_HHDM_SIZE); gate with mm_phys_in_hhdm() first. */
+#define MM_HHDM_PML4_SLOT       ((MM_HHDM_BASE >> 39) & 0x1ffULL)
+#define MM_HHDM_PML4_SLOT_LAST  (MM_HHDM_PML4_SLOT + (MM_HHDM_SIZE >> 39) - 1ULL)
+static inline uint64_t mm_hhdm_pml4_slot(uint64_t phys)
+{
+    return MM_HHDM_PML4_SLOT + (phys >> 39);
+}
+_Static_assert(MM_HHDM_PML4_SLOT == 273ULL,
+    "HHDM base must live in PML4 slot 273");
+_Static_assert(MM_HHDM_PML4_SLOT_LAST == 400ULL,
+    "HHDM 64 TiB window must end at PML4 slot 400");
+
 /* IMAGE relation: kernel linker symbol -> its physical load address. Returns 0
  * when 'virt' is not an image-window address. */
 static inline uint64_t mm_image_virt_to_phys(const void *virt)

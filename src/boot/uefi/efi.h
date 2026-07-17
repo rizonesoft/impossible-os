@@ -103,6 +103,11 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_TFTP_TIMEOUT       0x0016  /* no response after retries */
 #define BOOT_ERR_TFTP_OVER_CAP      0x0017  /* file exceeds the per-file cap */
 #define BOOT_ERR_TFTP_DEVICE        0x0018  /* device/protocol transfer failure */
+/* Higher-half direct map (HHDM) construction failure (higher-half relocation, section 2):
+ * NX unsupported, EFER.NXE would not latch, arena overlaps the loaded kernel,
+ * arena/interval capacity exceeded, or RAM beyond the 64 TiB HHDM window.
+ * Keep BOOT_ERR_REGISTRY_MAX in bootx64.c in sync with this highest value. */
+#define BOOT_ERR_HHDM_FAIL          0x0019
 
 /* --- GUID --- */
 typedef struct {
