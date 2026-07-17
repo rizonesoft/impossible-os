@@ -834,14 +834,19 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 **Test checkpoint:** a `KERNEL_TESTS=off` build compiles none of `ntfs_test.c` / `ixfs_test.c` / `test_threads.c`; `build/kernel.map` carries no `ntfs_run_self_test` / `ixfs_test_*` / `tpm_t_test_*` symbol; mounting a volume labelled `NTFS_TEST` on a release build performs no writes; the default `on` build still runs the NTFS self-test on that label and passes the full `scripts/test.sh` suite. Test on: QEMU KVM + TCG.
 
-> **Test runner:** `bash scripts/test-tooling.sh` (4 new §28 contract cases) | 528 tooling tests, 4 pre-existing unrelated hook failures (identical at clean HEAD)
+> **Test runner:** `bash scripts/test-tooling.sh` (4 new §28 contract cases) | 528 tooling tests, 3 pre-existing unrelated hook failures (identical at clean HEAD)
 
 > **Notes:**
-> - Shipped: guards on `ntfs_run_self_test`, 7 TPM test mutators, and the `boot_tests.c` CRUD/IXFS-perf blocks; Makefile `filter-out` pruning of 3 extra TUs; a new `build-release-flavor` CI job; 4 host-side contract tests.
+> - Shipped: guards on `ntfs_run_self_test`, 7 TPM test mutators, the `boot_tests.c` CRUD/IXFS-perf blocks, and whole-file guards on `ntfs_test.c`/`ixfs_test.c`; 3-TU Makefile prune; a `build-release-flavor` CI job; 4 host-side contract tests.
 > - Runs via the existing `KERNEL_TESTS={on,off}` knob (§26); verified against real builds -- off-flavor `kernel.map` carries none of the 9 guarded symbols, on-flavor carries all 9.
 > - Discovered mid-implementation: `shell_loader_func` (cmd.exe launcher) was misfiled in `test_threads.c`; moved to `shell_loader.c`, fixed a size TOCTOU + a success-path leak; PMM tiering was tried and reverted (unlocked bitmap, XREF TODO-03 §1).
+> - Test coverage: `shell_loader_func`'s bounds/TOCTOU/leak fixes have no dedicated kernel test (needs live vfs+task infra); validated via smoke test (boot to `C:\\>` proves successful load+exec).
 > - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
 > - Scope boundary: §28 owns test-only TUs OUTSIDE `src/kernel/test/` and their call sites; §26 owns the flavor mechanism; §27 (next) owns the release-map proof gate, whose inventory now has a clean release map to assert against.
+
+> **Verified:** 2026-07-17 | commit `3a1eb47b` | 8/8 items | build OK | smoke PASS (KVM 2.62s), 21504 kernel + 16 user tests, both flavors build, off map seam-free
+> **Accepted:** [H] `task_create()`'s stack alloc via `pmm_alloc_contiguous()` predates this commit unchanged (reason: scope) -> XREF: 03-memory-concurrency/TODO-03-advanced-allocator §1 (item: "PMM bitmap SMP locking" at line 103)
+> **Quality reviewed:** 2026-07-17 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 

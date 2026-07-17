@@ -4,6 +4,12 @@
 
 #include "ixfs_internal.h"
 
+/* KERNEL_TESTS-gated (release-flavor test-surface exclusion): this whole
+ * TU is test-only content, already pruned from the release build's C_SRCS
+ * (Makefile). Guarding the body too is a second independent layer, so it
+ * cannot link even if a future build-script change bypasses the prune. */
+#ifdef KERNEL_TESTS
+
 void ixfs_test_performance(void)
 {
     int pass;
@@ -598,3 +604,5 @@ void ixfs_test_performance(void)
 
     klog(LOG_DEBUG, "TEST", "--- IXFS Performance Tests Complete ---");
 }
+
+#endif /* KERNEL_TESTS */

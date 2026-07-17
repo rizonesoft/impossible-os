@@ -61,6 +61,14 @@
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 
+/* KERNEL_TESTS-gated (release-flavor test-surface exclusion): this whole
+ * TU is test-only content, already pruned from the release build's C_SRCS
+ * (Makefile). Guarding the body too is a second independent layer -- the
+ * attacker-triggerable NTFS_TEST self-test below must not link even if a
+ * future build-script change (a direct compile, an added target, a stale
+ * object) bypasses the Makefile prune. */
+#ifdef KERNEL_TESTS
+
 /* ---- String helpers (no libc) ---- */
 
 static int test_strcmp(const char *a, const char *b)
@@ -3481,4 +3489,6 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
              (uint64_t)tests_run);
     klog(LOG_INFO, "ntfs-test", "--- NTFS Self-Test: DONE ---");
 }
+
+#endif /* KERNEL_TESTS */
 
