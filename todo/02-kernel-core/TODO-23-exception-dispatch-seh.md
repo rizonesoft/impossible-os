@@ -66,21 +66,21 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §7     |  [/]   |
-| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
-| 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
-| 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
-| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                     | §4, TODO-11 §7             |  [ ]   |
-| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                | §1                         |  [ ]   |
-| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                         | §6, TODO-07 §3             |  [ ]   |
-| 💎   |   8   | SEH chain walk + `__C_specific_handler`                          | §5, §6, TODO-11 §6         |  [ ]   |
-| 💎   |   9   | RtlUnwindEx -- unwind to target frame                            | §6, §8                     |  [ ]   |
-| 💎   |  10   | Vectored Exception Handlers (VEH)                                | §4, TODO-05 §3             |  [ ]   |
-| 💎   |  11   | Vectored Continue Handlers (VCH)                                 | §4, §10                    |  [ ]   |
-| 💎   |  12   | Unhandled exception filter + WER hook                            | §7, §8, §10                |  [ ]   |
-| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                         | §2                         |  [ ]   |
-| 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                       | §6, §9, §13                |  [ ]   |
-| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [ ]   |
-| ⭐   |  16   | Exception dispatch telemetry                                     | §4, TODO-04 §6             |  [ ]   |
+| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [/]   |
+| 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
+| 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [/]   |
+| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                     | §4, TODO-11 §7             |  [/]   |
+| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                | §1                         |  [/]   |
+| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                         | §6, TODO-07 §3             |  [/]   |
+| 💎   |   8   | SEH chain walk + `__C_specific_handler`                          | §5, §6, TODO-11 §6         |  [/]   |
+| 💎   |   9   | RtlUnwindEx -- unwind to target frame                            | §6, §8                     |  [/]   |
+| 💎   |  10   | Vectored Exception Handlers (VEH)                                | §4, TODO-05 §3             |  [/]   |
+| 💎   |  11   | Vectored Continue Handlers (VCH)                                 | §4, §10                    |  [/]   |
+| 💎   |  12   | Unhandled exception filter + WER hook                            | §7, §8, §10                |  [/]   |
+| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                         | §2                         |  [/]   |
+| 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                       | §6, §9, §13                |  [/]   |
+| 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [/]   |
+| ⭐   |  16   | Exception dispatch telemetry                                     | §4, TODO-04 §6             |  [/]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -146,6 +146,8 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 
 - [ ] Commit: `"mm: triage #PF into user/kernel paths; defer to exception dispatch"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 3. General Fault-to-Exception Mapping (#DE, #DB, #BP, #OF, #UD, #NP, #SS, #GP, #CP)
@@ -178,6 +180,8 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and routes through `ki_dispatch_
 **Test checkpoint:** Trigger user-mode `ud2` -- serial log shows `"except: #UD at 0x<rip>, STATUS_ILLEGAL_INSTRUCTION"`. Trigger user-mode `int3` -- serial log shows `"except: #BP at 0x<rip>, STATUS_BREAKPOINT"`. Kernel-mode `div 0` → `panic_screen()` with `STATUS_INTEGER_DIVIDE_BY_ZERO`. If CET supported: `#CP` handler registered (check `except_init` log). `POST16(0xDE30)` before `except_init()`, `POST16(0xDE31)` after all handlers registered. If crash at 0xDE30: `except_init` never entered. Test on: QEMU WHPX + TCG. Verify on bare metal.
 
 - [ ] Commit: `"kernel: map CPU exceptions to EXCEPTION_RECORD dispatch (#DE/#DB/#BP/#GP/#UD/#SS/#CP)"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
@@ -212,6 +216,8 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 
 - [ ] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 5. KiUserExceptionDispatcher -- Ring-3 Exception Delivery
@@ -240,6 +246,8 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 
 - [ ] Commit: `"kernel: implement KiUserExceptionDispatcher and NtRaiseException/NtContinue"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 6. x64 Table-Based Unwind (`.pdata`, `RtlVirtualUnwind`)
@@ -261,6 +269,8 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 
 - [ ] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 7. Stack Walking (`RtlCaptureStackBackTrace`, `RtlWalkFrameChain`)
@@ -275,6 +285,8 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 **Test checkpoint:** `RtlCaptureStackBackTrace(0, 10, buf, NULL)` called from a 4-deep call chain returns ≥4 frames. `RtlCaptureStackBackTrace(2, 10, buf, NULL)` skips 2 frames -- first captured RIP differs from skip=0 case. Hash output is non-zero and deterministic for the same call site. Serial log: `"rtl: captured <N> stack frames"`. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"rtl: implement RtlCaptureStackBackTrace and RtlWalkFrameChain for kernel-mode stack walking"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
@@ -301,6 +313,8 @@ Expose `RtlDispatchException(EXCEPTION_RECORD *, CONTEXT *)` -- returns TRUE if 
 
 - [ ] Commit: `"rtl: implement RtlDispatchException, __C_specific_handler, and SEH scope-table walker"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 9. RtlUnwindEx -- Unwind to a Target Frame
@@ -321,6 +335,8 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 **Test checkpoint:** `RtlUnwindEx` from a 3-frame stack to the target frame invokes `__finally` in each intermediate frame. `EXCEPTION_UNWINDING` flag is set on the `EXCEPTION_RECORD` during the walk and cleared after. Target frame receives `return_value` in RAX. Serial log: `"rtl: unwind to frame 0x<target>, <N> finally handlers invoked"`. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
@@ -343,6 +359,8 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 
 - [ ] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 11. Vectored Continue Handlers (VCH)
@@ -360,6 +378,8 @@ Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `Remov
 **Test checkpoint:** The VCH anchor exists at its pinned TEB offset, is distinct from `TEB.VehListHead`, and is zero-initialised at thread create; a unit test asserts both anchors reuse the same `VECTORED_EXCEPTION_ENTRY` node ABI. Grep proves no `ki_call_vch_list` exists in ring 0. Behavioural VCH ordering ("fires only after SEH succeeds") is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"rtl: implement Vectored Continue Handler (VCH) list"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
@@ -384,6 +404,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 - [ ] Commit: `"rtl: implement unhandled exception filter, WER stub, and crash log"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 13. Kernel Safe Probing (`ProbeForRead`, `ProbeForWrite`)
@@ -407,6 +429,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 - [ ] Commit: `"kernel: add ProbeForRead/Write and try_copy_{from,to}_user safe probing"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 14. Kernel-Mode `__try`/`__except` for Drivers
@@ -429,6 +453,8 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 **Test checkpoint:** Kernel `__try { *(volatile int*)0 = 0; } __except(EXCEPTION_EXECUTE_HANDLER) { /* handled */ }` -- handler fires, kernel continues executing. Serial log: `"except: kernel exception handled at 0x<rip>"`. Nested kernel exception (exception inside handler) → `KeBugCheckEx` with code `KERNEL_EXCEPTION_NOT_HANDLED`. AHCI MMIO read smoke test: guarded read of unmapped BAR address → exception caught, not panic. `POST16(0xDEE0)` before kernel exception chain walk, `POST16(0xDEE1)` after handler invocation. Test on: QEMU WHPX + TCG. Verify on bare metal.
 
 - [ ] Commit: `"kernel: implement kernel-mode __try/__except via KI_EXCEPTION_REGISTRATION"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
@@ -461,6 +487,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 - [ ] Commit: `"kernel: map hardware faults to POSIX signals for Linux compat processes"`
 
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
+
 ---
 
 ## 16. Exception Dispatch Telemetry
@@ -479,6 +507,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 **Test checkpoint:** Trigger a user-mode access violation → serial log contains JSON event: `{"type":"exception_dispatch","code":"0xC0000005","handler":"veh","disposition":"CONTINUE_SEARCH"}` (or similar). Rate limiting: trigger 200 exceptions in rapid succession -- log shows ≤100 entries. `CONFIG_EXCEPT_TELEMETRY=0` build: no telemetry log entries emitted. Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"kernel: add exception dispatch telemetry to JSON structured log"`
+
+> **Deferred:** [blocked] 2026-07-17 -- BSS/`USER_BASE` ceiling: this section adds kernel `.text` to an image with ~8 KiB headroom under `USER_BASE` `0x800000`, and it builds on the §1 types (~12 KiB, code-complete in stash `todo23-s1-wip`), so it trips `scripts/build.sh`'s BSS-collision guard. Re-verified this session (`build/kernel.map` `__kernel_end` < `0x800000`). The whole file is gated until the higher-half relocation retires the ceiling. -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone").
 
 ---
 
