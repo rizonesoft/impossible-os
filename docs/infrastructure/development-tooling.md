@@ -322,6 +322,44 @@ Key flags:
 - `--target=x86_64-elf` -- cross-compilation target
 - `-ffreestanding -nostdlib -nostdinc` -- no standard library, no host headers
 
+### Build Flavors
+
+Two validated knobs select a build flavor. Both fail fast with `$(error ...)` on an
+unrecognized value rather than silently building something unintended.
+
+| Knob            | Values                        | Default | Purpose                                    |
+| --------------- | ----------------------------- | ------- | ------------------------------------------ |
+| `BUILD_ALT_BOOT`| `off`, `diagnostic`, `compatible` | `off` | Alternate boot-protocol policy (see [alt-boot.md](../boot/alt-boot.md)) |
+| `KERNEL_TESTS`  | `on`, `off`                   | `on`    | Kernel test-surface flavor                 |
+
+**`KERNEL_TESTS=off` is the release flavor.** It does two distinct things, and both are
+required: it omits `-DKERNEL_TESTS` (so the in-translation-unit `#ifdef KERNEL_TESTS`
+seams compile out) AND it prunes `src/kernel/test/` from the source list (the define
+alone would still compile and link every test translation unit). The default `on` flavor
+is what `scripts/test.sh` needs; the seams are load-bearing for the suite.
+
+Three properties the mechanism guarantees:
+
+- **The flavor is authoritative.** The flag is appended last and with `override`, so
+  neither `KERNEL_EXTRA_CFLAGS=-DKERNEL_TESTS` nor a command-line `CFLAGS=` override can
+  contradict `KERNEL_TESTS=off` (clang applies `-D`/`-U` left to right; the last wins).
+- **A flip rebuilds everything.** `build/.kernel-tests.stamp` holds the flavor name and is
+  a REAL prerequisite of every C object rule, so an `on` to `off` change cannot relink
+  objects compiled under the opposite flavor. A same-flavor rebuild stays incremental
+  because the stamp is only rewritten when the flavor actually changes.
+- **The guarded seams leave the image.** `KERNEL_TESTS=off` links no `src/kernel/test/`
+  translation unit and no `*_for_test` / fault-injection global; `SYS_FAULT_INJECT`
+  (syscall 44) loses its handler, though its ABI number stays reserved so
+  `IMPOSSIBLE_OS_ABI_HASH` does not differ between flavors. This is NOT yet full
+  test-surface exclusion: test-only translation units that live outside
+  `src/kernel/test/` under ordinary filenames and carry no guard (`ntfs_test.c`,
+  `ixfs_test.c`, `test_threads.c`) still compile into the release flavor. Tracked by
+  [Test-Only Translation Units Outside src/kernel/test/](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#28-test-only-translation-units-outside-srckerneltest).
+
+`scripts/test-tooling.sh` asserts this contract. Proving that a *shipped* image was built
+with the release flavor is a separate gate, owned by
+[Release-Flavor Proof: Seam-Inventory Gate and CI Attestation](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#27-release-flavor-proof-seam-inventory-gate-and-ci-attestation).
+
 ### Build Script
 
 All builds go through `scripts/build.sh` -- never raw `make` commands.

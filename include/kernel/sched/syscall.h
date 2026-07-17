@@ -51,7 +51,13 @@
 #define SYS_FAULT_INJECT 44 /* sys_fault_inject(kind, countdown, flags) → 0 / -1
                              * (test=1 gated, self-pid scoped) -- see the
                              * user-mode fault-injection bridge section in
-                             * the user-mode test framework TODO */
+                             * the user-mode test framework TODO
+                             * KERNEL_TESTS-gated: the handler exists only in
+                             * the test flavor; `make KERNEL_TESTS=off` drops
+                             * it and syscall 44 returns -1 as an unknown
+                             * syscall. The NUMBER stays reserved in both
+                             * flavors (ABI promise + IMPOSSIBLE_OS_ABI_HASH
+                             * input), so the fingerprint does not differ. */
 #define SYS_WRITEHANDLE  45 /* sys_writehandle(handle, buf, size) → bytes / -1
                              * mirror of SYS_READHANDLE; routes through
                              * ob_file_write() so pipe write-ends and future

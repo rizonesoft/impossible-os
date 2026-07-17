@@ -295,6 +295,12 @@ NTSTATUS nt_atom_query_basic(uint16_t atom, uint16_t *out_usage,
     return STATUS_SUCCESS;
 }
 
+#ifdef KERNEL_TESTS
+/* Test-fixture teardown only. Guarded so the release flavor does not link a
+ * global that wipes the whole atom table: every caller lives in
+ * src/kernel/test/, which `make KERNEL_TESTS=off` prunes, but the definition
+ * is non-static and would otherwise survive into kernel.map as gadget
+ * surface. */
 void nt_atom_reset_for_test(void)
 {
     if (!s_atoms)
@@ -309,6 +315,7 @@ void nt_atom_reset_for_test(void)
     }
     spin_unlock_irqrestore(&s_atom_lock, flags);
 }
+#endif /* KERNEL_TESTS */
 
 /* ---- Locale accessors ---------------------------------------------------- */
 

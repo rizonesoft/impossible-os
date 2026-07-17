@@ -127,7 +127,9 @@ bool ci_hash_revoked(const uint8_t hash[CI_HASH_LEN]);
  * tests). Pair every publish with the reset so later tests still observe the
  * fail-closed pre-publish state. Not for production callers -- ci_init is the
  * sole real publisher. */
+#ifdef KERNEL_TESTS
 void ci_policy_publish_for_test(const ci_policy_t *fixture);
 void ci_policy_reset_for_test(void);
+#endif
 
 #endif /* KERNEL_CI_CI_H */

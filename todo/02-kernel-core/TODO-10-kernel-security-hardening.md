@@ -89,8 +89,9 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  23   | KFENCE sampling UAF/OOB detector                                | §11, §13                   |  [/]   |
 | ⭐   |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
 | 💎   |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
-| 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [ ]   |
+| 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [x]   |
 | 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [ ]   |
+| 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -759,23 +760,36 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 
 ## 26. Release-Build Test-Surface Exclusion
 
-Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, because `Makefile:29` defines `-DKERNEL_TESTS` **unconditionally** and no build path omits it. The guards therefore gate nothing: `build/kernel.map` carries `pmm_alloc_fail_next`, `pmm_alloc_fail_countdown_set`, and `nt_atom_reset_for_test`. These are not inert debug helpers -- `pmm_alloc_fail_next()` forces the next physical allocation to FAIL, and `nt_atom_reset_for_test()` wipes the global atom table. None is SSDT-registered, so none is user-reachable today; the exposure is ROP/gadget surface plus the standing risk that a future seam is reachable.
+Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, because `Makefile` defined `-DKERNEL_TESTS` **unconditionally** and no build path omitted it. The guards therefore gated nothing: `build/kernel.map` carried `pmm_alloc_fail_next`, `pmm_alloc_fail_countdown_set`, and `nt_atom_reset_for_test`. These are not inert debug helpers -- `pmm_alloc_fail_next()` forces the next physical allocation to FAIL, and `nt_atom_reset_for_test()` wipes the global atom table.
 
 > [!NOTE]
 > **Found 2026-07-17 during `02-kernel-core/TODO-33 §10`** (Codex adversarial, [high], verified at `Makefile:29` + `build/kernel.map`). That section proposed a `KERNEL_TESTS`-gated atom-table mutator; the review showed the gate does not exist in practice, so the seam was dropped rather than shipped. The docstring in `include/kernel/mm/pmm.h` asserting "Released builds compile the entire surface out via `KERNEL_TESTS`" is FALSE against the Makefile and must be corrected or made true.
 
-- [ ] Add a validated `KERNEL_TESTS ?= on` knob to `Makefile` mirroring `BUILD_ALT_BOOT` at `Makefile:52-62` (`$(error ...)` outside `{on,off}`); `on` keeps `-DKERNEL_TESTS`, `off` omits it
-- [ ] When `off`, prune `$(KERNEL_DIR)/test/` from the `C_SRCS` find at `Makefile:142`; it globs every `.c` unconditionally, so the define alone still compiles and links every test TU
-- [ ] Add `build/.kernel-tests.stamp` (content = the flavor) regenerated via the `.FORCE` + `cmp -s` idiom at `Makefile:100-123` so its mtime moves ONLY on a real flavor change
-- [ ] Make that stamp a REAL (not order-only) prereq of EVERY C object rule: the pattern rule at `Makefile:1540` AND the 8 explicit rules at `Makefile:1420-1475`, which declare their own prereqs and bypass it (a flip otherwise rebuilds nothing)
-- [ ] Guard `include/kernel/test/test_usermode.h` with `#ifdef KERNEL_TESTS` + a no-op `static inline` `#else` mirroring `test.h:225-253`; `boot_tests.c:130` calls `test_usermode_run()` unguarded, so a pruned release build fails to link
-- [ ] Audit every existing `#ifdef KERNEL_TESTS` seam for what it would expose if reachable, and pick per-seam: keep test-only, or promote to a real gated API
-- [ ] Correct the FALSE docstring at `include/kernel/mm/pmm.h:94` claiming released builds compile the surface out via `KERNEL_TESTS` -- untrue against `Makefile:29` until this section lands
-- [ ] Commit: `"kernel/security: exclude the test surface from release builds"`
+> [!NOTE]
+> **Reachability corrected during implementation 2026-07-17.** This section originally claimed "None is SSDT-registered, so none is user-reachable today; the exposure is ROP/gadget surface". The SSDT half is true but the conclusion was NOT: the fault-injection seams are reachable from user mode through the **native** syscall table -- `SYS_FAULT_INJECT` (44, `syscall.h:51`) dispatches at `syscall.c` to `kmalloc/pmm/vmm/copy_user` fail-injection, gated only at RUNTIME by `boot.conf test=1`. So the pre-section exposure was a config-gated live syscall, not merely gadget surface. `KERNEL_TESTS=off` now drops the handler at compile time (the number stays reserved; it feeds `IMPOSSIBLE_OS_ABI_HASH`).
 
-**Test checkpoint:** `make KERNEL_TESTS=off` links a kernel with no `src/kernel/test/` TU; `make KERNEL_TESTS=bogus` fails fast on the `$(error ...)`; an `on -> off -> on` incremental sequence rebuilds the EXPLICIT-rule TU `build/kernel/icon_store.o` (it carries a seam at `icon_store.c:671`) on each flip, proving the stamp reaches the non-pattern rules; the default `on` build still passes the full `scripts/test.sh` suite, which depends on those seams. Test on: QEMU KVM + TCG.
+- [x] Added a validated `KERNEL_TESTS ?= on` knob to `Makefile` mirroring the `BUILD_ALT_BOOT` idiom (`$(error ...)` outside `{on,off}`); `on` emits `-DKERNEL_TESTS`, `off` emits `-UKERNEL_TESTS`
+- [x] Flavor flag emitted LAST via `override CFLAGS +=` (after the base, `KERNEL_EXTRA_CFLAGS`, `BUILD_ALT_BOOT`); `override` also on `KERNEL_TESTS_FLAG` + the SIMD/AVX2/AVX512 derived vars, so no command-line assignment can contradict `off`
+- [x] When `off`, `$(KERNEL_DIR)/test/` is `filter-out`-pruned from `C_SRCS`; `C_OBJS` derives from the pruned list, so no TU from THAT directory reaches the link (103 on `on`, 0 on `off`). Test TUs elsewhere are §28
+- [x] Added `build/.kernel-tests.stamp` (content = the flavor) via the `.FORCE` + `cmp -s` idiom, so its mtime moves ONLY on a real flavor change and same-flavor rebuilds stay incremental
+- [x] Made the stamp a REAL (not order-only) prereq of every C object rule: **15**, not the 8 this item first claimed (14 explicit + the pattern rule); placed after the `.c` so `$<` still resolves to the source
+- [x] Guarded `test_usermode.h` with `#ifdef KERNEL_TESTS` + no-op `#else` inlines for all **9** functions: the 8 `boot_tests.c` calls plus `test_usermode_color_active()`, which `klog.c` reached via a header-bypassing `extern`
+- [x] Seam audit: guarded 5 unguarded test-only globals still in the release map -- `nt_atom_reset_for_test`, `boot_rollback_reset_for_test`, `ci_policy_publish_for_test`, `ci_policy_reset_for_test`, `nt_audit_reset_for_test`
+- [x] Flavor-gated the `SYS_FAULT_INJECT` handler + dispatch case: the release flavor drops the user-reachable fault-injection bridge; syscall 44 falls to the unknown default (-1). The NUMBER stays reserved (ABI-hash input)
+- [x] Corrected the FALSE docstring at `include/kernel/mm/pmm.h` -- it now names the release flavor (`make KERNEL_TESTS=off`); the release PIPELINE turning that knob is §27
+- [x] Wired 15 host-side contract tests in `scripts/test-tooling.sh` (flavor flags, 5 override-bypass vectors, default goal, `$(error)`, TU pruning, stamp coverage); documented the knob in `build.sh --help` + `development-tooling.md`
+- [x] Commit: `"kernel/security: exclude the test surface from release builds"`
 
-> **Scope boundary:** §26 owns the build-level MECHANISM only (flavor knob, stamp invalidation, source pruning, release-side header guards). The PROOF that a shipped image is seam-free -- the seam-inventory gate and CI/packaging attestation -- is §27, a hard follow-on rather than an optional extra: the mechanism alone is a knob nobody turns. §26 does not redesign any individual seam's API; a seam that must survive into release is promoted by its own owning TODO. -> XREF: §27 (release-flavor proof).
+**Test checkpoint:** `KERNEL_TESTS=off bash scripts/build.sh` (or `make KERNEL_TESTS=off kernel`; the bare `make KERNEL_TESTS=off` default goal is `include/build_info.h`, NOT a kernel) links a kernel with no `src/kernel/test/` TU (test TUs OUTSIDE that directory still link -- §28 owns them); `make KERNEL_TESTS=bogus` fails fast on the `$(error ...)`; an `on -> off -> on` incremental sequence rebuilds the EXPLICIT-rule TU `build/kernel/icon_store.o` (it carries a seam at `icon_store.c:671`) on each flip, proving the stamp reaches the non-pattern rules; the default `on` build still passes the full `scripts/test.sh` suite, which depends on those seams. Test on: QEMU KVM + TCG.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (15 KERNEL_TESTS contract cases) | 524 tooling tests, 3 pre-existing unrelated hook failures (identical at clean HEAD)
+
+> **Notes:**
+> - Shipped the `KERNEL_TESTS={on,off}` build flavor: a validated `Makefile` knob, a `.kernel-tests.stamp` prereq on all 15 C object rules, `filter-out` pruning of `src/kernel/test/`, and release guards on 9 header functions + 5 test-only globals. Covers the seams + that directory ONLY.
+> - Runs as `KERNEL_TESTS=off bash scripts/build.sh`; the flag is appended last with `override`, so no command-line assignment beats it. A flip rebuilds every TU; same-flavor rebuilds stay incremental.
+> - Corrected the section premise: the seams were user-reachable via `SYS_FAULT_INJECT` (syscall 44), not just gadget surface; that handler is now flavor-gated. Codex design adoptions (2 [high]) in the commit message.
+> - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
+> - Scope boundary: §26 owns the MECHANISM; the proof a shipped image used it is §27, and test TUs outside `src/kernel/test/` (found by this section's review) are §28. -> XREF: §27 (release-flavor proof) + §28 (test-only TUs outside the test directory).
 
 ---
 
@@ -787,6 +801,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, beca
 > **Gate design settled by Codex design review 2026-07-17 (two passes).** A `*_for_test` / `*_fail_*` NAME GLOB is REJECTED as sole proof: verified against `build/kernel.map` it misses `cpu_msr_profile_count`, `cpu_msr_profile_entry`, `cpu_bsp_pat_baseline` (`cpu_security.c:1905-1921`), `nls_test_set_active` (`nls.c:228`), `mouse_test_set_ps2_buttons` (`mouse.c:593`), and `kcrc32c_sw_test` (`kchecksum.c:158`) -- 4 of 6 slip the glob, so the gate would report green while state-mutating seams stay linked. A test-map-minus-release-map SUBTRACTION is REJECTED as tautological: that set is absent from the release map by construction, so the assertion can never fail. The gate must derive an INDEPENDENT inventory from the sources.
 
 - [ ] Add `scripts/check-release-symbols.sh`: derive the seam inventory INDEPENDENTLY by parsing `#ifdef KERNEL_TESTS` regions for the symbols they define, then assert `build/kernel.map` carries none of them; it must be able to FAIL
+- [ ] Extend that inventory beyond `#ifdef` regions to the §28 test-only TUs (`ntfs_test.c`, `ixfs_test.c`, `test_threads.c`, TPM mutators): they carry no guard, so a region-parsing inventory reports green while they stay linked -> XREF: §28
 - [ ] Assert no `src/kernel/test/` TU contributed to the release link, covering the stale-object and accidental-inclusion cases a seam inventory alone would miss
 - [ ] Wire `.github/workflows/release.yml`: keep the test-flavor build + `scripts/test.sh` gate, then clean-rebuild with `KERNEL_TESTS=off` and run the gate immediately before packaging
 - [ ] Stamp release provenance on the artifact; BOTH packaging paths (`release.yml`, `scripts/release/build-image.sh`) must independently REJECT a `kernel.exe` lacking it -- they are separate entry points
@@ -794,7 +809,27 @@ Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, beca
 
 **Test checkpoint:** `scripts/check-release-symbols.sh` FAILS on a `KERNEL_TESTS=on` `kernel.map` (proving it can fail) and PASSES on a `KERNEL_TESTS=off` one; a negative test adds a fresh seam symbol and confirms the gate catches it with no edit to the gate; `build-image.sh` refuses a test-flavor `kernel.exe`. Test on: QEMU KVM + TCG + a CI dry-run.
 
-> **Scope boundary:** §27 owns the PROOF and its enforcement points only (gate script, CI wiring, packaging provenance). The flavor mechanism it verifies is §26. -> XREF: §26 (release-build test-surface exclusion).
+> **Scope boundary:** §27 owns the PROOF and its enforcement points only (gate script, CI wiring, packaging provenance). The flavor mechanism it verifies is §26; the test TUs living OUTSIDE `src/kernel/test/` (which the `#ifdef`-region inventory would miss entirely) are §28. -> XREF: §26 (release-build test-surface exclusion) + §28 (test-only TUs outside the test directory).
+
+---
+
+## 28. Test-Only Translation Units Outside `src/kernel/test/`
+
+§26 prunes `$(KERNEL_DIR)/test/` and guards the `#ifdef KERNEL_TESTS` seams, which is the build MECHANISM. It does not cover test code that lives outside that directory under an ordinary filename and carries NO `#ifdef` guard: a `KERNEL_TESTS=off` dry run still compiles `src/kernel/fs/ntfs/ntfs_test.c`, `src/kernel/fs/ixfs/ixfs_test.c`, `src/kernel/main/test_threads.c`, and `src/kernel/main/boot_tests.c`, plus the TPM transport test mutators. Zero objects under one directory is therefore NOT release test-surface exclusion.
+
+> [!WARNING]
+> **`ntfs_run_self_test()` is reachable from attacker-controlled data TODAY**, independent of any build flavor. `partition.c:904` calls it unconditionally for EVERY mounted NTFS volume; the only gate is `test_strcmp(vol->volume_name, "NTFS_TEST")` at `ntfs_test.c:3283`, and the volume label is data ON THE DISK. A USB stick labelled `NTFS_TEST` runs 69 create/delete/rename/journal/write tests against the mounted volume. This is a live security defect, not merely a release-flavor concern: the guard is necessary but a data-driven trigger for destructive code is the real bug.
+
+- [ ] Guard `ntfs_run_self_test()` (`ntfs_test.c:3278`) and its unconditional call site at `partition.c:904`; the `NTFS_TEST` volume-label gate is attacker-controlled data, so a labelled USB stick runs 69 destructive tests on mount
+- [ ] Prune `src/kernel/fs/ntfs/ntfs_test.c`, `src/kernel/fs/ixfs/ixfs_test.c`, `src/kernel/main/test_threads.c` from `C_SRCS` when `KERNEL_TESTS=off`, guarding each call site; a directory-only prune of `$(KERNEL_DIR)/test/` misses all three
+- [ ] Guard the `tpm_t_test_install` / `tpm_t_test_restore` mutators (`tpm_transport.c:1188-1264`) that replace the live callback table and CRB buffers, plus their declarations
+- [ ] Decide per-TU whether `boot_tests.c` (called at `boot_desktop.c:357`, runtime-gated by `boot.conf test=1`) compiles out under the release flavor or stays as a config-gated launcher
+- [ ] Re-audit for test-only TUs by CONTENT (test harness structure, `test_pass`/`test_fail` helpers), not by filename or directory: the four above prove both heuristics miss real cases
+- [ ] Commit: `"kernel/security: exclude test TUs outside the test directory from release builds"`
+
+**Test checkpoint:** a `KERNEL_TESTS=off` build compiles none of `ntfs_test.c` / `ixfs_test.c` / `test_threads.c`; `build/kernel.map` carries no `ntfs_run_self_test` / `ixfs_test_*` / `tpm_t_test_*` symbol; mounting a volume labelled `NTFS_TEST` on a release build performs no writes; the default `on` build still runs the NTFS self-test on that label and passes the full `scripts/test.sh` suite. Test on: QEMU KVM + TCG.
+
+> **Scope boundary:** §28 owns test-only TUs OUTSIDE `src/kernel/test/` and their production call sites. The flavor mechanism is §26; the release-map proof gate is §27, whose inventory must consume this section's list rather than deriving from `#ifdef` regions alone. -> XREF: §26 (release-build test-surface exclusion) + §27 (release-flavor proof).
 
 ---
 
@@ -824,6 +859,8 @@ Every `#ifdef KERNEL_TESTS` seam in the tree is live in the shipped kernel, beca
 | 💎   | stackleak erase stk    | ❌ No            | ✅ KSTACK_ERASE      | ⬜ §22                       |
 | 💎   | KFENCE UAF/OOB sample  | ❌ No            | ✅ KFENCE            | ⬜ §23                       |
 | ⭐   | Mitigation posture API | ⚠️ WMI          | ⚠️ sysfs            | ⬜ §24                       |
+| 💎   | Test code out of build | ✅ free/checked  | ✅ Kconfig KUNIT off | ⏸ §26 seams+test dir; §28   |
+| 💎   | Release flavor proven  | ✅ WHQL signing  | ✅ distro CI         | ⬜ §27                       |
 
 After §1 through §13, parity with Win11/Linux mitigations for NX through stack canaries and guard pages; §14 through §16 add KASLR, enclave/signing syscalls, and lockdown. §17 through §25 close the image-W^X (§17), 128-bit feature surface (§18), MDS/VERW data-sampling (§19), software-CFI/kCFI (§20), FORTIFY_SOURCE (§21), stackleak (§22), and KFENCE (§23) gaps, plus a queryable mitigation posture (§24, exclusive) and the transient-execution predictor policy (SSBD/STIBP/RSB/BHI/ITS/Retbleed, §25). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.
 

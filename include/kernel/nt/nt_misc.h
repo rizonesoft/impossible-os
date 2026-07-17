@@ -118,8 +118,11 @@ NTSTATUS nt_atom_delete(uint16_t atom);
 NTSTATUS nt_atom_query_basic(uint16_t atom, uint16_t *out_usage,
                              uint16_t *name_out, uint32_t name_cap_chars,
                              uint32_t *out_name_len_chars);
-/* Reset the atom table to empty -- test-only fixture teardown. */
+/* Reset the atom table to empty -- test-only fixture teardown. Absent from the
+ * release flavor (`make KERNEL_TESTS=off`); every caller is a pruned test TU. */
+#ifdef KERNEL_TESTS
 void nt_atom_reset_for_test(void);
+#endif
 
 /* Locale get/set accessors (kernel-side; the syscalls wrap these). */
 uint32_t nt_locale_get_default(void);

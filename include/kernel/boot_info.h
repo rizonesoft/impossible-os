@@ -439,7 +439,9 @@ int  boot_rollback_raise_if_steady(void);
  *    is latched on success or permanent opt-out and subsequent
  *    calls stay 0 forever. */
 int  boot_rollback_request_raise(void);
+#ifdef KERNEL_TESTS
 void boot_rollback_reset_for_test(void);
+#endif
 
 /* Warm-kernel-update handoff (section 14).
  *

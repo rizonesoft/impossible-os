@@ -131,7 +131,9 @@ NTSTATUS nt_audit_register(SYSCALL_AUDIT_ROUTINE routine, void *context,
  * called from within an audit routine. */
 NTSTATUS nt_audit_unregister(int32_t handle);
 /* Reset the hook table -- test fixture teardown. */
+#ifdef KERNEL_TESTS
 void nt_audit_reset_for_test(void);
+#endif
 
 /* ---- transition_ring_record runtime gate ---------------------------------- *
  * Default off ("cheap"); the syscall entry asm skips transition_ring_record

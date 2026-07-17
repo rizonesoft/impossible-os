@@ -89,7 +89,6 @@ static uint32_t s_stress_iters;
  * test_usermode_color_active() below. */
 static volatile int s_utest_color_active;
 
-int test_usermode_color_active(void);
 int test_usermode_color_active(void)
 {
     return s_utest_color_active;

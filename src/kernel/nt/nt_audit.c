@@ -134,6 +134,11 @@ NTSTATUS nt_audit_unregister(int32_t handle)
     return STATUS_INVALID_HANDLE;
 }
 
+#ifdef KERNEL_TESTS
+/* KERNEL_TESTS-gated: every caller is a src/kernel/test/ TU, which the
+ * release flavor (`make KERNEL_TESTS=off`) prunes. Without the guard this
+ * non-static definition survives into a release kernel.map as gadget
+ * surface with no legitimate production caller. */
 void nt_audit_reset_for_test(void)
 {
     uint64_t irq;
@@ -151,6 +156,7 @@ void nt_audit_reset_for_test(void)
     /* g_next_id kept monotonic so a stale handle never re-matches. */
     spin_unlock_irqrestore(&s_audit_lock, irq);
 }
+#endif /* KERNEL_TESTS */
 
 /* ---- Hot-path dispatch (session-scoped) ---------------------------------- */
 

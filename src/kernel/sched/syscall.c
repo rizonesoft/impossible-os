@@ -285,8 +285,19 @@ static NTSTATUS sys_getprocs(uint64_t buf_ptr, uint64_t buf_size,
  * Exposed non-static so kernel unit tests can invoke the dispatch
  * directly (with a save/restore wrapper around config.test) without
  * re-implementing the gate logic. Not part of the public kernel API.
+ *
+ * KERNEL_TESTS-gated: every allocator countdown this forwards to is a
+ * KERNEL_TESTS seam, so the release flavor has no definition to call. The
+ * boot.conf test=1 gate above is a RUNTIME gate; this is the compile-time
+ * one. Under `make KERNEL_TESTS=off` the SYS_FAULT_INJECT case is dropped
+ * from syscall_handler() too, so syscall 44 falls to the unknown-syscall
+ * default and returns -1 -- the same value the runtime gate returns on a
+ * production (test=0) boot, now guaranteed by the compiler. The SYS_
+ * number itself stays reserved in syscall.h: it is an ABI promise and
+ * feeds IMPOSSIBLE_OS_ABI_HASH, which must not differ between flavors.
  * ------------------------------------------------------------------ */
 
+#ifdef KERNEL_TESTS
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
 {
@@ -348,6 +359,7 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
         return -1;
     }
 }
+#endif /* KERNEL_TESTS */
 
 /* ---- Shared syscall-entry IRQL wrappers -------------------------- *
  *
@@ -945,9 +957,13 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             ret = -1;
         break;
     }
+#ifdef KERNEL_TESTS
+    /* Release flavor drops this case: syscall 44 then falls to the
+     * unknown-syscall default and returns -1. See the dispatch banner. */
     case SYS_FAULT_INJECT:
         ret = sys_fault_inject_dispatch((uint32_t)arg1, (uint32_t)arg2);
         break;
+#endif /* KERNEL_TESTS */
     case SYS_ABI_HANDSHAKE:
         /* -18 ABI fingerprint runtime gate: returns the 64-bit hash the
          * kernel was compiled with. User crt0 calls this as the first

@@ -19,6 +19,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/seqlock.h"
 #include "kernel/boot_init.h"
+#include "kernel/test/test_usermode.h"  /* test_usermode_color_active (no-op when KERNEL_TESTS=off) */
 
 
 /* GCC built-in variadic args (no libc needed) */
@@ -1238,7 +1239,6 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
              * DTEST subsystem-name overrides above still win if a
              * nested test harness explicitly tags its output. */
             if (!test_color && subsystem) {
-                extern int test_usermode_color_active(void);
                 if (test_usermode_color_active())
                     test_color = ANSI_TEST_USER;
             }

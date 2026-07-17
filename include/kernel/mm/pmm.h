@@ -90,8 +90,9 @@ uint64_t pmm_get_free_frames(void);
  *
  * Setters all return void. Calling _countdown_set(0), _task_filter_set(0),
  * or _max_injections_set(0) disables the respective gate. Test runner
- * clears all four state fields between suites. Released builds compile
- * the entire surface out via KERNEL_TESTS. */
+ * clears all four state fields between suites. The release build flavor
+ * (`make KERNEL_TESTS=off`) compiles the entire surface out and prunes
+ * src/kernel/test/ from the build. */
 void     pmm_alloc_fail_countdown_set(uint32_t n);
 void     pmm_alloc_fail_countdown_clear(void);
 void     pmm_alloc_fail_next(void);

@@ -6535,6 +6535,130 @@ assert_exit_zero "boot-reliability self-test (classify/aggregate/schema)" \
 
 
 # ============================================================================
+# KERNEL_TESTS release-flavor knob (kernel-security-hardening: release-build
+# test-surface exclusion)
+# ============================================================================
+# All checks use `make -n` dry-runs: they assert the FLAVOR CONTRACT (which
+# flags reach the compiler, which sources reach the link) without paying for a
+# real compile. The proof that a shipped image carries no test surface is a
+# separate gate (the release-flavor proof / seam-inventory work), not these checks.
+
+# Last -D/-U KERNEL_TESTS flag on a rule's compile line ("" if none). clang
+# applies -D/-U left to right, so the LAST flag is the effective one.
+_kt_last_flag() {  # <target> [make-vars...]
+    local target="$1"; shift
+    make -Bn "$@" "$target" 2>/dev/null \
+        | grep -oE '\-[DU]KERNEL_TESTS' | tail -1
+}
+
+_kt_case() {  # <desc> <want> <target> [make-vars...]
+    local desc="$1" want="$2" target="$3"; shift 3
+    local got
+    got="$(_kt_last_flag "$target" "$@")"
+    if [ "$got" = "$want" ]; then
+        t_pass "$desc"
+    else
+        t_fail "$desc" "effective flag: '${got:-<none>}' (want '$want')"
+    fi
+}
+
+# Default flavor is the test flavor: the suite must keep working with no knob.
+_kt_case "KERNEL_TESTS: default flavor defines the macro" \
+         "-DKERNEL_TESTS" "build/kernel/mm/pmm.o"
+_kt_case "KERNEL_TESTS=on defines the macro" \
+         "-DKERNEL_TESTS" "build/kernel/mm/pmm.o" KERNEL_TESTS=on
+_kt_case "KERNEL_TESTS=off undefines the macro" \
+         "-UKERNEL_TESTS" "build/kernel/mm/pmm.o" KERNEL_TESTS=off
+
+# SECURITY (Codex design review 2026-07-17): the documented KERNEL_EXTRA_CFLAGS
+# pass-through must NOT be able to re-enable the test surface under the release
+# flavor. The flavor flag is appended last with `override`, so it wins.
+_kt_case "KERNEL_TESTS=off beats KERNEL_EXTRA_CFLAGS=-DKERNEL_TESTS" \
+         "-UKERNEL_TESTS" "build/kernel/mm/pmm.o" \
+         KERNEL_TESTS=off KERNEL_EXTRA_CFLAGS=-DKERNEL_TESTS
+_kt_case "KERNEL_TESTS=off beats a command-line CFLAGS override" \
+         "-UKERNEL_TESTS" "build/kernel/mm/pmm.o" \
+         KERNEL_TESTS=off CFLAGS=-DKERNEL_TESTS
+
+# The INTERNAL flag variables are `override` too: a plain assignment would lose
+# to a command-line value and re-enable the seams under an apparent release
+# build. Each of these is a bypass that existed before the override landed.
+_kt_case "KERNEL_TESTS=off beats a KERNEL_TESTS_FLAG override" \
+         "-UKERNEL_TESTS" "build/kernel/mm/pmm.o" \
+         KERNEL_TESTS=off KERNEL_TESTS_FLAG=-DKERNEL_TESTS
+_kt_case "KERNEL_TESTS=off beats a SIMD_CFLAGS override" \
+         "-UKERNEL_TESTS" "build/kernel/icon_store.o" \
+         KERNEL_TESTS=off SIMD_CFLAGS=-DKERNEL_TESTS
+_kt_case "KERNEL_TESTS=off beats an AVX2_CFLAGS override" \
+         "-UKERNEL_TESTS" "build/kernel/mm/memops.o" \
+         KERNEL_TESTS=off AVX2_CFLAGS=-DKERNEL_TESTS
+_kt_case "KERNEL_TESTS=off beats an AVX512_CFLAGS override" \
+         "-UKERNEL_TESTS" "build/kernel/mm/memops_avx512.o" \
+         KERNEL_TESTS=off AVX512_CFLAGS=-DKERNEL_TESTS
+
+# The flavor stamp must not become make's default goal: it is declared before
+# the kernel targets, and a bare `make` that builds only a stamp would let an
+# operator believe a release kernel was produced.
+_kt_goal="$(make -p 2>/dev/null | grep -m1 '^.DEFAULT_GOAL' || true)"
+case "$_kt_goal" in
+    *kernel-tests.stamp*)
+        t_fail "KERNEL_TESTS stamp is not make's default goal" "$_kt_goal" ;;
+    *)
+        t_pass "KERNEL_TESTS stamp is not make's default goal" ;;
+esac
+
+# The SIMD/AVX rules derive their own CFLAGS variants and declare their own
+# prerequisites; they must inherit the flavor like the pattern rule does.
+_kt_case "KERNEL_TESTS=off reaches the SIMD-derived explicit rules" \
+         "-UKERNEL_TESTS" "build/kernel/icon_store.o" KERNEL_TESTS=off
+
+# An invalid flavor fails fast at parse time rather than building something
+# unintended (mirrors the BUILD_ALT_BOOT contract).
+# Capture first: this file runs under `set -o pipefail`, so piping make
+# straight into grep would surface make's intended rc=2 as the pipeline's
+# status and invert the result.
+_kt_bogus_out="$(make KERNEL_TESTS=bogus kernel 2>&1)" && _kt_bogus_rc=0 || _kt_bogus_rc=$?
+if [ "$_kt_bogus_rc" != "0" ] \
+   && echo "$_kt_bogus_out" | grep -q "KERNEL_TESTS must be one of: on, off"; then
+    t_pass "KERNEL_TESTS=bogus fails fast with a named error"
+else
+    t_fail "KERNEL_TESTS=bogus fails fast with a named error" \
+           "rc=$_kt_bogus_rc; output: $(echo "$_kt_bogus_out" | head -1)"
+fi
+
+# Source pruning: the define alone still compiles/links every test TU, so the
+# release flavor must drop them from the build entirely.
+_kt_test_tus() {  # <flavor> -> count of src/kernel/test objects in the build
+    make -n KERNEL_TESTS="$1" kernel 2>/dev/null \
+        | grep -oE 'build/kernel/test/[a-z_0-9]+\.o' | sort -u | wc -l
+}
+_kt_on_tus="$(_kt_test_tus on)"
+_kt_off_tus="$(_kt_test_tus off)"
+if [ "$_kt_off_tus" = "0" ]; then
+    t_pass "KERNEL_TESTS=off prunes every src/kernel/test/ TU from the build"
+else
+    t_fail "KERNEL_TESTS=off prunes every src/kernel/test/ TU from the build" \
+           "$_kt_off_tus test objects still in the build"
+fi
+if [ "$_kt_on_tus" -gt 0 ]; then
+    t_pass "KERNEL_TESTS=on keeps the src/kernel/test/ TUs ($_kt_on_tus objects)"
+else
+    t_fail "KERNEL_TESTS=on keeps the src/kernel/test/ TUs" "test suite pruned from the test flavor"
+fi
+
+# Stamp invalidation: the flavor stamp must be a REAL prerequisite of EVERY C
+# object rule. An order-only prereq (`| stamp`) does not trigger a rebuild, so
+# a flip would silently relink objects compiled under the opposite flavor.
+_kt_c_rules="$(grep -cE '^(\$\(BUILD_DIR\)/\S+\.o|\$\(LZ4_FULL_OBJ\)): \$\(SRC_DIR\)/\S+\.c ' Makefile)"
+_kt_stamped="$(grep -cE '^(\$\(BUILD_DIR\)/\S+\.o|\$\(LZ4_FULL_OBJ\)): \$\(SRC_DIR\)/\S+\.c \$\(KERNEL_TESTS_STAMP\) \|' Makefile)"
+if [ "$_kt_c_rules" = "$_kt_stamped" ] && [ "$_kt_stamped" -gt 0 ]; then
+    t_pass "KERNEL_TESTS flavor stamp is a real prereq of all $_kt_stamped C object rules"
+else
+    t_fail "KERNEL_TESTS flavor stamp is a real prereq of all C object rules" \
+           "$_kt_stamped of $_kt_c_rules C rules carry the stamp"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

@@ -152,6 +152,11 @@ bool ci_hash_revoked(const uint8_t hash[CI_HASH_LEN])
     return false;
 }
 
+#ifdef KERNEL_TESTS
+/* KERNEL_TESTS-gated: every caller is a src/kernel/test/ TU, which the
+ * release flavor (`make KERNEL_TESTS=off`) prunes. Without the guard this
+ * non-static definition survives into a release kernel.map as gadget
+ * surface with no legitimate production caller. */
 /* Test-only publication seam. Installs a caller-built fixture and release-stores
  * the ready flag using the SAME ordering as ci_init, so unit tests can exercise
  * the published (post-seal) accessor paths without calling ci_init (which reads
@@ -169,3 +174,4 @@ void ci_policy_reset_for_test(void)
     __atomic_store_n(&s_ready, 0u, __ATOMIC_RELEASE);
     memset(&s_policy, 0, sizeof(s_policy));
 }
+#endif /* KERNEL_TESTS */

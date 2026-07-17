@@ -20,11 +20,50 @@
  * test_usermode_set_filter() via boot_tests_run's wire-up; the
  * launcher runs every match when unset, or only globs matching the
  * filter string when set.
+ *
+ * KERNEL_TESTS gating: the launcher lives in src/kernel/test/, which the
+ * release flavor (`make KERNEL_TESTS=off`) prunes from the build entirely.
+ * Its callers -- boot_tests.c and klog.c -- call it unguarded, so every
+ * declaration below is `#ifdef KERNEL_TESTS` with a no-op `static inline`
+ * `#else` arm, mirroring test.h. The type taxonomy and the exit-code
+ * contract carry no linkage and stay visible in both flavors.
  * ============================================================================ */
 
 #pragma once
 
 #include "kernel/types.h"
+
+/* Test-type taxonomy (user-mode test framework). The launcher derives the type
+ * from the binary filename prefix:
+ *   `test_smoke_*.exe`   -> UTEST_TYPE_SMOKE    (phase 0: FAIL aborts run)
+ *   `test_stress_*.exe`  -> UTEST_TYPE_STRESS   (classname=stress; binary loops internally)
+ *   `test_perf_*.exe`    -> UTEST_TYPE_PERF     (classname=perf; test owns baseline)
+ *   anything else        -> UTEST_TYPE_CORRECTNESS (default)
+ * An optional `type=<name>` token in the manifest entry overrides
+ * the filename-derived default (future-proofing for binaries that
+ * want to declare a different policy).
+ *
+ * Stress note: the launcher spawns each binary exactly once. Stress
+ * iteration is the BINARY's responsibility (see user/test/
+ * test_stress_libc.c). Kernel task slots are monotonic so a
+ * launcher-side loop would exhaust TASK_MAX (32) after ~20 binaries. */
+typedef enum {
+    UTEST_TYPE_CORRECTNESS = 0,
+    UTEST_TYPE_SMOKE       = 1,
+    UTEST_TYPE_STRESS      = 2,
+    UTEST_TYPE_PERF        = 3
+} utest_type_t;
+
+/* Contract for SKIP: a test binary reports "this test is not
+ * applicable here" by exiting with status 77 (kselftest convention).
+ * The launcher counts it as SKIPPED, not FAIL. Any other non-zero
+ * exit is FAIL. */
+#define UTEST_EXIT_SKIP    77
+/* Synthetic exit the launcher assigns when a binary is killed for
+ * exceeding its wall-clock timeout. */
+#define UTEST_EXIT_TIMEOUT (-6)
+
+#ifdef KERNEL_TESTS
 
 /* Run every test_*.exe found at C:\ root sequentially and collect
  * results. Logs per-binary `[UTEST]` lines + a final summary.
@@ -76,27 +115,6 @@ void test_usermode_set_xml(int enable);
  * schema for downstream trend analysis. Disabled by default. */
 void test_usermode_set_json(int enable);
 
-/* Test-type taxonomy (user-mode test framework). The launcher derives the type
- * from the binary filename prefix:
- *   `test_smoke_*.exe`   -> UTEST_TYPE_SMOKE    (phase 0: FAIL aborts run)
- *   `test_stress_*.exe`  -> UTEST_TYPE_STRESS   (classname=stress; binary loops internally)
- *   `test_perf_*.exe`    -> UTEST_TYPE_PERF     (classname=perf; test owns baseline)
- *   anything else        -> UTEST_TYPE_CORRECTNESS (default)
- * An optional `type=<name>` token in the manifest entry overrides
- * the filename-derived default (future-proofing for binaries that
- * want to declare a different policy).
- *
- * Stress note: the launcher spawns each binary exactly once. Stress
- * iteration is the BINARY's responsibility (see user/test/
- * test_stress_libc.c). Kernel task slots are monotonic so a
- * launcher-side loop would exhaust TASK_MAX (32) after ~20 binaries. */
-typedef enum {
-    UTEST_TYPE_CORRECTNESS = 0,
-    UTEST_TYPE_SMOKE       = 1,
-    UTEST_TYPE_STRESS      = 2,
-    UTEST_TYPE_PERF        = 3
-} utest_type_t;
-
 /* RESERVED -- boot.conf `stress_iters=<N>` is plumbed through this
  * setter but currently has no consumer (stress binaries hardcode
  * their iteration count). When a future env-passing syscall lands,
@@ -105,11 +123,25 @@ typedef enum {
  * default. */
 void test_usermode_set_stress_iters(uint32_t n);
 
-/* Contract for SKIP: a test binary reports "this test is not
- * applicable here" by exiting with status 77 (kselftest convention).
- * The launcher counts it as SKIPPED, not FAIL. Any other non-zero
- * exit is FAIL. */
-#define UTEST_EXIT_SKIP    77
-/* Synthetic exit the launcher assigns when a binary is killed for
- * exceeding its wall-clock timeout. */
-#define UTEST_EXIT_TIMEOUT (-6)
+/* Non-zero while a user-mode test binary owns the current task, so klog
+ * renders every kernel line emitted on that binary's behalf in the UTEST
+ * color. Read by klog's color-scope block; the launcher owns the flag. */
+int test_usermode_color_active(void);
+
+#else /* !KERNEL_TESTS */
+
+/* Release flavor: src/kernel/test/ is pruned from the build, so the launcher
+ * has no definition. The unguarded callers in boot_tests.c and klog.c compile
+ * against these no-ops instead, and the calls fold away. */
+
+static inline void test_usermode_run(void) {}
+static inline void test_usermode_set_filter(const char *filter __attribute__((unused))) {}
+static inline void test_usermode_set_timeout_ms(uint32_t ms __attribute__((unused))) {}
+static inline void test_usermode_set_tap(int enable __attribute__((unused))) {}
+static inline void test_usermode_set_isolation(int enable __attribute__((unused))) {}
+static inline void test_usermode_set_xml(int enable __attribute__((unused))) {}
+static inline void test_usermode_set_json(int enable __attribute__((unused))) {}
+static inline void test_usermode_set_stress_iters(uint32_t n __attribute__((unused))) {}
+static inline int  test_usermode_color_active(void) { return 0; }
+
+#endif /* KERNEL_TESTS */

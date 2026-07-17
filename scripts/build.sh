@@ -59,6 +59,18 @@ Environment variables (passed through to make):
                                         See docs/boot/alt-boot.md.
   KERNEL_EXTRA_CFLAGS=...               Append CFLAGS to kernel compile
                                         (e.g. fixture-mode ABI overrides).
+                                        Cannot re-enable KERNEL_TESTS under
+                                        KERNEL_TESTS=off: the flavor flag is
+                                        appended last and wins.
+  KERNEL_TESTS={on,off}                 Kernel test-surface flavor. Default
+                                        `on`: the KERNEL_TESTS seams and the
+                                        src/kernel/test/ suite are compiled in
+                                        (scripts/test.sh needs this). `off` is
+                                        the RELEASE flavor: seams compile out
+                                        and the test sources are pruned from
+                                        the build. Flipping the flavor rebuilds
+                                        every TU (build/.kernel-tests.stamp).
+                                        See todo/02-kernel-core/TODO-10 sec 26.
 
 Output:
   Tee'd to build/build.log. Last line is always one of:

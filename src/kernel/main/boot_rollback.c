@@ -358,6 +358,11 @@ int boot_rollback_request_raise(void)
 
 /* Test-only reset. Tests that drive the steady gate need a way to
  * rewind state between cases without rebooting. NOT for production use. */
+#ifdef KERNEL_TESTS
+/* KERNEL_TESTS-gated: every caller is a src/kernel/test/ TU, which the
+ * release flavor (`make KERNEL_TESTS=off`) prunes. Without the guard this
+ * non-static definition survives into a release kernel.map as gadget
+ * surface with no legitimate production caller. */
 void boot_rollback_reset_for_test(void)
 {
     /* Atomic stores to mirror the production paths -- tests that
@@ -368,3 +373,4 @@ void boot_rollback_reset_for_test(void)
     __atomic_store_n(&s_raised,    0, __ATOMIC_RELEASE);
     __atomic_store_n(&s_enqueued,  0, __ATOMIC_RELEASE);
 }
+#endif /* KERNEL_TESTS */
