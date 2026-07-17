@@ -33,6 +33,7 @@
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
 #include "../../../include/boot/ab_boot_metadata.h"        /* A/B dual-slot metadata wire ABI + validators (TODO-21) */
+#include "../../../include/kernel/mm/memmap_boot.h"          /* single-sourced HHDM constants (no drift vs memmap.h) */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -866,9 +867,13 @@ static void nvram_write_boot_error(UINT32 code)
 /* BootError values must be a known BOOT_ERR_* code from efi.h.  Reject
  * anything else as untrusted input (a pre-OS UEFI app can write under
  * the public Impossible OS GUID).  Keep this in sync with the registry
- * in efi.h: highest currently-defined code is BOOT_ERR_FW_SETUP_RESET_RET
- * (0x0014). */
+ * in efi.h: highest currently-defined code is BOOT_ERR_HHDM_FAIL (0x0019). */
 #define BOOT_ERR_REGISTRY_MAX 0x0019  /* highest BOOT_ERR_* in efi.h (BOOT_ERR_HHDM_FAIL) */
+/* Pin the duplicate to the actual highest efi.h code so a new BOOT_ERR_* that
+ * forgets to bump this fails the build instead of silently rejecting a valid
+ * new error as untrusted. */
+_Static_assert(BOOT_ERR_REGISTRY_MAX == BOOT_ERR_HHDM_FAIL,
+    "BOOT_ERR_REGISTRY_MAX must track the highest BOOT_ERR_* in efi.h");
 
 static UINT32 nvram_read_boot_error(void)
 {
@@ -10682,23 +10687,22 @@ static void copy_config_tables(void)
 #define POST16_BL_HHDM_INSTALL  0xB064  /* post-EBS: installing HHDM leaves (PML4 273-400) */
 #define POST16_BL_HHDM_OK       0xB065  /* post-EBS: HHDM direct map complete */
 
-/* Bootloader-local mirror of the canonical HHDM constants
- * (include/kernel/mm/memmap.h). bootx64.c cannot include memmap.h -- it
- * pulls kernel/types.h, which the freestanding UEFI TU must not see (efi.h
- * owns the integer types). Mirrored literals + local _Static_assert extend
- * the boot_info_mirror.h convention; keep in sync with memmap.h. */
-#define BL_MM_HHDM_BASE        0xffff888000000000ULL  /* memmap.h MM_HHDM_BASE */
-#define BL_MM_HHDM_SIZE        0x0000400000000000ULL  /* MM_HHDM_SIZE (64 TiB) */
-#define BL_MM_PML4_PHYS_LIMIT  0x0000000100000000ULL  /* MM_PML4_PHYS_LIMIT (4 GiB) */
+/* The HHDM constants are SINGLE-SOURCED from include/kernel/mm/memmap_boot.h
+ * (included above) -- MM_HHDM_BASE / MM_HHDM_SIZE / MM_PML4_PHYS_LIMIT /
+ * MM_HHDM_PML4_SLOT / MM_HHDM_PML4_SLOT_LAST. Both this bootloader and the
+ * kernel's memmap.h include that one file, so there is no separate literal
+ * that can drift. The BL_ aliases keep the local names below unchanged. */
+#define BL_MM_HHDM_BASE        MM_HHDM_BASE
+#define BL_MM_HHDM_SIZE        MM_HHDM_SIZE
+#define BL_MM_PML4_PHYS_LIMIT  MM_PML4_PHYS_LIMIT
+#define BL_HHDM_PML4_SLOT      MM_HHDM_PML4_SLOT
+#define BL_HHDM_PML4_SLOT_LAST MM_HHDM_PML4_SLOT_LAST
 
-/* PML4 slot the HHDM base lands in: (BASE >> 39) & 0x1ff = 273. The 64 TiB
- * window occupies 128 slots (273..400 inclusive). */
-#define BL_HHDM_PML4_SLOT      ((UINT64)((BL_MM_HHDM_BASE >> 39) & 0x1ffULL))
-#define BL_HHDM_PML4_SLOT_LAST 400ULL
-_Static_assert(((BL_MM_HHDM_BASE >> 39) & 0x1ffULL) == 273ULL,
-    "HHDM base must live in PML4 slot 273 -- memmap.h mirror drift");
-_Static_assert(BL_HHDM_PML4_SLOT + (BL_MM_HHDM_SIZE >> 39) - 1 == BL_HHDM_PML4_SLOT_LAST,
-    "HHDM 64 TiB window must span PML4 slots 273..400");
+/* pmm_init() clamps its bitmap coverage at 4 GiB (src/kernel/mm/pmm.c
+ * highest_addr cap). This is a DISTINCT constant from MM_PML4_PHYS_LIMIT (the
+ * AP 32-bit CR3 ceiling) that happens to share the 4 GiB value; keep them
+ * separate so a change to one never silently resizes the bitmap guard. */
+#define BL_PMM_BITMAP_PHYS_CAP 0x0000000100000000ULL  /* pmm.c 4 GiB highest_addr cap */
 
 /* Page-table entry flags + sizes. */
 #define BL_PTE_P      (1ULL << 0)
@@ -10875,21 +10879,23 @@ static int bl_hhdm_page_mapped(UINT64 phys)
 }
 
 /* True when the whole 2 MiB bucket [base, base+2M) maps as one PS=1 leaf:
- * fully inside a single usable interval AND disjoint from the kernel-image
- * envelope. */
-static int bl_hhdm_bucket_whole(UINT64 base)
+ * fully inside the CURRENT usable interval [iv_base, iv_end) AND disjoint from
+ * the kernel-image envelope. O(1): the caller sweeps buckets within one sorted
+ * + coalesced interval, so "fully usable" == "fully inside this interval" (a
+ * bucket straddling a coalescing gap extends past iv_end and is handled as a
+ * partial). This replaces an O(intervals)-per-bucket rescan that made the
+ * install O((RAM / 2 MiB) * intervals) -- ~billions of comparisons on a large
+ * fragmented map. */
+static int bl_hhdm_bucket_whole(UINT64 base, UINT64 iv_base, UINT64 iv_end)
 {
     UINT64 bend = base + BL_PAGE_2M;
-    UINT32 i;
+    if (base < iv_base || bend > iv_end) return 0;   /* not fully in this interval */
     if (g_kernel_img_hi > g_kernel_img_lo) {
         UINT64 elo = g_kernel_img_lo & ~(BL_PAGE_4K - 1);
         UINT64 ehi = (g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1);
         if (base < ehi && bend > elo) return 0;
     }
-    for (i = 0; i < s_hhdm_iv_n; i++)
-        if (base >= s_hhdm_iv[i].base && bend <= s_hhdm_iv[i].end)
-            return 1;
-    return 0;
+    return 1;
 }
 
 /* Allocate one zeroed page-table frame from the arena. Bounds-checked: FATAL
@@ -10993,7 +10999,7 @@ static void bl_hhdm_reserve_arena(EFI_MEMORY_DESCRIPTOR *raw,
      * dependence on the sizing snapshot. Guard = kernel image + max bitmap +
      * 1 page for any linker padding between page_up(image end) and the real
      * __kernel_end where pmm actually places the bitmap. */
-    UINT64 bitmap_max = BL_MM_PML4_PHYS_LIMIT / 32768ULL;   /* 128 KiB, page-aligned */
+    UINT64 bitmap_max = BL_PMM_BITMAP_PHYS_CAP / 32768ULL;   /* 128 KiB, page-aligned */
     UINT64 kguard_hi = ((g_kernel_img_hi + BL_PAGE_4K - 1) & ~(BL_PAGE_4K - 1))
                        + bitmap_max + BL_PAGE_4K;
 
@@ -11168,7 +11174,7 @@ static void bl_hhdm_install_leaves(void)
             }
             last_bucket = b;
 
-            if (bl_hhdm_bucket_whole(b)) {
+            if (bl_hhdm_bucket_whole(b, s_hhdm_iv[iv].base, ivend)) {
                 cur_pd[pd_i] = b | BL_PTE_P | BL_PTE_RW | BL_PTE_PS | BL_PTE_NX;
             } else {
                 UINT64 pt_phys;
@@ -11272,6 +11278,13 @@ static void jump_to_kernel(UINT64 entry_point)
         volatile UINT64 *hh =
             (volatile UINT64 *)(UINTN)(BL_MM_HHDM_BASE + g_hhdm_arena_base);
         if (*id != *hh) {
+            /* Deliberately NOT boot_fatal here: this runs under the freshly
+             * loaded PT_PML4, which maps only the low 4 GiB identity + the HHDM
+             * (RAM). boot_fatal dereferences gST and calls RuntimeServices
+             * (SetVariable/GetTime/ResetSystem) + boot_history_append and may
+             * touch the GOP framebuffer -- any of which can live ABOVE 4 GiB and
+             * is unmapped here, turning a controlled halt into a triple fault.
+             * A bare serial write + cli;hlt has no post-CR3 mapping dependency. */
             serial_early_print("[FAIL] HHDM: identity vs direct-map readback "
                                "mismatch -- halting\n");
             for (;;) __asm__ volatile ("cli; hlt");

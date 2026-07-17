@@ -57,6 +57,9 @@
 #pragma once
 
 #include "kernel/types.h"
+/* HHDM base/size, PML4 phys limit, and HHDM PML4-slot constants live in a
+ * UEFI-safe sub-header the bootloader shares, so its mirror cannot drift. */
+#include "kernel/mm/memmap_boot.h"
 
 /* ---- Size / alignment units ---------------------------------------------- */
 
@@ -93,12 +96,9 @@
 
 /* ---- HHDM: fixed-offset direct map of physical RAM ----------------------- */
 
-/* Linux-compatible base. Sparse: only validated UEFI RAM types are aliased
- * here (see the alias policy in the design doc). Mapped NX + writable; never
- * executable, never User. MMIO does NOT live here -- vmm_map_mmio_uc() owns
- * device memory in the MMIO window below. */
-#define MM_HHDM_BASE          0xffff888000000000ULL
-#define MM_HHDM_SIZE          0x0000400000000000ULL   /* 64 TiB of RAM */
+/* MM_HHDM_BASE / MM_HHDM_SIZE are defined in the shared memmap_boot.h
+ * (Linux-compatible base; sparse RAM-only, NX + writable, never User; MMIO
+ * stays in the MMIO window via vmm_map_mmio_uc()). */
 #define MM_HHDM_END           (MM_HHDM_BASE + MM_HHDM_SIZE)
 
 /* ---- MMIO / fixmap window ------------------------------------------------ */
@@ -169,8 +169,8 @@
 #define MM_AP_ENVELOPE_SIZE   0x0000000000002000ULL   /* trampoline + AP_DATA */
 #define MM_AP_ENVELOPE_END    (MM_AP_ENVELOPE_BASE + MM_AP_ENVELOPE_SIZE)
 
-/* Hard ceiling for the kernel PML4 physical frame (32-bit CR3 load on APs). */
-#define MM_PML4_PHYS_LIMIT    0x0000000100000000ULL   /* 4 GiB */
+/* MM_PML4_PHYS_LIMIT (4 GiB, the AP 32-bit CR3 ceiling) lives in the shared
+ * memmap_boot.h. */
 
 /* ---- Compile-time layout gate -------------------------------------------- */
 
@@ -328,17 +328,12 @@ static inline uint64_t mm_hhdm_to_phys(const void *virt)
  * occupies 128 slots (273..400 inclusive). The bootloader installs leaves per
  * slot (bootx64.c setup_page_tables); the walker conversion (section 9) uses
  * this to find the right PML4 entry. Assumes 'phys' is a mapped RAM address
- * (phys < MM_HHDM_SIZE); gate with mm_phys_in_hhdm() first. */
-#define MM_HHDM_PML4_SLOT       ((MM_HHDM_BASE >> 39) & 0x1ffULL)
-#define MM_HHDM_PML4_SLOT_LAST  (MM_HHDM_PML4_SLOT + (MM_HHDM_SIZE >> 39) - 1ULL)
+ * (phys < MM_HHDM_SIZE); gate with mm_phys_in_hhdm() first. MM_HHDM_PML4_SLOT
+ * / _LAST and their asserts live in the shared memmap_boot.h. */
 static inline uint64_t mm_hhdm_pml4_slot(uint64_t phys)
 {
     return MM_HHDM_PML4_SLOT + (phys >> 39);
 }
-_Static_assert(MM_HHDM_PML4_SLOT == 273ULL,
-    "HHDM base must live in PML4 slot 273");
-_Static_assert(MM_HHDM_PML4_SLOT_LAST == 400ULL,
-    "HHDM 64 TiB window must end at PML4 slot 400");
 
 /* IMAGE relation: kernel linker symbol -> its physical load address. Returns 0
  * when 'virt' is not an image-window address. */
