@@ -4,9 +4,11 @@
  * Disk-backed swap with Clock (second-chance) page replacement.
  * Uses pagefile.sys on the IXFS partition as the backing store.
  *
- *   1. Copy page contents to a swap slot
- *   2. Unmap the page (free the physical frame)
- *   3. Write SWAP_ENCODE_PTE(slot_id) into the PTE
+ *   1. Copy page contents to a swap slot (pagefile)
+ *   2. Write SWAP_ENCODE_PTE(slot_id) into the PTE, verifying the leaf still
+ *      maps the captured frame -- the marker goes in BEFORE the frame is freed
+ *   3. Free the physical frame directly -- only after the marker is committed,
+ *      so a failed/raced encode never strands the page
  *
  * Swap in flow (on page fault):
  *   1. Read PTE → decode swap slot ID
@@ -93,9 +95,13 @@ static uint64_t swap_read_pte(uintptr_t virt)
     return pt[pt_idx];
 }
 
-/* Write a PTE value for a virtual address.
- * Used to encode swap metadata when Present=0. */
-static void swap_write_pte(uintptr_t virt, uint64_t pte_val)
+/* Write a PTE value for a virtual address at the 4 KiB PT level.
+ * Used to encode swap metadata when Present=0. Returns 0 on success, -1 if
+ * any level is absent OR a huge (1 GiB/2 MiB) leaf is encountered -- a huge
+ * leaf's frame is a DATA frame, not a page table, and must NEVER be descended
+ * into (matching swap_read_pte's huge stops). Descending would write swap
+ * metadata into unrelated physical memory. */
+static int swap_write_pte(uintptr_t virt, uint64_t pte_val, uintptr_t expected_phys)
 {
     uint64_t cr3;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
@@ -107,17 +113,31 @@ static void swap_write_pte(uintptr_t virt, uint64_t pte_val)
     uint32_t pd_idx   = (uint32_t)((virt >> 21) & 0x1FF);
     uint32_t pt_idx   = (uint32_t)((virt >> 12) & 0x1FF);
 
-    if (!(pml4[pml4_idx] & 1)) return;
+    if (!(pml4[pml4_idx] & 1)) return -1;
     uint64_t *pdpt = pt_walk(pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & 1)) return;
+    if (!(pdpt[pdpt_idx] & 1)) return -1;
+    if (pdpt[pdpt_idx] & VMM_FLAG_HUGE) return -1;   /* 1 GiB leaf, not a PD */
     uint64_t *pd = pt_walk(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
-    if (!(pd[pd_idx] & 1)) return;
+    if (!(pd[pd_idx] & 1)) return -1;
+    if (pd[pd_idx] & VMM_FLAG_HUGE) return -1;        /* 2 MiB leaf, not a PT */
     uint64_t *pt = pt_walk(pd[pd_idx] & PTE_ADDR_MASK);
+
+    /* Verify the leaf still maps the frame swap_out captured before the
+     * pagefile I/O. If a concurrent unmap/remap changed it, DO NOT overwrite --
+     * stranding the swap marker over an unrelated mapping would let swap_out
+     * free a frame it no longer owns. Report -1, mutating nothing. The current
+     * flat single-CPU cooperative scheduler makes this verify+write atomic;
+     * full SMP/preemptive serialization of swap is a separate swap-wide concern
+     * (swap_slots/clock_entries are likewise unlocked). */
+    if (!(pt[pt_idx] & VMM_FLAG_PRESENT) ||
+        (pt[pt_idx] & PTE_ADDR_MASK) != expected_phys)
+        return -1;
 
     pt[pt_idx] = pte_val;
     vmm_flush_tlb(virt);
+    return 0;
 }
 
 /* --- Page copy helper --- */
@@ -249,6 +269,14 @@ int swap_out(uintptr_t virt_addr)
         return -1;
     }
 
+    /* Swap operates on 4 KiB pages only. Reject a huge (2 MiB / 1 GiB) leaf
+     * BEFORE touching a slot or the pagefile: swap_write_pte must never descend
+     * into a huge leaf's DATA frame as if it were a page table. */
+    if (swap_read_pte(virt_addr) & VMM_FLAG_HUGE) {
+        klog(LOG_WARN, "swap", "Cannot swap out huge page %p", virt_addr);
+        return -1;
+    }
+
     /* Copy page contents to temp buffer, then write to pagefile */
     page_copy(swap_temp_buf, (const void *)virt_addr);
     slot_offset = i * SWAP_SLOT_SIZE;
@@ -258,11 +286,19 @@ int swap_out(uintptr_t virt_addr)
         return -1;
     }
 
-    /* Unmap the page and free the physical frame */
-    vmm_unmap_page(virt_addr, 1);
-
-    /* Write swap-encoded PTE */
-    swap_write_pte(virt_addr, SWAP_ENCODE_PTE(i));
+    /* Encode the swap marker into the PTE BEFORE releasing the frame, so a
+     * failed encode never strands the page: on -1 the mapping and the frame are
+     * untouched and the slot stays free (no vmm_unmap_page-then-fallible-write
+     * window that could free the frame and then lose it). swap_write_pte
+     * replaces the present 4 KiB PTE with the Present=0 swap marker and flushes
+     * the TLB. */
+    if (swap_write_pte(virt_addr, SWAP_ENCODE_PTE(i), phys) != 0) {
+        klog(LOG_ERROR, "swap", "swap_out: %p PTE absent/changed since capture -- aborting", virt_addr);
+        return -1;
+    }
+    /* PTE now holds the swap marker; free the frame directly. NOT
+     * vmm_unmap_page -- that would clear the marker we just wrote. */
+    pmm_free_frame(phys);
 
     /* Update slot metadata */
     swap_slots[i].in_use = 1;
@@ -406,8 +442,11 @@ uintptr_t swap_clock_victim(void)
 
             /* Check Accessed bit */
             if (pte & VMM_FLAG_ACCESSED) {
-                /* Second chance: clear the Accessed bit */
-                swap_write_pte(vaddr, pte & ~VMM_FLAG_ACCESSED);
+                /* Second chance: clear the Accessed bit, keeping the same
+                 * frame (expected_phys = the frame just read, so the leaf
+                 * verify is a no-op here -- no I/O between read and write). */
+                swap_write_pte(vaddr, pte & ~VMM_FLAG_ACCESSED,
+                               pte & PTE_ADDR_MASK);
                 continue;
             }
 

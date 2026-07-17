@@ -661,7 +661,11 @@ uintptr_t vmm_create_user_pml4(void)
     zero_page(pd_phys);
     zero_page(pt_phys);
 
-    /* Get kernel's PDPT and PD (via identity mapping) */
+    /* Get kernel's PDPT and PD through the HHDM. No VMM_FLAG_PRESENT guard
+     * before pt_walk here (unlike the user-facing lookup paths): kernel PML4[0]
+     * and its PDPT[0] are unconditionally present in the boot map, so the
+     * masked frame is never zero and pt_walk cannot bugcheck. If that ever
+     * changes the whole kernel is already unbootable, not just this clone. */
     kern_pdpt = pt_walk(kernel_pml4[0] & PTE_ADDR_MASK);
     kern_pd   = pt_walk(kern_pdpt[0] & PTE_ADDR_MASK);
 
@@ -811,9 +815,10 @@ static int map_user_page_impl(uintptr_t cr3, uintptr_t virt, uintptr_t phys,
     pti   = pt_index(virt);
 
     /* Zero-fill the frame BEFORE mapping -- prevents kernel data
-     * leaking to user mode.  The frame is identity-mapped so
-     * (uint8_t *)phys is a valid kernel pointer. Shared-memory
-     * callers skip this (zero_frame=0) so pre-written data survives. */
+     * leaking to user mode.  zero_page() writes through the HHDM alias
+     * (pt_walk), so the zero-fill survives the section-5 identity teardown.
+     * Shared-memory callers skip this (zero_frame=0) so pre-written data
+     * survives. */
     if (zero_frame)
         zero_page(phys);
 

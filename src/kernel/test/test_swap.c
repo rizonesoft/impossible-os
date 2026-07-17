@@ -19,11 +19,15 @@ static void test_swap_roundtrip(void)
         return;
     }
 
-    /* Use a safe test address outside the user ELF range (0x800000-0x900000)
-     * and kernel heap.  0x40000000 (1 GiB) is in the identity-mapped region
-     * and not used by anything. */
-    uintptr_t test_virt = 0x40000000;
-    vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
+    /* Use a test VA at 24 GiB -- above every mapped window (0-4 GiB identity,
+     * 4-5 GiB mmap, 5 GiB+ PE bases, 9-10 GiB MMIO), so vmm_map_page creates a
+     * real 4 KiB PTE rather than silently failing over a 2 MiB huge leaf (the
+     * old 0x40000000 sat inside the identity huge map: the map failed, writes
+     * hit the identity page, and swap_out descended a huge leaf -- a false
+     * pass that masked physical-memory corruption). */
+    uintptr_t test_virt = 0x600000000ULL;
+    int mapped = vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
+    TEST_ASSERT(mapped == 0, "vmm_map_page installs a real 4 KiB PTE for swap");
 
     uint8_t *page = (uint8_t *)test_virt;
     for (uint32_t k = 0; k < 4096; k++)

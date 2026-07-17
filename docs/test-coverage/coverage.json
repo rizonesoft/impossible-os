@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-17T02:55:38+02:00",
+  "timestamp": "2026-07-17T04:29:55+02:00",
   "total_suites": 2128,
-  "total_assertions": 7842,
+  "total_assertions": 7843,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -76,7 +76,7 @@
     {"file": "test_smbios.c", "suites": 4, "assertions": 13},
     {"file": "test_smbios_parse.c", "suites": 11, "assertions": 20},
     {"file": "test_storage.c", "suites": 2, "assertions": 2},
-    {"file": "test_swap.c", "suites": 1, "assertions": 3},
+    {"file": "test_swap.c", "suites": 1, "assertions": 4},
     {"file": "test_syscall_filter.c", "suites": 8, "assertions": 42},
     {"file": "test_time.c", "suites": 20, "assertions": 99},
     {"file": "test_timer_tick_cb.c", "suites": 2, "assertions": 4},

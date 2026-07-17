@@ -65,6 +65,7 @@ Replace the fixed-slot, path-special-cased swap globals with a real pagefile man
 - [ ] Replace `SWAP_MAX_SLOTS` static-array ownership with runtime-sized slot allocation; keep `SWAP_ENCODE_PTE()` stable so existing PTE encodings remain valid
 - [ ] Add pagefile discovery and creation policy: use `C:\Impossible\System\pagefile.sys` by default, honor Registry size override, and surface a degraded mode when the system volume is unavailable instead of silent partial init
 - [ ] Move `swap_init`, `swap_out`, `swap_in`, and `swap_stats` onto the manager object; protect slot allocation/free and reverse-map updates with explicit locking
+- [ ] Serialize the `swap_out` + clock PTE transaction (verify/mark/free/publish) against preemption via an IRQ-safe address-space lock; §9 left it a preemptible TOCTOU → XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md` §9
 - [ ] Add `pagefile_backend_read(slot, buf)` / `pagefile_backend_write(slot, buf)` wrappers so later `D05 T05 §11` migration is isolated to one backend
 - [ ] Add `swap_stats()` / `pagefile_stats()` reporting: total slots, used slots, failed writes, failed reads, degraded-state reason
 - [ ] Reject unswappable mappings early: NonPagedPool, DMA buffers, kernel stacks, guard pages, and explicitly locked pages never receive swap PTEs
