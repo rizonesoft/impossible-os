@@ -49,6 +49,8 @@ include/build_info.h
 
 # Bear compilation database (machine-specific absolute paths)
 compile_commands.json
+# ON-flavor DB snapshot preserved for the release seam gate's PART A2 advisory
+compile_commands.on.json
 
 # clangd background index cache
 .cache/

@@ -374,6 +374,7 @@ void boot_load_status_dump_to_blackbox(void)
 
 /* ---- test seam --------------------------------------------------------- */
 
+#ifdef KERNEL_TESTS
 void boot_load_status_test_save(struct boot_load_test_state *st)
 {
     uint32_t i;
@@ -393,3 +394,4 @@ void boot_load_status_test_restore(const struct boot_load_test_state *st)
         s_pool[i] = st->saved[i];
     atomic_set(&s_claimed, st->saved_claimed);
 }
+#endif

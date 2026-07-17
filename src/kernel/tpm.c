@@ -61,7 +61,13 @@ static uint32_t s_event_count;
 static struct tpm_event  s_events[TPM_EVENT_MAX];
 static uint32_t          s_event_overflow;
 static tpm_evlog_status_t s_evlog_status = TPM_EVLOG_NO_LOG;
+#ifdef KERNEL_TESTS
+/* Test-only queryable copy of the first-rejection offset. The offset is also
+ * emitted on the production serial path (see tpm_init) and returned by the pure
+ * tpm_evlog_parse() out-param, so the production diagnostic is unaffected;
+ * only the caller-less accessor is guarded out of release (release test-surface exclusion). */
 static uint32_t          s_evlog_fail_offset;
+#endif
 
 /* ---- Unaligned-safe little-endian byte loads ----
  *
@@ -255,7 +261,9 @@ boot_result_t tpm_init(void)
     s_event_count = 0;
     s_event_overflow = 0;
     s_evlog_status = TPM_EVLOG_NO_LOG;
+#ifdef KERNEL_TESTS
     s_evlog_fail_offset = 0;
+#endif
 
     if (!g_boot_info.tpm_available) {
         klog(LOG_INFO, "TPM", "Not detected");
@@ -294,7 +302,9 @@ boot_result_t tpm_init(void)
                                             s_events, TPM_EVENT_MAX,
                                             &cnt, &ovf, &foff);
     s_evlog_status      = st;
+#ifdef KERNEL_TESTS
     s_evlog_fail_offset = foff;
+#endif
     s_event_overflow    = ovf;
 
     if (st != TPM_EVLOG_OK) {
@@ -333,10 +343,12 @@ tpm_evlog_status_t tpm_evlog_status(void)
     return s_evlog_status;
 }
 
+#ifdef KERNEL_TESTS
 uint32_t tpm_evlog_fail_offset(void)
 {
     return s_evlog_fail_offset;
 }
+#endif
 
 int tpm_event_overflow(void)
 {

@@ -720,6 +720,7 @@ tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
  * first and the s_ak_busy gate is RELEASEd last so no later store can publish a
  * provisioned handle behind a freed gate, but a truly concurrent provisioner
  * would still race -- which the quiescent contract forbids. */
+#ifdef KERNEL_TESTS
 void tpm_attest_test_reset(void)
 {
     s_ak_handle = 0u;
@@ -727,3 +728,4 @@ void tpm_attest_test_reset(void)
     __atomic_store_n(&s_ak_ready, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
 }
+#endif

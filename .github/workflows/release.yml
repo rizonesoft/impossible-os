@@ -116,6 +116,23 @@ jobs:
           fi
           echo "✅ Build succeeded"
 
+      # Preserve the ON-flavor (KERNEL_TESTS=on) compile database before the
+      # off rebuild overwrites it: the seam gate's advisory PART A2 needs the
+      # test-object compile commands (the release/off DB prunes them) to derive
+      # its "referenced only by pruned test objects" candidate inventory.
+      # (release test-surface exclusion -- advisory only, never blocks the release.)
+      - name: Preserve ON-flavor compile DB for the test-ref audit
+        run: |
+          # Write to the repo root (not build/): the off `build.sh clean` wipes
+          # build/ but leaves the root, and the seam gate looks for
+          # compile_commands.on.json there.
+          if [ -s compile_commands.json ]; then
+            cp compile_commands.json compile_commands.on.json
+            echo "✅ saved ON-flavor compile DB ($(python3 -c 'import json;print(len(json.load(open("compile_commands.json"))))') entries)"
+          else
+            echo "::warning::compile_commands.json absent after ON build; PART A2 advisory will skip"
+          fi
+
       # ── Release-flavor rebuild + seam-inventory gate ────────────────────
       # The build + unit tests above ran the TEST flavor (KERNEL_TESTS=on) so
       # the suite could execute. A SHIPPED image must not carry that surface,
@@ -150,6 +167,30 @@ jobs:
             exit 1
           fi
           bash scripts/check-release-symbols.sh
+
+      # Surface the ADVISORY PART A2 inventory (release test-surface exclusion): the gate
+      # prints only a sample, so retain the FULL candidate list as an artifact
+      # and emit a warning with the count -- otherwise a newly leaked helper
+      # outside the printed sample produces no durable signal (Codex adversarial
+      # F2). It is advisory: a non-empty list never fails the release.
+      - name: Surface test-only-reference advisory (PART A2)
+        if: always()
+        run: |
+          AUDIT=build/test-only-ref-audit.txt
+          if [ -s "$AUDIT" ]; then
+            N=$(wc -l < "$AUDIT")
+            echo "::warning::PART A2 advisory: $N shipped symbol(s) referenced only by pruned test objects (see the test-only-ref-audit artifact). Audit each; guard a genuine test-only helper with #ifdef KERNEL_TESTS. Over-reports by design -- never release-blocking."
+          else
+            echo "PART A2 advisory: no candidate inventory produced (empty or skipped)."
+          fi
+
+      - name: Upload test-only-reference advisory inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-only-ref-audit
+          path: build/test-only-ref-audit.txt
+          if-no-files-found: ignore
 
       # Bind the gate to the SHIPPED image: extract every kernel copy from
       # system-disk.img and prove it is byte-identical to the gated kernel.exe

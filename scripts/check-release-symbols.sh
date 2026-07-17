@@ -13,6 +13,12 @@
 #           diff the defined-symbol sets to derive the seam inventory
 #           INDEPENDENTLY of the release link, and assert build/kernel.map
 #           carries none of it. (scripts/lib/release-seam-inventory.py.)
+#   PART A2 ADVISORY test-only-reference audit. Surfaces a test-only helper
+#           defined UNCONDITIONALLY in a production TU (invisible to PART A's
+#           flavor-diff) via a compiler-derived "referenced only by pruned test
+#           objects" inventory. Over-reports by design, so it NEVER blocks a
+#           release. (scripts/lib/test-only-ref-audit.py; needs the ON-flavor
+#           compile DB -- see test_ref_audit_advisory below.)
 #   PART B  Link-input gate. Read the `ld.lld --trace` input list that the
 #           KERNEL_BIN link emits as a byproduct (build/kernel.link-trace.txt,
 #           co-generated with kernel.exe so it cannot drift) and assert no
@@ -24,13 +30,16 @@
 #           check standalone; packaging paths use it to REJECT an unstamped
 #           kernel.
 #
-# SCOPE / KNOWN LIMITATION: Part A's flavor-diff catches symbols that DIFFER
-# between the two flavors -- i.e. everything gated by `#ifdef KERNEL_TESTS`. A
-# test-only helper defined UNCONDITIONALLY in a production TU (present in both
-# flavors) is invisible to the diff. Guarding those helpers + a compiler-derived
-# "referenced-only-by-test-objects" inventory is tracked separately (TODO-10
-# section 29). This gate therefore proves "no flavor-gated test surface leaked",
-# not "zero test-named symbols".
+# SCOPE: Part A's flavor-diff catches symbols that DIFFER between the two
+# flavors -- i.e. everything gated by `#ifdef KERNEL_TESTS`. A test-only helper
+# defined UNCONDITIONALLY in a production TU (present in both flavors) would be
+# invisible to the diff; the release test-surface exclusion guarded the known such helpers, so
+# they are now flavor-gated and Part A covers them. The advisory PART A2
+# (test_ref_audit_advisory below) surfaces a FUTURE unguarded one from a
+# compiler-derived "referenced only by pruned test objects" inventory. That
+# inventory over-reports (see PART A2) so it is ADVISORY, never a release gate;
+# this proof therefore asserts "no flavor-gated test surface leaked", not "zero
+# test-referenced symbols".
 #
 # Usage:
 #   scripts/check-release-symbols.sh                     # full gate (A+B+C)
@@ -217,6 +226,59 @@ link_input_gate() {
 }
 
 # -----------------------------------------------------------------------------
+# PART A2 -- ADVISORY test-only-reference audit (release test-surface exclusion).
+#
+# PART A proves no `#ifdef KERNEL_TESTS`-gated seam leaks. It is blind to a
+# test-only helper defined UNCONDITIONALLY in a production TU (present in both
+# flavors). Section 29 guards the known such helpers -- once guarded they become
+# flavor-gated and PART A covers them -- and this advisory surfaces a FUTURE
+# unguarded one, with no hand-maintained symbol list.
+#
+# It is ADVISORY, never a hard gate: a compiler-derived "referenced only by test
+# objects" set over-reports (a real API address-taken only within its own TU, or
+# awaiting a production caller, looks test-only) and can under-report, so it can
+# neither be asserted-empty nor fail a release (Codex design review 2026-07-17).
+# It requires the ON-flavor compile DB (the release/off DB prunes test objects):
+# pass RELEASE_ON_CC=<path>, else compile_commands.on.json, else the live
+# compile_commands.json only if it still carries test objects; otherwise it
+# advisory-skips. It NEVER changes the gate exit status.
+# -----------------------------------------------------------------------------
+test_ref_audit_advisory() {
+    local on_cc=""
+    if [[ -n "${RELEASE_ON_CC:-}" && -s "${RELEASE_ON_CC}" ]]; then
+        on_cc="${RELEASE_ON_CC}"
+    elif [[ -s "$BUILD_DIR/compile_commands.on.json" ]]; then
+        on_cc="$BUILD_DIR/compile_commands.on.json"
+    elif [[ -s "compile_commands.on.json" ]]; then
+        on_cc="compile_commands.on.json"
+    elif [[ -s "$CC_JSON" ]] && grep -q '/kernel/test/' "$CC_JSON"; then
+        on_cc="$CC_JSON"
+    fi
+    if [[ -z "$on_cc" ]]; then
+        note "PART A2 (advisory): SKIPPED -- no ON-flavor compile DB (set RELEASE_ON_CC or place compile_commands.on.json); the release/off DB prunes test objects."
+        return 0
+    fi
+    [[ -f "$KERNEL_MAP" ]] || { note "PART A2 (advisory): SKIPPED -- $KERNEL_MAP absent"; return 0; }
+
+    # Fail-open by contract: this advisory MUST NOT abort the release gate. Any
+    # setup failure (mktemp under an unusable TMPDIR, etc.) is a warning + return
+    # 0, so the authoritative A/B/C result is never masked (Codex adversarial F3).
+    local wd
+    if ! wd="$(mktemp -d 2>/dev/null)"; then
+        note "PART A2 (advisory): SKIPPED -- mktemp failed (TMPDIR unusable); hard gate unaffected"
+        return 0
+    fi
+    local out="$BUILD_DIR/test-only-ref-audit.txt"
+    # Advisory: never propagate the auditor's rc to the gate.
+    python3 "$REPO_ROOT/scripts/lib/test-only-ref-audit.py" \
+        --cc "$on_cc" --map "$KERNEL_MAP" --repo "$REPO_ROOT" \
+        --nm "$NM" --workdir "$wd" --out "$out" || true
+    [[ -s "$out" ]] && note "PART A2 (advisory): full candidate inventory written to $out"
+    rm -rf "$wd" 2>/dev/null || true
+    return 0
+}
+
+# -----------------------------------------------------------------------------
 main() {
     if [[ "${1:-}" == "--verify-provenance" ]]; then
         [[ -n "${2:-}" ]] || { err "--verify-provenance requires a <kernel.exe> path"; exit 2; }
@@ -236,6 +298,7 @@ main() {
     symbol_gate      || rc=1
     link_input_gate  || rc=1
     verify_provenance "$KERNEL_EXE" || rc=1
+    test_ref_audit_advisory || true   # advisory only -- never affects rc
     if [[ "$rc" -eq 0 ]]; then
         ok "release proof PASSED: no flavor-gated test seam in the map, no test object linked, release provenance stamped"
     else

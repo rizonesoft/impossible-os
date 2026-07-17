@@ -136,8 +136,11 @@ boot_health_check_aggregate(unsigned int req_ok, unsigned int req_soft,
                              unsigned int req_hard, unsigned int req_skipped);
 
 /* Reset the registry. Test-only; production code never calls this.
- * Clears registered checks and the cached aggregate. */
+ * Clears registered checks and the cached aggregate. Guarded out of release
+ * builds (release test-surface exclusion). */
+#ifdef KERNEL_TESTS
 void boot_health_check_test_reset(void);
+#endif
 
 /* Filter check: returns 1 if a check with the given name should run
  * under the supplied subset list, 0 otherwise. Empty subset (count==0)

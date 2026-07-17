@@ -37,7 +37,12 @@
  * either from the test phase (pre-compositor) or from a thread while
  * the compositor is HLT-idling in headless mode. */
 static volatile int      s_compositor_headless = 0;
+#ifdef KERNEL_TESTS
+/* Test-only seed slot: no production compositor feature consumes it (see the
+ * accessor contract in main_internal.h). Guarded out of release images so the
+ * storage + accessors carry no test surface (release test-surface exclusion). */
 static volatile uint64_t s_compositor_test_seed = 0;
+#endif
 
 void compositor_set_headless(int headless)
 {
@@ -49,6 +54,7 @@ int compositor_is_headless(void)
     return s_compositor_headless;
 }
 
+#ifdef KERNEL_TESTS
 void compositor_set_test_seed(uint64_t seed)
 {
     s_compositor_test_seed = seed;
@@ -58,6 +64,7 @@ uint64_t compositor_get_test_seed(void)
 {
     return s_compositor_test_seed;
 }
+#endif
 
 uint32_t compositor_step_frames(uint32_t n)
 {

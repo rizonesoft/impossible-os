@@ -368,9 +368,16 @@ only at `KERNEL_TESTS=off`). Both packaging paths -- `.github/workflows/release.
 `system-disk.img` to the gated hash) and refuse an unstamped kernel. Design + the flavor-diff's
 known limitation are in
 [Release-Flavor Proof: Seam-Inventory Gate and CI Attestation](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#27-release-flavor-proof-seam-inventory-gate-and-ci-attestation).
-A residual class -- test-only helper functions defined unconditionally in production TUs, which
-the flavor-diff cannot see -- is tracked by
-[Guard Unguarded Test-Only Helper Functions in Production TUs](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#29-guard-unguarded-test-only-helper-functions-in-production-tus).
+A former residual class -- test-only helper functions defined unconditionally in production TUs,
+invisible to the flavor-diff -- was closed by
+[Guard Unguarded Test-Only Helper Functions in Production TUs](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#29-guard-unguarded-test-only-helper-functions-in-production-tus):
+the known helpers are now `#ifdef KERNEL_TESTS`-guarded (so PART A covers them), and an
+advisory PART A2 (`scripts/lib/test-only-ref-audit.py`) surfaces a future unguarded one from a
+compiler-derived "referenced only by pruned test objects" inventory -- advisory because that set
+over-reports, so it never blocks a release. The remaining gate-robustness work (a signed CI
+attestation replacing the forgeable in-tree link-trace sha, plus a per-flag compile-DB
+fingerprint and a validate-not-recompute receipt) is tracked by
+[Signed CI Attestation for the Release-Flavor Proof Gate](../../todo/02-kernel-core/TODO-10-kernel-security-hardening.md#30-signed-ci-attestation-for-the-release-flavor-proof-gate).
 
 ### Build Script
 

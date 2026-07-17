@@ -92,7 +92,8 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [x]   |
 | 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [x]   |
 | 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [x]   |
-| 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [ ]   |
+| 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
+| 💎   |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -812,7 +813,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 - [x] Commit: `"kernel/security: prove release images carry no test surface"`
 
 > [!NOTE]
-> **Known limitation (owned by §29).** PART A's flavor-diff catches everything gated by `#ifdef KERNEL_TESTS`. A test-only helper defined UNCONDITIONALLY in a production TU (present in both flavors, e.g. `compositor_set_test_seed`, `tpm_attest_test_reset`, `boot_health_check_test_reset`) is invisible to the diff and ships in the release image. Codex adversarial review flagged this as a concrete false-GREEN; the gate's claim is therefore scoped precisely to "no flavor-gated test seam leaked", and guarding those helpers + a "referenced-only-by-test-objects" inventory is tracked in §29. -> XREF: §29.
+> **Resolved by §29.** PART A's flavor-diff catches everything gated by `#ifdef KERNEL_TESTS`. A test-only helper defined UNCONDITIONALLY in a production TU (present in both flavors) was invisible to the diff and shipped in the release image (Codex adversarial flagged this false-GREEN). §29 guarded all 7 such helpers with `#ifdef KERNEL_TESTS` -- so they are now flavor-gated and PART A covers them -- and added the advisory PART A2 "referenced-only-by-test-objects" audit for a future one. -> XREF: §29.
 
 **Test checkpoint:** `scripts/check-release-symbols.sh` FAILS on a `KERNEL_TESTS=on` `kernel.map` (proving it can fail) and PASSES on a `KERNEL_TESTS=off` one; a negative test adds a fresh seam symbol and confirms the gate catches it with no edit to the gate; `build-image.sh` refuses a test-flavor `kernel.exe`. Test on: QEMU KVM + TCG + a CI dry-run.
 
@@ -827,8 +828,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
 > - Scope boundary: §27 owns the PROOF + enforcement points; §26 owns the flavor mechanism; §28 owns test-only TUs; §29 owns unguarded test-only helper functions. -> XREF: §26 + §28 + §29.
 > **Verified:** 2026-07-17 | commit `4eb1399d` | 6/6 items | build OK | smoke PASS (KVM 2.9s)
-> **Accepted:** [H] PART A flavor-diff misses unguarded test-only helpers defined in production TUs -> XREF: 02-kernel-core/TODO-10 §29 (item: "Enumerate every test-only helper defined unconditionally in a production TU" at line 874)
-> **Accepted:** [M] `build-image.sh` repeats the full ~678-compile proof each image build -> XREF: 02-kernel-core/TODO-10 §29 (item: "Gate robustness (§27 F8 + perf residual)" at line 877)
+> **Accepted:** [M] `build-image.sh` repeats the full ~678-compile proof each image build -> XREF: 02-kernel-core/TODO-10 §30 (item: "Perf: `build-image.sh` validates the signed attestation ... validate-not-recompute")
 > **Quality reviewed:** 2026-07-17 | Codex 7x (design, adversarial, consistency, perf) | 8H+3M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -871,16 +871,46 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 
 §27's release proof (PART A flavor-diff) and §28's TU pruning both miss test-only helper FUNCTIONS defined UNCONDITIONALLY in production translation units: present in BOTH `KERNEL_TESTS` flavors, so the on/off symbol diff never sees them and they ship in the release image. Codex adversarial review of §27 flagged this as a concrete false-GREEN -- the off-flavor `kernel.map` carries `compositor_set_test_seed`/`compositor_get_test_seed` (`compositor.c`), `tpm_attest_test_reset` (`tpm_attest.c`; its own comment: "unit-test setup ONLY -- Not on any production path"), `boot_health_check_test_reset` (`boot_health_check.c`), `boot_load_status_test_save`/`_restore` (`boot_load_status.c`), and `tpm_evlog_fail_offset`/`s_evlog_fail_offset`.
 
-- [ ] Enumerate every test-only helper defined unconditionally in a production TU (referenced only from `src/kernel/test/`), confirm no production caller for each, and guard definition + declaration with `#ifdef KERNEL_TESTS`
-- [ ] Supplement `check-release-symbols.sh` PART A with a compiler-derived "symbols referenced exclusively by pruned test objects" inventory, so a future unguarded test helper is caught automatically (no manual list) -> XREF: §27
-- [ ] Re-run `check-release-symbols.sh` on the off build: the newly-guarded symbols are absent from `kernel.map` and the supplementary inventory is empty
-- [ ] Gate robustness (§27 F8 + perf residual): replace the in-tree `kernel.link-trace.sha` manifest with a signed CI attestation / reusable receipt -- resists a build-tree writer AND lets repeated `build-image.sh` runs validate-not-recompute -> §27
-- [ ] Gate robustness (§27 F9 residual): bind `compile_commands.json` to the gated kernel via a clean-build fingerprint covering per-flag drift within a covered TU (PART A catches a missing TU, not changed flags) -> XREF: §27
-- [ ] Commit: `"kernel/security: guard test-only helpers in production TUs"`
+- [x] Guarded all 7 test-only helpers (def+decl) with `#ifdef KERNEL_TESTS` (compositor seed pair, `tpm_attest_test_reset`, `boot_health_check_test_reset`, `boot_load_status_test_{save,restore}`, `tpm_evlog_fail_offset`); off map clean
+- [x] `check-release-symbols.sh` PART A2 + `lib/test-only-ref-audit.py`: compiler-derived "referenced-only-by-test-objects" inventory. ADVISORY only (design review: raw set over-reports, cannot be empty-asserted)
+- [x] Re-ran on the off build: PART A now catches all 7 (flavor-gated); PART A2 advisory runs (584 legit un-wired candidates, the 7 absent). `release.yml` preserves the ON-flavor compile DB for A2
+- [/] Gate robustness (§27 F8 + perf residual): signed CI attestation replacing the forgeable in-tree `kernel.link-trace.sha` + validate-not-recompute receipt; needs crypto signing -> XREF: §30
+- [/] Gate robustness (§27 F9 residual): per-flag `compile_commands.json` fingerprint bound to the gated kernel; lives in F8's signed attestation -> XREF: §30
+- [x] Commit: `"kernel/security: guard test-only helpers in production TUs"`
 
-**Test checkpoint:** an off-flavor `kernel.map` carries none of the enumerated helper symbols; the on-flavor build still defines them and passes `scripts/test.sh`; the supplementary inventory FAILS if any test-object-referenced symbol reappears in the release map. Test on: QEMU KVM + TCG.
+**Test checkpoint:** an off-flavor `kernel.map` carries none of the 7 enumerated helper symbols (each now `#ifdef KERNEL_TESTS`-gated, so `check-release-symbols.sh` PART A catches any regression); the on-flavor build still defines them and passes `scripts/test.sh`. PART A2's advisory inventory writes `build/test-only-ref-audit.txt` and never blocks a release (it over-reports; see §29 body). Test on: QEMU KVM + TCG.
 
-> **Scope boundary:** §29 owns test-only HELPER FUNCTIONS defined in production TUs (present in both flavors) PLUS §27's accepted gate-robustness residuals (signed attestation, DB flag-fingerprint). §27 owns the proof gate; §28 owns whole test TUs. -> XREF: §27 (seam-inventory gate) + §28 (test-only TUs outside the test dir).
+> **Scope boundary:** §29 owns test-only HELPER FUNCTIONS defined in production TUs (present in both flavors): the `#ifdef KERNEL_TESTS` guards + the advisory PART A2 audit. §27 owns the proof gate; §28 owns whole test TUs; §30 owns the F8/F9 gate-robustness residuals (signed attestation + DB flag-fingerprint). -> XREF: §27 (seam-inventory gate) + §28 (test-only TUs outside the test dir) + §30 (signed attestation).
+
+> **Note:** No kernel test surface -- the guards remove symbols, they add no behavior; validation is the host-side release-symbol gate (off-flavor `kernel.map` seam-free) + both-flavor `-Werror` builds.
+
+> **Test runner:** N/A (host-side release gate, no new kernel test surface) | validation: both KERNEL_TESTS={on,off} builds `-Werror` clean; off `kernel.map` carries none of the 9 guarded symbols; PART A + advisory A2 run.
+
+> **Notes:**
+> - Shipped: `#ifdef KERNEL_TESTS` guards on 7 test-only helpers across 5 production TUs + headers; new `scripts/lib/test-only-ref-audit.py` advisory auditor + `check-release-symbols.sh` PART A2.
+> - How it runs: the guards make all 7 flavor-gated so PART A's diff catches any regression; PART A2 is an ADVISORY audit (needs the ON-flavor compile DB `release.yml` preserves), writes `build/test-only-ref-audit.txt`, never blocks.
+> - Downstream: closes §27's accepted [H] unguarded-helper residual (stamp swept); F8/F9 gate-robustness residuals rehomed to the new §30. Codex design + adversarial adoptions in the commit message.
+> - Canonical doc: [development-tooling.md "Build Flavors"](../../docs/infrastructure/development-tooling.md#build-flavors).
+> - Scope boundary: §29 owns the helper guards + advisory audit; §27 owns the proof gate; §28 owns whole test TUs; §30 owns the signed attestation + DB fingerprint.
+> **Deferred:** [M] F8/F9 gate-robustness residuals (signed CI attestation + per-flag compile-DB fingerprint + validate-not-recompute receipt) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), so they are operator-reserved. Rehomed as concrete items -> XREF: §30 (F8/F9/Perf items).
+
+---
+
+## 30. Signed CI Attestation for the Release-Flavor Proof Gate
+
+§27's PART B binds the link trace to `kernel.exe` with an in-tree `kernel.link-trace.sha` manifest, and §29's gate re-derives the full ~678-compile proof on every `build-image.sh` run. Both gaps need a tamper-resistant, reusable attestation an in-tree file cannot provide: a build-tree writer can rewrite all three sha records, and an unsigned in-tree receipt is only a forgeable cache hint (Codex design review 2026-07-17). Closing this needs cryptographic signing and is operator-reserved -- it adds a signing-mechanism decision (Sigstore/cosign keyless via GitHub OIDC vs a keyed release identity) and a new tool dependency.
+
+- [/] F8: signed CI attestation over {`kernel.exe` sha, `kernel.link-trace.txt` sha, `compile_commands.json` flag-fingerprint}, replacing the forgeable in-tree `kernel.link-trace.sha` so PART B resists a build-tree writer -> XREF: §27 F8
+- [/] F9: include the per-flag `compile_commands.json` fingerprint in the attestation so a covered TU compiled with drifted flags (not just a missing TU) trips the gate -> XREF: §27 F9 + §29
+- [/] Perf: `build-image.sh` validates the signed attestation (kernel sha + fingerprint match) to skip the full ~678-compile recompute when valid, else full recompute (validate-not-recompute) -> XREF: §27 accepted [M] perf residual
+- [/] Operator decision: choose the signing mechanism (cosign keyless OIDC vs keyed identity) and accept the new tool dependency
+- [ ] Commit: `"kernel/security: signed CI attestation for the release-flavor gate"`
+
+**Test checkpoint:** the release gate rejects a tampered `kernel.link-trace.txt` even when its in-tree sha record is rewritten to match; a `build-image.sh` re-run over an unchanged, attested kernel validates without recompiling; a covered TU rebuilt with a changed flag fails the fingerprint check. Test on: a CI dry-run + local `build-image.sh`.
+
+> **Scope boundary:** §30 owns the tamper-resistant signed attestation + the reusable validate-not-recompute receipt + the DB flag-fingerprint (§27 F8/F9 + perf residuals). §27 owns the proof gate; §29 owns the helper guards + advisory audit. -> XREF: §27 + §29.
+
+> **Deferred:** [H] signed CI attestation + DB flag-fingerprint (F8/F9) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), which is operator-reserved -> awaiting operator decision on the signing mechanism (XREF from §29 items "Gate robustness (§27 F8 ...)" + "(§27 F9 ...)").
 
 ---
 
@@ -910,7 +940,7 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 | 💎   | stackleak erase stk    | ❌ No            | ✅ KSTACK_ERASE      | ⬜ §22                       |
 | 💎   | KFENCE UAF/OOB sample  | ❌ No            | ✅ KFENCE            | ⬜ §23                       |
 | ⭐   | Mitigation posture API | ⚠️ WMI          | ⚠️ sysfs            | ⬜ §24                       |
-| 💎   | Test code out of build | ✅ free/checked  | ✅ Kconfig KUNIT off | ✅ §26 seams+test dir + §28  |
+| 💎   | Test code out of build | ✅ free/checked  | ✅ Kconfig KUNIT off | ✅ §26/§28 TUs + §29 helpers |
 | 💎   | Release flavor proven  | ✅ WHQL signing  | ✅ distro CI         | ✅ §27 seam+trace+provenance |
 
 After §1 through §13, parity with Win11/Linux mitigations for NX through stack canaries and guard pages; §14 through §16 add KASLR, enclave/signing syscalls, and lockdown. §17 through §25 close the image-W^X (§17), 128-bit feature surface (§18), MDS/VERW data-sampling (§19), software-CFI/kCFI (§20), FORTIFY_SOURCE (§21), stackleak (§22), and KFENCE (§23) gaps, plus a queryable mitigation posture (§24, exclusive) and the transient-execution predictor policy (SSBD/STIBP/RSB/BHI/ITS/Retbleed, §25). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.

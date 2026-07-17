@@ -168,6 +168,7 @@ boot_health_check_registered_count(void)
     return s_check_count;
 }
 
+#ifdef KERNEL_TESTS
 void
 boot_health_check_test_reset(void)
 {
@@ -177,6 +178,7 @@ boot_health_check_test_reset(void)
     s_cached_aggregate = BOOT_HEALTH_AGG_PENDING;
     s_ran_once = 0;
 }
+#endif
 
 /* ---- Default check implementations ------------------------------------- */
 

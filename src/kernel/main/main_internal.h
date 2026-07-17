@@ -68,8 +68,10 @@ int  compositor_is_headless(void);
  * clock. Today no compositor feature consumes the seed; the API slot
  * lands ahead of animation work so trace tooling can commit to the
  * contract. */
+#ifdef KERNEL_TESTS
 void     compositor_set_test_seed(uint64_t seed);
 uint64_t compositor_get_test_seed(void);
+#endif
 
 /* Drive exactly `n` compositor frames: mark dirty, composite, present
  * (skipping real fb_swap in headless mode), advance the frame-

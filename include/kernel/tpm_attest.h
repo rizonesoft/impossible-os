@@ -171,5 +171,8 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
 /* Marshaled AK public (TPMT_PUBLIC) captured at provisioning, for the verifier. */
 tpm_attest_status_t tpm_ak_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len);
 
-/* Test seam: drop the cached AK so the next call re-provisions. Unit-test only. */
+/* Test seam: drop the cached AK so the next call re-provisions. Unit-test only.
+ * Guarded out of release builds (release test-surface exclusion). */
+#ifdef KERNEL_TESTS
 void tpm_attest_test_reset(void);
+#endif

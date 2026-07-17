@@ -83,9 +83,14 @@ tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int ve
                                    uint32_t *out_fail_offset);
 
 /* Structured parse status + the exact offset of the first rejection (0 when
- * status == TPM_EVLOG_OK). */
+ * status == TPM_EVLOG_OK). tpm_evlog_fail_offset() is a test-only queryable
+ * accessor (guarded out of release builds, release test-surface exclusion); the same offset
+ * is available to any caller via tpm_evlog_parse()'s out_fail_offset out-param
+ * and is logged on the production serial path. */
 tpm_evlog_status_t tpm_evlog_status(void);
+#ifdef KERNEL_TESTS
 uint32_t           tpm_evlog_fail_offset(void);
+#endif
 
 /* Preserved event metadata. tpm_event_get() returns NULL for out-of-range i
  * or when the last parse failed. tpm_event_overflow() is 1 when the log held

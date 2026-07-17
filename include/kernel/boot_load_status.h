@@ -85,10 +85,13 @@ void boot_load_status_dump_to_blackbox(void);
 void boot_load_status_report_summary(void);
 
 /* Test seam: snapshot/restore the whole pool so a unit test can record a
- * synthetic mix without destroying the live boot log. Pure memory ops. */
+ * synthetic mix without destroying the live boot log. Pure memory ops.
+ * Guarded out of release builds (release test-surface exclusion). */
+#ifdef KERNEL_TESTS
 struct boot_load_test_state {
     struct boot_load_entry saved[BOOT_LOAD_MAX];
     int32_t                saved_claimed;
 };
 void boot_load_status_test_save(struct boot_load_test_state *st);
 void boot_load_status_test_restore(const struct boot_load_test_state *st);
+#endif
