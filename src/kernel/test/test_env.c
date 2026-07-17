@@ -3350,7 +3350,11 @@ static void test_rtlenv_set_current_environment(void)
     void *saved = (void *)0, *block = (void *)0, *prev = (void *)0, *raw;
     char out[64];
 
-    RtlCreateEnvironment(1u, &saved);          /* snapshot the real environ to restore */
+    /* Snapshot the real environ to restore. The destructive whole-store swaps below
+     * depend on this succeeding -- assert it before clobbering the live environment so
+     * an allocation failure cannot leave siblings with a wrecked store. */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(1u, &saved), (uint32_t)STATUS_SUCCESS,
+                   "restore snapshot created before the destructive swap");
 
     env_unset(t, "RTLSCE_A");
     env_unset(t, "RTLSCE_B");
@@ -3425,7 +3429,9 @@ static void test_rtlenv_set_environment_strings(void)
     /* "A=1\0" -- single trailing NUL, no double-NUL terminator. */
     static const uint16_t unterm[]= { 'A','=','1', 0 };
 
-    RtlCreateEnvironment(1u, &saved);
+    /* Snapshot to restore; assert it before the destructive swaps (see set-current). */
+    TEST_ASSERT_EQ((uint32_t)RtlCreateEnvironment(1u, &saved), (uint32_t)STATUS_SUCCESS,
+                   "restore snapshot created before the destructive swap");
 
     /* Happy path: the whole store becomes exactly {A=1, B=2}. */
     TEST_ASSERT_EQ((uint32_t)RtlSetEnvironmentStrings(good, sizeof(good)),

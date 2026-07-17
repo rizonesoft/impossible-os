@@ -793,7 +793,7 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 - [x] `env_exchange_block(t, entries, count, void **out_old)` (env.c): ONE `environ_lock` span snapshots the old store AND swaps the prepared new one; new store prepared before the lock, so any failure leaves the prior environ live
 - [x] Split `env_build_block_utf16` into an `_locked` core (caller holds the lock) + a locking wrapper; `env_snapshot_wrapped_locked` builds `PreviousEnvironment` INSIDE the swap span, so an OOM there aborts the whole exchange with no snapshot leaked
 - [x] `RtlSetCurrentEnvironment(PVOID Environment, PVOID *PreviousEnvironment)` (nt_rtlenv.c): NTSTATUS + PVOID per phnt/WRK; NULL out-param swaps and builds no old block. NULL Environment -> INVALID_PARAMETER
-- [x] REPLACE-whole-store, never per-entry merge (verified by test: adopt drops keys absent from the block). DECODE+COPY, not ownership-transfer -- no PEB env pointer, so the caller keeps its block and we adopt a copy
+- [x] REPLACE-whole-store, never per-entry merge (test: adopt drops keys absent from the block). Copies contents internally but CONSUMES the block on SUCCESS (native ownership transfer); caller retains only on failure
 - [x] `env_adopt_block` becomes exactly `env_exchange_block(t, e, c, NULL)` over a shared prepare + well-formedness predicate, so the two paths cannot drift on what a storable entry is
 - [x] Provenance: BEST-EFFORT `env_block_extent()` check (derefs `block-1`); a non-provenanced pointer -> `STATUS_NOT_SUPPORTED`, live store untouched. NOT a foreign-pointer validator (kernel-resident caller contract); header private to env.c
 - [x] `RtlSetEnvironmentStrings(PCWSTR NewEnvironment, SIZE_T NewEnvironmentSize)`: size is BYTES; ODD size and 0 -> INVALID_PARAMETER (never floored), WCHAR count bounded before narrowing. Rides §24-owned kernel-resident input contract
@@ -805,7 +805,7 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 
 **Test checkpoint:** `RtlSetCurrentEnvironment` installs a `RtlCreateEnvironment(1)` clone and the store then reads a variable only that block carried; `PreviousEnvironment` returns a block whose content is the pre-swap environ and which `RtlDestroyEnvironment` frees; a NULL `PreviousEnvironment` still swaps and allocates no old block; a non-provenanced pointer is refused with `STATUS_NOT_SUPPORTED` and the store is untouched; an adoption failure leaves the prior environ intact and leaks no snapshot. `RtlSetEnvironmentStrings` replaces the store from a counted block and refuses an odd size, an unterminated block, and a size past `ENV_BLOCK_MAX`. `RtlCreateEnvironmentEx` honors EMPTY, clones on 0, and refuses each unknown flag bit and each TRANSLATE bit. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 3 new suites (set-current / set-strings / create-ex flag matrix), 2116/2116 kernel + 16/16 user PASS, 0 leaked on KVM
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 4 new suites (create-ex flag matrix / exchange secure-snapshot / set-current / set-strings), 2124/2124 kernel + 16/16 user PASS, 0 leaked on KVM
 
 > **Notes:**
 > - Shipped: 3 ntdll wrappers in `nt_rtlenv.c` (`RtlSetCurrentEnvironment`, `RtlSetEnvironmentStrings`, `RtlCreateEnvironmentEx`) over the applied env.c substrate (`env_exchange_block`, `env_replace_from_block_utf16`, `env_block_extent`).
@@ -813,6 +813,9 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 > - Downstream: exports stay GATED (no `pe.c` row; §21's `pe_ntdll_export_ssdt == -1` test extended to the 3 new entries) until §24 probe+copy + §20 PMM close; unblocked by `02-kernel-core/TODO-33 §10` BSS headroom.
 > - Canonical doc: `include/kernel/nt/nt_rtlenv.h` (per-entry contracts) + `include/kernel/env.h` (substrate contracts).
 > - Scope boundary: §23 owns block-LIFECYCLE adoption over `env.c`; §24 owns the counted-block boundary probe+copy + expansion completeness; §25 owns the counted (non-`_U`) Rtl read forms.
+> **Verified:** 2026-07-18 | commit `9f43238d` | 12/12 items | build OK | tests 2124/2124 + 16 user PASS, 0 leaked (KVM)
+> **Accepted:** [L] restore-token cap 65536 WCHARs < 1 MiB store cap; a 64K-1M-WCHAR env fails `RtlSetCurrentEnvironment` on the old-store serialize (reason: pre-existing env_create_block format cap, gated) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Restore-token cap parity" at line 837)
+> **Quality reviewed:** 2026-07-18 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 1H+6M+1L fixed, 1L accepted-XREF, 1L rejected | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---
 
@@ -831,6 +834,7 @@ The `nt_rtlenv.c` half of §20's deferred completeness work (§22 shipped the `e
 - [ ] Make the `env_buf` magic poison the serialization point: `env_buf_free` read-checks then writes `magic` non-atomically, so two CPUs freeing the same pointer both pass and both release. `__atomic_compare_exchange_n` makes the catch SMP-real
 - [ ] Pin `env_expand`'s truncation sentinel against `ENV_EXPAND_OVER_BUDGET`: a `max_len` of `0xFFFFFFFF` returns `(int)max_len` == -1, indistinguishable from a refusal. No caller comes near it; state a `max_len <= INT32_MAX` contract
 - [ ] **Ownership-registry provenance validator**: `env_block_extent()` cannot refuse a foreign pointer (provenance derefs `block-1`). An export row needs a validator keyed on the body pointer -> XREF `02-kernel-core/TODO-22` §23
+- [ ] **Restore-token cap parity**: env_create_block caps at 65536 WCHARs but the store accepts 1 MiB, so a 64K-1M-WCHAR env fails RtlSetCurrentEnvironment on the old-store serialize. Raise the cap when the gate opens -> XREF §23
 - [ ] Commit: `"ntdll: measured expansion budget + lookup cache for Rtl env"`
 
 **Test checkpoint:** the measured budget constant carries its derivation next to it; a repeated-miss expansion is measurably cheaper than the §20 baseline while still refusing at the budget; a small query no longer allocates a 4 KiB heap block, and the Rtl and Nt query paths agree. When the boundary items unblock: a caller-supplied `Environment` expands and queries through the snapshot helper, and an unterminated/unmapped one is refused rather than scanned past. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
