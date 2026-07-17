@@ -614,8 +614,8 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                |
 | 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10 (deferred; BSS + §8/§9)       |
 | 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                        |
-| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⚠️ §7 kernel-side; ring 3 needs §8   |
-| 💎   | Server impersonate client    | ✅ NtAlpcImpersonate*  | ⚠️ SCM_CREDENTIALS only | ⚠️ §7 helper + gate; slot -> §8      |
+| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⚠️ §7 kernel-side; ring 3 needs §8  |
+| 💎   | Server impersonate client    | ✅ NtAlpcImpersonate*  | ⚠️ SCM_CREDENTIALS only | ⚠️ §7 helper + gate; slot -> §8     |
 | 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (7 args > 6-word SSDT cap)     |
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                      |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                      |
