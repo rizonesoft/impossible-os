@@ -190,7 +190,12 @@ void boot_tests_run(void)
      * multi-second write stall and leaves no test artifact behind. The VFS read
      * smoke test above + the directory dump below still run as the read-path checks;
      * a read touches i_atime (one inode write), far below the slow-media freeze
-     * threshold the bulk-write tests hit. */
+     * threshold the bulk-write tests hit.
+     * KERNEL_TESTS-gated: this block creates/overwrites/unlinks C:\test.txt
+     * and C:\TestDir gated only on debug=1 (boot.conf), which can originate
+     * from a mutable ESP on some boot-media layouts -- a release image must
+     * not run destructive filesystem mutation from that signal alone. */
+#ifdef KERNEL_TESTS
     if (!reduced_io && vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
@@ -226,11 +231,18 @@ void boot_tests_run(void)
             }
         }
     }
+#endif /* KERNEL_TESTS */
 
     /* IXFS performance features test (hash index + snapshot + scrub = hundreds of
-     * writes) -- skipped on USB media to avoid a multi-second boot stall. */
+     * writes) -- skipped on USB media to avoid a multi-second boot stall.
+     * KERNEL_TESTS-gated (release-flavor test-surface exclusion): defined in ixfs_test.c,
+     * pruned from the release flavor. This whole function only reaches
+     * here under debug=1 (boot.conf, admin-controlled), so the guard is
+     * purely about not linking a dropped TU's symbol, not attacker reach. */
+#ifdef KERNEL_TESTS
     if (!reduced_io)
         ixfs_test_performance();
+#endif
 
     /* Directory tree dump -- dump_dir_tree() logs per entry, and in live-log mode
      * each klog flushes to disk, so a populated volume is O(entries) small writes.

@@ -242,8 +242,12 @@ int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
 int ixfs_rename(struct vfs_node *parent, const char *old_name,
                 const char *new_name, uint32_t flags);
 
-/* Test block groups, buffer cache, and directory hash index */
+/* Test block groups, buffer cache, and directory hash index.
+ * KERNEL_TESTS-gated (release-flavor test-surface exclusion): defined in ixfs_test.c, pruned
+ * from the release flavor's C_SRCS. */
+#ifdef KERNEL_TESTS
 void ixfs_test_performance(void);
+#endif
 
 /* Snapshot API */
 int ixfs_snapshot_create(const char *name);

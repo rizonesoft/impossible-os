@@ -967,8 +967,13 @@ struct vfs_node *ntfs_get_root(struct ntfs_volume *vol);
 
 /* Run NTFS self-test suite (§8.1).
  * Only executes if vol->volume_name is "NTFS_TEST".
- * Logs pass/fail results to serial via klog. */
+ * Logs pass/fail results to serial via klog.
+ * KERNEL_TESTS-gated (release-flavor test-surface exclusion): the "NTFS_TEST" volume-label
+ * check is attacker-controlled data (the label is on-disk), so a release
+ * image must not carry this destructive self-test reachable via mount. */
+#ifdef KERNEL_TESTS
 void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root);
+#endif
 
 /* Enumerate a directory entry by index (for VFS readdir).
  * dir_inode: MFT inode of the directory.

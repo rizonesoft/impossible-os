@@ -262,3 +262,83 @@ jobs:
           path: build/test-artifacts/
           retention-days: 1
           if-no-files-found: ignore
+
+  # ── Release-flavor compile+link gate (test-surface exclusion) ───────────────
+  # scripts/test-tooling.sh proves the KERNEL_TESTS flavor CONTRACT via
+  # `make -n` text only (a dry-run plan, never an actual compile), so nothing
+  # in CI previously stopped the release flavor bit-rotting between merges --
+  # a guard added to kernel/security/etc. that silently fails to compile under
+  # KERNEL_TESTS=off would go unnoticed until a release cut. This job runs a
+  # full clean off-flavor build on every push/PR. Independent job (not a step
+  # in `build` above) so its failure is attributed clearly and it can run in
+  # parallel; it does NOT run scripts/test.sh -- the KERNEL_TESTS suite itself
+  # is compiled out under this flavor, so there is nothing to run.
+  build-release-flavor:
+    name: Build (KERNEL_TESTS=off release flavor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            clang-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm mtools dosfstools
+
+      - name: Build OS (clean, KERNEL_TESTS=off)
+        env:
+          KERNEL_TESTS: "off"
+        run: bash scripts/build.sh clean
+
+      - name: Verify build sentinel
+        run: |
+          LAST_LINE=$(tail -1 build/build.log)
+          echo "Build log last line: $LAST_LINE"
+          if [ "$LAST_LINE" != "=== BUILD OK ===" ]; then
+            echo "::error::Release-flavor build did not complete successfully"
+            echo "--- Last 30 lines of build.log ---"
+            tail -30 build/build.log
+            exit 1
+          fi
+          echo "✅ Release-flavor build succeeded"
+
+      # No src/kernel/test/ object and none of the three explicitly-pruned
+      # extra TUs (ntfs_test.c, ixfs_test.c, test_threads.c) should exist in
+      # this flavor's build output -- a fast, direct check that the Makefile
+      # prune actually fired rather than trusting a green build alone (a
+      # stale incremental object from a prior `on` build could otherwise
+      # slip through the link on a misconfigured runner).
+      - name: Verify test TUs were pruned
+        run: |
+          for f in build/kernel/test build/kernel/fs/ntfs/ntfs_test.o build/kernel/fs/ixfs/ixfs_test.o build/kernel/main/test_threads.o; do
+            if [ -e "$f" ]; then
+              echo "::error::$f exists in a KERNEL_TESTS=off build (should be pruned)"
+              exit 1
+            fi
+          done
+          echo "✅ No pruned test TUs present in build output"
+
+      - name: Upload build log on failure
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-release-flavor-log
+          path: build/build.log
+          retention-days: 1
+          if-no-files-found: ignore

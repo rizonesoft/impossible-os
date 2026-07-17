@@ -191,8 +191,18 @@ C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -n
 # gates the in-TU seams, but the find above globs every .c unconditionally, so
 # without this the test translation units still compile and link. C_OBJS is
 # derived from the pruned list below, so no pruned object can reach the link.
+#
+# Release-flavor test-surface exclusion: a directory-only prune of $(KERNEL_DIR)/test/ misses
+# test-only TUs that live under an ordinary filename OUTSIDE that directory.
+# These three are explicitly enumerated (not directory-matched) because they
+# sit beside production files in src/kernel/fs/ntfs/, src/kernel/fs/ixfs/,
+# and src/kernel/main/ respectively; their call sites are separately guarded
+# with #ifdef KERNEL_TESTS (partition.c, boot_tests.c) so pruning the object
+# never leaves a dangling reference.
+KERNEL_TESTS_EXTRA_TUS := $(KERNEL_DIR)/fs/ntfs/ntfs_test.c $(KERNEL_DIR)/fs/ixfs/ixfs_test.c $(KERNEL_DIR)/main/test_threads.c
 ifeq ($(KERNEL_TESTS),off)
     C_SRCS := $(filter-out $(KERNEL_DIR)/test/%, $(C_SRCS))
+    C_SRCS := $(filter-out $(KERNEL_TESTS_EXTRA_TUS), $(C_SRCS))
 endif
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 

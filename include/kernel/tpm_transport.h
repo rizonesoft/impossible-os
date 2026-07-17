@@ -201,6 +201,12 @@ struct tpm_t_io {
     void     (*w32)(uint32_t off, uint32_t v);
 };
 
+/* KERNEL_TESTS-gated block (release-flavor test-surface exclusion): every type and function
+ * below is a test-only seam called exclusively from src/kernel/test/
+ * test_tpm_*.c (already pruned entirely at KERNEL_TESTS=off); guarding the
+ * declarations too keeps a release build from even seeing the prototypes. */
+#ifdef KERNEL_TESTS
+
 /* Full snapshot of the mutable transport routing state, so a test can restore
  * EVERY field it perturbed (not just the io pointer). A bare io-pointer restore
  * left iface/available/failed/fast at the test's values, which on a real-fTPM
@@ -268,3 +274,5 @@ struct tpm_t_crb_snapshot tpm_t_test_install_crb_buffers(volatile uint8_t *cmd,
 
 /* Restore CRB buffers captured by tpm_t_test_install_crb_buffers(). */
 void tpm_t_test_restore_crb_buffers(struct tpm_t_crb_snapshot snap);
+
+#endif /* KERNEL_TESTS */

@@ -907,6 +907,9 @@ int tpm2_submit_waiting(const uint8_t *cmd, uint32_t cmd_len,
     return rc;
 }
 
+/* KERNEL_TESTS-gated (release-flavor test-surface exclusion): called only from
+ * src/kernel/test/test_tpm_nv.c (pruned entirely at KERNEL_TESTS=off). */
+#ifdef KERNEL_TESTS
 void tpm_t_test_busy_ticks(uint32_t n)
 {
     uint64_t irqf;
@@ -914,6 +917,7 @@ void tpm_t_test_busy_ticks(uint32_t n)
     s_test_busy_ticks = n;
     spin_unlock_irqrestore(&s_state_lock, irqf);
 }
+#endif
 
 int tpm_transport_available(void)
 {
@@ -1183,7 +1187,14 @@ void tpm_transport_init(void)
     tpm_t_startup_probe();
 }
 
-/* ---- Test seam ---- */
+/* ---- Test seam ----
+ * KERNEL_TESTS-gated (release-flavor test-surface exclusion): every function below replaces
+ * the live callback table, CRB buffer pointers, or budget-throttle state
+ * -- all called exclusively from src/kernel/test/test_tpm_*.c (already
+ * pruned entirely at KERNEL_TESTS=off). Guarding the definitions here too
+ * so the release map carries none of these state-mutating symbols even
+ * though this TU (production TPM transport code) stays in the link. */
+#ifdef KERNEL_TESTS
 
 struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
                                            int iface, int fast)
@@ -1283,3 +1294,5 @@ int tpm_t_test_budget_active(void)
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return active;
 }
+
+#endif /* KERNEL_TESTS */

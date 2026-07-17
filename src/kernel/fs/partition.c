@@ -900,8 +900,13 @@ void partition_mount_filesystems(int active_slot)
                          (uint64_t)next_fat32_letter,
                          ntfs_vol->total_sectors);
 
-                    /* Run self-test if this is the test volume */
+                    /* Run self-test if this is the test volume.
+                     * KERNEL_TESTS-gated (release-flavor test-surface exclusion): the volume
+                     * label is attacker-controlled data, so the release
+                     * flavor drops this call site along with the TU. */
+#ifdef KERNEL_TESTS
                     ntfs_run_self_test(ntfs_vol, ntfs_root);
+#endif
 
                     next_fat32_letter++;
                     /* Skip X if we reach it (reserved for BlackBox) --

@@ -1,9 +1,13 @@
 /* ============================================================================
  * test_threads.c -- Test thread function bodies
  *
- * Thread entry points used by boot_tests.c for cooperative scheduling,
- * preemptive scheduling, mutex, semaphore, pipe, shared memory, user-mode,
- * exec, shell loader, and fork tests.
+ * TEST-ONLY: thread entry points used by test_usermode.c / test_ipc.c (both
+ * under src/kernel/test/) for cooperative scheduling, preemptive scheduling,
+ * mutex, semaphore, pipe, shared memory, user-mode, exec, and fork tests.
+ * Pruned from the release flavor's C_SRCS at KERNEL_TESTS=off (TODO-10
+ * section 28) -- shell_loader_func was moved OUT of this file to
+ * src/kernel/main/shell_loader.c because it is production code (the
+ * boot->desktop cmd.exe launcher), not a test thread.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -273,42 +277,10 @@ void exec_loader_func(void)
         __asm__ volatile("hlt");
 }
 
-/* --- Cmd loader: kernel task that execs cmd.exe from C:\ --- */
-void shell_loader_func(void)
-{
-    struct vfs_node *file;
-    uint8_t *buf;
-
-    if (!vfs_is_mounted('C')) {
-        klog(LOG_WARN, "cmd", "C:\\ not mounted");
-        return;
-    }
-
-    file = vfs_open("C:\\cmd.exe", VFS_O_READ);
-    if (!file) {
-        klog(LOG_WARN, "cmd", "cmd.exe not found on C:\\");
-        return;
-    }
-
-    buf = (uint8_t *)kmalloc(file->size);
-    if (!buf) {
-        klog(LOG_ERROR, "cmd", "cannot allocate buffer");
-        vfs_close(file);
-        return;
-    }
-
-    vfs_read(file, 0, (uint32_t)file->size, buf);
-    vfs_close(file);
-
-    if (task_exec(buf, file->size) < 0) {
-        klog(LOG_ERROR, "cmd", "exec failed");
-        kfree(buf);
-        return;
-    }
-
-    for (;;)
-        __asm__ volatile("hlt");
-}
+/* shell_loader_func moved to src/kernel/main/shell_loader.c 2026-07-17
+ * (release-flavor test-surface exclusion): it is PRODUCTION code (the boot->desktop cmd.exe
+ * launcher), not test-only, so it cannot live in a TU pruned entirely
+ * under KERNEL_TESTS=off. See shell_loader.h for the full rationale. */
 
 /* --- Fork test function ---
  * Runs in ring 3. Forks, child prints and exits, parent calls waitpid. */

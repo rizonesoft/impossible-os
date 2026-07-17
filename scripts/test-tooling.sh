@@ -6659,6 +6659,59 @@ else
 fi
 
 # ============================================================================
+# Release-flavor test-surface exclusion: test-only TUs OUTSIDE src/kernel/test/
+# ============================================================================
+# A directory-only prune (above) misses test-only TUs that sit beside
+# production files under an ordinary filename. These dry-run checks assert
+# the Makefile-level pruning contract for the three explicitly-listed extra
+# TUs; the #ifdef KERNEL_TESTS guards inside partition.c/boot_tests.c/
+# tpm_transport.c are compile-time (invisible to `make -n`) and their actual
+# symbol-absence is proven by the release-flavor gate (section 27), not here.
+
+_kt_extra_tu_present() {  # <flavor> <object-path> -> 1 if present in the plan
+    # Capture to a variable and match with a bash `case`, never pipe `make -n`
+    # (or its captured output) into `grep -q`: under this script's
+    # `set -o pipefail`, grep -q's early exit on first match can SIGPIPE the
+    # upstream writer, and pipefail then reports THAT non-zero exit instead
+    # of grep's success -- silently forcing every case to "0" regardless of
+    # the real content (caught 2026-07-17: all 4 of these checks false-failed
+    # under the real script but passed standalone without pipefail active).
+    # A pure bash `case` match has no subprocess pipe, so no pipefail hazard.
+    local _plan="" _flavor="$1" _needle="$2"
+    _plan="$(make -n KERNEL_TESTS="$_flavor" kernel 2>/dev/null)"
+    case "$_plan" in
+        *"$_needle"*) echo 1 ;;
+        *)            echo 0 ;;
+    esac
+}
+for _kt_extra in \
+    "build/kernel/fs/ntfs/ntfs_test.o" \
+    "build/kernel/fs/ixfs/ixfs_test.o" \
+    "build/kernel/main/test_threads.o"
+do
+    _kt_on_present="$(_kt_extra_tu_present on "$_kt_extra")"
+    _kt_off_present="$(_kt_extra_tu_present off "$_kt_extra")"
+    if [ "$_kt_on_present" = "1" ] && [ "$_kt_off_present" = "0" ]; then
+        t_pass "KERNEL_TESTS=off prunes $_kt_extra (present at on, absent at off)"
+    else
+        t_fail "KERNEL_TESTS=off prunes $_kt_extra" \
+               "on=$_kt_on_present off=$_kt_off_present (want on=1 off=0)"
+    fi
+done
+
+# shell_loader_func moved OUT of test_threads.c into its own production TU
+# (2026-07-17): it must survive BOTH flavors, since it is the release
+# flavor's only path to a shell (boot_desktop.c task_create()s it).
+_kt_shell_on="$(_kt_extra_tu_present on "build/kernel/main/shell_loader.o")"
+_kt_shell_off="$(_kt_extra_tu_present off "build/kernel/main/shell_loader.o")"
+if [ "$_kt_shell_on" = "1" ] && [ "$_kt_shell_off" = "1" ]; then
+    t_pass "shell_loader.o (production cmd.exe launcher) survives both flavors"
+else
+    t_fail "shell_loader.o survives both flavors" \
+           "on=$_kt_shell_on off=$_kt_shell_off (want on=1 off=1)"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

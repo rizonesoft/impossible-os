@@ -29,6 +29,7 @@
 #include "icon_store.h"          /* Color icon rendering from IRES */
 #include "gfx.h"                 /* Alpha blending for icon compositing */
 #include <kernel/os_logo.h>      /* Pre-built OS logo arrays (all sizes, no scaling needed) */
+#include <kernel/main/shell_loader.h>  /* shell_loader_func -- cmd.exe Terminal launcher */
 
 /* Integer square root -- local copy matching gfx_core.c (isqrt is static) */
 static uint32_t isqrt_u(uint32_t n)
@@ -1021,7 +1022,6 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
 
                     /* Dispatch by label name */
                     if (item->label[0] == 'T') { /* Terminal */
-                        extern void shell_loader_func(void);
                         terminal_open();
                         task_create(shell_loader_func, "ShellLoader");
                     } else if (item->label[0] == 'A' && item->label[1] == 'b') { /* About */

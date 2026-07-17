@@ -61,6 +61,7 @@
 #include "kernel/ipc/pipe.h"
 #include "libc/string.h"   /* snprintf for the flush-progress splash line */
 #include "kernel/ipc/alpc.h"
+#include "kernel/main/shell_loader.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 3 ------------------------------------------------------------ */
@@ -745,10 +746,7 @@ void boot_phase3(void)
         boot_halt("HW watchdog disarm failed at boot handoff");
 
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
-    {
-        extern void shell_loader_func(void);
-        task_create(shell_loader_func, "cmd.exe");
-    }
+    task_create(shell_loader_func, "cmd.exe");
 
     scheduler_enable();
 
