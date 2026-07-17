@@ -10,6 +10,8 @@ title: "TODO-24 -- ALPC / Message Ports"
 
 > **Validated:** 2026-07-17 | validate-todo-file clean (structure / IO table / XREF / test wiring)
 
+> **Gap-audited:** 2026-07-17 | gap-audit + codex-gap-audit (needs-attention, 5 findings verified + filed); 6 gaps -> Branch A into open §6-§11 (msg-identity attrs, resource reserves, completion-list not-impl, connection-message ABI, namespace generalization, ConnectPortEx)
+
 > **Goal:** Implement Advanced Local Procedure Call (ALPC), the kernel's connection-oriented message-passing substrate. ALPC gives every process pair a typed, reference-counted port object, a three-way connection handshake (server create → client connect → server accept), synchronous send+wait+reply semantics, asynchronous delivery via completion lists, and optional large-data transfer through mapped port sections. The Win32 subsystem server (CSRSS), the RPC local transport, COM local activation, and every NT service that talks back to a client process are all built on top of ALPC. The existing IPC layer (pipes, shared memory, signals) cannot substitute for it because it has no connection-oriented reply semantics: a server cannot wait for exactly one client's reply and route it back to the right caller. Without ALPC, the Win32 subsystem server model is impossible to build.
 
 > [!IMPORTANT]
@@ -52,7 +54,9 @@ title: "TODO-24 -- ALPC / Message Ports"
 - Server can capture and impersonate the client's security token.
 - Per-message sender SID and token-modified-ID queries via `NtAlpcQueryInformationMessage`.
 - Optional Win11 parity exports: `NtAlpcOpenSenderProcess`, `NtAlpcOpenSenderThread`, and `NtAlpcRevokeSecurityContext` (or documented alias) for CSRSS and security tooling parity.
-- Message zones provide pre-allocated buffer pools for high-throughput ports, eliminating per-message `kmalloc` on the hot path.
+- Message zones provide pre-allocated buffer pools for high-throughput ports, eliminating per-message `kmalloc` on the hot path; resource reserves add per-message reusable reservations for guaranteed delivery under memory pressure.
+- Per-message TOKEN and WORK_ON_BEHALF_OF identity attributes propagate sender / RPC-caller provenance across chained ALPC hops.
+- Connection-time message and attribute negotiation (full-width connect/accept ABI) carries `PortContext` and connection payloads for CSRSS/RPC.
 - CSRSS `ApiPort` boots and accepts the first Win32 subsystem connections.
 - `alpcmon.exe` provides a live port monitor with per-port latency histograms (P50/P99); a developer-experience exclusive.
 
@@ -147,7 +151,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [x] `AlpcDisconnectPort(ht, port_handle)` implemented. Lock port, set Disconnected, snapshot peer + pin; if server_conn, also detach the whole ConnectionQueue so pending clients unblock with `STATUS_PORT_DISCONNECTED` instead of their per-request timeout (finding fix). Outside lock: wake every pending connect with DISCONNECTED status; queue `ALPC_MSG_TYPE_PORT_CLOSED` on peer's MessageQueue + signal peer WaitQueue; drop peer pin + peer ConnectedPort ref.
 - [x] `alpc_port_on_delete` now releases `ConnectionPort` as well as `ConnectedPort` (finding fix) -- comm ports no longer leak the listener port reference.
 - [x] Retrofit `NtAlpcConnectPort_handler` -- `alpc_probe_and_split` leaf extraction, rebuild full `\RPC Control\<leaf>` path, `AlpcConnectPort` call. Port attrs probed + validated (discarded for §3 scope).
-- [x] Retrofit `NtAlpcAcceptConnectPort_handler` -- probe out_handle, call `AlpcAcceptConnectPort`. PortContext / ConnectionMessage / ConnMsgAttr deferred with `SCOPE-GAP-ALLOWED` to §4-§5.
+- [x] Retrofit `NtAlpcAcceptConnectPort_handler` -- probe out_handle, call `AlpcAcceptConnectPort`. PortContext / ConnectionMessage / ConnMsgAttr deferred with `SCOPE-GAP-ALLOWED` to §8 (connection-message negotiation).
 - [x] Retrofit `NtAlpcDisconnectPort_handler` -- direct call to `AlpcDisconnectPort`; Flags deferred.
 - [x] Slots `0x0110`, `0x0112`, `0x0114` dropped from the pending-features sweep in `test_ob.c` alongside `0x010F` (§2).
 - [x] **SeAccessCheck (deferred):** on_open stays NULL per §2 precedent; tracked at `02-kernel-core/TODO-15 §5` (SeAccessCheck Engine) which owns the retrofit. `SCOPE-GAP-ALLOWED: pending T15 §5` sentinel in source.
@@ -277,8 +281,10 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `ALPC_DATA_VIEW_ATTR` (bit 0x1) -- view for large data
   - `ALPC_CONTEXT_ATTR` (bit 0x2) -- port/message context values
   - `ALPC_HANDLE_ATTR` (bit 0x4) -- handle duplication across the port
-  - `ALPC_SECURITY_ATTR` (bit 0x8) -- security context (for §7)
-- [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` -- bounds-check all present attribute structs against `buffer_len` before use
+  - `ALPC_SECURITY_ATTR` (bit 0x8) -- security context handle / QoS (for §7)
+  - `ALPC_TOKEN_ATTR` (TOKEN) -- per-message sender token identity; define layout + marshalling here, token reference lifetime / impersonation / teardown owned by §7 (a ValidAttributes bit alone is NOT sufficient -- trust boundary)
+  - `ALPC_WORK_ON_BEHALF_ATTR` (WORK_ON_BEHALF_OF) -- RPC caller work-ticket identity propagated across chained ALPC hops (priority-boost / deadlock-avoidance); layout here, provenance validation owned by §7
+- [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` -- bounds-check all present attribute structs (including TOKEN / WORK_ON_BEHALF layouts) against `buffer_len` before use
 - [ ] Commit: `"kernel/ipc/alpc: port sections, view mapping, message attributes dispatch"`
 
 **Test checkpoint:** `NtAlpcCreatePortSection(NULL, 64*1024)` creates anonymous 64 KiB section. `NtAlpcCreateSectionView` maps it into caller's VA; writing a pattern to `ViewBase` succeeds. Send message with `ALPC_DATA_VIEW_ATTR`; receiver calls `NtAlpcCreateSectionView` with received `SectionHandle`; reads back matching pattern; zero copies. `NtAlpcDeleteSectionView` unmaps without crash. `NtAlpcDeletePortSection` dereferences section. `AlpcpValidateMessageAttributes` rejects invalid `buffer_len`. Serial log: `"[ALPC] section view mapped: base=%p size=%llu"`. Test on: QEMU WHPX + TCG.
@@ -306,6 +312,13 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [ ] `NtAlpcCreateSecurityContext(PortHandle, Flags, SecurityAttribute)` -- pre-creates a security context handle to avoid repeated per-message token capture; stored in `ALPC_SECURITY_ATTR.ContextHandle`
 - [ ] `NtAlpcDeleteSecurityContext(PortHandle, Flags, ContextHandle)` -- revokes and frees the captured context
 - [ ] Client connection SID verification: `RequiredServerSid` parameter to `NtAlpcConnectPort`: if non-NULL, kernel reads the server port owner's `UserSid` from `port->ClientToken` (set when server was created) and compares it using `RtlEqualSid`; returns `STATUS_SERVER_SID_MISMATCH` if different; prevents clients from connecting to hijacked ports
+- [ ] Token / work-on-behalf provenance ownership (backs the §6 `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR` layouts):
+  - Snapshot + reference the sender's token at send time; release the reference on message free and on port teardown
+  - Reject impersonation changes after enqueue; validate carried thread identity against `PORT_MESSAGE.ClientId` (anti-spoof at the trust boundary)
+  - Tests: impersonating-sender + stale-thread rejection
+- [ ] `NtAlpcConnectPortEx` (SSDT 0x0111): security-descriptor variant of the `RequiredServerSid` check:
+  - Import a bounded `PSECURITY_DESCRIPTOR ServerSecurityRequirements` and call `SeAccessCheck` (→ XREF `TODO-15-security-reference-monitor.md §5`) instead of simple SID equality
+  - Lower priority than the base SID check; handler wired by the §8 retrofit
 - [ ] Self-contained execution note (see callout below).
 > [!NOTE]
 > `SeImpersonateClientEx` (T15 §7) is not yet implemented. §7 (NtAlpcImpersonateClientOfPort) should implement a minimal inline version: `task->ImpersonationToken = ObReferenceObject(port->ClientToken)` with refcount management. Full privilege checks (`SeImpersonatePrivilege`, IL comparison) are deferred to T15 §7-§8; add `// TODO: SeImpersonatePrivilege check T15 §8` stub.
@@ -330,7 +343,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   NtAlpcCreatePortSection
   NtAlpcDeletePortSection
   NtAlpcCreateSectionView
-  NtAlpcCreateResourceReserve (pre-allocate resources for guaranteed delivery; related to §11 message zones)
+  NtAlpcCreateResourceReserve (per-message reusable reservation for guaranteed delivery; DISTINCT mechanism owned by §11, not the zone pool)
   NtAlpcDeleteSectionView
   NtAlpcCreateSecurityContext
   NtAlpcDeleteSecurityContext
@@ -341,7 +354,11 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [ ] **Gap (Win11 parity, gap-analysis 2026-04-14):** add SSDT slots + kernel helpers for **`NtAlpcOpenSenderProcess`** and **`NtAlpcOpenSenderThread`** so a server can obtain audited handles to the sender of a queued message (CSRSS-style diagnostics, sandbox introspection). Validate parameters against `PORT_MESSAGE.ClientId`; return `STATUS_INVALID_HANDLE` when the sender thread has exited.
 - [ ] **Gap (Win11 parity, gap-analysis 2026-04-14):** implement **`NtAlpcRevokeSecurityContext`** if it remains a distinct export from `NtAlpcDeleteSecurityContext` on a pinned `ntdll.dll` / public symbol list; otherwise document a thin alias and close the gap with one implementation path.
 - [ ] Add corresponding `ZwAlpc*` aliases in `include/kernel/ipc/alpc_syscalls.h`
-- [ ] **Retrofit the 16 ALPC SSDT stubs in `src/kernel/nt/nt_alpc.c` (SSDT 0x010F-0x011E)** to real handlers that call into the ALPC engine instead of returning `STATUS_NOT_IMPLEMENTED`. Covered syscalls: `NtAlpcCreatePort` (0x010F), `NtAlpcConnectPort` (0x0110), `NtAlpcConnectPortEx` (0x0111), `NtAlpcAcceptConnectPort` (0x0112), `NtAlpcSendWaitReceivePort` (0x0113; canonical message rendezvous; needs `ALPC_MESSAGE_ATTRIBUTES` decode for handle/context/view attrs), `NtAlpcDisconnectPort` (0x0114), `NtAlpcCancelMessage` (0x0115), `NtAlpcCreatePortSection` (0x0116; wraps `NtCreateSection` with port association), `NtAlpcDeletePortSection` (0x0117), `NtAlpcCreateSectionView` (0x0118), `NtAlpcDeleteSectionView` (0x0119), `NtAlpcCreateResourceReserve` (0x011A; pre-allocated message zones from §11), `NtAlpcDeleteResourceReserve` (0x011B), `NtAlpcQueryInformation` (0x011C; all 11 `ALPC_PORT_INFORMATION_CLASS` values from §9), `NtAlpcSetInformation` (0x011D), `NtAlpcQueryInformationMessage` (0x011E; 2 `ALPC_MESSAGE_INFORMATION_CLASS` values from §9). Each retrofit drops the `SCOPE-GAP-ALLOWED` sentinel in `nt_alpc.c`, adds a handler body that probes user buffers via `ProbeForReadIfUser`/`ProbeForWriteIfUser`, resolves the port handle via `ObpReferenceObjectByHandle` (-> XREF TODO-05 §3), and dispatches to the matching ALPC engine helper (`alpc_port_create`, `alpc_port_connect`, `alpc_send_wait_receive`, `alpc_disconnect`, `alpc_query_info`, etc.). This auto-closes TODO-05 §31 (16 ALPC syscalls deferred here). Additional Vista+ ALPC syscalls listed in the §8 syscall list above (`NtAlpcCreateSecurityContext`, `NtAlpcDeleteSecurityContext`, `NtAlpcImpersonateClientOfPort`) require fresh SSDT numbers in `service_numbers.h` and are not covered by this retrofit.
+- [ ] **Retrofit the 16 ALPC SSDT stubs in `src/kernel/nt/nt_alpc.c` (SSDT 0x010F-0x011E)** to real handlers that call into the ALPC engine instead of returning `STATUS_NOT_IMPLEMENTED`. Covered syscalls: `NtAlpcCreatePort` (0x010F), `NtAlpcConnectPort` (0x0110), `NtAlpcConnectPortEx` (0x0111), `NtAlpcAcceptConnectPort` (0x0112), `NtAlpcSendWaitReceivePort` (0x0113; canonical message rendezvous; needs `ALPC_MESSAGE_ATTRIBUTES` decode for handle/context/view attrs), `NtAlpcDisconnectPort` (0x0114), `NtAlpcCancelMessage` (0x0115), `NtAlpcCreatePortSection` (0x0116; wraps `NtCreateSection` with port association), `NtAlpcDeletePortSection` (0x0117), `NtAlpcCreateSectionView` (0x0118), `NtAlpcDeleteSectionView` (0x0119), `NtAlpcCreateResourceReserve` (0x011A; per-message reusable reservation mechanism owned by §11, distinct from the zone pool), `NtAlpcDeleteResourceReserve` (0x011B), `NtAlpcQueryInformation` (0x011C; all 11 `ALPC_PORT_INFORMATION_CLASS` values from §9), `NtAlpcSetInformation` (0x011D), `NtAlpcQueryInformationMessage` (0x011E; 2 `ALPC_MESSAGE_INFORMATION_CLASS` values from §9). Each retrofit drops the `SCOPE-GAP-ALLOWED` sentinel in `nt_alpc.c`, adds a handler body that probes user buffers via `ProbeForReadIfUser`/`ProbeForWriteIfUser`, resolves the port handle via `ObpReferenceObjectByHandle` (-> XREF TODO-05 §3), and dispatches to the matching ALPC engine helper (`alpc_port_create`, `alpc_port_connect`, `alpc_send_wait_receive`, `alpc_disconnect`, `alpc_query_info`, etc.). This auto-closes TODO-05 §31 (16 ALPC syscalls deferred here). Additional Vista+ ALPC syscalls listed in the §8 syscall list above (`NtAlpcCreateSecurityContext`, `NtAlpcDeleteSecurityContext`, `NtAlpcImpersonateClientOfPort`) require fresh SSDT numbers in `service_numbers.h` and are not covered by this retrofit.
+- [ ] Connection-message negotiation (full-width connect/accept ABI):
+  - The compact 6-arg SSDT handlers for `NtAlpcConnectPort` / `NtAlpcAcceptConnectPort` currently discard `PortContext`, `ConnectionMessage`, and `ConnMsgAttr` (`nt_alpc.c` `(void)a5; (void)a6;`; §3 deferred these here to nowhere)
+  - Wire the full-width ABI: bounded copy of the connection-request `PORT_MESSAGE` + `ALPC_MESSAGE_ATTRIBUTES` through connect → accept/reject → timeout → cancel; propagate `PortContext`; return the accept-side reply message
+  - Required for CSRSS/RPC connect-time negotiation. Test: connect-time payload round-trip + context propagation
 - [ ] Commit: `"kernel/ipc/alpc: NtAlpc* SSDT registration, stub retrofit, OpenSender/RevokeSecurityContext gap items"`
 
 ---
@@ -355,11 +372,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   - `AlpcConnectedSIDInformation` (3) → SID of the connected peer process
   - `AlpcServerInformation` (4) → `{ThreadBlocked, ConnectedProcessId, ConnectionNtPath}`
   - `AlpcMessageZoneInformation` (5) → message zone status (→ §11)
-  - `AlpcRegisterCompletionListInformation` (6) → completion list registration status (→ §5)
-  - `AlpcUnregisterCompletionListInformation` (7) → unregister completion list
-  - `AlpcAdjustCompletionListConcurrencyCountInformation` (8) → concurrency count for completion list drain threads
-  - `AlpcRegisterCallbackInformation` (9) → callback function registered for async event notification
-  - `AlpcCompletionListRundownInformation` (10) → drain and tear down completion list
+  - `AlpcRegisterCompletionListInformation` (6) / `AlpcUnregisterCompletionListInformation` (7) / `AlpcAdjustCompletionListConcurrencyCountInformation` (8) / `AlpcRegisterCallbackInformation` (9) / `AlpcCompletionListRundownInformation` (10) -- these are completion-LIST lifecycle operations issued via `NtAlpcSetInformation` (NOT queries). The user-VA mapped completion-list ring was NOT built (§5 chose the IOCP-notify channel instead). Return `STATUS_NOT_IMPLEMENTED` with rationale -- do NOT alias to IOCP: IOCP posts metadata while the payload stays on `MessageQueue` and has no shared-list registration / concurrency / rundown semantics, so aliasing would silently break async consumers. If a real mapped completion-list ring is ever needed, it lands as a new section, not an alias.
 - [ ] Return `STATUS_INVALID_INFO_CLASS` for unknown classes
 - [ ] `NtAlpcQueryInformationMessage(PortHandle, Flags, Message, MessageInformationClass, Buffer, Length, ReturnLength)`:
   - `AlpcMessageSidInformation` (0) → returns the SID of the sender of the specified message (derived from captured client token at send time)
@@ -390,6 +403,10 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
                   .Flags = ALPC_PORTFLG_SYSTEM_PROCESS });
   ```
 - [ ] `\Windows\ApiPort` must be resolvable in the Ob namespace (→ XREF `TODO-05-object-manager.md §3`); add `\Windows\` directory creation to Phase 1 Ob init
+- [ ] Generalize named-port path resolution beyond `\RPC Control\` (create + connect):
+  - `alpc_probe_and_split` (`nt_alpc.c`) + `AlpcCreatePort` (`alpc_port.c`) hard-code the `\RPC Control` root, so `\Windows\ApiPort` is rejected `STATUS_OBJECT_NAME_INVALID`
+  - Accept an allowlist of authorized absolute roots (`\RPC Control\`, `\Windows\`), resolving the parent directory generically via `ObLookupObjectByName`
+  - Test: user-mode create AND connect to `\Windows\ApiPort`
 - [ ] Win32 process creation notification: every new process calls `NtAlpcConnectPort(L"\\Windows\\ApiPort", ...)` at startup in its CRT0 path (→ XREF `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` *(planned)*); sends `CsrClientConnectToServer` message with `{ProcessId, ThreadId, WindowsVersion, SubsystemType=IMAGE_SUBSYSTEM_WINDOWS_GUI/CUI}`
 - [ ] CSRSS accepts, allocates a `CSR_PROCESS` record, stores `PortContext`, and replies with a session ID and the address of the CSR shared section
 - [ ] From this point, Win32 console I/O, `CreateProcess`, `CreateThread`, and exception notification all flow through this ALPC connection
@@ -410,9 +427,9 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 ---
 
-## 11. Message Zones (Pre-Allocated Message Buffers)
+## 11. Message Zones & Resource Reserves (Pre-Allocated Buffers)
 
-High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messages per second. The default per-message `kmalloc`/`kfree` cycle adds allocation pressure and cache misses. A message zone pre-allocates a contiguous buffer pool per port, and message allocations come from the zone via bump-pointer until full, falling back to `kmalloc` only when the zone is exhausted. Win11 uses `AlpcMessageZoneInformation` for this; Linux has no equivalent; Unix sockets allocate per-message `sk_buff` structs from the slab.
+High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messages per second. The default per-message `kmalloc`/`kfree` cycle adds allocation pressure and cache misses. A message zone pre-allocates a contiguous buffer pool per port, and message allocations come from the zone via bump-pointer until full, falling back to `kmalloc` only when the zone is exhausted. Win11 uses `AlpcMessageZoneInformation` for this; Linux has no equivalent; Unix sockets allocate per-message `sk_buff` structs from the slab. Resource reserves (`NtAlpcCreateResourceReserve`) are a DISTINCT mechanism this section also owns: a per-creation, reference-counted, reusable single-message reservation a client pins by `ResourceId` for guaranteed-delivery repeated same-size sends, surviving the memory pressure that would starve the zone/kmalloc paths. Not an alias of the zone pool: the zone is one shared bump-allocator, a reserve is one dedicated reusable buffer with independent lifetime.
 
 - [ ] Define `ALPC_MESSAGE_ZONE` structure:
   ```c
@@ -431,9 +448,16 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 - [ ] `AlpcFreeToZone(zone, entry)`; decrement `ActiveMessages`; when `ActiveMessages == 0`, reset `UsedBytes = 0` (zone becomes fully reusable)
 - [ ] Wire `AlpcMessageZoneInformation` (info class 5) into `NtAlpcSetInformation`: set zone size; `NtAlpcQueryInformation`: read zone status
 - [ ] CSRSS bootstrap (§10): create `\Windows\ApiPort` with a 64 KiB message zone by default
-- [ ] Commit: `"kernel/ipc/alpc: message zone pre-allocated per-port message buffer pool"`
+- [ ] Define `ALPC_RESERVE` (DISTINCT from `ALPC_MESSAGE_ZONE`) + create/delete syscalls:
+  - Reference-counted, keyed by a per-creation `ResourceId`; holds `OwnerPort` / `HandleTable` / cached `PORT_MESSAGE_ENTRY` / `Size` / `Active` flag
+  - `NtAlpcCreateResourceReserve(PortHandle, Flags, MessageSize, ResourceId)` pins a reusable single-message buffer; `NtAlpcDeleteResourceReserve(PortHandle, Flags, ResourceId)` releases it
+- [ ] Reserve send-path + teardown:
+  - A send referencing a valid `ResourceId` reuses the pinned reserve (no allocation, survives a `kmalloc` failure) instead of the zone / kmalloc path
+  - On disconnect / port teardown, tear down all reserves; a refcount prevents freeing an in-flight reserve
+  - Test: create a reserve, send repeatedly under a forced `kmalloc` failure -- delivery still succeeds; delete frees it
+- [ ] Commit: `"kernel/ipc/alpc: message zones + resource reserves (pre-allocated per-port buffers)"`
 
-**Test checkpoint:** Create port with 16 KiB message zone. Send 100 messages of 128 bytes each. Verify all allocate from zone (no `kmalloc` calls). Send messages until zone is full. Verify fallback to `kmalloc` succeeds. After all messages are freed, verify zone resets (`UsedBytes == 0`). `NtAlpcQueryInformation(AlpcMessageZoneInformation)` returns correct `ZoneSize` and `UsedBytes`. Serial log: `"[ALPC] Zone alloc: port=%s size=%u used=%u"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Create port with 16 KiB message zone. Send 100 messages of 128 bytes each. Verify all allocate from zone (no `kmalloc` calls). Send messages until zone is full. Verify fallback to `kmalloc` succeeds. After all messages are freed, verify zone resets (`UsedBytes == 0`). `NtAlpcQueryInformation(AlpcMessageZoneInformation)` returns correct `ZoneSize` and `UsedBytes`. Resource reserve: `NtAlpcCreateResourceReserve` pins a buffer; repeated sends succeed under a forced `kmalloc` failure; `NtAlpcDeleteResourceReserve` frees it. Serial log: `"[ALPC] Zone alloc: port=%s size=%u used=%u"`. Test on: QEMU WHPX + TCG.
 
 ---
 
@@ -442,6 +466,9 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 - [ ] Per-port message latency histogram (see callout below).
 > [!TIP]
 > Neither Windows (no built-in per-port latency tracking) nor Linux (no kernel-level IPC profiling beyond `perf`/`ftrace`) provides a first-class, always-on message latency profiler for IPC. Impossible OS embeds a lightweight histogram directly in every `ALPC_PORT`, recording send-to-reply round-trip time in microsecond buckets. Developers see per-port P50/P95/P99 latencies in `alpcmon.exe` without attaching a debugger or running an ETW trace.
+
+> [!NOTE]
+> The histogram is designed for sub-1% steady-state overhead (per the 2026 low-overhead ring-tracer research bar): fixed-bucket atomic increments only, no per-message allocation, no lock on the record path.
 
 - [ ] Add to `ALPC_PORT`:
   ```c
@@ -490,7 +517,10 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                       |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                       |
 | 💎   | Message zones                | ✅ AlpcMessageZone     | ❌ Per-msg sk_buff       | ⬜ §11                                |
-| 💎   | Completion list lifecycle    | ✅ Register/Unregister | ❌ N/A                   | ⬜ §9                                 |
+| 💎   | Completion list lifecycle    | ✅ Register/Unregister | ❌ N/A                   | ⬜ §9 not-impl (IOCP subst.)          |
+| 💎   | Message identity attrs       | ✅ TOKEN + WoB attr    | ⚠️ SCM_CREDENTIALS      | ⬜ §6 layout + §7 provenance          |
+| 💎   | Connection-msg negotiation   | ✅ Connect/accept msg  | ⚠️ connect() payload    | ⬜ §8 (full-width ABI)                |
+| 💎   | Resource reserves (per-msg)  | ✅ NtAlpcCreateReserve | ❌ N/A                   | ⬜ §11 (distinct from zones)          |
 | ⭐   | Per-port latency histogram   | ❌ ETW only            | ❌ ftrace only           | ⬜ §12 (histogram)                    |
 | ⭐   | Live port monitor + profiler | ❌ WinObj read-only    | ❌ N/A                   | ⬜ §12 (alpcmon)                      |
 
@@ -520,6 +550,11 @@ After §1-10, Impossible OS reaches full Windows 11 ALPC parity for hosting CSRS
   - Message zone: create port with 16 KiB zone → 100 messages allocate from zone without `kmalloc`
   - Per-message query: `NtAlpcQueryInformationMessage(AlpcMessageSidInformation)` returns sender SID
   - Open sender: after a queued message, `NtAlpcOpenSenderProcess` / `NtAlpcOpenSenderThread` return handles matching `PORT_MESSAGE.ClientId`; dead thread returns `STATUS_INVALID_HANDLE`
+  - Resource reserve: create a reserve, repeated sends succeed under a forced `kmalloc` failure; delete frees it
+  - Message identity attrs: send with `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF_ATTR`; receiver reads sender provenance; stale-thread + post-enqueue impersonation rejected
+  - Connection-message negotiation: connect with a connection `PORT_MESSAGE` + attrs; server receives the payload + `PortContext` on accept; round-trip intact
+  - Namespace generalization: create AND connect `\Windows\ApiPort` succeeds (not only `\RPC Control\`)
+  - Completion-list lifecycle: `NtAlpcSetInformation(AlpcRegisterCompletionListInformation)` returns `STATUS_NOT_IMPLEMENTED` (IOCP-notify substitute, not aliased)
   - Port stats: send 50 messages → `ALPC_PORT_STATS.TotalSent == 50`
 - [ ] Register in `test_runner_init()`: `test_suite_register_cat("alpc", test_register_alpc, TEST_CAT_IPC)`
 - [ ] Commit: `"test: add ALPC message port test suite"`
