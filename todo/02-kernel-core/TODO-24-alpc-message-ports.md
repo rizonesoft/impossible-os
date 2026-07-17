@@ -233,6 +233,9 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [x] Fallback: if no completion port is associated (`port->CompletionPortHandle == 0`), `alpc_notify_completion_port()` early-returns and the send path uses only the synchronous `MessageQueue` + `WaitQueue` path from §4.
 - [x] Waitable port: when `ALPC_PORTFLG_WAITABLE_PORT` is set in the port's `Attributes.Flags`, the port caches `IsWaitable=1` and initializes a MANUAL_RESET `SignalledEvent`. `msg_queue_enqueue_locked` sets the event on the 0→1 Count transition; `msg_queue_dequeue_locked` clears it on the 1→0 transition -- both under `port->Lock`, so the event state can never disagree with the queue state a waiter observes. `wait_on_handle` (src/kernel/nt/nt_sync.c) grew an `ObpAlpcPortType` branch that dispatches on `IsWaitable`, returning `STATUS_OBJECT_TYPE_MISMATCH` for non-waitable ports.
 - [x] (Bonus fix) `wait_on_handle` Event and Timer branches had an inverted `event_wait_timeout` result mapping (`== 0 ? SUCCESS : TIMEOUT`) that would have reported timeouts as SUCCESS and successes as TIMEOUT. Caught during §5 design review; corrected to `? SUCCESS : TIMEOUT`.
+- [ ] **Race-proof the `AlpcAcceptConnectPort` failure unwinds.** They blindly consume the `client_comm->ConnectedPort` ref, but a sibling `AlpcDisconnectPort` can clear that link and consume its `server_comm` ref first, so the unwind double-frees
+  - Detach each cross-link under the owning port's lock and consume its reference ONLY if the pointer still matches; hold the `server_comm` creation ref until every detach completes, so no branch writes through a freed port
+  - Both the handle-alloc-failure and token-dup-failure branches (`alpc_port.c`); handle-quota exhaustion makes the first attacker-reachable. Add a disconnect-vs-failed-accept race test -> XREF: `02-kernel-core/TODO-24 §7`
 - [x] (Bonus fix) `IO_COMPLETION_PORT` gained a per-port `spinlock_t lock` plus `s_iocp_allocator_lock` guarding `s_iocp_allocated`. The previous "single-threaded today" assumption ceased to hold as soon as kernel ALPC sends started posting completion packets concurrently with user-mode `NtSet/Remove` handlers. All four IOCP handlers (`NtCreate/Set/Remove` + the new `io_completion_post`) now run under the port lock.
 - [x] Disconnect's PORT_CLOSED marker is now routed through `msg_queue_enqueue_locked` (was a manual append) so SignalledEvent tracks MessageQueue.Count transitions across every producer, including teardown.
 - [x] ~~Commit:~~ `"kernel/ipc/alpc: async completion list, waitable port, IO_COMPLETION integration"`
@@ -299,15 +302,18 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 > [!NOTE]
 > **Ceiling cleared; SHIPPED 2026-07-17.** This section was parked because its kernel `.text` pushed the `-DKERNEL_TESTS` image's BSS end to exactly `0x800000`, colliding with `USER_BASE`. `02-kernel-core/TODO-33 §10` converted the large static pools to frame-backed storage (BSS end `0x7fe000` -> `0x6c0000`, headroom 8 KiB -> 1280 KiB), so the stash re-applied and built with room to spare (BSS end `0x6c1000`) -- no higher-half move and no ABI change needed -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-24 §7` (ALPC client token)"). The re-apply was re-reviewed against the moved HEAD and tightened: the UserMode same-SID exemption now also requires NON-AMPLIFICATION (see item 3 below). The `RequiredServerSid` compare stays `[/]`: it is correct and reachable from KernelMode, but the SYSCALL transport cannot deliver a 6th argument from ring 3 -> XREF: `02-kernel-core/TODO-24 §8`.
 
-- [x] Security context capture at CONNECT time (`AlpcConnectPort`): when the listener QoS is `>= SecurityIdentification`, Ob-reference the connecting thread's effective token onto the request, released on every free path:
+- [x] Security context capture at CONNECT time (`AlpcConnectPort`): when the NEGOTIATED QoS is `>= SecurityIdentification`, Ob-reference the connecting thread's effective token onto the request, released on every free path:
   1. Effective token = `thread_current()->impersonation_token` else `task_current()->token` -- captured in the client's own context so an active client impersonation is honored and the requester-teardown SMP race is closed (not a raw `RequesterTask` deref at accept)
-  2. At accept, `NtDuplicateToken(req->CapturedToken, 0, SecurityQos.EffectiveOnly, TokenImpersonation)` -- Ob-refcounted dup (`desired_access` ignored by the impl, matches `ImpersonateSelf`)
-  3. Stamp `captured->ImpersonationLevel = SecurityQos.ImpersonationLevel` so the negotiated level gates later impersonation
-  4. Store in `server_comm->ClientToken`; on dup failure the whole handshake unwinds (free handle, undo cross-links/refs, signal client failure)
+  2. QoS is NEGOTIATED, not listener-dictated: `req->NegotiatedLevel = min(client, listener)`, `NegotiatedEffectiveOnly = OR` of both -- a listener can never raise a client's exposure, because the client's SQOS is a LIMIT
+  3. At accept, `NtDuplicateToken(req->CapturedToken, 0, req->NegotiatedEffectiveOnly, TokenImpersonation)` -- Ob-refcounted dup (`desired_access` ignored by the impl, matches `ImpersonateSelf`)
+  4. Stamp `captured->ImpersonationLevel = req->NegotiatedLevel` (the dup otherwise inherits the SOURCE token's level, which is neither party's request)
+  5. Store in `server_comm->ClientToken` BEFORE `ObpAllocateHandle` publishes the port -- initialize-then-publish, so no reader sees a reachable port with a NULL or half-stamped token; on dup failure the whole handshake unwinds
+- [/] Honor the client `SecurityQos` for RING-3 clients: needs fault-recoverable usercopy first -- copying user `port_attrs` today would trade an unreachable escalation for a kernel-fault DoS -> XREF: `02-kernel-core/TODO-23 §13`
 - [x] Server impersonation: internal helper `AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)` shipped in `alpc_port.c` (SSDT slot + `NtAlpcImpersonateClientOfPort` syscall wrapper -> §8):
   1. Non-`AlpcServerCommunicationPort` -> `STATUS_INVALID_PORT_HANDLE`; no captured token -> `STATUS_NO_TOKEN`
   2. Identification-only captured token (`< SecurityImpersonation`) -> `STATUS_BAD_IMPERSONATION_LEVEL`
-  3. UserMode caller: matching `UserSid` alone is NOT sufficient -- under the split-token model one user owns both a filtered Medium-IL and an elevated High-IL token, so the no-privilege path requires NON-AMPLIFICATION: same principal AND client IL not above the server's (`SeTryGetTokenIntegrityLevel` + `SeCompareMandatoryLevels`, fail-closed on a malformed label) AND not `IsElevated` while the server is not; otherwise `SeImpersonatePrivilege` is required, else `STATUS_PRIVILEGE_NOT_HELD`. KernelMode bypasses
+  3. UserMode caller: matching `UserSid` alone is NOT sufficient -- one user owns both a filtered Medium-IL and an elevated High-IL token -- so the no-privilege path requires NON-AMPLIFICATION via `alpc_authority_is_subset()`, else `SeImpersonatePrivilege`, else `STATUS_PRIVILEGE_NOT_HELD`. KernelMode bypasses
+  4. Non-amplification = same principal AND: IL not raised (`SeCompareMandatoryLevels`, fail-closed on a malformed label); no elevation gained; client privilege LUIDs a subset (PRESENCE, since a holder can enable its own disabled privilege); client groups a subset (an ENABLED client group demands an ENABLED server group -- a server impersonating cannot enable a disabled group on the token it runs under); no restricted token on either side (equal `RestrictedSidCount` cannot prove equal restriction); every server deny-only SID still deny-only on the client (dropping a denial is amplification the client-side scan cannot see)
   4. Fresh `ObReferenceObject` + `__atomic_exchange_n` into `thread_current()->impersonation_token`, deref displaced (repeat/revert/thread-exit ref-safe)
 - [/] Client SID verification: `RequiredServerSid` vs the listener creation-time `OwnerSid` via `RtlEqualSid` -> `STATUS_SERVER_SID_MISMATCH`. Kernel-side SHIPPED + tested; ring-3 unreachable -> XREF: `02-kernel-core/TODO-24 §8`
   - Handler probes + bounded-copies the caller SID into kernel memory (header, `SubAuthorityCount`-derived length, `RtlValidSid`) before the compare
@@ -324,15 +330,21 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 **Test checkpoint:** Server accepts a connection at QoS `>= SecurityImpersonation`; `server_comm->ClientToken` is non-NULL, stamped at the negotiated level, refcount 1. `AlpcImpersonateClientOfPort` sets `thread_current()->impersonation_token` (refcount -> 2), `RevertToSelf` clears it (-> 1); identification-only -> `STATUS_BAD_IMPERSONATION_LEVEL`; anonymous (no capture) -> `STATUS_NO_TOKEN`; connection port -> `STATUS_INVALID_PORT_HANDLE`. `AlpcCreatePort` snapshots `OwnerSid`; wrong `RequiredServerSid` -> `STATUS_SERVER_SID_MISMATCH`, matching completes the handshake. Zero leaks. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | 313 kernel tests, 0 failures (10 §7 cases incl. the no-amplification gate, 0 leaked)
+> **Test runner:** `scripts\debug\kernel\run-ipc-tests.bat` (SUITE=ipc) | 326 kernel tests, 0 failures (11 §7 cases: 9 amplification vectors + QoS cap, 0 leaked)
 
 > **Notes:**
 > - **Shipped** -- connect-time token capture + `OwnerSid` snapshot + `AlpcImpersonateClientOfPort` + SID verify (`alpc_port.c`), bounded SID copy (`nt_alpc.c`), 3 status codes, 10 IPC tests. Codex adoptions in the commit message.
 > - **How it runs** -- capture at `AlpcConnectPort` in the client's context, duplicate at accept, release in `alpc_port_on_delete`; impersonation installs via atomic exchange, cleared by `RevertToSelf`.
-> - **Security gate** -- UserMode impersonation without `SeImpersonatePrivilege` is limited to NON-AMPLIFYING self-impersonation (same principal, IL not raised, no elevation gained); same-SID Medium->High is refused.
+> - **Security gate** -- UserMode impersonation without `SeImpersonatePrivilege` requires NON-AMPLIFICATION: same principal, IL not raised, no elevation gained, privileges/groups a subset, no restricted token, no dropped deny-only SID. Client QoS caps the listener's.
 > - **Downstream** -- in-message attrs -> §6; the security syscalls' SSDT slots + the ring-3 `RequiredServerSid` transport -> §8; `NtAlpcConnectPortEx` `SeAccessCheck` -> TODO-15 §5.
 > - **Canonical doc:** [`include/kernel/ipc/alpc_port.h`](../../include/kernel/ipc/alpc_port.h) -- the ALPC port + security contract.
 > - **Constraint** -- standalone thread-exit token release is not unit-tested (scheduler-owned teardown path).
+
+> **Verified:** 2026-07-17 | commit `992e2846` | 6/10 items | build OK | 21504 kernel + 16 user tests | smoke PASS (KVM 2.92s) | BSS end `0x6c2000` (was the `0x801000` that parked this section)
+> **Accepted:** [H] `RequiredServerSid` cannot be delivered from ring 3 -- `syscall_entry.asm` zeroes `r9` and `syscall_dispatch_fast` passes `a6=0`, so the compare is KernelMode-only and the kernel cannot fail closed on it (reason: widening the transport is an operator-reserved ABI change) -> XREF: `02-kernel-core/TODO-24 §8` (item: "**Deliver `a5`/`a6` from ring 3.**" at line 380)
+> **Accepted:** [H] the `AlpcAcceptConnectPort` failure unwinds blindly consume the `client_comm->ConnectedPort` ref, so a racing `AlpcDisconnectPort` can drive a double-release (reason: pre-existing -- byte-identical at parent `8080acd9`, §4-era accept code) -> XREF: `02-kernel-core/TODO-24 §4` (item: "**Race-proof the `AlpcAcceptConnectPort` failure unwinds.**" at line 236)
+> **Accepted:** [M] `nt_alpc.c` includes `cpu_security.h` under `nt/`, which kernel-code-quality Gate 7 names as arch-forbidden; this is the 8th such include and every one exists for `copy_from_user`, which has no arch-neutral home (reason: repo-wide doc-vs-code drift, operator call) -> XREF: `18-future-research/TODO-01 §1` (item: "**Give `copy_from_user`/`copy_to_user` an arch-neutral home.**" at line 88)
+> **Quality reviewed:** 2026-07-17 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 4H+4M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -343,24 +355,24 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 
 - [x] SSDT entries: all 16 NtAlpc* entry points registered at `0x010F-0x011E` by `nt_alpc_register_ssdt()` (`nt_alpc.c`) via `alpc_register_one()` (collision + bounds + failure checks); numbers in `service_numbers.h:249-264` (→ XREF `TODO-12 §5`):
   ```
-  NtAlpcCreatePort
-  NtAlpcConnectPort / NtAlpcConnectPortEx (extended variant)
-  NtAlpcAcceptConnectPort
-  NtAlpcSendWaitReceivePort
-  NtAlpcDisconnectPort
-  NtAlpcQueryInformation
-  NtAlpcSetInformation
-  NtAlpcCreatePortSection
-  NtAlpcDeletePortSection
-  NtAlpcCreateSectionView
-  NtAlpcCreateResourceReserve (per-message reusable reservation for guaranteed delivery; DISTINCT mechanism owned by §11, not the zone pool)
-  NtAlpcDeleteSectionView
-  NtAlpcCreateSecurityContext
-  NtAlpcDeleteSecurityContext
-  NtAlpcImpersonateClientOfPort
-  NtAlpcCancelMessage
-  NtAlpcQueryInformationMessage
+  0x010F NtAlpcCreatePort
+  0x0110 NtAlpcConnectPort
+  0x0111 NtAlpcConnectPortEx
+  0x0112 NtAlpcAcceptConnectPort
+  0x0113 NtAlpcSendWaitReceivePort
+  0x0114 NtAlpcDisconnectPort
+  0x0115 NtAlpcCancelMessage
+  0x0116 NtAlpcCreatePortSection
+  0x0117 NtAlpcDeletePortSection
+  0x0118 NtAlpcCreateSectionView
+  0x0119 NtAlpcDeleteSectionView
+  0x011A NtAlpcCreateResourceReserve (per-message reusable reservation for guaranteed delivery; DISTINCT mechanism owned by §11, not the zone pool)
+  0x011B NtAlpcDeleteResourceReserve
+  0x011C NtAlpcQueryInformation
+  0x011D NtAlpcSetInformation
+  0x011E NtAlpcQueryInformationMessage
   ```
+- [ ] Fresh SSDT slots + wrappers for the three §7 security syscalls (`NtAlpcCreateSecurityContext`, `NtAlpcDeleteSecurityContext`, `NtAlpcImpersonateClientOfPort`) -- none has a number, handler, or registration -> XREF: `02-kernel-core/TODO-24 §7`
 - [/] **Gap (Win11 parity):** SSDT slots + helpers for **`NtAlpcOpenSenderProcess`** / **`NtAlpcOpenSenderThread`** -- audited handles to a message sender; validate against `PORT_MESSAGE.ClientId`. New slots + handler `.text`: BSS-ceiling-blocked
 - [/] **Gap (Win11 parity):** **`NtAlpcRevokeSecurityContext`** -- implement if distinct from `NtAlpcDeleteSecurityContext` on a pinned `ntdll.dll` symbol list, else a thin alias. Both peers are §7-deferred, so there is nothing to alias yet
 - [/] `ZwAlpc*` kernel-mode aliases -- BLOCKED, not merely unwritten: `zw_dispatch` carries 6 words (`zw.h:101`), too few for the 8-11-arg ALPC surface. Header home (`zw.h` vs new `alpc_syscalls.h`) stays OPEN pending the transport
@@ -598,11 +610,12 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 | 💎   | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply) |
 | 💎   | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)  |
 | 💎   | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                |
-| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ⬜ §7 (done, stashed; BSS-blocked)   |
+| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ✅ §7 (capture + QoS negotiation)    |
 | 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                |
 | 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10 (deferred; BSS + §8/§9)       |
 | 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                        |
-| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⬜ §7 (done, stashed; BSS-blocked)   |
+| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⚠️ §7 kernel-side; ring 3 needs §8   |
+| 💎   | Server impersonate client    | ✅ NtAlpcImpersonate*  | ⚠️ SCM_CREDENTIALS only | ⚠️ §7 helper + gate; slot -> §8      |
 | 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (7 args > 6-word SSDT cap)     |
 | 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                      |
 | 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                      |

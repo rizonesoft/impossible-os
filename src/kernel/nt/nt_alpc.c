@@ -247,13 +247,37 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!NT_SUCCESS(st))
         return st;
 
+    /* The caller's SecurityQos is how a client LIMITS what a server may do with
+     * its identity, and AlpcConnectPort honors it by negotiating min(client,
+     * listener). We can only pass it on when reading it is SAFE.
+     *
+     * KernelMode callers: the pointer is kernel-resident, so read it directly.
+     *
+     * UserMode callers: do NOT dereference. ProbeForReadIfUser validates range
+     * and alignment ONLY -- it never checks that the pages are mapped -- and
+     * copy_from_user is a plain byte loop with no fixup table and no SEH
+     * (src/kernel/cpu_security.c). An in-range unmapped buffer, or one unmapped
+     * right after the probe, would fault in ring 0 and take the system down:
+     * trading an unreachable escalation for a reachable DoS is a bad trade, and
+     * this path never dereferenced port_attrs before. So ring-3 clients cannot
+     * constrain the listener yet -- the listener's QoS governs, exactly as
+     * before. Probe still runs so a bad pointer is still rejected early.
+     * Closing this needs bounded, fault-recoverable usercopy (the kernel safe
+     * probing work: probe.c + a safe_return_rip slot in the CPU-local area),
+     * the same blocker the environment-variable Rtl expansion work carries. */
+    SECURITY_QUALITY_OF_SERVICE client_qos_copy;
+    const SECURITY_QUALITY_OF_SERVICE *client_qos =
+        (const SECURITY_QUALITY_OF_SERVICE *)0;
     if (port_attrs) {
-        /* Validate + discard; does not persist caller-supplied port
-         * attrs on the client-comm port. They're caller intent for the
-         * server connection, not our concern here. */
         st = ProbeForReadIfUser(port_attrs, sizeof(ALPC_PORT_ATTRIBUTES), 8);
         if (!NT_SUCCESS(st))
             return st;
+        if (ssdt_previous_mode() != SSDT_USER_MODE) {
+            client_qos_copy = port_attrs->SecurityQos;
+            if (client_qos_copy.ImpersonationLevel > SecurityDelegation)
+                return STATUS_INVALID_PARAMETER;
+            client_qos = &client_qos_copy;
+        }
     }
 
     st = alpc_probe_and_split(oa, leaf_buf, sizeof(leaf_buf), &have_name);
@@ -281,7 +305,11 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
      * that many bytes, then validate the immutable snapshot -- otherwise a
      * short mapping causes an out-of-bounds kernel read and a live user buffer
      * creates validate/use skew. */
-    uint8_t sid_storage[SID_MAX_SIZE] = {0};
+    /* _Alignas(4): this buffer is cast to SID*, and SID carries a uint32_t
+     * SubAuthority[] array, so it needs 4-byte alignment. A bare uint8_t[] is
+     * 1-byte aligned -- benign on x86-64 but UB, and the compiler may emit
+     * alignment-assuming code (ARM64 is the live concern). */
+    _Alignas(4) uint8_t sid_storage[SID_MAX_SIZE] = {0};
     const SID *required_sid = (const SID *)0;
     if (a6) {
         const SID *user_sid = (const SID *)a6;
@@ -320,7 +348,7 @@ static NTSTATUS NtAlpcConnectPort_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     }
 
     st = AlpcConnectPort(&task_current()->handle_table, full_path,
-                         timeout_ms, required_sid, &h);
+                         timeout_ms, required_sid, client_qos, &h);
     /* STATUS_TIMEOUT and other non-error-severity informational values
      * are NOT success here -- NT_SUCCESS(STATUS_TIMEOUT) is true because
      * its severity bit is 0, but the connection did not complete. Only

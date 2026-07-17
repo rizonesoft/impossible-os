@@ -300,20 +300,32 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
  *   required_server_sid -- optional (NULL = no check); when non-NULL, an
  *                  already-validated kernel-resident SID snapshot compared
  *                  against the listener's creation-time OwnerSid. Section 7.
- *   out_handle  -- on success, receives the client communication-port
- *                  handle; on failure untouched
+ *                  NOTE: reachable only from KernelMode today -- the SYSCALL
+ *                  transport cannot deliver this argument from ring 3
+ *                  (the ALPC SSDT registration/transport work).
+ *   client_qos  -- optional (NULL = the client imposes no limit); the CALLER's
+ *                  requested QoS. The effective impersonation level is
+ *                  min(client_qos, listener), and EffectiveOnly is the OR of
+ *                  the two, so a client can always LOWER its exposure but a
+ *                  listener can never raise it. Section 7.
+ *   out_handle  -- receives the client communication-port handle on success.
+ *                  NOT written on any failure path.
  *
- * Returns STATUS_SUCCESS on accept, STATUS_PORT_CONNECTION_REFUSED
- * on server reject, STATUS_OBJECT_NAME_NOT_FOUND if no port at
- * port_name, STATUS_OBJECT_TYPE_MISMATCH if the path resolves to a
- * non-server-connection port, STATUS_SERVER_SID_MISMATCH if
- * required_server_sid does not match the listener owner, STATUS_TIMEOUT if
- * the server did not accept/reject within timeout_ms,
+ * Returns STATUS_SUCCESS on accept; STATUS_INVALID_PARAMETER on a NULL
+ * ht/port_name/out_handle; STATUS_OBJECT_NAME_NOT_FOUND if no port at
+ * port_name; STATUS_OBJECT_TYPE_MISMATCH if the path resolves to a
+ * non-server-connection port; STATUS_SERVER_SID_MISMATCH if
+ * required_server_sid does not match the listener owner (also returned when
+ * the listener has no OwnerSid -- fail closed); STATUS_PORT_DISCONNECTED if
+ * the listener went away before the request was queued;
+ * STATUS_PORT_CONNECTION_REFUSED on server reject; STATUS_TIMEOUT if the
+ * server did not accept/reject within timeout_ms;
  * STATUS_INSUFFICIENT_RESOURCES on allocation failure. Rolls back every
  * partial state on failure.
  */
 NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
                          uint32_t timeout_ms, const SID *required_server_sid,
+                         const SECURITY_QUALITY_OF_SERVICE *client_qos,
                          HANDLE *out_handle);
 
 /*
@@ -323,17 +335,30 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
  * as ImpersonateSelf/RevertToSelf), after enforcing the impersonation-level
  * and SeImpersonatePrivilege trust-boundary checks.
  *
- *   port        -- a pinned server communication port (caller owns the ref)
+ *   port        -- a pinned server communication port. The caller MUST hold a
+ *                  reference: ClientToken is read without the port lock, and
+ *                  the pin is what stops alpc_port_on_delete from freeing it.
  *   access_mode -- SSDT_KERNEL_MODE (trusted, bypasses the privilege gate) or
- *                  SSDT_USER_MODE (the server must hold SeImpersonatePrivilege
- *                  to impersonate a higher-integrity client)
+ *                  SSDT_USER_MODE (gated -- see below)
  *
- * Returns STATUS_SUCCESS; STATUS_INVALID_PORT_HANDLE if `port` is not a server
+ * A UserMode caller takes the no-privilege path ONLY for a NON-AMPLIFYING
+ * self-impersonation: same UserSid AND the client conveys no authority the
+ * server lacks -- integrity not raised, no elevation gained, privileges and
+ * groups a subset, no restricted token on either side, and every server
+ * deny-only SID still deny-only on the client. Anything unprovable fails
+ * closed. Otherwise SeImpersonatePrivilege is required.
+ *
+ * Returns STATUS_SUCCESS; STATUS_INVALID_PARAMETER on a NULL port or no current
+ * thread/task; STATUS_INVALID_PORT_HANDLE if `port` is not a server
  * communication port; STATUS_NO_TOKEN if no client token was captured (the
- * connection's QoS was below SecurityIdentification); STATUS_BAD_IMPERSONATION_LEVEL
- * if the captured token is identification-only; STATUS_PRIVILEGE_NOT_HELD if a
- * UserMode server lacks SeImpersonatePrivilege for a higher-integrity client.
- * The SSDT syscall wrapper (NtAlpcImpersonateClientOfPort) is wired in section 8.
+ * NEGOTIATED QoS was below SecurityIdentification, or the client had no token);
+ * STATUS_BAD_IMPERSONATION_LEVEL if the captured token is identification-only;
+ * STATUS_PRIVILEGE_NOT_HELD when a UserMode caller fails the gate above.
+ *
+ * NOT REACHABLE FROM RING 3: there is no service number, handler, export, or
+ * registration for NtAlpcImpersonateClientOfPort -- it needs a FRESH SSDT slot
+ * (the ALPC SSDT registration work), not part of the 0x010F-0x011E retrofit.
+ * Kernel callers only today.
  */
 NTSTATUS AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode);
 

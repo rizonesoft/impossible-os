@@ -51,9 +51,17 @@ struct alpc_connection_request {
     /* Section 7: the connecting thread's effective token, captured + Ob-
      * referenced at connect time (in the client's own context) and owned by
      * this request. The accept path DUPLICATES from it; the client releases it
-     * on every path that frees the request. NULL when the listener QoS is
+     * on every path that frees the request. NULL when the NEGOTIATED QoS is
      * below SecurityIdentification or the client had no token. */
     struct access_token            *CapturedToken;
+    /* Section 7: the NEGOTIATED impersonation level -- min(client-requested,
+     * listener-requested). The listener alone must not decide this: the
+     * client's SECURITY_QUALITY_OF_SERVICE is how a caller LIMITS what a
+     * server may do with its identity, so the lower of the two governs both
+     * capture and the level stamped on the duplicate at accept. */
+    SECURITY_IMPERSONATION_LEVEL    NegotiatedLevel;
+    /* Effective-only is authority-REDUCING, so either side asking for it wins. */
+    uint8_t                         NegotiatedEffectiveOnly;
     NTSTATUS                        ReplyStatus;
     event_t                         ReplyEvent;
 };
@@ -415,16 +423,26 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
      * immutable creation-time identity rather than the reusable OwnerTask
      * slot (OwnerTask is an unreferenced raw pointer -- after the creator
      * exits and the slot is recycled it could name an unrelated process).
-     * Best-effort: a creator with no primary token leaves OwnerSid NULL, and
-     * the connect-side check fails closed when RequiredServerSid is supplied.
+     * NULL OwnerSid means exactly ONE thing (alpc_port.h): the creator had no
+     * primary token. It must NEVER mean "the snapshot failed" -- a port that
+     * silently lost its identity would answer every RequiredServerSid connect
+     * with STATUS_SERVER_SID_MISMATCH, reporting a resource failure as an
+     * authentication failure on a security-sensitive endpoint. So a creator
+     * that HAS an identity either gets it snapshotted or the creation fails.
      * Freed in alpc_port_on_delete. */
     {
         ACCESS_TOKEN *creator_tok = PsReferencePrimaryToken(task_current());
+        NTSTATUS sid_st = STATUS_SUCCESS;
+
         if (creator_tok && creator_tok->UserSid) {
             uint32_t sid_len = RtlLengthSid(creator_tok->UserSid);
-            if (sid_len && sid_len <= SID_MAX_SIZE) {
+            if (!sid_len || sid_len > SID_MAX_SIZE) {
+                sid_st = STATUS_INVALID_SID;
+            } else {
                 SID *copy = (SID *)kmalloc(sid_len);
-                if (copy) {
+                if (!copy) {
+                    sid_st = STATUS_INSUFFICIENT_RESOURCES;
+                } else {
                     memcpy(copy, creator_tok->UserSid, sid_len);
                     port->OwnerSid = copy;
                 }
@@ -432,6 +450,13 @@ NTSTATUS AlpcCreatePort(HANDLE_TABLE *ht, const char *name,
         }
         if (creator_tok)
             PsDereferencePrimaryToken(creator_tok);
+        if (!NT_SUCCESS(sid_st)) {
+            klog(LOG_ERROR, "alpc",
+                 "create: owner-SID snapshot failed (0x%x) -- refusing port",
+                 (uint64_t)(uint32_t)sid_st);
+            ObDereferenceObject(port);      /* nothing published yet */
+            return sid_st;
+        }
     }
     event_init(&port->WaitQueue, "alpc_port_wait", EVENT_AUTO_RESET, 0);
     /*: SignalledEvent is manual-reset so NtWaitForSingleObject on
@@ -580,6 +605,7 @@ static ALPC_PORT *alpc_alloc_comm_port(ALPC_PORT_TYPE type,
 
 NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
                          uint32_t timeout_ms, const SID *required_server_sid,
+                         const SECURITY_QUALITY_OF_SERVICE *client_qos,
                          HANDLE *out_handle)
 {
     void *server_body = (void *)0;
@@ -670,9 +696,30 @@ NTSTATUS AlpcConnectPort(HANDLE_TABLE *ht, const char *port_name,
      * Ob reference the request holds for its whole lifetime; every path that
      * frees `req` releases it. Only when the listener QoS is
      * identification-or-higher. */
+    /* Negotiate the QoS: the LOWER of what the client asked for and what the
+     * listener asked for. A listener must not be able to raise a client's
+     * exposure -- a client that requested Anonymous or SecurityIdentification
+     * is stating a limit on how its identity may be used, and honoring only
+     * the listener's request would let a malicious server capture an
+     * impersonable token from a client that never allowed one. A client that
+     * supplies no QoS (client_qos == NULL) does not constrain the listener. */
+    {
+        SECURITY_IMPERSONATION_LEVEL srv_level =
+            server_conn->Attributes.SecurityQos.ImpersonationLevel;
+        uint8_t srv_eff = server_conn->Attributes.SecurityQos.EffectiveOnly;
+
+        req->NegotiatedLevel = srv_level;
+        req->NegotiatedEffectiveOnly = srv_eff;
+        if (client_qos) {
+            if (client_qos->ImpersonationLevel < srv_level)
+                req->NegotiatedLevel = client_qos->ImpersonationLevel;
+            if (client_qos->EffectiveOnly)
+                req->NegotiatedEffectiveOnly = 1;   /* reducing -> either wins */
+        }
+    }
+
     req->CapturedToken = (struct access_token *)0;
-    if (server_conn->Attributes.SecurityQos.ImpersonationLevel
-            >= SecurityIdentification) {
+    if (req->NegotiatedLevel >= SecurityIdentification) {
         struct thread *cthr = thread_current();
         struct task   *ctask = task_current();
         ACCESS_TOKEN  *eff =
@@ -880,23 +927,6 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
     ObReferenceObject(server_comm);
     client_comm->ConnectedPort = server_comm;
 
-    /* Allocate server-side handle. */
-    h = ObpAllocateHandle(ht, server_comm, ALPC_PORT_ALL_ACCESS, 0);
-    if (h == INVALID_HANDLE_VALUE) {
-        /* Undo cross-link. */
-        ObDereferenceObject(server_comm);             /* client's ref */
-        client_comm->ConnectedPort = (ALPC_PORT *)0;
-        ObDereferenceObject(client_comm);             /* server_comm's ref */
-        server_comm->ConnectedPort = (ALPC_PORT *)0;
-        ObDereferenceObject(server_conn);             /* server_comm's ConnectionPort ref */
-        server_comm->ConnectionPort = (ALPC_PORT *)0;
-        ObDereferenceObject(server_comm);             /* creation ref */
-        req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
-        event_set(&req->ReplyEvent);
-        ObDereferenceObject(server_conn);             /* server_conn pin */
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
     /* Section 7: stamp the server-side comm port with a duplicate of the
      * client's connect-time captured effective token (req->CapturedToken,
      * already Ob-referenced by the request, so no teardown race and any active
@@ -905,20 +935,25 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
      * (alpc_port_on_delete dereferences it). Runs OUTSIDE any port lock (token
      * duplication allocates). On duplication failure the whole handshake
      * unwinds -- the connection is refused rather than completed without the
-     * promised security context. */
+     * promised security context.
+     *
+     * This MUST happen before ObpAllocateHandle publishes server_comm: a
+     * handle makes the port reachable, and a sibling thread that called
+     * AlpcImpersonateClientOfPort inside a publish-then-stamp window would read
+     * ClientToken == NULL (spurious STATUS_NO_TOKEN) or observe the pointer
+     * store without the level store and gate on NtDuplicateToken's inherited
+     * SOURCE level instead of the negotiated one. Initialize fully, then
+     * publish. */
     if (req->CapturedToken) {
         /* desired_access is ignored by NtDuplicateToken today (matches
          * ImpersonateSelf); EffectiveOnly strips disabled attrs per the
          * negotiated QoS. */
         ACCESS_TOKEN *captured = NtDuplicateToken(
             req->CapturedToken, 0,
-            server_conn->Attributes.SecurityQos.EffectiveOnly,
+            req->NegotiatedEffectiveOnly,
             TokenImpersonation);
         if (!captured) {
-            /* Unwind the accepted handshake (mirror the handle-alloc-failure
-             * path above): free the server handle, undo cross-links + refs,
-             * signal the client with failure, drop the listener pin. */
-            ObpFreeHandle(ht, h);
+            /* Undo the cross-link; no handle exists yet. */
             ObDereferenceObject(server_comm);             /* client's ref */
             client_comm->ConnectedPort = (ALPC_PORT *)0;
             ObDereferenceObject(client_comm);             /* server_comm's ref */
@@ -931,12 +966,33 @@ NTSTATUS AlpcAcceptConnectPort(HANDLE_TABLE *ht,
             ObDereferenceObject(server_conn);             /* listener pin */
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        /* Stamp the captured token with the negotiated impersonation level so
-         * AlpcImpersonateClientOfPort's level gate is meaningful -- the source
-         * primary token's level is not the negotiated connection level. */
-        captured->ImpersonationLevel =
-            server_conn->Attributes.SecurityQos.ImpersonationLevel;
+        /* Stamp the captured token with the NEGOTIATED impersonation level --
+         * min(client, listener), computed at connect time -- so
+         * AlpcImpersonateClientOfPort's level gate reflects what the CLIENT
+         * allowed, not merely what the listener wanted. (The source primary
+         * token's own level, which NtDuplicateToken inherits, is neither.)
+         * Both stores land before the port is reachable. */
+        captured->ImpersonationLevel = req->NegotiatedLevel;
         server_comm->ClientToken = captured;
+    }
+
+    /* Allocate server-side handle -- publishes a fully initialized port. */
+    h = ObpAllocateHandle(ht, server_comm, ALPC_PORT_ALL_ACCESS, 0);
+    if (h == INVALID_HANDLE_VALUE) {
+        /* Undo cross-link. The creation-ref drop below drives server_comm to
+         * zero, and alpc_port_on_delete releases any ClientToken stamped
+         * above -- no separate token release needed here. */
+        ObDereferenceObject(server_comm);             /* client's ref */
+        client_comm->ConnectedPort = (ALPC_PORT *)0;
+        ObDereferenceObject(client_comm);             /* server_comm's ref */
+        server_comm->ConnectedPort = (ALPC_PORT *)0;
+        ObDereferenceObject(server_conn);             /* server_comm's ConnectionPort ref */
+        server_comm->ConnectionPort = (ALPC_PORT *)0;
+        ObDereferenceObject(server_comm);             /* creation ref */
+        req->ReplyStatus = STATUS_INSUFFICIENT_RESOURCES;
+        event_set(&req->ReplyEvent);
+        ObDereferenceObject(server_conn);             /* server_conn pin */
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     /* Snapshot any field we want to log BEFORE signalling the client:
@@ -1028,11 +1084,15 @@ static int alpc_authority_is_subset(const ACCESS_TOKEN *client,
         uint32_t ca = client->Groups[i].Attributes;
         int held = 0;
 
-        /* Integrity groups are covered by the IL comparison; a disabled or
-         * deny-only client group conveys no authority to gain. */
+        /* Integrity groups are covered by the IL comparison, and a deny-only
+         * group conveys nothing to gain. A merely DISABLED group is still
+         * authority: NtAdjustGroupsToken can enable any non-deny-only group
+         * afterwards, so a token carrying it hands the holder that group on
+         * demand -- the same reasoning the privilege scan above applies to
+         * present-but-disabled privileges. Ignoring the enabled bit keeps the
+         * two scans consistent and closes the enable-after-impersonation
+         * escalation. */
         if (ca & (SE_GROUP_INTEGRITY | SE_GROUP_USE_FOR_DENY_ONLY))
-            continue;
-        if (!(ca & SE_GROUP_ENABLED))
             continue;
 
         if (!client->Groups[i].Sid)
@@ -1047,8 +1107,22 @@ static int alpc_authority_is_subset(const ACCESS_TOKEN *client,
                 continue;
             if (!RtlEqualSid(client->Groups[i].Sid, server->Groups[j].Sid))
                 continue;
-            if ((sa & SE_GROUP_ENABLED) && !(sa & SE_GROUP_USE_FOR_DENY_ONLY))
-                held = 1;
+            if (sa & SE_GROUP_USE_FOR_DENY_ONLY)
+                continue;               /* deny-only is not authority held */
+            /* Enabled-state matters HERE, asymmetrically with the client scan.
+             * "The server could just enable its own disabled group" does not
+             * hold when server_eff is an impersonation token: NtOpenThreadToken
+             * opens the PROCESS primary token, so the server cannot reach in and
+             * enable a disabled group on the token it is currently
+             * impersonating. Treating a disabled server group as authority
+             * would therefore hand an ENABLED client group to a server that
+             * cannot actually obtain it. So: an enabled client group demands an
+             * enabled server group; a disabled client group is satisfied by the
+             * group merely being present (identical-token self-impersonation
+             * still matches on both sides). */
+            if ((ca & SE_GROUP_ENABLED) && !(sa & SE_GROUP_ENABLED))
+                continue;
+            held = 1;
         }
         if (!held)
             return 0;
@@ -1156,8 +1230,11 @@ NTSTATUS AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)
     if (old)
         ObDereferenceObject(old);
 
-    klog(LOG_DEBUG, "alpc", "impersonating client on thread %u",
-         (uint64_t)thr->id);
+    /* No success-path log here on purpose: impersonation is a per-RPC-call
+     * operation, and klog(LOG_DEBUG) is enabled by default and writes the UART
+     * byte-by-byte under an IRQ-disabling lock -- milliseconds per line, which
+     * would serialize concurrent servers and dominate RPC latency. Failures
+     * above return a distinct NTSTATUS; that is the observability surface. */
     return STATUS_SUCCESS;
 }
 

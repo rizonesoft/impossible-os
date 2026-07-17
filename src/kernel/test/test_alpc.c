@@ -404,6 +404,9 @@ static const char *s_conn_target_name;
  * check). Set before spawning the worker; the test runner is serial so a
  * single shared pointer is race-free across the one active handshake. */
 static const SID *s_conn_required_sid;
+/* Optional client-side QoS for the handshake worker (NULL = the client imposes
+ * no limit, so the listener's QoS governs). Same serial-runner rationale. */
+static const SECURITY_QUALITY_OF_SERVICE *s_conn_client_qos;
 
 static void alpc_connect_worker(void *arg)
 {
@@ -412,7 +415,7 @@ static void alpc_connect_worker(void *arg)
     NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
                                   s_conn_target_name,
                                   /* timeout_ms */ 5000,
-                                  s_conn_required_sid, &h);
+                                  s_conn_required_sid, s_conn_client_qos, &h);
     s_conn_client_handle = h;
     s_conn_client_status = st;
     s_conn_worker_done   = 1;
@@ -423,7 +426,8 @@ static void test_alpc_connect_nonexistent(void)
     HANDLE h = INVALID_HANDLE_VALUE;
     NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
                                   "\\RPC Control\\NoSuchPort", 100,
-                                  (const SID *)0, &h);
+                                  (const SID *)0,
+                                  (const SECURITY_QUALITY_OF_SERVICE *)0, &h);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
                    "connect to nonexistent => OBJECT_NAME_NOT_FOUND");
     TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE, "handle left INVALID");
@@ -437,7 +441,8 @@ static void test_alpc_connect_type_mismatch(void)
      * mismatched type). */
     HANDLE h = INVALID_HANDLE_VALUE;
     NTSTATUS st = AlpcConnectPort(&task_current()->handle_table,
-                                  "\\RPC Control", 100, (const SID *)0, &h);
+                                  "\\RPC Control", 100, (const SID *)0,
+                                  (const SECURITY_QUALITY_OF_SERVICE *)0, &h);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_OBJECT_NAME_NOT_FOUND,
                    "connect to directory => OBJECT_NAME_NOT_FOUND");
 }
@@ -458,6 +463,7 @@ static void test_alpc_accept_handshake(void)
 
     s_conn_target_name   = "\\RPC Control\\HsServer";
     s_conn_required_sid  = (const SID *)0;
+    s_conn_client_qos    = (const SECURITY_QUALITY_OF_SERVICE *)0;
     s_conn_client_handle = INVALID_HANDLE_VALUE;
     s_conn_client_status = STATUS_INVALID_PARAMETER;
     s_conn_worker_done   = 0;
@@ -651,7 +657,8 @@ static void test_alpc_connect_timeout(void)
     HANDLE client_h = INVALID_HANDLE_VALUE;
     st = AlpcConnectPort(&task_current()->handle_table,
                          "\\RPC Control\\TimeoutSrv",
-                         /* timeout_ms */ 50, (const SID *)0, &client_h);
+                         /* timeout_ms */ 50, (const SID *)0,
+                         (const SECURITY_QUALITY_OF_SERVICE *)0, &client_h);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_TIMEOUT,
                    "connect timeout => STATUS_TIMEOUT");
     TEST_ASSERT_EQ(client_h, INVALID_HANDLE_VALUE,
@@ -761,7 +768,8 @@ static void s4_connect_worker(void *arg)
     HANDLE ch = INVALID_HANDLE_VALUE;
     (void)AlpcConnectPort(&task_current()->handle_table,
                           s_sync_target_name, /* timeout */ 5000,
-                          (const SID *)0, &ch);
+                          (const SID *)0,
+                          (const SECURITY_QUALITY_OF_SERVICE *)0, &ch);
     s_sync_client_handle = ch;
     s_sync_worker_done = 1;
 }
@@ -2397,6 +2405,7 @@ static ALPC_PORT *alpc_s7_body(HANDLE h)
 static HANDLE alpc_s7_handshake(const char *leaf,
                                 SECURITY_IMPERSONATION_LEVEL level,
                                 const SID *required_sid,
+                                const SECURITY_QUALITY_OF_SERVICE *client_qos,
                                 HANDLE *out_server_conn)
 {
     static char s7_path[96];
@@ -2417,6 +2426,7 @@ static HANDLE alpc_s7_handshake(const char *leaf,
     snprintf(s7_path, sizeof(s7_path), "\\RPC Control\\%s", leaf);
     s_conn_target_name   = s7_path;
     s_conn_required_sid  = required_sid;
+    s_conn_client_qos    = client_qos;
     s_conn_client_handle = INVALID_HANDLE_VALUE;
     s_conn_client_status = STATUS_INVALID_PARAMETER;
     s_conn_worker_done   = 0;
@@ -2499,7 +2509,8 @@ static void test_alpc_required_sid_mismatch(void)
         HANDLE h = INVALID_HANDLE_VALUE;
         st = AlpcConnectPort(&task_current()->handle_table,
                              "\\RPC Control\\SidMismatch", 100,
-                             (const SID *)&bogus, &h);
+                             (const SID *)&bogus,
+                             (const SECURITY_QUALITY_OF_SERVICE *)0, &h);
         TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SERVER_SID_MISMATCH,
                        "wrong RequiredServerSid => SERVER_SID_MISMATCH");
         TEST_ASSERT_EQ(h, INVALID_HANDLE_VALUE, "no client handle on mismatch");
@@ -2520,7 +2531,8 @@ static void test_alpc_required_sid_match(void)
         return;
     }
     HANDLE srv = INVALID_HANDLE_VALUE;
-    HANDLE comm = alpc_s7_handshake("SidMatch", SecurityAnonymous, my_sid, &srv);
+    HANDLE comm = alpc_s7_handshake("SidMatch", SecurityAnonymous, my_sid,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     TEST_ASSERT_NEQ(comm, INVALID_HANDLE_VALUE, "matching SID => handshake OK");
     TEST_ASSERT_EQ((uint32_t)s_conn_client_status, (uint32_t)STATUS_SUCCESS,
                    "client connect SUCCESS with matching SID");
@@ -2539,7 +2551,8 @@ static void test_alpc_capture_and_impersonate(void)
     }
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("ImpSrv", SecurityImpersonation,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     TEST_ASSERT_NEQ(comm, INVALID_HANDLE_VALUE, "impersonation handshake OK");
     if (comm != INVALID_HANDLE_VALUE) {
         ALPC_PORT *sp = alpc_s7_body(comm);
@@ -2583,7 +2596,8 @@ static void test_alpc_impersonate_identification_rejected(void)
     }
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("IdSrv", SecurityIdentification,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     if (comm != INVALID_HANDLE_VALUE) {
         ALPC_PORT *sp = alpc_s7_body(comm);
         NTSTATUS ist = AlpcImpersonateClientOfPort(sp, SSDT_KERNEL_MODE);
@@ -2599,7 +2613,8 @@ static void test_alpc_impersonate_no_token(void)
 {
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("AnonSrv", SecurityAnonymous,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     if (comm != INVALID_HANDLE_VALUE) {
         ALPC_PORT *sp = alpc_s7_body(comm);
         TEST_ASSERT((sp ? sp->ClientToken : (ACCESS_TOKEN *)0) == (ACCESS_TOKEN *)0,
@@ -2639,7 +2654,8 @@ static void test_alpc_impersonate_repeated(void)
     }
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("RepSrv", SecurityImpersonation,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     if (comm != INVALID_HANDLE_VALUE) {
         ALPC_PORT *sp = alpc_s7_body(comm);
         if (sp && sp->ClientToken) {
@@ -2674,7 +2690,8 @@ static void test_alpc_impersonate_user_mode_same_identity(void)
     }
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("SameIdSrv", SecurityImpersonation,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     if (comm != INVALID_HANDLE_VALUE) {
         ALPC_PORT *sp = alpc_s7_body(comm);
         if (sp && sp->ClientToken) {
@@ -2709,7 +2726,8 @@ static void test_alpc_impersonate_user_mode_no_amplification(void)
 
     HANDLE srv = INVALID_HANDLE_VALUE;
     HANDLE comm = alpc_s7_handshake("NoAmpSrv", SecurityImpersonation,
-                                    (const SID *)0, &srv);
+                                    (const SID *)0,
+                                    (const SECURITY_QUALITY_OF_SERVICE *)0, &srv);
     ALPC_PORT *sp = (comm != INVALID_HANDLE_VALUE) ? alpc_s7_body(comm)
                                                    : (ALPC_PORT *)0;
 
@@ -2784,7 +2802,42 @@ static void test_alpc_impersonate_user_mode_no_amplification(void)
                 ct->GroupCount--;
             }
 
-            /* Vector 5 -- dropped denial: a group the SERVER carries deny-only
+            /* Vector 5 -- enabled client vs DISABLED server, same SID. The
+             * server cannot enable a disabled group on the token it is
+             * impersonating (NtOpenThreadToken opens the PROCESS primary
+             * token), so a disabled server group is NOT authority it holds and
+             * must not authorize an enabled client group. */
+            if (medium->GroupCount < TOKEN_MAX_GROUPS &&
+                ct->GroupCount < TOKEN_MAX_GROUPS) {
+                medium->Groups[medium->GroupCount].Sid =
+                    (SID *)SeBuiltinAdministratorsSid;
+                medium->Groups[medium->GroupCount].Attributes = 0; /* disabled */
+                medium->GroupCount++;
+                ct->Groups[ct->GroupCount].Sid =
+                    (SID *)SeBuiltinAdministratorsSid;
+                ct->Groups[ct->GroupCount].Attributes = SE_GROUP_ENABLED;
+                ct->GroupCount++;
+                ist = AlpcImpersonateClientOfPort(sp, SSDT_USER_MODE);
+                TEST_ASSERT_EQ((uint32_t)ist, (uint32_t)STATUS_PRIVILEGE_NOT_HELD,
+                               "enabled client group vs disabled server group refused");
+                if (ist == STATUS_SUCCESS)
+                    RevertToSelf();
+
+                /* Vector 6 -- DISABLED client vs present server, same SID:
+                 * conveys nothing the server lacks, so it must be ALLOWED
+                 * (this is what keeps identical-token self-impersonation
+                 * working when the token carries disabled groups). */
+                ct->Groups[ct->GroupCount - 1].Attributes = 0;   /* disabled */
+                ist = AlpcImpersonateClientOfPort(sp, SSDT_USER_MODE);
+                TEST_ASSERT_EQ((uint32_t)ist, (uint32_t)STATUS_SUCCESS,
+                               "disabled client group vs present server allowed");
+                if (ist == STATUS_SUCCESS)
+                    RevertToSelf();
+                ct->GroupCount--;
+                medium->GroupCount--;
+            }
+
+            /* Vector 7 -- dropped denial: a group the SERVER carries deny-only
              * is negative authority. A client that does not carry it deny-only
              * escapes a denial the server is subject to. Walking only the
              * client's groups cannot see this. */
@@ -2802,7 +2855,7 @@ static void test_alpc_impersonate_user_mode_no_amplification(void)
                 medium->GroupCount--;
             }
 
-            /* Vector 6 -- restricted token: equal RestrictedSidCount cannot
+            /* Vector 8 -- restricted token: equal RestrictedSidCount cannot
              * prove equal restriction, so any restricted token fails closed. */
             ct->Flags |= TOKEN_IS_RESTRICTED;
             ist = AlpcImpersonateClientOfPort(sp, SSDT_USER_MODE);
@@ -2812,7 +2865,7 @@ static void test_alpc_impersonate_user_mode_no_amplification(void)
                 RevertToSelf();
             ct->Flags &= ~(uint32_t)TOKEN_IS_RESTRICTED;
 
-            /* Vector 7 -- unprovable identity: a malformed IL label must fail
+            /* Vector 9 -- unprovable identity: a malformed IL label must fail
              * closed rather than default to Medium and slip through. */
             ct->IntegrityLevelSid = (SID *)0;
             ist = AlpcImpersonateClientOfPort(sp, SSDT_USER_MODE);
@@ -2829,6 +2882,50 @@ static void test_alpc_impersonate_user_mode_no_amplification(void)
 
     cur->token = prev;
     ObDereferenceObject(medium);
+}
+
+/* The CLIENT's SecurityQos is a LIMIT, not a suggestion: an impersonation-hungry
+ * listener must not be able to raise a client's exposure. A client connecting at
+ * SecurityIdentification to a SecurityImpersonation listener must yield a token
+ * stamped Identification -- which the impersonation gate then refuses. */
+static void test_alpc_client_qos_caps_listener(void)
+{
+    SECURITY_QUALITY_OF_SERVICE cq = {0};
+    HANDLE srv = INVALID_HANDLE_VALUE;
+
+    alpc_s7_ensure_token();
+    if (!task_current()->token) {
+        alpc_s7_restore_token();
+        TEST_SKIP("no primary token to capture");
+        return;
+    }
+
+    cq.Length              = (uint32_t)sizeof(cq);
+    cq.ImpersonationLevel  = SecurityIdentification;   /* client's ceiling */
+
+    /* Listener asks for the maximum; the client asks for less. */
+    HANDLE comm = alpc_s7_handshake("QosCapSrv", SecurityImpersonation,
+                                    (const SID *)0, &cq, &srv);
+    TEST_ASSERT_NEQ(comm, INVALID_HANDLE_VALUE, "qos-cap: handshake OK");
+    if (comm != INVALID_HANDLE_VALUE) {
+        ALPC_PORT *sp = alpc_s7_body(comm);
+        TEST_ASSERT(sp != (ALPC_PORT *)0, "qos-cap: port body resolved");
+        if (sp && sp->ClientToken) {
+            /* Negotiated down to the client's ceiling, NOT the listener's. */
+            TEST_ASSERT_EQ((uint32_t)sp->ClientToken->ImpersonationLevel,
+                           (uint32_t)SecurityIdentification,
+                           "client QoS caps the listener's requested level");
+            /* And an identification-only token cannot be acted as. */
+            NTSTATUS ist = AlpcImpersonateClientOfPort(sp, SSDT_KERNEL_MODE);
+            TEST_ASSERT_EQ((uint32_t)ist,
+                           (uint32_t)STATUS_BAD_IMPERSONATION_LEVEL,
+                           "listener cannot impersonate past the client's QoS");
+            if (ist == STATUS_SUCCESS)
+                RevertToSelf();
+        }
+    }
+    alpc_s7_teardown("QosCapSrv", srv, comm);
+    alpc_s7_restore_token();
 }
 
 /* ---- Registration ------------------------------------------------------ */
@@ -2959,6 +3056,9 @@ void test_register_alpc(void)
                             test_alpc_impersonate_repeated, TEST_CAT_IPC);
     test_suite_register_cat("alpc: UserMode same-identity impersonation",
                             test_alpc_impersonate_user_mode_same_identity,
+                            TEST_CAT_IPC);
+    test_suite_register_cat("alpc: client QoS caps listener level",
+                            test_alpc_client_qos_caps_listener,
                             TEST_CAT_IPC);
     test_suite_register_cat("alpc: impersonate UserMode no-amplification gate",
                             test_alpc_impersonate_user_mode_no_amplification,

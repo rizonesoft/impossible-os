@@ -85,6 +85,10 @@ the toolchain and UEFI boot path work.
   ```
   Record each hit in `docs/architecture/x86-arch-inventory.md` table: `File | Line | Construct | Category | AArch64 equivalent | RISC-V equivalent | Effort`
 
+- [ ] **Give `copy_from_user`/`copy_to_user` an arch-neutral home.** `cpu_security.h` is arch-forbidden in `fs`/`ob`/`ipc`/`nt` per kernel-code-quality Gate 7, yet 8 neutral files include it purely for usercopy -- the gate is unenforceable as written
+  - Current includers: `nt_syscall.c`, `nt_process.c`, `nt_unicode.c`, `nt_alpc.c`, `nt_misc.c`, `nt_env.c`, `nt_audit.c`, `ob/ob.c`. Operator decision: introduce a neutral `uaccess.h` behind which each arch supplies the primitive, OR amend Gate 7 to name usercopy as a sanctioned exception
+  - Whichever way it lands, update the Gate 7 text in `.claude/skills/kernel-code-quality/SKILL.md` in the same change so doc and code agree
+
 - [ ] **Construct categories and ARM64 equivalents**:
 
 | x86-64 construct                                | AArch64 equivalent                                        | RISC-V equivalent                          |
