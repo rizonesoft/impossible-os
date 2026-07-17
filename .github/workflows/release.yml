@@ -162,14 +162,28 @@ jobs:
           EFI_OFFSET=$(grep -oP 'EFI_OFFSET\s*:=\s*\K\d+' Makefile 2>/dev/null || echo 1048576)
           GATED_SHA=$(sha256sum build/kernel.exe | awk '{print $1}')
           echo "Gated kernel.exe sha256=$GATED_SHA (ESP offset $EFI_OFFSET)"
-          mcopy -i "build/system-disk.img@@${EFI_OFFSET}" ::/boot/kernel.exe /tmp/embedded-kernel.exe
-          EMB_SHA=$(sha256sum /tmp/embedded-kernel.exe | awk '{print $1}')
-          if [ "$EMB_SHA" != "$GATED_SHA" ]; then
-            echo "::error::Embedded /boot/kernel.exe ($EMB_SHA) != gated build/kernel.exe ($GATED_SHA)"
-            exit 1
+
+          # Verify EVERY kernel-bearing image entry, not just the ESP copy: the
+          # recovery partition also ships the kernel as kernel.bak. A stale or
+          # substituted copy in either slot must fail the release.
+          check_copy() {  # <label> <extracted-path>
+            local sha; sha=$(sha256sum "$2" | awk '{print $1}')
+            if [ "$sha" != "$GATED_SHA" ]; then
+              echo "::error::$1 kernel ($sha) != gated build/kernel.exe ($GATED_SHA)"; exit 1
+            fi
+            bash scripts/check-release-symbols.sh --verify-provenance "$2"
+            echo "✅ $1 kernel matches the gated, provenance-stamped kernel"
+          }
+
+          mcopy -i "build/system-disk.img@@${EFI_OFFSET}" ::/boot/kernel.exe /tmp/esp-kernel.exe
+          check_copy "ESP /boot/kernel.exe" /tmp/esp-kernel.exe
+
+          RECOVERY_OFFSET=$(grep -oP 'RECOVERY_OFFSET=\K\d+' build/system-disk.img.info)
+          if [ -z "$RECOVERY_OFFSET" ]; then
+            echo "::error::RECOVERY_OFFSET missing from system-disk.img.info -- cannot bind kernel.bak"; exit 1
           fi
-          bash scripts/check-release-symbols.sh --verify-provenance /tmp/embedded-kernel.exe
-          echo "✅ Packaged disk image ships the gated, provenance-stamped kernel"
+          mcopy -i "build/system-disk.img@@${RECOVERY_OFFSET}" ::kernel.bak /tmp/recovery-kernel.exe
+          check_copy "recovery kernel.bak" /tmp/recovery-kernel.exe
 
       # ── Verify disk image ──────────────────────────────────────────────
       - name: Verify disk image

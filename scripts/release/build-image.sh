@@ -257,12 +257,27 @@ cp "$BL_PATH" "$ESP_STAGE/EFI/BOOT/BOOTX64.EFI"
 # packaging path is INDEPENDENT of .github/workflows/release.yml (which never
 # invokes build-image.sh), so it must enforce the whole proof itself. The gate
 # fails closed if compile_commands.json or any proof input is missing.
+# Freeze the expected kernel digest from the manifest BEFORE the gate runs, so
+# the post-copy check below compares against the exact bytes the gate verifies --
+# not a manifest a concurrent rebuild could regenerate after the gate returns.
+GATED_KHASH="$(awk '$2 == "build/kernel.exe" {print $1}' build/kernel.link-trace.sha 2>/dev/null)"
 if ! bash scripts/check-release-symbols.sh; then
     err "$KR_PATH failed the release-flavor proof -- refusing to package a test-flavor or contaminated kernel."
     err "Rebuild the pruned flavor with: KERNEL_TESTS=off bash scripts/build.sh clean"
     exit 1
 fi
 cp "$KR_PATH" "$ESP_STAGE/boot/kernel.exe"
+# Close the check-to-copy race: only the exact bytes the gate approved (the
+# frozen digest above) may reach the ESP. A concurrent rebuild that raced the
+# gate changes the staged hash and fails here. (A malicious build-tree writer
+# rewriting kernel.exe AND the manifest in lockstep needs the signed attestation
+# tracked in section 29; this closes the accidental/concurrent race.)
+STAGED_KHASH="$(sha256sum "$ESP_STAGE/boot/kernel.exe" | awk '{print $1}')"
+if [[ ! "$GATED_KHASH" =~ ^[0-9a-f]{64}$ ]] || [ "$STAGED_KHASH" != "$GATED_KHASH" ] || \
+   ! bash scripts/check-release-symbols.sh --verify-provenance "$ESP_STAGE/boot/kernel.exe"; then
+    err "staged kernel.exe ($STAGED_KHASH) does not match the gated digest ($GATED_KHASH) -- a concurrent rebuild raced the gate; aborting."
+    exit 1
+fi
 cp "$BOOT_CONF" "$ESP_STAGE/EFI/ImpossibleOS/boot.conf"
 
 # Seed the boot-entry store with the idempotent default. Running twice
