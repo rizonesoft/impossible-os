@@ -47,6 +47,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 | ⭐   | Order | Deliverable                                              | Depends On             | Status |
 | --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
+| 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [ ]   |
 | 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
 | 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
@@ -59,6 +60,7 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
+> 🔥 = unblocks the stalled kernel queue; depends on nothing and ships FIRST (see §10).
 > **Ship order note:** the row order above IS the ship order; the number column is the section-heading id. Original §2 (direct map + walker conversion) was SPLIT 2026-07-16 on the design review's SPLIT-CONFIRMED verdict (2+ worker contexts) into §2 (HHDM construction, additive, kernel still walks identity) and a new §9 (walker conversion) appended at file end to keep the §5/§6/§7 external XREF anchors stable. §9 ships between §2 and §3; §3 and §5 both depend on it.
 
 ---
@@ -248,7 +250,7 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 - [ ] Choose the new conventional user load base (e.g. `0x400000`, or PIE/ASLR-randomized once `D03 T02 §2` lands) and update `user/user.ld` + `scripts/build-eif.py`.
 - [ ] Reduce `include/kernel/mm/user_range.h` to the new base (or remove it if ASLR makes it dynamic); update the three includers (`vmm.c`, `pmm.c`, `task.c`) and their static asserts.
 - [ ] Remove the `scripts/build.sh` BSS-collision guard (no longer meaningful) and the `0x900000` user-range guard page; replace with the relevant lower-half guard if still needed.
-- [ ] Confirm the tactical static-pool conversions (see Notes) are no longer load-bearing -- the kernel may grow freely in the high half.
+- [ ] Confirm the §10 static-pool conversions are no longer load-bearing for HEADROOM. KEEP them (freestanding rule: no large static); only the headroom justification retires -> XREF: this file §10 (item: "Convert `reg_value_pool`").
 - [ ] Unblocks the kernel sections the ceiling stalled: re-run each deferred section once the guard is gone -> XREF `02-kernel-core/TODO-22` §23 (item: "Commit: `\"ntdll: live-environment adoption over an atomic env exchange\"`")
 - [ ] Re-run `02-kernel-core/TODO-22` §24 once the guard is gone (item: "Commit: `\"ntdll: measured expansion budget + lookup cache for Rtl env\"`"); it also carries a latent non-atomic `env_buf_free` SMP fix
 - [ ] Re-run `02-kernel-core/TODO-22` §25 once the guard is gone (item: "Commit: `\"ntdll: counted (non-_U) Rtl env read forms over a SIZE_T-safe core\"`")
@@ -259,7 +261,7 @@ With user space owning the lower half, drop the hardcoded ceiling and all the bo
 **Test checkpoint:** User programs load + run at the new base; `bash scripts/build.sh clean` -> `=== BUILD OK ===` with the BSS guard removed; no `user_range.h` static-assert failures. Test on: QEMU WHPX + TCG; **bare metal**.
 
 > [!NOTE]
-> **Interim bridge superseded:** before this TODO lands, the headroom risk was mitigated tactically by converting large kernel static pools (IXFS `volumes` ~1.4 MB, registry `reg_key_pool`/`reg_value_pool` ~1 MB, `klog_ring`, `devices`) from static BSS to `pmm_alloc_contiguous`, and by keeping unit-test fixtures out of the shipped kernel image. Those conversions remain correct (freestanding-kernel rule: no large static), but they stop being *necessary for headroom* once the kernel lives in the high half.
+> **Interim bridge NOT BUILT -- note corrected 2026-07-17.** This note previously asserted that the headroom risk "was mitigated tactically by converting large kernel static pools ... from static BSS to `pmm_alloc_contiguous`", and that "those conversions remain correct". **Both claims were false against tree**: the pools are still static arrays (`registry.c:61`/`:64`, `klog.c:78`, `blkdev.c:13`, `nt_misc.c:47`) and `git log -S` shows no conversion commit ever landed -- the prose was written aspirationally at this TODO's authoring commit (`26297a49`) and never implemented. The false claim was load-bearing: it made the tactical option look spent, so every ceiling-stalled kernel section was parked behind §3's operator-reserved decision instead. The conversion is now filed as a real, unblocked section -> §10. This section (§7) still owns the PERMANENT retirement; §10 only buys headroom.
 
 > **Deferred:** [Critical] 2026-07-17 -- cascade-blocked on §3. This section builds on the higher-half kernel that §3's low->high jump establishes (Depends-On §3), so it cannot start until §3 lands. §3 is itself deferred awaiting an operator sequencing decision (the physical image / user-window collision). -> XREF: this file §3 (item: "Commit: `"boot: kernel linker VMA/LMA split + higher-half jump"`") + `todo/answers.md` Q3.
 
@@ -329,6 +331,38 @@ Move every page-table walker off the identity map and onto the §2 HHDM, while t
 
 > [!NOTE]
 > **Regression risk: HIGH.** An incomplete deref inventory or a walk-vs-load (`*_phys`) mix-up is silent until §5 retires the identity map or the next kernel-task CR3 load. Rollback: revert to walking via the identity map (the §2 HHDM install is independent and stays). Keep `scripts/test-smoke.sh` green at every step. The repo-wide walker inventory (20 functions) MUST be complete before §5 (identity teardown).
+
+---
+
+## 10. Tactical BSS Headroom -- Large Static Pools to Dynamic Allocation
+
+Buy kernel-image headroom NOW, without the higher-half move. **Depends on nothing**; ships FIRST in the Implementation Order. This is the section that unparks the kernel queue: §3 (the permanent fix) is deferred awaiting an operator sequencing decision, and every ceiling-stalled section behind it is waiting on ~8 KiB. The kernel carries **~3.6 MB of static BSS**, of which ~1.5 MB sits in pools that the freestanding-kernel rule already says should be dynamic (`CLAUDE.md`: `kmalloc()` for <= 4 KB only, `pmm_alloc_contiguous()` for everything larger). Converting the single largest pool buys ~98x the headroom the stalled sections need.
+
+> [!IMPORTANT]
+> **Filed 2026-07-17 after the §7 Note was found false.** That Note asserted these conversions had already shipped ("Those conversions remain correct"); they had not -- the pools are static in tree and `git log -S` finds no conversion commit. The stale claim made the tactical path look spent, so the kernel queue was parked behind §3's operator-reserved decision instead. **The proven pattern already exists in-tree** -- §9 converted `swap_temp_buf` (4 KiB static -> `pmm_alloc_contiguous(1)` via HHDM, `swap.c`) exactly this way.
+
+Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `USER_BASE` `0x800000` = **8 KiB headroom**):
+
+| Symbol | Size | Home | Init phase | Safe to convert? |
+| --- | ---: | --- | --- | --- |
+| `reg_value_pool` | 784 KiB | `registry.c:64` | `registry_init` (late, `boot_storage.c`) | yes -- PMM is up |
+| `s_atoms` | 274 KiB | `nt_misc.c:47` | lazy / NT init | yes -- PMM is up |
+| `devices` | 271 KiB | `blkdev.c:13` | driver registration | yes -- PMM is up |
+| `reg_key_pool` | 228 KiB | `registry.c:61` | `registry_init` (late) | yes -- PMM is up |
+| `klog_ring` | 281 KiB | `klog.c:78` | **pre-PMM** (boot-phase aware) | NO -- see below |
+
+- [ ] Convert `reg_value_pool` (784 KiB) + `reg_key_pool` (228 KiB) in `registry.c` to `pmm_alloc_contiguous` at `registry_init`; keep the pool-index allocator, fail `registry_init` closed on allocation failure -- this alone clears the ceiling
+- [ ] Convert `s_atoms` (274 KiB, `nt_misc.c`) to a dynamic table behind its existing lookup helpers; allocate at NT init or first use, never on the atom fast path
+- [ ] Convert `devices` (271 KiB, `blkdev.c`) to dynamic; `BLKDEV_MAX` is only 16, so the per-device struct is the cost -- shrinking the struct may be cheaper than an allocation
+- [ ] **Do NOT convert `klog_ring`** (281 KiB) blind -- klog logs BEFORE `pmm_init`. Keep a small static early ring + migrate later, or leave static -> XREF: `01-boot-platform/TODO-04 §1` (item: "Boot-Phase Aware klog Init")
+- [ ] Keep pure test-data fixtures out of the measured image (`test_env_value_too_long.big` 32 KiB, `s_bls_fixture` 36 KiB) -- the gate measures the `-DKERNEL_TESTS` image, so test statics count against the ceiling
+- [ ] Re-measure the `scripts/build.sh` BSS gate after each conversion and record the new headroom in the Notes -- the gate output is the acceptance evidence for this section
+- [ ] Un-defer the ceiling-parked queue once headroom exists: TODO-24 §7 (stash `TODO-24-s7-wip-bss-ceiling`), TODO-23 §1-§16, TODO-22 §23-§25 -> XREF: this file §7 (item: "Re-run `02-kernel-core/TODO-23` §2-§16 once the guard is gone")
+- [ ] Commit: `"kernel/mm: convert large static pools to dynamic -- tactical BSS headroom"`
+
+**Test checkpoint:** `bash scripts/build.sh` prints `✓ BSS check` with a materially lower BSS end (expect >= 700 KiB headroom after the registry pools alone, vs 8 KiB today). Full `scripts/test.sh` green -- registry suites especially, since the pool-index allocator semantics must not change. `scripts/test-smoke.sh` boots to `C:\>`: the registry is on the boot path, so an allocation-failure regression surfaces as a boot hang, not a test failure. Test on: QEMU KVM + TCG; **bare metal**.
+
+> **Scope boundary:** §10 buys headroom by removing large statics; it does NOT touch the address-space layout. §7 owns retiring the `USER_BASE` ceiling permanently and, once it lands, retires §10's *headroom* justification -- but not the conversions, which stay correct on the no-large-static rule.
 
 ---
 
