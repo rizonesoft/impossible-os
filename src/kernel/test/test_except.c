@@ -14,6 +14,8 @@
 #include "kernel/idt.h"
 #include "kernel/vectors.h"  /* VECTOR_* -- general fault-to-exception mapping */
 #include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
+#include "kernel/bugcheck.h" /* BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED / _SYSTEM_SERVICE */
+#include "kernel/nt/zw.h"    /* ssdt_enter/leave_system_service -- bugcheck classification */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
  *      except.h are Layer 1 -- these prove the same contract at runtime so a
@@ -432,9 +434,13 @@ static void test_pf_build_access_violation_zeroes_context(void)
     TEST_ASSERT_EQ(ctx.Dr0, 0, "Dr0 zeroed, not poison");
 }
 
-/* Until later sections land, the dispatch stubs decline every exception so the
- * #PF handler's terminal path stays correct. */
-static void test_pf_dispatch_stubs_return_unhandled(void)
+/* Section 4: a user exception with no debug port declines (ring-3 delivery is a
+ * later stage, so the caller performs the terminal), and the kernel SEH walk
+ * stub still declines. NOTE: only the UserMode leg is safe to drive here -- a
+ * KernelMode dispatch with no handler ends in KeBugCheckExFrame (noreturn), which
+ * a unit test must never invoke; the kernel path is covered via the debugger-
+ * handled case below, which returns before the terminal. */
+static void test_dispatch_user_no_debugger_declines(void)
 {
     struct interrupt_frame f;
     EXCEPTION_RECORD rec;
@@ -444,9 +450,120 @@ static void test_pf_dispatch_stubs_return_unhandled(void)
     pf_build_access_violation(&rec, &ctx, &f, 0x4000, f.err_code);
 
     TEST_ASSERT_EQ(ki_dispatch_exception(&rec, &ctx, &f, UserMode, 1),
-                   KI_EXCEPTION_UNHANDLED, "ki_dispatch_exception stub declines");
+                   KI_EXCEPTION_UNHANDLED,
+                   "user dispatch, no debug port -> UNHANDLED (caller terminates)");
     TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
-                   KI_EXCEPTION_UNHANDLED, "ki_raise_kernel_exception stub declines");
+                   KI_EXCEPTION_UNHANDLED, "kernel SEH walk stub declines");
+}
+
+/* Section 4: DbgkForwardException is a stub returning FALSE until a user-mode
+ * debug port exists (NtDebugActiveProcess). */
+static void test_dbgk_forward_exception_stub(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    pf_build_access_violation(&rec, &ctx, &f, 0x4000, f.err_code);
+    TEST_ASSERT_EQ(DbgkForwardException(&rec, &ctx, 1), 0,
+                   "DbgkForwardException declines (no debug port)");
+}
+
+/* Test kernel-debugger callback: records how it was notified, then reports the
+ * exception as resolved so the dispatcher returns before the bugcheck terminal. */
+static int s_dbg_calls;
+static int s_dbg_first_chance;
+static KPROCESSOR_MODE s_dbg_mode;
+static int test_debug_routine(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                              struct interrupt_frame *frame,
+                              KPROCESSOR_MODE mode, int first_chance)
+{
+    (void)rec; (void)ctx; (void)frame;
+    s_dbg_calls++;
+    s_dbg_first_chance = first_chance;
+    s_dbg_mode = mode;
+    return 1;  /* handled -- a real routine would rewrite `frame` to the resume pt */
+}
+
+/* Section 4: a kernel-mode first-chance debugger notification fires with the
+ * first_chance flag and KernelMode; a HANDLED return resumes without reaching
+ * KeBugCheckExFrame. Detaches the routine afterward so no state leaks to sibling
+ * tests. */
+static void test_dispatch_kernel_debugger_first_chance(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    KI_EXCEPTION_DISPOSITION disp;
+
+    fill_frame(&f);
+    pf_build_access_violation(&rec, &ctx, &f, 0x4000, f.err_code);
+    s_dbg_calls = 0; s_dbg_first_chance = -1; s_dbg_mode = UserMode;
+
+    ki_set_debug_routine(test_debug_routine);
+    disp = ki_dispatch_exception(&rec, &ctx, &f, KernelMode, 1);
+    ki_set_debug_routine((KI_DEBUG_ROUTINE)0);  /* detach -- no residue */
+
+    TEST_ASSERT_EQ(disp, KI_EXCEPTION_HANDLED,
+                   "kernel debugger handled -> HANDLED (no bugcheck)");
+    TEST_ASSERT_EQ(s_dbg_calls, 1, "debugger notified exactly once (first-chance)");
+    TEST_ASSERT_EQ(s_dbg_first_chance, 1, "first_chance flag set on the notification");
+    TEST_ASSERT_EQ(s_dbg_mode, KernelMode, "debugger notified with KernelMode");
+}
+
+/* Section 4: kernel-terminal bugcheck classification -- STOP 0x1E for a plain
+ * kernel fault, STOP 0x3B when a user-originated system service is on the stack.
+ * in_system_service is a per-thread depth; bracket it with the real helpers and
+ * restore it so the test leaves no residue for sibling tests. */
+static void test_kernel_bugcheck_code_selection(void)
+{
+    TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED,
+                   "plain kernel fault -> 0x1E KMODE_EXCEPTION_NOT_HANDLED");
+
+    ssdt_enter_system_service();
+    TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_SYSTEM_SERVICE_EXCEPTION,
+                   "fault inside a system service -> 0x3B SYSTEM_SERVICE_EXCEPTION");
+    ssdt_leave_system_service();
+
+    TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED,
+                   "service flag restored -> 0x1E again");
+}
+
+/* Section 4: the kernel-terminal parameter layout is per-STOP-code -- 0x1E carries
+ * the exception info parameters, 0x3B carries the CONTEXT-record address in slot 3
+ * and zero in slot 4 (NT ABI). Emitting the 0x1E layout for 0x3B would make a dump
+ * consumer dereference info0 as a CONTEXT pointer. */
+static void test_kernel_bugcheck_param_layout(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    uint64_t params[4];
+    uint32_t code;
+
+    fill_frame(&f);
+    /* Sets NumberParameters=2: [0]=access type, [1]=fault address. */
+    pf_build_access_violation(&rec, &ctx, &f, 0x4000, f.err_code);
+
+    /* No system service in flight -> 0x1E, exception-info parameter layout. */
+    code = ki_kernel_bugcheck_params(&rec, &ctx, params);
+    TEST_ASSERT_EQ(code, BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED, "no service -> 0x1E");
+    TEST_ASSERT_EQ(params[0], (uint64_t)(uint32_t)rec.ExceptionCode, "0x1E P1 = code");
+    TEST_ASSERT_EQ(params[1], (uint64_t)(uintptr_t)rec.ExceptionAddress, "0x1E P2 = addr");
+    TEST_ASSERT_EQ(params[2], rec.ExceptionInformation[0], "0x1E P3 = exception info0");
+    TEST_ASSERT_EQ(params[3], rec.ExceptionInformation[1], "0x1E P4 = exception info1");
+
+    /* Inside a user system service -> 0x3B, CONTEXT-record layout. */
+    ssdt_enter_system_service();
+    code = ki_kernel_bugcheck_params(&rec, &ctx, params);
+    ssdt_leave_system_service();
+    TEST_ASSERT_EQ(code, BUGCHECK_SYSTEM_SERVICE_EXCEPTION, "in service -> 0x3B");
+    TEST_ASSERT_EQ(params[0], (uint64_t)(uint32_t)rec.ExceptionCode, "0x3B P1 = code");
+    TEST_ASSERT_EQ(params[1], (uint64_t)(uintptr_t)rec.ExceptionAddress,
+                   "0x3B P2 = faulting instruction address");
+    TEST_ASSERT_EQ(params[2], (uint64_t)(uintptr_t)&ctx, "0x3B P3 = CONTEXT record address");
+    TEST_ASSERT_EQ(params[3], 0, "0x3B P4 = 0 (reserved)");
 }
 
 /* A same-CPL (ring-0) frame: in x86-64 LONG MODE the CPU pushes SS:RSP on every
@@ -651,8 +768,16 @@ void test_register_except(void)
                             test_pf_build_access_violation_read_and_fetch, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: pf builder zeroes CONTEXT",
                             test_pf_build_access_violation_zeroes_context, TEST_CAT_EXCEPT);
-    test_suite_register_cat("Except: pf dispatch stubs decline",
-                            test_pf_dispatch_stubs_return_unhandled, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: user dispatch no debugger declines",
+                            test_dispatch_user_no_debugger_declines, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: DbgkForwardException stub declines",
+                            test_dbgk_forward_exception_stub, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: kernel debugger first-chance handled",
+                            test_dispatch_kernel_debugger_first_chance, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: kernel bugcheck code 0x1E/0x3B",
+                            test_kernel_bugcheck_code_selection, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: kernel bugcheck param layout 0x1E/0x3B",
+                            test_kernel_bugcheck_param_layout, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: context_from_frame kernel CPL",
                             test_context_from_frame_kernel_cpl, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: fault vector -> NTSTATUS map",

@@ -774,6 +774,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
@@ -982,6 +983,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
@@ -1894,6 +1896,7 @@ int task_fork(struct interrupt_frame *frame)
      * task_create_* init. */
     tasks[child_pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    tasks[child_pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].threads[0].rsp = (uint64_t)sp;
     /* Reset the child main thread's APC state (sets apc_state.process; the
@@ -3670,6 +3673,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
+    t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     t->threads[tid].pledge_pending = 0;
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
@@ -3887,6 +3891,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
+    t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     t->threads[tid].pledge_pending = 0;
 
@@ -4020,6 +4025,10 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
      * lifetime field that gates security -- previous_mode gates ProbeFor*IfUser
      * -- must be reset before the slot is advertised, not after. */
     thr->previous_mode = 0;  /* KernelMode */
+    thr->in_system_service = 0;  /* clear the system-service flag before THREAD_FREE:
+                                  * a self-terminated thread (noreturn thread_exit) skips
+                                  * ssdt_leave_system_service, so clear here so the reused
+                                  * slot never misclassifies a later kernel fault as 0x3B */
     /* Release any impersonation token before the slot is advertised for reuse:
      * a thread that exited while impersonating (never called RevertToSelf) would
      * otherwise leak the token's reference and leave a stale pointer for the next

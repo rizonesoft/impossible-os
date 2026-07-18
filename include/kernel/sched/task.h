@@ -169,6 +169,19 @@ struct thread {
                                      * Per-thread so a Zw kernel call on one CPU cannot clear
                                      * another CPU's user-syscall probe flag. Zero-init (a fresh
                                      * kernel thread defaults to KernelMode). */
+    uint32_t    in_system_service;  /* 1 while a user-originated system service runs on this
+                                     * thread: set at the true ring-3 -> ring-0 syscall entry
+                                     * (SYSCALL fast path + INT 0x2E), cleared at exit. A plain
+                                     * store, not a ++/-- RMW -- a thread runs one syscall at a
+                                     * time (kernel code never issues SYSCALL/INT 0x2E), so the
+                                     * flag never nests, and the store matches previous_mode's SMP
+                                     * profile exactly (same global-cursor caveat, no lost-update
+                                     * risk). Distinct from previous_mode, which zw_dispatch forces
+                                     * to KernelMode for nested Zw calls -- this flag is NOT touched
+                                     * by Zw, so a fault inside a nested Zw within a user syscall
+                                     * still reads 1. Consumed by ki_kernel_bugcheck_code() to pick
+                                     * 0x3B SYSTEM_SERVICE_EXCEPTION vs 0x1E. Reset to 0 at every
+                                     * slot reuse (with previous_mode). Zero-init. */
     uint8_t     in_audit;           /* 1 while this thread is running a syscall-audit hook;
                                      * per-thread (migration-safe) recursion guard so a hook's
                                      * own syscall is not itself re-audited. Zero-init. */

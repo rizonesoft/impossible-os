@@ -125,7 +125,9 @@ NTSTATUS syscall_dispatch_fast(uint64_t number,
 {
     NTSTATUS result;
     ssdt_set_previous_mode(SSDT_USER_MODE);
+    ssdt_enter_system_service();
     result = ssdt_dispatch((uint32_t)number, a1, a2, a3, a4, a5, 0);
+    ssdt_leave_system_service();
     ssdt_set_previous_mode(SSDT_KERNEL_MODE);
 
     /* Propagate Win32 error code to TEB->LastErrorValue on failure.

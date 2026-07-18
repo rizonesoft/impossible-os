@@ -151,9 +151,14 @@ uint32_t panic_crc32(const void *data, uint32_t len);
 
 /* Collect crash evidence into the physical evidence page. Safe to call from a
  * faulted context: raw physical writes only. `frame` may be NULL (software
- * bugcheck with no exception frame). First caller wins per panic so a nested
- * fault during BSOD render does not overwrite the original record. */
+ * bugcheck with no exception frame). `bugcheck_params` is the emitting call's own
+ * four STOP parameters (or NULL for a raw exception with none) -- passed by value
+ * so the record cannot combine one CPU's frame with another CPU's parameters, the
+ * way recovering them from the global g_last_bugcheck by code-equality could.
+ * First caller wins per panic so a nested fault during BSOD render does not
+ * overwrite the original record. */
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
+                            const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line);
 
 /* Phase-0 restore: if the evidence page holds a valid record, copy it into the

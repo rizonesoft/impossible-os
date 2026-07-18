@@ -116,7 +116,7 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] `schedule()`: acquires `g_rq[this_cpu()].lock`, dequeues from local `rq.q`, releases lock, performs context switch
 - [ ] `task_create()`: pick `cpu = argmin(g_rq[cpu].nr_running)` across online CPUs; enqueue into `g_rq[cpu].q`; respect `affinity_mask`
 - [ ] Per-CPU idle task: created during `sched_init_cpu(cpu_id)` at priority 39, `SCHED_NORMAL`
-- [ ] Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]`, not global `current_task`/`current_thread`; closes the cross-CPU probe-gating half of 02-kernel-core/TODO-12 §12 (`ssdt_previous_mode`)
+- [ ] Per-CPU current-thread cursor: `thread_current()` resolves from `g_rq[this_cpu()]`, not global `current_task`/`current_thread`; closes probe-gating for TODO-12 §12 (`ssdt_previous_mode`) + TODO-23 §4 bugcheck class (`in_system_service`)
 - [ ] Boot log per AP: `[SCHED] CPU%u: run queue initialised`
 - [ ] Commit: `"sched: per-CPU run queues -- struct rq[MAX_CPUS], local dequeue, task placement"`
 - [ ] task_cleanup reap barrier: a TASK_DEAD task must be off-CPU on ALL CPUs before its lock-free frees (pml4, per-thread/TEB frames, handle table, unveil, `env_free` -> T22 §1); local-CR3 guard covers only the reaper.

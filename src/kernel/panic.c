@@ -125,12 +125,33 @@ const BUGCHECK_INFO *bugcheck_get_last(void)
     return &g_last_bugcheck;
 }
 
-void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
-                  uint64_t p3, uint64_t p4)
+/* Shared bugcheck emission core. `frame` is the live trap frame, or NULL for
+ * software-initiated (non-fault) callers; passing the real frame preserves the
+ * fault-vector + register evidence panic_screen renders and the dump captures.
+ * `persist_registry` gates the best-effort cross-boot registry write, which is
+ * UNSAFE from an arbitrary fault context (RegSetValueEx takes registry locks and
+ * touches the heap, either of which the interrupted thread may already hold or
+ * have corrupted): the frame-aware fault terminal skips it and relies on the
+ * in-memory g_last_bugcheck + dump pipeline for persistence instead. */
+static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
+                              uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
+                              const char *description, const char *file, uint32_t line);
+
+static __attribute__((noreturn)) void ke_bugcheck_emit(
+        struct interrupt_frame *frame, BUGCHECK_CODE code,
+        uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4, int persist_registry)
 {
     extern uint64_t KeQueryInterruptTimeCoarse(void);
 
-    POST16(0xDE40);
+    /* POST16 renders to the framebuffer (post_display16 -> fb_fill_rect/put_pixel).
+     * The frame-aware fault terminal (KeBugCheckExFrame, frame != NULL) runs in an
+     * arbitrary kernel-fault context where the framebuffer mapping may be corrupt,
+     * so a POST render here could nested-fault and clobber the original crash
+     * evidence before panic_collect_evidence claims it. Skip POST for that path
+     * (fault-path code uses klog/evidence, not POST16 -- kernel-code-quality Gate 4);
+     * the software crash path (NULL frame) keeps its boot-diagnostic POST marker. */
+    if (!frame)
+        POST16(0xDE40);
 
     /* NOTE: g_last_bugcheck and the desc buffer are written before
      * panic_screen's owner arbitration, so two SIMULTANEOUS bugchecks on
@@ -154,8 +175,11 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
 
     /* Write last bugcheck to registry for cross-boot persistence.
      * This is best-effort -- registry may not be available during
-     * early boot crashes. No lock -- we're about to halt. */
-    if (kernel_subsystem_ready(SUBSYS_REGISTRY)) {
+     * early boot crashes. No lock -- we're about to halt. Gated on
+     * persist_registry: the frame-aware fault terminal passes 0 because
+     * RegSetValueEx here (locks + heap) can deadlock or refault when the
+     * interrupted thread was mid-registry-op or the heap is corrupt. */
+    if (persist_registry && kernel_subsystem_ready(SUBSYS_REGISTRY)) {
         HKEY hk = (HKEY)0;
         uint32_t disp = 0;
         if (RegCreateKeyEx((HKEY)(uintptr_t)0x80000002,  /* HKLM */
@@ -221,12 +245,38 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
         desc[pos] = '\0';
     }
 
-    /* Route to panic_screen -- it handles BSOD rendering, klog crash persist,
-     * subsystem dump, POST code, and halt/restart. */
-    panic_screen((void *)0, (uint64_t)code, desc, __FILE__, __LINE__);
+    /* Route to the core panic path -- BSOD rendering, klog crash persist, subsystem
+     * dump, POST code, halt/restart. Pass `code` as the explicit bugcheck code and
+     * the four call-local params so the STOP identity + params reach the cross-boot
+     * evidence even when `frame` is non-NULL; `frame` (NULL for non-fault callers)
+     * gives it the register/vector evidence. */
+    {
+        const uint64_t params[4] = { p1, p2, p3, p4 };
+        panic_screen_impl(frame, (uint64_t)code, (uint32_t)code, params,
+                          desc, __FILE__, __LINE__);
+    }
 
     /* panic_screen should never return, but just in case */
     for (;;) __asm__ volatile("cli; hlt");
+}
+
+/* Software/non-fault crash entry -- no trap frame. Registry persistence is safe
+ * here: these callers (manual crash, assertion, subsystem failure) are not the
+ * arbitrary-fault contexts the frame-aware terminal guards against. */
+void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
+                  uint64_t p3, uint64_t p4)
+{
+    ke_bugcheck_emit((struct interrupt_frame *)0, code, p1, p2, p3, p4,
+                     1 /*persist_registry*/);
+}
+
+/* Frame-aware fault terminal for kernel-mode exception dispatch: preserves the
+ * trap frame's register/vector evidence and skips the fault-unsafe registry
+ * write. -> XREF: TODO-23 s4 (ki_dispatch_exception kernel-mode terminal). */
+void KeBugCheckExFrame(struct interrupt_frame *frame, BUGCHECK_CODE code,
+                       uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4)
+{
+    ke_bugcheck_emit(frame, code, p1, p2, p3, p4, 0 /*persist_registry*/);
 }
 
 /* --- NMI-triggered crash (S1) ------------------------------------------- */
@@ -770,6 +820,7 @@ uint32_t panic_crc32(const void *data, uint32_t len)
 }
 
 void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
+                            const uint64_t bugcheck_params[4],
                             const char *message, const char *file, uint32_t line)
 {
     /* Atomic claim: on an SMP double-panic two CPUs must not both write the
@@ -791,16 +842,16 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
     ev->boot_seq = boot_history_kernel_phase3_committed_seq();
 
     ev->bugcheck_code = bugcheck_code;
-    /* g_last_bugcheck params are only trustworthy when this panic actually came
-     * through KeBugCheckEx, i.e. its recorded code matches the code we are
-     * collecting. A raw exception (frame != NULL) or a direct panic_screen()
-     * caller (crash-test) leaves g_last_bugcheck stale, so the params stay zero
-     * and the fault_vector / bugcheck_code fields carry the identity. */
-    if (!frame && g_last_bugcheck.code == bugcheck_code) {
-        ev->bugcheck_params[0] = g_last_bugcheck.param1;
-        ev->bugcheck_params[1] = g_last_bugcheck.param2;
-        ev->bugcheck_params[2] = g_last_bugcheck.param3;
-        ev->bugcheck_params[3] = g_last_bugcheck.param4;
+    /* Parameters come from the emitting call's own snapshot, not the global
+     * g_last_bugcheck: recovering them by code-equality would let a concurrent
+     * same-code bugcheck on another CPU overwrite g_last_bugcheck between the store
+     * and this read, combining this frame with torn/foreign parameters. A raw
+     * exception passes NULL (no STOP parameters -- identity is the fault_vector). */
+    if (bugcheck_params) {
+        ev->bugcheck_params[0] = bugcheck_params[0];
+        ev->bugcheck_params[1] = bugcheck_params[1];
+        ev->bugcheck_params[2] = bugcheck_params[2];
+        ev->bugcheck_params[3] = bugcheck_params[3];
     }
     ev->fault_vector = frame ? frame->int_no  : 0u;
     ev->err_code     = frame ? frame->err_code : 0u;
@@ -1109,8 +1160,14 @@ void panic_evidence_write_blackbox(void)
         pmm_free_frame(phys + p * 4096u);
 }
 
-void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
-                  const char *description, const char *file, uint32_t line)
+/* Core panic path. `bugcheck_code` is the authoritative STOP code recorded in the
+ * cross-boot evidence, decoupled from frame presence: a raw exception passes 0
+ * (identity is the fault vector), while a framed bugcheck (KeBugCheckExFrame)
+ * passes its real 0x1E/0x3B code AND the trap frame, so the black-box record keeps
+ * both the STOP identity+params and the register/vector evidence. */
+static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code,
+                              uint32_t bugcheck_code, const uint64_t bugcheck_params[4],
+                              const char *description, const char *file, uint32_t line)
 {
     /* Mask interrupts FIRST -- nothing may re-enter the panic path while the
      * collector touches the fixed 0x80000 evidence page and shared log state.
@@ -1118,12 +1175,10 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     __asm__ volatile ("cli");
 
     /* Capture cross-boot forensic evidence before any other panic work (serial,
-     * async isolation, framebuffer, VFS) that could itself fault. The explicit
-     * error_code is the authoritative no-frame stop code (KeBugCheckEx passes
-     * its bugcheck code; direct callers like the crash-test pass theirs). For a
-     * raw exception (frame set) the fault_vector field carries identity. */
-    panic_collect_evidence(frame, frame ? 0u : (uint32_t)error_code,
-                           description, file, line);
+     * async isolation, framebuffer, VFS) that could itself fault. bugcheck_code is
+     * the authoritative STOP code (0 for a raw exception -- fault_vector carries
+     * identity there). */
+    panic_collect_evidence(frame, bugcheck_code, bugcheck_params, description, file, line);
 
     uint32_t screen_w;
     uint32_t screen_h;
@@ -1505,4 +1560,17 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
 
     for (;;)
         __asm__ volatile ("cli; hlt");
+}
+
+/* Public terminal. A present frame means "raw exception" -- no structured STOP
+ * code, identity is the fault vector. (KeBugCheckEx / KeBugCheckExFrame go through
+ * panic_screen_impl directly with an explicit bugcheck code.) */
+void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
+                  const char *description, const char *file, uint32_t line)
+{
+    /* Raw fault / non-bugcheck caller: no STOP parameters (NULL), identity via the
+     * fault vector. (KeBugCheckEx / KeBugCheckExFrame call panic_screen_impl
+     * directly with an explicit bugcheck code + call-local params.) */
+    panic_screen_impl(frame, error_code, frame ? 0u : (uint32_t)error_code,
+                      (const uint64_t *)0, description, file, line);
 }

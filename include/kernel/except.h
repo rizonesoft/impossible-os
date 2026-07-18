@@ -392,6 +392,39 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
 KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                                    struct interrupt_frame *frame);
 
+/* Kernel-debugger dispatch callback (NT's KiDebugRoutine). Called first- and
+ * second-chance for kernel-mode exceptions. Returns nonzero if the debugger
+ * resolved the exception: it MUST have rewritten the live `frame` to the resume
+ * point (the KI_EXCEPTION_HANDLED frame-ownership contract -- ki_dispatch_exception
+ * returns HANDLED without re-applying `ctx`). Set by KD attach; default NULL (no
+ * debugger, notification skipped). -> XREF: TODO-29 KD kernel-debugger attach. */
+typedef int (*KI_DEBUG_ROUTINE)(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                                struct interrupt_frame *frame,
+                                KPROCESSOR_MODE mode, int first_chance);
+
+/* Publish the kernel-debugger callback (atomic release store). Passing NULL
+ * detaches. -> XREF: TODO-29 KD kernel-debugger attach. */
+void ki_set_debug_routine(KI_DEBUG_ROUTINE routine);
+
+/* User-mode debug-port forward (NT's DbgkForwardException). Returns nonzero if a
+ * debug port existed and continued execution (frame rewritten to resume). Stub
+ * returns 0 (no debug port) until NtDebugActiveProcess lands.
+ * -> XREF: TODO-29 user-mode debug port (NtDebugActiveProcess). */
+int DbgkForwardException(EXCEPTION_RECORD *rec, CONTEXT *ctx, int first_chance);
+
+/* Select the kernel-mode terminal bugcheck code: BUGCHECK_SYSTEM_SERVICE_EXCEPTION
+ * (0x3B) when the fault occurred inside a user-originated system service (per-thread
+ * in_system_service depth > 0), else BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED (0x1E).
+ * Pure/side-effect-free (unit-testable without invoking the terminal). Returns the
+ * raw STOP code as uint32_t so this header stays independent of bugcheck.h. */
+uint32_t ki_kernel_bugcheck_code(void);
+
+/* Fill the four KeBugCheckEx parameters for the kernel-mode terminal and return
+ * the selected STOP code. The layout is per-code (0x1E: code/addr/info0/info1;
+ * 0x3B: code/instr-addr/CONTEXT-addr/0), matching NT so a dump consumer reads the
+ * right slots. Pure/side-effect-free (unit-testable without invoking the terminal). */
+uint32_t ki_kernel_bugcheck_params(EXCEPTION_RECORD *rec, CONTEXT *ctx, uint64_t params[4]);
+
 /* --- General fault-to-exception mapping -------------------------------------
  *
  * Registers ISR handlers for the CPU fault vectors that map to a Windows

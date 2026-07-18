@@ -70,7 +70,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                     | TODO-12 §1, TODO-33 §10    |  [x]   |
 | 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [/]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)  | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
-| 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [ ]   |
+| 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [/]   |
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, TODO-11 §7             |  [ ]   |
 | 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [ ]   |
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [ ]   |
@@ -252,17 +252,26 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 > `KeBugCheckEx` is implemented in `src/kernel/panic.c` per `TODO-27-crash-dump-generation.md` §1. When `except.c` lands, include `panic.h` (or a forward declaration) and call the shared `KeBugCheckEx` entry point for terminal kernel-mode faults. Do not add a second implementation in `except.c`.
 
 - [x] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (landed by §2, local; moved to shared header later)
-- [ ] `src/kernel/except.c`: include `panic.h`; call `KeBugCheckEx(...)` for terminal kernel-mode dispatch (no duplicate body)
-- [ ] `src/kernel/except.c` -- replace the §2 UNHANDLED stub with `ki_dispatch_exception(rec, ctx, frame, mode, first_chance)` returning `KI_EXCEPTION_DISPOSITION` -- master dispatcher
-- [ ] `KiDebugRoutine` function pointer -- defaults to NULL (no debugger); set by KD attach (→ XREF: TODO-29 §5)
-- [ ] `DbgkForwardException(rec, ctx, first_chance)` -- stub returning FALSE; sends exception to user-mode debug port when TODO-29 §14 lands
-- [ ] For user-mode: first-chance debugger → hand off to `KiUserExceptionDispatcher` (§5); accept the `NtRaiseException(first_chance=FALSE)` re-entry → second-chance debugger → terminate. Do NOT call VEH/SEH/VCH from ring 0
-- [ ] For kernel-mode: call `KiDebugRoutine` first-chance → kernel SEH (§14) → `KiDebugRoutine` second-chance → `KeBugCheckEx`
-- [ ] Pick the right bugcheck (both already in `include/kernel/bugcheck.h`): `BUGCHECK_SYSTEM_SERVICE_EXCEPTION` (0x3B) when the fault happened inside a syscall/SSDT dispatch, else `BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED` (0x1E) -> XREF: `TODO-27 §1`
+- [x] `except.c` kernel-mode terminal calls `KeBugCheckExFrame` -- frame-aware fault-safe sibling of `KeBugCheckEx` in `panic.c` (shared core, keeps trap-frame evidence, skips fault-unsafe registry write); no duplicate body
+- [x] `src/kernel/except.c` `ki_dispatch_exception(rec, ctx, frame, mode, first_chance)` master dispatcher replaces the §2 UNHANDLED stub; orchestrates debugger notify -> kernel SEH stub -> terminal
+- [x] `KiDebugRoutine` callback (static in `except.c`, default NULL) published atomically via `ki_set_debug_routine()`, read acquire in the fault path → XREF: TODO-29 KD kernel-debugger attach
+- [x] `DbgkForwardException(rec, ctx, first_chance)` stub returns FALSE (no debug port) → XREF: TODO-29 user-mode debug port (`NtDebugActiveProcess`)
+- [/] User-mode: debugger first/second-chance via `DbgkForwardException`, declines to the caller terminal when undebugged; ring-0 does NOT call VEH/SEH/VCH. Ring-3 handover to `KiUserExceptionDispatcher` deferred to §5
+- [x] Kernel-mode: `KiDebugRoutine` first-chance → `ki_raise_kernel_exception` (kernel SEH, §14 stub) → `KiDebugRoutine` second-chance → `KeBugCheckExFrame` terminal; sequence wired here, SEH body owned by §14
+- [x] `ki_kernel_bugcheck_code`/`_params` select STOP 0x3B (params code/instr/CONTEXT-addr/0) when a user syscall is on the stack (per-thread `in_system_service` flag, untouched by Zw) else 0x1E -> XREF: `TODO-27 §1`
 
-**Test checkpoint:** With `KiDebugRoutine == NULL`: user-mode access violation routes through VEH → SEH → unhandled filter path (stubs return FALSE until §8-§12 land). With `KiDebugRoutine` set to a test function: first-chance notification fires before VEH. Kernel-mode unhandled exception calls `KeBugCheckEx`. Serial log shows `"except: dispatch user exception code=0x<code>, first_chance=1"`. `POST16(0xDE40)` on dispatcher entry, `POST16(0xDE41)` after dispatch decision. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** With `KiDebugRoutine == NULL`: an undebugged user access violation returns `KI_EXCEPTION_UNHANDLED` so the caller performs the WER + user-safe panic terminal (VEH/SEH/VCH are ring-3, §8-§12). With `KiDebugRoutine` set to a test function: a kernel-mode first-chance notification fires (mode=KernelMode, first_chance=1) and a HANDLED return resumes without a bugcheck. Kernel-mode unhandled exception calls `KeBugCheckExFrame` (STOP 0x1E, or 0x3B inside a system service). Serial log shows `"except: dispatch user exception code=0x<code>, first_chance=1"` (klog, not POST16 -- fault-path code is post-Phase-3). Validated by the `except` unit suite; on-hardware check QEMU WHPX + TCG.
 
-- [ ] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 156 kernel suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `ki_dispatch_exception` dispatcher (debugger notify, `KiDebugRoutine`, `DbgkForwardException` stub, bugcheck selector) in `except.c`; `KeBugCheckExFrame` frame-safe terminal in `panic.c`; `in_system_service` flag.
+> - **How it runs** -- both `#PF` (§2) and general-fault (§3) handlers route through the dispatcher; kernel faults bugcheck internally (noreturn), so the callers' kernel `else` panic branches are now defense-in-depth fallbacks.
+> - **Downstream effects** -- unblocks §5 ring-3 delivery and §14 kernel SEH. Codex design + adversarial adoptions (frame-safe STOP identity, Zw-proof service flag, per-code 0x1E/0x3B param layout, slot-reuse reset) in the commit message.
+> - **Canonical doc** -- [`TODO-23-exception-dispatch-seh.md`](TODO-23-exception-dispatch-seh.md) §4.
+> - **Scope boundary** -- §4 owns debugger notify + terminal selection; ring-3 delivery §5, kernel SEH §14, VEH/VCH §10-§11, KD attach + user debug port TODO-29; `in_system_service` SMP closure rides with `previous_mode`'s deferred work.
+
+- [x] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
 
 
 ---
@@ -583,7 +592,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Lazy stack commit/auto-grow   | ✅ guard commit    | ✅ expand_stack   | ⬜ §17 reserve/commit                   |
 | 💎   | #DB/#BP debugger routing      | ✅                 | ✅ ptrace         | ◐ §3 map / §4 KD                       |
 | 💎   | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+           | ◐ §3 handler (CET-gated; delivery §5)  |
-| 💎   | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace         | ⬜ §4                                   |
+| 💎   | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace         | ◐ §4 KiDebugRoutine (deliver §5)       |
+| 💎   | Kernel-mode bugcheck terminal | ✅ KeBugCheckEx    | ✅ oops/panic     | ◐ §4 KeBugCheckExFrame 0x1E/0x3B       |
 | 💎   | KiUserExceptionDispatcher     | ✅                 | ❌                | ⬜ §5                                   |
 | 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ⬜ §6                                   |
 | 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ⬜ §7                                   |

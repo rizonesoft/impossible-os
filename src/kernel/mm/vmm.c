@@ -722,9 +722,12 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
          * nested-fault guard instead of rebuilding a record in this live slot.
          * Log ONLY here (never before dispatch, so a future HANDLED path stays
          * log-free) and ONLY for user faults: a user fault entered from ring 3,
-         * so no kernel spinlock (klog's s_klog_lock included) is held; a kernel
-         * fault may hold it, so klog could deadlock -- panic_screen is the
-         * fault-safe path. Ring-3 delivery + per-process termination land later. */
+         * so no kernel spinlock (klog's s_klog_lock included) is held. A kernel
+         * #PF does NOT reach the else branch anymore: ki_dispatch_exception owns
+         * the kernel terminal (KeBugCheckExFrame, noreturn) and never returns
+         * UNHANDLED for KernelMode -- the else is defense-in-depth (fault-safe
+         * panic_screen) if that contract ever changes. Ring-3 delivery +
+         * per-process termination land with the ring-3-delivery stage. */
         if (mode == UserMode) {
             klog(LOG_ERROR, "mm",
                  "pf: user fault at %p code=0x%x rip=%p (access violation)",

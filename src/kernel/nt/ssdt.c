@@ -55,6 +55,29 @@ uint32_t ssdt_previous_mode(void)
     return t ? t->previous_mode : SSDT_KERNEL_MODE;
 }
 
+/* System-service flag (0x3B vs 0x1E bugcheck classification). Bracket the true
+ * ring-3 -> ring-0 syscall dispatch only; NOT called from zw_dispatch, so a fault
+ * inside a nested Zw within a user syscall still reads 1. A plain store (not a
+ * ++/-- RMW): a thread runs one syscall at a time, so the flag never nests, and
+ * the store carries the same per-thread resolution and not-yet-CPU-local SMP
+ * caveat as previous_mode above -- no worse, and with no RMW lost-update risk. A
+ * self-terminating syscall (noreturn thread_exit) leaves the flag set; the slot
+ * is cleared on reuse alongside previous_mode. A NULL current thread (very early
+ * boot) has no system service in flight. */
+void ssdt_enter_system_service(void)
+{
+    struct thread *t = thread_current();
+    if (t)
+        t->in_system_service = 1;
+}
+
+void ssdt_leave_system_service(void)
+{
+    struct thread *t = thread_current();
+    if (t)
+        t->in_system_service = 0;
+}
+
 /* ---- User-buffer probing ------------------------------------------------- */
 
 NTSTATUS ProbeForRead(const void *Address, uint64_t Length, uint32_t Alignment)

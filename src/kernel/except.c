@@ -20,6 +20,7 @@
 #include "kernel/smp.h"         /* smp_this_cpu() + MAX_CPUS: per-CPU exception scratch */
 #include "kernel/boot_init.h"   /* POST16 (except_init is boot-path phase 1) */
 #include "kernel/wer.h"         /* wer_write_crash_report -- user-mode terminal path */
+#include "kernel/sched/task.h"  /* thread_current()->in_system_service (bugcheck class) */
 
 /* Local byte-wise zero: the kernel has no memset declaration in a header, and
  * panic.c zeroes CONTEXT the same way. Keeps this file dependency-free so it
@@ -159,22 +160,135 @@ uint32_t frame_from_context(const CONTEXT *ctx, struct interrupt_frame *frame)
     return restored;
 }
 
-/* --- Dispatch stubs ------------------------------------------------------
+/* --- Debugger notification + bugcheck classification -----------------------
  *
- * The #PF triage routes user- and kernel-origin faults through these entry
- * points. The full dispatch pipeline (debugger notification, ring-3 handover,
- * kernel SEH chain walk) lands in later sections; until then the stubs decline
- * every exception (return UNHANDLED), so the caller performs its existing
- * terminal action. Kept dependency-free and lock-free -- they run in fault
- * context where a klog spinlock or an allocation could deadlock or fault. */
+ * The master dispatcher orchestrates the NT exception-dispatch sequence:
+ *   user-mode:   debugger first-chance -> (ring-3 handover: KiUserException
+ *                dispatcher stage) -> second-chance -> terminate
+ *   kernel-mode: KiDebugRoutine first-chance -> kernel SEH walk -> KiDebugRoutine
+ *                second-chance -> KeBugCheckEx
+ * Ring-3 delivery (KiUserExceptionDispatcher) and the kernel SEH chain walk are
+ * owned by the ring-3-delivery and kernel-__try/__except stages; both are stubs
+ * here (DbgkForwardException -> FALSE, ki_raise_kernel_exception -> UNHANDLED), so
+ * an undebugged fault takes the existing terminal. Everything on this path runs
+ * in fault context: lock-free, allocation-free. */
+
+/* Kernel-debugger callback. Permanently resident once KD attaches; a single
+ * aligned pointer read/write is atomic on x86-64, but use explicit acquire/
+ * release so a debug routine published by KD on another CPU is fully visible
+ * (no seqlock needed for a resident callback). Default NULL = no debugger. */
+static KI_DEBUG_ROUTINE ki_debug_routine;
+
+void ki_set_debug_routine(KI_DEBUG_ROUTINE routine)
+{
+    __atomic_store_n(&ki_debug_routine, routine, __ATOMIC_RELEASE);
+}
+
+/* User-mode debug-port forward. No debug port exists until NtDebugActiveProcess
+ * lands, so decline every exception. -> XREF: TODO-29 user-mode debug port. */
+int DbgkForwardException(EXCEPTION_RECORD *rec, CONTEXT *ctx, int first_chance)
+{
+    (void)rec; (void)ctx; (void)first_chance;
+    return 0;  /* FALSE -- no debugger attached */
+}
+
+uint32_t ki_kernel_bugcheck_code(void)
+{
+    /* A kernel-mode fault taken while a user-originated system service is on the
+     * stack is STOP 0x3B (SYSTEM_SERVICE_EXCEPTION); any other kernel fault is
+     * STOP 0x1E. in_system_service (not previous_mode, which zw_dispatch forces
+     * to KernelMode for nested Zw calls) is the correct in-service marker.
+     * SMP caveat: thread_current() still resolves the GLOBAL current-thread cursor,
+     * so a fault on one CPU can read another CPU's thread and mis-pick 0x3B vs 0x1E.
+     * This is a forensic STOP-code inaccuracy (not a safety issue) shared with
+     * previous_mode and closed by the per-CPU current-thread cursor work
+     * (TODO-07 SMP phase-2). */
+    struct thread *t = thread_current();
+    if (t && t->in_system_service)
+        return BUGCHECK_SYSTEM_SERVICE_EXCEPTION;
+    return BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED;
+}
+
+uint32_t ki_kernel_bugcheck_params(EXCEPTION_RECORD *rec, CONTEXT *ctx, uint64_t params[4])
+{
+    /* Parameter layout is per-STOP-code, matching NT's KeBugCheckEx contract:
+     *   0x1E KMODE_EXCEPTION_NOT_HANDLED: code, fault address, exception param 0,
+     *        exception param 1 (for an access violation: access type, fault addr).
+     *   0x3B SYSTEM_SERVICE_EXCEPTION:    code, faulting instruction address,
+     *        address of the CONTEXT record, 0. Emitting the 0x1E layout for 0x3B
+     *        would make a dump consumer read ExceptionInformation[0] as a CONTEXT
+     *        pointer and dereference garbage. */
+    uint32_t code = ki_kernel_bugcheck_code();
+
+    params[0] = (uint64_t)(uint32_t)rec->ExceptionCode;
+    params[1] = (uint64_t)(uintptr_t)rec->ExceptionAddress;
+    if (code == BUGCHECK_SYSTEM_SERVICE_EXCEPTION) {
+        params[2] = (uint64_t)(uintptr_t)ctx;
+        params[3] = 0;
+    } else {
+        params[2] = rec->NumberParameters > 0 ? rec->ExceptionInformation[0] : 0;
+        params[3] = rec->NumberParameters > 1 ? rec->ExceptionInformation[1] : 0;
+    }
+    return code;
+}
+
 KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                                struct interrupt_frame *frame,
                                                KPROCESSOR_MODE mode, int first_chance)
 {
-    (void)rec; (void)ctx; (void)frame; (void)mode; (void)first_chance;
+    KI_DEBUG_ROUTINE dbg = __atomic_load_n(&ki_debug_routine, __ATOMIC_ACQUIRE);
+
+    if (mode == KernelMode) {
+        /* First-chance kernel debugger. A nonzero return means it resolved the
+         * fault and rewrote `frame` to the resume point (frame-ownership
+         * contract -- we return HANDLED without touching `ctx`). */
+        if (first_chance && dbg &&
+            dbg(rec, ctx, frame, KernelMode, 1 /*first_chance*/))
+            return KI_EXCEPTION_HANDLED;
+
+        /* Kernel SEH chain walk (owned by the kernel-__try/__except stage; the
+         * stub declines today). */
+        if (ki_raise_kernel_exception(rec, ctx, frame) == KI_EXCEPTION_HANDLED)
+            return KI_EXCEPTION_HANDLED;
+
+        /* Second-chance kernel debugger -- last stop before the bugcheck. */
+        if (dbg && dbg(rec, ctx, frame, KernelMode, 0 /*second_chance*/))
+            return KI_EXCEPTION_HANDLED;
+
+        /* Terminal. Frame-aware, fault-safe bugcheck (preserves the trap frame's
+         * register/vector evidence, skips the fault-unsafe registry write). The
+         * STOP code and its per-code parameter layout (0x1E vs 0x3B) come from the
+         * pure ki_kernel_bugcheck_params selector. noreturn. */
+        {
+            uint64_t params[4];
+            uint32_t bc = ki_kernel_bugcheck_params(rec, ctx, params);
+            KeBugCheckExFrame(frame, bc, params[0], params[1], params[2], params[3]);
+        }
+        return KI_EXCEPTION_UNHANDLED;  /* unreachable */
+    }
+
+    /* UserMode. A ring-3 fault holds no kernel spinlock (the caller enters here
+     * from the interrupted user thread), so klog is safe. */
+    klog(LOG_INFO, "except", "dispatch user exception code=0x%x, first_chance=%d",
+         (uint64_t)(uint32_t)rec->ExceptionCode, first_chance);
+
+    /* Debugger first/second-chance via the user-mode debug port. A nonzero return
+     * means the debugger continued execution (frame rewritten to resume). */
+    if (DbgkForwardException(rec, ctx, first_chance))
+        return KI_EXCEPTION_HANDLED;
+
+    /* Ring-3 handover (KiUserExceptionDispatcher) is owned by the ring-3-delivery
+     * stage. Until it lands, an undebugged user exception has nowhere to go in
+     * ring 0: decline so the caller performs the existing terminal (WER report +
+     * user-safe panic). When ring-3 delivery lands, the first-chance leg hands
+     * `frame` to KiUserExceptionDispatcher here, and the NtRaiseException
+     * (first_chance=0) re-entry drives the second-chance debugger + termination. */
     return KI_EXCEPTION_UNHANDLED;
 }
 
+/* Kernel-mode SEH chain walk. Owned by the kernel-__try/__except stage; the stub
+ * declines so an unresolved kernel fault stays terminal (bugcheck) as it is
+ * today. -> XREF: TODO-23 kernel-mode __try/__except for drivers. */
 KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                                    struct interrupt_frame *frame)
 {
@@ -376,9 +490,12 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
         /* Unhandled: terminal. Leave in_use SET so a fault DURING the terminal
          * path hits the nested guard. A user fault entered from ring 3 holds no
          * kernel spinlock, so klog + a user WER crash report are safe here (the
-         * VFS write runs at the interrupted thread's IRQL); a kernel fault may
-         * hold locks, so it takes the fault-safe panic directly (no WER/klog).
-         * Ring-3 delivery + per-process termination land with the later stages. */
+         * VFS write runs at the interrupted thread's IRQL). A kernel fault does
+         * NOT reach the else branch anymore: ki_dispatch_exception owns the
+         * kernel terminal (KeBugCheckExFrame, noreturn) and never returns
+         * UNHANDLED for KernelMode -- the else is defense-in-depth if that
+         * contract ever changes. Ring-3 delivery + per-process termination land
+         * with the ring-3-delivery stage. */
         if (mode == UserMode) {
             wer_write_crash_report(frame, vec);
             klog(LOG_ERROR, "except",

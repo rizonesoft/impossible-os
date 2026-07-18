@@ -61,6 +61,16 @@ __attribute__((noreturn))
 void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
                   uint64_t p3, uint64_t p4);
 
+/* Frame-aware fault terminal: same as KeBugCheckEx but hands the live trap frame
+ * to panic_screen (preserving fault-vector + register evidence) and skips the
+ * fault-unsafe cross-boot registry write. Use from a fault/exception context
+ * (e.g. ki_dispatch_exception's kernel-mode terminal), NOT from software-
+ * initiated crashes. Does NOT return. */
+struct interrupt_frame;
+__attribute__((noreturn))
+void KeBugCheckExFrame(struct interrupt_frame *frame, BUGCHECK_CODE code,
+                       uint64_t p1, uint64_t p2, uint64_t p3, uint64_t p4);
+
 /* Read the last bugcheck info (valid after KeBugCheckEx or across boots via registry). */
 const BUGCHECK_INFO *bugcheck_get_last(void);
 
