@@ -665,29 +665,65 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     struct pf_exc_scratch *s;
     uint32_t  cpu;
 
-    /* Check guard pages first -- these are intentional not-present pages.
-     * A guard page hit means stack overflow, heap overflow, or buffer overrun.
-     * Report with a specific message instead of a generic page fault. (Growable
-     * user-stack auto-grow hooks in ahead of this terminal panic in a later
-     * section; today every guard hit is terminal.) */
+    /* Pager chain runs FIRST: swap-in for evicted pages, then mmap demand-load
+     * and MAP_PRIVATE copy-on-write (a present-bit write fault -- must NOT be
+     * gated out by a not-present check). A guarded user copy to a swapped /
+     * demand / COW page is paged in here and the copy retried, not failed. Only
+     * faults the pager declines fall through. (Guard pages have no swap/mmap
+     * backing, so a genuine guard hit declines both and reaches the terminal
+     * guard check below unchanged.) */
+    if (swap_handle_fault(fault_addr, err_code)) {
+        return (uint64_t)frame;  /* page swapped in, retry instruction */
+    }
+    if (mmap_handle_fault(fault_addr, err_code)) {
+        return (uint64_t)frame;  /* page loaded / COW-resolved, retry instruction */
+    }
+
+    /* Fault-recoverable user access: a guarded copy/write-touch primitive
+     * (__uaccess_* in cpu_security.c) faulting on its USER operand is turned
+     * into a graceful failure instead of a kernel bugcheck. Recognized by the
+     * EXACT faulting instruction RIP (a static exception table -- no per-CPU
+     * state, so inherently SMP/preempt-safe) AND the fault DIRECTION: the kernel
+     * heap lives at low identity-mapped VAs, so an operand address alone cannot
+     * say which operand faulted. A copy_from recovers only a READ fault (its
+     * user SOURCE); a copy_to / write-touch recovers only a WRITE fault (its
+     * user DEST). A wrong-direction fault is the KERNEL operand and falls
+     * through to the guard/terminal path, so a kernel-buffer overflow into a
+     * guard page still bugchecks. Runs BEFORE guard_page_lookup so a user
+     * pointer that happens to hit a registered (low, identity-mapped) guard page
+     * fails the copy gracefully instead of panicking the kernel. */
+    if (fault_addr < MM_USER_END) {
+        int is_write = (err_code & PF_EC_WRITE) != 0;
+        uint64_t rip = frame->rip;
+        extern char __uaccess_copy_from_fault[], __uaccess_copy_from_fixup[];
+        extern char __uaccess_copy_to_fault[], __uaccess_copy_to_fixup[];
+        extern char __uaccess_touch_fault[], __uaccess_touch_fixup[];
+        if (!is_write && rip == (uint64_t)(uintptr_t)__uaccess_copy_from_fault) {
+            frame->rip = (uint64_t)(uintptr_t)__uaccess_copy_from_fixup;
+            return (uint64_t)frame;  /* user source unreadable: RCX = bytes left */
+        }
+        if (is_write && rip == (uint64_t)(uintptr_t)__uaccess_copy_to_fault) {
+            frame->rip = (uint64_t)(uintptr_t)__uaccess_copy_to_fixup;
+            return (uint64_t)frame;  /* user dest unwritable: RCX = bytes left */
+        }
+        if (is_write && rip == (uint64_t)(uintptr_t)__uaccess_touch_fault) {
+            frame->rip = (uint64_t)(uintptr_t)__uaccess_touch_fixup;
+            return (uint64_t)frame;  /* write-probe reports not-writable */
+        }
+    }
+
+    /* Guard pages -- intentional not-present pages (stack/heap/buffer overrun).
+     * Terminal with a specific label. Runs after the pager (guards have no
+     * swap/mmap backing) and after the uaccess fixup (a user-operand fault at a
+     * guard address is recovered above; a wrong-direction or kernel-operand
+     * guard fault reaches here and stays terminal). User-stack auto-grow hooks
+     * in ahead of this in a later section; today every remaining hit is fatal. */
     {
         const char *label = guard_page_lookup(fault_addr);
         if (label) {
             panic_screen(frame, err_code, label, "vmm.c", 0);
             return (uint64_t)frame;  /* unreachable */
         }
-    }
-
-    /* Existing pager chain runs UNCHANGED for both user and kernel faults, and
-     * ahead of triage: swap-in for evicted pages, then mmap demand-load and
-     * MAP_PRIVATE copy-on-write (a present-bit write fault -- must NOT be gated
-     * out by a not-present check). Only faults the pager declines fall through
-     * to triage, which replaces the old always-panic final clause. */
-    if (swap_handle_fault(fault_addr, err_code)) {
-        return (uint64_t)frame;  /* page swapped in, retry instruction */
-    }
-    if (mmap_handle_fault(fault_addr, err_code)) {
-        return (uint64_t)frame;  /* page loaded / COW-resolved, retry instruction */
     }
 
     /* Triage the unresolved fault. Build the exception record in per-CPU scratch
@@ -738,6 +774,11 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
         }
         return (uint64_t)frame;  /* unreachable */
     }
+}
+
+void vmm_register_page_fault_handler(void)
+{
+    idt_register_handler(14, page_fault_handler);
 }
 
 /* --- Per-process page tables -------------------------------------------- */
@@ -1595,8 +1636,12 @@ boot_result_t vmm_init(void)
     }
     POST16(POST16_HHDM_WALK_OK);
 
-    /* Register the page fault handler (ISR 14) */
-    idt_register_handler(14, page_fault_handler);
+    /* Register the page fault handler (ISR 14). NOTE: idt_init() in boot
+     * phase 1 zeroes handlers[] AFTER this phase-0 call, so this registration
+     * is erased; boot_phase1 calls vmm_register_page_fault_handler() again to
+     * make it effective. The phase-0 call is kept so the handler is present if
+     * a #PF somehow fires between VMM bring-up and idt_init(). */
+    vmm_register_page_fault_handler();
 
     klog(LOG_INFO, "mm", "VMM initialized (PML4 phys %p, walk %p, page fault handler registered)",
            (uint64_t)root_phys, (uint64_t)(uintptr_t)kernel_pml4);

@@ -267,11 +267,88 @@ uint32_t copy_user_fail_fired_counter(void)
 }
 #endif /* KERNEL_TESTS */
 
+/* ========================================================================
+ * Fault-recoverable user access
+ *
+ * __uaccess_copy_from / __uaccess_copy_to / __uaccess_touch_w perform the
+ * actual user-memory touch behind a STATIC exception table keyed by the EXACT
+ * faulting instruction RIP. page_fault_handler (vmm.c) recognizes a #PF taken
+ * at a __uaccess_*_fault label and redirects RIP to the paired __uaccess_*_fixup
+ * label, turning a bad user pointer into a graceful failure instead of a kernel
+ * bugcheck. There is NO per-CPU state and NO cli: the faulting RIP alone
+ * identifies the guarded instruction, so recovery is inherently SMP- and
+ * preempt-safe. A per-CPU return-slot + cli would be misredirectable by a
+ * nested NMI/MCE #PF and would hold interrupts off for the whole copy.
+ *
+ * COPY DIRECTION MATTERS. There are no per-process page tables, so the kernel
+ * heap lives at LOW identity-mapped VAs -- an operand address alone cannot say
+ * whether a fault hit the user or the kernel operand. So the from/to copies use
+ * DISTINCT fault labels and the handler recovers only when the fault DIRECTION
+ * matches the user operand: a copy_FROM_user recovers only a READ fault (the
+ * user SOURCE), a copy_TO_user / write-touch recovers only a WRITE fault (the
+ * user DEST). A wrong-direction fault is the KERNEL operand and stays terminal,
+ * so a kernel-buffer overflow into a guard page still bugchecks.
+ *
+ * NOT an isolation boundary: an in-range user pointer that aliases mapped
+ * kernel data still resolves without faulting. True per-process isolation is
+ * owned by the per-process page-table work in
+ * 03-memory-concurrency/TODO-01-vmm-memory-protection.md.
+ * ARCH: x86-64 -- rep movsb / lock orb are x86 string/atomic ops.
+ * ======================================================================== */
+
+/* Generate a guarded byte-copy with its own fault/fixup labels. Returns bytes
+ * NOT copied (0 == full success). The `rep movsb` is the guarded instruction
+ * (its RIP == <name>_fault); on a #PF mid-copy the handler redirects to
+ * <name>_fixup, leaving RCX = bytes remaining. noinline so the global labels
+ * are emitted exactly once; cld pins a forward copy regardless of the caller's
+ * DF. Two directions get separate labels so the fault handler can tell a user
+ * SOURCE read fault (copy_from) from a user DEST write fault (copy_to). */
+#define UACCESS_COPY_FN(name)                                                 \
+    __attribute__((noinline))                                                 \
+    uint64_t name(void *dst, const void *src, uint64_t n)                     \
+    {                                                                         \
+        __asm__ volatile (                                                    \
+            "cld\n\t"                                                         \
+            ".globl " #name "_fault\n\t"                                      \
+            ".globl " #name "_fixup\n\t"                                      \
+            #name "_fault:\n\t"                                               \
+            "rep movsb\n\t"                                                   \
+            #name "_fixup:\n\t"                                               \
+            : "+c"(n), "+D"(dst), "+S"(src)                                   \
+            :                                                                 \
+            : "memory", "cc");                                                \
+        return n;                                                             \
+    }
+
+UACCESS_COPY_FN(__uaccess_copy_from)   /* user SOURCE  -> read fault recovers  */
+UACCESS_COPY_FN(__uaccess_copy_to)     /* user DEST    -> write fault recovers */
+
+/* Write-probe a single address WITHOUT changing its contents: `lock orb $0` is
+ * a read-modify-write that sets no bits but faults on a read-only or unmapped
+ * page. Returns 0 if writable, -1 if it faulted (redirected to the fixup). The
+ * touch is a write, so the handler recovers it only on a WRITE fault. */
+__attribute__((noinline))
+int __uaccess_touch_w(void *addr)
+{
+    int failed = 0;
+    __asm__ volatile (
+        ".globl __uaccess_touch_fault\n\t"
+        ".globl __uaccess_touch_fixup\n\t"
+        "__uaccess_touch_fault:\n\t"
+        "lock orb $0, (%[a])\n\t"
+        "jmp 1f\n\t"
+        "__uaccess_touch_fixup:\n\t"
+        "movl $1, %[f]\n\t"
+        "1:\n\t"
+        : [f]"+r"(failed)
+        : [a]"r"(addr)
+        : "memory", "cc");
+    return failed ? -1 : 0;
+}
+
 int copy_from_user(void *dst, const void *user_src, uint32_t len)
 {
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)user_src;
-    uint32_t i;
+    int r;
 
 #ifdef KERNEL_TESTS
     /* fault-inject -- return -1 BEFORE touching user memory so the
@@ -281,19 +358,19 @@ int copy_from_user(void *dst, const void *user_src, uint32_t len)
         return -1;
 #endif
 
+    /* Fault-recoverable: a bad user_src returns -1 instead of bugchecking. The
+     * #PF is recovered INSIDE __uaccess_copy_from and control returns here
+     * normally, so KERNEL_ACCESS_USER_END still clears AC on the fault path. */
     KERNEL_ACCESS_USER_BEGIN();
-    for (i = 0; i < len; i++)
-        d[i] = s[i];
+    r = (__uaccess_copy_from(dst, user_src, (uint64_t)len) == 0) ? 0 : -1;
     KERNEL_ACCESS_USER_END();
 
-    return 0;
+    return r;
 }
 
 int copy_to_user(void *user_dst, const void *src, uint32_t len)
 {
-    uint8_t *d = (uint8_t *)user_dst;
-    const uint8_t *s = (const uint8_t *)src;
-    uint32_t i;
+    int r;
 
 #ifdef KERNEL_TESTS
     if (copy_user_fault_should_fire())
@@ -301,11 +378,10 @@ int copy_to_user(void *user_dst, const void *src, uint32_t len)
 #endif
 
     KERNEL_ACCESS_USER_BEGIN();
-    for (i = 0; i < len; i++)
-        d[i] = s[i];
+    r = (__uaccess_copy_to(user_dst, src, (uint64_t)len) == 0) ? 0 : -1;
     KERNEL_ACCESS_USER_END();
 
-    return 0;
+    return r;
 }
 
 /* ---- UMIP (User-Mode Instruction Prevention) via CR4.UMIP ---- */

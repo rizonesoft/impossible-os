@@ -71,7 +71,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [/]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)  | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [/]   |
-| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, TODO-11 §7             |  [ ]   |
+| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [ ]   |
 | 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [ ]   |
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [ ]   |
 | 💎   |   8   | SEH chain walk + `__C_specific_handler`                           | §5, §6, TODO-11 §6         |  [ ]   |
@@ -79,7 +79,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |  10   | Vectored Exception Handlers (VEH)                                 | §4, TODO-05 §3             |  [ ]   |
 | 💎   |  11   | Vectored Continue Handlers (VCH)                                  | §4, §10                    |  [ ]   |
 | 💎   |  12   | Unhandled exception filter + WER hook                             | §7, §8, §10                |  [ ]   |
-| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                          | §2                         |  [ ]   |
+| ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                          | §2                         |  [x]   |
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                        | §6, §9, §13                |  [ ]   |
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)              | §3, §5, D10T10 §8          |  [/]   |
 | ⭐   |  16   | Exception dispatch telemetry                                      | §4, TODO-04 §6             |  [ ]   |
@@ -154,9 +154,7 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 - [x] Build `EXCEPTION_RECORD` + a CONTROL/INTEGER `CONTEXT` in cache-line-aligned per-CPU scratch (`pf_exc_scratch[MAX_CPUS]`, `in_use` guard) not on the #PF stack; pure `pf_build_access_violation()`
 - [x] Route BOTH modes through `ki_dispatch_exception(rec, ctx, frame, mode, first_chance)` (mode = U bit); resume via IRET on `KI_EXCEPTION_HANDLED`, else terminal panic
 - [x] `ki_raise_kernel_exception(rec, ctx, frame)` stub declared for §14 (called BY the dispatcher, not the #PF handler); `klog` only on the user terminal path (kernel may hold `s_klog_lock`)
-- [ ] BUG (found in §3): `page_fault_handler` registered in `vmm_init()` (phase 0) is erased by the `idt_init()` handlers[] clear (phase 1); re-register #PF in phase 1 after `idt_init` (mirror `except_init`, → XREF: `§3`)
-
-> Latent today (identity-mapped, no live demand faults) but it defeats the guard-page labels + future demand paging: `handlers[14]` is NULL at runtime so every live #PF hits the generic `idt.c` panic instead of this triage. Verify the fix with the smoke test + a live fault case.
+- [x] BUG (found in §3, fixed in §13): `#PF` re-registered in `boot_phase1` after `except_init` -- `idt_init` zeroed the phase-0 `handlers[14]` (live #PF hit the generic panic); §13's fixup needs the reachable handler
 
 **Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0 code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns UNHANDLED, handler panics until §5 ring-3 delivery lands). Trigger a kernel-mode swap fault -- existing guard/swap/mmap chain still handles it correctly (COW is a present-bit write -- pager chain runs unchanged, not gated on not-present). A guard-page hit keeps the current labeled panic (§17 replaces it with auto-grow). No POST16 on this post-Phase-3 runtime fault path (Codex design review: POST16 is boot-path telemetry, unobservable after desktop start); user-path diagnostics use `klog`, kernel-path uses the fault-safe `panic_screen`. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
 
@@ -221,7 +219,7 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and, for the recoverable paths, 
 > - **ABI decision** -- #CP uses `STATUS_STACK_BUFFER_OVERRUN` + subcode 0x39, not `STATUS_CONTROL_STACK_VIOLATION` (a different path); matches real Windows. `STATUS_STACK_BUFFER_OVERRUN` now canonical in `ntstatus.h` (deduped from `stack_canary.c`).
 > - **Scope boundary** -- general fault vectors only; #PF stays with the VMM triage (section 2), #NM with lazy-FPU, NMI/#DF/#MC keep dedicated handlers. Ring-3 delivery is §5; kernel SEH §8/§14; three refinements stay open above (#CP SHSTK/IBT decode, cause-aware #GP, #MF/#XM).
 > **Verified:** 2026-07-18 | commit `bfdfe36e` + review fixes | 5/8 items | build OK | smoke PASS (TCG 2.54s)
-> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 224)
+> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 222)
 > **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 204)
 > **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 208)
 > **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 209)
@@ -465,22 +463,31 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 **Prompt:** Repair and complete the EXISTING kernel probing API so a ring-3 pointer cannot crash or corrupt the kernel. `ProbeForRead`/`ProbeForWrite` already exist (declared `include/kernel/nt/zw.h:57-58`, implemented `src/kernel/nt/ssdt.c:60` and `:95`), and `ProbeForWrite` is literally `return ProbeForRead(...)` -- a range/alignment/overflow check with no page touch, so it cannot prove writability. Extend those symbols IN PLACE; do NOT create a second `probe.h`/`probe.c` pair with the same names. What is missing:
 - `ProbeForWrite` page-touch: touch the first byte of each page to force a present+writable mapping and catch write-protected pages.
-- `try_copy_from_user(dst, src, n)` / `try_copy_to_user(dst, src, n)` -- fault-recoverable copies (Linux `__ex_table` in spirit). A per-CPU `safe_return_rip` slot; the #PF handler (§2) checks it and redirects to the safe-return path when a fault lands inside a guarded copy. This closes the TOCTOU between probe and dereference that a range check alone cannot.
+- `try_copy_from_user(dst, src, n)` / `try_copy_to_user(dst, src, n)` -- fault-recoverable copies (Linux `__ex_table` in spirit). A static exception table keyed by the exact faulting instruction RIP: the #PF handler (§2), after the guard/swap/mmap chain, redirects a user-range fault taken at a guarded copy to its fixup. This closes the TOCTOU between probe and dereference that a range check alone cannot.
 
 > [!IMPORTANT]
-> → XREF: `TODO-07 §2` -- the per-CPU safe_return_rip slot is CPU-local data, co-located with the IRQL tracking fields.
+> The recovery mechanism is a **static, RIP-keyed exception table** (`__uaccess_*_fault`/`_fixup` global labels), NOT a per-CPU `safe_return_rip` slot: the faulting RIP alone identifies the guarded instruction, so there is no per-CPU mutable state and no `cli` -- inherently SMP/preempt-safe, and un-misredirectable by a nested NMI/MCE #PF.
 
 > [!WARNING]
-> **The range check is currently the ONLY user/kernel separation, and it is not sufficient on its own.** There are no per-process page tables yet: user stacks are `kmalloc`'d from the kernel heap and share 2 MiB pages with kernel data, and SMEP/SMAP stay off until that lands (`docs/infrastructure/bare-metal-gotchas.md`). So an address below `MM_USER_PROBE_ADDRESS` can still alias kernel memory, and a probe-passing write can corrupt the kernel rather than fault. Treat `try_copy_*` fixup as the real safety boundary; full isolation is owned by the per-process page-table work -> XREF: `TODO-10 §2`.
+> **The range check + fault fixup is fault RECOVERY, NOT user/kernel isolation.** There are no per-process page tables yet: user stacks are `kmalloc`'d from the kernel heap and share 2 MiB pages with kernel data, and SMEP/SMAP stay off until that lands (`docs/infrastructure/bare-metal-gotchas.md`). An in-range pointer that aliases mapped kernel data resolves WITHOUT faulting, so `try_copy_*` cannot stop a mapped-alias write -- it only turns an unmapped/read-only/misaligned user pointer into a graceful error instead of a bugcheck. True isolation is owned by the per-process page-table work -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §2` (item: "Per-process physical isolation: `vmm_create_user_pml4()` must allocate unique physical pages per process" at line 121).
 
-- [ ] Extend `include/kernel/nt/zw.h` + `src/kernel/nt/ssdt.c` in place: add `try_copy_from_user` / `try_copy_to_user` beside the existing probes (no duplicate `ProbeForRead`/`ProbeForWrite` symbols anywhere)
-- [ ] `ProbeForWrite`: stop delegating to `ProbeForRead`; add the per-page write touch so it actually proves writability
-- [ ] `safe_return_rip` slot in the CPU-local area; #PF triage (§2) checks it and redirects on a guarded-copy fault
-- [ ] Migrate user-pointer dereferences behind `try_copy_*` (existing `copy_from_user` at `include/kernel/cpu_security.h:266` has no fixup) -> XREF: `TODO-21 §11` + `TODO-05 §11` already defer on exactly this gap
+- [x] `try_copy_from_user` / `try_copy_to_user` (`ssdt.c`, decl `zw.h`): probe range then copy via guarded `__uaccess_copy`; a #PF on the user operand returns `STATUS_ACCESS_VIOLATION`, not a bugcheck. Extended in place, no `probe.h`
+- [x] Static RIP-keyed exception table (`__uaccess_*_fault`/`_fixup` labels, `cpu_security.c`); `page_fault_handler` redirects a `CR2 < MM_USER_END` guarded-instruction fault to its fixup, after guard/swap/mmap -- NO per-CPU slot, NO cli
+- [x] `copy_from_user`/`copy_to_user` (`cpu_security.c`) delegate to `__uaccess_copy` -- all 16 callers gain fault recovery; int/-1 ABI + SMAP + test injection kept. Per-call `try_copy_*` migration owned by `TODO-21 §11`/`TODO-05 §11`
+- [x] Re-register `#PF` (ISR 14) in `boot_phase1` after `except_init` (`vmm_register_page_fault_handler`) -- closes the latent §2 bug where `idt_init` zeroed `handlers[14]`
 
-**Test checkpoint:** `ProbeForRead(user_addr, 8, 4)` on a valid mapped user page succeeds (no exception). `ProbeForRead(kernel_addr, 8, 4)` raises `STATUS_ACCESS_VIOLATION` -- does NOT panic. `ProbeForWrite(user_addr, 4096, 1)` touches each page -- succeeds for mapped writable pages. `try_copy_from_user` from unmapped address returns error code, not crash. `POST16(0xDED0)` before `safe_return_rip` slot setup, `POST16(0xDED1)` after #PF safe-return path tested. If crash at 0xDED0: safe_return_rip slot not initialized. Test on: QEMU WHPX + TCG. Verify on bare metal -- TLB behavior differs.
+**Test checkpoint:** `ProbeForRead(user_addr, 8, 4)` on a valid mapped user page succeeds; `ProbeForRead(kernel_addr, 8, 4)` and `ProbeForWrite(kernel_addr, ...)` raise `STATUS_ACCESS_VIOLATION` -- do NOT panic. `ProbeForWrite` touches each page and proves writability. `try_copy_from_user` from an unmapped user page returns `STATUS_ACCESS_VIOLATION` via the RIP-keyed exception-table redirect and the kernel keeps running. No POST16 (post-Phase-3 runtime fault path; klog/serial is the diagnostic surface). Test on: QEMU WHPX + TCG. Verify on bare metal -- TLB behavior differs.
 
-- [ ] Commit: `"kernel: add ProbeForRead/Write and try_copy_{from,to}_user safe probing"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 6 new suites (ProbeForWrite kernel/NULL/zero, __uaccess_copy success, __uaccess_touch_w, try_copy_{from,to}_user probe gate), 0 failures. Live unmapped-page fault-recovery is serial-validated (Verification).
+
+> **Notes:**
+> - **What shipped** -- fault-recoverable user access: guarded `__uaccess_copy`/`__uaccess_touch_w` (`cpu_security.c`), `try_copy_{from,to}_user` + page-touch `ProbeForWrite` (`ssdt.c`), and the `page_fault_handler` redirect (`vmm.c`); 6 `except` suites.
+> - **How it integrates** -- `copy_from_user`/`copy_to_user` delegate to `__uaccess_copy` (all 16 callers gain recovery unchanged); a #PF at a `__uaccess_*_fault` label on a `CR2 < MM_USER_END` address redirects to its fixup after the pager chain.
+> - **Downstream effects** -- unblocks §5 (`try_copy_to_user` for KiUserExceptionDispatcher) and the deferred user-buffer handlers in `TODO-21 §11` / `TODO-05 §11`; also closes the latent §2 `handlers[14]`-NULL bug.
+> - **Canonical doc** -- the fault-recoverable user-access block in `src/kernel/cpu_security.c` (mechanism owner).
+> - **Scope boundary** -- §13 owns fault RECOVERY (unmapped/RO/misaligned -> error); it is NOT an isolation boundary (mapped-alias isolation owned by `03-memory-concurrency/TODO-01 §2`). Ring-3 delivery is §5, kernel SEH is §14.
+
+- [x] Commit: `"kernel: add try_copy_{from,to}_user + ProbeForWrite page-touch; re-register #PF"`
 
 
 ---
@@ -609,15 +616,15 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Unhandled exception filter    | ✅ WER             | ✅ core dump      | ⬜ §12 kernel terminal                  |
 | 💎   | `__fastfail` / INT 0x29       | ✅ 0xC0000409      | ❌                | ◐ §3 handler (DPL=3; per-proc term §5) |
 | 💎   | CONTEXT ContextFlags + FXSAVE | ✅ 0x4D0 ABI       | ✅ ucontext_t     | ✅ §1 layout                            |
-| 💎   | Fault-recoverable usercopy    | ✅ kernel SEH      | ✅ `__ex_table`   | ⬜ §13 try_copy_*                       |
-| ⭐   | IRQL-aware safe probing       | ✅ ProbeForRead    | ✅ copy_from_user | ⬜ §13                                  |
+| 💎   | Fault-recoverable usercopy    | ✅ kernel SEH      | ✅ `__ex_table`   | ✅ §13 try_copy_* / RIP-keyed table     |
+| 💎   | ProbeForRead/Write page-touch | ✅ ProbeForWrite   | ✅ copy_from_user | ✅ §13 page-touch write probe           |
 | 💎   | Kernel __try/__except         | ✅                 | ❌                | ⬜ §14                                  |
 | 💎   | POSIX signal from faults      | ❌                 | ✅                | ⬜ §15 compat                           |
 | 💎   | sigaltstack overflow          | ❌                 | ✅                | ⬜ §15 compat                           |
 | ⭐   | Dispatch telemetry            | ❌                 | ❌                | ⬜ §16 JSON log                         |
 | ⭐   | Exception budget / storm ctrl | ❌                 | ❌                | ⬜ §16 rate-limit ext                   |
 
-> **After parity items:** Impossible OS matches Windows on the full SEH/VEH/VCH pipeline and matches Linux on POSIX signal delivery. Exclusive differentiators: **dispatch telemetry** recording the full VEH → SEH → VCH handler chain into the JSON structured log (neither WER nor core dumps capture the decision sequence); **IRQL-aware safe probing** co-locating `safe_return_rip` with IRQL fields for zero-overhead probe checks in the #PF handler; and **exception storm control** rate-limiting per-process exceptions to prevent DoS from runaway JITs or intentional exception flooding.
+> **After parity items:** Impossible OS matches Windows on the full SEH/VEH/VCH pipeline and matches Linux on POSIX signal delivery. Exclusive differentiators: **dispatch telemetry** recording the full VEH → SEH → VCH handler chain into the JSON structured log (neither WER nor core dumps capture the decision sequence); and **exception storm control** rate-limiting per-process exceptions to prevent DoS from runaway JITs or intentional exception flooding. (Safe probing itself is parity: §13 ships a standard RIP-keyed usercopy fixup, matching Windows kernel SEH and Linux `__ex_table`.)
 
 ---
 

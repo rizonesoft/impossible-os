@@ -918,7 +918,13 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
         if (pst != STATUS_SUCCESS)
             return pst;
         KeSetSystemTimeEx(nt, &prev);
-        (void)copy_to_user((void *)prev_ptr, &prev, sizeof(uint64_t));
+        /* The clock is already swapped; copy_to_user is now fault-recoverable,
+         * so a PreviousTime page unmapped/protected after the probe returns an
+         * error here instead of bugchecking. Report it rather than falsely
+         * claiming success -- the time change is a committed side effect either
+         * way (same non-transactional contract as the Windows API). */
+        if (copy_to_user((void *)prev_ptr, &prev, sizeof(uint64_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
         return STATUS_SUCCESS;
     }
 

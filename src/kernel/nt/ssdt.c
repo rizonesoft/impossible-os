@@ -18,6 +18,7 @@
 #include "kernel/nt/syscall_filter.h"
 #include "kernel/nt/pledge.h"   /* pledge_check_syscall / pledge_terminate */
 #include "kernel/sched/task.h"  /* thread_current() for per-thread previous_mode */
+#include "kernel/cpu_security.h" /* __uaccess_copy / __uaccess_touch_w -- guarded user copies */
 #include "kernel/klog.h"
 
 /* ---- Previous-mode tracking ---------------------------------------------- */
@@ -129,10 +130,82 @@ NTSTATUS ProbeForRead(const void *Address, uint64_t Length, uint32_t Alignment)
 
 NTSTATUS ProbeForWrite(void *Address, uint64_t Length, uint32_t Alignment)
 {
-    /* Same validation as ProbeForRead -- the address range check is
-     * identical. On real Windows the write probe also touches each page
-     * to trigger CoW; we don't have CoW yet so the range check suffices. */
-    return ProbeForRead(Address, Length, Alignment);
+    NTSTATUS st;
+    uintptr_t a, end, p;
+
+    /* Range/alignment/overflow gate first (identical to ProbeForRead). */
+    st = ProbeForRead(Address, Length, Alignment);
+    if (st != STATUS_SUCCESS)
+        return st;
+    if (Length == 0)
+        return STATUS_SUCCESS;
+
+    /* Prove writability of the ENTIRE range: touch the first byte of each page
+     * with a non-destructive read-modify-write. A read-only or unmapped page
+     * faults and the guarded touch reports STATUS_ACCESS_VIOLATION instead of
+     * corrupting kernel memory or bugchecking. A demand-paged/CoW page is paged
+     * in by the fault handler and the touch retried. ProbeForRead already proved
+     * end does not overflow and stays below MM_USER_PROBE_ADDRESS, so the
+     * page-boundary walk cannot wrap.
+     *
+     * Full-range (not capped): a partial probe would report a large buffer
+     * writable while a later page is not, so it must cover the whole range.
+     *
+     * SCOPE: this proves writability AT PROBE TIME only. It does NOT protect a
+     * writer that YIELDS between the probe and the write (e.g. a blocking
+     * receive) against a sibling thread unmapping the buffer in the meantime --
+     * that TOCTOU is closed only by writing through a fault-recoverable copy
+     * (try_copy_to_user / copy_to_user), never a raw memcpy. Cost note: an
+     * untrusted, not-yet-validated length makes this an O(pages) locked walk;
+     * the fix is caller-side (validate the real output size BEFORE probing). */
+    a   = (uintptr_t)Address;
+    end = a + Length;
+    for (p = a; p < end; p = (p & ~(uintptr_t)0xFFF) + 0x1000) {
+        if (__uaccess_touch_w((void *)p) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS try_copy_from_user(void *dst, const void *user_src, uint64_t n)
+{
+    NTSTATUS st;
+
+    if (n == 0)
+        return STATUS_SUCCESS;
+
+    st = ProbeForRead(user_src, n, 1);   /* range/alignment/overflow gate */
+    if (st != STATUS_SUCCESS)
+        return st;
+
+    /* The guarded copy fault-fixup closes the probe-to-copy TOCTOU: a page
+     * unmapped after the probe faults and returns a nonzero remainder here.
+     * copy_FROM: the user SOURCE read-faults, recovered by the read-direction
+     * fixup. */
+    if (__uaccess_copy_from(dst, user_src, n) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS try_copy_to_user(void *user_dst, const void *src, uint64_t n)
+{
+    NTSTATUS st;
+
+    if (n == 0)
+        return STATUS_SUCCESS;
+
+    /* Range/alignment gate only (ProbeForRead is direction-agnostic): the
+     * guarded copy's own fault-fixup catches a read-only or unmapped
+     * destination during the write, so the per-page ProbeForWrite touch would
+     * be redundant double work here. copy_TO: the user DEST write-faults,
+     * recovered by the write-direction fixup. */
+    st = ProbeForRead(user_dst, n, 1);
+    if (st != STATUS_SUCCESS)
+        return st;
+
+    if (__uaccess_copy_to(user_dst, src, n) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
 }
 
 /* ---- NTSTATUS -> Win32 error translation --------------------------------- */

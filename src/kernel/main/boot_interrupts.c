@@ -40,6 +40,7 @@
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
 #include "kernel/except.h"      /* except_init -- fault-to-exception handlers */
+#include "kernel/mm/vmm.h"      /* vmm_register_page_fault_handler -- re-install ISR 14 */
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
@@ -152,6 +153,13 @@ void boot_phase1(void)
      * phase 0 would be erased by that clear. CPUID ran in phase 0, so the #CP
      * (CET shadow-stack) gate is valid. */
     except_init();
+
+    /* Re-install the #PF handler (ISR 14). except_init() deliberately skips
+     * vector 14 (the VMM owns it), and idt_init() above zeroed handlers[],
+     * erasing the phase-0 vmm_init() registration. Without this call
+     * handlers[14] is NULL and a live #PF hits the generic unhandled panic
+     * instead of the user/kernel triage handler. */
+    vmm_register_page_fault_handler();
 
     /* --- AVX-512 opt-in with MPERF/APERF throttle guard ---
      * Deferred from phase 0 because the probe needs the kernel IDT to

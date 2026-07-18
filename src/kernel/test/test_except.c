@@ -16,6 +16,8 @@
 #include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
 #include "kernel/bugcheck.h" /* BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED / _SYSTEM_SERVICE */
 #include "kernel/nt/zw.h"    /* ssdt_syscall_enter/leave -- bugcheck classification */
+#include "kernel/cpu_security.h" /* __uaccess_copy_* / __uaccess_touch_w -- guarded copies */
+#include "kernel/mm/pmm.h"       /* pmm_alloc_frame -- live fault-recovery test */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
  *      except.h are Layer 1 -- these prove the same contract at runtime so a
@@ -724,6 +726,138 @@ static void test_except_build_record_null(void)
                    "record untouched when frame is NULL");
 }
 
+/* ---- Kernel safe probing / fault-recoverable copies ----
+ * The live unmapped-page fault-RECOVERY path (a #PF inside a guarded copy
+ * redirected to its fixup) is serial/smoke-validated -- see the Verification
+ * section of TODO-23. These suites cover the deterministic decision logic and
+ * the copy/touch success paths without triggering a live fault. */
+
+/* ProbeForWrite rejects a kernel-range pointer before any page touch. */
+static void test_probe_for_write_kernel_addr_fails(void)
+{
+    NTSTATUS s = ProbeForWrite((void *)0x80000000ULL, 0x10, 1);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "ProbeForWrite rejects kernel pointer");
+}
+
+/* ProbeForWrite rejects NULL and accepts a zero-length request (no touch). */
+static void test_probe_for_write_null_and_zero(void)
+{
+    NTSTATUS s = ProbeForWrite(NULL, 8, 1);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "ProbeForWrite rejects NULL");
+    s = ProbeForWrite((void *)0x800000ULL, 0, 1);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                   "ProbeForWrite zero length succeeds without touch");
+}
+
+/* __uaccess_copy_from/_to drain RCX to 0 and copy the bytes -- success path. */
+static void test_uaccess_copy_success(void)
+{
+    uint8_t src[32], dst[32];
+    unsigned i;
+    int mismatch = 0;
+
+    for (i = 0; i < 32; i++) { src[i] = (uint8_t)(i + 1); dst[i] = 0; }
+    TEST_ASSERT_EQ((uint32_t)__uaccess_copy_from(dst, src, 32), 0u,
+                   "__uaccess_copy_from fully copies (0 bytes remaining)");
+    for (i = 0; i < 32; i++)
+        if (dst[i] != src[i]) mismatch = 1;
+    TEST_ASSERT_EQ(mismatch, 0, "__uaccess_copy_from bytes match source");
+    for (i = 0; i < 32; i++) dst[i] = 0;
+    TEST_ASSERT_EQ((uint32_t)__uaccess_copy_to(dst, src, 32), 0u,
+                   "__uaccess_copy_to fully copies (0 bytes remaining)");
+    TEST_ASSERT_EQ((uint32_t)__uaccess_copy_from(dst, src, 0), 0u,
+                   "__uaccess_copy_from zero length returns 0");
+}
+
+/* The #PF handler must be registered in the live IDT after boot phase 1 --
+ * without it (the latent idt_init handlers[] clear) a live #PF hits the generic
+ * panic and no fault recovery works. This is the deterministic guard for the
+ * phase-1 re-registration. */
+static void test_pf_handler_registered(void)
+{
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)idt_get_handler(14) != 0, 1u,
+                   "ISR 14 (#PF) handler is registered after phase 1");
+}
+
+/* Live end-to-end fault recovery: map a controlled user-range page, prove a
+ * clean guarded copy, then unmap it and prove the copy FAULTS and the handler
+ * recovers (kernel keeps running -- reaching the final assert IS the proof).
+ * The scratch VA sits just ABOVE the 0-4 GiB huge identity map so vmm_map_page
+ * creates fresh page tables instead of refusing a huge-page descent (a VA
+ * inside the huge map would make this test a silent no-op), and below
+ * MM_USER_END so the redirect's user-range gate accepts the fault.
+ * TEST-SIDE-EFFECT-ALLOWED: maps/unmaps one scratch VA to exercise the live
+ * #PF redirect; the leaf frame is freed on unmap. */
+static void test_uaccess_copy_from_recovers_live_fault(void)
+{
+    const uintptr_t va = 0x100000000UL;  /* 4 GiB: above the huge identity map */
+    uint64_t phys;
+    uint8_t kbuf[8] = {0};
+
+    if (vmm_get_physical(va) != 0) {
+        TEST_SKIP("live-fault scratch VA unexpectedly already mapped");
+        return;
+    }
+    phys = pmm_alloc_frame();
+    if (!phys) { TEST_SKIP("no free frame for live fault test"); return; }
+    if (vmm_map_page(va, phys, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE) != 0) {
+        pmm_free_frame(phys);
+        TEST_SKIP("could not map scratch page (unsupported host)");
+        return;
+    }
+
+    *(volatile uint8_t *)va = 0x5A;      /* page is mapped+writable now */
+    TEST_ASSERT_EQ((uint32_t)__uaccess_copy_from(kbuf, (const void *)va, 1), 0u,
+                   "copy_from mapped user page succeeds");
+    TEST_ASSERT_EQ((uint32_t)kbuf[0], 0x5Au, "copy_from read the mapped byte");
+
+    vmm_unmap_page(va, 1);               /* now unmapped -- the next read #PFs */
+    TEST_ASSERT_EQ((uint32_t)(__uaccess_copy_from(kbuf, (const void *)va, 8) != 0),
+                   1u, "copy_from unmapped user page faults and recovers");
+    /* Reaching here means the live #PF was redirected to the fixup, not fatal. */
+}
+
+/* __uaccess_touch_w reports a writable address OK without changing contents. */
+static void test_uaccess_touch_writable(void)
+{
+    volatile uint64_t victim = 0xA5A5A5A5A5A5A5A5ULL;
+
+    TEST_ASSERT_EQ(__uaccess_touch_w((void *)&victim), 0,
+                   "__uaccess_touch_w succeeds on writable address");
+    TEST_ASSERT_EQ((uint32_t)(victim & 0xFFFFFFFFu), 0xA5A5A5A5u,
+                   "__uaccess_touch_w leaves contents unchanged");
+}
+
+/* try_copy_from_user gates on the probe: NULL and kernel-range sources fail,
+ * zero length succeeds. */
+static void test_try_copy_from_user_probe_gate(void)
+{
+    uint8_t dst[8];
+    NTSTATUS s = try_copy_from_user(dst, NULL, 8);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "try_copy_from_user rejects NULL source");
+    s = try_copy_from_user(dst, (const void *)0x80000000ULL, 8);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "try_copy_from_user rejects kernel-range source");
+    s = try_copy_from_user(dst, (const void *)0x800000ULL, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                   "try_copy_from_user zero length succeeds");
+}
+
+/* try_copy_to_user gates on the probe the same way. */
+static void test_try_copy_to_user_probe_gate(void)
+{
+    uint8_t src[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    NTSTATUS s = try_copy_to_user((void *)0x80000000ULL, src, 8);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "try_copy_to_user rejects kernel-range dest");
+    s = try_copy_to_user((void *)0x800000ULL, src, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                   "try_copy_to_user zero length succeeds");
+}
+
 /* ---- Registration ---- */
 
 void test_register_except(void)
@@ -792,6 +926,22 @@ void test_register_except(void)
                             test_except_build_record_control_protection, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: build record NULL args",
                             test_except_build_record_null, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ProbeForWrite rejects kernel addr",
+                            test_probe_for_write_kernel_addr_fails, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ProbeForWrite NULL / zero length",
+                            test_probe_for_write_null_and_zero, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: __uaccess_copy success + data match",
+                            test_uaccess_copy_success, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: __uaccess_touch_w writable ok",
+                            test_uaccess_touch_writable, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: try_copy_from_user probe gate",
+                            test_try_copy_from_user_probe_gate, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: try_copy_to_user probe gate",
+                            test_try_copy_to_user_probe_gate, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: #PF handler registered after phase 1",
+                            test_pf_handler_registered, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: copy_from recovers live #PF",
+                            test_uaccess_copy_from_recovers_live_fault, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

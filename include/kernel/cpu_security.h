@@ -262,11 +262,34 @@ static inline void clac(void) { __asm__ volatile ("clac" ::: "memory"); }
 #define KERNEL_ACCESS_USER_END() \
     do { if (cpu_has(CPU_FEATURE_SMAP)) clac(); } while (0)
 
-/* Copy len bytes from user-space to kernel buffer. SMAP-safe. */
+/* Copy len bytes from user-space to kernel buffer. SMAP-safe. Fault-recoverable:
+ * a bad user_src returns -1 instead of bugchecking (delegates to __uaccess_copy). */
 int copy_from_user(void *dst, const void *user_src, uint32_t len);
 
-/* Copy len bytes from kernel buffer to user-space. SMAP-safe. */
+/* Copy len bytes from kernel buffer to user-space. SMAP-safe. Fault-recoverable:
+ * a bad user_dst returns -1 instead of bugchecking (delegates to __uaccess_copy). */
 int copy_to_user(void *user_dst, const void *src, uint32_t len);
+
+/* Fault-recoverable byte copies behind a static RIP-keyed exception table.
+ * Return bytes NOT copied (0 == full success); a #PF on the user operand is
+ * turned into a partial-copy result by page_fault_handler instead of a kernel
+ * bugcheck. Separate from/to entry points so the handler can tell a user SOURCE
+ * read fault (copy_from) from a user DEST write fault (copy_to) -- see
+ * cpu_security.c (no per-CPU state, no cli). */
+uint64_t __uaccess_copy_from(void *dst, const void *src, uint64_t n);
+uint64_t __uaccess_copy_to(void *dst, const void *src, uint64_t n);
+
+/* Non-destructive single-address write probe (lock orb $0). Returns 0 if the
+ * address is present+writable, -1 if the touch faulted. Used by ProbeForWrite. */
+int __uaccess_touch_w(void *addr);
+
+/* Exception-table label symbols emitted by the __uaccess_* primitives.
+ * page_fault_handler compares the faulting RIP to the *_fault labels and, when
+ * the fault direction matches the user operand, redirects to the *_fixup label:
+ * copy_from recovers a READ fault, copy_to / touch recover a WRITE fault. */
+extern char __uaccess_copy_from_fault[], __uaccess_copy_from_fixup[];
+extern char __uaccess_copy_to_fault[], __uaccess_copy_to_fixup[];
+extern char __uaccess_touch_fault[], __uaccess_touch_fixup[];
 
 #ifdef KERNEL_TESTS
 /* ---- Test-only copy_to_user / copy_from_user fault injection

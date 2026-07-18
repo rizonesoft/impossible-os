@@ -83,6 +83,13 @@ pte_t *pt_walk(uintptr_t phys);
 #include "kernel/boot_init.h"
 boot_result_t vmm_init(void);
 
+/* (Re)install the #PF handler (ISR 14) into the live IDT handlers[] table.
+ * MUST be called in boot phase 1 AFTER idt_init(), which zeroes handlers[]:
+ * the phase-0 vmm_init() registration is erased by that clear, so without the
+ * phase-1 call handlers[14] is NULL and every live #PF hits the generic
+ * unhandled-vector panic instead of the triage handler. */
+void vmm_register_page_fault_handler(void);
+
 #ifdef KERNEL_TESTS
 /* ---- Test-only VMM mapping fault injection (kernel-test-harness
  * roadmap; see include/kernel/mm/heap.h for the canonical API shape).

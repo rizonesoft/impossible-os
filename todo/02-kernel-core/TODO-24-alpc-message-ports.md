@@ -309,6 +309,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
   4. Stamp `captured->ImpersonationLevel = req->NegotiatedLevel` (the dup otherwise inherits the SOURCE token's level, which is neither party's request)
   5. Store in `server_comm->ClientToken` BEFORE `ObpAllocateHandle` publishes the port -- initialize-then-publish, so no reader sees a reachable port with a NULL or half-stamped token; on dup failure the whole handshake unwinds
 - [/] Honor the client `SecurityQos` for RING-3 clients: needs fault-recoverable usercopy first -- copying user `port_attrs` today would trade an unreachable escalation for a kernel-fault DoS -> XREF: `02-kernel-core/TODO-23 §13`
+- [ ] Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request` write `recv_msg` via RAW `memcpy` after a yielding wait -- a sibling unmap bugchecks the kernel. Migrate both to `copy_to_user` + concurrent-unmap test -> XREF: `TODO-23 §13`
 - [x] Server impersonation: internal helper `AlpcImpersonateClientOfPort(ALPC_PORT *port, uint32_t access_mode)` shipped in `alpc_port.c` (SSDT slot + `NtAlpcImpersonateClientOfPort` syscall wrapper -> §8):
   1. Non-`AlpcServerCommunicationPort` -> `STATUS_INVALID_PORT_HANDLE`; no captured token -> `STATUS_NO_TOKEN`
   2. Identification-only captured token (`< SecurityImpersonation`) -> `STATUS_BAD_IMPERSONATION_LEVEL`

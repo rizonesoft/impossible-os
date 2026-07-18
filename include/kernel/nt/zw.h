@@ -67,6 +67,14 @@ void ssdt_syscall_leave(void);
 NTSTATUS ProbeForRead(const void *Address, uint64_t Length, uint32_t Alignment);
 NTSTATUS ProbeForWrite(void *Address, uint64_t Length, uint32_t Alignment);
 
+/* Fault-recoverable user copies: probe the range, then copy behind the static
+ * exception table so a #PF on the user operand returns STATUS_ACCESS_VIOLATION
+ * instead of bugchecking. Closes the probe-then-dereference TOCTOU that a range
+ * check alone cannot (a page can be unmapped or read-only between probe and
+ * copy). n = byte count. NOT an isolation boundary -- see cpu_security.c. */
+NTSTATUS try_copy_from_user(void *dst, const void *user_src, uint64_t n);
+NTSTATUS try_copy_to_user(void *user_dst, const void *src, uint64_t n);
+
 /* Convenience: probe only if previous mode is UserMode. No-op for kernel. */
 static inline NTSTATUS ProbeForReadIfUser(const void *Address,
                                           uint64_t Length, uint32_t Alignment)
