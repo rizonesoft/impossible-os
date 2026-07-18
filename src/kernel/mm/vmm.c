@@ -31,11 +31,12 @@
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
+#include "kernel/except.h"              /* #PF triage: EXCEPTION_RECORD/CONTEXT + dispatch ABI */
 #include "kernel/boot_halt.h"           /* boot_halt: fatal NX-policy enforcement failure */
 #include "kernel/bugcheck.h"            /* KeBugCheckEx: pt_walk hard-error on a corrupt PTE */
 #include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
+#include "kernel/smp.h"                 /* smp_this_cpu() + MAX_CPUS: per-CPU #PF exception scratch */
 #ifdef KERNEL_TESTS
-#include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
@@ -589,37 +590,151 @@ static const char *guard_page_lookup(uintptr_t fault_addr)
     return (const char *)0;
 }
 
-/* --- Page Fault Handler (ISR 14) --- */
+/* --- Page Fault Handler (ISR 14) ---
+ *
+ * ARCH: x86-64 -- CR2 and the #PF error code are AMD64-specific. Will move to
+ * arch/ with the HAL split.
+ *
+ * #PF error-code bits (Intel SDM Vol 3, "Page-Fault Error Code"). Named so the
+ * triage never tests a magic bit. */
+#define PF_EC_PRESENT   0x01u   /* P:  0 = not-present page, 1 = protection violation */
+#define PF_EC_WRITE     0x02u   /* W/R: 1 = write access, 0 = read */
+#define PF_EC_USER      0x04u   /* U/S: 1 = fault taken in ring 3 */
+#define PF_EC_RESERVED  0x08u   /* RSVD: reserved bit set in a paging structure */
+#define PF_EC_FETCH     0x10u   /* I/D: 1 = instruction fetch (requires NXE) */
+#define PF_EC_PROTKEY   0x20u   /* PK:  protection-key violation */
+#define PF_EC_SHADOW    0x40u   /* SS:  shadow-stack access (CET) */
+
+/* Per-CPU exception scratch. EXCEPTION_RECORD (152 B) + CONTEXT (1232 B) are
+ * far too large to build as locals on the arbitrary-depth kernel stack a ring-0
+ * #PF runs on: reserving them in the prologue could touch the guard page or
+ * corrupt an already-deep stack before panic_screen even runs, destroying the
+ * diagnostic path precisely during stack exhaustion. Each CPU owns one slot
+ * (only the faulting CPU touches it -- no lock), 16-byte aligned to satisfy the
+ * CONTEXT alignment ABI. `in_use` is a one-shot recursion guard: a nested #PF
+ * that arrives while a slot is being populated cannot reuse it, so it escalates
+ * straight to a terminal panic instead of scribbling over a live record. */
+struct pf_exc_scratch {
+    EXCEPTION_RECORD rec;
+    CONTEXT          ctx;
+    volatile uint32_t in_use;
+} __attribute__((aligned(16)));
+
+static struct pf_exc_scratch pf_exc_scratch[MAX_CPUS];
+
+/* Build a STATUS_ACCESS_VIOLATION EXCEPTION_RECORD + a CONTROL/INTEGER CONTEXT
+ * describing this fault. Pure (no logging, no locks, no allocation) so it is
+ * safe in fault context and directly unit-testable. `ctx` is fully zeroed first
+ * so no stale per-CPU-scratch bytes leak into an unsatisfiable register group,
+ * then context_from_frame fills CONTROL + INTEGER from the frame. */
+void pf_build_access_violation(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                               const struct interrupt_frame *frame,
+                               uintptr_t fault_addr, uint64_t err_code)
+{
+    uint8_t *cp = (uint8_t *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < (uint32_t)sizeof(CONTEXT); i++)
+        cp[i] = 0;
+    ctx->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    context_from_frame(frame, ctx);
+
+    rec->ExceptionCode     = STATUS_ACCESS_VIOLATION;
+    rec->ExceptionFlags    = EXCEPTION_CONTINUABLE;   /* first-chance may resolve */
+    rec->ExceptionRecord   = (EXCEPTION_RECORD *)0;
+    rec->ExceptionAddress  = (void *)(uintptr_t)frame->rip;
+    rec->NumberParameters  = 2;
+    /* winnt.h contract: [0] = access type, [1] = faulting linear address. */
+    rec->ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE] =
+        (err_code & PF_EC_FETCH) ? EXCEPTION_ACCESS_EXECUTE :
+        (err_code & PF_EC_WRITE) ? EXCEPTION_ACCESS_WRITE   :
+                                   EXCEPTION_ACCESS_READ;
+    rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR] = (uint64_t)fault_addr;
+}
 
 static uint64_t page_fault_handler(struct interrupt_frame *frame)
 {
     uintptr_t fault_addr = read_cr2();
+    uint64_t  err_code   = frame->err_code;
+    struct pf_exc_scratch *s;
+    uint32_t  cpu;
 
     /* Check guard pages first -- these are intentional not-present pages.
      * A guard page hit means stack overflow, heap overflow, or buffer overrun.
-     * Report with a specific message instead of a generic page fault. */
+     * Report with a specific message instead of a generic page fault. (Growable
+     * user-stack auto-grow hooks in ahead of this terminal panic in a later
+     * section; today every guard hit is terminal.) */
     {
         const char *label = guard_page_lookup(fault_addr);
         if (label) {
-            panic_screen(frame, frame->err_code, label, "vmm.c", 0);
+            panic_screen(frame, err_code, label, "vmm.c", 0);
             return (uint64_t)frame;  /* unreachable */
         }
     }
 
-    /* Try swap handler -- if the page was swapped, bring it back */
-    if (swap_handle_fault(fault_addr, frame->err_code)) {
+    /* Existing pager chain runs UNCHANGED for both user and kernel faults, and
+     * ahead of triage: swap-in for evicted pages, then mmap demand-load and
+     * MAP_PRIVATE copy-on-write (a present-bit write fault -- must NOT be gated
+     * out by a not-present check). Only faults the pager declines fall through
+     * to triage, which replaces the old always-panic final clause. */
+    if (swap_handle_fault(fault_addr, err_code)) {
         return (uint64_t)frame;  /* page swapped in, retry instruction */
     }
-
-    /* Try mmap handler -- if the page is in an mmap'd region, load it */
-    if (mmap_handle_fault(fault_addr, frame->err_code)) {
-        return (uint64_t)frame;  /* page loaded from file, retry instruction */
+    if (mmap_handle_fault(fault_addr, err_code)) {
+        return (uint64_t)frame;  /* page loaded / COW-resolved, retry instruction */
     }
 
-    /* Unhandled page fault -- show styled panic screen */
-    panic_screen(frame, frame->err_code, "PAGE_FAULT", "vmm.c", 0);
+    /* Triage the unresolved fault. Build the exception record in per-CPU scratch
+     * (never on this fault's kernel stack) under a one-shot recursion guard. */
+    cpu = smp_this_cpu()->cpu_id;
+    if (cpu >= MAX_CPUS || pf_exc_scratch[cpu].in_use) {
+        /* Bad CPU index (cannot happen post-boot) or a nested #PF while a record
+         * is mid-build: do not reuse the slot -- escalate straight to terminal. */
+        panic_screen(frame, err_code, "PAGE_FAULT (nested)", "vmm.c", 0);
+        return (uint64_t)frame;  /* unreachable */
+    }
+    s = &pf_exc_scratch[cpu];
+    s->in_use = 1;
+    pf_build_access_violation(&s->rec, &s->ctx, frame, fault_addr, err_code);
 
-    return (uint64_t)frame;  /* unreachable */
+    if (err_code & PF_EC_USER) {
+        KI_EXCEPTION_DISPOSITION disp;
+
+        /* User-origin fault: the CPU was in ring 3, so no kernel spinlock (klog
+         * included) can be held -- logging here is deadlock-safe. */
+        klog(LOG_ERROR, "mm",
+             "pf: user fault at %p code=0x%x rip=%p (access violation)",
+             (void *)fault_addr, (unsigned int)err_code, (void *)(uintptr_t)frame->rip);
+
+        disp = ki_dispatch_exception(&s->rec, &s->ctx, frame, UserMode, 1 /*first_chance*/);
+        if (disp == KI_EXCEPTION_HANDLED) {
+            s->in_use = 0;           /* resolved -- release the slot */
+            return (uint64_t)frame;  /* delivered / retry via IRET */
+        }
+
+        /* Unhandled: terminal. Leave in_use SET so a fault DURING panic re-enters
+         * the nested-fault path (minimal terminal) instead of rebuilding a record
+         * in this live slot. Ring-3 delivery + per-process termination land in
+         * later sections; until then an unhandled user fault stops the system. */
+        panic_screen(frame, err_code, "USER_ACCESS_VIOLATION", "vmm.c", 0);
+        return (uint64_t)frame;  /* unreachable */
+    } else {
+        KI_EXCEPTION_DISPOSITION disp;
+
+        /* Kernel-origin fault. Do NOT klog here: the faulting CPU may already
+         * hold s_klog_lock (or any spinlock), so logging could deadlock.
+         * panic_screen is the fault-safe diagnostic path. */
+        disp = ki_raise_kernel_exception(&s->rec, &s->ctx, frame);
+        if (disp == KI_EXCEPTION_HANDLED) {
+            s->in_use = 0;           /* kernel SEH resolved it -- release the slot */
+            return (uint64_t)frame;  /* resume */
+        }
+
+        /* Unhandled kernel fault: terminal. Leave in_use SET (see the user path)
+         * so a fault during panic hits the nested-fault guard, not this slot. */
+        panic_screen(frame, err_code, "PAGE_FAULT", "vmm.c", 0);
+        return (uint64_t)frame;  /* unreachable */
+    }
 }
 
 /* --- Per-process page tables -------------------------------------------- */

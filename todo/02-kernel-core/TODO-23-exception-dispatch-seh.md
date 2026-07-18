@@ -68,7 +68,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §10    |  [x]   |
-| 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [ ]   |
+| 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [x]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                     | §4, TODO-11 §7             |  [ ]   |
@@ -150,12 +150,20 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 > → XREF: `D03 T04 §4` -- lazy mapped-file and swap-backed page-in live in the pager TODO; this section routes eligible not-present faults there rather than re-implementing pager policy in the exception layer.
 > → XREF: `§17` -- guard-page stack auto-grow (`vmm_try_grow_stack()`) is the split-off owner of the growable-stack case in the not-present-user branch.
 
-- [ ] Decode error-code bits; distinguish user vs. kernel fault cleanly
-- [ ] Build `EXCEPTION_RECORD` and `CONTEXT` on the kernel stack before dispatch
-- [ ] Route to `ki_dispatch_exception()` (§4) for user-mode faults
-- [ ] Route to `ki_raise_kernel_exception()` stub (implemented fully in §14)
+- [x] Decode error-code bits (named `PF_EC_*` per Intel SDM) and distinguish user vs. kernel fault via the U bit (`page_fault_handler`, `vmm.c`)
+- [x] Build `EXCEPTION_RECORD` + a CONTROL/INTEGER `CONTEXT` in a per-CPU scratch slot (`pf_exc_scratch[MAX_CPUS]`, aligned, `in_use` recursion guard) not on the #PF kernel stack; pure `pf_build_access_violation()`
+- [x] Route user-mode faults to `ki_dispatch_exception(rec, ctx, frame, UserMode, first_chance)`; resume via IRET on `KI_EXCEPTION_HANDLED`, else terminal panic
+- [x] Route kernel-mode faults to `ki_raise_kernel_exception(rec, ctx, frame)` stub (full impl in §14); no `klog` on the kernel path (may hold `s_klog_lock`)
 
-**Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0, code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns to `panic_screen()` until §4 lands). Trigger a kernel-mode swap fault -- existing swap/mmap chain still handles it correctly. A guard-page hit keeps the current labeled panic (§17 replaces it with auto-grow). `POST16(0xDE20)` on #PF entry, `POST16(0xDE21)` after triage decision. If crash: check last POST -- 0xDE20 = never entered triage, 0xDE21 = triage completed but dispatch failed. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
+**Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0 code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns UNHANDLED, handler panics until §5 ring-3 delivery lands). Trigger a kernel-mode swap fault -- existing guard/swap/mmap chain still handles it correctly (COW is a present-bit write -- pager chain runs unchanged, not gated on not-present). A guard-page hit keeps the current labeled panic (§17 replaces it with auto-grow). No POST16 on this post-Phase-3 runtime fault path (Codex design review: POST16 is boot-path telemetry, unobservable after desktop start); user-path diagnostics use `klog`, kernel-path uses the fault-safe `panic_screen`. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
+
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 4 new `pf_*` suites (write / read+fetch decode, CONTEXT zeroing, stub disposition), 0 failures
+
+> **Notes:**
+> - **What shipped** -- `page_fault_handler` triage rewrite (`vmm.c`): decode `PF_EC_*`, unchanged guard/swap/mmap chain, then build an access-violation record and route by U bit; pure `pf_build_access_violation()` + 4 unit tests.
+> - **How it integrates** -- calls the `except.h` dispatch ABI (`ki_dispatch_exception`/`ki_raise_kernel_exception` return `KI_EXCEPTION_DISPOSITION`, live frame passed); §2 ships UNHANDLED stubs, so an unresolved fault stays terminal as before.
+> - **Downstream effects** -- lands `KPROCESSOR_MODE` + the dispatch decls §4/§5/§14 build on; §17 hooks stack auto-grow into the not-present-user branch. Codex design adoptions in the commit message.
+> - **Scope boundary** -- §2 owns triage + record build + dispatch routing; ring-3 delivery is §5, kernel SEH is §14, stack auto-grow is §17, safe probing is §13.
 
 - [ ] Commit: `"mm: triage #PF into user/kernel paths; defer to exception dispatch"`
 
@@ -198,7 +206,7 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and routes through `ki_dispatch_
 
 ## 4. Debugger First-Chance / Second-Chance Notification
 
-**Prompt:** Implement the master exception dispatcher `ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx, KPROCESSOR_MODE mode, BOOLEAN first_chance)` that orchestrates the full Windows NT exception dispatch sequence. On Windows, the dispatch order is:
+**Prompt:** Implement the master exception dispatcher (declaration + UNHANDLED stub landed by §2: `KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx, struct interrupt_frame *frame, KPROCESSOR_MODE mode, int first_chance)` -- the live `frame` is passed so ring-3 delivery can rewrite it, and a `KI_EXCEPTION_HANDLED` return resumes via IRET) that orchestrates the full Windows NT exception dispatch sequence. On Windows, the dispatch order is:
 1. **Debugger first-chance notification** -- if the process has a debug port (or kernel debugger is attached for kernel-mode exceptions), send the exception to the debugger. If the debugger handles it (continues execution), stop.
 2. **Ring-3 handover** (user-mode exceptions) -- deliver the trap frame to `KiUserExceptionDispatcher` (§5). Steps 3-6 then run **in ring 3**, inside ntdll, NOT in this function: VEH (§10) -> SEH (§8) -> VCH (§11) -> top-level filter (§12). See the address-space boundary callout at the top of this file.
 3. **Second-chance re-entry** -- when ring-3 dispatch declines everything, ntdll re-enters the kernel via `NtRaiseException(first_chance=FALSE)` (§5). Only then does the kernel notify the debugger a second time. This round-trip IS the second-chance mechanism; there is no kernel-side handler walk.
@@ -210,13 +218,13 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 > → XREF: `TODO-29 §5` -- KD is the kernel debugger; `KiDebugRoutine` is the function pointer that `ki_dispatch_exception` calls for kernel-mode first/second-chance. If KD is not attached, `KiDebugRoutine` is NULL and the notification is skipped.
 > → XREF: `TODO-29 §14` -- User-mode debug port is `NtDebugActiveProcess`; `DbgkForwardException()` sends the exception to the debug port. Stub `DbgkForwardException` to return FALSE until TODO-29 §14 lands.
 
-> [!WARNING]
-> `KPROCESSOR_MODE` does not exist yet. Define locally in `include/kernel/except.h`: `typedef enum { KernelMode = 0, UserMode = 1 } KPROCESSOR_MODE;`. Canonical definition moves to a shared NT types header when TODO-12 matures.
+> [!NOTE]
+> `KPROCESSOR_MODE` (`typedef enum { KernelMode = 0, UserMode = 1 }`), the `KI_EXCEPTION_DISPOSITION` enum, and the `ki_dispatch_exception` / `ki_raise_kernel_exception` declarations were landed by §2 in `include/kernel/except.h`; §4/§14 replace the UNHANDLED stubs with the real bodies. Canonical `KPROCESSOR_MODE` moves to a shared NT types header when TODO-12 matures.
 > `KeBugCheckEx` is implemented in `src/kernel/panic.c` per `TODO-27-crash-dump-generation.md` §1. When `except.c` lands, include `panic.h` (or a forward declaration) and call the shared `KeBugCheckEx` entry point for terminal kernel-mode faults. Do not add a second implementation in `except.c`.
 
-- [ ] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (local; moved to shared header later)
+- [x] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (landed by §2, local; moved to shared header later)
 - [ ] `src/kernel/except.c`: include `panic.h`; call `KeBugCheckEx(...)` for terminal kernel-mode dispatch (no duplicate body)
-- [ ] `src/kernel/except.c` -- `ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher
+- [ ] `src/kernel/except.c` -- replace the §2 UNHANDLED stub with `ki_dispatch_exception(rec, ctx, frame, mode, first_chance)` returning `KI_EXCEPTION_DISPOSITION` -- master dispatcher
 - [ ] `KiDebugRoutine` function pointer -- defaults to NULL (no debugger); set by KD attach (→ XREF: TODO-29 §5)
 - [ ] `DbgkForwardException(rec, ctx, first_chance)` -- stub returning FALSE; sends exception to user-mode debug port when TODO-29 §14 lands
 - [ ] For user-mode: first-chance debugger → hand off to `KiUserExceptionDispatcher` (§5); accept the `NtRaiseException(first_chance=FALSE)` re-entry → second-chance debugger → terminate. Do NOT call VEH/SEH/VCH from ring 0
@@ -438,7 +446,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 **Prompt:** Enable kernel-mode structured exception handling so drivers can wrap dangerous operations (MMIO access, DMA buffer reads) in `__try`/`__except`. The mechanism differs from user-mode: there is no user stack to push onto. Instead:
 1. Add `KI_EXCEPTION_REGISTRATION` -- a per-thread (kernel stack) record pushed by `__try` lowering code at the head of the thread's kernel stack frame.
-2. `ki_raise_kernel_exception(EXCEPTION_RECORD *, CONTEXT *)` -- walks the kernel-mode exception chain (stored in the per-CPU `current_thread->kernel_exception_list`), calls filter expressions, and invokes `RtlUnwindEx` (§9) for matching handlers.
+2. `ki_raise_kernel_exception(EXCEPTION_RECORD *, CONTEXT *, struct interrupt_frame *)` (declaration + UNHANDLED stub landed by §2; returns `KI_EXCEPTION_DISPOSITION`) -- walks the kernel-mode exception chain (stored in the per-CPU `current_thread->kernel_exception_list`), calls filter expressions, and invokes `RtlUnwindEx` (§9) for matching handlers.
 3. Patch the kernel's `.pdata` section to include `UNWIND_INFO` for critical paths (requires linker script changes to emit `.pdata` for `clang-19`).
 4. Guard against re-entrancy: if a kernel exception occurs inside a kernel exception handler, escalate directly to `KeBugCheckEx` (panic with structured code).
 
@@ -446,7 +454,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > → XREF: `TODO-07 §3` -- kernel `__try` must only be used at `PASSIVE_LEVEL` or `APC_LEVEL`; add `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` assertion at the start of `ki_raise_kernel_exception`.
 
 - [ ] `include/kernel/except.h` -- `KI_EXCEPTION_REGISTRATION`, kernel exception chain head in `struct task`
-- [ ] `src/kernel/except.c` -- `ki_raise_kernel_exception()`
+- [ ] `src/kernel/except.c` -- replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body
 - [ ] Linker script: ensure kernel code sections emit `.pdata` with `-fexceptions` (or manual stubs)
 - [ ] Re-entrancy guard: nested kernel exception → `KeBugCheckEx`
 - [ ] Wrap one existing dangerous driver operation (e.g., AHCI MMIO read) as a smoke test
@@ -540,7 +548,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | ⭐   | Feature                       | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS       |
 | --- | ----------------------------- | ----------------- | ---------------- | --------------------- |
 | 💎   | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                | ✅ §1 `except.h`       |
-| 💎   | #PF user/kernel triage        | ✅                 | ✅                | ⚠️ §2 kernel-only     |
+| 💎   | #PF user/kernel triage        | ✅                 | ✅                | ✅ §2 triage+dispatch  |
 | 💎   | Lazy stack commit/auto-grow   | ✅ guard commit    | ✅ expand_stack   | ⬜ §17 reserve/commit  |
 | 💎   | #DB/#BP debugger routing      | ✅                 | ✅ ptrace         | ⬜ §3                  |
 | 💎   | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+           | ⬜ §3 conditional      |

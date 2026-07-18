@@ -137,3 +137,26 @@ uint32_t frame_from_context(const CONTEXT *ctx, struct interrupt_frame *frame)
      * deliberately preserved across a restore. */
     return restored;
 }
+
+/* --- Dispatch stubs ------------------------------------------------------
+ *
+ * The #PF triage routes user- and kernel-origin faults through these entry
+ * points. The full dispatch pipeline (debugger notification, ring-3 handover,
+ * kernel SEH chain walk) lands in later sections; until then the stubs decline
+ * every exception (return UNHANDLED), so the caller performs its existing
+ * terminal action. Kept dependency-free and lock-free -- they run in fault
+ * context where a klog spinlock or an allocation could deadlock or fault. */
+KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                                               struct interrupt_frame *frame,
+                                               KPROCESSOR_MODE mode, int first_chance)
+{
+    (void)rec; (void)ctx; (void)frame; (void)mode; (void)first_chance;
+    return KI_EXCEPTION_UNHANDLED;
+}
+
+KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                                                   struct interrupt_frame *frame)
+{
+    (void)rec; (void)ctx; (void)frame;
+    return KI_EXCEPTION_UNHANDLED;
+}

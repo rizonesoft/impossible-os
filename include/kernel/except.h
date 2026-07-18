@@ -335,3 +335,44 @@ uint32_t frame_from_context(const CONTEXT *ctx, struct interrupt_frame *frame);
  * MXCSR=0x1F80). Used for a CONTEXT whose FPU group was never captured: raw
  * zeroes would unmask every FP exception on a restore. */
 void context_init_fpu_state(CONTEXT *ctx);
+
+/* --- Exception dispatch ABI --------------------------------------------------
+ *
+ * Declared by the #PF triage; implemented by the exception-dispatcher, ring-3
+ * delivery, and kernel-SEH stages that follow. KPROCESSOR_MODE is the NT
+ * previous-mode enum; the canonical definition moves to a shared NT types
+ * header when the native-API surface matures. Keep the values pinned (0/1) --
+ * task.previous_mode already uses this encoding (0 = KernelMode, 1 = UserMode). */
+typedef enum { KernelMode = 0, UserMode = 1 } KPROCESSOR_MODE;
+
+/* Dispatch disposition. The #PF triage and every later dispatch stage agree on
+ * this contract so the seam is stable across the dispatcher / ring-3 delivery /
+ * kernel-SEH stages:
+ *   UNHANDLED -- nobody resolved the exception; the CALLER performs the
+ *                terminal action (deliver to ring-3 later, or panic now).
+ *   HANDLED   -- resolved in place; `frame` (and/or `ctx`) was updated to the
+ *                resume point, and the caller returns through IRET to retry.
+ * The triage stub returns UNHANDLED, so today every fault the pager chain
+ * declined terminates -- exactly the pre-triage behavior, but now routed
+ * through the durable dispatch contract instead of an inline panic. */
+typedef enum {
+    KI_EXCEPTION_UNHANDLED = 0,
+    KI_EXCEPTION_HANDLED   = 1,
+} KI_EXCEPTION_DISPOSITION;
+
+/* Master user-mode exception dispatcher. The full sequence (debugger
+ * first-chance -> ring-3 handover via KiUserExceptionDispatcher -> second-chance
+ * -> terminate) is owned by the dispatcher / ring-3 delivery stages; the #PF
+ * triage ships a stub that returns UNHANDLED. `frame` is the live interrupt
+ * frame: a HANDLED return means it was rewritten to the resume/delivery point.
+ * `first_chance` is 1 on the initial raise. */
+KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                                               struct interrupt_frame *frame,
+                                               KPROCESSOR_MODE mode, int first_chance);
+
+/* Kernel-mode exception raise -- walks the per-thread kernel exception chain and
+ * runs SEH filters. Owned by the kernel-mode __try/__except stage; the #PF
+ * triage ships a stub that returns UNHANDLED so an unresolved kernel fault stays
+ * terminal (panic) as it is today. */
+KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                                                   struct interrupt_frame *frame);

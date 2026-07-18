@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/except.h"
 #include "kernel/idt.h"
+#include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
  *      except.h are Layer 1 -- these prove the same contract at runtime so a
@@ -349,6 +350,104 @@ static void test_exception_pointers_pairing(void)
                    "EXCEPTION_POINTERS pairs the CONTEXT record");
 }
 
+/* ---- #PF triage: pf_build_access_violation + dispatch stubs ---- */
+
+/* A write fault (err_code W bit set, user bit set) builds an access-violation
+ * record: code, 2 parameters, WRITE access type, faulting address in [1], and a
+ * CONTROL|INTEGER CONTEXT filled from the frame. */
+static void test_pf_build_access_violation_write(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    f.err_code = 0x07;  /* P | W | U -- user write, protection violation */
+
+    pf_build_access_violation(&rec, &ctx, &f, 0xDEAD000, f.err_code);
+
+    TEST_ASSERT_EQ((uint32_t)rec.ExceptionCode, 0xC0000005,
+                   "ExceptionCode == STATUS_ACCESS_VIOLATION");
+    TEST_ASSERT_EQ(rec.ExceptionFlags, (uint32_t)EXCEPTION_CONTINUABLE,
+                   "access violation is first-chance continuable");
+    TEST_ASSERT_EQ(rec.NumberParameters, 2u, "NumberParameters == 2");
+    TEST_ASSERT_EQ(rec.ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE],
+                   (uint64_t)EXCEPTION_ACCESS_WRITE, "write fault -> access type 1");
+    TEST_ASSERT_EQ(rec.ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR],
+                   0xDEAD000ULL, "faulting address in ExceptionInformation[1]");
+    TEST_ASSERT_EQ((uintptr_t)rec.ExceptionAddress, 0x0000000000401000ULL,
+                   "ExceptionAddress == faulting RIP");
+    TEST_ASSERT(CONTEXT_HAS_GROUP(ctx.ContextFlags, CONTEXT_CONTROL),
+                "CONTEXT carries CONTROL group");
+    TEST_ASSERT(CONTEXT_HAS_GROUP(ctx.ContextFlags, CONTEXT_INTEGER),
+                "CONTEXT carries INTEGER group");
+    TEST_ASSERT_EQ(ctx.Rip, 0x0000000000401000ULL, "CONTEXT Rip from frame");
+    TEST_ASSERT_EQ(ctx.Rax, 0x0202020202020202ULL, "CONTEXT Rax from frame");
+}
+
+/* A read fault decodes to READ; setting the instruction-fetch bit decodes to
+ * EXECUTE (winnt.h access-type 8) -- proves the access-type decode covers all
+ * three cases and is not hard-wired. */
+static void test_pf_build_access_violation_read_and_fetch(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    f.err_code = 0x04;  /* U only -- user read, not-present */
+    pf_build_access_violation(&rec, &ctx, &f, 0x1000, f.err_code);
+    TEST_ASSERT_EQ(rec.ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE],
+                   (uint64_t)EXCEPTION_ACCESS_READ, "read fault -> access type 0");
+
+    fill_frame(&f);
+    f.err_code = 0x14;  /* U | I(fetch) -- user instruction fetch */
+    pf_build_access_violation(&rec, &ctx, &f, 0x2000, f.err_code);
+    TEST_ASSERT_EQ(rec.ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE],
+                   (uint64_t)EXCEPTION_ACCESS_EXECUTE, "fetch fault -> access type 8");
+}
+
+/* pf_build_access_violation zeroes the CONTEXT first, so an unsatisfiable group
+ * (FLOATING_POINT) is never left as caller garbage even from a reused scratch
+ * buffer -- the FPU control word is the architectural init value, not stale. */
+static void test_pf_build_access_violation_zeroes_context(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    uint8_t *p = (uint8_t *)&ctx;
+    uint32_t i;
+
+    for (i = 0; i < (uint32_t)sizeof(CONTEXT); i++)
+        p[i] = 0xEE;  /* poison the scratch before the build */
+
+    fill_frame(&f);
+    pf_build_access_violation(&rec, &ctx, &f, 0x3000, f.err_code);
+
+    TEST_ASSERT(!CONTEXT_HAS_GROUP(ctx.ContextFlags, CONTEXT_FLOATING_POINT),
+                "FLOATING_POINT group not claimed");
+    TEST_ASSERT_EQ(ctx.FltSave.ControlWord, FPU_FCW_INIT,
+                   "FPU control word is architectural init, not poison");
+    TEST_ASSERT_EQ(ctx.Dr0, 0, "Dr0 zeroed, not poison");
+}
+
+/* Until later sections land, the dispatch stubs decline every exception so the
+ * #PF handler's terminal path stays correct. */
+static void test_pf_dispatch_stubs_return_unhandled(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    pf_build_access_violation(&rec, &ctx, &f, 0x4000, f.err_code);
+
+    TEST_ASSERT_EQ(ki_dispatch_exception(&rec, &ctx, &f, UserMode, 1),
+                   KI_EXCEPTION_UNHANDLED, "ki_dispatch_exception stub declines");
+    TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
+                   KI_EXCEPTION_UNHANDLED, "ki_raise_kernel_exception stub declines");
+}
+
 /* ---- Registration ---- */
 
 void test_register_except(void)
@@ -387,6 +486,14 @@ void test_register_except(void)
                             test_exception_flt_codes, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: EXCEPTION_POINTERS pairing",
                             test_exception_pointers_pairing, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: pf access violation (write)",
+                            test_pf_build_access_violation_write, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: pf access violation (read/fetch)",
+                            test_pf_build_access_violation_read_and_fetch, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: pf builder zeroes CONTEXT",
+                            test_pf_build_access_violation_zeroes_context, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: pf dispatch stubs decline",
+                            test_pf_dispatch_stubs_return_unhandled, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

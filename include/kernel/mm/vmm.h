@@ -9,6 +9,9 @@
 
 #include "kernel/types.h"
 #include "kernel/mm/memmap.h"   /* mm_phys_to_hhdm: HHDM walk-pointer translation */
+#include "kernel/except.h"      /* #PF triage builds EXCEPTION_RECORD/CONTEXT from the fault frame */
+
+struct interrupt_frame;         /* fwd decl -- #PF triage builder takes the live frame */
 
 /* Page flags (bits in page table entries) */
 #define VMM_FLAG_PRESENT    (1ULL << 0)
@@ -243,3 +246,13 @@ int vmm_map_huge_1g(uintptr_t virt, uintptr_t phys, uint64_t flags);
  * Falls back silently if CPU_FEATURE_PAGE1GB is not supported.
  * Call after vmm_init() and vmm_apply_nx_policy(). */
 void vmm_promote_to_1g(void);
+
+/* #PF triage helper -- build a STATUS_ACCESS_VIOLATION EXCEPTION_RECORD plus a
+ * CONTROL/INTEGER CONTEXT describing a page fault. Pure and side-effect-free
+ * (no logging, no locks, no allocation) so it is safe in fault context and
+ * directly unit-testable: `ctx` is zeroed then filled from `frame`; `rec` gets
+ * ExceptionCode = STATUS_ACCESS_VIOLATION, NumberParameters = 2, and the winnt.h
+ * access-type / faulting-address pair decoded from `err_code`. */
+void pf_build_access_violation(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                               const struct interrupt_frame *frame,
+                               uintptr_t fault_addr, uint64_t err_code);
