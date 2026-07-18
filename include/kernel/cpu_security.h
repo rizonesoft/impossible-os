@@ -283,16 +283,20 @@ uint64_t __uaccess_copy_to(void *dst, const void *src, uint64_t n);
  * address is present+writable, -1 if the touch faulted. Used by ProbeForWrite. */
 int __uaccess_touch_w(void *addr);
 
-/* Fault-recoverable single-QWORD read from a possibly-corrupt/untrusted KERNEL
- * address -- the fault-safe primitive for kernel stack walking (TODO-23 s7
- * RtlCaptureStackBackTrace and crash-time frame-chain walks). A #PF taken at the
- * guarded load is redirected by page_fault_handler to its fixup (RIP-keyed, no
- * per-CPU state, SMP/preempt-safe), so a bad RBP terminates the walk instead of
- * bugchecking. Unlike __uaccess_* (recovered only for a CR2 < MM_USER_END
- * operand), this targets KERNEL VAs and the handler matches it by RIP alone
- * (read direction), redirected BEFORE the swap/mmap pager so a stray read never
- * enters demand paging at DISPATCH_LEVEL. Returns 0 on success (*out = value
- * read), -1 if it faulted (*out untouched). */
+/* Fault-recoverable single-QWORD read from a possibly-corrupt/untrusted
+ * RESIDENT KERNEL address -- the fault-safe primitive for kernel stack walking
+ * (TODO-23 s7 RtlCaptureStackBackTrace and crash-time frame-chain walks). A #PF
+ * taken at the guarded load is redirected by page_fault_handler to its fixup
+ * (RIP-keyed, no per-CPU state, SMP/preempt-safe), so a bad RBP terminates the
+ * walk instead of bugchecking. Unlike __uaccess_* (recovered only for a
+ * CR2 < MM_USER_END operand), this targets KERNEL VAs and the handler matches it
+ * by RIP alone (read direction), redirected BEFORE the swap/mmap pager. SCOPE: it
+ * is for ALWAYS-RESIDENT kernel memory (kernel stacks) reached in a context that
+ * can take a #PF -- it does NOT page in swapped/demand/user memory (such a read
+ * faults and returns -1, never resolved), and recovery is unavailable from a
+ * #DF/#MC/NMI abort context. Rejects NULL out, a top-of-address-space wrap, and
+ * non-canonical operands up front (those would #GP, not #PF). Returns 0 on
+ * success (*out = value read), -1 if it faulted or was rejected (*out untouched). */
 int __kstack_read_u64(uint64_t *out, const void *addr);
 
 /* Exception-table label symbols emitted by the __uaccess_* primitives.

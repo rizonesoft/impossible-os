@@ -361,11 +361,19 @@ int __kstack_read_u64(uint64_t *out, const void *addr)
     uint64_t val = 0;
     uint64_t a = (uint64_t)(uintptr_t)addr;
 
-    /* A non-canonical address raises #GP, not #PF -- the RIP-keyed fixup below
-     * only recovers #PF, so a #GP would bugcheck. Reject a non-canonical operand
-     * (both the base and the last read byte) up front. Defense in depth: callers
-     * (the stack walker) also pre-check, but this makes the primitive safe for
-     * ANY address. */
+    if (!out)
+        return -1;
+    /* The full 8-byte load is [a, a+7]. Reject a top-of-address-space wrap (a+7
+     * overflowing) BEFORE the canonical test -- a wrapped endpoint could re-enter
+     * canonical space and let the load straddle the linear-address boundary and
+     * raise #GP, which the #PF-only fixup cannot recover. Then require BOTH the
+     * base and the last byte canonical (a non-canonical operand also #GPs).
+     * NOTE: recovery relies on normal #PF delivery, so this is only fault-safe for
+     * RESIDENT kernel memory reached in a context that can take a #PF (not from a
+     * #DF/#MC/NMI abort handler); pageable/user memory read here faults and
+     * returns -1 rather than being paged in. */
+    if (a > ~(uint64_t)0 - 7u)
+        return -1;
     if (!MM_IS_CANONICAL_4LVL(a) || !MM_IS_CANONICAL_4LVL(a + 7u))
         return -1;
 

@@ -148,6 +148,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Unload paths call `kimage_unregister` after rundown.
 - [ ] Existing crash module enumeration migrates to this registry.
 - [ ] Load failures must not leave partial image entries.
+- [ ] Lock-free crash-safe module-range lookup: `exec_find_module_by_pc` takes `s_module_lock` (not NMI-safe), so crash-path PC validation can deadlock -- add an immutable module-range snapshot -> XREF: `TODO-23 §7` (`rtlp_is_code_pc`)
 - [ ] Commit: `"kernel: kimage -- loader integration"`
 
 **Test checkpoint:** Loading an EIF/PE image registers exactly one `KIMAGE_ENTRY`; a failed load leaves zero entries (atomic); the migrated crash-module enumeration returns the same set. Serial log shows `"kimage: registered '<name>'"` on load. Test on: QEMU WHPX + TCG; bare metal.

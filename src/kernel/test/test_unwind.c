@@ -1169,15 +1169,31 @@ static void test_stackwalk_degenerate(void)
                    "NULL context -> 0 frames");
 }
 
-/* RtlWalkFrameChain: kernel walk (flags==0) captures frames; user walk (flags&1)
- * is deferred and returns 0. */
+/* RtlWalkFrameChain: kernel walk (flags==0) captures frames; user walk
+ * (RTL_STACK_WALK_USER_MODE) is deferred and returns 0; the upper flag bits carry
+ * frames-to-skip (>> RTL_STACK_WALK_SKIP_SHIFT). */
 static void test_stackwalk_frame_chain(void)
 {
-    void *buf[8] = {0};
-    TEST_ASSERT(RtlWalkFrameChain(buf, 8, 0) >= 1u,
+    void *b0[8] = {0};
+    void *b1[8] = {0};
+    uint32_t f;
+
+    TEST_ASSERT(RtlWalkFrameChain(b0, 8, 0) >= 1u,
                 "RtlWalkFrameChain(flags=0) walks the kernel stack");
-    TEST_ASSERT_EQ((uint64_t)RtlWalkFrameChain(buf, 8, 1u), 0u,
-                   "RtlWalkFrameChain(flags&1) user walk deferred -> 0");
+    TEST_ASSERT_EQ((uint64_t)RtlWalkFrameChain(b0, 8, RTL_STACK_WALK_USER_MODE), 0u,
+                   "RtlWalkFrameChain user-mode walk deferred -> 0");
+
+    /* Skip encoded in the upper bits: flags=0 vs (1 << SKIP_SHIFT) from ONE call
+     * site -- skip=1 drops the immediate caller. */
+    f = (1u << RTL_STACK_WALK_SKIP_SHIFT);
+    {
+        void **bufs[2]; uint32_t flg[2]; int k;
+        bufs[0] = b0; flg[0] = 0;
+        bufs[1] = b1; flg[1] = f;
+        for (k = 0; k < 2; k++)
+            (void)RtlWalkFrameChain(bufs[k], 8, flg[k]);
+        TEST_ASSERT(b1[0] != b0[0], "RtlWalkFrameChain skip bits drop the caller");
+    }
 }
 
 /* The fault-safe read primitive: reads a valid kernel address correctly, and an
@@ -1197,6 +1213,15 @@ static void test_stackwalk_kstack_read(void)
      * it must be rejected up front (returns -1 without dereferencing). */
     TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(&out, (const void *)0x0000800000000000ULL),
                    (uint64_t)(int64_t)-1, "__kstack_read_u64 rejects a non-canonical address");
+
+    /* NULL output storage is rejected (no unguarded store-fault). */
+    TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(0, &src),
+                   (uint64_t)(int64_t)-1, "__kstack_read_u64 rejects NULL out");
+
+    /* Top-of-address-space wrap: [a, a+7] overflows -- rejected before the load
+     * (a wrapped endpoint could straddle the linear-address boundary -> #GP). */
+    TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(&out, (const void *)(uintptr_t)(~(uint64_t)0 - 3u)),
+                   (uint64_t)(int64_t)-1, "__kstack_read_u64 rejects an address+7 wrap");
 
     /* Find a genuinely unmapped high-canonical kernel VA (vmm_get_physical == 0
      * is a non-faulting page-table walk; 0 reliably means not present). */

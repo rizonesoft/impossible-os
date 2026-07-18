@@ -1088,18 +1088,25 @@ void *RtlPcToFileHeader(void *pc_value, void **base_of_image)
 extern char __text_start[];
 extern char __text_end[];
 
-/* A recorded return address must land in kernel text or a loaded module --
- * filters fabricated frames a corrupt chain would synthesize from stack data.
- * (The kernel currently links at 1 MiB, so the kernel image window is
- * [__text_start, __text_end); MM_KERNEL_VIRT_BASE is the not-yet-live TODO-33
- * higher-half base and must NOT be used as a validity predicate here.) */
+/* A recorded return address must land in kernel text -- filters fabricated
+ * frames a corrupt chain would synthesize from stack data. (The kernel currently
+ * links at 1 MiB, so the kernel image window is [__text_start, __text_end);
+ * MM_KERNEL_VIRT_BASE is the not-yet-live TODO-33 higher-half base and must NOT
+ * be used as a validity predicate here.)
+ *
+ * LOCK-FREE by construction -- must stay so: this runs on the crash / DISPATCH-
+ * LEVEL walk path, so it MUST NOT call RtlPcToFileHeader (-> exec_find_module_by_pc
+ * takes s_module_lock, which exec.c documents as NOT NMI-safe -- a walk from a
+ * context already holding it, or an NMI, would deadlock). Loaded-module frames
+ * (PE drivers) therefore stop the walk today; validating them needs a lock-free
+ * module-range snapshot owned by the kernel-image/module-registry loader-
+ * integration work. No PE kernel drivers load yet, so kernel-text-only
+ * validation loses nothing now. */
 static int rtlp_is_code_pc(uint64_t pc)
 {
     uint64_t ts = (uint64_t)(uintptr_t)__text_start;
     uint64_t te = (uint64_t)(uintptr_t)__text_end;
-    if (pc >= ts && pc < te)
-        return 1;
-    return RtlPcToFileHeader((void *)(uintptr_t)pc, 0) != 0;
+    return (pc >= ts && pc < te);
 }
 
 /* Resolve the containing kernel stack [*lo,*hi) for a live RSP, ONLY when RSP
@@ -1141,31 +1148,51 @@ static uint16_t rtlp_walk_rbp(uint64_t rsp, uint64_t rbp, uint32_t skip,
                               uint32_t count, void **buf, uint32_t *hash_out)
 {
     uint64_t lo, hi;
-    uint32_t captured = 0, skipped = 0, hash = 0;
+    uint32_t captured = 0, skipped = 0, visited = 0, hash = 0;
     uint64_t prev = 0;
 
-    if (count > RTL_MAX_STACK_FRAMES)
-        count = RTL_MAX_STACK_FRAMES;
     if (count == 0 || !buf) {
         if (hash_out) *hash_out = 0;
         return 0;
     }
+    /* Cap the number of frames the caller can actually store (RTL_MAX_STACK_FRAMES
+     * is our absolute walk ceiling; kernel stacks are far shallower). */
+    if (count > RTL_MAX_STACK_FRAMES)
+        count = RTL_MAX_STACK_FRAMES;
     if (!rtlp_kernel_stack_bounds(rsp, &lo, &hi)) {
+        /* Span fallback for an unresolved stack. Reject a wrapping RSP explicitly
+         * -- an untrusted crash CONTEXT could carry an rsp near the top of the
+         * address space where rsp + SPAN wraps and hi - 16 underflows, defeating
+         * the containment bound. */
+        if (rsp > ~(uint64_t)0 - RTL_STACK_WALK_MAX_SPAN) {
+            if (hash_out) *hash_out = 0;
+            return 0;
+        }
         lo = rsp;
-        hi = rsp + RTL_STACK_WALK_MAX_SPAN;   /* rsp is a valid stack VA: no wrap */
+        hi = rsp + RTL_STACK_WALK_MAX_SPAN;
+    }
+    if (hi < lo + 16u) {   /* need room for a full [rbp, rbp+16) slot pair */
+        if (hash_out) *hash_out = 0;
+        return 0;
     }
 
-    while (captured < count) {
+    /* Bound TOTAL frames examined (skipped + captured), not just captured: a large
+     * skip must not walk the whole 64 KiB span doing two guarded reads + a
+     * code-PC check per frame. */
+    while (captured < count && visited < RTL_MAX_STACK_FRAMES) {
         uint64_t saved_rbp, ret;
 
         /* Frame-pointer validity: 8-aligned, at/above SP and inside the bound so
-         * [rbp, rbp+16) is in range, strictly climbing (no cycle), and canonical
-         * -- a non-canonical [rbp, rbp+16) would #GP (not #PF) and escape the
+         * [rbp, rbp+16) is in range (hi >= lo+16 proven above, so hi - 16u cannot
+         * underflow), strictly climbing (no cycle), and canonical -- a non-
+         * canonical [rbp, rbp+16) would #GP (not #PF) and escape the
          * __kstack_read_u64 fixup, so reject it before the read. */
         if (rbp & 0x7u)          break;
         if (rbp < lo || rbp > hi - 16u) break;
         if (rbp <= prev)         break;
         if (!MM_IS_CANONICAL_4LVL(rbp) || !MM_IS_CANONICAL_4LVL(rbp + 15u)) break;
+
+        visited++;
 
         /* Fault-safe reads: return address first, then the saved frame pointer. */
         if (__kstack_read_u64(&ret, (const void *)(uintptr_t)(rbp + 8)) != 0)
@@ -1228,15 +1255,17 @@ uint32_t RtlWalkFrameChain(void **callers, uint32_t count, uint32_t flags)
 {
     uint64_t rsp, rbp;
 
-    if (flags & 1u) {
+    if (flags & RTL_STACK_WALK_USER_MODE) {
         /* User-mode walk needs the current thread's saved ring-3 CONTEXT to source
          * the user RSP/RBP; no such accessor exists from kernel mode yet. Deferred
          * (the read mechanism would use the s13 fault-safe user path). */
         return 0;
     }
+    /* Frames-to-skip is encoded in the upper flag bits (ntdll convention). */
     rbp = (uint64_t)(uintptr_t)__builtin_frame_address(0);
     __asm__ volatile ("movq %%rsp, %0" : "=r"(rsp));
-    return (uint32_t)rtlp_walk_rbp(rsp, rbp, 0, count, callers, 0);
+    return (uint32_t)rtlp_walk_rbp(rsp, rbp, flags >> RTL_STACK_WALK_SKIP_SHIFT,
+                                   count, callers, 0);
 }
 
 uint32_t rtl_unwind_dynamic_table_count(void)

@@ -273,8 +273,17 @@ void *RtlPcToFileHeader(void *pc_value, void **base_of_image);
  * module (RtlPcToFileHeader). Metadata-accurate walking is the deferred
  * TODO-18 s5 follow-up. */
 
-/* Hard cap on captured frames (Windows RtlCaptureStackBackTrace: max 0xFE). */
+/* Absolute walk ceiling: the maximum number of frames the walk will EVER examine
+ * (skipped + captured), bounding total work on a pathological deep/corrupt chain.
+ * Kernel stacks are far shallower, so this is a safety bound, not a real capture
+ * limit. (Not the same as the Windows ~254 FramesToSkip field width.) */
 #define RTL_MAX_STACK_FRAMES   0xFEu
+
+/* RtlWalkFrameChain flags: bit 0 selects a user-mode walk; the frames-to-skip
+ * count is encoded in the upper bits (>> RTL_STACK_WALK_SKIP_SHIFT), matching the
+ * documented ntdll RtlWalkFrameChain convention. */
+#define RTL_STACK_WALK_USER_MODE   0x1u
+#define RTL_STACK_WALK_SKIP_SHIFT  8
 
 /* Capture the current kernel-mode call stack: walk the RBP chain, skip the first
  * frames_to_skip frames (frames_to_skip == 0 -> first captured frame is the
@@ -296,11 +305,13 @@ uint16_t rtl_capture_stack_from_context(const CONTEXT *context, uint32_t frames_
                                         uint32_t frames_to_capture, void **back_trace,
                                         uint32_t *back_trace_hash);
 
-/* Thin frame-chain wrapper. flags == 0: walk the current kernel stack (as
- * RtlCaptureStackBackTrace with skip == 0). flags & 1: user-mode walk -- deferred
- * (returns 0) until a saved current-user-CONTEXT accessor exists to source the
- * ring-3 RSP/RBP from kernel mode (the user reads themselves would use the s13
- * fault-safe user path). Returns the number of callers recorded. */
+/* Thin frame-chain wrapper. The frames-to-skip count is (flags >>
+ * RTL_STACK_WALK_SKIP_SHIFT); RTL_STACK_WALK_USER_MODE (bit 0) selects a
+ * user-mode walk. Kernel walk (bit 0 clear): walk the current kernel stack,
+ * skipping the encoded count. User walk (bit 0 set): deferred (returns 0) until a
+ * saved current-user-CONTEXT accessor exists to source the ring-3 RSP/RBP from
+ * kernel mode (the user reads themselves would use the s13 fault-safe user path).
+ * Returns the number of callers recorded. */
 uint32_t RtlWalkFrameChain(void **callers, uint32_t count, uint32_t flags);
 
 /* Test-support: current number of registered dynamic function tables. */

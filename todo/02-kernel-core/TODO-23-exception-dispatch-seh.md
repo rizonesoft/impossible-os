@@ -376,7 +376,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 
 **Test checkpoint:** `RtlCaptureStackBackTrace(0, 8, buf, &hash)` from a 4-deep chain returns ≥4 kernel-code frames with a non-zero hash; `skip=1` drops the immediate caller (first frame == skip=0 second frame); `rtl_capture_stack_from_context` on a synthetic RBP chain returns the exact frames with a deterministic hash; a non-monotonic RBP terminates the walk; `__kstack_read_u64` recovers a #PF on an unmapped kernel VA (returns -1, no bugcheck). Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 7 new StackWalk suites, 0 failures (21918 kernel + 16 user PASS)
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 8 new StackWalk suites, 0 failures (21923 kernel + 16 user PASS)
 
 > **Notes:**
 > - **What shipped** -- kernel stack walking in `unwind.c`: `RtlCaptureStackBackTrace`, `RtlWalkFrameChain`, `rtl_capture_stack_from_context`; a bounds-checked RBP frame-chain walk (no `RtlVirtualUnwind` -- the ELF kernel has no `.pdata`).
@@ -385,6 +385,9 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - **Downstream effects** -- 4 Codex design rounds hardened the fault boundary (see commit msg); `RtlWalkFrameChain` user walk `[/]` deferred to `TODO-07 §3`; metadata-accurate walk deferred to `TODO-18 §5`.
 > - **Canonical doc** -- the stack-walk block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §7 owns the kernel walker + fault-safe read; `.eh_frame`/`.pdata` registry is `TODO-18 §5`; user-mode `RtlCaptureStackBackTrace` (ntdll) is `TODO-04`.
+> **Verified:** 2026-07-18 | ship `1d3e1ab5` + review fixes | 5/6 items | build OK | 21923 kernel + 16 user PASS | smoke PASS (KVM 2.75s)
+> **Deferred:** [M] loaded-module (PE driver) return frames stop the walk -- kernel-text-only PC validation stays lock-free to avoid the `s_module_lock` crash-path deadlock (the deadlock itself is fixed); no PE drivers load yet -> XREF: `02-kernel-core/TODO-18 §6` (item: "Lock-free crash-safe module-range lookup" at line 151)
+> **Quality reviewed:** 2026-07-18 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+6M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlCaptureStackBackTrace and RtlWalkFrameChain for kernel-mode stack walking"`
 
