@@ -77,7 +77,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   8   | SEH chain walk + `__C_specific_handler` (re-owned ring-3 → T04 §5) | §5, §6, TODO-11 §6         |  [/]   |
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                              | §6, §8                     |  [/]   |
 | 💎   |  10   | Vectored Exception Handlers (VEH)                                  | §4, TODO-05 §3             |  [x]   |
-| 💎   |  11   | Vectored Continue Handlers (VCH)                                   | §4, §10                    |  [ ]   |
+| 💎   |  11   | Vectored Continue Handlers (VCH)                                   | §4, §10                    |  [x]   |
 | 💎   |  12   | Unhandled exception filter + WER hook                              | §7, §8, §10                |  [ ]   |
 | ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                           | §2                         |  [x]   |
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [ ]   |
@@ -493,7 +493,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- `include/kernel/except.h` VEH shared ABI block.
 > - **Scope boundary** -- §10 owns the shared node/disposition ABI; TODO-04 §5 owns the list head, lock, add/remove APIs, and the walk; TODO-11 owns the TEB layout (no VEH field added).
 > **Verified:** 2026-07-19 | commit `6bf93677` | 4/4 items | build OK | tests 387/387 PASS
-> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 287)
+> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 289)
 > **Quality reviewed:** 2026-07-19 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
@@ -510,12 +510,20 @@ Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `Remov
 > [!NOTE]
 > VCH is distinct from VEH. VEH runs BEFORE frame-based handlers; VCH runs AFTER. Both are per-process and both live in ring 3 (§10 ownership note applies verbatim: the list head is ntdll process-global, never a TEB/PEB anchor). Full order: kernel debugger first-chance (§4) → [ring 3: VEH → SEH → VCH] → kernel second-chance via `NtRaiseException` re-entry (§4) → terminate.
 
-- [ ] Confirm the VCH list reuses the `VECTORED_HANDLER_ENTRY` node ABI from §10 (no new kernel type); the second list head is ntdll process-global -> XREF: `12-user-platform-sdk/TODO-04 §5` owns both list heads + locks
-- [ ] Scope boundary: `AddVectoredContinueHandler` / `RemoveVectoredContinueHandler` and the post-SEH walk are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5`; no `ki_call_vch_list` in ring 0
+- [x] Confirmed: VCH reuses §10's `VECTORED_HANDLER_ENTRY` node (no new kernel type); `except.h` comment now pins ONE node / TWO ntdll heads, no kernel anchor -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "VCH list") owns both heads + locks
+- [x] Scope boundary: `AddVectoredContinueHandler` / `RemoveVectoredContinueHandler` + the post-SEH walk are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "VCH walk"); grep proves no `ki_call_vch_list` in ring 0
 
 **Test checkpoint:** The kernel publishes NO second anchor (VCH reuses §10's `VECTORED_HANDLER_ENTRY` and the ntdll process-global model); grep proves no `ki_call_vch_list` and no VCH TEB/PEB field exist in ring 0. Behavioural VCH ordering ("fires only after SEH succeeds") is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"rtl: implement Vectored Continue Handler (VCH) list"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 387 suites, 0 failures
+> **Notes:**
+> - **What shipped** -- `include/kernel/except.h` node comment now states the ONE-node / TWO-ntdll-heads / no-kernel-anchor boundary for VEH+VCH; no new kernel type, function, anchor, or test was added for VCH.
+> - **How it integrates** -- VCH reuses §10's `VECTORED_HANDLER_ENTRY` verbatim; the relabelled layout test ("VEH/VCH shared node ABI layout") proves the shared node TYPE's ABI, not runtime lists (D12T04 §5); a grep confirms no ring-0 VCH anchor.
+> - **Downstream effects** -- `12-user-platform-sdk/TODO-04 §5` gained concrete VCH items (list head, both APIs, post-SEH walk, ordering/re-entrancy tests); design review caught the empty-XREF + tautological-test traps.
+> - **Canonical doc** -- `include/kernel/except.h` VEH/VCH shared node ABI block.
+> - **Scope boundary** -- §11 owns only the kernel boundary confirmation; TODO-04 §5 owns the second list head, both VCH APIs, and the post-SEH continuation walk.
+
+- [x] Commit: `"rtl: implement Vectored Continue Handler (VCH) list"`
 
 
 ---
@@ -704,7 +712,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | SEH + __C_specific_handler    | ✅                     | ❌                  | ⬜ ring-3 → T04 §5 (§8 re-owned)           |
 | 💎   | RtlUnwindEx + __finally       | ✅                     | ❌                  | ✅ §9 unwind-to-target + RtlRestoreContext |
 | 💎   | VEH list                      | ✅ ntdll               | ❌                  | ✅ §10 node ABI (list D12T04 §5)           |
-| 💎   | VCH list                      | ✅ ntdll               | ❌                  | ⬜ §11 ABI, D12T04 §5                      |
+| 💎   | VCH list                      | ✅ ntdll               | ❌                  | ✅ §11 kernel boundary (list D12T04 §5)    |
 | 💎   | Unhandled exception filter    | ✅ WER                 | ✅ core dump        | ⬜ §12 kernel terminal                     |
 | 💎   | `__fastfail` / INT 0x29       | ✅ 0xC0000409          | ❌                  | ◐ §3 handler (DPL=3; per-proc term §5)    |
 | 💎   | CONTEXT ContextFlags + FXSAVE | ✅ 0x4D0 ABI           | ✅ ucontext_t       | ✅ §1 layout                               |

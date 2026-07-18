@@ -360,7 +360,16 @@ typedef int32_t (__attribute__((ms_abi)) *PVECTORED_EXCEPTION_HANDLER)(
 /* VEH / VCH list node -- the IMPOSSIBLE OS shared ABI, agreed between the kernel
  * (publisher) and Impossible OS's own ntdll (consumer). Impossible OS's ntdll
  * allocates these from its process heap and links them into its process-global
- * VEH list (the Vectored Continue Handler list reuses this exact type).
+ * VEH list.
+ *
+ * ONE node type, TWO ntdll list heads. The Vectored Continue Handler (VCH) list
+ * reuses this EXACT type; VCH is not a new kernel struct and has no second kernel
+ * anchor. VEH runs before frame-based (SEH) handlers, VCH after a handler has
+ * chosen to continue; both are per-PROCESS ring-3 state whose list heads + locks
+ * live in the ntdll user runtime, never in a kernel / TEB / PEB field. The kernel
+ * neither anchors, reads, nor walks either list --
+ * there is no ki_call_veh_list / ki_call_vch_list in ring 0. The kernel's whole
+ * contribution to both mechanisms is this single canonical node layout.
  *
  * This is the CURRENT minimal shape and is NOT byte-for-byte with Microsoft's
  * ntdll (a modern Microsoft entry is a ~0x28 node carrying reference/lock

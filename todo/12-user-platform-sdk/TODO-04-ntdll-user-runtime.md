@@ -252,7 +252,9 @@ are available via `CreateFiber`/`SwitchToFiber`.
 ## 5. Vectored Exception Handling (VEH) `[Opus]`
 
 > Novel exception dispatch chain. No prior Impossible OS VEH exists. Kernel delivers
-> exceptions via `NtRaiseException`; ntdll dispatches to VEH → SEH → UnhandledExceptionFilter.
+> exceptions via `NtRaiseException`; ntdll dispatches VEH → SEH → VCH (Vectored Continue
+> Handlers, walked when dispatch continues execution -- via VEH or a frame handler -- before
+> resume) → UnhandledExceptionFilter.
 
 > [!IMPORTANT]
 > **Ownership boundary with `02-kernel-core/TODO-23` (binding both ways).** THIS section owns the
@@ -285,6 +287,12 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`VOID RaiseException(code, flags, nargs, args)`**: build `EXCEPTION_RECORD`; call `NtRaiseException(record, context, TRUE)` → kernel delivers back via `KiUserExceptionDispatcher`
 - [ ] **`RtlCaptureStackBackTrace(skip, count, buffer, hash)`**: walk `RBP` chain; store return addresses; return actual count captured
 - [ ] **Re-entrant dispatch + removal safety** (DESIGN OPEN): a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so one lock across the walk is insufficient; define+test a re-entrancy protocol (see NOTE)
+- [ ] **VCH list**: SECOND process-global lock-guarded list of `VECTORED_HANDLER_ENTRY` nodes, separate head from the VEH list; reuses §10 node ABI (no new type); NOT a TEB/PEB anchor. ABI: `TODO-23 §10`; boundary: `§11`
+- [ ] **`PVOID AddVectoredContinueHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)`**: allocate node via `RtlAllocateHeap`; `first != 0` head-insert else tail-append on the VCH list; return opaque handle
+- [ ] **`ULONG RemoveVectoredContinueHandler(PVOID handle)`**: unlink from the VCH list under the ntdll lock; free via `RtlFreeHeap`; return 1 on success, 0 if not found
+- [ ] **VCH walk**: when dispatch CONTINUES execution (VEH returned CONTINUE_EXECUTION, or a frame/SEH handler continued), before context restore, walk the VCH list under the lock; validate exact trigger conditions vs a Windows/ReactOS trace
+- [ ] **VCH return semantics**: each `handler(EXCEPTION_POINTERS *)` returns a disposition -- `EXCEPTION_CONTINUE_EXECUTION` stops the VCH walk, `EXCEPTION_CONTINUE_SEARCH` proceeds to the next; shares the VEH re-entrancy protocol
+- [ ] **VCH ordering + re-entrancy tests**: assert VCH fires on both continue paths (VEH-continue and SEH-continue) and stops on `CONTINUE_EXECUTION`, in registration order, and removal-during-walk is safe under the shared protocol
 
 > [!NOTE]
 > **Re-entrancy is unresolved.** A VEH handler is arbitrary code: it may call `RemoveVectoredExceptionHandler` (self or another node) or fault into nested exception dispatch. Holding one lock across the whole walk does NOT make this safe -- a non-recursive lock deadlocks inside recovery, and a recursive one lets a node be freed while an outer walk still references it (use-after-free). The design must cover self-removal, next-handler removal, and nested exceptions via deferred reclamation / dispatch-depth tracking, or per-node lifetime state (Microsoft's ntdll uses a ~0x28 refcounted + `EncodePointer`'d node for exactly this). The VEH/VCH node is currently the minimal `{ LIST_ENTRY List; PVECTORED_EXCEPTION_HANDLER Handler; }` (24 bytes) -- PROVISIONAL: if the protocol needs per-node lifetime state the node grows and both sides update together. Node ABI owner: `02-kernel-core/TODO-23 §10`.

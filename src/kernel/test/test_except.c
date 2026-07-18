@@ -882,10 +882,12 @@ veh_test_handler_continue_search(EXCEPTION_POINTERS *info)
 
 static void test_veh_node_layout(void)
 {
-    /* Layer 3: prove the shared VEH node ABI at runtime (except.h static-asserts
-     * it as Layer 1). Impossible OS's own ntdll uses this exact node layout for
-     * its process-global VEH/VCH lists; the literal sizes/offsets here are the
-     * independent contract both sides are pinned to. */
+    /* Layer 3: prove the shared VEH/VCH node ABI at runtime (except.h
+     * static-asserts it as Layer 1). Impossible OS's own ntdll uses this ONE node
+     * layout for BOTH its process-global lists -- the Vectored Exception Handler
+     * list and the Vectored Continue Handler list reuse the same 24-byte node;
+     * there is no separate VCH node type and no kernel anchor for either. The
+     * literal sizes/offsets here are the independent contract both sides pin. */
     TEST_ASSERT_EQ(sizeof(VECTORED_HANDLER_ENTRY), 24, "VECTORED_HANDLER_ENTRY is 24 bytes");
     TEST_ASSERT_EQ(_Alignof(VECTORED_HANDLER_ENTRY), 8, "VECTORED_HANDLER_ENTRY 8-byte aligned");
     TEST_ASSERT_EQ(__builtin_offsetof(VECTORED_HANDLER_ENTRY, List), 0x00, "VEH node List at 0x00");
@@ -1000,7 +1002,7 @@ void test_register_except(void)
                             test_pf_handler_registered, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: copy_from recovers live #PF",
                             test_uaccess_copy_from_recovers_live_fault, TEST_CAT_EXCEPT);
-    test_suite_register_cat("Except: VEH node ABI layout",
+    test_suite_register_cat("Except: VEH/VCH shared node ABI layout",
                             test_veh_node_layout, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: VEH handler ms_abi + disposition",
                             test_veh_handler_abi, TEST_CAT_EXCEPT);
