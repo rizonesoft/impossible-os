@@ -864,6 +864,17 @@ The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw p
 
 **Test checkpoint:** the counted Query and Expand agree value-for-value with their `_U` counterparts on the shared cases; exact fit SUCCEEDS on Query (WRK rule) and the `_U` wrapper still reports Length in bytes excluding the NUL; Expand's `ReturnLength` includes the NUL on both the success and too-small paths; a `SourceLength` past the documented cap is refused rather than narrowed; a result above `RTL_ENV_MAX_RESULT_WCHARS` is `STATUS_UNSUCCESSFUL` through `_U` but expressible through the counted form; a non-NULL `Environment` is refused pending §24. Serial/klog observable. QEMU WHPX + TCG; VirtualBox; bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 8 new suites (counted Expand success/too-small/foreign/boundaries, counted Query roundtrip/too-small/errors/boundaries), 2162/2162 kernel + 16/16 user PASS, 0 leaked on KVM
+
+> **Notes:**
+> - **What shipped:** two counted phnt read forms (`RtlExpandEnvironmentStrings`, `RtlQueryEnvironmentVariable`) in `nt_rtlenv.c` over a SIZE_T-safe `rtl_env_expand_counted` engine + a shared query core; both `_U` forms delegate down; 8 new suites.
+> - **How it integrates:** counted forms serve only the NULL Environment (foreign -> `STATUS_NOT_SUPPORTED`); Expand `ReturnLength` includes the NUL on both paths, Query excludes it on success -- deliberately NOT unified. Adoptions in the commit message.
+> - **Downstream effects:** exports stay GATED (no `pe.c` row; the §21 absence test pins both counted names) until §24 probe+copy + §20 PMM (`03-memory-concurrency/TODO-03 §1`) close.
+> - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (counted entry contracts, ReturnLength conventions, source-policy ceiling).
+> - **Scope boundary:** §25 owns the counted (non-`_U`) READ forms over `nt_rtlenv.c`; §23 owns block-lifecycle adoption; §24 owns the foreign-block probe+copy boundary + expansion completeness.
+> **Verified:** 2026-07-18 | commit `c846428f` | 8/8 items | build OK | tests 2162/2162 kernel + 16 user PASS, 0 leaked (KVM)
+> **Accepted:** [M] two-pass agreement misses an equal-length equal-cost concurrent `Source` mutation (reason: pre-existing documented limitation shared by all forms, not user-reachable) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Snapshot `Source` into a private kernel buffer" at line 830)
+> **Quality reviewed:** 2026-07-18 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 1H+4M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
 ---
 
