@@ -52,9 +52,9 @@ enum cpu_feature {
     CPU_FEATURE_UMIP      = 27,   /* User-Mode Instruction Prevention */
     CPU_FEATURE_PKU       = 28,   /* Protection Keys for User-mode */
 
-    /* CPUID Leaf 0x07 ECX=0 EDX */
-    CPU_FEATURE_CET_SS    = 29,   /* CET Shadow Stacks */
-    CPU_FEATURE_CET_IBT   = 30,   /* CET Indirect Branch Tracking */
+    /* CPUID Leaf 0x07 ECX=0 (CET_SS is ECX[7]; CET_IBT/IBRS/... are EDX) */
+    CPU_FEATURE_CET_SS    = 29,   /* CET Shadow Stacks -- probed from ECX[7] */
+    CPU_FEATURE_CET_IBT   = 30,   /* CET Indirect Branch Tracking -- EDX[20] */
     CPU_FEATURE_IBRS      = 31,   /* Indirect Branch Restricted Speculation */
     CPU_FEATURE_STIBP     = 32,   /* Single Thread Indirect Branch Predictors */
     CPU_FEATURE_UINTR     = 33,   /* User-Level Interrupts */

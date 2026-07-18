@@ -37,7 +37,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 - -> XREF: `TODO-12-native-api-ssdt.md §26`: SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write -> CRITICAL_STRUCTURE_CORRUPTION BugCheck
 - -> XREF: `TODO-17-binary-system.md §3,§12`: ELF `PT_GNU_PROPERTY` (T17 §3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (T17 §12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §9 (CET shadow stack) and §10 (CET IBT) consume those flags to decide enforcement
 - -> XREF: `TODO-21-process-model-extensions.md §11`: per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-21
-- -> XREF: `TODO-23-exception-dispatch-seh.md §3`: `#CP` (vector 21, CET shadow-stack violation) exception handler; §9 of this TODO enables CET SS, §3 of T23 routes the resulting `#CP` faults through `ki_dispatch_exception()` (T23 §3 is a hard prerequisite for §9 enable -- without structured #CP routing a shadow-stack violation panics instead of being caught)
+- -> XREF: `TODO-23-exception-dispatch-seh.md §3`: `#CP` (vector 21, CET shadow-stack RET mismatch OR IBT missing-`ENDBR64`) exception handler -- SHIPPED; §9 enables CET SS, §10 enables IBT, §3 of T23 handles the resulting `#CP` faults (user-mode via `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly) (T23 §3 was a hard prerequisite for §9/§10 enable -- now satisfied, so a violation is caught rather than triple-faulting)
 - -> XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §3`: `boot_info.secure_boot_enabled` / `HKLM\SYSTEM\SecureBoot\State` from UEFI `SecureBoot` variable; future `boot.conf` lockdown knob must be defined in this TODO when implemented (no §13 in TODO-01)
 - -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, §5`: Phase 0 activation order (§2) calls `cpu_efer_harden()`/`cpu_cr4_harden()` from this TODO; AP hardening (§5) replicates the same features on each AP via `ap_cpu_harden()`
 - -> XREF: `TODO-31-kernel-bulletproofing.md §10`: guard pages, split huge pages, and VM layout invariants; NX/SMEP/SMAP policy here must stay consistent with those checks
@@ -297,15 +297,15 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 ## 9. CET Shadow Stack (Kernel Ring 0)
 
 > [!WARNING]
-> **Deferred -- blocked on two prerequisites owned elsewhere (Codex design review 2026-06-28).** Enabling supervisor CET (`CR4.CET` + `S_CET.SH_STK_EN`) is unsafe until both land, so CET stays detected-but-disabled (the current, safe state -- `CPU_FEATURE_CET_SS` is already probed in `cpuid.c`):
-> 1. **#CP fault routing** -- `vector 21` only reaches the generic panic path today (`isr_stubs.asm:179` `ISR_ERRCODE 21`; no structured handler). Without it a forged-return/shadow-stack violation triple-faults instead of being caught, so the Test-checkpoint promise cannot be delivered. -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)" at line 60).
+> **Deferred -- blocked on the remaining AP-TSS prerequisite owned elsewhere (Codex design review 2026-06-28; #CP routing shipped 2026-07-18).** Enabling supervisor CET (`CR4.CET` + `S_CET.SH_STK_EN`) is unsafe until it lands, so CET stays detected-but-disabled (the current, safe state -- `CPU_FEATURE_CET_SS` is probed from CPUID.(07H,0):ECX[7] in `cpuid.c`):
+> 1. **#CP fault routing (RESOLVED)** -- SHIPPED in TODO-23 §3: `except_common_handler` registers a CET-gated `#CP` (vector 21) handler -- user-mode routes through `ki_dispatch_exception()` (`STATUS_STACK_BUFFER_OVERRUN`+subcode 0x39), kernel-mode calls `KeBugCheckEx(0x139, 0x39)` directly -- so a shadow-stack (or IBT) violation is caught rather than triple-faulting. Registration is gated on `cpu_has(CPU_FEATURE_CET_SS) || cpu_has(CPU_FEATURE_CET_IBT)` (both raise #CP), so it activates automatically once either capability is present. -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3`.
 > 2. **AP IST shadow stacks** -- `MSR_IA32_INTERRUPT_SSP_TABLE` needs a per-CPU TSS so each AP's #DF/NMI/#PF IST entry gets its own shadow stack; the TSS/IST is BSP-only today (`gdt.c:123` "configures the BSP TSS only"). Enabling CET on APs without this turns any IST-backed exception into a recursive #CP. -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
 >
 > Design review also corrected the draft below: the supervisor shadow-stack PTE marker is **Dirty (bit 6, `VMM_FLAG_DIRTY`) with Write=0**, NOT "bit 5" (bit 5 is `VMM_FLAG_ACCESSED`); and CET state must be saved as **per-thread `PL0_SSP` on every context switch, NOT via `IA32_XSS`/`XSAVES`** -- `xsave_area`/`fpu_used` are per-*task* and lazy, so XSS-backed CET state would corrupt SSP across same-process thread switches. XSS deferred until XSAVE ownership moves to `struct thread`.
 
-- [/] **(prereq, blocks enable)** Structured `#CP` (vector 21) routing through `ki_dispatch_exception()` -> XREF: `TODO-23 §3` (SHIPPED there; CET-gated handler). Until CET enables, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
-- [ ] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`.
-- [ ] BUG: `cpuid.c` probes `CPU_FEATURE_CET_SS` from EDX[7], but CET SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM (EDX[7] reserved); move to ECX block, else `cpu_has(CET_SS)` is always false and CET SS never enables (found via TODO-23 §3)
+- [x] Structured `#CP` (vector 21) handling -> XREF: `TODO-23 §3` (SHIPPED; CET-gated handler: user-mode routes through `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly)
+- [ ] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`. Until this + the enable trampoline land, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+- [x] FIXED (TODO-23 §3 review): `cpuid.c` probed `CPU_FEATURE_CET_SS` from EDX[7]; CET SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM (EDX[7] reserved). Moved to the ECX block so `cpu_has(CET_SS)` is accurate on CET hardware (2 reviewers confirmed)
 - [ ] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline)
   - Seed the active call chain's SSP via the architectural save/restore-token sequence before any normal `RET`, else the first return after `CR4.CET` faults #CP on an empty shadow stack during bring-up
 - [ ] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern
@@ -341,18 +341,18 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | deferred -- VMM-SHSTK-encoding + `cpu_enable_cet_ss` gating-off tests land with the enable; CET is detected-but-disabled today so no enable surface to assert yet.
 >
 > **Notes:**
-> - Deferred 2026-06-28: Codex design review proved a safe kernel-ring-0 CET enable is blocked on `#CP` routing (`TODO-23 §3`) + per-CPU AP TSS for IST shadow stacks (`D01 T09 §10`); CET stays detected-but-disabled (the safe state).
+> - Deferred 2026-06-28 (updated 2026-07-18): `#CP` routing (`TODO-23 §3`) is now SHIPPED (CET-gated handler); the remaining CET-enable blocker is the per-CPU AP TSS for IST shadow stacks (`D01 T09 §10`). CET stays detected-but-disabled (the safe state) until that lands.
 > - Design corrected the draft: supervisor-SHSTK PTE marker is Dirty/bit-6 + Write-clear (not "bit 5" = Accessed); CET state saves per-thread `PL0_SSP` on context switch, not `IA32_XSS`/`XSAVES` (XSAVE is per-task + lazy).
 > - When unblocked: add `CET_SS` to the AP probe mask, `cpu_enable_cet_ss()` gated per-AP via `cpu_feature_local()` (mirrors §8 `SPEC_CTRL`), CET-aware no-return enable trampoline, then per-thread + IST shadow stacks.
 >
-> **Deferred:** [Critical] Kernel-ring-0 CET shadow-stack enable unsafe without structured `#CP` (vector 21) handling -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)" at line 72). [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
+> **Deferred:** [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399). (The structured `#CP` routing blocker was resolved by `TODO-23 §3`.)
 
 ---
 
 ## 10. CET Indirect Branch Tracking (IBT / ENDBR64)
 
 > [!WARNING]
-> **Deferred -- inherits §9's CET-enable blockers (Codex design review 2026-06-28).** IBT enforcement (`S_CET.ENDBR_EN`) rides the same `CR4.CET` enable that §9 defers, and an indirect branch to a target lacking `ENDBR64` raises `#CP` -- so IBT cannot be enabled until: (1) `#CP` routing exists -> XREF: `02-kernel-core/TODO-23 §3` (item: "Fault-to-exception mapping ...#CP" at line 60); (2) §9's CET enable path lands (this section's `cpu_enable_cet_ibt()` ORs `ENDBR_EN` into the §9 `S_CET` write). The `-fcf-protection=branch` ENDBR64 emission + asm-stub `ENDBR64` audit (`ap_trampoline.asm`, ISR/IDT stubs) is harmless-when-off instrumentation but is held with the enable to avoid shipping dead, unenforced landing pads.
+> **Deferred -- inherits §9's CET-enable blockers (Codex design review 2026-06-28).** IBT enforcement (`S_CET.ENDBR_EN`) rides the same `CR4.CET` enable that §9 defers, and an indirect branch to a target lacking `ENDBR64` raises `#CP` -- so IBT cannot be enabled until §9's CET enable path lands (this section's `cpu_enable_cet_ibt()` ORs `ENDBR_EN` into the §9 `S_CET` write). The former `#CP` routing prereq is now SHIPPED in `02-kernel-core/TODO-23 §3` (CET-gated handler; user-mode via `ki_dispatch_exception()`, kernel-mode `KeBugCheckEx()` directly). The `-fcf-protection=branch` ENDBR64 emission + asm-stub `ENDBR64` audit (`ap_trampoline.asm`, ISR/IDT stubs) is harmless-when-off instrumentation but is held with the enable to avoid shipping dead, unenforced landing pads.
 
 - [ ] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target
 - [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l`; must be > 0 (non-zero); count should match approximate function count
@@ -370,10 +370,10 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | deferred -- ENDBR64-count + IBT-enable tests land with §9's CET enable path.
 >
 > **Notes:**
-> - Deferred 2026-06-28: IBT enforcement rides §9's deferred `CR4.CET`/`S_CET` enable and raises `#CP` on missing `ENDBR64`, so it inherits §9's two blockers (`#CP` routing + the CET enable path).
+> - Deferred 2026-06-28 (updated 2026-07-18): IBT enforcement rides §9's deferred `CR4.CET`/`S_CET` enable and raises `#CP` on missing `ENDBR64`. With `#CP` routing now shipped (`TODO-23 §3`), it inherits only §9's remaining blocker: the CET enable path (+ AP TSS).
 > - Held to avoid shipping dead, unenforced ENDBR64 landing pads; the `-fcf-protection=branch` flag + asm-stub audit land together with the enable.
 >
-> **Deferred:** [High] CET IBT enable inherits §9's blockers -> XREF: this TODO §9 (CET enable path) + `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP)" at line 60).
+> **Deferred:** [High] CET IBT enable inherits §9's remaining blocker -> XREF: this TODO §9 (CET enable path + AP TSS). (The `#CP` routing prereq was resolved by `02-kernel-core/TODO-23-exception-dispatch-seh.md §3`.)
 
 ---
 

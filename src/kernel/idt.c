@@ -444,15 +444,22 @@ irql_restore:
 
 void idt_register_handler(uint8_t n, interrupt_handler_t handler)
 {
-    /* Guard: warn if overwriting an existing non-NULL handler.
-     * Legitimate overwrites (e.g., MSR probe temporarily replacing #GP)
-     * are allowed but logged at DEBUG level. NULL handler = deregistration. */
+    /* Guard: warn if overwriting an existing non-NULL handler -- catches an
+     * UNEXPECTED permanent replacement (two subsystems claiming one vector).
+     * Expected temporary swaps (the MSR #GP probe) use the _quiet variant so
+     * they do not flood the boot log (84 lines/boot before that split).
+     * NULL handler = deregistration. */
     if (handler && handlers[n]) {
         klog(LOG_WARN, "idt",
              "vector 0x%02X: overwriting existing handler %p with %p",
              (uint64_t)n, (uint64_t)(uintptr_t)handlers[n],
              (uint64_t)(uintptr_t)handler);
     }
+    handlers[n] = handler;
+}
+
+void idt_register_handler_quiet(uint8_t n, interrupt_handler_t handler)
+{
     handlers[n] = handler;
 }
 

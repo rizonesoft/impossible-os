@@ -189,7 +189,7 @@ Enable Intel Control-flow Enforcement Technology for user mode. Set `CR4.CET` an
 > [!IMPORTANT]
 > CET is a security-critical feature with precise ordering requirements. `CR4.CET` (bit 23) must be set before writing `IA32_U_CET`. `IA32_U_CET` MSR (`0x6A0`) controls user-mode shadow stack: bit 0=`SHSTK_EN`, bit 2=`ENDBR_EN` (indirect branch tracking). Shadow stack pointer `IA32_PL3_SSP` (`0x6A8`) = base of the user shadow stack. For syscall: on entry, `INCSSPQ` advances kernel SSP; on return, `RSTORSSP` restores it. Shadow stack pages are marked with the `Supervisor Shadow Stack` (`SSS=1`) page table attribute -- write-protected except by `WRSS`.
 
-- [ ] CPUID check: `CPUID[07h].ECX[7]` (CET_SS); `CPUID[07h].ECX[20]` (CET_IBT); log if absent and skip
+- [ ] CPUID check: `CPUID[07h].ECX[7]` (CET_SS); `CPUID[07h].EDX[20]` (CET_IBT); log if absent and skip
 - [ ] `cet_init_bsp()`: `CR4 |= CR4_CET (1<<23)`; write `IA32_U_CET (0x6A0) = 0x1` (SHSTK_EN) + optionally `0x5` (SHSTK+ENDBR); write `IA32_S_CET (0x6A2) = 0x1` (kernel shadow stack enable)
 - [ ] Per-task shadow stack: `cet_alloc_shadow_stack(task, size)` -- allocate `size` bytes (default 64 KiB) with `PAGE_WRITE_PROTECT`; set `SSS` attribute in PTE; write initial return address token via `WRSSQ`; store in `task->shadow_stack_base`
 - [ ] `task_switch()` extension: `WRMSRL(IA32_PL0_SSP, task->shadow_stack_ksp)` to set kernel SSP for new task before first ring-0 entry

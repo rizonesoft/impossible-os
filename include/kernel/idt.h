@@ -102,6 +102,11 @@ int idt_is_loaded(void);
  * task's frame pointer to switch contexts. */
 typedef uint64_t (*interrupt_handler_t)(struct interrupt_frame *frame);
 void idt_register_handler(uint8_t n, interrupt_handler_t handler);
+/* Same as idt_register_handler but silent: for EXPECTED temporary swaps (the
+ * MSR #GP probe install/restore) where overwriting a resident handler is by
+ * design, so the overwrite warning would be pure boot-log noise. Unexpected
+ * permanent overwrites must still use idt_register_handler (which warns). */
+void idt_register_handler_quiet(uint8_t n, interrupt_handler_t handler);
 interrupt_handler_t idt_get_handler(uint8_t n);
 
 /* Promote vector `n`'s gate to DPL=3 so ring-3 code may raise it with `INT n`

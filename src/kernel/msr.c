@@ -80,7 +80,7 @@ int msr_try_read(uint32_t index, uint64_t *out)
     );
     s_probe_rip = probe_addr;
 
-    idt_register_handler(13, gp_probe_handler);
+    idt_register_handler_quiet(13, gp_probe_handler);
 
     /* The rdmsr instruction -- if the MSR doesn't exist, #GP fires
      * at exactly this RIP and gp_probe_handler skips it. */
@@ -91,7 +91,7 @@ int msr_try_read(uint32_t index, uint64_t *out)
     );
 
     /* Restore original handler */
-    idt_register_handler(13, s_saved_gp_handler);
+    idt_register_handler_quiet(13, s_saved_gp_handler);
 
     /* Capture result while still holding the lock to prevent the next
      * CPU's probe from resetting s_gp_fired before we read it. */
@@ -137,7 +137,7 @@ int msr_try_write(uint32_t index, uint64_t value)
     );
     s_probe_rip = probe_addr;
 
-    idt_register_handler(13, gp_probe_handler);
+    idt_register_handler_quiet(13, gp_probe_handler);
 
     __asm__ volatile (
         "1: wrmsr\n\t"
@@ -145,7 +145,7 @@ int msr_try_write(uint32_t index, uint64_t value)
         : "a"(lo), "d"(hi), "c"(index)
     );
 
-    idt_register_handler(13, s_saved_gp_handler);
+    idt_register_handler_quiet(13, s_saved_gp_handler);
 
     {
         int faulted = s_gp_fired;

@@ -179,7 +179,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `secureboot_keys_init()` -- BOOT_DEGRADED; move here from Phase 0
 - [x] `fb_init()` + `boot_splash_init()` -- BOOT_DEGRADED; display is optional for kernel correctness
 - [x] `boot_timing_init()` + boot timing report log path after timer calibration
-- [ ] Wire `except_init()` in Phase 1 after IDT/IRQ setup (→ XREF: [TODO-23-exception-dispatch-seh.md §1](./TODO-23-exception-dispatch-seh.md))
+- [x] Wire `except_init()` in Phase 1 after IDT/IRQ setup (`boot_phase1()` calls it right after `idt_init()`; must be post-clear) (→ XREF: [TODO-23-exception-dispatch-seh.md §3](./TODO-23-exception-dispatch-seh.md))
 - [ ] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-29-kernel-debugger-kd-protocol.md §4](./TODO-29-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-29-kernel-debugger-kd-protocol.md §15`)
 - [x] `__asm__ volatile ("sti")` -- enable interrupts only after all of the above
 - [x] `boot_splash_start_animation()` -- after STI so LAPIC timer can drive the spinner
@@ -201,7 +201,6 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 > - Scope: §3 owns Phase 1 init order + `sti` placement; per-subsystem typed fatal/degraded propagation is §2/§4, deferred PS/2 mouse is §11.
 >
 > **Verified:** 2026-06-20 | commit `840d0ea8` | 23/25 items | build OK | smoke PASS (KVM 2.66s)
-> **Accepted:** [M] `except_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-23 §1 (item: "`except_init()` -- register all handlers; call from kernel init phase 1" at line 202)
 > **Accepted:** [M] `kd_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-29 §4 (item: "`kd_init()` -- called from Phase 1 kernel init" at line 186)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed | scope: kernel-code-quality
 

@@ -396,8 +396,8 @@ KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEX
  *
  * Registers ISR handlers for the CPU fault vectors that map to a Windows
  * exception rather than an unconditional panic (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP,
- * the CET #CP when the CPU supports shadow stacks, and the ring-3 __fastfail
- * INT 0x29). MUST be called from kernel init phase 1 AFTER idt_init() -- that is
+ * the CET #CP when the CPU supports CET shadow stacks OR IBT, and the ring-3
+ * __fastfail INT 0x29). MUST be called from kernel init phase 1 AFTER idt_init() -- that is
  * where the kernel IDT is loaded and where handlers[] is (re)initialised, so a
  * registration done earlier (phase 0) would be erased by the idt_init() clear. */
 void except_init(void);

@@ -149,12 +149,13 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UMIP,     ecx,  2);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PKU,      ecx,  3);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_WAITPKG,  ecx,  5);
+        /* SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM -- NOT EDX[7] (reserved). */
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_CET_SS,   ecx,  7);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_LA57,     ecx, 16);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_RDPID,    ecx, 22);
 
         /* EDX */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UINTR,     edx,  5);
-        set_flag_if(&g_cpu.flags, CPU_FEATURE_CET_SS,    edx,  7);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_CET_IBT,   edx, 20);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_IBRS,      edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_STIBP,     edx, 27);

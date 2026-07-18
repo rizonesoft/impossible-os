@@ -343,6 +343,20 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
 
         except_build_record(&s->rec, &s->ctx, frame, m->code, exc_flags);
 
+        /* STATUS_ACCESS_VIOLATION (#GP/#NP here) is an ABI record with exactly
+         * two parameters: [0] = access type, [1] = faulting linear address (the
+         * winnt.h contract, same as the #PF triage). Unlike #PF these vectors
+         * carry no CR2, so the address is not known -- report a read at address
+         * 0 so the record is WELL-FORMED (NumberParameters must be 2) rather
+         * than left at 0 which a consumer would read as a malformed AV. A finer
+         * cause decode (#GP privileged-instruction / invalid-LOCK) is the filed
+         * cause-aware refinement. */
+        if (m->code == STATUS_ACCESS_VIOLATION) {
+            s->rec.NumberParameters = 2;
+            s->rec.ExceptionInformation[EXCEPTION_INFO_ACCESS_TYPE] = EXCEPTION_ACCESS_READ;
+            s->rec.ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR]  = 0;
+        }
+
         /* User-mode #CP carries the fast-fail subcode so a consumer can tell a
          * shadow-stack violation from other STATUS_STACK_BUFFER_OVERRUN causes. */
         if (m->flags & FAULT_CET_BUGCHECK) {
@@ -370,7 +384,7 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
             klog(LOG_ERROR, "except",
                  "%s at %p err=0x%x -> status 0x%x (user, unhandled)",
                  m->name, (void *)(uintptr_t)frame->rip,
-                 (unsigned int)frame->err_code, (unsigned int)m->code);
+                 (uint64_t)frame->err_code, (uint64_t)(uint32_t)m->code);
             panic_screen(frame, frame->err_code, m->name, "except.c", 0);
         } else {
             panic_screen(frame, frame->err_code, m->name, "except.c", 0);
@@ -406,11 +420,16 @@ void except_init(void)
 {
     POST16(POST16_EXCEPT);
 
+    /* #CP (vector 21) is raised by CET shadow-stack (SHSTK) RET mismatches AND by
+     * CET IBT missing-ENDBR64 violations -- either capability can issue it, and
+     * the two are independently enumerated. Register when EITHER is present; a
+     * CPU with neither never issues #CP, so claiming the vector there is wasteful.
+     * (The current delivery uses the SHSTK fast-fail subcode; decoding the #CP
+     * error-code bits to distinguish SHSTK vs IBT is the filed refinement.) */
+    int cp_capable = cpu_has(CPU_FEATURE_CET_SS) || cpu_has(CPU_FEATURE_CET_IBT);
     for (uint32_t i = 0; i < FAULT_MAP_COUNT; i++) {
         uint8_t vec = fault_maps[i].vector;
-        /* #CP is raised only by CET shadow-stack hardware; claiming the vector
-         * on a CPU without CET would intercept a vector the CPU never issues. */
-        if (vec == VECTOR_CONTROL_PROTECTION && !cpu_has(CPU_FEATURE_CET_SS))
+        if (vec == VECTOR_CONTROL_PROTECTION && !cp_capable)
             continue;
         idt_register_handler(vec, except_common_handler);
     }
@@ -418,8 +437,10 @@ void except_init(void)
     /* __fastfail takes the dedicated (dispatch-bypassing) handler. */
     idt_register_handler(VECTOR_FASTFAIL, except_fastfail_handler);
 
-    /* Ring-3 must raise INT3 (breakpoint), INTO (#OF) and INT 0x29 (__fastfail)
-     * directly, so promote those gates to DPL=3. CPU-generated faults
+    /* Ring-3 must be able to raise the software-INT vectors directly, so promote
+     * their gates to DPL=3: INT3 (breakpoint), INT 4 (#OF -- note INTO is #UD in
+     * 64-bit mode, so vector 4 is reachable from ring 3 only via an explicit
+     * `int 4`), and INT 0x29 (__fastfail). CPU-generated faults
      * (#DE/#UD/#NP/#SS/#GP/#CP) ignore gate DPL and need no promotion. */
     idt_set_user_callable(VECTOR_BREAKPOINT);
     idt_set_user_callable(VECTOR_OVERFLOW);
@@ -427,7 +448,7 @@ void except_init(void)
 
     klog(LOG_INFO, "except",
          "fault-to-exception handlers registered (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP + __fastfail, #CP %s)",
-         cpu_has(CPU_FEATURE_CET_SS) ? "on" : "off");
+         cp_capable ? "on" : "off");
 
     POST16(POST16_EXCEPT_OK);
 }
