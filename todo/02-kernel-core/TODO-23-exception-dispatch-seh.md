@@ -271,6 +271,11 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 > - **Canonical doc** -- [`TODO-23-exception-dispatch-seh.md`](TODO-23-exception-dispatch-seh.md) §4.
 > - **Scope boundary** -- §4 owns debugger notify + terminal selection; ring-3 delivery §5, kernel SEH §14, VEH/VCH §10-§11, KD attach + user debug port TODO-29; `in_system_service` SMP closure rides with `previous_mode`'s deferred work.
 
+> **Verified:** 2026-07-18 | commit `7a10bb24` | 7/8 items | build OK | smoke PASS (TCG 2.72s)
+> **Accepted:** [M] framed terminal still runs `panic_screen_impl` FPU-capture POST16 + restart-registry I/O unconditionally (pre-existing, panic-path-wide; §4 skips only the persist-write + entry POST16) -> XREF: 02-kernel-core/TODO-27 §1 (item: "Fault-context gating in `panic_screen_impl`" at line 101)
+> **Accepted:** [M] 0x3B vs 0x1E classification reads `thread_current()` global cursor (pre-existing, shared with `previous_mode`; forensic-only) -> XREF: 03-memory-concurrency/TODO-07 (item: "Per-CPU current-thread cursor" at line 119)
+> **Quality reviewed:** 2026-07-18 | Codex 10x (design + adversarial + consistency + perf + re-adversarial) | 2H+9M+2L fixed, 2M accepted-XREF | scope: kernel-code-quality
+
 - [x] Commit: `"kernel: implement ki_dispatch_exception with debugger first/second-chance notification"`
 
 

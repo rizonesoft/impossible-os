@@ -55,27 +55,39 @@ uint32_t ssdt_previous_mode(void)
     return t ? t->previous_mode : SSDT_KERNEL_MODE;
 }
 
-/* System-service flag (0x3B vs 0x1E bugcheck classification). Bracket the true
- * ring-3 -> ring-0 syscall dispatch only; NOT called from zw_dispatch, so a fault
- * inside a nested Zw within a user syscall still reads 1. A plain store (not a
- * ++/-- RMW): a thread runs one syscall at a time, so the flag never nests, and
- * the store carries the same per-thread resolution and not-yet-CPU-local SMP
- * caveat as previous_mode above -- no worse, and with no RMW lost-update risk. A
- * self-terminating syscall (noreturn thread_exit) leaves the flag set; the slot
- * is cleared on reuse alongside previous_mode. A NULL current thread (very early
- * boot) has no system service in flight. */
-void ssdt_enter_system_service(void)
+/* Syscall-boundary state for the true ring-3 -> ring-0 dispatch: set previous_mode
+ * (SSDT probe gating) AND in_system_service (0x3B vs 0x1E bugcheck classification)
+ * together in ONE thread_current() resolution -- the two were separate helpers,
+ * doubling the current-thread lookup on every syscall (Codex perf review). Both
+ * are plain stores (not ++/-- RMW): a thread runs one syscall at a time so neither
+ * nests, and both carry the same per-thread / not-yet-CPU-local SMP caveat as
+ * previous_mode. in_system_service is NOT touched by zw_dispatch (which saves and
+ * restores previous_mode for nested Zw calls), so a fault inside a nested Zw within
+ * a user syscall still reads in_system_service == 1. A self-terminating syscall
+ * (noreturn thread_exit) leaves both set; the slot is cleared on reuse. A NULL
+ * current thread (very early boot) has no user system service in flight. */
+void ssdt_syscall_enter(void)
 {
     struct thread *t = thread_current();
-    if (t)
+    if (t) {
+        t->previous_mode     = SSDT_USER_MODE;
         t->in_system_service = 1;
+    }
 }
 
-void ssdt_leave_system_service(void)
+void ssdt_syscall_leave(void)
 {
     struct thread *t = thread_current();
-    if (t)
+    if (t) {
+        /* Clear in_system_service BEFORE restoring previous_mode: the SYSCALL entry
+         * runs with interrupts enabled, so a fault taken between these two stores
+         * must not observe KernelMode with the service flag still set (that would
+         * misclassify a post-service fault as STOP 0x3B instead of 0x1E). Clearing
+         * the flag first keeps the window classifying as 0x1E, matching the former
+         * separate-helper ordering. */
         t->in_system_service = 0;
+        t->previous_mode     = SSDT_KERNEL_MODE;
+    }
 }
 
 /* ---- User-buffer probing ------------------------------------------------- */

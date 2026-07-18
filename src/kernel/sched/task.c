@@ -4027,8 +4027,8 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
     thr->previous_mode = 0;  /* KernelMode */
     thr->in_system_service = 0;  /* clear the system-service flag before THREAD_FREE:
                                   * a self-terminated thread (noreturn thread_exit) skips
-                                  * ssdt_leave_system_service, so clear here so the reused
-                                  * slot never misclassifies a later kernel fault as 0x3B */
+                                  * ssdt_syscall_leave, so clear here so the reused slot
+                                  * never misclassifies a later kernel fault as 0x3B */
     /* Release any impersonation token before the slot is advertised for reuse:
      * a thread that exited while impersonating (never called RevertToSelf) would
      * otherwise leak the token's reference and leave a stale pointer for the next

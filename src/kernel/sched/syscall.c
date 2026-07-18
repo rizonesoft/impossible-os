@@ -992,9 +992,8 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
 {
     extern NTSTATUS ssdt_dispatch(uint32_t, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t, uint64_t);
-    extern void ssdt_set_previous_mode(uint32_t);
-    extern void ssdt_enter_system_service(void);
-    extern void ssdt_leave_system_service(void);
+    extern void ssdt_syscall_enter(void);
+    extern void ssdt_syscall_leave(void);
     extern uint32_t RtlNtStatusToDosError(NTSTATUS);
     extern struct thread *thread_current(void);
     NTSTATUS result;
@@ -1005,8 +1004,7 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
      * the fault-injection hooks from firing on NT-mediated
      * allocator calls. (Codex quality review 2026-04-20.) */
     KIRQL entry_irql = syscall_lower_entry_irql();
-    ssdt_set_previous_mode(1);  /* UserMode -- INT 0x2E always from ring 3 */
-    ssdt_enter_system_service();
+    ssdt_syscall_enter();       /* UserMode + in_system_service (INT 0x2E always from ring 3) */
     result = ssdt_dispatch(
         (uint32_t)frame->rax,   /* service number */
         frame->r10,             /* arg1 (Windows: R10 = original RCX) */
@@ -1014,8 +1012,7 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
         frame->r8,              /* arg3 */
         frame->r9,              /* arg4 */
         0, 0);                  /* arg5, arg6 (from user stack, future) */
-    ssdt_leave_system_service();
-    ssdt_set_previous_mode(0);  /* restore KernelMode */
+    ssdt_syscall_leave();       /* restore KernelMode + clear in_system_service */
     /* Propagate Win32 error code to TEB->LastErrorValue on failure */
     if (NT_ERROR(result)) {
         struct thread *thr = thread_current();

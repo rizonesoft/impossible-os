@@ -15,7 +15,7 @@
 #include "kernel/vectors.h"  /* VECTOR_* -- general fault-to-exception mapping */
 #include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
 #include "kernel/bugcheck.h" /* BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED / _SYSTEM_SERVICE */
-#include "kernel/nt/zw.h"    /* ssdt_enter/leave_system_service -- bugcheck classification */
+#include "kernel/nt/zw.h"    /* ssdt_syscall_enter/leave -- bugcheck classification */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
  *      except.h are Layer 1 -- these prove the same contract at runtime so a
@@ -514,17 +514,17 @@ static void test_dispatch_kernel_debugger_first_chance(void)
 
 /* Section 4: kernel-terminal bugcheck classification -- STOP 0x1E for a plain
  * kernel fault, STOP 0x3B when a user-originated system service is on the stack.
- * in_system_service is a per-thread depth; bracket it with the real helpers and
- * restore it so the test leaves no residue for sibling tests. */
+ * in_system_service is a per-thread boolean flag; the syscall-boundary helpers set
+ * and clear it (they also set previous_mode, harmless here), leaving no residue. */
 static void test_kernel_bugcheck_code_selection(void)
 {
     TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED,
                    "plain kernel fault -> 0x1E KMODE_EXCEPTION_NOT_HANDLED");
 
-    ssdt_enter_system_service();
+    ssdt_syscall_enter();
     TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_SYSTEM_SERVICE_EXCEPTION,
                    "fault inside a system service -> 0x3B SYSTEM_SERVICE_EXCEPTION");
-    ssdt_leave_system_service();
+    ssdt_syscall_leave();
 
     TEST_ASSERT_EQ(ki_kernel_bugcheck_code(), BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED,
                    "service flag restored -> 0x1E again");
@@ -555,9 +555,9 @@ static void test_kernel_bugcheck_param_layout(void)
     TEST_ASSERT_EQ(params[3], rec.ExceptionInformation[1], "0x1E P4 = exception info1");
 
     /* Inside a user system service -> 0x3B, CONTEXT-record layout. */
-    ssdt_enter_system_service();
+    ssdt_syscall_enter();
     code = ki_kernel_bugcheck_params(&rec, &ctx, params);
-    ssdt_leave_system_service();
+    ssdt_syscall_leave();
     TEST_ASSERT_EQ(code, BUGCHECK_SYSTEM_SERVICE_EXCEPTION, "in service -> 0x3B");
     TEST_ASSERT_EQ(params[0], (uint64_t)(uint32_t)rec.ExceptionCode, "0x3B P1 = code");
     TEST_ASSERT_EQ(params[1], (uint64_t)(uintptr_t)rec.ExceptionAddress,

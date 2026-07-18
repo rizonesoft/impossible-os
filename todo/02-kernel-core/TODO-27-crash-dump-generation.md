@@ -98,6 +98,7 @@ Define Windows-compatible STOP code taxonomy and the `KeBugCheckEx` entry point 
 - [ ] **Unified panic owner token**: one first-caller claim for KeBugCheckEx + direct panic_screen entries, claimed AFTER async-worker isolation (an async AP must never park holding ownership and silence later panics)
 - [ ] **Nested/NMI owner re-entry policy**: owner-side NMI or nested fault must not republish `g_last_bugcheck`/desc; route to a minimal serial-only emergency halt instead of re-entering the collector
 - [ ] **POST16 after owner arbitration**: losers must not touch shared POST/framebuffer state pre-claim (raw port breadcrumb only)
+- [ ] **Fault-context gating in `panic_screen_impl`** (TODO-23 §4 `KeBugCheckExFrame`): shared terminal still runs FPU-capture framebuffer POST16 + auto-restart registry I/O; gate both off for fault context (corrupt-fb/held-lock nested-faults).
 - [ ] **Two-slot crash-dump publication**: generation + checksum protocol replacing in-place TRUNC so a failed rewrite never destroys the last good dump
 - [ ] **IXFS flush honesty for the dump path**: `ixfs` flush must propagate bitmap/cache/journal errors and reach a device durability boundary before `write_crash_dump` may report success
 

@@ -211,6 +211,7 @@ title: "TODO-29 -- Kernel Debugger (KD Protocol)"
   ```
 - [ ] `kd_debug_exception_handler(frame)` -- handles `#DB` (single-step, hardware watchpoint); calls `kd_enter_command_loop(frame)` if KD is present; returns `panic_screen` otherwise
 - [ ] `kd_breakpoint_exception_handler(frame)` -- handles `INT3`; adjusts `frame->rip -= 1` to rewind past the `0xCC` byte before entering the command loop (so `g` resumes from the original instruction)
+- [ ] KiDebugRoutine lifetime: `ki_dispatch_exception()` (TODO-23 §4) snapshots the routine with one atomic load and may call it after a detach -- keep it resident (permanent kernel text or quiescence before unmap); freeing on detach is UAF.
 
 - [ ] `kd_freeze_aps()` -- send `KD_IPI_FREEZE` IPI to all APs (use LAPIC broadcast IPI `NMI` or a dedicated synthetic vector); each AP's IPI handler sets `cpu_data[this_cpu].frozen = true` and busy-waits
 - [ ] `kd_thaw_aps()` -- clear `frozen` flag on all CPUs; they resume executing their previous tasks

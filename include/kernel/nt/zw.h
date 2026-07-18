@@ -42,13 +42,14 @@ void ssdt_set_previous_mode(uint32_t mode);
 uint32_t ssdt_previous_mode(void);
 
 /* Enter/leave a user-originated system service: bracket the true ring-3 -> ring-0
- * syscall dispatch (SYSCALL fast path + INT 0x2E) so ki_kernel_bugcheck_code()
- * can tell a fault inside a system service (STOP 0x3B) from a pure kernel-thread
- * fault (STOP 0x1E). Unlike previous_mode these are NOT called by zw_dispatch, so
- * a nested Zw within a user syscall keeps the depth >0. Same per-thread /
- * thread_current() SMP-closure caveat as previous_mode (see ssdt.c). */
-void ssdt_enter_system_service(void);
-void ssdt_leave_system_service(void);
+ * syscall dispatch (SYSCALL fast path + INT 0x2E). One thread_current() resolution
+ * sets BOTH previous_mode (SSDT probe gating) and in_system_service (so
+ * ki_kernel_bugcheck_code() tells a fault inside a system service, STOP 0x3B, from
+ * a pure kernel-thread fault, STOP 0x1E). Unlike previous_mode, in_system_service
+ * is NOT touched by zw_dispatch, so a nested Zw within a user syscall keeps it set.
+ * Same per-thread / thread_current() SMP-closure caveat as previous_mode (ssdt.c). */
+void ssdt_syscall_enter(void);
+void ssdt_syscall_leave(void);
 
 /* ---- User-buffer probing ---------------------------------------------------
  *

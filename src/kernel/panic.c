@@ -246,13 +246,16 @@ static __attribute__((noreturn)) void ke_bugcheck_emit(
     }
 
     /* Route to the core panic path -- BSOD rendering, klog crash persist, subsystem
-     * dump, POST code, halt/restart. Pass `code` as the explicit bugcheck code and
-     * the four call-local params so the STOP identity + params reach the cross-boot
-     * evidence even when `frame` is non-NULL; `frame` (NULL for non-fault callers)
-     * gives it the register/vector evidence. */
+     * dump, POST code, halt/restart. error_code drives the VISIBLE serial `ERR=` +
+     * BSOD "Error code": for a framed bugcheck it must stay the hardware fault error
+     * code (#PF/#GP bits -- the primary evidence when serial is all you have), NOT
+     * the STOP code, so pass frame->err_code when a frame exists (else the STOP code
+     * for a software crash). bugcheck_code carries the 0x1E/0x3B STOP identity into
+     * the cross-boot evidence separately, and the call-local params ride alongside. */
     {
         const uint64_t params[4] = { p1, p2, p3, p4 };
-        panic_screen_impl(frame, (uint64_t)code, (uint32_t)code, params,
+        uint64_t error_code = frame ? frame->err_code : (uint64_t)code;
+        panic_screen_impl(frame, error_code, (uint32_t)code, params,
                           desc, __FILE__, __LINE__);
     }
 
