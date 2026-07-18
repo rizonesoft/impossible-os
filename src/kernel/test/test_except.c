@@ -860,6 +860,64 @@ static void test_try_copy_to_user_probe_gate(void)
 
 /* ---- Registration ---- */
 
+/* ---- VEH shared ABI (Section 10 -- Vectored Exception Handlers) --------- */
+
+/* Synthetic ms_abi handlers. A compiled PE vectored handler uses the Microsoft
+ * x64 convention and returns a 32-bit LONG, so these MUST be ms_abi -- a SysV
+ * handler would validate the wrong convention (rtl/unwind.h PEXCEPTION_ROUTINE
+ * note). They exercise the real call path through PVECTORED_EXCEPTION_HANDLER. */
+static int32_t __attribute__((ms_abi))
+veh_test_handler_continue_execution(EXCEPTION_POINTERS *info)
+{
+    (void)info;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static int32_t __attribute__((ms_abi))
+veh_test_handler_continue_search(EXCEPTION_POINTERS *info)
+{
+    (void)info;
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void test_veh_node_layout(void)
+{
+    /* Layer 3: prove the shared VEH node ABI at runtime (except.h static-asserts
+     * it as Layer 1). Impossible OS's own ntdll uses this exact node layout for
+     * its process-global VEH/VCH lists; the literal sizes/offsets here are the
+     * independent contract both sides are pinned to. */
+    TEST_ASSERT_EQ(sizeof(VECTORED_HANDLER_ENTRY), 24, "VECTORED_HANDLER_ENTRY is 24 bytes");
+    TEST_ASSERT_EQ(_Alignof(VECTORED_HANDLER_ENTRY), 8, "VECTORED_HANDLER_ENTRY 8-byte aligned");
+    TEST_ASSERT_EQ(__builtin_offsetof(VECTORED_HANDLER_ENTRY, List), 0x00, "VEH node List at 0x00");
+    TEST_ASSERT_EQ(__builtin_offsetof(VECTORED_HANDLER_ENTRY, Handler), 0x10, "VEH node Handler at 0x10");
+    TEST_ASSERT_EQ(sizeof(LIST_ENTRY), 16, "LIST_ENTRY is 16 bytes (Flink+Blink)");
+}
+
+static void test_veh_handler_abi(void)
+{
+    /* Behavioral ABI test: call a synthetic handler through the shared typedef
+     * and confirm each disposition survives the ms_abi + 32-bit-return path. A
+     * bare `long` return would sign-extend -1 to 0xFFFFFFFFFFFFFFFF and fail the
+     * CONTINUE_EXECUTION comparison; SysV vs ms_abi would mis-marshal the arg. */
+    PVECTORED_EXCEPTION_HANDLER h;
+    EXCEPTION_POINTERS ptrs;
+    ptrs.ExceptionRecord = (EXCEPTION_RECORD *)0;
+    ptrs.ContextRecord   = (CONTEXT *)0;
+
+    h = veh_test_handler_continue_execution;
+    TEST_ASSERT_EQ((int)h(&ptrs), EXCEPTION_CONTINUE_EXECUTION,
+                   "handler returns EXCEPTION_CONTINUE_EXECUTION (-1) intact");
+
+    h = veh_test_handler_continue_search;
+    TEST_ASSERT_EQ((int)h(&ptrs), EXCEPTION_CONTINUE_SEARCH,
+                   "handler returns EXCEPTION_CONTINUE_SEARCH (0) intact");
+
+    /* The three winnt.h dispositions are distinct signed values (ntdll agreement). */
+    TEST_ASSERT_EQ((int)EXCEPTION_CONTINUE_EXECUTION, -1, "CONTINUE_EXECUTION == -1");
+    TEST_ASSERT_EQ((int)EXCEPTION_CONTINUE_SEARCH, 0, "CONTINUE_SEARCH == 0");
+    TEST_ASSERT_EQ((int)EXCEPTION_EXECUTE_HANDLER, 1, "EXECUTE_HANDLER == 1");
+}
+
 void test_register_except(void)
 {
     test_suite_register_cat("Except: CONTEXT size",
@@ -942,6 +1000,10 @@ void test_register_except(void)
                             test_pf_handler_registered, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: copy_from recovers live #PF",
                             test_uaccess_copy_from_recovers_live_fault, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: VEH node ABI layout",
+                            test_veh_node_layout, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: VEH handler ms_abi + disposition",
+                            test_veh_handler_abi, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

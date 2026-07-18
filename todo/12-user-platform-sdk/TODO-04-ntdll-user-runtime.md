@@ -18,8 +18,9 @@ title: "TODO-04 -- NTDLL & User-Mode Runtime"
 > **Prerequisites complete before starting:**
 > - `10-platform-services/TODO-07 §9` -- `pe_exec()` with minimal TEB (`stack_base/limit/self`,
 >   `FS_BASE` MSR) and minimal PEB (`ImageBaseAddress`, `ProcessParameters.CommandLine`).
->   This TODO **extends** TEB with `TlsSlots[64]`, `ExceptionList`, VEH chain head, and
->   `Tib.FiberData`; and extends PEB with `ProcessHeap`, `Ldr` (module list), `TlsBitmap`.
+>   This TODO **extends** TEB with `TlsSlots[64]`, `ExceptionList`, and `Tib.FiberData`; and
+>   extends PEB with `ProcessHeap`, `Ldr` (module list), `TlsBitmap`. (The VEH/VCH list heads are
+>   ntdll process-global state, NOT a TEB field -- see §5.)
 > - `10-platform-services/TODO-08 §2` -- `ntdll.dll` minimal stubs
 >   (`RtlInitUnicodeString`, `NtCurrentTeb`, `RtlGetVersion`, `NtAllocateVirtualMemory`).
 >   Stubs are replaced/completed here without breaking their export table entries.
@@ -113,8 +114,8 @@ are available via `CreateFiber`/`SwitchToFiber`.
       uint32_t  _pad0;
       /* TLS */
       void     *TlsSlots[64];         /* +0x1480  TlsSetValue/GetValue */
-      /* VEH head (Impossible OS extension at non-standard offset) */
-      void     *VehListHead;          /* +0x??? -- append after standard fields */
+      /* NOTE: no VehListHead here -- the VEH/VCH lists are ntdll PROCESS-GLOBAL
+       * state (see §5), not per-thread TEB fields. */
   } TEB;
   ```
 - [ ] **Extend `PEB` struct** in `include/win32/peb.h`:
@@ -153,7 +154,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
       UNICODE_STRING BaseDllName;
   } LDR_DATA_TABLE_ENTRY;
   ```
-- [ ] **`pe_exec()` extension** (in `TODO-07 §9` code): allocate full TEB at process start; populate `TlsSlots[]` all-NULL; set `VehListHead = NULL`; allocate and populate `PEB_LDR_DATA`; set `PEB.ProcessHeap` after `RtlCreateHeap` (§2) called from CRT0 (§7)
+- [ ] **`pe_exec()` extension** (in `TODO-07 §9` code): allocate full TEB; populate `TlsSlots[]` all-NULL; allocate `PEB_LDR_DATA`; set `PEB.ProcessHeap` after `RtlCreateHeap` (§2) from CRT0 (§7). VEH/VCH heads init in `VehInit()` (§5), not here
 - [ ] **Fixed VA mapping**: `ntdll.dll` PE optional header `ImageBase = 0x7FF000000000`; `pe_resolve_imports()` maps it there; `GS:[0x30]` → TEB self-pointer already set by `TODO-07 §9`
 - [ ] **`ntdll_syscalls.asm`**: one stub per Nt* function:
   ```nasm
@@ -266,16 +267,15 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 **Source file:** `src/user/ntdll/ntdll_except.c`
 
-- [ ] **VEH list**: doubly-linked list of `VECTORED_HANDLER_ENTRY` nodes anchored at
-  `TEB.VehListHead`; each node: `{ LIST_ENTRY links; PVECTORED_EXCEPTION_HANDLER handler; }`
+- [ ] **VEH list**: PROCESS-GLOBAL lock-guarded doubly-linked list of `VECTORED_HANDLER_ENTRY` nodes in ntdll data (a `LdrpVectorHandlerList`-analog) -- NOT a TEB/PEB anchor (per-process semantics). Node ABI pinned by `02-kernel-core/TODO-23 §10`
 - [ ] **`PVOID AddVectoredExceptionHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)`**:
   - Allocate `VECTORED_HANDLER_ENTRY` via `RtlAllocateHeap`
   - If `first != 0`: insert at list head; else append at tail
   - Return opaque handle (pointer to entry)
 - [ ] **`ULONG RemoveVectoredExceptionHandler(PVOID handle)`**:
-  - Unlink entry from `TEB.VehListHead` list; free via `RtlFreeHeap`; return 1 on success, 0 if not found
+  - Unlink entry from the process-global VEH list (under the ntdll lock); free via `RtlFreeHeap`; return 1 on success, 0 if not found
 - [ ] **`KiUserExceptionDispatcher`** (called by kernel on exception, via `NtRaiseException`):
-  - Walk `TEB.VehListHead` list: call each `handler(EXCEPTION_POINTERS *)`:
+  - Walk the process-global VEH list (under the ntdll lock): call each `handler(EXCEPTION_POINTERS *)`:
     - Returns `EXCEPTION_CONTINUE_EXECUTION` → restore context and resume; done
     - Returns `EXCEPTION_CONTINUE_SEARCH` → continue to next handler
   - If list exhausted: walk SEH via **table-based x64 dispatch** -- `RtlLookupFunctionEntry` + `RtlVirtualUnwind` per frame, invoking each frame's language handler (`__C_specific_handler`). x64 has NO frame-linked chain: do NOT walk `TEB.ExceptionList` (that is the legacy x86-32 mechanism; the kernel sets it to -1 "no SEH" at `task.c:2319`) (→ XREF `02-kernel-core/TODO-23 §6`, `§8`)
@@ -284,6 +284,10 @@ are available via `CreateFiber`/`SwitchToFiber`.
     - Call `ExitProcess(1)` after dialog dismissed
 - [ ] **`VOID RaiseException(code, flags, nargs, args)`**: build `EXCEPTION_RECORD`; call `NtRaiseException(record, context, TRUE)` → kernel delivers back via `KiUserExceptionDispatcher`
 - [ ] **`RtlCaptureStackBackTrace(skip, count, buffer, hash)`**: walk `RBP` chain; store return addresses; return actual count captured
+- [ ] **Re-entrant dispatch + removal safety** (DESIGN OPEN): a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so one lock across the walk is insufficient; define+test a re-entrancy protocol (see NOTE)
+
+> [!NOTE]
+> **Re-entrancy is unresolved.** A VEH handler is arbitrary code: it may call `RemoveVectoredExceptionHandler` (self or another node) or fault into nested exception dispatch. Holding one lock across the whole walk does NOT make this safe -- a non-recursive lock deadlocks inside recovery, and a recursive one lets a node be freed while an outer walk still references it (use-after-free). The design must cover self-removal, next-handler removal, and nested exceptions via deferred reclamation / dispatch-depth tracking, or per-node lifetime state (Microsoft's ntdll uses a ~0x28 refcounted + `EncodePointer`'d node for exactly this). The VEH/VCH node is currently the minimal `{ LIST_ENTRY List; PVECTORED_EXCEPTION_HANDLER Handler; }` (24 bytes) -- PROVISIONAL: if the protocol needs per-node lifetime state the node grows and both sides update together. Node ABI owner: `02-kernel-core/TODO-23 §10`.
 
 ---
 
@@ -296,7 +300,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
   2. Call `RtlCreateHeap(0, NULL, 0x100000, 0x10000, NULL, NULL)` → store in `PEB.ProcessHeap`
   3. Call `LdrpInitialize()`: populate `PEB.Ldr`, load all static imports recursively via `LdrLoadDll`
   4. Call `LdrpRunTlsCallbacks(DLL_PROCESS_ATTACH)` for all loaded modules
-  5. Call `VehInit()`: zero-initialize `TEB.VehListHead`
+  5. Call `VehInit()`: zero-initialize the process-global VEH/VCH list heads + their lock (ntdll data, not the TEB)
   6. Walk `.ctors` section (LLVM emits static C++ constructor pointers there): call each in order
   7. Parse `ProcessParameters.CommandLine` → `argc`/`argv` via `crt_parse_cmdline()`
   8. Call `WinMain(hInstance, NULL, cmdline, SW_SHOW)` or `main(argc, argv)`

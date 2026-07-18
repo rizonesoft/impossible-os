@@ -19,6 +19,7 @@
 
 #include "kernel/types.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/ob/peb.h"   /* LIST_ENTRY -- VEH node link field */
 
 /* Full definition in kernel/idt.h. Forward-declared so this header stays free
  * of an arch include; except.c includes idt.h for the field access. */
@@ -301,6 +302,92 @@ typedef struct _EXCEPTION_POINTERS {
 _Static_assert(sizeof(EXCEPTION_POINTERS) == 16, "EXCEPTION_POINTERS must be 16 bytes (Windows x64)");
 _Static_assert(__builtin_offsetof(EXCEPTION_POINTERS, ExceptionRecord) == 0x00, "ExceptionRecord at 0x00");
 _Static_assert(__builtin_offsetof(EXCEPTION_POINTERS, ContextRecord)   == 0x08, "ContextRecord at 0x08");
+
+/* --- Vectored Exception Handler (VEH) shared ABI --------------------------
+ *
+ * VEH is a RING-3 mechanism. ntdll keeps the handler list as PROCESS-GLOBAL
+ * state -- a lock-guarded doubly-linked list, analogous to Windows'
+ * LdrpVectorHandlerList under LdrpVehLock -- and walks it from
+ * RtlDispatchException BEFORE the frame-based SEH scan. The kernel NEVER reads,
+ * walks, or anchors this list; it publishes only the shared node + disposition
+ * ABI so the ntdll VEH list (owned by the ntdll user-runtime Vectored Exception
+ * Handling work) and any kernel-side introspection agree byte-for-byte.
+ *
+ * There is deliberately NO kernel / TEB / PEB anchor field. VEH is per-PROCESS:
+ * a per-thread TEB anchor would give each thread its own list and break
+ * AddVectoredExceptionHandler semantics (a handler registered on one thread
+ * would not fire for another thread's fault). This mirrors the unhandled-
+ * exception-filter rule that there is no PEB.UnhandledExceptionFilter field --
+ * process-wide ring-3 state lives in ntdll, not in a kernel-published
+ * per-thread structure. (Design review 2026-07-19: the original TEB.VehListHead
+ * plan was dropped for exactly this reason; the ntdll anchor also sidesteps the
+ * two-page TEB mapping dependency in the PEB/TEB user-ABI TEB-allocation work.) */
+
+/* VEH/frame handler dispositions (winnt.h). A handler returns one of these
+ * signed values; the 32-bit width is carried by the callback RETURN TYPE
+ * (PVECTORED_EXCEPTION_HANDLER returns int32_t -- a Windows LONG in EAX), not by
+ * the macros. The macros are bare integers exactly as winnt.h defines them so
+ * they remain valid in preprocessor `#if` expressions (a `(int32_t)`-cast form
+ * expands to invalid preprocessor tokens). EXCEPTION_EXECUTE_HANDLER is the
+ * third winnt.h disposition (frame-based __except filters, not VEH); it is
+ * published here as the single canonical home for the triad so no consumer
+ * redefines a subset. */
+#define EXCEPTION_CONTINUE_EXECUTION  (-1)
+#define EXCEPTION_CONTINUE_SEARCH     (0)
+#define EXCEPTION_EXECUTE_HANDLER     (1)
+
+/* Preprocessor-safety guard: the dispositions must evaluate in `#if` (winnt.h
+ * contract). A `(int32_t)`-cast form would make this directive a syntax error,
+ * so this line fails the build the moment the macros stop being bare integers. */
+#if (EXCEPTION_CONTINUE_EXECUTION != -1) || (EXCEPTION_CONTINUE_SEARCH != 0) || \
+    (EXCEPTION_EXECUTE_HANDLER != 1)
+#error "VEH disposition macros must be preprocessor-safe integers (-1/0/1)"
+#endif
+
+/* A vectored exception handler. CRITICAL ABI: a compiled PE handler uses the
+ * MICROSOFT x64 calling convention (RCX = ExceptionInfo + 32-byte home space),
+ * NOT the kernel's SysV (x86_64-elf), and returns a 32-bit Windows LONG. The
+ * pointer is therefore ms_abi so a call through it marshals the argument the
+ * way a real ntdll handler expects, and the return is int32_t -- a bare `long`
+ * is 64-bit under LP64 and would widen EXCEPTION_CONTINUE_EXECUTION (-1) to
+ * 0xFFFFFFFFFFFFFFFF in RAX, so it would never compare equal. Every synthetic
+ * test handler MUST also be ms_abi (see rtl/unwind.h PEXCEPTION_ROUTINE note).
+ * Node-layout asserts cannot catch either error, so the ABI test invokes a
+ * handler through this typedef. */
+typedef int32_t (__attribute__((ms_abi)) *PVECTORED_EXCEPTION_HANDLER)(
+    EXCEPTION_POINTERS *ExceptionInfo);
+
+/* VEH / VCH list node -- the IMPOSSIBLE OS shared ABI, agreed between the kernel
+ * (publisher) and Impossible OS's own ntdll (consumer). Impossible OS's ntdll
+ * allocates these from its process heap and links them into its process-global
+ * VEH list (the Vectored Continue Handler list reuses this exact type).
+ *
+ * This is the CURRENT minimal shape and is NOT byte-for-byte with Microsoft's
+ * ntdll (a modern Microsoft entry is a ~0x28 node carrying reference/lock
+ * metadata and an EncodePointer-obfuscated handler so it can safely defer
+ * freeing a node whose handler is mid-dispatch). Impossible OS does not load
+ * Microsoft's ntdll, so the byte layout is a private contract between the kernel
+ * (publisher) and Impossible OS's own ntdll (consumer). The kernel defines the
+ * canonical layout so the two sides cannot drift; it never allocates or walks a
+ * node, and this _Static_assert fires if either side extends the node.
+ *
+ * OPEN DESIGN (owned by the ntdll VEH implementation, not the kernel): a VEH
+ * handler is arbitrary code that may call RemoveVectoredExceptionHandler (self
+ * or another node) or fault into nested dispatch, so a re-entrancy-safe dispatch
+ * protocol -- deferred reclamation / dispatch-depth tracking, or per-node
+ * lifetime state -- is required and unresolved. IF that design adds per-node
+ * lifetime state, this node grows and BOTH sides update together. The 24-byte
+ * shape is therefore provisional, not a safety guarantee. */
+typedef struct _VECTORED_HANDLER_ENTRY {
+    LIST_ENTRY                  List;    /* 0x00: links in the ntdll process-global list */
+    PVECTORED_EXCEPTION_HANDLER Handler; /* 0x10: the registered callback */
+} VECTORED_HANDLER_ENTRY;                /* total: 0x18 = 24 bytes */
+
+/* Layer 1 -- pin the shared VEH node ABI so the kernel and ntdll cannot drift. */
+_Static_assert(sizeof(VECTORED_HANDLER_ENTRY) == 24, "VECTORED_HANDLER_ENTRY must be 24 bytes (Impossible OS VEH ABI)");
+_Static_assert(_Alignof(VECTORED_HANDLER_ENTRY) == 8, "VECTORED_HANDLER_ENTRY must be 8-byte aligned");
+_Static_assert(__builtin_offsetof(VECTORED_HANDLER_ENTRY, List)    == 0x00, "VEH node List at 0x00");
+_Static_assert(__builtin_offsetof(VECTORED_HANDLER_ENTRY, Handler) == 0x10, "VEH node Handler at 0x10");
 
 /* --- Frame <-> CONTEXT conversion ----------------------------------------
  *

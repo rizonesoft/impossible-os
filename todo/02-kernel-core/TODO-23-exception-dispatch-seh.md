@@ -50,12 +50,12 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 ## Outcome
 
-- `include/kernel/except.h` -- `EXCEPTION_RECORD`, `CONTEXT`, `EXCEPTION_POINTERS`, NTSTATUS fault codes, `KI_EXCEPTION_REGISTRATION`, VEH/VCH list heads
+- `include/kernel/except.h` -- `EXCEPTION_RECORD`, `CONTEXT`, `EXCEPTION_POINTERS`, NTSTATUS fault codes, `KI_EXCEPTION_REGISTRATION`, `VECTORED_HANDLER_ENTRY` node ABI (the VEH/VCH list heads themselves are ntdll process-global state, not kernel fields)
 - `src/kernel/except.c` -- `context_from_frame()`, `frame_from_context()`, `except_init()`, fault ISR handlers (vectors 0, 1, 3, 4, 6, 11, 12, 13, 21), `ki_dispatch_exception()` (master dispatcher with debugger first/second-chance), `ki_raise_kernel_exception()`, `except_log_dispatch()` (telemetry)
 - `src/kernel/mm/vmm.c` -- `page_fault_handler()` triages #PF into user vs. kernel paths with EXCEPTION_RECORD capture
 - `src/kernel/rtl/unwind.c` + `include/kernel/rtl/unwind.h` -- `RtlLookupFunctionEntry`, `RtlVirtualUnwind`, `RtlUnwindEx`, `RtlCaptureStackBackTrace`, `RtlWalkFrameChain`
 - `src/kernel/rtl/seh.c` -- kernel-mode SEH SCOPE_TABLE walker (§14) + `WerpReportFault()` stub. The ring-3 `RtlDispatchException` / `__C_specific_handler` / top-level filter are ntdll-side -> `12-user-platform-sdk/TODO-04 §5`
-- `include/kernel/except.h` -- `VECTORED_EXCEPTION_ENTRY` node + disposition ABI shared with ntdll (the VEH/VCH lists themselves are ring-3 state, not kernel state)
+- `include/kernel/except.h` -- `VECTORED_HANDLER_ENTRY` node + `PVECTORED_EXCEPTION_HANDLER` + disposition ABI shared with ntdll (the VEH/VCH lists themselves are ring-3 process-global state, not kernel state)
 - `include/kernel/nt/zw.h` + `src/kernel/nt/ssdt.c` -- EXISTING `ProbeForRead`/`ProbeForWrite` extended in place (page-touch) plus new `try_copy_from_user` / `try_copy_to_user` fault-fixup copies. No new `probe.h`/`probe.c`
 - `src/kernel/compat/signal_compat.c` -- `ki_deliver_compat_signal()` (Linux compat, `CONFIG_LINUX_COMPAT` guarded), `sigaltstack` support
 - `NtRaiseException` and `NtContinue` registered in SSDT (→ `TODO-12-native-api-ssdt.md §5`)
@@ -76,7 +76,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                           | §6, TODO-07 §3             |  [/]   |
 | 💎   |   8   | SEH chain walk + `__C_specific_handler` (re-owned ring-3 → T04 §5) | §5, §6, TODO-11 §6         |  [/]   |
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                              | §6, §8                     |  [/]   |
-| 💎   |  10   | Vectored Exception Handlers (VEH)                                  | §4, TODO-05 §3             |  [ ]   |
+| 💎   |  10   | Vectored Exception Handlers (VEH)                                  | §4, TODO-05 §3             |  [x]   |
 | 💎   |  11   | Vectored Continue Handlers (VCH)                                   | §4, §10                    |  [ ]   |
 | 💎   |  12   | Unhandled exception filter + WER hook                              | §7, §8, §10                |  [ ]   |
 | ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                           | §2                         |  [x]   |
@@ -467,39 +467,50 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 
 ## 10. Vectored Exception Handlers (VEH)
 
-**Prompt:** Establish the kernel side of the Vectored Exception Handler contract. VEH is a per-process, ring-3 mechanism: ntdll anchors a doubly-linked list of `VECTORED_EXCEPTION_ENTRY` nodes at `TEB.VehListHead` and walks it from `RtlDispatchException` **before** the SEH scope-table walk (§8), after the kernel has delivered the fault via `KiUserExceptionDispatcher` (§5). The kernel's only job here is to publish the shared node/disposition ABI and reserve the anchor field so the two sides agree; the list itself is never read or walked from ring 0.
+**Prompt:** Establish the kernel side of the Vectored Exception Handler contract. VEH is a per-process, ring-3 mechanism: ntdll keeps a lock-guarded doubly-linked list of `VECTORED_HANDLER_ENTRY` nodes as **process-global** state (a `LdrpVectorHandlerList`-analog) and walks it from `RtlDispatchException` **before** the SEH scope-table walk (§8), after the kernel has delivered the fault via `KiUserExceptionDispatcher` (§5). The kernel's only job here is to publish the shared node/disposition ABI so the two sides agree byte-for-byte; the list itself is never anchored, read, or walked from ring 0.
 
 > [!WARNING]
-> **Ownership: the VEH list is RING-3 state.** Windows keeps it in ntdll and walks it from `RtlDispatchException`; the kernel never calls a VEH handler. `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` owns the list, the add/remove APIs, and the walk (item: "**VEH list**: doubly-linked list of `VECTORED_HANDLER_ENTRY` nodes anchored at `TEB.VehListHead`"). This section therefore does NOT put a VEH head in `struct task` or call handlers from `ki_dispatch_exception()`; it ships only what ring 3 needs from the kernel.
+> **Ownership: the VEH list is RING-3 state, and its anchor is ntdll process-global -- NOT a kernel/TEB/PEB field.** Windows keeps it in ntdll and walks it from `RtlDispatchException`; the kernel never calls a VEH handler. `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` owns the list head, the add/remove APIs, and the walk. This section therefore does NOT put a VEH head in `struct task`, the TEB, or the PEB, and does NOT call handlers from `ki_dispatch_exception()`; it ships only the shared node/disposition ABI.
+
+> [!IMPORTANT]
+> **No per-thread anchor.** VEH is per-PROCESS: a `TEB.VehListHead` (per-thread) anchor would give each thread its own list and break `AddVectoredExceptionHandler` semantics (a handler registered on one thread would not fire for another thread's fault). This mirrors §12's rule that there is no `PEB.UnhandledExceptionFilter` field -- process-wide ring-3 state lives in ntdll. The original draft's `TEB.VehListHead` reservation was dropped by design review (2026-07-19); the ntdll anchor also sidesteps the two-page TEB mapping dependency in `TODO-11 §16`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-05 §3` -- VEH handles are not Win32 kernel handles; use a simple opaque pointer. No overlap with the Object Manager handle table.
 
-- [ ] `include/kernel/except.h` -- `VECTORED_EXCEPTION_ENTRY` node layout + `EXCEPTION_CONTINUE_EXECUTION`/`EXCEPTION_CONTINUE_SEARCH` disposition constants, as the shared kernel/ntdll ABI contract
-- [ ] `_Static_assert` the node layout so ntdll's list (D12 T04 §5) and any kernel-side introspection agree byte-for-byte
-- [ ] Reserve `TEB.VehListHead` (the ring-3 list anchor) -> XREF: `TODO-11 §6` owns the TEB field
-- [ ] Scope boundary: `RtlAddVectoredExceptionHandler` / `RtlRemoveVectoredExceptionHandler` / the walk are implemented in ntdll -> XREF: `12-user-platform-sdk/TODO-04 §5`; NOT in `src/kernel/rtl/veh.c`
+- [x] `include/kernel/except.h` -- `VECTORED_HANDLER_ENTRY` node (24B: `LIST_ENTRY`@0x00, handler@0x10), `PVECTORED_EXCEPTION_HANDLER` (ms_abi, int32_t return), and the winnt.h disposition triad (-1/0/1), as the shared kernel/ntdll ABI
+- [x] `_Static_assert` node size/offsets/alignment for byte-for-byte ntdll agreement; a behavioural test invokes a synthetic ms_abi handler through the typedef to prove convention + 32-bit return width
+- [x] No kernel/TEB/PEB anchor field: the list head is ntdll process-global state (design review dropped the per-thread `TEB.VehListHead`) -> XREF: `12-user-platform-sdk/TODO-04 §5` owns the list head + lock
+- [x] Scope boundary: `AddVectoredExceptionHandler` / `RemoveVectoredExceptionHandler` / the walk are implemented in ntdll -> XREF: `12-user-platform-sdk/TODO-04 §5`; NOT in `src/kernel/rtl/veh.c`
 
-**Test checkpoint:** `_Static_assert`s pin `VECTORED_EXCEPTION_ENTRY` size/offsets and the disposition constants (`EXCEPTION_CONTINUE_EXECUTION=-1`, `EXCEPTION_CONTINUE_SEARCH=0`); a unit test asserts the kernel's view of the node matches the ntdll view byte-for-byte. `TEB.VehListHead` exists at its pinned offset and is zero-initialised at thread create. Grep proves NO kernel call site walks the VEH list (`ki_call_veh_list` must not exist). Behavioural VEH tests live with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `_Static_assert`s pin `VECTORED_HANDLER_ENTRY` size(24)/offsets(0x00,0x10) and the disposition constants (`EXCEPTION_CONTINUE_EXECUTION=-1`, `EXCEPTION_CONTINUE_SEARCH=0`, `EXCEPTION_EXECUTE_HANDLER=1`); a unit test asserts the same at runtime plus invokes a synthetic ms_abi handler through `PVECTORED_EXCEPTION_HANDLER` and confirms each disposition survives the ms_abi + 32-bit-return path. Grep proves NO kernel call site anchors or walks the VEH list (`ki_call_veh_list` / `VehListHead` must not exist in ring 0). Behavioural VEH tests live with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 387 suites, 0 failures
+> **Notes:**
+> - **What shipped** -- `include/kernel/except.h` VEH shared ABI: `VECTORED_HANDLER_ENTRY` (24B), `PVECTORED_EXCEPTION_HANDLER` (ms_abi, int32_t return), and the winnt.h disposition triad, all Layer-1 `_Static_assert`ed.
+> - **How it integrates** -- kernel publishes the ABI only; ntdll (D12 T04 §5) owns the process-global lock-guarded list. Kernel never anchors/reads/walks it. `test_except.c` adds a node-layout + behavioural-ms_abi test (`TEST_CAT_EXCEPT`).
+> - **Downstream effects** -- unblocks the ntdll VEH list against the current node ABI (24B, PROVISIONAL: re-entrancy design at TODO-04 §5 may extend it); §11 (VCH) reuses `VECTORED_HANDLER_ENTRY`. Design review dropped the per-thread `TEB.VehListHead`; adversarial caught the false Windows byte-for-byte claim + re-entrancy premise (adoptions in commit).
+> - **Canonical doc** -- `include/kernel/except.h` VEH shared ABI block.
+> - **Scope boundary** -- §10 owns the shared node/disposition ABI; TODO-04 §5 owns the list head, lock, add/remove APIs, and the walk; TODO-11 owns the TEB layout (no VEH field added).
+
+- [x] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
 
 
 ---
 
 ## 11. Vectored Continue Handlers (VCH)
 
-**Prompt:** Implement the Vectored Continue Handler list -- a separate mechanism from VEH (§10). On Windows, VCH handlers are called **after** a frame-based (SEH) handler has been found and has decided to continue execution, but **before** execution actually resumes. This allows monitoring/logging handlers to observe that an exception was handled without interfering with the dispatch. The VCH list uses the same `VECTORED_EXCEPTION_ENTRY` node type as VEH but is stored in a separate list head.
+**Prompt:** Implement the Vectored Continue Handler list -- a separate mechanism from VEH (§10). On Windows, VCH handlers are called **after** a frame-based (SEH) handler has been found and has decided to continue execution, but **before** execution actually resumes. This allows monitoring/logging handlers to observe that an exception was handled without interfering with the dispatch. The VCH list uses the same `VECTORED_HANDLER_ENTRY` node type as VEH (§10) but is a separate ntdll process-global list head.
 
-Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `RemoveVectoredContinueHandler`, and the post-SEH walk -- are implemented in ntdll (D12 T04 §5). The kernel contributes only the second list anchor and the shared node ABI.
+Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `RemoveVectoredContinueHandler`, and the post-SEH walk -- are implemented in ntdll (D12 T04 §5). The kernel contributes only the shared node ABI (already published by §10); the second list head is ntdll process-global state, NOT a kernel/TEB/PEB field.
 
 > [!NOTE]
-> VCH is distinct from VEH. VEH runs BEFORE frame-based handlers; VCH runs AFTER. Both are per-process and both live in ring 3 (§10 ownership note applies verbatim). Full order: kernel debugger first-chance (§4) → [ring 3: VEH → SEH → VCH] → kernel second-chance via `NtRaiseException` re-entry (§4) → terminate.
+> VCH is distinct from VEH. VEH runs BEFORE frame-based handlers; VCH runs AFTER. Both are per-process and both live in ring 3 (§10 ownership note applies verbatim: the list head is ntdll process-global, never a TEB/PEB anchor). Full order: kernel debugger first-chance (§4) → [ring 3: VEH → SEH → VCH] → kernel second-chance via `NtRaiseException` re-entry (§4) → terminate.
 
-- [ ] Reserve a SECOND ring-3 list anchor for VCH, distinct from `TEB.VehListHead`, reusing the §10 node type -> XREF: `TODO-11 §6` owns the TEB field
+- [ ] Confirm the VCH list reuses the `VECTORED_HANDLER_ENTRY` node ABI from §10 (no new kernel type); the second list head is ntdll process-global -> XREF: `12-user-platform-sdk/TODO-04 §5` owns both list heads + locks
 - [ ] Scope boundary: `AddVectoredContinueHandler` / `RemoveVectoredContinueHandler` and the post-SEH walk are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5`; no `ki_call_vch_list` in ring 0
 
-**Test checkpoint:** The VCH anchor exists at its pinned TEB offset, is distinct from `TEB.VehListHead`, and is zero-initialised at thread create; a unit test asserts both anchors reuse the same `VECTORED_EXCEPTION_ENTRY` node ABI. Grep proves no `ki_call_vch_list` exists in ring 0. Behavioural VCH ordering ("fires only after SEH succeeds") is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
+**Test checkpoint:** The kernel publishes NO second anchor (VCH reuses §10's `VECTORED_HANDLER_ENTRY` and the ntdll process-global model); grep proves no `ki_call_vch_list` and no VCH TEB/PEB field exist in ring 0. Behavioural VCH ordering ("fires only after SEH succeeds") is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
 
 - [ ] Commit: `"rtl: implement Vectored Continue Handler (VCH) list"`
 
@@ -689,7 +700,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Kernel stack walking          | ✅ RtlCaptureStack     | ✅ stack_trace      | ✅ §7 RBP walk + fault-safe read           |
 | 💎   | SEH + __C_specific_handler    | ✅                     | ❌                  | ⬜ ring-3 → T04 §5 (§8 re-owned)           |
 | 💎   | RtlUnwindEx + __finally       | ✅                     | ❌                  | ✅ §9 unwind-to-target + RtlRestoreContext |
-| 💎   | VEH list                      | ✅ ntdll               | ❌                  | ⬜ §10 ABI, D12T04 §5                      |
+| 💎   | VEH list                      | ✅ ntdll               | ❌                  | ✅ §10 node ABI (list D12T04 §5)           |
 | 💎   | VCH list                      | ✅ ntdll               | ❌                  | ⬜ §11 ABI, D12T04 §5                      |
 | 💎   | Unhandled exception filter    | ✅ WER                 | ✅ core dump        | ⬜ §12 kernel terminal                     |
 | 💎   | `__fastfail` / INT 0x29       | ✅ 0xC0000409          | ❌                  | ◐ §3 handler (DPL=3; per-proc term §5)    |
