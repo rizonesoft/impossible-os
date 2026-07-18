@@ -59,8 +59,20 @@
 #include "kernel/cpu_security.h"    /* __kstack_read_u64 (fault-safe kernel read) */
 #include "kernel/mm/memmap.h"       /* MM_IS_CANONICAL_4LVL (reject non-canonical RBP) */
 #include "kernel/klog.h"
+#include "kernel/nt/ntstatus.h"     /* NTSTATUS, NT_SUCCESS, STATUS_* for RtlUnwindEx */
+#include "kernel/bugcheck.h"        /* KeBugCheckEx -- terminal on post-cleanup unwind failure */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
+
+/* rtl_restore_context (unwind_asm.asm) hardcodes these CONTEXT byte offsets.
+ * except.h pins them too; re-pinning here fails the C build the moment a field
+ * moves, before the asm can silently desync (5-layer defense, Layer 1). */
+_Static_assert(__builtin_offsetof(CONTEXT, EFlags) == 0x44, "asm CTX_EFlags");
+_Static_assert(__builtin_offsetof(CONTEXT, Rax)    == 0x78, "asm CTX_Rax");
+_Static_assert(__builtin_offsetof(CONTEXT, Rsp)    == 0x98, "asm CTX_Rsp");
+_Static_assert(__builtin_offsetof(CONTEXT, Rbp)    == 0xA0, "asm CTX_Rbp");
+_Static_assert(__builtin_offsetof(CONTEXT, R15)    == 0xF0, "asm CTX_R15");
+_Static_assert(__builtin_offsetof(CONTEXT, Rip)    == 0xF8, "asm CTX_Rip");
 
 /* Maximum chained-info depth before we treat the chain as malformed (cycle /
  * runaway). Real toolchains emit at most a handful of chain levels. */
@@ -1285,4 +1297,282 @@ void rtl_unwind_init(void)
     klog(LOG_INFO, "rtl",
          "rtl: unwind engine ready (dynamic tables: %u, kernel .pdata: ELF none)",
          (uint64_t)s_dft_count);
+}
+
+/* ==========================================================================
+ * RtlUnwindEx -- unwind to a target frame
+ * ==========================================================================
+ * Two passes, both driven by RtlLookupFunctionEntry + RtlVirtualUnwind (the
+ * shipped engine): a no-side-effect PREFLIGHT that proves the chain reaches the
+ * target with well-formed, monotone frames, then an EXECUTE pass that invokes
+ * each intermediate frame's __finally termination handler with EXCEPTION_UNWINDING
+ * set. Splitting the validation out means a malformed or unreachable chain fails
+ * BEFORE any irreversible cleanup runs -- a post-hoc check cannot un-run a
+ * __finally. Proven against synthetic RtlAddFunctionTable tables (the ELF kernel
+ * has no .pdata); real kernel-driver __finally handlers arrive with the kernel-
+ * mode SEH scope-table walker follow-up.
+ * ========================================================================== */
+
+/* Frame ceiling for one unwind (runaway / cyclic chain guard). */
+#define UNWIND_MAX_UNWIND_FRAMES   RTL_MAX_STACK_FRAMES
+
+/* Unwind-in-progress flags cleared on the record once the target is reached. */
+#define UNWIND_INPROGRESS_FLAGS \
+    ((uint32_t)(EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND | EXCEPTION_TARGET_UNWIND))
+
+/* One frame step: look up ctx->Rip's function entry and virtual-unwind ctx to
+ * its caller (requesting the UNW_FLAG_UHANDLER termination handler). Returns 1
+ * on a successful step (ctx advanced to the caller; *handler is the handler VA
+ * or NULL), 0 at a leaf / unknown PC (no function entry; ctx NOT advanced). */
+static int rtlp_unwind_step(CONTEXT *ctx, void **handler, uint64_t *establisher,
+                            uint64_t *image_base, PRUNTIME_FUNCTION *func_entry,
+                            void **handler_data)
+{
+    uint64_t ib = 0, est = 0;
+    void *hd = 0;
+    PRUNTIME_FUNCTION e = RtlLookupFunctionEntry(ctx->Rip, &ib, 0);
+    if (!e)
+        return 0;
+    void *h = RtlVirtualUnwind(UNW_FLAG_UHANDLER, ib, ctx->Rip, e, ctx,
+                               &hd, &est, 0);
+    *handler = h;
+    *establisher = est;
+    *image_base = ib;
+    *func_entry = e;
+    *handler_data = hd;
+    return 1;
+}
+
+/* Invoke one frame's termination handler with EXCEPTION_UNWINDING set and
+ * interpret the returned disposition. Returns 1 to continue the unwind, 0 on a
+ * reported collided unwind (*collided set; caller adopts dctx state), -1 on an
+ * invalid disposition (caller fails safe). The full nested/multi-scope collided-
+ * unwind recovery is owned by the kernel-mode SEH walker follow-up; this handles
+ * a single-level collision safely instead of silently double-running cleanup. */
+static int rtlp_call_termination_handler(PEXCEPTION_ROUTINE handler,
+                                         EXCEPTION_RECORD *rec, uint64_t establisher_frame,
+                                         CONTEXT *ctx, DISPATCHER_CONTEXT *dctx,
+                                         int *collided)
+{
+    EXCEPTION_DISPOSITION disp =
+        handler((struct _EXCEPTION_RECORD *)rec, (void *)(uintptr_t)establisher_frame,
+                (struct _CONTEXT *)ctx, (struct _DISPATCHER_CONTEXT *)dctx);
+    switch (disp) {
+    case ExceptionContinueSearch:
+    case ExceptionContinueExecution:
+        return 1;
+    case ExceptionCollidedUnwind:
+        rec->ExceptionFlags |= (uint32_t)EXCEPTION_COLLIDED_UNWIND;
+        *collided = 1;
+        return 0;
+    default:
+        return -1;   /* ExceptionNestedException / garbage: invalid during unwind */
+    }
+}
+
+/* Preflight: walk a COPY of the chain WITHOUT side effects, confirming it
+ * reaches target (0 = exit unwind, whole stack) with strictly-ascending frames
+ * and RSP and no overshoot. Returns STATUS_SUCCESS if reachable, else
+ * STATUS_BAD_STACK. */
+static NTSTATUS rtlp_unwind_preflight(uint64_t target, const CONTEXT *start)
+{
+    CONTEXT probe = *start;
+    uint64_t prev_est = 0, prev_rsp = probe.Rsp;
+    int reached = 0;   /* caller rejects target == 0; a target is always required */
+    for (unsigned i = 0; i < UNWIND_MAX_UNWIND_FRAMES; i++) {
+        void *h = 0, *hd = 0;
+        uint64_t est = 0, ib = 0;
+        PRUNTIME_FUNCTION fe = 0;
+        if (!rtlp_unwind_step(&probe, &h, &est, &ib, &fe, &hd)) {
+            /* Leaf / unknown PC: top of stack. For a targeted unwind that means
+             * the target frame was never found -> unreachable. */
+            break;
+        }
+        if (i > 0 && est <= prev_est)         /* frames must strictly ascend */
+            return STATUS_BAD_STACK;
+        if (probe.Rsp <= prev_rsp)            /* RSP must strictly ascend */
+            return STATUS_BAD_STACK;
+        if (target != 0 && est > target)      /* overshot the target frame */
+            return STATUS_BAD_STACK;
+        prev_est = est;
+        prev_rsp = probe.Rsp;
+        if (target != 0 && est == target) {
+            reached = 1;
+            break;
+        }
+    }
+    return reached ? STATUS_SUCCESS : STATUS_BAD_STACK;
+}
+
+NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
+                              EXCEPTION_RECORD *exception_record, void *return_value,
+                              CONTEXT *context_record, void *history_table,
+                              uint32_t *out_finally_count)
+{
+    if (out_finally_count)
+        *out_finally_count = 0;
+    if (!exception_record || !context_record)
+        return STATUS_INVALID_PARAMETER;
+
+    const uint64_t target = (uint64_t)(uintptr_t)target_frame;
+    const uint64_t target_ip_val = (uint64_t)(uintptr_t)target_ip;
+    /* A whole-stack EXIT unwind (target_frame == NULL) resumes nowhere -- it is a
+     * thread-termination primitive with no consumer wired yet, and resuming
+     * through a NULL target_ip would jump to address 0. Reject both until an
+     * exit-unwind consumer + terminal outcome exist (filed follow-up). */
+    if (target == 0 || target_ip_val == 0) {
+        /* Also clear any unwind bits a reused/nested record entered with, so a
+         * rejected request never leaves the record marked actively unwinding. */
+        exception_record->ExceptionFlags &= ~UNWIND_INPROGRESS_FLAGS;
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    /* Mark the unwind in progress on the record (before the handler pass sees it). */
+    exception_record->ExceptionFlags |= (uint32_t)EXCEPTION_UNWINDING;
+
+    /* Pass 1: validate reachability with no side effects (fail before any cleanup). */
+    NTSTATUS pf = rtlp_unwind_preflight(target, context_record);
+    if (!NT_SUCCESS(pf)) {
+        exception_record->ExceptionFlags &= ~UNWIND_INPROGRESS_FLAGS;
+        return pf;   /* GUARANTEE: no __finally ran */
+    }
+
+    /* Pass 2: execute -- unwind context_record for real, running the __finally
+     * termination handler of each EXITED frame, then the TARGET frame's handler
+     * with EXCEPTION_TARGET_UNWIND (so it can run the __finally of scopes exited
+     * within the target function), and finally resume in the target frame's own
+     * context at target_ip. The preflight invariants are re-checked here too: a
+     * handler that adopted a collided context could otherwise redirect the walk
+     * backward or into a cycle before the frame cap. */
+    uint32_t finally_count = 0;
+    int reached = 0;
+    NTSTATUS status = STATUS_BAD_STACK;   /* until reached */
+    uint64_t prev_est = 0, prev_rsp = context_record->Rsp;
+    CONTEXT resume_ctx = *context_record;
+    for (unsigned i = 0; i < UNWIND_MAX_UNWIND_FRAMES; i++) {
+        void *h = 0, *hd = 0;
+        uint64_t est = 0, ib = 0;
+        PRUNTIME_FUNCTION fe = 0;
+        CONTEXT frame_ctx = *context_record;   /* this frame's own context (resume snapshot) */
+        if (!rtlp_unwind_step(context_record, &h, &est, &ib, &fe, &hd)) {
+            /* Metadata-free frame before the target -> the target is unreachable. */
+            status = STATUS_BAD_STACK;
+            goto done;
+        }
+
+        /* Re-validate the same monotonicity/overshoot invariants preflight used. */
+        if ((i > 0 && est <= prev_est) || context_record->Rsp <= prev_rsp || est > target) {
+            status = STATUS_BAD_STACK;
+            goto done;
+        }
+        prev_est = est;
+        prev_rsp = context_record->Rsp;
+
+        const int at_target = (est == target);
+        if (at_target) {
+            resume_ctx = frame_ctx;   /* resume in the target frame's context */
+            exception_record->ExceptionFlags |= (uint32_t)EXCEPTION_TARGET_UNWIND;
+        }
+
+        if (h) {
+            DISPATCHER_CONTEXT dctx = { 0 };
+            dctx.ControlPc = frame_ctx.Rip;
+            dctx.ImageBase = ib;
+            dctx.FunctionEntry = fe;
+            dctx.EstablisherFrame = est;
+            dctx.TargetIp = target_ip_val;
+            dctx.ContextRecord = context_record;   /* one canonical live unwind context */
+            dctx.LanguageHandler = (PEXCEPTION_ROUTINE)h;
+            dctx.HandlerData = hd;
+            dctx.HistoryTable = history_table;
+            dctx.ScopeIndex = 0;
+
+            int collided = 0;
+            int r = rtlp_call_termination_handler((PEXCEPTION_ROUTINE)h, exception_record,
+                                                  est, context_record, &dctx, &collided);
+            finally_count++;
+            if (r < 0) {
+                status = STATUS_INVALID_DISPOSITION;
+                goto done;
+            }
+            if (collided) {
+                /* A collision IN the target frame cannot be honoured by the
+                 * single-level adopt -- we would resume at the original target_ip
+                 * with the nested unwind's state discarded. Full nested recovery
+                 * is deferred; fail safe rather than resume with wrong state. */
+                if (at_target) {
+                    status = STATUS_INVALID_DISPOSITION;
+                    goto done;
+                }
+                if (dctx.ContextRecord && dctx.ContextRecord != context_record)
+                    *context_record = *dctx.ContextRecord;   /* adopt handler's state */
+                /* Validate the adopted state BEFORE the next step dereferences its
+                 * RSP/frame: a collided handler must not redirect into a non-
+                 * canonical RIP, backward, or to a wild RSP far from the current
+                 * frame. The RSP is bounded to a forward span of the pre-adopt RSP
+                 * (the stack-walk backstop), rejecting an out-of-stack forged
+                 * pointer. A forged-but-in-span unmapped RSP is still the engine's
+                 * trusted-establisher-frame boundary: fault-safe RtlVirtualUnwind
+                 * reads for a fully untrusted context are the deferred follow-up. */
+                if (!MM_IS_CANONICAL_4LVL(context_record->Rip) ||
+                    context_record->Rsp < prev_rsp ||
+                    context_record->Rsp - prev_rsp > (uint64_t)RTL_STACK_WALK_MAX_SPAN) {
+                    status = STATUS_BAD_STACK;
+                    goto done;
+                }
+            }
+        }
+
+        if (at_target) {
+            reached = 1;
+            status = STATUS_SUCCESS;
+            /* Stage the resume state in the target frame's context. */
+            resume_ctx.Rip = target_ip_val;
+            resume_ctx.Rax = (uint64_t)(uintptr_t)return_value;
+            *context_record = resume_ctx;
+            goto done;
+        }
+    }
+    /* Frame cap exhausted without reaching the target -- fail safe. */
+    status = STATUS_BAD_STACK;
+
+done:
+    /* Single cleanup exit: ALWAYS clear the flags and report the number of
+     * __finally handlers that ran -- the public RtlUnwindEx uses a non-zero count
+     * to know a post-cleanup failure is terminal (cannot return to the caller). */
+    exception_record->ExceptionFlags &= ~UNWIND_INPROGRESS_FLAGS;
+    if (out_finally_count)
+        *out_finally_count = finally_count;
+    (void)reached;
+    return status;
+}
+
+void RtlUnwindEx(void *target_frame, void *target_ip, EXCEPTION_RECORD *exception_record,
+                 void *return_value, CONTEXT *context_record, void *history_table)
+{
+    uint32_t finally_count = 0;
+    NTSTATUS s = rtl_unwind_to_target(target_frame, target_ip, exception_record,
+                                      return_value, context_record, history_table,
+                                      &finally_count);
+    if (NT_SUCCESS(s))
+        RtlRestoreContext(context_record, exception_record);   /* does not return */
+
+    if (finally_count > 0) {
+        /* One or more __finally handlers already ran, THEN the unwind failed
+         * (invalid disposition, target-frame collision, or a rejected adopted
+         * context). Returning to the original caller would resume execution on a
+         * partially cleaned-up stack -- double cleanup / use-after-free. An unwind
+         * failure past the point of no return is terminal: a full system raises
+         * `s` via RtlRaiseStatus into second-chance dispatch; until that path
+         * exists it bugchecks. */
+        KeBugCheckEx(BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED, (uint64_t)(uint32_t)s,
+                     (uint64_t)finally_count, (uint64_t)(uintptr_t)target_frame,
+                     (uint64_t)(uintptr_t)target_ip);   /* does not return */
+    }
+
+    /* Preflight failure: NO __finally ran, so returning is the documented
+     * fail-safe (a full system would RtlRaiseStatus; kernel-internal callers
+     * inspect the return). Log so a silent no-op unwind is visible on serial. */
+    klog(LOG_ERROR, "rtl", "RtlUnwindEx: unreachable pre-cleanup (status 0x%x)",
+         (uint64_t)(uint32_t)s);
 }

@@ -1240,6 +1240,548 @@ static void test_stackwalk_kstack_read(void)
     }
 }
 
+/* ==========================================================================
+ * RtlUnwindEx -- unwind to a target frame (TODO-23 kernel unwind)
+ * ========================================================================== */
+
+/* ms_abi termination handlers used by the RtlUnwindEx tests. They MUST be ms_abi
+ * -- a SysV handler would receive the arguments in the wrong registers, so a
+ * SysV synthetic handler would validate the wrong calling convention. */
+static volatile uint32_t s_fin_calls;
+static volatile uint32_t s_fin_saw_unwinding;
+static volatile uint32_t s_fin_saw_target;
+static volatile uint64_t s_fin_establishers[8];
+
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_finally_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                   struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)ctx; (void)dctx;
+    EXCEPTION_RECORD *r = (EXCEPTION_RECORD *)rec;
+    if (s_fin_calls < 8)
+        s_fin_establishers[s_fin_calls] = (uint64_t)(uintptr_t)establisher;
+    s_fin_calls++;
+    if (r->ExceptionFlags & EXCEPTION_UNWINDING)
+        s_fin_saw_unwinding++;
+    if (r->ExceptionFlags & EXCEPTION_TARGET_UNWIND)
+        s_fin_saw_target++;
+    return ExceptionContinueSearch;
+}
+
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_bad_disposition_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                           struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx; (void)dctx;
+    s_fin_calls++;
+    return ExceptionNestedException;   /* invalid on the unwind pass */
+}
+
+/* First call runs a real __finally (ContinueSearch); a LATER call fails with an
+ * invalid disposition -- models a failure AFTER irreversible cleanup already ran. */
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_deferred_fail_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                         struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx; (void)dctx;
+    s_fin_calls++;
+    return (s_fin_calls == 1) ? ExceptionContinueSearch : ExceptionNestedException;
+}
+
+static volatile uint64_t s_collide_new_rip;
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_collided_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                    struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)establisher; (void)ctx;
+    EXCEPTION_RECORD *r = (EXCEPTION_RECORD *)rec;
+    s_fin_calls++;
+    /* Only the EXITED frames report a collision; the target-frame call resolves
+     * normally (a target-frame collision is a distinct fail-safe path). */
+    if (r->ExceptionFlags & EXCEPTION_TARGET_UNWIND)
+        return ExceptionContinueSearch;
+    /* Simulate a nested unwind handing back a new dispatcher state: repoint the
+     * working context's Rip (the engine must adopt it and continue). */
+    if (dctx && dctx->ContextRecord)
+        dctx->ContextRecord->Rip = s_collide_new_rip;
+    return ExceptionCollidedUnwind;
+}
+
+/* Reports a collision on EVERY call, including the target frame (R2-3 path). */
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_collided_target_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                           struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx;
+    s_fin_calls++;
+    if (dctx && dctx->ContextRecord)
+        dctx->ContextRecord->Rip = s_collide_new_rip;
+    return ExceptionCollidedUnwind;
+}
+
+/* Adopts a wild high-canonical RSP far beyond the current frame; the engine must
+ * reject it (span backstop) BEFORE the next step dereferences that RSP. */
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_collided_wildrsp_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                            struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx;
+    s_fin_calls++;
+    if (dctx && dctx->ContextRecord) {
+        dctx->ContextRecord->Rip = s_collide_new_rip;
+        dctx->ContextRecord->Rsp += 0x100000ULL;   /* 1 MiB > 64 KiB span backstop */
+    }
+    return ExceptionCollidedUnwind;
+}
+
+/* Build a "push rbp; sub rsp,0x20" prolog UNWIND_INFO at `u` with a UHANDLER
+ * referencing handler_rva (0 = no handler flag). Mirrors build_simple_uinfo. */
+static void tu_build_uhandler_uinfo(uint8_t *u, uint32_t handler_rva, int has_handler)
+{
+    u[0] = (uint8_t)(1u | (has_handler ? (UNW_FLAG_UHANDLER << 3) : 0));
+    u[1] = 0x05;   /* SizeOfProlog = 5 */
+    u[2] = 0x02;   /* CountOfCodes = 2 */
+    u[3] = 0x00;   /* FrameRegister 0 */
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));   /* alloc 0x20 @5 */
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));   /* push rbp @1 */
+    /* aligned = 2 -> handler RVA at codes+2 = u[8..11] */
+    u[8]  = (uint8_t)(handler_rva & 0xFFu);
+    u[9]  = (uint8_t)((handler_rva >> 8) & 0xFFu);
+    u[10] = (uint8_t)((handler_rva >> 16) & 0xFFu);
+    u[11] = (uint8_t)((handler_rva >> 24) & 0xFFu);
+}
+
+/* Register one synthetic function [base+0x10, base+0x30) whose UHANDLER points at
+ * `handler`. base is chosen below both the metadata image and the handler so the
+ * handler RVA (handler - base) and UnwindInfoAddress (img - base) both fit u32
+ * and RtlVirtualUnwind reconstructs the real handler VA (base + handler_rva).
+ * Returns base via *out_base and body PC (base+0x18) via *out_body_pc. */
+static void tu_register_handler_fn(img_buf_t *img, RUNTIME_FUNCTION *rf, void *handler,
+                                   uint64_t *out_base, uint64_t *out_body_pc)
+{
+    uint64_t uimg = (uint64_t)(uintptr_t)img;
+    uint64_t uh   = (uint64_t)(uintptr_t)handler;
+    uint64_t base = (uimg < uh) ? uimg : uh;
+    uint32_t handler_rva = (uint32_t)(uh - base);
+    uint32_t uinfo_rva   = (uint32_t)((uimg + 0x40) - base);
+    tu_build_uhandler_uinfo(&img->b[0x40], handler_rva, 1);
+    /* Fixed small RVAs for the code range so control PCs are simple; the
+     * metadata + handler live at their real (large) RVAs from base. */
+    rf->BeginAddress = 0x10;
+    rf->EndAddress = 0x30;
+    rf->UnwindInfoAddress = uinfo_rva;
+    RtlAddFunctionTable(rf, 1, base);
+    *out_base = base;
+    *out_body_pc = base + 0x18;
+}
+
+/* ---- RtlUnwindEx: __finally chain + flags + target resume ---- */
+
+static void test_rtlunwind_finally_chain(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_finally_handler, &base, &body_pc);
+
+    /* Three recursive frames of 0x30 bytes each (6 u64 slots): frame k has its
+     * saved-rbp at stk[6k+4] and return address at stk[6k+5]; body rsp = stk[6k]. */
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;   /* outside the table -> lookup NULL */
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    /* Discover establisher frames via a dry RtlVirtualUnwind walk (the engine's
+     * own establisher semantics), so the target matches exactly. */
+    uint64_t est[3] = { 0 };
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        for (int k = 0; k < 3; k++) {
+            uint64_t ib = 0, e = 0;
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+            est[k] = e;
+        }
+    }
+    TEST_ASSERT(est[0] < est[1] && est[1] < est[2], "establisher frames strictly ascend");
+
+    s_fin_calls = 0; s_fin_saw_unwinding = 0; s_fin_saw_target = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    rec.ExceptionCode = (NTSTATUS)0xC0000005;
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    const uint64_t TARGET_IP = 0xDEAD1234ULL, RETVAL = 0x99AA55ULL;
+    uint32_t fcount = 0;
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est[2], (void *)TARGET_IP,
+                                      &rec, (void *)RETVAL, &ctx, 0, &fcount);
+
+    /* Frames 0 and 1 run their __finally (EXITED); the target frame's handler runs
+     * with EXCEPTION_TARGET_UNWIND so it can run any exited in-frame scopes. */
+    TEST_ASSERT_EQ((uint64_t)s, 0u, "rtl_unwind_to_target succeeds to a reachable target");
+    TEST_ASSERT_EQ((uint64_t)fcount, 3u, "handler ran for frames 0,1 (exited) + target frame");
+    TEST_ASSERT_EQ((uint64_t)s_fin_calls, 3u, "termination handler invoked three times");
+    TEST_ASSERT_EQ((uint64_t)s_fin_saw_unwinding, 3u, "EXCEPTION_UNWINDING set on every handler call");
+    TEST_ASSERT_EQ((uint64_t)s_fin_saw_target, 1u, "only the target-frame call sees EXCEPTION_TARGET_UNWIND");
+    TEST_ASSERT_EQ(s_fin_establishers[0], est[0], "first __finally sees frame 0 establisher");
+    TEST_ASSERT_EQ(s_fin_establishers[1], est[1], "second __finally sees frame 1 establisher");
+    TEST_ASSERT_EQ(s_fin_establishers[2], est[2], "target-frame handler sees the target establisher");
+    TEST_ASSERT_EQ(ctx.Rip, TARGET_IP, "resume Rip is target_ip");
+    TEST_ASSERT_EQ(ctx.Rax, RETVAL, "resume Rax is return_value");
+    TEST_ASSERT_EQ(ctx.Rsp, est[2], "resume Rsp is the target frame (not unwound past it)");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "EXCEPTION_UNWINDING cleared after the unwind completes");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: unreachable target fails preflight, no __finally runs ---- */
+
+static void test_rtlunwind_unreachable_target(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_finally_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;   /* top of chain: only 3 frames */
+
+    s_fin_calls = 0; s_fin_saw_unwinding = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    /* A target frame ABOVE the whole 3-frame chain is never reached. */
+    uint64_t bogus_target = (uint64_t)(uintptr_t)&stk[64];
+    uint32_t fcount = 123;
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)bogus_target, (void *)0xCAFEULL,
+                                      &rec, (void *)0, &ctx, 0, &fcount);
+
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_BAD_STACK,
+                   "unreachable target -> STATUS_BAD_STACK");
+    TEST_ASSERT_EQ((uint64_t)s_fin_calls, 0u, "no __finally runs when preflight fails");
+    TEST_ASSERT_EQ((uint64_t)fcount, 0u, "finally count is zero on preflight failure");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "unwind flags cleared on preflight failure");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: an invalid handler disposition fails safe ---- */
+
+static void test_rtlunwind_invalid_disposition(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_bad_disposition_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est2;
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        uint64_t ib = 0, e = 0;
+        for (int k = 0; k < 3; k++) {
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+        }
+        est2 = e;
+    }
+
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est2, (void *)0xBEEFULL,
+                                      &rec, (void *)0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_INVALID_DISPOSITION,
+                   "invalid handler disposition -> STATUS_INVALID_DISPOSITION");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "unwind flags cleared on invalid-disposition failure");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: a collided unwind is adopted (single-level) ---- */
+
+static void test_rtlunwind_collided(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_collided_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est[3] = { 0 };
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        for (int k = 0; k < 3; k++) {
+            uint64_t ib = 0, e = 0;
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+            est[k] = e;
+        }
+    }
+
+    /* The collided handler repoints Rip to body_pc so the walk continues from a
+     * valid frame after adoption. */
+    s_collide_new_rip = body_pc;
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est[2], (void *)0x1357ULL,
+                                      &rec, (void *)0x2468ULL, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)s, 0u, "collided unwind still resolves to the target");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_COLLIDED_UNWIND),
+                   (uint64_t)EXCEPTION_COLLIDED_UNWIND,
+                   "EXCEPTION_COLLIDED_UNWIND recorded on the record");
+    TEST_ASSERT_EQ(ctx.Rip, 0x1357ULL, "resume Rip is target_ip after adoption");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: a failure AFTER cleanup ran is reported (finally_count>0) ---- *
+ * The core returns the failure status AND a non-zero finally_count so the public
+ * RtlUnwindEx wrapper knows cleanup already ran and must NOT return to its caller
+ * (it bugchecks instead -- untestable here without halting the suite). */
+static void test_rtlunwind_fail_after_cleanup(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_deferred_fail_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est2;
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        uint64_t ib = 0, e = 0;
+        for (int k = 0; k < 3; k++) {
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+        }
+        est2 = e;
+    }
+
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint32_t fcount = 0;
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est2, (void *)0x3030ULL,
+                                      &rec, 0, &ctx, 0, &fcount);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_INVALID_DISPOSITION,
+                   "a later invalid disposition fails the unwind");
+    TEST_ASSERT_EQ((uint64_t)fcount, 2u, "finally_count reports the cleanup that ran before the failure");
+    TEST_ASSERT((uint64_t)fcount > 0u, "non-zero finally_count -> wrapper must go terminal, not return");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: a collision IN the target frame fails safe ---- */
+
+static void test_rtlunwind_target_collision(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_collided_target_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = SENTINEL;   /* single frame: its establisher is the target */
+
+    uint64_t est0;
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        uint64_t ib = 0, e = 0;
+        PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+        est0 = e;
+    }
+
+    s_collide_new_rip = body_pc;
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est0, (void *)0xF00DULL,
+                                      &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_INVALID_DISPOSITION,
+                   "a collision in the target frame fails safe (not silently resumed)");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "unwind flags cleared on the target-collision fail-safe path");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: a collided redirect to a wild RSP is rejected pre-deref ---- */
+
+static void test_rtlunwind_collided_wildrsp(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_collided_wildrsp_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est[3] = { 0 };
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        for (int k = 0; k < 3; k++) {
+            uint64_t ib = 0, e = 0;
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+            est[k] = e;
+        }
+    }
+
+    s_collide_new_rip = body_pc;
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    /* The first exited frame's handler redirects RSP a wild 1 MiB forward; the
+     * span backstop must reject it before the next step reads that RSP. */
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est[2], (void *)0x2020ULL,
+                                      &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_BAD_STACK,
+                   "a collided redirect to a wild RSP is rejected (STATUS_BAD_STACK)");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "unwind flags cleared on the wild-RSP fail-safe path");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: exit-unwind / NULL target_ip rejected + stale flags cleared ---- */
+
+static void test_rtlunwind_exit_rejected(void)
+{
+    /* A reused record entering with the unwind bits already set must not stay
+     * marked actively unwinding after a rejected request (R2-4). */
+    EXCEPTION_RECORD rec = { 0 };
+    rec.ExceptionFlags = EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND;
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+
+    /* target_frame == NULL (whole-stack exit unwind) is not yet supported. */
+    NTSTATUS s1 = rtl_unwind_to_target(0, (void *)0x1000ULL, &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s1, (uint64_t)(uint32_t)STATUS_INVALID_PARAMETER,
+                   "exit unwind (NULL target_frame) rejected");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND)),
+                   0u, "pre-set unwind flags cleared on rejection");
+    /* NULL target_ip would resume to address 0. */
+    rec.ExceptionFlags = EXCEPTION_UNWINDING;
+    NTSTATUS s2 = rtl_unwind_to_target((void *)0x2000ULL, 0, &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s2, (uint64_t)(uint32_t)STATUS_INVALID_PARAMETER,
+                   "NULL target_ip rejected");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "no unwind flags left set on a rejected request");
+}
+
+/* ---- DISPATCHER_CONTEXT ABI layout ---- */
+
+static void test_rtlunwind_dispatcher_abi(void)
+{
+    TEST_ASSERT_EQ(sizeof(DISPATCHER_CONTEXT), 0x50, "DISPATCHER_CONTEXT is 80 bytes");
+    TEST_ASSERT_EQ(__builtin_offsetof(DISPATCHER_CONTEXT, ContextRecord), 0x28,
+                   "DISPATCHER_CONTEXT.ContextRecord at 0x28");
+    TEST_ASSERT_EQ(__builtin_offsetof(DISPATCHER_CONTEXT, LanguageHandler), 0x30,
+                   "DISPATCHER_CONTEXT.LanguageHandler at 0x30");
+    TEST_ASSERT_EQ(__builtin_offsetof(DISPATCHER_CONTEXT, ScopeIndex), 0x48,
+                   "DISPATCHER_CONTEXT.ScopeIndex at 0x48");
+    TEST_ASSERT_EQ((uint64_t)ExceptionContinueSearch, 1u, "ExceptionContinueSearch == 1");
+    TEST_ASSERT_EQ((uint64_t)ExceptionCollidedUnwind, 3u, "ExceptionCollidedUnwind == 3");
+}
+
+/* ---- RtlRestoreContext: same-CPL register + RSP + RIP transfer ---- *
+ * A restore transfers every register, so the resumed state cannot be observed
+ * from C without violating the compiler's callee-saved assumptions. The asm
+ * harness rtl_restore_selftest (unwind_asm.asm) drives the resume into its own
+ * landing label, records the resumed rbx/r12/rsp into a caller buffer (memory,
+ * not a clobbered register), and returns cleanly -- proving control transferred
+ * to ctx->Rip with ctx->Rsp and the integer registers restored. */
+extern int rtl_restore_selftest(CONTEXT *ctx, uint64_t out[3]);
+
+static void test_rtlrestorecontext(void)
+{
+    static uint64_t scratch[64];
+    const uint64_t SENT_RBX = 0xB1B2B3B4B5ULL, SENT_R12 = 0x1212121212ULL;
+    const uint64_t RESUME_RSP = (uint64_t)(uintptr_t)&scratch[48];   /* headroom both sides */
+
+    CONTEXT ctx;
+    for (int i = 0; i < (int)sizeof(ctx); i++) ((uint8_t *)&ctx)[i] = 0;
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rbx = SENT_RBX;
+    ctx.R12 = SENT_R12;
+    ctx.Rsp = RESUME_RSP;
+    ctx.EFlags = 0x202;    /* IF + reserved bit 1 (Rip is set by the harness) */
+
+    uint64_t out[3] = { 0, 0, 0 };
+    int rc = rtl_restore_selftest(&ctx, out);
+
+    TEST_ASSERT_EQ((uint64_t)rc, 1u, "rtl_restore_selftest completed the round trip");
+    TEST_ASSERT_EQ(out[0], SENT_RBX, "RtlRestoreContext restored rbx");
+    TEST_ASSERT_EQ(out[1], SENT_R12, "RtlRestoreContext restored r12");
+    TEST_ASSERT_EQ(out[2], RESUME_RSP, "RtlRestoreContext restored rsp and transferred to Rip");
+}
+
 /* ---- Registration ---- */
 
 void test_register_unwind(void)
@@ -1312,6 +1854,28 @@ void test_register_unwind(void)
                             test_stackwalk_frame_chain, TEST_CAT_EXCEPT);
     test_suite_register_cat("StackWalk: __kstack_read_u64 valid + fault-recover",
                             test_stackwalk_kstack_read, TEST_CAT_EXCEPT);
+
+    /* TODO-23 kernel unwind: RtlUnwindEx + RtlRestoreContext */
+    test_suite_register_cat("UnwindEx: __finally chain + flags + target resume",
+                            test_rtlunwind_finally_chain, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: unreachable target fails preflight (no __finally)",
+                            test_rtlunwind_unreachable_target, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: invalid handler disposition fails safe",
+                            test_rtlunwind_invalid_disposition, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: failure after cleanup reports finally_count",
+                            test_rtlunwind_fail_after_cleanup, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: collided unwind adopted (single-level)",
+                            test_rtlunwind_collided, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: target-frame collision fails safe",
+                            test_rtlunwind_target_collision, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: collided wild-RSP redirect rejected pre-deref",
+                            test_rtlunwind_collided_wildrsp, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: exit-unwind / NULL target_ip rejected + flags cleared",
+                            test_rtlunwind_exit_rejected, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: DISPATCHER_CONTEXT ABI layout",
+                            test_rtlunwind_dispatcher_abi, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: RtlRestoreContext register/RSP/RIP transfer",
+                            test_rtlrestorecontext, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -177,6 +177,72 @@ _Static_assert(__builtin_offsetof(KNONVOLATILE_CONTEXT_POINTERS, Integer) == 128
 typedef PRUNTIME_FUNCTION (*PGET_RUNTIME_FUNCTION_CALLBACK)(uint64_t control_pc,
                                                             void *context);
 
+/* --- Shared table-based dispatch ABI (RtlUnwindEx / kernel + ntdll) -------- *
+ * The language-specific handler (__C_specific_handler for C __try/__finally) is
+ * called by RtlUnwindEx during the unwind pass and by the search-pass dispatcher
+ * (ntdll RtlDispatchException / the kernel-driver SEH scope-table walker) on the
+ * scan pass. This is the FIRST kernel definition of that shared contract; the
+ * kernel-driver SEH walker (TODO-23 kernel-mode SEH) and ring-3 ntdll (TODO-04
+ * exception dispatch) build on it byte-for-byte.
+ *
+ * CRITICAL ABI: compiled PE handlers use the MICROSOFT x64 calling convention
+ * (RCX/RDX/R8/R9 + 32-byte home space), NOT the kernel's SysV (x86_64-elf)
+ * convention. PEXCEPTION_ROUTINE is therefore an ms_abi pointer, so a call
+ * through it marshals arguments the way a real __C_specific_handler expects.
+ * Every synthetic test handler MUST also be ms_abi or it validates the wrong
+ * convention. */
+
+/* Language-handler disposition (winnt.h EXCEPTION_DISPOSITION). Returned by a
+ * __try/__except filter-frame handler on the scan pass and by a __finally
+ * termination handler on the unwind pass. */
+typedef enum _EXCEPTION_DISPOSITION {
+    ExceptionContinueExecution = 0,
+    ExceptionContinueSearch    = 1,
+    ExceptionNestedException   = 2,
+    ExceptionCollidedUnwind    = 3,
+} EXCEPTION_DISPOSITION;
+
+struct _DISPATCHER_CONTEXT;   /* fwd: the handler receives a pointer to it */
+
+/* The AMD64 language-specific handler routine. ms_abi: RCX=ExceptionRecord,
+ * RDX=EstablisherFrame, R8=ContextRecord, R9=DispatcherContext, + 32B home. */
+typedef EXCEPTION_DISPOSITION (__attribute__((ms_abi)) *PEXCEPTION_ROUTINE)(
+    struct _EXCEPTION_RECORD    *ExceptionRecord,
+    void                        *EstablisherFrame,
+    struct _CONTEXT             *ContextRecord,
+    struct _DISPATCHER_CONTEXT  *DispatcherContext);
+
+/* DISPATCHER_CONTEXT -- the dispatch state handed to a language handler. Layout
+ * pinned to the winnt.h AMD64 struct so a PE-compiled handler indexes the same
+ * offsets (HistoryTable/ScopeIndex are load-bearing for collided-unwind and
+ * nested __except scope tracking). */
+typedef struct _DISPATCHER_CONTEXT {
+    uint64_t           ControlPc;         /* 0x00: PC being unwound in this frame */
+    uint64_t           ImageBase;         /* 0x08: owning image base */
+    PRUNTIME_FUNCTION  FunctionEntry;     /* 0x10: this frame's RUNTIME_FUNCTION */
+    uint64_t           EstablisherFrame;  /* 0x18: this frame's establisher base */
+    uint64_t           TargetIp;          /* 0x20: unwind target IP */
+    CONTEXT           *ContextRecord;     /* 0x28: the live unwind CONTEXT */
+    PEXCEPTION_ROUTINE LanguageHandler;   /* 0x30: this frame's handler routine */
+    void              *HandlerData;       /* 0x38: language-specific data (SCOPE_TABLE) */
+    void              *HistoryTable;      /* 0x40: PUNWIND_HISTORY_TABLE (unused today) */
+    uint32_t           ScopeIndex;        /* 0x48: nested-scope resume index */
+    uint32_t           Fill0;             /* 0x4C: padding to 0x50 */
+} DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
+
+_Static_assert(sizeof(DISPATCHER_CONTEXT) == 0x50, "DISPATCHER_CONTEXT is 80 bytes (winnt.h AMD64)");
+_Static_assert(_Alignof(DISPATCHER_CONTEXT) == 8, "DISPATCHER_CONTEXT pointer-aligned");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, ControlPc)        == 0x00, "ControlPc at 0x00");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, ImageBase)        == 0x08, "ImageBase at 0x08");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, FunctionEntry)    == 0x10, "FunctionEntry at 0x10");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, EstablisherFrame) == 0x18, "EstablisherFrame at 0x18");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, TargetIp)         == 0x20, "TargetIp at 0x20");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, ContextRecord)    == 0x28, "ContextRecord at 0x28");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, LanguageHandler)  == 0x30, "LanguageHandler at 0x30");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, HandlerData)      == 0x38, "HandlerData at 0x38");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, HistoryTable)     == 0x40, "HistoryTable at 0x40");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, ScopeIndex)       == 0x48, "ScopeIndex at 0x48");
+
 /* ==========================================================================
  * Public engine API
  * ========================================================================== */
@@ -213,6 +279,49 @@ void *RtlVirtualUnwind(uint32_t handler_type, uint64_t image_base, uint64_t cont
                        PRUNTIME_FUNCTION function_entry, CONTEXT *context,
                        void **handler_data, uint64_t *establisher_frame,
                        KNONVOLATILE_CONTEXT_POINTERS *context_pointers);
+
+/* --- RtlUnwindEx -- unwind to a target frame (TODO-23 kernel unwind) ------- *
+ * Unwind the current thread's kernel stack from context_record's frame up to
+ * target_frame, invoking each intermediate frame's __finally termination
+ * handler (via the language handler in its UNWIND_INFO) with EXCEPTION_UNWINDING
+ * set on exception_record. On reaching target_frame it loads target_ip into RIP
+ * and return_value into RAX and transfers control there via RtlRestoreContext.
+ * target_frame == NULL requests an EXIT unwind (whole stack).
+ *
+ * SAME-CPL KERNEL PRIMITIVE. This unwinds and resumes KERNEL frames only. The
+ * ring-3 continuation (NtContinue / KiUserExceptionDispatcher) needs a validated
+ * trap-frame/IRET path to change CS/SS across the privilege boundary and is NOT
+ * this primitive (owned by TODO-23 ring-3 delivery).
+ *
+ * Does not return on success (control transfers to target_ip). On a malformed or
+ * unreachable chain it FAILS SAFE: no __finally runs and it returns to the caller
+ * (a real system would RtlRaiseStatus; kernel-internal callers inspect the
+ * fail-safe return today). Proven against synthetic RtlAddFunctionTable tables. */
+void RtlUnwindEx(void *target_frame, void *target_ip, EXCEPTION_RECORD *exception_record,
+                 void *return_value, CONTEXT *context_record, void *history_table);
+
+/* Testable core of RtlUnwindEx: runs the no-side-effect PREFLIGHT (validate the
+ * chain reaches target_frame with well-formed metadata) then the side-effecting
+ * unwind pass (invoke each __finally). On success, writes the resume state into
+ * *context_record (Rip=target_ip, Rax=return_value), clears the unwind flags on
+ * exception_record, sets *out_finally_count, and returns STATUS_SUCCESS WITHOUT
+ * transferring control (the public wrapper calls RtlRestoreContext). On a
+ * malformed/unreachable chain returns a failure NTSTATUS and GUARANTEES no
+ * __finally ran (preflight failed before the execute pass). out_finally_count
+ * may be NULL. */
+NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
+                              EXCEPTION_RECORD *exception_record, void *return_value,
+                              CONTEXT *context_record, void *history_table,
+                              uint32_t *out_finally_count);
+
+/* Terminal same-CPL resume primitive: load context_record's CONTROL+INTEGER
+ * groups (GPRs, RSP, RIP, RFLAGS) and transfer control to Rip. Does NOT return.
+ * Restores ONLY the frame-backed groups -- matching context_from_frame /
+ * frame_from_context, which never capture/restore FP/XMM/segment/debug groups
+ * for a kernel frame -- so it never touches the lazy-FPU CR0.TS state. exception_
+ * record is accepted for ABI parity (Windows uses it for the machine-frame /
+ * consolidate path) and is not consulted here. TRUSTED kernel CONTEXT only. */
+void RtlRestoreContext(CONTEXT *context_record, EXCEPTION_RECORD *exception_record);
 
 /* Register a dynamic function table for generated code with no backing image.
  * The registry takes a private COPY of function_table[0..entry_count) (the

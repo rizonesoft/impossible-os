@@ -178,6 +178,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_ILLEGAL_INSTRUCTION          ((NTSTATUS)0xC000001D)  /* #UD -- bad opcode */
 #define STATUS_NONCONTINUABLE_EXCEPTION     ((NTSTATUS)0xC0000025)  /* continue on noncontinuable */
 #define STATUS_INVALID_DISPOSITION          ((NTSTATUS)0xC0000026)  /* handler returned bad disposition */
+#define STATUS_BAD_STACK                    ((NTSTATUS)0xC0000028)  /* invalid/unaligned stack during unwind */
 #define STATUS_ARRAY_BOUNDS_EXCEEDED        ((NTSTATUS)0xC000008C)  /* #BR -- bound check */
 #define STATUS_FLOAT_DENORMAL_OPERAND       ((NTSTATUS)0xC000008D)  /* #MF/#XM -- denormal */
 #define STATUS_FLOAT_DIVIDE_BY_ZERO         ((NTSTATUS)0xC000008E)  /* #MF/#XM -- divide by zero */
