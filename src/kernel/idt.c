@@ -13,6 +13,7 @@
 
 #include "kernel/idt.h"
 #include "kernel/gdt.h"
+#include "kernel/vectors.h"
 #include "kernel/klog.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/lapic.h"
@@ -288,7 +289,12 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     struct per_cpu_data *pcpu = smp_this_cpu();
     KIRQL prev_irql = pcpu->current_irql;
 
-    if (vec >= 32) {
+    /* VECTOR_FASTFAIL (INT 0x29) is a synchronous SOFTWARE exception, not a
+     * hardware IRQ -- it just happens to land in the 0x20-0x2F numeric window.
+     * Raising IRQL to a device DIRQL for it would run the fast-fail terminal
+     * path at DISPATCH_LEVEL, where its panic/termination work must not be
+     * gated. Keep it at the interrupted thread's IRQL like the vec<32 faults. */
+    if (vec >= 32 && vec != VECTOR_FASTFAIL) {
         KIRQL isr_irql = vector_to_irql(vec);
         if (isr_irql > prev_irql)
             pcpu->current_irql = isr_irql;
@@ -453,6 +459,22 @@ void idt_register_handler(uint8_t n, interrupt_handler_t handler)
 interrupt_handler_t idt_get_handler(uint8_t n)
 {
     return handlers[n];
+}
+
+void idt_set_user_callable(uint8_t n)
+{
+    if (!s_idt_loaded) {
+        /* Before lidt the IDTR still points at the UEFI IDT; poking our idt[]
+         * gate has no effect. Callers must run after idt_init(). */
+        klog(LOG_WARN, "idt",
+             "idt_set_user_callable(0x%02X) before kernel IDT loaded -- ignored",
+             (uint64_t)n);
+        return;
+    }
+    /* Present, DPL=3, 64-bit interrupt gate (0xEE) -- same shape idt_init()
+     * uses for the INT 0x2E / INT 0x80 syscall gates. Preserves the IST index
+     * already programmed for this vector (only the type_attr byte changes). */
+    idt[n].type_attr = 0xEE;
 }
 
 void idt_init(void)

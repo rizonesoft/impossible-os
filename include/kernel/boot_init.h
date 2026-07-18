@@ -314,6 +314,10 @@ _Static_assert(SUBSYS_COUNT <= 32,
 /* IPI vector for async boot init work dispatch */
 #define IPI_VECTOR_ASYNC_INIT   0xFC
 
+/* Exception dispatch handler registration (0xDE30-0xDE3F) */
+#define POST16_EXCEPT           0xDE30  /* except_init() entry */
+#define POST16_EXCEPT_OK        0xDE31  /* all fault handlers registered */
+
 /* Crash Dump Generation (0xDE40-0xDE4F) */
 #define POST16_BUGCHECK         0xDE40  /* KeBugCheckEx entry */
 #define POST16_FPU_CAPTURE      0xDE42  /* FPU/XSAVE state capture */

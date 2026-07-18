@@ -24,10 +24,7 @@
 #include "kernel/bugcheck.h"        /* KeBugCheckEx, BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE */
 #include "kernel/boot_info.h"       /* boot_payload_find -- peek the firmware RNG seed */
 #include "kernel/klog.h"
-
-/* STATUS_STACK_BUFFER_OVERRUN -- the NT status a GS cookie violation reports.
- * Not yet present in a shared status header; named here to avoid a bare literal. */
-#define STATUS_STACK_BUFFER_OVERRUN  0xC0000409u
+#include "kernel/nt/ntstatus.h"     /* STATUS_STACK_BUFFER_OVERRUN (canonical home) */
 
 /* The global cookie the compiler reads/compares. Defined exactly once. */
 uintptr_t __stack_chk_guard;
@@ -153,7 +150,10 @@ void canary_init(void)
 __attribute__((noreturn))
 void __stack_chk_fail(void)
 {
+    /* Cast to uint32_t: NTSTATUS is signed, so a bare widen to the uint64_t
+     * bugcheck parameter would sign-extend 0xC0000409 to 0xFFFFFFFFC0000409.
+     * Keep the historical zero-extended 0x00000000C0000409 param value. */
     KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE,
-                 STATUS_STACK_BUFFER_OVERRUN, 0, 0, 0);
+                 (uint32_t)STATUS_STACK_BUFFER_OVERRUN, 0, 0, 0);
     __builtin_unreachable();
 }

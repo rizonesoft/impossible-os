@@ -39,6 +39,7 @@
 #include "kernel/klog.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
+#include "kernel/except.h"      /* except_init -- fault-to-exception handlers */
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
@@ -145,6 +146,12 @@ void boot_phase1(void)
     POST16(POST16_IDT_OK);
     kernel_subsystem_set_ready(SUBSYS_IDT, true);
     boot_progress(1, "IDT", POST16_IDT_OK);
+
+    /* Register CPU fault -> Windows exception handlers NOW, after idt_init() has
+     * loaded the kernel IDT and (re)zeroed handlers[]. A registration done in
+     * phase 0 would be erased by that clear. CPUID ran in phase 0, so the #CP
+     * (CET shadow-stack) gate is valid. */
+    except_init();
 
     /* --- AVX-512 opt-in with MPERF/APERF throttle guard ---
      * Deferred from phase 0 because the probe needs the kernel IDT to

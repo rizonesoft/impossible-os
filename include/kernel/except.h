@@ -243,10 +243,21 @@ _Static_assert(__builtin_offsetof(CONTEXT, VectorControl)  == 0x4A0, "VectorCont
 #define EXCEPTION_FLT_OVERFLOW          ((uint32_t)STATUS_FLOAT_OVERFLOW)
 #define EXCEPTION_FLT_UNDERFLOW         ((uint32_t)STATUS_FLOAT_UNDERFLOW)
 #define EXCEPTION_FLT_STACK_CHECK       ((uint32_t)STATUS_FLOAT_STACK_CHECK)
-/* CET #CP (STATUS_CONTROL_STACK_VIOLATION) is defined by the fault-to-exception
- * mapping that owns the vector-21 (#CP) handler in the exception-dispatch/SEH
- * work. CET is not probed yet (CPU-hardening / shadow-stack work), so pinning
- * the code here would ship an unverified ABI constant. */
+#define EXCEPTION_STACK_BUFFER_OVERRUN  ((uint32_t)STATUS_STACK_BUFFER_OVERRUN)
+
+/* Fast-fail subcodes (winnt.h FAST_FAIL_*). A __fastfail (int 0x29) carries the
+ * code in ECX; a CET #CP shadow-stack RET mismatch reports this specific one.
+ * Stored in EXCEPTION_RECORD.ExceptionInformation[0] on the noncontinuable
+ * STATUS_STACK_BUFFER_OVERRUN so a consumer can tell the fault kind apart. */
+#define FAST_FAIL_CONTROL_INVALID_RETURN_ADDRESS  0x39u
+
+/* CET #CP (vector 21) shadow-stack RET mismatch does NOT get a dedicated NTSTATUS
+ * in real Windows: it surfaces the SAME EXCEPTION_STACK_BUFFER_OVERRUN code as
+ * __fastfail / a GS cookie violation, disambiguated by the fast-fail subcode
+ * (FAST_FAIL_CONTROL_INVALID_RETURN_ADDRESS) in ExceptionInformation[0]. The
+ * general fault-to-exception mapping owns the #CP handler and uses that pairing;
+ * STATUS_CONTROL_STACK_VIOLATION (0xC00001B2) is a DIFFERENT, SetThreadContext-
+ * path constant and is deliberately NOT introduced here. */
 
 /* ExceptionInformation[] indices for STATUS_ACCESS_VIOLATION / IN_PAGE_ERROR,
  * per the winnt.h contract: [0] = access type, [1] = faulting address. */
@@ -380,3 +391,33 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
  * terminal (panic) as it is today. */
 KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                                    struct interrupt_frame *frame);
+
+/* --- General fault-to-exception mapping -------------------------------------
+ *
+ * Registers ISR handlers for the CPU fault vectors that map to a Windows
+ * exception rather than an unconditional panic (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP,
+ * the CET #CP when the CPU supports shadow stacks, and the ring-3 __fastfail
+ * INT 0x29). MUST be called from kernel init phase 1 AFTER idt_init() -- that is
+ * where the kernel IDT is loaded and where handlers[] is (re)initialised, so a
+ * registration done earlier (phase 0) would be erased by the idt_init() clear. */
+void except_init(void);
+
+/* Pure mapping helpers (no locks, no allocation, no logging) -- fault-context
+ * safe and directly unit-testable, the same discipline as pf_build_access_violation. */
+
+/* NTSTATUS a given fault vector delivers to user mode, or 0 (STATUS_SUCCESS) if
+ * the vector is not one this mapping owns. */
+NTSTATUS except_vector_to_status(uint8_t vector);
+
+/* Non-zero if a kernel-mode fault on this vector is unconditionally terminal
+ * (#DE/#OF/#UD -- no SEH recovery is ever attempted, per the mapping contract). */
+int except_vector_kernel_fatal(uint8_t vector);
+
+/* Build an EXCEPTION_RECORD + CONTROL/INTEGER CONTEXT for a general fault.
+ * ExceptionAddress and the CONTEXT are taken from `frame`; NumberParameters is
+ * 0 (callers that carry fault-specific parameters, e.g. the #CP/__fastfail
+ * subcode, set them afterwards). context_from_frame() performs the full CONTEXT
+ * scrub, so the caller only seeds ctx->ContextFlags with the frame-backed groups. */
+void except_build_record(EXCEPTION_RECORD *rec, CONTEXT *ctx,
+                         const struct interrupt_frame *frame,
+                         NTSTATUS code, uint32_t exception_flags);

@@ -103,3 +103,9 @@ int idt_is_loaded(void);
 typedef uint64_t (*interrupt_handler_t)(struct interrupt_frame *frame);
 void idt_register_handler(uint8_t n, interrupt_handler_t handler);
 interrupt_handler_t idt_get_handler(uint8_t n);
+
+/* Promote vector `n`'s gate to DPL=3 so ring-3 code may raise it with `INT n`
+ * (e.g. INT3 breakpoint, INTO overflow, INT 0x29 __fastfail). CPU-generated
+ * exceptions ignore gate DPL, so this is only needed for software-INT vectors.
+ * No-op (with a warning) until the kernel IDT is loaded -- call after idt_init(). */
+void idt_set_user_callable(uint8_t n);

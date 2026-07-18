@@ -51,6 +51,7 @@
 #define VECTOR_ALIGNMENT_CHECK     0x11
 #define VECTOR_MACHINE_CHECK       0x12
 #define VECTOR_SIMD_FP_ERROR       0x13
+#define VECTOR_CONTROL_PROTECTION  0x15  /* #CP -- CET shadow-stack / IBT violation */
 
 /* ---- Hardware IRQs ----
  * ISA IRQ 0-7 (master PIC / IOAPIC pins) use 0x20-0x27.
@@ -64,6 +65,7 @@
 #define VECTOR_PS2_MOUSE           (VECTOR_ISA_IRQ8_BASE + 4)  /* ISA IRQ12 */
 
 /* ---- Software interrupts (statically assigned) ---- */
+#define VECTOR_FASTFAIL            0x29  /* INT 0x29 -- __fastfail / RaiseFailFastException (DPL=3) */
 #define VECTOR_NT_SYSCALL          0x2E  /* INT 0x2E -- NT compat syscall */
 #define VECTOR_LINUX_SYSCALL       0x80  /* INT 0x80 -- Linux-style syscall */
 #define VECTOR_YIELD               0x81  /* INT 0x81 -- cooperative yield */
@@ -97,6 +99,22 @@ _Static_assert(VECTOR_LINUX_SYSCALL < VECTOR_ISA_IRQ8_BASE ||
     "Linux syscall vector must not sit in the ISA IRQ8-15 range");
 _Static_assert(VECTOR_ISA_IRQ8_BASE + 7 < 0x80,
     "ISA IRQ8-15 range must stay below the DPL=3 INT 0x80 gate");
+
+/* __fastfail (INT 0x29, DPL=3) must live outside every hardware IRQ range so a
+ * device line can never alias the user-callable gate (same rule as INT 0x2E).
+ * 0x29 sits in the vacated 0x28-0x2F window (ISA IRQ8-15 were moved to
+ * 0x70-0x77), so it collides with nothing. */
+_Static_assert(VECTOR_FASTFAIL < 0x20 || VECTOR_FASTFAIL > 0x27,
+    "fastfail vector must not sit in the ISA IRQ0-7 range");
+_Static_assert(VECTOR_FASTFAIL < VECTOR_ISA_IRQ8_BASE ||
+               VECTOR_FASTFAIL > VECTOR_ISA_IRQ8_BASE + 7,
+    "fastfail vector must not sit in the ISA IRQ8-15 range");
+_Static_assert(VECTOR_FASTFAIL != VECTOR_NT_SYSCALL &&
+               VECTOR_FASTFAIL != VECTOR_LINUX_SYSCALL &&
+               VECTOR_FASTFAIL != VECTOR_YIELD &&
+               VECTOR_FASTFAIL != VECTOR_LAPIC_TIMER &&
+               VECTOR_FASTFAIL != VECTOR_PIT_TIMER,
+    "fastfail vector must not collide with a syscall/yield/timer vector");
 
 /* Software vectors must not collide with each other */
 _Static_assert(VECTOR_NT_SYSCALL != VECTOR_LINUX_SYSCALL,

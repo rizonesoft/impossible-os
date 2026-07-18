@@ -303,8 +303,9 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 >
 > Design review also corrected the draft below: the supervisor shadow-stack PTE marker is **Dirty (bit 6, `VMM_FLAG_DIRTY`) with Write=0**, NOT "bit 5" (bit 5 is `VMM_FLAG_ACCESSED`); and CET state must be saved as **per-thread `PL0_SSP` on every context switch, NOT via `IA32_XSS`/`XSAVES`** -- `xsave_area`/`fpu_used` are per-*task* and lazy, so XSS-backed CET state would corrupt SSP across same-process thread switches. XSS deferred until XSAVE ownership moves to `struct thread`.
 
-- [ ] **(prereq, blocks enable)** Structured `#CP` (vector 21) routing through `ki_dispatch_exception()` -> XREF: `TODO-23 §3`. Until then `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+- [/] **(prereq, blocks enable)** Structured `#CP` (vector 21) routing through `ki_dispatch_exception()` -> XREF: `TODO-23 §3` (SHIPPED there; CET-gated handler). Until CET enables, `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
 - [ ] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`.
+- [ ] BUG: `cpuid.c` probes `CPU_FEATURE_CET_SS` from EDX[7], but CET SHSTK is CPUID.(07H,0):ECX[7] per Intel SDM (EDX[7] reserved); move to ECX block, else `cpu_has(CET_SS)` is always false and CET SS never enables (found via TODO-23 §3)
 - [ ] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline)
   - Seed the active call chain's SSP via the architectural save/restore-token sequence before any normal `RET`, else the first return after `CR4.CET` faults #CP on an empty shadow stack during bring-up
 - [ ] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern

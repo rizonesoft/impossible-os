@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/except.h"
 #include "kernel/idt.h"
+#include "kernel/vectors.h"  /* VECTOR_* -- general fault-to-exception mapping */
 #include "kernel/mm/vmm.h"   /* pf_build_access_violation -- #PF triage record builder */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
@@ -474,6 +475,138 @@ static void test_context_from_frame_kernel_cpl(void)
     TEST_ASSERT_EQ(ctx.Rip, 0x0000000000401000ULL, "kernel frame Rip captured");
 }
 
+/* ---- General fault-to-exception mapping (except_vector_to_status,
+ *      except_vector_kernel_fatal, except_build_record) ---- */
+
+/* Every general fault vector maps to its Windows NTSTATUS; an unmapped vector
+ * (NMI, #BR, #PF -- owned elsewhere) returns STATUS_SUCCESS (0). */
+static void test_except_vector_status_map(void)
+{
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_DIVIDE_ERROR),
+                   (uint32_t)STATUS_INTEGER_DIVIDE_BY_ZERO, "#DE -> INTEGER_DIVIDE_BY_ZERO");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_DEBUG),
+                   (uint32_t)STATUS_SINGLE_STEP, "#DB -> SINGLE_STEP");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_BREAKPOINT),
+                   (uint32_t)STATUS_BREAKPOINT, "#BP -> BREAKPOINT");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_OVERFLOW),
+                   (uint32_t)STATUS_INTEGER_OVERFLOW, "#OF -> INTEGER_OVERFLOW");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_INVALID_OPCODE),
+                   (uint32_t)STATUS_ILLEGAL_INSTRUCTION, "#UD -> ILLEGAL_INSTRUCTION");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_SEGMENT_NOT_PRESENT),
+                   (uint32_t)STATUS_ACCESS_VIOLATION, "#NP -> ACCESS_VIOLATION");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_STACK_FAULT),
+                   (uint32_t)STATUS_STACK_OVERFLOW, "#SS -> STACK_OVERFLOW");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_GENERAL_PROTECTION),
+                   (uint32_t)STATUS_ACCESS_VIOLATION, "#GP -> ACCESS_VIOLATION");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_CONTROL_PROTECTION),
+                   (uint32_t)STATUS_STACK_BUFFER_OVERRUN, "#CP -> STACK_BUFFER_OVERRUN");
+    /* Vectors this mapping does NOT own return 0. */
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_NMI), 0u, "NMI unmapped");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_PAGE_FAULT), 0u, "#PF owned by VMM");
+    TEST_ASSERT_EQ((uint32_t)except_vector_to_status(VECTOR_BOUND_RANGE), 0u, "#BR unmapped");
+}
+
+/* Only #DE/#OF/#UD are unconditionally terminal in kernel mode; the rest are
+ * dispatchable (kernel SEH may one day resolve them). */
+static void test_except_vector_kernel_fatal(void)
+{
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_DIVIDE_ERROR), 1, "#DE kernel-fatal");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_OVERFLOW), 1, "#OF kernel-fatal");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_INVALID_OPCODE), 1, "#UD kernel-fatal");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_DEBUG), 0, "#DB dispatchable");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_BREAKPOINT), 0, "#BP dispatchable");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_GENERAL_PROTECTION), 0, "#GP dispatchable");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_CONTROL_PROTECTION), 0, "#CP not fatal-panic");
+    TEST_ASSERT_EQ(except_vector_kernel_fatal(VECTOR_PAGE_FAULT), 0, "unmapped vector not fatal");
+}
+
+/* #DE record: correct code, EXCEPTION_CONTINUABLE, address = faulting RIP,
+ * no parameters, no chained record. */
+static void test_except_build_record_divide_by_zero(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    f.int_no = VECTOR_DIVIDE_ERROR;
+    f.err_code = 0;
+    except_build_record(&rec, &ctx, &f, STATUS_INTEGER_DIVIDE_BY_ZERO, EXCEPTION_CONTINUABLE);
+
+    TEST_ASSERT_EQ((uint32_t)rec.ExceptionCode, (uint32_t)STATUS_INTEGER_DIVIDE_BY_ZERO,
+                   "#DE record code");
+    TEST_ASSERT(EXCEPTION_IS_CONTINUABLE(rec.ExceptionFlags), "#DE record is continuable");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)rec.ExceptionAddress, 0x0000000000401000ULL,
+                   "#DE address is faulting RIP");
+    TEST_ASSERT_EQ(rec.NumberParameters, 0u, "#DE record has no parameters");
+    TEST_ASSERT(rec.ExceptionRecord == (EXCEPTION_RECORD *)0, "#DE record has no chained record");
+    TEST_ASSERT(CONTEXT_HAS_GROUP(ctx.ContextFlags, CONTEXT_CONTROL) &&
+                CONTEXT_HAS_GROUP(ctx.ContextFlags, CONTEXT_INTEGER),
+                "#DE CONTEXT captures CONTROL + INTEGER");
+    TEST_ASSERT_EQ(ctx.Rip, 0x0000000000401000ULL, "#DE CONTEXT Rip captured");
+}
+
+/* #BP: the handler rewinds the live RIP by 1 (past the INT3 byte) BEFORE building
+ * the record, so the record's ExceptionAddress lands on the INT3 instruction. */
+static void test_except_build_record_breakpoint_address_adjust(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    f.int_no = VECTOR_BREAKPOINT;
+    f.rip = 0x0000000000401234ULL;   /* CPU-pushed RIP -- one past the 0xCC */
+    f.rip -= 1;                       /* the adjustment except_common_handler applies */
+    except_build_record(&rec, &ctx, &f, except_vector_to_status(VECTOR_BREAKPOINT),
+                        EXCEPTION_CONTINUABLE);
+
+    TEST_ASSERT_EQ((uint32_t)rec.ExceptionCode, (uint32_t)STATUS_BREAKPOINT, "#BP record code");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)rec.ExceptionAddress, 0x0000000000401233ULL,
+                   "#BP address is the INT3 byte (RIP - 1)");
+    TEST_ASSERT_EQ(ctx.Rip, 0x0000000000401233ULL, "#BP CONTEXT Rip is the adjusted RIP");
+}
+
+/* #CP / __fastfail: noncontinuable STATUS_STACK_BUFFER_OVERRUN carrying the
+ * fast-fail subcode in ExceptionInformation[0]. */
+static void test_except_build_record_control_protection(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    f.int_no = VECTOR_CONTROL_PROTECTION;
+    except_build_record(&rec, &ctx, &f, STATUS_STACK_BUFFER_OVERRUN, EXCEPTION_NONCONTINUABLE);
+    /* Handler stamps the subcode after the pure build. */
+    rec.NumberParameters = 1;
+    rec.ExceptionInformation[0] = FAST_FAIL_CONTROL_INVALID_RETURN_ADDRESS;
+
+    TEST_ASSERT_EQ((uint32_t)rec.ExceptionCode, (uint32_t)STATUS_STACK_BUFFER_OVERRUN,
+                   "#CP record code is STACK_BUFFER_OVERRUN");
+    TEST_ASSERT(!EXCEPTION_IS_CONTINUABLE(rec.ExceptionFlags), "#CP record is noncontinuable");
+    TEST_ASSERT_EQ(rec.NumberParameters, 1u, "#CP record carries one parameter");
+    TEST_ASSERT_EQ(rec.ExceptionInformation[0], (uint64_t)FAST_FAIL_CONTROL_INVALID_RETURN_ADDRESS,
+                   "#CP subcode is FAST_FAIL_CONTROL_INVALID_RETURN_ADDRESS");
+}
+
+/* NULL arguments are ignored without touching memory. */
+static void test_except_build_record_null(void)
+{
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+
+    fill_frame(&f);
+    rec.ExceptionCode = 0x5A5A5A5A;
+    /* No crash and no write when any pointer is NULL. */
+    except_build_record(NULL, &ctx, &f, STATUS_BREAKPOINT, EXCEPTION_CONTINUABLE);
+    except_build_record(&rec, NULL, &f, STATUS_BREAKPOINT, EXCEPTION_CONTINUABLE);
+    except_build_record(&rec, &ctx, NULL, STATUS_BREAKPOINT, EXCEPTION_CONTINUABLE);
+    TEST_ASSERT_EQ((uint32_t)rec.ExceptionCode, 0x5A5A5A5Au,
+                   "record untouched when frame is NULL");
+}
+
 /* ---- Registration ---- */
 
 void test_register_except(void)
@@ -522,6 +655,18 @@ void test_register_except(void)
                             test_pf_dispatch_stubs_return_unhandled, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: context_from_frame kernel CPL",
                             test_context_from_frame_kernel_cpl, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: fault vector -> NTSTATUS map",
+                            test_except_vector_status_map, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: kernel-fatal vector flags",
+                            test_except_vector_kernel_fatal, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: build record #DE (continuable)",
+                            test_except_build_record_divide_by_zero, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: build record #BP address adjust",
+                            test_except_build_record_breakpoint_address_adjust, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: build record #CP fastfail subcode",
+                            test_except_build_record_control_protection, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: build record NULL args",
+                            test_except_build_record_null, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */
