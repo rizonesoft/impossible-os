@@ -481,11 +481,16 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 6 new suites (ProbeForWrite kernel/NULL/zero, __uaccess_copy success, __uaccess_touch_w, try_copy_{from,to}_user probe gate), 0 failures. Live unmapped-page fault-recovery is serial-validated (Verification).
 
 > **Notes:**
-> - **What shipped** -- fault-recoverable user access: guarded `__uaccess_copy`/`__uaccess_touch_w` (`cpu_security.c`), `try_copy_{from,to}_user` + page-touch `ProbeForWrite` (`ssdt.c`), and the `page_fault_handler` redirect (`vmm.c`); 6 `except` suites.
-> - **How it integrates** -- `copy_from_user`/`copy_to_user` delegate to `__uaccess_copy` (all 16 callers gain recovery unchanged); a #PF at a `__uaccess_*_fault` label on a `CR2 < MM_USER_END` address redirects to its fixup after the pager chain.
+> - **What shipped** -- fault-recoverable user access: direction-split guarded `__uaccess_copy_from`/`_to` + `__uaccess_touch_w` (`cpu_security.c`), `try_copy_{from,to}_user` + full-range page-touch `ProbeForWrite` (`ssdt.c`), and the `page_fault_handler` redirect (`vmm.c`); 8 `except` suites.
+> - **How it integrates** -- `copy_from_user`/`copy_to_user` delegate to `__uaccess_copy_{from,to}` (all 16 callers gain recovery unchanged); a #PF at a `__uaccess_*_fault` label matching the fault DIRECTION on a `CR2 < MM_USER_END` address redirects to its fixup after the pager chain.
 > - **Downstream effects** -- unblocks §5 (`try_copy_to_user` for KiUserExceptionDispatcher) and the deferred user-buffer handlers in `TODO-21 §11` / `TODO-05 §11`; also closes the latent §2 `handlers[14]`-NULL bug.
 > - **Canonical doc** -- the fault-recoverable user-access block in `src/kernel/cpu_security.c` (mechanism owner).
 > - **Scope boundary** -- §13 owns fault RECOVERY (unmapped/RO/misaligned -> error); it is NOT an isolation boundary (mapped-alias isolation owned by `03-memory-concurrency/TODO-01 §2`). Ring-3 delivery is §5, kernel SEH is §14.
+> **Verified:** 2026-07-18 | ship `c2d25f63` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.66s) | 21775 kernel + 16 user PASS
+> **Accepted:** [H] ALPC recv raw-`memcpy` concurrent-unmap DoS (pre-existing; §13 provides the fix primitive, does not regress it) -> XREF: `02-kernel-core/TODO-24 §7` (item: "Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request`" at line 312)
+> **Accepted:** [H] `KERNEL_ACCESS_USER_BEGIN/END` BSP-global `cpu_has` SMAP gate #UDs on a feature-skewed AP (shared macro; `copy_*_user` affected identically) -> XREF: `02-kernel-core/TODO-10 §2` (item: "`KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has`" at line 143)
+> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 544)
+> **Quality reviewed:** 2026-07-18 | Codex 10x (design, adversarial x4, re-adversarial, consistency x2, perf x2) | 1C+3H+4M fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: add try_copy_{from,to}_user + ProbeForWrite page-touch; re-register #PF"`
 
@@ -659,7 +664,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
   - `CONTEXT.ContextFlags` gates restoration: a CONTEXT with FLOATING_POINT clear leaves XMM state untouched on `NtContinue`
   - `NtContinue` rejects a non-canonical RIP, a kernel-mode CS selector, and a noncontinuable exception
   - `ProbeForWrite` on a read-only user page fails (proves the page touch, not just the range check)
-  - `try_copy_from_user` from an unmapped page returns an error via the `safe_return_rip` fixup and the kernel keeps running
+  - `try_copy_from_user` from an unmapped page returns an error via the RIP-keyed exception-table redirect (`__uaccess_copy_from_fault` -> `_fixup`) and the kernel keeps running
   - Kernel `__try`/`__except` around a guarded region: exception handler fires and kernel continues
 - [ ] Register in `test_runner_init()`: `test_register_except()`
 - [ ] Commit: `"test: add exception dispatch and SEH test suite"`

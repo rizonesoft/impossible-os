@@ -160,10 +160,14 @@ NTSTATUS ProbeForWrite(void *Address, uint64_t Length, uint32_t Alignment)
      * the fix is caller-side (validate the real output size BEFORE probing). */
     a   = (uintptr_t)Address;
     end = a + Length;
+    KERNEL_ACCESS_USER_BEGIN();   /* STAC: the touch writes user pages under SMAP */
     for (p = a; p < end; p = (p & ~(uintptr_t)0xFFF) + 0x1000) {
-        if (__uaccess_touch_w((void *)p) != 0)
+        if (__uaccess_touch_w((void *)p) != 0) {
+            KERNEL_ACCESS_USER_END();
             return STATUS_ACCESS_VIOLATION;
+        }
     }
+    KERNEL_ACCESS_USER_END();
     return STATUS_SUCCESS;
 }
 
@@ -181,9 +185,16 @@ NTSTATUS try_copy_from_user(void *dst, const void *user_src, uint64_t n)
     /* The guarded copy fault-fixup closes the probe-to-copy TOCTOU: a page
      * unmapped after the probe faults and returns a nonzero remainder here.
      * copy_FROM: the user SOURCE read-faults, recovered by the read-direction
-     * fixup. */
-    if (__uaccess_copy_from(dst, user_src, n) != 0)
-        return STATUS_ACCESS_VIOLATION;
+     * fixup. STAC/CLAC bracket the user access under SMAP (the #PF recovers
+     * inside __uaccess_copy_from and returns here, so CLAC always runs). */
+    {
+        uint64_t rem;
+        KERNEL_ACCESS_USER_BEGIN();
+        rem = __uaccess_copy_from(dst, user_src, n);
+        KERNEL_ACCESS_USER_END();
+        if (rem != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
     return STATUS_SUCCESS;
 }
 
@@ -203,8 +214,14 @@ NTSTATUS try_copy_to_user(void *user_dst, const void *src, uint64_t n)
     if (st != STATUS_SUCCESS)
         return st;
 
-    if (__uaccess_copy_to(user_dst, src, n) != 0)
-        return STATUS_ACCESS_VIOLATION;
+    {
+        uint64_t rem;
+        KERNEL_ACCESS_USER_BEGIN();   /* STAC under SMAP; CLAC always runs below */
+        rem = __uaccess_copy_to(user_dst, src, n);
+        KERNEL_ACCESS_USER_END();
+        if (rem != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
     return STATUS_SUCCESS;
 }
 
