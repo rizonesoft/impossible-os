@@ -22,6 +22,7 @@ CFLAGS  := --target=x86_64-elf \
            -ffreestanding -nostdlib -nostdinc \
            -fstack-protector-strong -mstack-protector-guard=global -fno-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+           -fno-omit-frame-pointer \
            -mcmodel=kernel -std=gnu11 -O2 -g \
            -mretpoline -mretpoline-external-thunk \
            -MMD -MP \

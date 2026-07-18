@@ -248,5 +248,60 @@ int RtlInstallFunctionTableCallback(uint64_t table_identifier, uint64_t base_add
  * kernel debugger. */
 void *RtlPcToFileHeader(void *pc_value, void **base_of_image);
 
+/* ==========================================================================
+ * Kernel-mode stack walking (TODO-23 s7)
+ * ==========================================================================
+ * The ELF kernel carries NO .pdata, so RtlLookupFunctionEntry returns NULL for
+ * every kernel PC and RtlVirtualUnwind cannot walk a kernel frame. Until the
+ * TODO-18 s5 .eh_frame-derived metadata provider + a bounds-checked engine read
+ * path land, kernel-mode walking uses a FRAME-POINTER (RBP) chain: each frame's
+ * saved RBP is at [RBP] and its return address at [RBP+8] (the standard x64
+ * frame layout, retained kernel-wide by -fno-omit-frame-pointer). The walk never
+ * invokes RtlVirtualUnwind on the (untrusted, possibly crash-time) live stack.
+ *
+ * Fault safety is the RIP-keyed recovery primitive, not a bounds table: every
+ * [RBP] / [RBP+8] slot is read through __kstack_read_u64 (cpu_security.c), whose
+ * guarded load recovers a #PF via page_fault_handler (redirected ahead of the
+ * pager). A corrupt or off-stack RBP -- including one on an unmapped stack guard
+ * page, a swapped page, or a page another CPU frees mid-walk -- returns an error
+ * from the read and terminates the walk instead of faulting, with no CR3/TOCTOU
+ * assumptions. Correctness guards (bound fabricated frames, not for safety): RBP
+ * is anchored to the captured RSP (RBP >= RSP), 8-aligned, strictly monotonically
+ * increasing, kept within the resolved containing kernel stack when known (else a
+ * bounded RTL_STACK_WALK_MAX_SPAN of the start); each recorded return address
+ * must fall in the kernel text range [__text_start, __text_end) or a loaded
+ * module (RtlPcToFileHeader). Metadata-accurate walking is the deferred
+ * TODO-18 s5 follow-up. */
+
+/* Hard cap on captured frames (Windows RtlCaptureStackBackTrace: max 0xFE). */
+#define RTL_MAX_STACK_FRAMES   0xFEu
+
+/* Capture the current kernel-mode call stack: walk the RBP chain, skip the first
+ * frames_to_skip frames (frames_to_skip == 0 -> first captured frame is the
+ * CALLER of RtlCaptureStackBackTrace), record up to min(frames_to_capture,
+ * RTL_MAX_STACK_FRAMES) return addresses into back_trace, and (if non-NULL) write
+ * an implementation-defined running hash of the captured addresses to
+ * back_trace_hash (deterministic for a given call site, non-zero for a non-empty
+ * trace). Returns the number of frames recorded. Takes no lock, does not block,
+ * and reads only through the fault-safe primitive, so it is callable at
+ * IRQL <= DISPATCH_LEVEL (-> XREF: TODO-07 s3). */
+uint16_t RtlCaptureStackBackTrace(uint32_t frames_to_skip, uint32_t frames_to_capture,
+                                  void **back_trace, uint32_t *back_trace_hash);
+
+/* Crash/exception consumers pass a starting CONTEXT built from the trap frame
+ * (context_from_frame) instead of capturing a fresh live context; the walk
+ * starts from that frame's Rsp/Rbp. skip/count/hash semantics match
+ * RtlCaptureStackBackTrace. Returns the number of frames recorded. */
+uint16_t rtl_capture_stack_from_context(const CONTEXT *context, uint32_t frames_to_skip,
+                                        uint32_t frames_to_capture, void **back_trace,
+                                        uint32_t *back_trace_hash);
+
+/* Thin frame-chain wrapper. flags == 0: walk the current kernel stack (as
+ * RtlCaptureStackBackTrace with skip == 0). flags & 1: user-mode walk -- deferred
+ * (returns 0) until a saved current-user-CONTEXT accessor exists to source the
+ * ring-3 RSP/RBP from kernel mode (the user reads themselves would use the s13
+ * fault-safe user path). Returns the number of callers recorded. */
+uint32_t RtlWalkFrameChain(void **callers, uint32_t count, uint32_t flags);
+
 /* Test-support: current number of registered dynamic function tables. */
 uint32_t rtl_unwind_dynamic_table_count(void);

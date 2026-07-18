@@ -283,6 +283,18 @@ uint64_t __uaccess_copy_to(void *dst, const void *src, uint64_t n);
  * address is present+writable, -1 if the touch faulted. Used by ProbeForWrite. */
 int __uaccess_touch_w(void *addr);
 
+/* Fault-recoverable single-QWORD read from a possibly-corrupt/untrusted KERNEL
+ * address -- the fault-safe primitive for kernel stack walking (TODO-23 s7
+ * RtlCaptureStackBackTrace and crash-time frame-chain walks). A #PF taken at the
+ * guarded load is redirected by page_fault_handler to its fixup (RIP-keyed, no
+ * per-CPU state, SMP/preempt-safe), so a bad RBP terminates the walk instead of
+ * bugchecking. Unlike __uaccess_* (recovered only for a CR2 < MM_USER_END
+ * operand), this targets KERNEL VAs and the handler matches it by RIP alone
+ * (read direction), redirected BEFORE the swap/mmap pager so a stray read never
+ * enters demand paging at DISPATCH_LEVEL. Returns 0 on success (*out = value
+ * read), -1 if it faulted (*out untouched). */
+int __kstack_read_u64(uint64_t *out, const void *addr);
+
 /* Exception-table label symbols emitted by the __uaccess_* primitives.
  * page_fault_handler compares the faulting RIP to the *_fault labels and, when
  * the fault direction matches the user operand, redirects to the *_fixup label:

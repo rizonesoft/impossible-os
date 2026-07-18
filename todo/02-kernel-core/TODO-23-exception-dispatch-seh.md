@@ -73,7 +73,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [/]   |
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [/]   |
 | 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [x]   |
-| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [ ]   |
+| 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [/]   |
 | 💎   |   8   | SEH chain walk + `__C_specific_handler`                           | §5, §6, TODO-11 §6         |  [ ]   |
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                             | §6, §8                     |  [ ]   |
 | 💎   |  10   | Vectored Exception Handlers (VEH)                                 | §4, TODO-05 §3             |  [ ]   |
@@ -367,15 +367,26 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 
 **Prompt:** Implement kernel-mode stack walking using the x64 unwind tables from §6. On Windows, `RtlCaptureStackBackTrace` is the primary API for capturing a stack trace -- it walks the call stack via `RtlVirtualUnwind` and records return addresses. Both user-mode (ntdll) and kernel-mode (ntoskrnl) expose this function. Linux has `stack_trace_save()`. Impossible OS needs the kernel-mode implementation here; the user-mode version is in `TODO-04-ntdll-user-runtime.md`.
 
-- [ ] `include/kernel/rtl/unwind.h` -- declare `RtlCaptureStackBackTrace(skip, count, buffer, hash)`, `RtlWalkFrameChain(callers, count, flags)`
-- [ ] `src/kernel/rtl/unwind.c` -- implement `RtlCaptureStackBackTrace`: call `RtlVirtualUnwind` (§6) in a loop, skip `skip` frames, record up to `count` return addresses into `buffer`, compute optional `hash`; max 0xFE frames
-- [ ] `src/kernel/rtl/unwind.c` -- implement `RtlWalkFrameChain`: thin wrapper; `flags & 1` = user-mode stack walk (read user RSP/RBP via safe probe §13)
-- [ ] Fault-safe frame reads: an untrusted or crash-time-corrupt stack walk must read each `RtlVirtualUnwind` frame slot fault-safely + validate the frame stays in range -> XREF: TODO-23 §6 (engine trusts the establisher frame).
-- [ ] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` (→ XREF: `TODO-07 §3`)
+- [x] `include/kernel/rtl/unwind.h` -- declare `RtlCaptureStackBackTrace`, `RtlWalkFrameChain`, `rtl_capture_stack_from_context(CONTEXT*)` (crash-path entry), `RTL_MAX_STACK_FRAMES` (0xFE)
+- [x] `src/kernel/rtl/unwind.c` -- `RtlCaptureStackBackTrace` + `rtl_capture_stack_from_context`: bounds-checked RBP walk, skip/count/hash, max 0xFE. No `.pdata`; metadata-accurate walk deferred -> XREF: `TODO-18 §5` (`.eh_frame` registry)
+- [x] Frame-pointer retention: `-fno-omit-frame-pointer` kernel-wide (Makefile CFLAGS) so RBP is a valid frame chain (also repairs `panic.c`'s best-effort RBP walk)
+- [/] `src/kernel/rtl/unwind.c` -- `RtlWalkFrameChain`: `flags==0` kernel walk shipped; `flags & 1` user walk returns 0 (needs a saved current-user-`CONTEXT` accessor) -> XREF: `TODO-07 §3` (saved user trap-frame accessor)
+- [x] Fault-safe frame reads: `[rbp]`/`[rbp+8]` via `__kstack_read_u64` (RIP-keyed #PF fixup, `cpu_security.c`+`vmm.c` redirect before the pager); RBP RSP-anchored, aligned, monotonic, bounded; `ret` in kernel text -> XREF: TODO-23 §6
+- [x] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` -- no lock, no block, fault-safe reads only (→ XREF: `TODO-07 §3`)
 
-**Test checkpoint:** `RtlCaptureStackBackTrace(0, 10, buf, NULL)` called from a 4-deep call chain returns ≥4 frames. `RtlCaptureStackBackTrace(2, 10, buf, NULL)` skips 2 frames -- first captured RIP differs from skip=0 case. Hash output is non-zero and deterministic for the same call site. Serial log: `"rtl: captured <N> stack frames"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `RtlCaptureStackBackTrace(0, 8, buf, &hash)` from a 4-deep chain returns ≥4 kernel-code frames with a non-zero hash; `skip=1` drops the immediate caller (first frame == skip=0 second frame); `rtl_capture_stack_from_context` on a synthetic RBP chain returns the exact frames with a deterministic hash; a non-monotonic RBP terminates the walk; `__kstack_read_u64` recovers a #PF on an unmapped kernel VA (returns -1, no bugcheck). Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"rtl: implement RtlCaptureStackBackTrace and RtlWalkFrameChain for kernel-mode stack walking"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 7 new StackWalk suites, 0 failures (21918 kernel + 16 user PASS)
+
+> **Notes:**
+> - **What shipped** -- kernel stack walking in `unwind.c`: `RtlCaptureStackBackTrace`, `RtlWalkFrameChain`, `rtl_capture_stack_from_context`; a bounds-checked RBP frame-chain walk (no `RtlVirtualUnwind` -- the ELF kernel has no `.pdata`).
+> - **Fault boundary** -- new `__kstack_read_u64` (`cpu_security.c`) is a RIP-keyed fault-recoverable kernel read; `page_fault_handler` redirects its #PF to the fixup BEFORE the pager, so a corrupt RBP stops the walk instead of bugchecking.
+> - **How it integrates** -- `-fno-omit-frame-pointer` kernel-wide makes RBP a valid frame chain (also repairs `panic.c`); capture starts at `__builtin_frame_address(0)` so `skip==0` yields the caller; crash consumers pass a `context_from_frame` CONTEXT.
+> - **Downstream effects** -- 4 Codex design rounds hardened the fault boundary (see commit msg); `RtlWalkFrameChain` user walk `[/]` deferred to `TODO-07 §3`; metadata-accurate walk deferred to `TODO-18 §5`.
+> - **Canonical doc** -- the stack-walk block in `include/kernel/rtl/unwind.h`.
+> - **Scope boundary** -- §7 owns the kernel walker + fault-safe read; `.eh_frame`/`.pdata` registry is `TODO-18 §5`; user-mode `RtlCaptureStackBackTrace` (ntdll) is `TODO-04`.
+
+- [x] Commit: `"rtl: implement RtlCaptureStackBackTrace and RtlWalkFrameChain for kernel-mode stack walking"`
 
 
 ---
@@ -648,7 +659,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | KiUserExceptionDispatcher     | ✅                 | ❌                | ⬜ §5                                   |
 | 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ✅ §6 engine (kernel meta: T18 §5)      |
 | 💎   | Dynamic/JIT function tables    | ✅ RtlAddFunctionTable | ✅ __register_frame | ✅ §6 registry + callback           |
-| 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ⬜ §7                                   |
+| 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ✅ §7 RBP walk + fault-safe read        |
 | 💎   | SEH + __C_specific_handler    | ✅                 | ❌                | ⬜ §8                                   |
 | 💎   | RtlUnwindEx + __finally       | ✅                 | ❌                | ⬜ §9                                   |
 | 💎   | VEH list                      | ✅ ntdll           | ❌                | ⬜ §10 ABI, D12T04 §5                   |

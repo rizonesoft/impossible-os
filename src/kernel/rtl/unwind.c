@@ -55,6 +55,9 @@
 #include "kernel/exec.h"
 #include "kernel/mm/heap.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/task.h"      /* thread_current / task_current + stack fields */
+#include "kernel/cpu_security.h"    /* __kstack_read_u64 (fault-safe kernel read) */
+#include "kernel/mm/memmap.h"       /* MM_IS_CANONICAL_4LVL (reject non-canonical RBP) */
 #include "kernel/klog.h"
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
@@ -1064,6 +1067,176 @@ void *RtlPcToFileHeader(void *pc_value, void **base_of_image)
     if (base_of_image)
         *base_of_image = base;
     return base;
+}
+
+/* ==========================================================================
+ * Kernel-mode stack walking (TODO-23 s7)
+ * ==========================================================================
+ * ARCH: x86-64 -- the RBP frame-chain layout ([RBP] = saved RBP, [RBP+8] =
+ * return address) is the AMD64 SysV/MS frame convention. Safety is the RIP-keyed
+ * fault-recovery read (__kstack_read_u64), not a stack-bounds table; the bounds
+ * below are correctness-only (bound fabricated frames). Design rationale + the
+ * four Codex design-review rounds behind it are in unwind.h's stack-walk block. */
+
+/* Correctness span backstop when the containing stack cannot be resolved (boot/
+ * loader/AP/IST): a kernel task/thread stack is 8 KiB and the BSP boot stack
+ * 16 KiB, so 64 KiB covers any real chain while keeping a corrupt monotonic RBP
+ * from wandering far into adjacent mapped memory. Safety does NOT depend on this
+ * -- every dereference is fault-recovered. */
+#define RTL_STACK_WALK_MAX_SPAN   0x10000u
+
+extern char __text_start[];
+extern char __text_end[];
+
+/* A recorded return address must land in kernel text or a loaded module --
+ * filters fabricated frames a corrupt chain would synthesize from stack data.
+ * (The kernel currently links at 1 MiB, so the kernel image window is
+ * [__text_start, __text_end); MM_KERNEL_VIRT_BASE is the not-yet-live TODO-33
+ * higher-half base and must NOT be used as a validity predicate here.) */
+static int rtlp_is_code_pc(uint64_t pc)
+{
+    uint64_t ts = (uint64_t)(uintptr_t)__text_start;
+    uint64_t te = (uint64_t)(uintptr_t)__text_end;
+    if (pc >= ts && pc < te)
+        return 1;
+    return RtlPcToFileHeader((void *)(uintptr_t)pc, 0) != 0;
+}
+
+/* Resolve the containing kernel stack [*lo,*hi) for a live RSP, ONLY when RSP
+ * actually falls inside a known stack -- so a stale thread_current()/task_current()
+ * (the per-CPU cursor is not yet live) cannot yield wrong-but-plausible bounds.
+ * Returns 1 on a hit, 0 when the stack is unknown (boot/loader/AP/IST or a
+ * synthetic test buffer) -- the caller then uses the RSP-anchored span backstop.
+ * Bounds are correctness-only; a guard page left inside the range is harmless
+ * because the read that lands on it is fault-recovered and stops the walk. */
+static int rtlp_kernel_stack_bounds(uint64_t rsp, uint64_t *lo, uint64_t *hi)
+{
+    struct thread *t = thread_current();
+    struct task *k = task_current();
+    uint64_t b, e;
+
+    if (t && t->kernel_stack_base && t->kernel_stack_pages) {
+        b = (uint64_t)(uintptr_t)t->kernel_stack_base;
+        e = b + (uint64_t)t->kernel_stack_pages * 4096u;
+        if (rsp >= b && rsp < e) { *lo = b; *hi = e; return 1; }
+    }
+    if (t && t->stack_base && t->stack_size) {
+        b = (uint64_t)(uintptr_t)t->stack_base;
+        e = b + (uint64_t)t->stack_size;
+        if (rsp >= b && rsp < e) { *lo = b; *hi = e; return 1; }
+    }
+    if (k && k->stack_base) {
+        b = (uint64_t)(uintptr_t)k->stack_base;
+        e = b + (uint64_t)TASK_STACK_SIZE;
+        if (rsp >= b && rsp < e) { *lo = b; *hi = e; return 1; }
+    }
+    return 0;
+}
+
+/* Core RBP-chain walk. rsp = lower bound / span origin (captured stack pointer),
+ * rbp = first candidate frame pointer. Every stack slot is read through the
+ * fault-safe __kstack_read_u64, so a corrupt RBP (unmapped / guard / freed /
+ * off-stack) terminates the walk instead of faulting. */
+static uint16_t rtlp_walk_rbp(uint64_t rsp, uint64_t rbp, uint32_t skip,
+                              uint32_t count, void **buf, uint32_t *hash_out)
+{
+    uint64_t lo, hi;
+    uint32_t captured = 0, skipped = 0, hash = 0;
+    uint64_t prev = 0;
+
+    if (count > RTL_MAX_STACK_FRAMES)
+        count = RTL_MAX_STACK_FRAMES;
+    if (count == 0 || !buf) {
+        if (hash_out) *hash_out = 0;
+        return 0;
+    }
+    if (!rtlp_kernel_stack_bounds(rsp, &lo, &hi)) {
+        lo = rsp;
+        hi = rsp + RTL_STACK_WALK_MAX_SPAN;   /* rsp is a valid stack VA: no wrap */
+    }
+
+    while (captured < count) {
+        uint64_t saved_rbp, ret;
+
+        /* Frame-pointer validity: 8-aligned, at/above SP and inside the bound so
+         * [rbp, rbp+16) is in range, strictly climbing (no cycle), and canonical
+         * -- a non-canonical [rbp, rbp+16) would #GP (not #PF) and escape the
+         * __kstack_read_u64 fixup, so reject it before the read. */
+        if (rbp & 0x7u)          break;
+        if (rbp < lo || rbp > hi - 16u) break;
+        if (rbp <= prev)         break;
+        if (!MM_IS_CANONICAL_4LVL(rbp) || !MM_IS_CANONICAL_4LVL(rbp + 15u)) break;
+
+        /* Fault-safe reads: return address first, then the saved frame pointer. */
+        if (__kstack_read_u64(&ret, (const void *)(uintptr_t)(rbp + 8)) != 0)
+            break;
+        if (__kstack_read_u64(&saved_rbp, (const void *)(uintptr_t)rbp) != 0)
+            break;
+        if (ret == 0 || !rtlp_is_code_pc(ret))
+            break;
+
+        if (skipped < skip) {
+            skipped++;
+        } else {
+            buf[captured++] = (void *)(uintptr_t)ret;
+            hash = (hash << 5) + hash + (uint32_t)ret;   /* djb2-ish; deterministic */
+        }
+        prev = rbp;
+        rbp  = saved_rbp;
+    }
+
+    if (hash_out)
+        *hash_out = hash;
+    return (uint16_t)captured;
+}
+
+uint16_t rtl_capture_stack_from_context(const CONTEXT *context, uint32_t frames_to_skip,
+                                        uint32_t frames_to_capture, void **back_trace,
+                                        uint32_t *back_trace_hash)
+{
+    uint64_t rsp, rbp;
+
+    if (!context) {
+        if (back_trace_hash)
+            *back_trace_hash = 0;
+        return 0;
+    }
+    rsp = context->Rsp;
+    rbp = context->Rbp;
+    if (rbp < rsp)   /* a valid frame pointer is at or above the stack pointer */
+        rbp = rsp;
+    return rtlp_walk_rbp(rsp, rbp, frames_to_skip, frames_to_capture,
+                         back_trace, back_trace_hash);
+}
+
+__attribute__((noinline))
+uint16_t RtlCaptureStackBackTrace(uint32_t frames_to_skip, uint32_t frames_to_capture,
+                                  void **back_trace, uint32_t *back_trace_hash)
+{
+    uint64_t rsp;
+    /* This frame's RBP: [rbp+8] is the return address into our CALLER, so
+     * frames_to_skip == 0 records the caller first (Windows semantics). Requires
+     * -fno-omit-frame-pointer (kernel-wide) and noinline (stable own frame). */
+    uint64_t rbp = (uint64_t)(uintptr_t)__builtin_frame_address(0);
+    __asm__ volatile ("movq %%rsp, %0" : "=r"(rsp));
+    return rtlp_walk_rbp(rsp, rbp, frames_to_skip, frames_to_capture,
+                         back_trace, back_trace_hash);
+}
+
+__attribute__((noinline))
+uint32_t RtlWalkFrameChain(void **callers, uint32_t count, uint32_t flags)
+{
+    uint64_t rsp, rbp;
+
+    if (flags & 1u) {
+        /* User-mode walk needs the current thread's saved ring-3 CONTEXT to source
+         * the user RSP/RBP; no such accessor exists from kernel mode yet. Deferred
+         * (the read mechanism would use the s13 fault-safe user path). */
+        return 0;
+    }
+    rbp = (uint64_t)(uintptr_t)__builtin_frame_address(0);
+    __asm__ volatile ("movq %%rsp, %0" : "=r"(rsp));
+    return (uint32_t)rtlp_walk_rbp(rsp, rbp, 0, count, callers, 0);
 }
 
 uint32_t rtl_unwind_dynamic_table_count(void)

@@ -6,6 +6,7 @@
 
 #include "kernel/cpu_security.h"
 #include "kernel/cpuid.h"
+#include "kernel/mm/memmap.h"           /* MM_IS_CANONICAL_4LVL for __kstack_read_u64 */
 #include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
 #include "kernel/boot_init.h"
@@ -344,6 +345,46 @@ int __uaccess_touch_w(void *addr)
         : [a]"r"(addr)
         : "memory", "cc");
     return failed ? -1 : 0;
+}
+
+/* Fault-recoverable single-QWORD read from a KERNEL address (TODO-23 s7 stack
+ * walking). The `movq` is the guarded instruction (its RIP == __kstack_read_fault);
+ * a #PF on a corrupt/off-stack/guard-page RBP is redirected by page_fault_handler
+ * to __kstack_read_fixup, which sets failed = 1. Distinct labels from __uaccess_*
+ * because this reads a KERNEL VA and the handler matches it by RIP alone (read
+ * direction, any CR2) ahead of the pager -- see vmm.c. noinline so the global
+ * labels emit exactly once. Returns 0 on success (*out = value), -1 on fault. */
+__attribute__((noinline))
+int __kstack_read_u64(uint64_t *out, const void *addr)
+{
+    int failed = 0;
+    uint64_t val = 0;
+    uint64_t a = (uint64_t)(uintptr_t)addr;
+
+    /* A non-canonical address raises #GP, not #PF -- the RIP-keyed fixup below
+     * only recovers #PF, so a #GP would bugcheck. Reject a non-canonical operand
+     * (both the base and the last read byte) up front. Defense in depth: callers
+     * (the stack walker) also pre-check, but this makes the primitive safe for
+     * ANY address. */
+    if (!MM_IS_CANONICAL_4LVL(a) || !MM_IS_CANONICAL_4LVL(a + 7u))
+        return -1;
+
+    __asm__ volatile (
+        ".globl __kstack_read_fault\n\t"
+        ".globl __kstack_read_fixup\n\t"
+        "__kstack_read_fault:\n\t"
+        "movq (%[a]), %[v]\n\t"
+        "jmp 1f\n\t"
+        "__kstack_read_fixup:\n\t"
+        "movl $1, %[f]\n\t"
+        "1:\n\t"
+        : [v]"+r"(val), [f]"+r"(failed)
+        : [a]"r"(addr)
+        : "memory", "cc");
+    if (failed)
+        return -1;
+    *out = val;
+    return 0;
 }
 
 int copy_from_user(void *dst, const void *user_src, uint32_t len)

@@ -15,6 +15,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/rtl/unwind.h"
+#include "kernel/cpu_security.h"   /* __kstack_read_u64 (fault-safe read under test) */
+#include "kernel/mm/vmm.h"         /* vmm_get_physical: find an unmapped VA safely */
 
 /* An 8-byte-aligned image scratch: RUNTIME_FUNCTION RVAs index into it, and
  * control_pc = (uint64_t)img + rva. Since img lives on the kernel stack (not a
@@ -1011,6 +1013,208 @@ static void test_unwind_pctofileheader_null(void)
     TEST_ASSERT_NULL(bimg, "RtlPcToFileHeader zeroes *base_of_image on miss");
 }
 
+/* ============================================================================
+ * TODO-23 s7: kernel-mode stack walking (RtlCaptureStackBackTrace,
+ * RtlWalkFrameChain, rtl_capture_stack_from_context)
+ * ==========================================================================*/
+
+/* Live 4-deep call chain. Each level does work AFTER the callee returns (the
+ * `g_sw_sink += n`), so the call is NOT in tail position -- with -fno-omit-frame-
+ * pointer that guarantees a distinct RBP frame per level, and prevents tail-call
+ * collapse from folding the chain. noinline keeps the frames separate. */
+static void    **g_sw_buf;
+static uint32_t   g_sw_skip;
+static uint32_t  *g_sw_hash;
+static volatile int g_sw_sink;
+
+static __attribute__((noinline)) uint16_t sw_leaf(void)
+{
+    uint16_t n = RtlCaptureStackBackTrace(g_sw_skip, 8, g_sw_buf, g_sw_hash);
+    g_sw_sink += n;                 /* defeat DCE + hold the frame live */
+    return n;
+}
+static __attribute__((noinline)) uint16_t sw_l3(void) { uint16_t n = sw_leaf(); g_sw_sink += n; return n; }
+static __attribute__((noinline)) uint16_t sw_l2(void) { uint16_t n = sw_l3();   g_sw_sink += n; return n; }
+static __attribute__((noinline)) uint16_t sw_l1(void) { uint16_t n = sw_l2();   g_sw_sink += n; return n; }
+
+/* skip=0 from a 4-deep chain records >= 4 frames, each a kernel code address,
+ * and yields a non-zero deterministic hash. */
+static void test_stackwalk_capture_depth(void)
+{
+    void    *buf[8] = {0};
+    uint32_t hash = 0;
+    uint16_t n;
+    int i;
+
+    g_sw_buf = buf; g_sw_skip = 0; g_sw_hash = &hash;
+    n = sw_l1();
+    TEST_ASSERT(n >= 4, "capture >= 4 frames from a 4-deep call chain");
+    for (i = 0; i < (int)n; i++)
+        TEST_ASSERT(buf[i] != 0, "captured frame is a non-NULL code address");
+    TEST_ASSERT(hash != 0, "back-trace hash is non-zero for a non-empty trace");
+    /* Hash determinism is asserted on the fully-controlled synthetic chain in
+     * test_stackwalk_from_context (a live capture's deep frames -- test runner,
+     * boot path -- are not this test's to pin). */
+}
+
+/* skip=1 drops the immediate caller: the first captured RIP differs from skip=0,
+ * and equals the second frame of the skip=0 capture. */
+static void test_stackwalk_skip(void)
+{
+    void *buf0[8] = {0};
+    void *buf1[8] = {0};
+    uint16_t n0, n1;
+
+    g_sw_hash = 0;
+    g_sw_buf = buf0; g_sw_skip = 0; n0 = sw_l1();
+    g_sw_buf = buf1; g_sw_skip = 1; n1 = sw_l1();
+
+    TEST_ASSERT(n0 >= 2, "skip=0 captured at least two frames");
+    TEST_ASSERT(n1 >= 1, "skip=1 captured at least one frame");
+    TEST_ASSERT(buf1[0] != buf0[0], "skip=1 drops the immediate caller");
+    TEST_ASSERT(buf1[0] == buf0[1], "skip=1 first frame == skip=0 second frame");
+}
+
+/* rtl_capture_stack_from_context walks a SYNTHETIC RBP chain built in a stack
+ * buffer (monotonically increasing frame pointers, real code addresses as return
+ * slots), terminated by a zero saved-RBP. */
+static void test_stackwalk_from_context(void)
+{
+    uint64_t fr[6];
+    CONTEXT  ctx;
+    void    *buf[8] = {0};
+    uint16_t n;
+
+    /* fr[2k] = saved RBP (-> next frame), fr[2k+1] = return address. */
+    fr[0] = (uint64_t)(uintptr_t)&fr[2];
+    fr[1] = (uint64_t)(uintptr_t)&sw_leaf;
+    fr[2] = (uint64_t)(uintptr_t)&fr[4];
+    fr[3] = (uint64_t)(uintptr_t)&sw_l2;
+    fr[4] = 0;                                   /* terminator: saved RBP = 0 */
+    fr[5] = (uint64_t)(uintptr_t)&sw_l3;
+
+    for (int i = 0; i < (int)(sizeof(ctx)); i++)
+        ((uint8_t *)&ctx)[i] = 0;
+    ctx.Rsp = (uint64_t)(uintptr_t)&fr[0];
+    ctx.Rbp = (uint64_t)(uintptr_t)&fr[0];
+
+    n = rtl_capture_stack_from_context(&ctx, 0, 8, buf, 0);
+    TEST_ASSERT_EQ((uint64_t)n, 3u, "synthetic 3-frame chain -> 3 frames");
+    TEST_ASSERT(buf[0] == (void *)(uintptr_t)&sw_leaf, "frame 0 return address");
+    TEST_ASSERT(buf[1] == (void *)(uintptr_t)&sw_l2,   "frame 1 return address");
+    TEST_ASSERT(buf[2] == (void *)(uintptr_t)&sw_l3,   "frame 2 return address");
+
+    /* Hash: non-zero, and deterministic for identical input (two walks of the
+     * same synthetic chain produce the same hash). */
+    {
+        void *b2[8] = {0};
+        uint32_t h1 = 0, h2 = 0;
+        (void)rtl_capture_stack_from_context(&ctx, 0, 8, buf, &h1);
+        (void)rtl_capture_stack_from_context(&ctx, 0, 8, b2, &h2);
+        TEST_ASSERT(h1 != 0, "synthetic-chain hash is non-zero");
+        TEST_ASSERT_EQ(h2, h1, "hash is deterministic for identical input");
+    }
+}
+
+/* A non-monotonic (backward) saved-RBP terminates the walk instead of looping:
+ * only the first valid frame is recorded. */
+static void test_stackwalk_no_runaway(void)
+{
+    uint64_t fr[6];
+    CONTEXT  ctx;
+    void    *buf[8] = {0};
+    uint16_t n;
+
+    fr[0] = (uint64_t)(uintptr_t)&fr[4];   /* frame 0 saved RBP -> higher (ok) */
+    fr[1] = (uint64_t)(uintptr_t)&sw_leaf; /* frame 0 return */
+    fr[4] = (uint64_t)(uintptr_t)&fr[0];   /* frame 1 saved RBP -> BACKWARD (stop) */
+    fr[5] = (uint64_t)(uintptr_t)&sw_l2;   /* frame 1 return */
+    fr[2] = fr[3] = 0;
+
+    for (int i = 0; i < (int)(sizeof(ctx)); i++)
+        ((uint8_t *)&ctx)[i] = 0;
+    ctx.Rsp = (uint64_t)(uintptr_t)&fr[0];
+    ctx.Rbp = (uint64_t)(uintptr_t)&fr[0];
+
+    n = rtl_capture_stack_from_context(&ctx, 0, 8, buf, 0);
+    TEST_ASSERT_EQ((uint64_t)n, 2u, "non-monotonic RBP stops after the two valid frames");
+    TEST_ASSERT(buf[0] == (void *)(uintptr_t)&sw_leaf, "frame 0 recorded before the bad link");
+    TEST_ASSERT(buf[1] == (void *)(uintptr_t)&sw_l2,   "frame 1 recorded before the bad link");
+}
+
+/* A non-canonical starting frame pointer (would #GP, not #PF) is rejected without
+ * dereferencing: the walk returns 0 instead of bugchecking. */
+static void test_stackwalk_noncanonical(void)
+{
+    CONTEXT ctx;
+    void   *buf[8] = {0};
+
+    for (int i = 0; i < (int)(sizeof(ctx)); i++)
+        ((uint8_t *)&ctx)[i] = 0;
+    ctx.Rsp = 0x0000800000000000ULL;   /* first non-canonical address */
+    ctx.Rbp = 0x0000800000000000ULL;
+    TEST_ASSERT_EQ((uint64_t)rtl_capture_stack_from_context(&ctx, 0, 8, buf, 0), 0u,
+                   "non-canonical RBP -> 0 frames (no #GP bugcheck)");
+}
+
+/* Degenerate arguments return 0 without touching memory. */
+static void test_stackwalk_degenerate(void)
+{
+    void *buf[4] = {0};
+    TEST_ASSERT_EQ((uint64_t)RtlCaptureStackBackTrace(0, 0, buf, 0), 0u,
+                   "count == 0 -> 0 frames");
+    TEST_ASSERT_EQ((uint64_t)RtlCaptureStackBackTrace(0, 4, 0, 0), 0u,
+                   "NULL buffer -> 0 frames");
+    TEST_ASSERT_EQ((uint64_t)rtl_capture_stack_from_context(0, 0, 4, buf, 0), 0u,
+                   "NULL context -> 0 frames");
+}
+
+/* RtlWalkFrameChain: kernel walk (flags==0) captures frames; user walk (flags&1)
+ * is deferred and returns 0. */
+static void test_stackwalk_frame_chain(void)
+{
+    void *buf[8] = {0};
+    TEST_ASSERT(RtlWalkFrameChain(buf, 8, 0) >= 1u,
+                "RtlWalkFrameChain(flags=0) walks the kernel stack");
+    TEST_ASSERT_EQ((uint64_t)RtlWalkFrameChain(buf, 8, 1u), 0u,
+                   "RtlWalkFrameChain(flags&1) user walk deferred -> 0");
+}
+
+/* The fault-safe read primitive: reads a valid kernel address correctly, and an
+ * unmapped kernel VA is recovered (returns -1) instead of bugchecking. */
+static void test_stackwalk_kstack_read(void)
+{
+    uint64_t src = 0xABCDEF0123456789ULL;
+    uint64_t out = 0;
+    uint64_t bad = 0;
+    uint64_t a;
+
+    TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(&out, &src), 0u,
+                   "__kstack_read_u64 on a valid address succeeds");
+    TEST_ASSERT_EQ(out, src, "__kstack_read_u64 returns the correct value");
+
+    /* Non-canonical operand raises #GP (not #PF), which the fixup cannot recover;
+     * it must be rejected up front (returns -1 without dereferencing). */
+    TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(&out, (const void *)0x0000800000000000ULL),
+                   (uint64_t)(int64_t)-1, "__kstack_read_u64 rejects a non-canonical address");
+
+    /* Find a genuinely unmapped high-canonical kernel VA (vmm_get_physical == 0
+     * is a non-faulting page-table walk; 0 reliably means not present). */
+    for (a = 0xffffff0000000000ULL; a < 0xffffff0000200000ULL; a += 0x1000ULL) {
+        if (vmm_get_physical((uintptr_t)a) == 0) { bad = a; break; }
+    }
+    if (bad) {
+        /* TEST-SIDE-EFFECT-ALLOWED: deliberately dereferences an unmapped kernel
+         * VA to prove the RIP-keyed __kstack_read fixup recovers the #PF instead
+         * of bugchecking (the crash-path fault boundary for stack walking). */
+        out = 0x1111;
+        TEST_ASSERT_EQ((uint64_t)__kstack_read_u64(&out, (const void *)(uintptr_t)bad),
+                       (uint64_t)(int64_t)-1, "__kstack_read_u64 on unmapped VA returns -1");
+    } else {
+        TEST_SKIP("no unmapped kernel VA found in the probe window");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_unwind(void)
@@ -1065,6 +1269,24 @@ void test_register_unwind(void)
                             test_unwind_malformed_transactional, TEST_CAT_EXCEPT);
     test_suite_register_cat("Unwind: RtlPcToFileHeader NULL",
                             test_unwind_pctofileheader_null, TEST_CAT_EXCEPT);
+
+    /* TODO-23 s7: kernel-mode stack walking */
+    test_suite_register_cat("StackWalk: capture depth + hash",
+                            test_stackwalk_capture_depth, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: skip drops immediate caller",
+                            test_stackwalk_skip, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: from-context synthetic chain",
+                            test_stackwalk_from_context, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: non-monotonic RBP no runaway",
+                            test_stackwalk_no_runaway, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: non-canonical RBP rejected",
+                            test_stackwalk_noncanonical, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: degenerate args return 0",
+                            test_stackwalk_degenerate, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: RtlWalkFrameChain kernel + deferred user",
+                            test_stackwalk_frame_chain, TEST_CAT_EXCEPT);
+    test_suite_register_cat("StackWalk: __kstack_read_u64 valid + fault-recover",
+                            test_stackwalk_kstack_read, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

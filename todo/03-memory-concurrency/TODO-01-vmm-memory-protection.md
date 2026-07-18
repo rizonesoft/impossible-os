@@ -132,6 +132,7 @@ Expose the VMM region state to user-mode so Win32 apps can walk their own addres
 - [ ] Implement `vmm_query_region(virt, out_mbi)` -- find VMA containing `virt`, populate `MEMORY_BASIC_INFORMATION`; for unmapped addresses return `State=MEM_FREE`, `RegionSize` = gap to next VMA
 - [ ] Wire `NtQueryVirtualMemory(handle, base, MemoryBasicInformation, buf, buf_size, &ret_len)`; return `STATUS_NOT_IMPLEMENTED` for other info classes
 - [ ] Support Win32 range-walk: successive calls with `base = prev.BaseAddress + prev.RegionSize` must cover the full user address space without gaps
+- [ ] Bug: `vmm_get_physical` 2 MiB branch tests only `VMM_FLAG_HUGE`, not PRESENT (`vmm.c`) -- a non-present huge PDE returns a bogus phys; require `(PRESENT|HUGE)` like the 1 GiB branch + a non-present-PDE test (found via TODO-23 §7)
 - [ ] Commit: `"mm: NtQueryVirtualMemory -- MEMORY_BASIC_INFORMATION"`
 
 ## 5. `VirtualAlloc` / `VirtualFree` / `VirtualProtect` Win32 Wrappers

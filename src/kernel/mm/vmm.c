@@ -665,6 +665,28 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     struct pf_exc_scratch *s;
     uint32_t  cpu;
 
+    /* Fault-recoverable KERNEL read: __kstack_read_u64 (cpu_security.c) is the
+     * fault-safe primitive for kernel stack walking (RtlCaptureStackBackTrace /
+     * crash frame-chain walks). A #PF at its guarded load means the walker chased
+     * a corrupt/off-stack/guard-page RBP into an unmapped or read-protected KERNEL
+     * VA; redirect to the fixup so the walk stops gracefully instead of
+     * bugchecking. Matched by the EXACT faulting RIP (static exception table, no
+     * per-CPU state -> SMP/preempt-safe) and read direction only. Runs BEFORE the
+     * swap/mmap pager: legitimate kernel stack pages are always resident, so a
+     * kstack-read fault is never a demand-page/COW event -- letting it reach
+     * swap_handle_fault (which can allocate, log, and vfs_read) would enter
+     * blocking I/O from a possibly-DISPATCH_LEVEL/crash context. A real user
+     * demand/COW fault never executes at this RIP, so the pager still handles
+     * those below. */
+    {
+        extern char __kstack_read_fault[], __kstack_read_fixup[];
+        if (!(err_code & PF_EC_WRITE) &&
+            frame->rip == (uint64_t)(uintptr_t)__kstack_read_fault) {
+            frame->rip = (uint64_t)(uintptr_t)__kstack_read_fixup;
+            return (uint64_t)frame;  /* guarded kernel read reports fault: RAX path */
+        }
+    }
+
     /* Pager chain runs FIRST: swap-in for evicted pages, then mmap demand-load
      * and MAP_PRIVATE copy-on-write (a present-bit write fault -- must NOT be
      * gated out by a not-present check). A guarded user copy to a swapped /

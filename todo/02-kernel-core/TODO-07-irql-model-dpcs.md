@@ -133,6 +133,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
 - [ ] Report system vectors at named IRQLs: LAPIC timer at `CLOCK_LEVEL`, IPI at `IPI_LEVEL` (today `vector_to_irql` reads timer DISPATCH, IPI HIGH). NT model: enter at CLOCK then lower to DISPATCH before §6 DPC drain (Codex §1 M)
+- [ ] Expose the current thread's active ring-3 `interrupt_frame` (user RSP/RBP/RIP) from kernel mode so `RtlWalkFrameChain(flags&1)` can walk the user stack -> XREF: `TODO-23 §7` (item: "`RtlWalkFrameChain` `flags & 1` user walk returns 0")
 - [x] Commit: `"kernel: irq -- wire IRQL raises/lowers into interrupt path"`
 
 > **Note:** IRQL tracking in `isr_handler` is software-only -- no LAPIC TPR writes on interrupt entry/exit. The LAPIC hardware already masks lower-priority vectors via the ISR/PPR mechanism during interrupt delivery. Explicit TPR writes are reserved for `KeRaiseIrql`/`KeLowerIrql` when kernel code intentionally changes level. This avoids interference with emulated LAPIC on WHPX/VBox/TCG.
@@ -275,9 +276,9 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a kernel worker thread, allowing operati
 > - Tests: `test_dpc_init_threaded` asserts `KeInitializeThreadedDpc` sets `threaded=1`; the behavioral PASSIVE-execution + handoff stress test is deferred with the §15 sync redesign.
 > - Canonical: `src/kernel/sched/dpc.c`.
 > **Verified:** 2026-06-26 | commit `bd8f42c2` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
-> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 278)
-> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 279)
-> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 280)
+> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 279)
+> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 280)
+> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 281)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: task_create return-check + doc + test, no locking/lifecycle change)
 
 ---
