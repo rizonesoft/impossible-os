@@ -448,6 +448,32 @@ static void test_pf_dispatch_stubs_return_unhandled(void)
                    KI_EXCEPTION_UNHANDLED, "ki_raise_kernel_exception stub declines");
 }
 
+/* A same-CPL (ring-0) frame: in x86-64 LONG MODE the CPU pushes SS:RSP on every
+ * exception regardless of CPL (and IRETQ pops all five), so the interrupt_frame
+ * carries a valid saved SS:RSP for a kernel fault too. context_from_frame must
+ * read them unconditionally -- capturing the actual saved values, never
+ * special-casing ring-0. */
+static void test_context_from_frame_kernel_cpl(void)
+{
+    struct interrupt_frame f;
+    CONTEXT ctx;
+    uint32_t captured;
+
+    fill_frame(&f);
+    f.cs  = 0x08;                    /* ring-0 kernel code selector, RPL 0 */
+    f.ss  = 0x10;                    /* ring-0 data selector -- the saved SS */
+    f.rsp = 0xFFFF800001234000ULL;   /* the CPU-pushed kernel RSP */
+    ctx.ContextFlags = CONTEXT_CONTROL;
+    captured = context_from_frame(&f, &ctx);
+
+    TEST_ASSERT(CONTEXT_HAS_GROUP(captured, CONTEXT_CONTROL),
+                "CONTROL captured for a kernel-CPL frame");
+    TEST_ASSERT_EQ(ctx.SegSs, 0x10, "kernel frame SS captured from the saved slot");
+    TEST_ASSERT_EQ(ctx.Rsp, 0xFFFF800001234000ULL,
+                   "kernel frame Rsp is the saved value, not special-cased");
+    TEST_ASSERT_EQ(ctx.Rip, 0x0000000000401000ULL, "kernel frame Rip captured");
+}
+
 /* ---- Registration ---- */
 
 void test_register_except(void)
@@ -494,6 +520,8 @@ void test_register_except(void)
                             test_pf_build_access_violation_zeroes_context, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: pf dispatch stubs decline",
                             test_pf_dispatch_stubs_return_unhandled, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: context_from_frame kernel CPL",
+                            test_context_from_frame_kernel_cpl, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

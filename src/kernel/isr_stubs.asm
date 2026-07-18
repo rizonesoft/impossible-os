@@ -36,8 +36,10 @@ isr_common_stub:
     ;   [rsp+16] = RIP  (CPU)
     ;   [rsp+24] = CS   (CPU)  ← check this
     ;   [rsp+32] = RFLAGS
-    ;   [rsp+40] = RSP  (user, if ring-3 entry)
-    ;   [rsp+48] = SS   (user, if ring-3 entry)
+    ;   [rsp+40] = RSP  (ALWAYS present -- long mode pushes SS:RSP on every
+    ;                    interrupt regardless of CPL; user RSP on ring-3 entry,
+    ;                    interrupted kernel RSP on ring-0 entry)
+    ;   [rsp+48] = SS   (ALWAYS present -- see RSP note; user SS vs kernel SS)
     ;
     ; SYMMETRY REQUIREMENT: every swapgs here MUST have a matching swapgs
     ; on the exit path. A missing or double swapgs corrupts GS for all
@@ -107,12 +109,13 @@ isr_common_stub:
     ; If returning to ring 3 (CS & 3 != 0), swap GS back so user-mode
     ; sees TEB via GS. Must match the entry swapgs exactly.
     ;
-    ; Stack at this point (iret frame):
+    ; Stack at this point (iret frame). IRETQ ALWAYS pops all five in long mode
+    ; (SS:RSP too), for a same-CPL ring-0 return as well as a ring-3 return:
     ;   [rsp+0]  = RIP
     ;   [rsp+8]  = CS   ← check this
     ;   [rsp+16] = RFLAGS
-    ;   [rsp+24] = RSP  (user)
-    ;   [rsp+32] = SS   (user)
+    ;   [rsp+24] = RSP  (user on ring-3 return, kernel on ring-0 return)
+    ;   [rsp+32] = SS   (user on ring-3 return, kernel on ring-0 return)
     test byte [rsp+8], 3      ; check RPL bits of return CS
     jz .no_swapgs_exit        ; returning to ring 0 → skip VERW + swapgs
 

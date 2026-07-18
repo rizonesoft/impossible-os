@@ -613,29 +613,35 @@ static const char *guard_page_lookup(uintptr_t fault_addr)
  * (only the faulting CPU touches it -- no lock), 16-byte aligned to satisfy the
  * CONTEXT alignment ABI. `in_use` is a one-shot recursion guard: a nested #PF
  * that arrives while a slot is being populated cannot reuse it, so it escalates
- * straight to a terminal panic instead of scribbling over a live record. */
+ * straight to a terminal panic instead of scribbling over a live record.
+ *
+ * Aligned to a 64-byte cache line (not just the 16-byte CONTEXT ABI minimum) and
+ * padded so the per-element stride is a cache-line multiple: otherwise one CPU's
+ * trailing bytes and the next CPU's leading bytes would share a line and bounce
+ * between cores on simultaneous faults, defeating the per-CPU ownership. */
+#define PF_CACHELINE 64u
 struct pf_exc_scratch {
     EXCEPTION_RECORD rec;
     CONTEXT          ctx;
     volatile uint32_t in_use;
-} __attribute__((aligned(16)));
+} __attribute__((aligned(PF_CACHELINE)));
 
-static struct pf_exc_scratch pf_exc_scratch[MAX_CPUS];
+_Static_assert(sizeof(struct pf_exc_scratch) % PF_CACHELINE == 0,
+               "pf_exc_scratch stride must be a cache-line multiple (no false sharing)");
+
+static struct pf_exc_scratch pf_exc_scratch[MAX_CPUS] __attribute__((aligned(PF_CACHELINE)));
 
 /* Build a STATUS_ACCESS_VIOLATION EXCEPTION_RECORD + a CONTROL/INTEGER CONTEXT
  * describing this fault. Pure (no logging, no locks, no allocation) so it is
- * safe in fault context and directly unit-testable. `ctx` is fully zeroed first
- * so no stale per-CPU-scratch bytes leak into an unsatisfiable register group,
- * then context_from_frame fills CONTROL + INTEGER from the frame. */
+ * safe in fault context and directly unit-testable. context_from_frame does the
+ * full CONTEXT scrub itself (zeroes the struct, parks FltSave at architectural
+ * init state) after snapshotting the requested mask -- so we only seed
+ * ContextFlags with the groups a frame can satisfy and let it clear the rest;
+ * no separate pre-zero of the per-CPU scratch is needed. */
 void pf_build_access_violation(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                const struct interrupt_frame *frame,
                                uintptr_t fault_addr, uint64_t err_code)
 {
-    uint8_t *cp = (uint8_t *)ctx;
-    uint32_t i;
-
-    for (i = 0; i < (uint32_t)sizeof(CONTEXT); i++)
-        cp[i] = 0;
     ctx->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
     context_from_frame(frame, ctx);
 
@@ -697,42 +703,36 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     s->in_use = 1;
     pf_build_access_violation(&s->rec, &s->ctx, frame, fault_addr, err_code);
 
-    if (err_code & PF_EC_USER) {
+    {
+        KPROCESSOR_MODE mode = (err_code & PF_EC_USER) ? UserMode : KernelMode;
         KI_EXCEPTION_DISPOSITION disp;
 
-        /* User-origin fault: the CPU was in ring 3, so no kernel spinlock (klog
-         * included) can be held -- logging here is deadlock-safe. */
-        klog(LOG_ERROR, "mm",
-             "pf: user fault at %p code=0x%x rip=%p (access violation)",
-             (void *)fault_addr, (unsigned int)err_code, (void *)(uintptr_t)frame->rip);
-
-        disp = ki_dispatch_exception(&s->rec, &s->ctx, frame, UserMode, 1 /*first_chance*/);
+        /* Both modes go through the master dispatcher; the mode arg selects the
+         * user (ring-3 delivery) vs kernel (KD notify -> kernel SEH -> bugcheck)
+         * flow. The dispatcher internally calls ki_raise_kernel_exception for a
+         * kernel fault, so the #PF handler never routes around it. The stub
+         * returns UNHANDLED until later sections land. */
+        disp = ki_dispatch_exception(&s->rec, &s->ctx, frame, mode, 1 /*first_chance*/);
         if (disp == KI_EXCEPTION_HANDLED) {
             s->in_use = 0;           /* resolved -- release the slot */
-            return (uint64_t)frame;  /* delivered / retry via IRET */
+            return (uint64_t)frame;  /* frame carries the resume state, IRET */
         }
 
-        /* Unhandled: terminal. Leave in_use SET so a fault DURING panic re-enters
-         * the nested-fault path (minimal terminal) instead of rebuilding a record
-         * in this live slot. Ring-3 delivery + per-process termination land in
-         * later sections; until then an unhandled user fault stops the system. */
-        panic_screen(frame, err_code, "USER_ACCESS_VIOLATION", "vmm.c", 0);
-        return (uint64_t)frame;  /* unreachable */
-    } else {
-        KI_EXCEPTION_DISPOSITION disp;
-
-        /* Kernel-origin fault. Do NOT klog here: the faulting CPU may already
-         * hold s_klog_lock (or any spinlock), so logging could deadlock.
-         * panic_screen is the fault-safe diagnostic path. */
-        disp = ki_raise_kernel_exception(&s->rec, &s->ctx, frame);
-        if (disp == KI_EXCEPTION_HANDLED) {
-            s->in_use = 0;           /* kernel SEH resolved it -- release the slot */
-            return (uint64_t)frame;  /* resume */
+        /* Unhandled: terminal. Leave in_use SET so a fault DURING panic hits the
+         * nested-fault guard instead of rebuilding a record in this live slot.
+         * Log ONLY here (never before dispatch, so a future HANDLED path stays
+         * log-free) and ONLY for user faults: a user fault entered from ring 3,
+         * so no kernel spinlock (klog's s_klog_lock included) is held; a kernel
+         * fault may hold it, so klog could deadlock -- panic_screen is the
+         * fault-safe path. Ring-3 delivery + per-process termination land later. */
+        if (mode == UserMode) {
+            klog(LOG_ERROR, "mm",
+                 "pf: user fault at %p code=0x%x rip=%p (access violation)",
+                 (void *)fault_addr, (unsigned int)err_code, (void *)(uintptr_t)frame->rip);
+            panic_screen(frame, err_code, "USER_ACCESS_VIOLATION", "vmm.c", 0);
+        } else {
+            panic_screen(frame, err_code, "PAGE_FAULT", "vmm.c", 0);
         }
-
-        /* Unhandled kernel fault: terminal. Leave in_use SET (see the user path)
-         * so a fault during panic hits the nested-fault guard, not this slot. */
-        panic_screen(frame, err_code, "PAGE_FAULT", "vmm.c", 0);
         return (uint64_t)frame;  /* unreachable */
     }
 }

@@ -138,7 +138,7 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 **Prompt:** Rewrite `page_fault_handler()` in `vmm.c` to triage before panicking.
 Decode `CR2` (fault address) and the error code bits (P=present, W=write, U=user, I=fetch, PK=prot-key, SS=shadow-stack). Decision tree:
 - **Kernel fault, not present** → existing swap/mmap chain (unchanged).
-- **Kernel fault, protection violation** → kernel exception path -- call `ki_raise_kernel_exception()` (§14) or `panic_screen()` if not inside a probed region (§13).
+- **Kernel fault, protection violation** → route through `ki_dispatch_exception(..., KernelMode, ...)` -- the master dispatcher owns the `ki_raise_kernel_exception()` (§14) call and terminal bugcheck/panic; falls back to `panic_screen()` if not inside a probed region (§13).
 - **User fault, not present** → existing swap/mmap chain; else hand a growable-stack guard hit to `vmm_try_grow_stack()` (§17); else deliver `STATUS_ACCESS_VIOLATION` via `KiUserExceptionDispatcher` (§5). Until §17 lands, a guard hit keeps the current labeled panic.
 - **User fault, protection violation** → deliver `STATUS_ACCESS_VIOLATION` to user-mode.
 - **User fetch fault** → deliver `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]=8` (execute).
@@ -151,21 +151,26 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 > → XREF: `§17` -- guard-page stack auto-grow (`vmm_try_grow_stack()`) is the split-off owner of the growable-stack case in the not-present-user branch.
 
 - [x] Decode error-code bits (named `PF_EC_*` per Intel SDM) and distinguish user vs. kernel fault via the U bit (`page_fault_handler`, `vmm.c`)
-- [x] Build `EXCEPTION_RECORD` + a CONTROL/INTEGER `CONTEXT` in a per-CPU scratch slot (`pf_exc_scratch[MAX_CPUS]`, aligned, `in_use` recursion guard) not on the #PF kernel stack; pure `pf_build_access_violation()`
-- [x] Route user-mode faults to `ki_dispatch_exception(rec, ctx, frame, UserMode, first_chance)`; resume via IRET on `KI_EXCEPTION_HANDLED`, else terminal panic
-- [x] Route kernel-mode faults to `ki_raise_kernel_exception(rec, ctx, frame)` stub (full impl in §14); no `klog` on the kernel path (may hold `s_klog_lock`)
+- [x] Build `EXCEPTION_RECORD` + a CONTROL/INTEGER `CONTEXT` in cache-line-aligned per-CPU scratch (`pf_exc_scratch[MAX_CPUS]`, `in_use` guard) not on the #PF stack; pure `pf_build_access_violation()`
+- [x] Route BOTH modes through `ki_dispatch_exception(rec, ctx, frame, mode, first_chance)` (mode = U bit); resume via IRET on `KI_EXCEPTION_HANDLED`, else terminal panic
+- [x] `ki_raise_kernel_exception(rec, ctx, frame)` stub declared for §14 (called BY the dispatcher, not the #PF handler); `klog` only on the user terminal path (kernel may hold `s_klog_lock`)
 
 **Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0 code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns UNHANDLED, handler panics until §5 ring-3 delivery lands). Trigger a kernel-mode swap fault -- existing guard/swap/mmap chain still handles it correctly (COW is a present-bit write -- pager chain runs unchanged, not gated on not-present). A guard-page hit keeps the current labeled panic (§17 replaces it with auto-grow). No POST16 on this post-Phase-3 runtime fault path (Codex design review: POST16 is boot-path telemetry, unobservable after desktop start); user-path diagnostics use `klog`, kernel-path uses the fault-safe `panic_screen`. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 4 new `pf_*` suites (write / read+fetch decode, CONTEXT zeroing, stub disposition), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 5 new suites (pf write / read+fetch decode, CONTEXT zeroing, stub disposition, kernel-CPL capture), 0 failures
+
+- [x] Commit: `"mm: triage #PF into user/kernel paths; defer to exception dispatch"`
 
 > **Notes:**
-> - **What shipped** -- `page_fault_handler` triage rewrite (`vmm.c`): decode `PF_EC_*`, unchanged guard/swap/mmap chain, then build an access-violation record and route by U bit; pure `pf_build_access_violation()` + 4 unit tests.
-> - **How it integrates** -- calls the `except.h` dispatch ABI (`ki_dispatch_exception`/`ki_raise_kernel_exception` return `KI_EXCEPTION_DISPOSITION`, live frame passed); §2 ships UNHANDLED stubs, so an unresolved fault stays terminal as before.
-> - **Downstream effects** -- lands `KPROCESSOR_MODE` + the dispatch decls §4/§5/§14 build on; §17 hooks stack auto-grow into the not-present-user branch. Codex design adoptions in the commit message.
+> - **What shipped** -- `page_fault_handler` triage rewrite (`vmm.c`): decode `PF_EC_*`, unchanged guard/swap/mmap chain, then build an access-violation record in per-CPU scratch and route by U bit; pure `pf_build_access_violation()` + 5 unit tests.
+> - **How it integrates** -- routes BOTH modes through the `except.h` dispatch ABI (`ki_dispatch_exception` returns `KI_EXCEPTION_DISPOSITION`, live frame passed); ships UNHANDLED stubs, so unresolved faults stay terminal.
+> - **Downstream effects** -- lands `KPROCESSOR_MODE` + the dispatch decls §4/§5/§14 build on; §17 hooks stack auto-grow into the not-present-user branch. Codex design + review adoptions in the commit messages.
+> - **Canonical doc** -- the `include/kernel/except.h` dispatch-ABI block (the exception-dispatch contract owner).
 > - **Scope boundary** -- §2 owns triage + record build + dispatch routing; ring-3 delivery is §5, kernel SEH is §14, stack auto-grow is §17, safe probing is §13.
-
-- [ ] Commit: `"mm: triage #PF into user/kernel paths; defer to exception dispatch"`
+>
+> **Verified:** 2026-07-18 | ship `eda0aea7` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.64s)
+> **Accepted:** [H] §14 `ki_raise_kernel_exception` IRQL check must be fault-safe (non-`klog`) -- a #PF at elevated IRQL inside klog would deadlock on `s_klog_lock` -> XREF: 02-kernel-core/TODO-23 §14 (item: "replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body; fault-safe (non-`klog`) IRQL check" at line 459)
+> **Quality reviewed:** 2026-07-18 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 2H+4M fixed, 1H accepted-XREF, 1H rejected (long-mode always pushes SS:RSP) | scope: kernel-code-quality
 
 
 ---
@@ -220,6 +225,7 @@ For kernel-mode there is no ring-3 leg: first-chance `KiDebugRoutine` -> kernel 
 
 > [!NOTE]
 > `KPROCESSOR_MODE` (`typedef enum { KernelMode = 0, UserMode = 1 }`), the `KI_EXCEPTION_DISPOSITION` enum, and the `ki_dispatch_exception` / `ki_raise_kernel_exception` declarations were landed by §2 in `include/kernel/except.h`; §4/§14 replace the UNHANDLED stubs with the real bodies. Canonical `KPROCESSOR_MODE` moves to a shared NT types header when TODO-12 matures.
+> **The §2 #PF handler routes BOTH user and kernel faults through `ki_dispatch_exception` (mode arg distinguishes)**, so the KernelMode leg here MUST call `ki_raise_kernel_exception` internally (do not expect the #PF handler to call it directly). **HANDLED contract:** a `KI_EXCEPTION_HANDLED` return MUST leave the live `frame` carrying the final resume/delivery state (the caller IRETs the frame and never re-applies `ctx`) -- a dispatcher working in `ctx` must `frame_from_context()` it back first, or IRET refaults in a loop.
 > `KeBugCheckEx` is implemented in `src/kernel/panic.c` per `TODO-27-crash-dump-generation.md` §1. When `except.c` lands, include `panic.h` (or a forward declaration) and call the shared `KeBugCheckEx` entry point for terminal kernel-mode faults. Do not add a second implementation in `except.c`.
 
 - [x] `include/kernel/except.h` -- `typedef enum { KernelMode, UserMode } KPROCESSOR_MODE;` (landed by §2, local; moved to shared header later)
@@ -452,9 +458,10 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 
 > [!IMPORTANT]
 > → XREF: `TODO-07 §3` -- kernel `__try` must only be used at `PASSIVE_LEVEL` or `APC_LEVEL`; add `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` assertion at the start of `ki_raise_kernel_exception`.
+> **Fault-safe entry (from §2 review):** the IRQL check MUST be non-logging in fault context. A `#PF` preserves the faulting IRQL, so a fault at elevated IRQL -- possibly already inside `klog` holding `s_klog_lock` -- must NOT route through a `klog`-logging `IRQL_REQUIRE_AT_MOST`. Use a fault-safe (non-`klog`) check and bypass kernel SEH at elevated IRQL, matching §2's no-`klog`-on-kernel-fault rule.
 
 - [ ] `include/kernel/except.h` -- `KI_EXCEPTION_REGISTRATION`, kernel exception chain head in `struct task`
-- [ ] `src/kernel/except.c` -- replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body
+- [ ] `src/kernel/except.c` -- replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body; fault-safe (non-`klog`) IRQL check per the [!IMPORTANT] block (a #PF at elevated IRQL in klog deadlocks `s_klog_lock`)
 - [ ] Linker script: ensure kernel code sections emit `.pdata` with `-fexceptions` (or manual stubs)
 - [ ] Re-entrancy guard: nested kernel exception → `KeBugCheckEx`
 - [ ] Wrap one existing dangerous driver operation (e.g., AHCI MMIO read) as a smoke test

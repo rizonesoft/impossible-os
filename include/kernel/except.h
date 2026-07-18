@@ -350,8 +350,12 @@ typedef enum { KernelMode = 0, UserMode = 1 } KPROCESSOR_MODE;
  * kernel-SEH stages:
  *   UNHANDLED -- nobody resolved the exception; the CALLER performs the
  *                terminal action (deliver to ring-3 later, or panic now).
- *   HANDLED   -- resolved in place; `frame` (and/or `ctx`) was updated to the
- *                resume point, and the caller returns through IRET to retry.
+ *   HANDLED   -- resolved; the live `frame` MUST carry the final resume/delivery
+ *                state before returning (the caller returns it through IRET and
+ *                never re-applies `ctx`). A dispatcher that works in `ctx` must
+ *                write it back via frame_from_context first -- returning HANDLED
+ *                with only `ctx` updated would IRET the unchanged frame and
+ *                refault in a loop.
  * The triage stub returns UNHANDLED, so today every fault the pager chain
  * declined terminates -- exactly the pre-triage behavior, but now routed
  * through the durable dispatch contract instead of an inline panic. */

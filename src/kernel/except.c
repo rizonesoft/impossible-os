@@ -23,18 +23,25 @@ static void except_zero(void *dst, uint32_t len)
         p[i] = 0;
 }
 
+/* Set only the architectural FPU init FIELDS. The caller MUST have already
+ * cleared FltSave -- all-zero would unmask every FP exception and fault the
+ * moment the state was restored and used, so these three fields override that.
+ * Split out so a caller that just zeroed the whole CONTEXT does not pay a second
+ * FltSave clear. */
+static void context_set_fpu_init_fields(CONTEXT *ctx)
+{
+    ctx->FltSave.ControlWord = FPU_FCW_INIT;
+    ctx->FltSave.MxCsr       = FPU_MXCSR_INIT;
+    ctx->MxCsr               = FPU_MXCSR_INIT;
+}
+
 void context_init_fpu_state(CONTEXT *ctx)
 {
     if (!ctx)
         return;
 
     except_zero(&ctx->FltSave, (uint32_t)sizeof(XMM_SAVE_AREA32));
-
-    /* Architectural reset state. All-zero would unmask every FP exception and
-     * fault the moment the state was restored and used. */
-    ctx->FltSave.ControlWord = FPU_FCW_INIT;
-    ctx->FltSave.MxCsr       = FPU_MXCSR_INIT;
-    ctx->MxCsr               = FPU_MXCSR_INIT;
+    context_set_fpu_init_fields(ctx);
 }
 
 uint32_t context_from_frame(const struct interrupt_frame *frame, CONTEXT *ctx)
@@ -55,10 +62,16 @@ uint32_t context_from_frame(const struct interrupt_frame *frame, CONTEXT *ctx)
 
     /* The FPU group can never be satisfied from a frame (see header contract):
      * park the area at architectural init state rather than raw zeroes so a
-     * caller that ignores the cleared flag cannot unmask every FP exception. */
-    context_init_fpu_state(ctx);
+     * caller that ignores the cleared flag cannot unmask every FP exception.
+     * The full except_zero above already cleared FltSave, so only set the init
+     * fields -- no second FltSave clear. */
+    context_set_fpu_init_fields(ctx);
 
     if (CONTEXT_HAS_GROUP(requested, CONTEXT_CONTROL)) {
+        /* In x86-64 LONG MODE the CPU pushes SS:RSP on EVERY interrupt/exception,
+         * even without a privilege change (unlike 32-bit protected mode), and
+         * IRETQ pops all five -- so the interrupt_frame carries a valid SS:RSP
+         * for both ring-0 and ring-3 faults. Read them unconditionally. */
         ctx->SegCs  = (uint16_t)frame->cs;
         ctx->SegSs  = (uint16_t)frame->ss;
         ctx->EFlags = (uint32_t)frame->rflags;
