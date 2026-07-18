@@ -37,11 +37,16 @@
  *
  * Frame trust: RtlVirtualUnwind reads saved registers/return addresses through
  * the establisher frame, which it TRUSTS to be a valid stack (kernel-mode
- * Windows RtlVirtualUnwind does the same). Arithmetic on RSP/frame base is
- * overflow/underflow-checked, but a consumer that unwinds an UNTRUSTED user
- * frame from kernel mode (the user-exception-delivery, kernel-stack-walking,
- * and crash-reporting paths) must supply fault-safe stack reads + stack-range
- * validation at its boundary.
+ * Windows RtlVirtualUnwind does the same). The metadata STRUCTURE (opcodes,
+ * slot counts, chaining, OpInfo domains) is fully validated and a malformed
+ * record fails safe transactionally; but SAVE_NONVOL/SAVE_XMM apply a
+ * metadata-controlled offset to the (trusted) frame base and READ the result,
+ * and the terminal pop reads [RSP] -- those are STACK reads, not metadata
+ * reads, so a huge-but-structurally-valid offset can still address outside the
+ * frame. Arithmetic on RSP/frame base is overflow/underflow-checked, but a
+ * consumer that unwinds an UNTRUSTED user frame from kernel mode (the
+ * user-exception-delivery, kernel-stack-walking, and crash-reporting paths)
+ * must supply fault-safe stack reads + stack-range validation at its boundary.
  * ============================================================================ */
 
 /* ARCH: x86-64 -- table-based unwind is the PE/COFF AMD64 mechanism. */
@@ -62,6 +67,11 @@ extern void *memcpy(void *dst, const void *src, uint64_t n);
  * kmalloc 4 KB ceiling, and the bound makes `entry_count * sizeof(...)` unable
  * to wrap. JIT tables larger than this must use the (deferred) growable API. */
 #define UNWIND_MAX_DYNAMIC_ENTRIES   256
+
+/* Cap on the number of registered dynamic tables. dft_lookup walks the sorted
+ * list under s_dft_lock (IRQs off); the cap bounds that critical section until
+ * an indexed/RCU-backed lookup lands (SMP-epoch follow-up). */
+#define UNWIND_MAX_DYNAMIC_TABLES    512
 
 /* --- Dynamic function-table registry node -------------------------------- */
 
@@ -188,6 +198,41 @@ static int ckadd_s(uint64_t a, int64_t b, uint64_t *out)
  * the caller frame if control_pc is an epilog, else 0 (ctx untouched).
  * ========================================================================== */
 
+/* Total length of a legal `[optional REX] FF /4` indirect-jmp EPILOG terminator
+ * beginning at `ins`, bounded by `avail` readable bytes. The AMD64 epilog
+ * contract restricts the tail-call jmp to a mod==00 MEMORY reference (any legal
+ * mod==00 form, including scaled-index SIB); register-direct (mod==11) and the
+ * disp8/disp32 base forms (mod==01/10) are NOT legal epilog terminators. Returns
+ * 0 when the form is prohibited, is not an FF /4, or `avail` is too small. */
+static uint32_t indirect_jmp_len(const uint8_t *ins, uint32_t avail)
+{
+    uint32_t i = 0;
+    if (avail >= 1u && (ins[0] & 0xF0u) == 0x40u)
+        i = 1u;                                  /* skip a REX prefix */
+    if (avail < i + 2u || ins[i] != 0xFFu)
+        return 0;
+    uint8_t modrm = ins[i + 1u];
+    if (((modrm >> 3) & 7u) != 4u)
+        return 0;                                /* ModRM reg field must be /4 */
+    uint8_t mod = (modrm >> 6) & 3u;
+    uint8_t rm  = modrm & 7u;
+    if (mod != 0u)
+        return 0;                                /* only mod==00 memory refs */
+    uint32_t len = i + 2u;                        /* [REX] FF modrm */
+    if (rm == 4u) {                              /* SIB byte follows (any index) */
+        if (avail < len + 1u)
+            return 0;
+        uint8_t sib = ins[len];
+        len += 1u;
+        if ((sib & 7u) == 5u)
+            len += 4u;                           /* SIB base 101 at mod0 => disp32 */
+    } else if (rm == 5u) {
+        len += 4u;                               /* RIP-relative disp32 */
+    }
+    /* else mod==00, rm in {0..3,6,7}: [reg] with no displacement. */
+    return len;
+}
+
 static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
                              uint64_t lo, uint64_t hi, int bounded,
                              uint64_t func_start, uint64_t func_end,
@@ -203,22 +248,30 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
     uint64_t *reg_slot[16] = { 0 };
     int       reg_touched[16] = { 0 };
 
+    /* Every epilog instruction must lie WHOLLY within [pc, func_end) AND the
+     * image bounds -- a multi-byte op (REX-pop, ret imm16, indirect jmp) must
+     * not straddle EndAddress into an adjacent function. Subtraction form so the
+     * function-extent check cannot wrap even for an unbounded dynamic table whose
+     * range ends at UINT64_MAX. */
+#define EPI_FITS(n) (in_bounds(pc, (n), lo, hi, bounded) && (pc) >= func_start && \
+                     (pc) < func_end && (uint64_t)(n) <= func_end - (pc))
+
     /* Step 1: optional stack teardown. Only the exact legal RSP-teardown
      * encodings are accepted so a non-RSP instruction with a similar shape
      * (e.g. `add r12,imm` = REX.WB) is never mistaken for a teardown:
      *   add rsp, imm8/imm32 : REX.W (0x48, REX.B CLEAR) 83/81 /0 (modrm 0xC4)
      *   lea rsp, [fp + disp] : REX.W[.B] 8D, reg field = rsp, base = the
      *                          UNWIND_INFO frame register, no SIB index. */
-    if (in_bounds(pc, 2, lo, hi, bounded)) {
+    if (EPI_FITS(2)) {
         uint8_t b0 = p[0];
-        if (b0 == 0x48 && p[1] == 0x83 && in_bounds(pc, 4, lo, hi, bounded) && p[2] == 0xC4) {
+        if (b0 == 0x48 && p[1] == 0x83 && EPI_FITS(4) && p[2] == 0xC4) {
             if (!ckadd_s(rsp, (int64_t)(int8_t)p[3], &rsp)) return 0;   /* add rsp, imm8 */
             p += 4; pc += 4;
-        } else if (b0 == 0x48 && p[1] == 0x81 && in_bounds(pc, 7, lo, hi, bounded) && p[2] == 0xC4) {
+        } else if (b0 == 0x48 && p[1] == 0x81 && EPI_FITS(7) && p[2] == 0xC4) {
             if (!ckadd_s(rsp, (int64_t)(int32_t)rd_u32(p + 3), &rsp)) return 0;  /* add rsp, imm32 */
             p += 7; pc += 7;
         } else if ((b0 == 0x48 || b0 == 0x49) && p[1] == 0x8D && frame_reg != 0 &&
-                   in_bounds(pc, 3, lo, hi, bounded)) {
+                   EPI_FITS(3)) {
             /* lea rsp, [frame_reg + disp]. reg field must be rsp (100b). Two
              * encodings of the base: a direct base (rm != 100), and the SIB
              * no-index form (rm == 100) that r12 and rsp REQUIRE. Indexed SIB,
@@ -235,7 +288,7 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
             if (ok && rm == 4u) {
                 /* disp32-no-base (base field 101) applies ONLY at mod==0; at
                  * mod 1/2 base 101 is a valid rbp/r13 (via REX.B) base. */
-                if (in_bounds(pc, 4, lo, hi, bounded) &&
+                if (EPI_FITS(4) &&
                     ((p[3] >> 3) & 7u) == 4u &&                    /* no index */
                     !(mod == 0u && (p[3] & 7u) == 5u)) {          /* not disp32-no-base */
                     base = (uint8_t)((p[3] & 7u) + rex_b);
@@ -252,11 +305,11 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
                 int64_t disp = 0;
                 uint32_t ilen = hdr;
                 if (mod == 1u) {
-                    if (in_bounds(pc, hdr + 1u, lo, hi, bounded)) {
+                    if (EPI_FITS(hdr + 1u)) {
                         disp = (int64_t)(int8_t)p[hdr]; ilen = hdr + 1;
                     } else ok = 0;
                 } else if (mod == 2u) {
-                    if (in_bounds(pc, hdr + 4u, lo, hi, bounded)) {
+                    if (EPI_FITS(hdr + 4u)) {
                         disp = (int64_t)(int32_t)rd_u32(p + hdr); ilen = hdr + 4;
                     } else ok = 0;
                 }   /* mod == 0: base-only, disp 0 */
@@ -274,21 +327,26 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
     int had_teardown = (pc != control_pc);
     int pops = 0;
 
-    /* Step 2: run of pop r64 (optional REX.B for r8-r15). */
+    /* Step 2: run of pop r64 (optional REX.B for r8-r15). A legal epilog pops at
+     * most the nonvolatile integer registers, so the scan is capped at 16 and
+     * confined to the function body -- a degenerate/crafted pop sled cannot make
+     * one unwind cost O(image size). */
     for (;;) {
-        if (!in_bounds(pc, 1, lo, hi, bounded))
+        if (!EPI_FITS(1))
             return 0;
         uint8_t rex_b = 0;
         uint32_t adv = 0;
         uint8_t b = p[0];
         if ((b & 0xF0) == 0x40) {                 /* REX prefix */
             rex_b = (b & 0x01) ? 8u : 0u;
-            if (!in_bounds(pc, 2, lo, hi, bounded))
+            if (!EPI_FITS(2))
                 return 0;
             b = p[1];
             adv = 1;
         }
         if (b >= 0x58 && b <= 0x5F) {             /* pop r64 */
+            if (pops >= 16)
+                return 0;   /* cap BEFORE dereferencing another slot */
             unsigned reg = (unsigned)(b - 0x58) + rex_b;
             uint64_t new_rsp;
             if (!ckadd(rsp, 8, &new_rsp))
@@ -321,44 +379,45 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
      *     (teardown already retired, nothing left to scan) is not detected and
      *     falls back to prolog unwind -- the robust fix is UWOP_EPILOG (unwind
      *     info v2) epilog metadata, tracked as a follow-up.
-     * `ret imm16` (0xC2) carries a stack adjustment we do not simulate and is
-     * rejected. */
-    if (!in_bounds(pc, 1, lo, hi, bounded))
+     * `ret imm16` (0xC2 iw) is a legal epilog terminator: it pops the return
+     * address and then adds imm16 to RSP (its stack adjustment is simulated). */
+    if (!EPI_FITS(1))
         return 0;
     uint8_t t = p[0];
     int is_epilog = 0;
+    uint32_t ret_imm = 0;   /* extra RSP adjustment from `ret imm16` */
     int had_progress = (had_teardown || pops > 0);
     /* Skip an optional REX prefix (0x40-0x4F) on an indirect jmp: Clang emits
      * `rex64 jmpq *[rip+d]` as 48 FF /4 and `jmp r8-r15` as 41 FF /4 (REX.B).
      * REX does not apply to a relative jmp, so EB/E9 are matched unprefixed. */
-    const uint8_t *jp = p;
-    uint64_t jpc = pc;
-    if ((t & 0xF0u) == 0x40u && in_bounds(pc, 2, lo, hi, bounded) && p[1] == 0xFF) {
-        jp = p + 1; jpc = pc + 1;
-    }
     if (t == 0xC3) {                              /* ret */
         is_epilog = 1;
-    } else if (t == 0xF3 && in_bounds(pc, 2, lo, hi, bounded) && p[1] == 0xC3) {
+    } else if (t == 0xC2 && EPI_FITS(3)) {        /* ret imm16 */
+        is_epilog = 1;
+        ret_imm = (uint32_t)p[1] | ((uint32_t)p[2] << 8);
+    } else if (t == 0xF3 && EPI_FITS(2) && p[1] == 0xC3) {
         is_epilog = 1;                            /* rep ret */
-    } else if (t == 0xEB && in_bounds(pc, 2, lo, hi, bounded)) {  /* jmp rel8 */
+    } else if (t == 0xEB && EPI_FITS(2)) {        /* jmp rel8 */
         uint64_t tgt = pc + 2 + (uint64_t)(int64_t)(int8_t)p[1];
         if (tgt < func_start || tgt >= func_end)
             is_epilog = 1;
-    } else if (t == 0xE9 && in_bounds(pc, 5, lo, hi, bounded)) {  /* jmp rel32 */
+    } else if (t == 0xE9 && EPI_FITS(5)) {        /* jmp rel32 */
         uint64_t tgt = pc + 5 + (uint64_t)(int64_t)(int32_t)rd_u32(p + 1);
         if (tgt < func_start || tgt >= func_end)
             is_epilog = 1;
-    } else if (had_progress && jp[0] == 0xFF && in_bounds(jpc, 2, lo, hi, bounded) &&
-               ((jp[1] >> 3) & 7u) == 4u) {       /* [REX.W] FF /4 indirect jmp */
-        is_epilog = 1;
+    } else if (had_progress) {                    /* `[REX] FF /4` indirect jmp */
+        uint32_t avail = (func_end - pc > 16u) ? 16u : (uint32_t)(func_end - pc);
+        uint32_t jl = indirect_jmp_len(p, avail);
+        if (jl != 0 && EPI_FITS(jl))
+            is_epilog = 1;
     }
     if (!is_epilog)
         return 0;
 
-    /* Commit: nonvolatile register restores (+ their saved-slot addresses),
-     * then pop the return address. */
+    /* Commit: nonvolatile register restores (+ their saved-slot addresses), then
+     * pop the return address (and apply a `ret imm16` stack adjustment). */
     uint64_t after_ret;
-    if (!ckadd(rsp, 8, &after_ret))
+    if (!ckadd(rsp, 8u + (uint64_t)ret_imm, &after_ret))
         return 0;
     for (unsigned i = 0; i < 16; i++) {
         if (reg_touched[i]) {
@@ -371,6 +430,7 @@ static int unwind_try_epilog(uint64_t control_pc, CONTEXT *ctx,
     ctx->Rip = *ret_slot;
     ctx->Rsp = after_ret;
     return 1;
+#undef EPI_FITS
 }
 
 /* ==========================================================================
@@ -455,8 +515,13 @@ void *RtlVirtualUnwind(uint32_t handler_type, uint64_t image_base, uint64_t cont
      * `context`, but if any opcode/chain step turns out malformed we must NOT
      * leaf-fall-back through the partially mutated state (a moved RSP would read
      * RIP from the wrong slot). On failure the snapshot is restored and a single
-     * leaf pop is taken from the ORIGINAL RSP. */
-    CONTEXT saved_ctx = *context;
+     * leaf pop is taken from the ORIGINAL RSP. Only the fields the interpreter
+     * can mutate are journaled -- the integer file (Rax..Rip, contiguous) and
+     * the FXSAVE XMM area -- avoiding a full 1232-byte CONTEXT copy per frame. */
+    uint64_t saved_ints[17];   /* Rax..R15 (16) + Rip */
+    memcpy(saved_ints, &context->Rax, sizeof(saved_ints));
+    uint8_t saved_xmm[256];
+    memcpy(saved_xmm, context->FltSave.XmmRegisters, sizeof(saved_xmm));
     int have_cp = (context_pointers != 0);
     KNONVOLATILE_CONTEXT_POINTERS saved_cp;
     if (have_cp)
@@ -564,6 +629,11 @@ void *RtlVirtualUnwind(uint32_t handler_type, uint64_t image_base, uint64_t cont
                     break;
                 }
                 case UWOP_SET_FPREG: {
+                    /* SET_FPREG is only legal when a frame register is declared,
+                     * and its OpInfo is reserved (0). Otherwise the record is
+                     * malformed and would set RSP from a bogus register (e.g. a
+                     * crafted FrameRegister==0 would use RAX). */
+                    if (frame_reg == 0 || info != 0) { malformed = 1; break; }
                     uint64_t reg_val = *ctx_int_reg(context, frame_reg);
                     uint64_t off16 = (uint64_t)UNWIND_INFO_FRAMEOFF(ui) * 16u;
                     if (reg_val < off16) { malformed = 1; break; }
@@ -683,9 +753,10 @@ void *RtlVirtualUnwind(uint32_t handler_type, uint64_t image_base, uint64_t cont
     }
 
     if (bad) {
-        /* Restore the entry state and take exactly one leaf pop from the
-         * ORIGINAL RSP (transactional fail-safe for malformed metadata). */
-        *context = saved_ctx;
+        /* Restore the mutated register blocks and take exactly one leaf pop from
+         * the ORIGINAL RSP (transactional fail-safe for malformed metadata). */
+        memcpy(&context->Rax, saved_ints, sizeof(saved_ints));
+        memcpy(context->FltSave.XmmRegisters, saved_xmm, sizeof(saved_xmm));
         if (have_cp)
             *context_pointers = saved_cp;
         unwind_leaf(context, establisher_frame);
@@ -889,7 +960,8 @@ int RtlAddFunctionTable(PRUNTIME_FUNCTION function_table, uint32_t entry_count,
 
     uint64_t flags;
     spin_lock_irqsave(&s_dft_lock, &flags);
-    if (dft_overlaps_locked(node->min_address, node->max_address) ||
+    if (s_dft_count >= UNWIND_MAX_DYNAMIC_TABLES ||
+        dft_overlaps_locked(node->min_address, node->max_address) ||
         dft_identity_exists_locked(node->identity)) {
         spin_unlock_irqrestore(&s_dft_lock, flags);
         kfree(copy);
@@ -927,7 +999,8 @@ int RtlInstallFunctionTableCallback(uint64_t table_identifier, uint64_t base_add
 
     uint64_t flags;
     spin_lock_irqsave(&s_dft_lock, &flags);
-    if (dft_overlaps_locked(node->min_address, node->max_address) ||
+    if (s_dft_count >= UNWIND_MAX_DYNAMIC_TABLES ||
+        dft_overlaps_locked(node->min_address, node->max_address) ||
         dft_identity_exists_locked(node->identity)) {
         spin_unlock_irqrestore(&s_dft_lock, flags);
         kfree(node);

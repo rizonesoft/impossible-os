@@ -39,6 +39,7 @@ typedef struct _RUNTIME_FUNCTION {
 } RUNTIME_FUNCTION, *PRUNTIME_FUNCTION;
 
 _Static_assert(sizeof(RUNTIME_FUNCTION) == 12, "RUNTIME_FUNCTION is 12 bytes (.pdata entry)");
+_Static_assert(_Alignof(RUNTIME_FUNCTION) == 4, "RUNTIME_FUNCTION is DWORD-aligned");
 _Static_assert(__builtin_offsetof(RUNTIME_FUNCTION, BeginAddress) == 0, "BeginAddress at 0");
 _Static_assert(__builtin_offsetof(RUNTIME_FUNCTION, EndAddress) == 4, "EndAddress at 4");
 _Static_assert(__builtin_offsetof(RUNTIME_FUNCTION, UnwindInfoAddress) == 8, "UnwindInfoAddress at 8");
@@ -64,6 +65,10 @@ typedef union _UNWIND_CODE {
 } UNWIND_CODE;
 
 _Static_assert(sizeof(UNWIND_CODE) == 2, "UNWIND_CODE is 2 bytes");
+_Static_assert(_Alignof(UNWIND_CODE) == 2, "UNWIND_CODE is USHORT-aligned");
+_Static_assert(__builtin_offsetof(UNWIND_CODE, b.CodeOffset) == 0, "UNWIND_CODE CodeOffset at 0");
+_Static_assert(__builtin_offsetof(UNWIND_CODE, b.OpAndInfo) == 1, "UNWIND_CODE OpAndInfo at 1");
+_Static_assert(__builtin_offsetof(UNWIND_CODE, FrameOffset) == 0, "UNWIND_CODE FrameOffset aliases at 0");
 
 #define UNWIND_CODE_OP(uc)     ((uint8_t)((uc).b.OpAndInfo & 0x0Fu))
 #define UNWIND_CODE_INFO(uc)   ((uint8_t)(((uc).b.OpAndInfo >> 4) & 0x0Fu))
@@ -99,7 +104,17 @@ typedef struct _UNWIND_INFO {
     UNWIND_CODE UnwindCode[1];   /* variable-length: CountOfCodes entries */
 } UNWIND_INFO, *PUNWIND_INFO;
 
+_Static_assert(__builtin_offsetof(UNWIND_INFO, VersionAndFlags) == 0, "UNWIND_INFO VersionAndFlags at 0");
+_Static_assert(__builtin_offsetof(UNWIND_INFO, SizeOfProlog) == 1, "UNWIND_INFO SizeOfProlog at 1");
+_Static_assert(__builtin_offsetof(UNWIND_INFO, CountOfCodes) == 2, "UNWIND_INFO CountOfCodes at 2");
+_Static_assert(__builtin_offsetof(UNWIND_INFO, FrameRegAndOff) == 3, "UNWIND_INFO FrameRegAndOff at 3");
 _Static_assert(__builtin_offsetof(UNWIND_INFO, UnwindCode) == 4, "UnwindCode array at offset 4");
+/* sizeof pins the minimum record (4-byte header + one 2-byte code slot) used by
+ * the metadata bounds checks; the DWORD placement the AMD64 spec requires for
+ * .xdata records is a PE-format property guaranteed by the loader, not this
+ * overlay struct's natural (2-byte) alignment. */
+_Static_assert(sizeof(UNWIND_INFO) == 6, "UNWIND_INFO minimum record is 6 bytes (header + 1 code slot)");
+_Static_assert(_Alignof(UNWIND_INFO) == 2, "UNWIND_INFO overlay alignment (uint16 code slot)");
 
 #define UNWIND_INFO_VERSION(ui)   ((uint8_t)((ui)->VersionAndFlags & 0x07u))
 #define UNWIND_INFO_FLAGS(ui)     ((uint8_t)(((ui)->VersionAndFlags >> 3) & 0x1Fu))
@@ -128,6 +143,15 @@ typedef struct _SCOPE_TABLE {
 } SCOPE_TABLE, *PSCOPE_TABLE;
 
 _Static_assert(sizeof(SCOPE_TABLE_ENTRY) == 16, "SCOPE_TABLE_ENTRY is 16 bytes");
+_Static_assert(_Alignof(SCOPE_TABLE_ENTRY) == 4, "SCOPE_TABLE_ENTRY DWORD-aligned");
+_Static_assert(_Alignof(SCOPE_TABLE) == 4, "SCOPE_TABLE DWORD-aligned");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE_ENTRY, BeginAddress) == 0, "SCOPE_TABLE_ENTRY BeginAddress at 0");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE_ENTRY, EndAddress) == 4, "SCOPE_TABLE_ENTRY EndAddress at 4");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE_ENTRY, HandlerAddress) == 8, "SCOPE_TABLE_ENTRY HandlerAddress at 8");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE_ENTRY, JumpTarget) == 12, "SCOPE_TABLE_ENTRY JumpTarget at 12");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE, Count) == 0, "SCOPE_TABLE Count at 0");
+_Static_assert(__builtin_offsetof(SCOPE_TABLE, ScopeRecord) == 4, "SCOPE_TABLE ScopeRecord at 4");
+_Static_assert(sizeof(SCOPE_TABLE) == 20, "SCOPE_TABLE is 20 bytes (Count + one ScopeRecord)");
 
 /* --- KNONVOLATILE_CONTEXT_POINTERS ---------------------------------------- *
  * RtlVirtualUnwind records, for each nonvolatile register it restored, the
@@ -140,6 +164,11 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
     M128A    *Xmm[16];       /* saved-XMM addresses, indexed by XMM number */
     uint64_t *Integer[16];   /* saved-GPR addresses, indexed by ABI reg number */
 } KNONVOLATILE_CONTEXT_POINTERS;
+
+_Static_assert(sizeof(KNONVOLATILE_CONTEXT_POINTERS) == 256, "KNONVOLATILE_CONTEXT_POINTERS is 256 bytes");
+_Static_assert(_Alignof(KNONVOLATILE_CONTEXT_POINTERS) == 8, "KNONVOLATILE_CONTEXT_POINTERS pointer-aligned");
+_Static_assert(__builtin_offsetof(KNONVOLATILE_CONTEXT_POINTERS, Xmm) == 0, "Xmm pointers at 0");
+_Static_assert(__builtin_offsetof(KNONVOLATILE_CONTEXT_POINTERS, Integer) == 128, "Integer pointers at 128");
 
 /* --- Dynamic function-table callback -------------------------------------- *
  * RtlInstallFunctionTableCallback registers a callback that lazily produces the

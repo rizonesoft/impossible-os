@@ -339,10 +339,12 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [ ] SMP-epoch dynamic-table lookup: close the cross-call window where a concurrent `RtlDeleteFunctionTable` can free a table an unwinder still holds an entry into (needs SMP RCU/epoch) -> XREF: `rcu.h` SMP-future quiescent-state tracking.
 - [ ] UWOP_EPILOG (unwind-info v2) epilog metadata: closes the residual where a PC exactly at an indirect tail-call jmp (frame torn down) is not detected by forward scanning -> XREF: this section (`unwind_try_epilog` indirect note).
 - [ ] Indirect / noncontiguous-fragment RUNTIME_FUNCTION support (UnwindInfoAddress bit 0): pair the fragment range with the shared parent unwind info; currently returns NULL (fail-safe) -> XREF: this section (`RtlLookupFunctionEntry` indirect note).
+- [ ] Exact winnt.h ABI types on the public unwind prototypes (PUNWIND_HISTORY_TABLE, PEXCEPTION_ROUTINE, BOOLEAN, PCWSTR OutOfProcessCallbackDll) when user-mode ntdll exports land -> XREF: this section (kernel-internal today).
+- [ ] Combined lookup+unwind path: a stack walk does two `exec_find_module_by_pc` 368B snapshots per loaded-module frame (RtlLookupFunctionEntry + unwind_module_extent); pass the extent from lookup into unwind -> XREF: §7 (stack walker).
 
 **Test checkpoint:** The kernel is ELF (no `.pdata`), so kernel PCs have no `RUNTIME_FUNCTION` and `RtlLookupFunctionEntry` correctly returns NULL for them; the engine is proven against a SYNTHETIC table registered via `RtlAddFunctionTable`. Lookup returns the registered entry for an in-range PC and NULL out-of-range. `RtlVirtualUnwind` on a 3-frame chain recovers the correct RIP per parent frame; prolog, epilog, and frame-register (`SET_FPREG`) forms all recover RIP/RSP; malformed metadata fails safe (leaf pop, no crash). Serial log: `"rtl: unwind engine ready (dynamic tables: 0, kernel .pdata: ELF none)"`. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 10 unwind suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 22 unwind suites, 0 failures
 
 > **Notes:**
 > - Shipped `src/kernel/rtl/unwind.{c,h}` (~1010 LOC + 22 test suites): the x64 table-based unwind engine -- `RtlLookupFunctionEntry`, `RtlVirtualUnwind` (prolog interpreter + epilog simulation + chaining + transactional malformed fail-safe), the dynamic function-table registry, `RtlPcToFileHeader`.
@@ -350,6 +352,11 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > - Owns the unwind ENGINE only; T18 §5 owns metadata lifetime/normalized storage + load-time validation, T17 owns section parsing. Kernel-mode unwind needs the T18 provider (filed item above) before §7 table-walks kernel stacks.
 > - Canonical doc: `include/kernel/rtl/unwind.h` header block (ownership split + SMP/lifetime + bounds-safety contract).
 > - Scope boundary: engine-internal (consumed by §7 stack walk, §12 crash reporting, the debugger); NOT yet exported to user-mode ntdll (`pe.c` export tables unchanged).
+> **Verified:** 2026-07-18 | ship `a63dd05b` + review fixes | 7/13 items | build OK | tests 21887+16 PASS; smoke PASS (TCG 2.57s)
+> **Accepted:** [H] engine trusts the establisher frame; fault-safe stack reads + stack-range validation for UNTRUSTED frames belong to consumers -> XREF: 02-kernel-core/TODO-23 §7 (item: "Fault-safe frame reads" at line 368)
+> **Accepted:** [H] loader-side `.pdata`/`.xdata` mapped-section validation + production kernel-mode unwind metadata (ELF `.eh_frame`) -> XREF: 02-kernel-core/TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`" at line 132)
+> **Deferred:** [M] SMP-epoch lookup, UWOP_EPILOG v2 metadata, indirect-fragment support, exact winnt.h ABI types, combined lookup+unwind path -> XREF: 02-kernel-core/TODO-23 §6 (item: "SMP-epoch dynamic-table lookup" at line 339)
+> **Quality reviewed:** 2026-07-18 | Codex 42x (design, adversarial, re-adversarial, consistency, perf) + kernel-quality-auditor + concurrency-mapper | 40H+11M+3L fixed, 0 open, 8 accepted/deferred-XREF, 2 rejected | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
 

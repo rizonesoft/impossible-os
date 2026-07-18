@@ -299,6 +299,97 @@ static void test_unwind_epilog(void)
     TEST_ASSERT_EQ(est, entry_rsp, "epilog establisher frame is the fault-PC RSP");
 }
 
+/* ---- ret imm16 epilog ---- */
+
+static void test_unwind_epilog_ret_imm16(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    RUNTIME_FUNCTION rf;
+    build_simple_uinfo(&img);
+    build_simple_rf(&rf);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Epilog at 0x18: pop rbp (5D); ret 0x10 (C2 10 00). */
+    img.b[0x18] = 0x5D;
+    img.b[0x19] = 0xC2; img.b[0x1A] = 0x10; img.b[0x1B] = 0x00;
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t SAVED_RBP = 0xC201ULL, RETADDR = 0xC202ULL;
+    stk[0] = SAVED_RBP;
+    stk[1] = RETADDR;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "ret imm16 epilog pops rbp");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "ret imm16 epilog recovers the return address");
+    /* pop (8) + ret pop (8) + imm16 (0x10) => &stk[1] + 8 + 0x10 = &stk[4]. */
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[4], "ret imm16 applies the imm16 stack adjustment");
+}
+
+/* ---- Epilog instruction straddling EndAddress is not an epilog ---- */
+
+static void test_unwind_epilog_straddle(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    build_simple_uinfo(&img);   /* prolog: push rbp; sub rsp,0x20 */
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* A `ret imm16` (3 bytes) at 0x18, but the function ends at 0x1A -- the
+     * immediate would be read from the next function, so it must NOT be
+     * classified as an epilog; the prolog interpreter runs instead. */
+    img.b[0x18] = 0xC2; img.b[0x19] = 0x10; img.b[0x1A] = 0x00;
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x1A, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[16] = { 0 };
+    const uint64_t SAVED_RBP = 0x57A1ULL, RETADDR = 0x57A2ULL;
+    stk[9] = SAVED_RBP;    /* prolog-unwind saved rbp slot */
+    stk[10] = RETADDR;     /* prolog-unwind return slot */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[5];   /* body RSP for the prolog form */
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    /* Prolog unwind (NOT the straddling ret imm16 epilog): alloc 0x20; pop rbp; pop ret. */
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "ret imm16 straddling EndAddress is not an epilog");
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "prolog unwind ran (rbp restored)");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[11], "prolog unwind Rsp (not epilog)");
+}
+
+/* ---- Malformed SET_FPREG with FrameRegister=0 fails safe ---- */
+
+static void test_unwind_set_fpreg_no_framereg(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* UNWIND_INFO at 0x40: FrameRegister=0 but a SET_FPREG code -> malformed. */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x06; u[2] = 0x01; u[3] = 0x00;   /* FrameReg 0 */
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_SET_FPREG | (0u << 4));
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t RETADDR = 0xF9E1ULL;
+    stk[2] = RETADDR;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[2];   /* entry RSP */
+    ctx.Rax = 0xDEADBEEF00ULL;                /* would become RSP if the bug were live */
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "SET_FPREG with FrameReg=0 is malformed -> leaf from entry RSP");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[3], "malformed SET_FPREG restores + single leaf pop");
+}
+
 /* ---- Frame-register (SET_FPREG) unwinding ---- */
 
 static void test_unwind_frame_register(void)
@@ -653,14 +744,12 @@ static void run_indirect_epilog(const uint8_t *tail, uint32_t tail_len, const ch
 
 static void test_unwind_epilog_import_tailcall(void)
 {
+    /* Only mod==00 memory-reference indirect jmps are legal epilog terminators
+     * per the AMD64 epilog contract (register-direct FF E0 is NOT). */
     const uint8_t ff25[6]   = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };        /* jmp [rip+d] */
     const uint8_t rex_ff25[7] = { 0x48, 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };/* rex jmp [rip+d] */
-    const uint8_t rex_ffe0[3] = { 0x48, 0xFF, 0xE0 };                        /* rex jmp rax */
-    const uint8_t rexb_ffe0[3] = { 0x41, 0xFF, 0xE0 };                       /* rex.b jmp r8 */
     run_indirect_epilog(ff25, sizeof(ff25), "FF 25 indirect tail-call epilog (PC at add)");
     run_indirect_epilog(rex_ff25, sizeof(rex_ff25), "48 FF 25 import tail-call epilog (PC at add)");
-    run_indirect_epilog(rex_ffe0, sizeof(rex_ffe0), "48 FF E0 register tail-call epilog (PC at add)");
-    run_indirect_epilog(rexb_ffe0, sizeof(rexb_ffe0), "41 FF E0 (jmp r8) REX.B tail-call epilog");
 
     /* FF 24 switch dispatch at a BODY PC (no teardown/pops prefix) must NOT be
      * classified as an epilog -- the prolog unwind runs instead. */
@@ -940,6 +1029,12 @@ void test_register_unwind(void)
                             test_unwind_three_frame_chain, TEST_CAT_EXCEPT);
     test_suite_register_cat("Unwind: epilog detection",
                             test_unwind_epilog, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: ret imm16 epilog",
+                            test_unwind_epilog_ret_imm16, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: epilog straddling EndAddress rejected",
+                            test_unwind_epilog_straddle, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: SET_FPREG FrameReg=0 fail-safe",
+                            test_unwind_set_fpreg_no_framereg, TEST_CAT_EXCEPT);
     test_suite_register_cat("Unwind: frame register (SET_FPREG)",
                             test_unwind_frame_register, TEST_CAT_EXCEPT);
     test_suite_register_cat("Unwind: lazy callback table",
