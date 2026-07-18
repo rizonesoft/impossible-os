@@ -71,7 +71,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [/]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)  | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [/]   |
-| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [ ]   |
+| 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [/]   |
 | 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [ ]   |
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [ ]   |
 | 💎   |   8   | SEH chain walk + `__C_specific_handler`                           | §5, §6, TODO-11 §6         |  [ ]   |
@@ -295,13 +295,26 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > → XREF: `TODO-11 §7` -- user stack frame layout must match for IRET to succeed.
 > → XREF: `TODO-12 §5` -- SSDT must be extended with NtRaiseException/NtContinue entries.
 
-- [ ] `ki_deliver_user_exception()` -- push CONTEXT+EXCEPTION_RECORD on user stack, redirect IRET
-- [ ] Reserve the user-stack block with a CHECKED subtraction (reject underflow), `ProbeForWrite` the whole reserved range, then write it ONLY via `try_copy_to_user` (§13) -- never a raw kernel `memcpy` through `frame->rsp`
-- [ ] Delivery failure (bad/misaligned/unwritable RSP, or the copy faults) = terminate the process, never `panic_screen()` and never a second fault in exception context
-- [ ] `NtRaiseException` SSDT entry -- calls `ki_dispatch_exception()` (§4); `first_chance=TRUE` for a software raise, `FALSE` for the ntdll second-chance re-entry (§4 step 3)
-- [ ] `NtContinue` SSDT entry -- validate BEFORE restoring: previous mode, canonical RIP/RSP, user-mode CS/SS selectors, safe RFLAGS bits, honoured `ContextFlags` (§1), and reject a noncontinuable exception; then resume user-mode
+> [!NOTE]
+> **DEFERRED (2026-07-18) -- blocked on missing infrastructure; SPLIT at implementation time.** A pre-implementation Codex design review (6 High) established that §5 depends on four prerequisites not yet built:
+> 1. a per-CPU current-thread cursor + per-CPU idle task/frame (`03-memory-concurrency/TODO-07-smp-phase2.md` lines 118-119) -- without it the trap-frame plumbing corrupts frames across CPUs and fault-context termination re-faults the sole runnable task;
+> 2. a real ntdll mapping that publishes the `KiUserExceptionDispatcher` VA per process (`TODO-11 §7`, `10-platform-services/TODO-07 §7`);
+> 3. a `KI_EXCEPTION_TERMINATE` disposition + a guaranteed-idle-frame termination primitive (today `schedule_now` returns the same frame for the sole runnable task, and the per-CPU exception scratch guard would strand on a process-only exit);
+> 4. a full-frame path for `NtContinue`/`NtRaiseException` (the SYSCALL fast path is SYSRET-only and cannot restore an arbitrary CONTEXT; INT 0x2E carries the live frame).
+> At implementation time SPLIT into (a) `ki_deliver_user_exception` delivery + termination infrastructure and (b) an INT 0x2E-only `NtRaiseException`/`NtContinue` section, per the design review.
+
+- [ ] `ki_deliver_user_exception(frame,rec)`: capture `CONTEXT` (§1) + build a pinned `KI_USER_EXCEPTION_FRAME` (Win64 ABI: 32B home + terminal return slot + `EXCEPTION_POINTERS`/record/context) via CHECKED `rsp` subtraction, reject underflow
+- [ ] Write the block ONLY via `ProbeForWrite` + `try_copy_to_user` (§13), never a raw `memcpy` through `frame->rsp`; point `EXCEPTION_POINTERS` at the user-stack copies; patch `frame->rip`=dispatcher, `frame->rsp`, `frame->rcx`=`EXCEPTION_POINTERS*`
+- [ ] Dispatcher address is PER-PROCESS readiness (a `task`-level VA set only after ntdll maps + its export resolves), NOT a global; `0` = hard delivery failure, never IRET to a placeholder -> XREF: `TODO-11 §7`, `10-platform-services/TODO-07 §7`
+- [ ] Delivery failure (unset dispatcher, bad RSP, copy fault) returns a new `KI_EXCEPTION_TERMINATE` disposition: clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive -- never `panic_screen()`, never a 2nd fault
+- [ ] Termination primitive requires the per-CPU idle task/frame + per-CPU current-thread cursor (absent today: `schedule_now` returns the same frame for the sole runnable task) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (lines 118-119)
+- [ ] `NtRaiseException` SSDT entry (0x0130), INT 0x2E only: calls `ki_dispatch_exception()` (§4) `first_chance=TRUE` for a raise, `FALSE` for the ntdll second-chance re-entry; fail STATUS on the frameless SYSCALL fast path
+- [ ] `NtContinue` SSDT entry (0x0131): validate untrusted IRET frame -- EXACT user CS/SS, user-range RIP/RSP, known `ContextFlags`, RFLAGS whitelist (force bit1+IF, clear IOPL/NT/VM/reserved), reject noncontinuable; atomic validated-copy restore
+- [ ] Per-thread `cur_trap_frame` + `trap_frame_replaced` plumbing in `syscall_handler_2e` -- BLOCKED on the per-CPU current-thread cursor (else cross-CPU frame corruption) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (line 119)
 
 **Test checkpoint:** User-mode fault delivery: after `ki_deliver_user_exception()`, `frame->rip` points to `KiUserExceptionDispatcher` address (or stub entry), `frame->rsp` is 16-byte aligned and below the original RSP. `EXCEPTION_RECORD` and `CONTEXT` are readable on the user stack. Invalid user RSP (e.g., 0xDEAD) → process terminated, not kernel panic. `POST16(0xDE50)` before user stack manipulation, `POST16(0xDE51)` after IRET redirect. Test on: QEMU WHPX + TCG.
+
+> **Deferred:** [H] ring-3 exception delivery + `NtContinue`/`NtRaiseException` blocked on the per-CPU current-thread cursor + per-CPU idle task/frame (trap-frame ownership across CPUs; fault-context termination without a re-fault) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "Per-CPU current-thread cursor" at line 119; item: "Per-CPU idle task" at line 118)
 
 - [ ] Commit: `"kernel: implement KiUserExceptionDispatcher and NtRaiseException/NtContinue"`
 
