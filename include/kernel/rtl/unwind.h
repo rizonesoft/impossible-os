@@ -242,6 +242,7 @@ _Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, LanguageHandler)  == 0x30,
 _Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, HandlerData)      == 0x38, "HandlerData at 0x38");
 _Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, HistoryTable)     == 0x40, "HistoryTable at 0x40");
 _Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, ScopeIndex)       == 0x48, "ScopeIndex at 0x48");
+_Static_assert(__builtin_offsetof(DISPATCHER_CONTEXT, Fill0)            == 0x4C, "Fill0 at 0x4C");
 
 /* ==========================================================================
  * Public engine API

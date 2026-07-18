@@ -64,13 +64,27 @@
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
 
-/* rtl_restore_context (unwind_asm.asm) hardcodes these CONTEXT byte offsets.
- * except.h pins them too; re-pinning here fails the C build the moment a field
- * moves, before the asm can silently desync (5-layer defense, Layer 1). */
+/* rtl_restore_context (unwind_asm.asm) hardcodes these CONTEXT byte offsets and
+ * reads EVERY GPR + EFlags + Rip. except.h pins the endpoints + sizeof; re-pinning
+ * every offset the asm consumes here fails the C build the moment ANY field moves
+ * (including a mid-block reorder that preserves the endpoints and sizeof), before
+ * the asm can silently restore the wrong register (5-layer defense, Layer 1). */
 _Static_assert(__builtin_offsetof(CONTEXT, EFlags) == 0x44, "asm CTX_EFlags");
 _Static_assert(__builtin_offsetof(CONTEXT, Rax)    == 0x78, "asm CTX_Rax");
+_Static_assert(__builtin_offsetof(CONTEXT, Rcx)    == 0x80, "asm CTX_Rcx");
+_Static_assert(__builtin_offsetof(CONTEXT, Rdx)    == 0x88, "asm CTX_Rdx");
+_Static_assert(__builtin_offsetof(CONTEXT, Rbx)    == 0x90, "asm CTX_Rbx");
 _Static_assert(__builtin_offsetof(CONTEXT, Rsp)    == 0x98, "asm CTX_Rsp");
 _Static_assert(__builtin_offsetof(CONTEXT, Rbp)    == 0xA0, "asm CTX_Rbp");
+_Static_assert(__builtin_offsetof(CONTEXT, Rsi)    == 0xA8, "asm CTX_Rsi");
+_Static_assert(__builtin_offsetof(CONTEXT, Rdi)    == 0xB0, "asm CTX_Rdi");
+_Static_assert(__builtin_offsetof(CONTEXT, R8)     == 0xB8, "asm CTX_R8");
+_Static_assert(__builtin_offsetof(CONTEXT, R9)     == 0xC0, "asm CTX_R9");
+_Static_assert(__builtin_offsetof(CONTEXT, R10)    == 0xC8, "asm CTX_R10");
+_Static_assert(__builtin_offsetof(CONTEXT, R11)    == 0xD0, "asm CTX_R11");
+_Static_assert(__builtin_offsetof(CONTEXT, R12)    == 0xD8, "asm CTX_R12");
+_Static_assert(__builtin_offsetof(CONTEXT, R13)    == 0xE0, "asm CTX_R13");
+_Static_assert(__builtin_offsetof(CONTEXT, R14)    == 0xE8, "asm CTX_R14");
 _Static_assert(__builtin_offsetof(CONTEXT, R15)    == 0xF0, "asm CTX_R15");
 _Static_assert(__builtin_offsetof(CONTEXT, Rip)    == 0xF8, "asm CTX_Rip");
 
@@ -1316,6 +1330,14 @@ void rtl_unwind_init(void)
 /* Frame ceiling for one unwind (runaway / cyclic chain guard). */
 #define UNWIND_MAX_UNWIND_FRAMES   RTL_MAX_STACK_FRAMES
 
+/* Minimum kernel-stack headroom the unwind call chain needs before it starts.
+ * The compiled preflight peak (rtl_unwind_to_target + noinline preflight's probe
+ * CONTEXT + RtlVirtualUnwind + exec_find_module_by_pc) is ~2.8 KiB; require 4 KiB
+ * so a deeply-consumed 8 KiB stack fails SAFE at entry rather than hitting the
+ * guard page mid-walk. Skipped when the containing stack is unknown (a synthetic
+ * test buffer / boot context), where no bound can be computed. */
+#define RTL_UNWIND_MIN_STACK   0x1000u
+
 /* Unwind-in-progress flags cleared on the record once the target is reached. */
 #define UNWIND_INPROGRESS_FLAGS \
     ((uint32_t)(EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND | EXCEPTION_TARGET_UNWIND))
@@ -1359,14 +1381,16 @@ static int rtlp_call_termination_handler(PEXCEPTION_ROUTINE handler,
                 (struct _CONTEXT *)ctx, (struct _DISPATCHER_CONTEXT *)dctx);
     switch (disp) {
     case ExceptionContinueSearch:
-    case ExceptionContinueExecution:
-        return 1;
+        return 1;   /* the normal __finally return */
     case ExceptionCollidedUnwind:
         rec->ExceptionFlags |= (uint32_t)EXCEPTION_COLLIDED_UNWIND;
         *collided = 1;
         return 0;
     default:
-        return -1;   /* ExceptionNestedException / garbage: invalid during unwind */
+        /* ExceptionContinueExecution / ExceptionNestedException / garbage are all
+         * invalid on the unwind pass -- only ContinueSearch and CollidedUnwind
+         * are legal dispositions while EXCEPTION_UNWINDING is set. */
+        return -1;
     }
 }
 
@@ -1374,7 +1398,11 @@ static int rtlp_call_termination_handler(PEXCEPTION_ROUTINE handler,
  * reaches target (0 = exit unwind, whole stack) with strictly-ascending frames
  * and RSP and no overshoot. Returns STATUS_SUCCESS if reachable, else
  * STATUS_BAD_STACK. */
-static NTSTATUS rtlp_unwind_preflight(uint64_t target, const CONTEXT *start)
+/* noinline: keep the 1232-byte probe CONTEXT in this transient frame (freed
+ * before the execute pass), so a termination handler never runs with the probe's
+ * stack still live -- the deep-fault stack-headroom mitigation. */
+static __attribute__((noinline)) NTSTATUS
+rtlp_unwind_preflight(uint64_t target, const CONTEXT *start)
 {
     CONTEXT probe = *start;
     uint64_t prev_est = 0, prev_rsp = probe.Rsp;
@@ -1404,6 +1432,34 @@ static NTSTATUS rtlp_unwind_preflight(uint64_t target, const CONTEXT *start)
     return reached ? STATUS_SUCCESS : STATUS_BAD_STACK;
 }
 
+/* Compact control+integer snapshot -- the ONLY groups RtlRestoreContext restores.
+ * The unwind runs on an 8 KiB kernel stack at arbitrary fault depth, so a full
+ * 1232-byte CONTEXT per frame is dangerous headroom; this ~140-byte snapshot of
+ * each frame (needed only to resume the target frame + supply dctx.ControlPc)
+ * keeps the peak footprint well under the stack budget. GPRs are the 16 contiguous
+ * Rax..R15 slots (pinned by the _Static_asserts above). */
+typedef struct rtlp_frame_regs {
+    uint64_t gpr[16];   /* Rax..R15 in CONTEXT order */
+    uint64_t rip;
+    uint32_t eflags;
+} rtlp_frame_regs_t;
+
+static inline void rtlp_snapshot_regs(const CONTEXT *ctx, rtlp_frame_regs_t *fr)
+{
+    for (unsigned i = 0; i < 16; i++)
+        fr->gpr[i] = (&ctx->Rax)[i];
+    fr->rip = ctx->Rip;
+    fr->eflags = ctx->EFlags;
+}
+
+static inline void rtlp_restore_regs(CONTEXT *ctx, const rtlp_frame_regs_t *fr)
+{
+    for (unsigned i = 0; i < 16; i++)
+        (&ctx->Rax)[i] = fr->gpr[i];
+    ctx->Rip = fr->rip;
+    ctx->EFlags = fr->eflags;
+}
+
 NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
                               EXCEPTION_RECORD *exception_record, void *return_value,
                               CONTEXT *context_record, void *history_table,
@@ -1427,7 +1483,30 @@ NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
         return STATUS_INVALID_PARAMETER;
     }
 
-    /* Mark the unwind in progress on the record (before the handler pass sees it). */
+    /* Normalize the record's unwind bits at entry: a reused/nested record may
+     * arrive with a stale EXCEPTION_TARGET_UNWIND / EXIT_UNWIND set, which exited-
+     * frame handlers would otherwise observe BEFORE the real target is reached
+     * (and run the wrong cleanup scopes irreversibly). Clear all in-progress bits
+     * up front; TARGET_UNWIND is re-set only at the target frame below. */
+    exception_record->ExceptionFlags &= ~UNWIND_INPROGRESS_FLAGS;
+
+    /* Refuse the unwind if this deeply-consumed stack lacks headroom for the
+     * ~2.8 KiB unwind call chain -- fail SAFE before consuming it, never mid-walk
+     * against the guard page. BEST-EFFORT: it runs after this function's small C
+     * prologue, treats the resolver's bounds as usable (the guard page sits a page
+     * below), and is skipped when the stack is unknown. A guard-page-aware bound +
+     * an asm entry trampoline before ANY prologue (or an emergency unwind stack) is
+     * the tracked full hardening; there is no ring-0 RtlUnwindEx caller yet, so
+     * best-effort is the shipping mitigation. */
+    {
+        uint64_t cur_rsp = 0, slo = 0, shi = 0;
+        __asm__ volatile ("movq %%rsp, %0" : "=r"(cur_rsp));
+        if (rtlp_kernel_stack_bounds(cur_rsp, &slo, &shi) &&
+            cur_rsp - slo < RTL_UNWIND_MIN_STACK)
+            return STATUS_BAD_STACK;   /* flags already normalized -> clean return */
+    }
+
+    /* Mark the unwind in progress on the (now-normalized) record. */
     exception_record->ExceptionFlags |= (uint32_t)EXCEPTION_UNWINDING;
 
     /* Pass 1: validate reachability with no side effects (fail before any cleanup). */
@@ -1448,12 +1527,16 @@ NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
     int reached = 0;
     NTSTATUS status = STATUS_BAD_STACK;   /* until reached */
     uint64_t prev_est = 0, prev_rsp = context_record->Rsp;
-    CONTEXT resume_ctx = *context_record;
+    /* Only ONE full CONTEXT (frame_ctx below) lives in this frame -- the target
+     * frame's own snapshot doubles as the resume context. Kernel stacks are 8 KiB
+     * and faults occur at arbitrary depth, so a second 1232-byte CONTEXT here is
+     * dangerous headroom. */
     for (unsigned i = 0; i < UNWIND_MAX_UNWIND_FRAMES; i++) {
         void *h = 0, *hd = 0;
         uint64_t est = 0, ib = 0;
         PRUNTIME_FUNCTION fe = 0;
-        CONTEXT frame_ctx = *context_record;   /* this frame's own context (resume snapshot) */
+        rtlp_frame_regs_t frame_regs;          /* compact resume snapshot of THIS frame */
+        rtlp_snapshot_regs(context_record, &frame_regs);
         if (!rtlp_unwind_step(context_record, &h, &est, &ib, &fe, &hd)) {
             /* Metadata-free frame before the target -> the target is unreachable. */
             status = STATUS_BAD_STACK;
@@ -1469,14 +1552,12 @@ NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
         prev_rsp = context_record->Rsp;
 
         const int at_target = (est == target);
-        if (at_target) {
-            resume_ctx = frame_ctx;   /* resume in the target frame's context */
+        if (at_target)
             exception_record->ExceptionFlags |= (uint32_t)EXCEPTION_TARGET_UNWIND;
-        }
 
         if (h) {
             DISPATCHER_CONTEXT dctx = { 0 };
-            dctx.ControlPc = frame_ctx.Rip;
+            dctx.ControlPc = frame_regs.rip;
             dctx.ImageBase = ib;
             dctx.FunctionEntry = fe;
             dctx.EstablisherFrame = est;
@@ -1504,15 +1585,20 @@ NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
                     status = STATUS_INVALID_DISPOSITION;
                     goto done;
                 }
-                if (dctx.ContextRecord && dctx.ContextRecord != context_record)
-                    *context_record = *dctx.ContextRecord;   /* adopt handler's state */
-                /* Validate the adopted state BEFORE the next step dereferences its
-                 * RSP/frame: a collided handler must not redirect into a non-
-                 * canonical RIP, backward, or to a wild RSP far from the current
-                 * frame. The RSP is bounded to a forward span of the pre-adopt RSP
-                 * (the stack-walk backstop), rejecting an out-of-stack forged
-                 * pointer. A forged-but-in-span unmapped RSP is still the engine's
-                 * trusted-establisher-frame boundary: fault-safe RtlVirtualUnwind
+                /* Only an IN-PLACE modification of the working context is the
+                 * supported single-level adopt. A handler that REPOINTS
+                 * dctx.ContextRecord at a different, handler-controlled buffer is
+                 * the deferred nested collided protocol -> fail safe rather than
+                 * dereference (copy through) an untrusted pointer. */
+                if (dctx.ContextRecord != context_record) {
+                    status = STATUS_BAD_STACK;
+                    goto done;
+                }
+                /* Validate the in-place-adopted state BEFORE the next step
+                 * dereferences its RSP/frame: no non-canonical RIP, no backward or
+                 * wild-forward RSP (bounded to a forward span of the pre-adopt RSP,
+                 * the stack-walk backstop). A forged-but-in-span unmapped RSP is
+                 * still the engine's trusted-establisher-frame boundary: fault-safe
                  * reads for a fully untrusted context are the deferred follow-up. */
                 if (!MM_IS_CANONICAL_4LVL(context_record->Rip) ||
                     context_record->Rsp < prev_rsp ||
@@ -1526,10 +1612,12 @@ NTSTATUS rtl_unwind_to_target(void *target_frame, void *target_ip,
         if (at_target) {
             reached = 1;
             status = STATUS_SUCCESS;
-            /* Stage the resume state in the target frame's context. */
-            resume_ctx.Rip = target_ip_val;
-            resume_ctx.Rax = (uint64_t)(uintptr_t)return_value;
-            *context_record = resume_ctx;
+            /* Resume in the target frame: restore its control+integer snapshot
+             * into the working CONTEXT (segments/FP stay the caller's originals,
+             * which RtlRestoreContext ignores), then set target_ip + return_value. */
+            rtlp_restore_regs(context_record, &frame_regs);
+            context_record->Rip = target_ip_val;
+            context_record->Rax = (uint64_t)(uintptr_t)return_value;
             goto done;
         }
     }

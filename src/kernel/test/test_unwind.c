@@ -1334,6 +1334,30 @@ tu_collided_wildrsp_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
     return ExceptionCollidedUnwind;
 }
 
+/* Repoints dctx.ContextRecord at a foreign buffer (the deferred nested protocol);
+ * the engine must reject it without dereferencing the untrusted pointer. */
+static CONTEXT s_foreign_ctx;
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_collided_repoint_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                            struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx;
+    s_fin_calls++;
+    if (dctx)
+        dctx->ContextRecord = &s_foreign_ctx;   /* repoint to a foreign buffer */
+    return ExceptionCollidedUnwind;
+}
+
+/* Returns ExceptionContinueExecution -- invalid on the unwind pass. */
+static EXCEPTION_DISPOSITION __attribute__((ms_abi))
+tu_continue_execution_handler(struct _EXCEPTION_RECORD *rec, void *establisher,
+                              struct _CONTEXT *ctx, struct _DISPATCHER_CONTEXT *dctx)
+{
+    (void)rec; (void)establisher; (void)ctx; (void)dctx;
+    s_fin_calls++;
+    return ExceptionContinueExecution;
+}
+
 /* Build a "push rbp; sub rsp,0x20" prolog UNWIND_INFO at `u` with a UHANDLER
  * referencing handler_rva (0 = no handler flag). Mirrors build_simple_uinfo. */
 static void tu_build_uhandler_uinfo(uint8_t *u, uint32_t handler_rva, int has_handler)
@@ -1436,6 +1460,54 @@ static void test_rtlunwind_finally_chain(void)
     TEST_ASSERT_EQ(ctx.Rsp, est[2], "resume Rsp is the target frame (not unwound past it)");
     TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
                    "EXCEPTION_UNWINDING cleared after the unwind completes");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: a reused record's stale unwind flags are normalized ---- */
+
+static void test_rtlunwind_stale_flags_normalized(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_finally_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est[3] = { 0 };
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        for (int k = 0; k < 3; k++) {
+            uint64_t ib = 0, e = 0;
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+            est[k] = e;
+        }
+    }
+
+    s_fin_calls = 0; s_fin_saw_unwinding = 0; s_fin_saw_target = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    rec.ExceptionFlags = EXCEPTION_TARGET_UNWIND | EXCEPTION_EXIT_UNWIND;   /* stale */
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est[2], (void *)0x6060ULL,
+                                      &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)s, 0u, "unwind succeeds despite the reused record's stale flags");
+    TEST_ASSERT_EQ((uint64_t)s_fin_saw_target, 1u,
+                   "stale TARGET_UNWIND normalized: only the target-frame handler sees it");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags &
+                              (EXCEPTION_UNWINDING | EXCEPTION_TARGET_UNWIND | EXCEPTION_EXIT_UNWIND)),
+                   0u, "all in-progress unwind flags cleared after completion");
 
     RtlDeleteFunctionTable(&rf);
 }
@@ -1735,6 +1807,94 @@ static void test_rtlunwind_exit_rejected(void)
                    "no unwind flags left set on a rejected request");
 }
 
+/* ---- RtlUnwindEx: a repointed collided context is rejected (no untrusted deref) ---- */
+
+static void test_rtlunwind_collided_repoint(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_collided_repoint_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est2;
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        uint64_t ib = 0, e = 0;
+        for (int k = 0; k < 3; k++) {
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+        }
+        est2 = e;
+    }
+
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est2, (void *)0x4040ULL,
+                                      &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_BAD_STACK,
+                   "a handler repointing dctx.ContextRecord is rejected (STATUS_BAD_STACK)");
+    TEST_ASSERT_EQ((uint64_t)(rec.ExceptionFlags & EXCEPTION_UNWINDING), 0u,
+                   "unwind flags cleared on the repoint fail-safe path");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- RtlUnwindEx: ExceptionContinueExecution is invalid during unwind ---- */
+
+static void test_rtlunwind_continue_execution_invalid(void)
+{
+    static img_buf_t img;
+    for (int i = 0; i < (int)sizeof(img.b); i++) img.b[i] = 0;
+    RUNTIME_FUNCTION rf;
+    uint64_t base = 0, body_pc = 0;
+    tu_register_handler_fn(&img, &rf, (void *)&tu_continue_execution_handler, &base, &body_pc);
+
+    uint64_t stk[24] = { 0 };
+    const uint64_t SENTINEL = base + 0x1000;
+    stk[4] = 0xAA11; stk[5] = body_pc;
+    stk[10] = 0xAA22; stk[11] = body_pc;
+    stk[16] = 0xAA33; stk[17] = SENTINEL;
+
+    uint64_t est2;
+    {
+        CONTEXT c = { 0 };
+        c.Rip = body_pc; c.Rsp = (uint64_t)(uintptr_t)&stk[0];
+        uint64_t ib = 0, e = 0;
+        for (int k = 0; k < 3; k++) {
+            PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, 0);
+            if (!fe) break;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, 0, &e, 0);
+        }
+        est2 = e;
+    }
+
+    s_fin_calls = 0;
+    EXCEPTION_RECORD rec = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.ContextFlags = CONTEXT_FULL;
+    ctx.Rip = body_pc; ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    NTSTATUS s = rtl_unwind_to_target((void *)(uintptr_t)est2, (void *)0x5050ULL,
+                                      &rec, 0, &ctx, 0, 0);
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)s, (uint64_t)(uint32_t)STATUS_INVALID_DISPOSITION,
+                   "ExceptionContinueExecution on the unwind pass is invalid");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
 /* ---- DISPATCHER_CONTEXT ABI layout ---- */
 
 static void test_rtlunwind_dispatcher_abi(void)
@@ -1860,6 +2020,8 @@ void test_register_unwind(void)
                             test_rtlunwind_finally_chain, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: unreachable target fails preflight (no __finally)",
                             test_rtlunwind_unreachable_target, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: reused record stale unwind flags normalized",
+                            test_rtlunwind_stale_flags_normalized, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: invalid handler disposition fails safe",
                             test_rtlunwind_invalid_disposition, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: failure after cleanup reports finally_count",
@@ -1870,6 +2032,10 @@ void test_register_unwind(void)
                             test_rtlunwind_target_collision, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: collided wild-RSP redirect rejected pre-deref",
                             test_rtlunwind_collided_wildrsp, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: repointed collided context rejected",
+                            test_rtlunwind_collided_repoint, TEST_CAT_EXCEPT);
+    test_suite_register_cat("UnwindEx: ExceptionContinueExecution invalid on unwind",
+                            test_rtlunwind_continue_execution_invalid, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: exit-unwind / NULL target_ip rejected + flags cleared",
                             test_rtlunwind_exit_rejected, TEST_CAT_EXCEPT);
     test_suite_register_cat("UnwindEx: DISPATCHER_CONTEXT ABI layout",

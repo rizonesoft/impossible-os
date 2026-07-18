@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-18T21:12:11+02:00",
-  "total_suites": 2243,
-  "total_assertions": 8372,
+  "timestamp": "2026-07-18T23:02:31+02:00",
+  "total_suites": 2246,
+  "total_assertions": 8378,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -93,7 +93,7 @@
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 118},
     {"file": "test_uefi_advanced.c", "suites": 13, "assertions": 42},
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
-    {"file": "test_unwind.c", "suites": 43, "assertions": 185},
+    {"file": "test_unwind.c", "suites": 46, "assertions": 191},
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 5, "assertions": 68},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},

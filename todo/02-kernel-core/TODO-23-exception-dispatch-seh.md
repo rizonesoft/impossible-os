@@ -437,13 +437,14 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 - [x] Termination handler invocation -- each EXITED frame `__finally` runs with `EXCEPTION_UNWINDING`; the TARGET frame handler runs with `EXCEPTION_TARGET_UNWIND`; resume is the target frame own context (PREFLIGHT invariants re-checked in EXECUTE)
 - [x] Set/clear the unwind flags (`EXCEPTION_UNWINDING`, `TARGET_UNWIND`) on the record, cleared once the target is reached; a whole-stack EXIT unwind (NULL target_frame) and a NULL target_ip are rejected (`STATUS_INVALID_PARAMETER`)
 - [x] `RtlRestoreContext(ctx, rec)` -- SAME-CPL kernel terminal resume (NASM `unwind_asm.asm`): restores CONTROL+INTEGER via a `cli`-guarded same-CPL `iretq` so RIP+RFLAGS+RSP take effect atomically; NOT the ring-3 delivery path
-- [/] `EXCEPTION_COLLIDED_UNWIND`: single-level detection shipped (adopts the handler `DISPATCHER_CONTEXT`, gross-validated: canonical RIP + forward-span RSP); full nested recovery + untrusted fault-safe reads -> XREF: `TODO-23 §14`
+- [/] `EXCEPTION_COLLIDED_UNWIND`: in-place single-level adopt (canonical RIP + forward-span RSP validated); a distinct-`ContextRecord` nested collision fails safe (`STATUS_BAD_STACK`), full adoption -> XREF: `TODO-23 §14`
 - [ ] Leaf-convention step for a metadata-free frame + whole-stack EXIT unwind -- today a NULL lookup fails safe and EXIT unwind is rejected; both land with the kernel-unwind metadata provider -> XREF: `02-kernel-core/TODO-18 §5`
 - [ ] CET: advance the shadow-stack pointer by N unwound frames (INCSSP) -- BLOCKED: kernel CET shadow stacks are detected-but-disabled (enable trampoline owned elsewhere), no live shadow stack to advance -> XREF: `TODO-10 §9`
+- [ ] Stack-safety hardening (full): guard-page-aware bounds + an asm entry check before the C prologue (or emergency unwind stack) + a near-guard test -- best-effort check + compact snapshot shipped -> XREF: this section
 
 **Test checkpoint:** `rtl_unwind_to_target` over a synthetic 3-frame `RtlAddFunctionTable` chain runs the ms_abi handler for both EXITED frames (`EXCEPTION_UNWINDING`) plus the target frame (`EXCEPTION_TARGET_UNWIND`, once); resume Rip=`target_ip`, Rax=`return_value`, Rsp=the target frame; the flag is cleared after. An unreachable target fails preflight with `STATUS_BAD_STACK` and runs NO `__finally`; an invalid handler disposition returns `STATUS_INVALID_DISPOSITION`; a collided disposition sets `EXCEPTION_COLLIDED_UNWIND` and still resolves; a collision IN the target frame and a wild-RSP collided redirect fail safe; a NULL target_frame/target_ip returns `STATUS_INVALID_PARAMETER` with flags cleared. A failure AFTER a `__finally` already ran reports `finally_count > 0` so the public `RtlUnwindEx` goes terminal (`KeBugCheckEx`) instead of returning to a half-cleaned caller. `RtlRestoreContext` restores rbx/r12/rsp and transfers to Rip (asm round-trip harness); `DISPATCHER_CONTEXT` ABI offsets pinned. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 14 new UnwindEx suites, 0 failures (371 kernel + 16 user PASS)
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 13 new UnwindEx suites, 0 failures (377 kernel + 16 user PASS)
 
 > **Notes:**
 > - **What shipped** -- `RtlUnwindEx` + testable `rtl_unwind_to_target`, NASM `RtlRestoreContext` + `rtl_restore_selftest` (new `unwind_asm.asm`), the shared dispatch ABI (`DISPATCHER_CONTEXT`, ms_abi `PEXCEPTION_ROUTINE`) in `unwind.h`; 6 tests.
@@ -451,8 +452,15 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Downstream effects** -- defines the dispatch ABI the kernel-driver SEH walker + ntdll build on; single-level `EXCEPTION_COLLIDED_UNWIND` handled, full nested protocol filed to §14; CET shadow-stack unwind filed to TODO-10 §9.
 > - **Canonical doc** -- the RtlUnwindEx / dispatch-ABI block in `include/kernel/rtl/unwind.h`.
 > - **Scope boundary** -- §9 owns the kernel unwind-to-target + terminal resume ENGINE; ring-3 `RtlDispatchException` is ntdll (TODO-04); the kernel-driver walker + full collided recovery are §14; NtContinue IRET restore is §5.
+> **Verified:** 2026-07-19 | ship `377c693f` + review fixes | 4/8 items | build OK | tests 377+16 PASS; smoke PASS (2.71s)
+> **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 443)
+> **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 441)
+> **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 342)
+> **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 580)
+> **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 442)
+> **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
-- [ ] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
+- [x] Commit: `"rtl: implement RtlUnwindEx with termination handler invocation"`
 
 
 ---
