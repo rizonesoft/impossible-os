@@ -190,7 +190,7 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 
 > **Verified:** 2026-06-11 | commit `5ae7bdb8` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
 > **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 212)
-> **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §4 (item: "`ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher" at line 207)
+> **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §4 (item: "`ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher" at line 214)
 > **Deferred:** [M] no dedicated IDT/vector unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
 > **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 6H+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 

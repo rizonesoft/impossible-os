@@ -32,7 +32,8 @@ title: "TODO-27 -- Crash Dump Generation"
 - → XREF: `TODO-04-system-logging.md §8` -- structured JSON crash event (§8) should include bugcheck code, params, and RIP in `events.jsonl` at panic time; note: the raw-partition dump workspace (§1) must not use physical page `0x80000` -- choose a different address or probe PMM for a contiguous free region (this constraint is a local §1 design note, not defined in TODO-27 §7)
 - → XREF: `TODO-04-system-logging.md §7` -- pstore/ramoops-style persistent RAM crash log (text); complements this TODO's binary CPU/memory state to disk; both are needed (no overlap)
 - → XREF: `TODO-17-binary-system.md §7` -- `exec_register_module()` populates the global `LOADED_MODULE` crash registry; §3 of this TODO consumes it for the ModuleList stream
-- → XREF: `TODO-23-exception-dispatch-seh.md §1` -- canonical `EXCEPTION_RECORD` / `CONTEXT` in `except.h` when §1 lands; §4 MDMP streams use `CONTEXT` from `panic.h` today and must be reconciled with T23 §1 types (same layout, single source of truth)
+- → XREF: `TODO-23-exception-dispatch-seh.md §1` -- LANDED: `EXCEPTION_RECORD` / `CONTEXT` / `XMM_SAVE_AREA32` now live in `except.h` (same 1232-byte layout); `panic.h` includes it, so §4 MDMP streams already consume the single-source T23 types
+- → XREF: `TODO-23-exception-dispatch-seh.md §1` -- source of the §2 cross-task FPU dump-leak follow-up (T23 §1's frame converter deliberately does no FXSAVE for this reason)
 - → XREF: `TODO-26-power-management.md §4` -- S4 hibernate partition GPT GUID reused as the raw dump partition backing store (§7); both share the same raw-write path
 - → XREF: `TODO-28-bsod-ux-enhancements.md` §13 -- BSOD progress UI (`panic_set_progress`) while the dump writer runs; T28 owns on-screen UX, this TODO owns dump bytes and completion callbacks
 - → XREF: `TODO-10-kernel-security-hardening.md` -- `CrashDumpEncryption` design and `X:\Crash\` default SDDL: security review gates with T10 before enforcement code in §9 or §6
@@ -66,7 +67,7 @@ title: "TODO-27 -- Crash Dump Generation"
 | ⭐   | Order | Deliverable                                    | Depends On     | Status |
 | --- | :---: | ---------------------------------------------- | -------------- | :----: |
 | 💎   |   1   | Bugcheck codes & `KeBugCheckEx`                | --             |  [x]   |
-| 💎   |   2   | FPU/XMM/XSAVE state capture                    | §1             |  [x]   |
+| 💎   |   2   | FPU/XMM/XSAVE state capture                    | §1             |  [/]   |
 | 💎   |   3   | Module registry (wire `exec_register_module`)  | T17 §6         |  [x]   |
 | 💎   |   4   | MDMP binary format: header, directory, streams | §1, §2, §3     |  [x]   |
 | 💎   |   5   | Minidump writer (crashing thread + memory)     | §4             |  [ ]   |
@@ -110,8 +111,9 @@ Capture the crashing thread's FPU/XMM/YMM state and build a Windows-compatible `
 
 - [x] Allocate static 4 KiB XSAVE scratch buffer in `panic.c`: `uint8_t g_panic_xsave_buf[4096] __attribute__((aligned(64)));` -- exported for test access
 - [x] `panic_capture_fpu_state()` -- called from `panic_screen()` after async isolation, gated behind atomic `panic_try_claim_owner()`; clears CR0.TS/EM, checks CR4.OSXSAVE at runtime, uses `xsave64` with `xcr0_active` mask or `fxsave64` fallback; `POST16(0xDE42)` on entry
-- [x] Define `CONTEXT` struct in `include/kernel/panic.h` at Windows x64 layout: 1232 bytes, `ContextFlags`, `MxCsr`, segment registers, debug registers, all GPRs, `Rip`, 512-byte `FltSave` (`XMM_SAVE_AREA32`), `M128A VectorRegister[26]` for YMM high halves, LBR fields; static assert on size; forward-declared in `nt_types.h`
+- [x] `CONTEXT` struct at Windows x64 layout (1232 bytes; GPRs, segment/debug regs, `Rip`, 512-byte `FltSave`, `M128A VectorRegister[26]`, LBR); size static-asserted. Canonical home is `include/kernel/except.h` (T23 §1); `panic.h` includes it
 - [x] `panic_build_context(frame, ctx)` -- populates `CONTEXT` from `interrupt_frame` + `g_panic_xsave_buf`; reads live DS/ES/FS/GS and debug registers; copies FXSAVE region into `FltSave`, MXCSR into top-level `MxCsr`, AVX YMM high halves into `VectorRegister[0..15]`; sets `ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT`
+- [ ] Cross-task FPU dump leak: sample CR0.TS in `panic_capture_fpu_state()` before `clts`; when set (faulting task deferred FPU), `panic_build_context()` inits `FltSave` + clears `CONTEXT_FLOATING_POINT` -> XREF: 02-kernel-core/TODO-23 §1
 - [x] Commit: `"kernel/panic: XSAVE FPU capture, CONTEXT record population"`
 
 **Test checkpoint:** After panic, `g_panic_xsave_buf` is non-zero (FPU was in use). `CONTEXT.MxCsr` is non-default. `CONTEXT.Rip` matches `interrupt_frame.rip`. `POST16(0xDE42)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
@@ -155,13 +157,13 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 **Test checkpoint:** `sizeof(MINIDUMP_HEADER)` == 32 bytes. `MINIDUMP_DIRECTORY` == 12 bytes. `MINIDUMP_MODULE` == 108 bytes (pack(4)). `MDMP_SIGNATURE == 0x504D444D`. `ImpossibleOSInfoStream` type == 0x8001. Static asserts on all 12 struct sizes + 5 MINIDUMP_TYPE flags + signature/stream ID. `POST16(0xDE46)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
 > [!NOTE]
-> **T23 alignment:** `CONTEXT` in `panic.h` is the live dump source today. When `TODO-23-exception-dispatch-seh.md` §1 adds `except.h` types, add a checklist item under §5 (writer) or a compile-time assert that MDMP `ThreadContext` RVAs stay binary-compatible with WinDbg.
+> **T23 alignment (LANDED):** `CONTEXT` now lives in `except.h` (`TODO-23-exception-dispatch-seh.md §1`) and `panic.h` includes it -- same 1232-byte layout, single source of truth. §5's writer must still assert MDMP `ThreadContext` RVAs stay binary-compatible with WinDbg against those types (item below).
 
 ---
 
 ## 5. Minidump Writer
 
-- [ ] After T23 §1 lands: assert MDMP `ThreadContext` / `CONTEXT` layout still matches WinDbg if `CONTEXT` migrates from `panic.h` to `except.h` (static assert or `test_crashdump` table)
+- [ ] Assert MDMP `ThreadContext` / `CONTEXT` layout matches WinDbg against the T23 §1 `except.h` types (CONTEXT now migrated there): static assert or `test_crashdump` table
 - [ ] Minidump memory layout (fixed region order, offsets computed at write time):
   ```
   [0x0000] MINIDUMP_HEADER         (28 bytes)

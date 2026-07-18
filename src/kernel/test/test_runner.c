@@ -37,6 +37,7 @@ static const char *cat_names[] = {
     [TEST_CAT_EX]       = "ex",
     [TEST_CAT_NLS]      = "nls",
     [TEST_CAT_KNF]      = "knf",
+    [TEST_CAT_EXCEPT]   = "except",
 };
 
 static const char *cat_labels[] = {
@@ -55,7 +56,15 @@ static const char *cat_labels[] = {
     [TEST_CAT_EX]       = "Executive Support",
     [TEST_CAT_NLS]      = "Atom/NLS/Locale",
     [TEST_CAT_KNF]      = "Notification Facility",
+    [TEST_CAT_EXCEPT]   = "Exception Dispatch",
 };
+
+/* Layer 1 -- both tables are indexed by test_category_t. A new enum entry
+ * without a matching row here would otherwise read a NULL name at runtime. */
+_Static_assert(sizeof(cat_names) / sizeof(cat_names[0]) == TEST_CAT_COUNT,
+               "cat_names must have one entry per test_category_t");
+_Static_assert(sizeof(cat_labels) / sizeof(cat_labels[0]) == TEST_CAT_COUNT,
+               "cat_labels must have one entry per test_category_t");
 
 /* ---- Global test state ---- */
 
@@ -455,6 +464,7 @@ extern void test_register_kimage(void);
 extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
+extern void test_register_except(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
 extern void test_register_ex(void);
@@ -559,6 +569,9 @@ void test_runner_init(void)
 
     /* Crash dump */
     test_register_crashdump();
+
+    /* Exception dispatch / SEH */
+    test_register_except();
 
     /* ABI */
     test_register_peb_teb();

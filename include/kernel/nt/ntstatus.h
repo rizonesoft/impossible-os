@@ -50,6 +50,9 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_NO_MORE_FILES                ((NTSTATUS)0x80000006)  /* directory enum exhausted */
 #define STATUS_NO_MORE_ENTRIES              ((NTSTATUS)0x8000001A)  /* registry/object enum exhausted */
 #define STATUS_DATATYPE_MISALIGNMENT        ((NTSTATUS)0x80000002)  /* buffer not aligned (warning severity) */
+#define STATUS_GUARD_PAGE_VIOLATION         ((NTSTATUS)0x80000001)  /* guard page touched (PAGE_GUARD) */
+#define STATUS_BREAKPOINT                   ((NTSTATUS)0x80000003)  /* INT3 / #BP */
+#define STATUS_SINGLE_STEP                  ((NTSTATUS)0x80000004)  /* trap flag / #DB */
 
 /* ---- Error codes -- object / handle -------------------------------------- */
 
@@ -57,6 +60,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_NOT_IMPLEMENTED              ((NTSTATUS)0xC0000002)  /* syscall not yet implemented */
 #define STATUS_INVALID_INFO_CLASS           ((NTSTATUS)0xC0000003)  /* unknown information class */
 #define STATUS_ACCESS_VIOLATION             ((NTSTATUS)0xC0000005)  /* user-buffer probe failed */
+#define STATUS_IN_PAGE_ERROR                ((NTSTATUS)0xC0000006)  /* page could not be brought in */
 #define STATUS_INVALID_HANDLE               ((NTSTATUS)0xC0000008)  /* handle not in table or wrong type */
 #define STATUS_INVALID_PARAMETER            ((NTSTATUS)0xC000000D)  /* bad argument value */
 #define STATUS_INFO_LENGTH_MISMATCH         ((NTSTATUS)0xC0000004)  /* length field vs buffer */
@@ -163,3 +167,26 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_DEVICE_NOT_READY             ((NTSTATUS)0xC00000A3)  /* device not initialized */
 #define STATUS_MEDIA_WRITE_PROTECTED        ((NTSTATUS)0xC00000A2)  /* media is write-protected */
 #define STATUS_IO_DEVICE_ERROR              ((NTSTATUS)0xC0000185)  /* I/O device error */
+
+/* ---- Error codes -- CPU exceptions ---------------------------------------
+ *
+ * Raised by the fault-to-exception mapping and surfaced to user mode as the
+ * matching EXCEPTION_* alias (kernel/except.h). Warning-severity exception
+ * codes (guard page, breakpoint, single step, misalignment) live in the
+ * informational block above. */
+
+#define STATUS_ILLEGAL_INSTRUCTION          ((NTSTATUS)0xC000001D)  /* #UD -- bad opcode */
+#define STATUS_NONCONTINUABLE_EXCEPTION     ((NTSTATUS)0xC0000025)  /* continue on noncontinuable */
+#define STATUS_INVALID_DISPOSITION          ((NTSTATUS)0xC0000026)  /* handler returned bad disposition */
+#define STATUS_ARRAY_BOUNDS_EXCEEDED        ((NTSTATUS)0xC000008C)  /* #BR -- bound check */
+#define STATUS_FLOAT_DENORMAL_OPERAND       ((NTSTATUS)0xC000008D)  /* #MF/#XM -- denormal */
+#define STATUS_FLOAT_DIVIDE_BY_ZERO         ((NTSTATUS)0xC000008E)  /* #MF/#XM -- divide by zero */
+#define STATUS_FLOAT_INEXACT_RESULT         ((NTSTATUS)0xC000008F)  /* #MF/#XM -- inexact */
+#define STATUS_FLOAT_INVALID_OPERATION      ((NTSTATUS)0xC0000090)  /* #MF/#XM -- invalid op */
+#define STATUS_FLOAT_OVERFLOW               ((NTSTATUS)0xC0000091)  /* #MF/#XM -- overflow */
+#define STATUS_FLOAT_STACK_CHECK            ((NTSTATUS)0xC0000092)  /* #MF -- x87 stack fault */
+#define STATUS_FLOAT_UNDERFLOW              ((NTSTATUS)0xC0000093)  /* #MF/#XM -- underflow */
+#define STATUS_INTEGER_DIVIDE_BY_ZERO       ((NTSTATUS)0xC0000094)  /* #DE -- divide by zero */
+#define STATUS_INTEGER_OVERFLOW             ((NTSTATUS)0xC0000095)  /* #OF -- INTO overflow */
+#define STATUS_PRIVILEGED_INSTRUCTION       ((NTSTATUS)0xC0000096)  /* #GP -- ring-3 privileged op */
+#define STATUS_STACK_OVERFLOW               ((NTSTATUS)0xC00000FD)  /* #SS -- guard page on stack */

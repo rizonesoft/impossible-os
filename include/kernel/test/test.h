@@ -55,9 +55,15 @@ typedef enum {
     TEST_CAT_EX,        /* Executive support runtime (SLIST, rundown, callbacks, locks, ...) */
     TEST_CAT_NLS,       /* Atom/NLS/locale subsystem (UNICODE_STRING, case fold, code page) */
     TEST_CAT_KNF,       /* Kernel Notification Facility (WNF-style state notifications) */
+    TEST_CAT_EXCEPT,    /* Exception dispatch / SEH (CONTEXT, EXCEPTION_RECORD, unwind) */
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF,
 } test_category_t;
+
+/* The bootloader parses `test_suite=<name>` into these ORDINALS by hand
+ * (src/boot/uefi/bootx64.c). It is a separate binary, so no _Static_assert can
+ * bind the two: append new categories before TEST_CAT_COUNT and add the
+ * matching name there in the same commit -- never renumber an existing one. */
 
 /* ---- Test suite entry ---- */
 typedef void (*test_fn_t)(void);

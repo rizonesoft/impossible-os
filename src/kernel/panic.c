@@ -369,40 +369,24 @@ void panic_capture_fpu_state(void)
 
 void panic_build_context(struct interrupt_frame *frame, CONTEXT *ctx)
 {
-    /* Zero the entire CONTEXT first */
-    {
+    /* Frame-backed groups come from the shared converter. The panic path then
+     * APPENDS live segment/debug/FPU state below -- sound here (and only here)
+     * because a panic has stopped the world and deliberately wants this cpu's
+     * current state, which is exactly what context_from_frame must never
+     * fabricate for a general caller. */
+    ctx->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    if (frame) {
+        context_from_frame(frame, ctx);
+    } else {
         uint8_t *p = (uint8_t *)ctx;
         for (uint32_t i = 0; i < sizeof(CONTEXT); i++)
             p[i] = 0;
     }
 
-    ctx->ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT;
-
-    if (frame) {
-        /* --- Control registers (CONTEXT_CONTROL) --- */
-        ctx->Rip    = frame->rip;
-        ctx->SegCs  = (uint16_t)frame->cs;
-        ctx->SegSs  = (uint16_t)frame->ss;
-        ctx->Rsp    = frame->rsp;
-        ctx->EFlags = (uint32_t)frame->rflags;
-        ctx->Rbp    = frame->rbp;
-
-        /* --- Integer registers (CONTEXT_INTEGER) --- */
-        ctx->Rax = frame->rax;
-        ctx->Rcx = frame->rcx;
-        ctx->Rdx = frame->rdx;
-        ctx->Rbx = frame->rbx;
-        ctx->Rsi = frame->rsi;
-        ctx->Rdi = frame->rdi;
-        ctx->R8  = frame->r8;
-        ctx->R9  = frame->r9;
-        ctx->R10 = frame->r10;
-        ctx->R11 = frame->r11;
-        ctx->R12 = frame->r12;
-        ctx->R13 = frame->r13;
-        ctx->R14 = frame->r14;
-        ctx->R15 = frame->r15;
-    }
+    /* Segments, debug registers and FPU state are captured live below, so
+     * advertise them as valid on top of what the converter reported. */
+    ctx->ContextFlags |= CONTEXT_SEGMENTS | CONTEXT_DEBUG_REGISTERS |
+                         CONTEXT_FLOATING_POINT;
 
     /* --- Segment registers --- */
     /* DS/ES/FS/GS aren't in interrupt_frame; read them live.

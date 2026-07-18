@@ -17,7 +17,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 > [!NOTE]
 > **WHOLE-FILE BLOCKER CLEARED 2026-07-17 -- this file is UNPARKED.** Every section here was gated on the kernel-BSS/`USER_BASE` ceiling: `.bss` ended at `0x7FEE55`, 4523 bytes under `USER_BASE` `0x800000`, so `scripts/build.sh`'s BSS-collision guard failed any section adding more than ~4 KiB of `.text`/`.rodata`. `02-kernel-core/TODO-33 §10` converted the large static pools to frame-backed storage and the BSS end moved to `0x6c2000` -- **~1272 KiB of headroom**, ~280x what this file's §1 needed. The 16 ceiling `Deferred` stamps were swept and 15 of 16 rows reset to `[ ]`; the file now runs on its own Implementation Order, §1 first. **§15 stays `[/]`** -- the ceiling was not its only blocker (its `D10T10 §8` Linux-compat signal prerequisite is open), and §3/§4 additionally depend on the open `TODO-29 §5`, so resolve each row's "Depends On" column before starting it -> XREF: `02-kernel-core/TODO-33 §11` (item: "`TODO-23 §1-§16` (exception/SEH)").
 >
-> **§1 is code-COMPLETE and parked in `git stash` `todo23-s1-wip` -- APPLY it, do not rewrite.** It was implemented and design-reviewed before the park; re-verify it against the moved HEAD (the tree advanced substantially) rather than trusting the old review, exactly as `TODO-24 §7` needed when its stash was re-applied.
+> **§1 SHIPPED 2026-07-18.** The parked `git stash` `todo23-s1-wip` was applied, re-verified against the moved HEAD, re-reviewed adversarially (alignment ABI fix adopted; cross-task panic-FPU leak filed to `TODO-27 §2`), built `-Werror`, and committed. `except.h` / `except.c` / `test_except.c` are in tree; §2 onward can build on the CONTEXT converters.
 
 > [!IMPORTANT]
 > **Current state:** `vmm.c` has a `page_fault_handler` (vector 14) that chains to the swap and mmap handlers for kernel-mode recoverable faults, then falls through to `panic_screen()`. All other CPU exception vectors (0-13, 15-31) dispatch directly to `panic_screen()` via `idt.c`. No `EXCEPTION_RECORD` or `CONTEXT` is captured, no user-mode fault delivery path exists, and there is no kernel safe-probing API. The POSIX signal machinery (`signals` field in `struct task`) is wired but not exercised.
@@ -67,7 +67,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §10    |  [ ]   |
+| 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §10    |  [x]   |
 | 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
@@ -97,7 +97,7 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 
 > [!IMPORTANT]
 > → XREF: `TODO-12 §1` -- SATISFIED: `include/kernel/nt/ntstatus.h` is the canonical `NTSTATUS` home (`typedef int32_t NTSTATUS` at `:21`). `except.h` includes it; exception status codes are added THERE, never re-declared here.
-> → XREF: `TODO-33 §1-§7` -- BLOCKER: this section is implemented but cannot link (kernel BSS / `USER_BASE` ceiling). See the Deferred stamp below.
+> → XREF: `TODO-33 §10` -- CLEARED: the kernel BSS / `USER_BASE` ceiling that blocked linking was resolved (frame-backed pools moved BSS end to `0x6c2000`); §1 now builds and links.
 
 > [!NOTE]
 > `CONTEXT` is NOT new: `struct _CONTEXT` (1232 bytes) already ships in `include/kernel/panic.h` for the crash-dump pipeline, forward-declared at `include/kernel/nt/nt_types.h:101`. This section MOVES it (plus `XMM_SAVE_AREA32`, `M128A`, the `CONTEXT_*` flags) into `except.h` and has `panic.h` include that -- a consolidation, not a second definition.
@@ -112,9 +112,16 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 
 **Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` == 1232 with all GP registers + XMM0-15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- RIP/RSP/RFLAGS/CS/SS/GP all match. The `_Static_assert` block + the `except` suite are the ABI proof; the boot-log line is emitted by `except_init()` (§3), which owns kernel init registration. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 16 suites -- BLOCKED: cannot link until TODO-33 lands
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 16 suites, 0 failures
 
-- [ ] Commit: `"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types"`
+- [x] Commit: `"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types"`
+
+> **Notes:**
+> - **What shipped** -- `include/kernel/except.h` (EXCEPTION_RECORD/CONTEXT/EXCEPTION_POINTERS + `CONTEXT_HAS_GROUP` macro, offsets `_Static_assert`-pinned, `aligned(16)`), `src/kernel/except.c` converters, `test_except.c` (16 suites).
+> - **How it integrates** -- frame-backed CONTROL+INTEGER only, returning the mask actually captured; `panic.h` now includes `except.h` and `panic_build_context()` delegates its frame fill to `context_from_frame`.
+> - **Downstream effects** -- satisfies `TODO-27`'s T23-§1 CONTEXT reconciliation (single source of truth); adversarial review adopted a 16-byte alignment fix and filed the cross-task panic-FPU dump leak to `TODO-27 §2`.
+> - **Canonical doc** -- the `include/kernel/except.h` header block (the exception-ABI owner).
+> - **Scope boundary** -- §1 owns the ABI types + frame<->CONTEXT converters; per-thread FPU/segment/debug capture is `§5` (NtGetContextThread); the ring-3 dispatch half is `TODO-04 §5`.
 
 
 ---
@@ -504,7 +511,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 | ⭐   | Feature                       | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS       |
 | --- | ----------------------------- | ----------------- | ---------------- | --------------------- |
-| 💎   | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                | ⬜ §1                  |
+| 💎   | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                | ✅ §1 `except.h`       |
 | 💎   | #PF user/kernel triage        | ✅                 | ✅                | ⚠️ §2 kernel-only     |
 | 💎   | #DB/#BP debugger routing      | ✅                 | ✅ ptrace         | ⬜ §3                  |
 | 💎   | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+           | ⬜ §3 conditional      |
@@ -518,7 +525,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | VCH list                      | ✅ ntdll           | ❌                | ⬜ §11 ABI, D12T04 §5  |
 | 💎   | Unhandled exception filter    | ✅ WER             | ✅ core dump      | ⬜ §12 kernel terminal |
 | 💎   | `__fastfail` / INT 0x29       | ✅ 0xC0000409      | ❌                | ⬜ §3 vector 41        |
-| 💎   | CONTEXT ContextFlags + FXSAVE | ✅ 0x4E0 ABI       | ✅ ucontext_t     | ⬜ §1                  |
+| 💎   | CONTEXT ContextFlags + FXSAVE | ✅ 0x4D0 ABI       | ✅ ucontext_t     | ✅ §1 layout           |
 | 💎   | Fault-recoverable usercopy    | ✅ kernel SEH      | ✅ `__ex_table`   | ⬜ §13 try_copy_*      |
 | ⭐   | IRQL-aware safe probing       | ✅ ProbeForRead    | ✅ copy_from_user | ⬜ §13                 |
 | 💎   | Kernel __try/__except         | ✅                 | ❌                | ⬜ §14                 |
