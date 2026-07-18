@@ -68,7 +68,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | ⭐   | Order | Deliverable                                                      | Depends On                 | Status |
 | --- | :---: | ---------------------------------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | EXCEPTION_RECORD, CONTEXT, EXCEPTION_POINTERS                    | TODO-12 §1, TODO-33 §10    |  [x]   |
-| 💎   |   2   | #PF triage -- user vs. kernel, COW, guard, stack growth          | §1, TODO-07 §3             |  [ ]   |
+| 💎   |   2   | #PF triage -- user/kernel decode, EXCEPTION_RECORD build, routing | §1, TODO-07 §3             |  [ ]   |
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP) | §1, TODO-10 §9, TODO-29 §5 |  [ ]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification               | §1-§3, TODO-29 §5          |  [ ]   |
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                     | §4, TODO-11 §7             |  [ ]   |
@@ -83,6 +83,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                       | §6, §9, §13                |  [ ]   |
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)             | §3, §5, D10T10 §8          |  [/]   |
 | ⭐   |  16   | Exception dispatch telemetry                                     | §4, TODO-04 §6             |  [ ]   |
+| 💎   |  17   | Guard-page stack auto-grow (split from §2; land right after §2)  | §2, §3                     |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -130,13 +131,15 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 
 ---
 
-## 2. #PF Triage -- User vs. Kernel, COW, Guard Pages, Stack Growth
+## 2. #PF Triage -- User vs. Kernel Decode, EXCEPTION_RECORD/CONTEXT Build, Dispatch Routing
+
+> **Split note (2026-07-18):** Guard-page / stack auto-grow (commit-vs-reserve tracking, guard re-arm, terminal `STATUS_STACK_OVERFLOW`) was split out to **§17** so this section stays one worker context (SPLIT-RECOMMENDED: ABI impact + 8 items). This section owns error-code decode, the user/kernel decision tree, building `EXCEPTION_RECORD`/`CONTEXT`, and routing to the dispatch stubs; §17 hooks its growable-stack case into the not-present-user branch below.
 
 **Prompt:** Rewrite `page_fault_handler()` in `vmm.c` to triage before panicking.
 Decode `CR2` (fault address) and the error code bits (P=present, W=write, U=user, I=fetch, PK=prot-key, SS=shadow-stack). Decision tree:
 - **Kernel fault, not present** → existing swap/mmap chain (unchanged).
 - **Kernel fault, protection violation** → kernel exception path -- call `ki_raise_kernel_exception()` (§14) or `panic_screen()` if not inside a probed region (§13).
-- **User fault, not present** → check if address falls in a guard page region (stack auto-grow) or an mmap region; map the page, retry, or deliver `STATUS_ACCESS_VIOLATION` via `KiUserExceptionDispatcher` (§5).
+- **User fault, not present** → existing swap/mmap chain; else hand a growable-stack guard hit to `vmm_try_grow_stack()` (§17); else deliver `STATUS_ACCESS_VIOLATION` via `KiUserExceptionDispatcher` (§5). Until §17 lands, a guard hit keeps the current labeled panic.
 - **User fault, protection violation** → deliver `STATUS_ACCESS_VIOLATION` to user-mode.
 - **User fetch fault** → deliver `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]=8` (execute).
 Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavior (always panic) as the unreachable final clause.
@@ -145,16 +148,14 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 > → XREF: `TODO-07 §3` -- interrupt entry raises IRQL; fault handler runs at device IRQL.
 > → XREF: `TODO-11 §5` -- `task->peb` needed to find user-mode VMM range boundary.
 > → XREF: `D03 T04 §4` -- lazy mapped-file and swap-backed page-in live in the pager TODO; this section routes eligible not-present faults there rather than re-implementing pager policy in the exception layer.
+> → XREF: `§17` -- guard-page stack auto-grow (`vmm_try_grow_stack()`) is the split-off owner of the growable-stack case in the not-present-user branch.
 
 - [ ] Decode error-code bits; distinguish user vs. kernel fault cleanly
-- [ ] Guard page / stack-growth detection with configurable stack reserve (default 1 MiB)
-- [ ] Commit-vs-reserve boundary: track committed and reserved bounds separately; on a successful grow MOVE the guard one page down and re-arm it (one-shot), and reject a fault that jumped OVER the guard instead of growing into it
-- [ ] Reserve exhausted = terminal: deliver `STATUS_STACK_OVERFLOW` (§3 maps #SS) WITHOUT touching the exhausted stack; never grow past the reserve into adjacent mappings
 - [ ] Build `EXCEPTION_RECORD` and `CONTEXT` on the kernel stack before dispatch
 - [ ] Route to `ki_dispatch_exception()` (§4) for user-mode faults
 - [ ] Route to `ki_raise_kernel_exception()` stub (implemented fully in §14)
 
-**Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0, code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns to `panic_screen()` until §4 lands). Trigger a kernel-mode swap fault -- existing swap/mmap chain still handles it correctly. Guard page fault at stack bottom auto-grows the stack. `POST16(0xDE20)` on #PF entry, `POST16(0xDE21)` after triage decision. If crash: check last POST -- 0xDE20 = never entered triage, 0xDE21 = triage completed but dispatch failed. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
+**Test checkpoint:** Trigger a user-mode NULL dereference -- serial log shows `"pf: user fault at 0x0, code=0x<ec>"` and routes to `ki_dispatch_exception()` (stub returns to `panic_screen()` until §4 lands). Trigger a kernel-mode swap fault -- existing swap/mmap chain still handles it correctly. A guard-page hit keeps the current labeled panic (§17 replaces it with auto-grow). `POST16(0xDE20)` on #PF entry, `POST16(0xDE21)` after triage decision. If crash: check last POST -- 0xDE20 = never entered triage, 0xDE21 = triage completed but dispatch failed. Test on: QEMU WHPX + TCG. Verify on bare metal -- #PF error code bits may differ.
 
 - [ ] Commit: `"mm: triage #PF into user/kernel paths; defer to exception dispatch"`
 
@@ -511,12 +512,36 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 
 ---
 
+## 17. Guard-Page Stack Auto-Grow -- Commit/Reserve Tracking, Guard Re-Arm, Terminal Overflow
+
+> **Split from §2 (2026-07-18).** §2 owns #PF triage and dispatch routing; this section owns the growable-stack case of the not-present-user branch. Windows commits a thread stack lazily: a small committed region backed by real pages, a larger reserved region, and a one-page guard just below the committed low-water mark. Touching the guard commits one more page and MOVES the guard down; running out of reserve raises `STATUS_STACK_OVERFLOW`. This section implements that for user (and kernel-task) stacks.
+
+**Prompt:** Add per-stack `{reserve_low, commit_low, guard_page}` tracking and a `vmm_try_grow_stack(fault_addr, is_user)` hook called from §2's not-present-user (and kernel-task-stack) branch. On a guard hit inside `[reserve_low, commit_low)`: commit one page (map + zero), move the guard one page down, re-arm it (one-shot), and retry the instruction. A fault BELOW `reserve_low` (jumped over the guard, or reserve exhausted) is terminal: deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack (dispatch on a safe path / the current labeled panic until §5 lands), and never grow past the reserve into an adjacent mapping.
+
+> [!IMPORTANT]
+> → XREF: `§2` -- the #PF triage that calls `vmm_try_grow_stack()`; ships first.
+> → XREF: `§3` -- `#SS` maps to `STATUS_STACK_OVERFLOW`; the terminal path reuses that mapping.
+> → XREF: `TODO-11 §5` -- `task->peb`/thread stack bounds for the user-mode range check.
+
+- [ ] Guard-page / stack-growth detection with a configurable stack reserve (default 1 MiB); track per-stack committed and reserved bounds separately
+- [ ] Successful grow: commit one page, MOVE the guard one page down and re-arm it (one-shot); reject a fault that jumped OVER the guard instead of growing into it
+- [ ] Reserve exhausted = terminal: deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack; never grow past the reserve into adjacent mappings
+- [ ] SMP-safe: serialize concurrent grows on the same stack; the guard-table update and PTE map must not race a second CPU faulting the same guard
+
+**Test checkpoint:** A recursive user thread that walks its stack down past the committed low-water mark auto-grows one page per guard hit and continues; serial shows the commit_low moving down. A runaway recursion that exhausts the 1 MiB reserve delivers `STATUS_STACK_OVERFLOW` (labeled panic until §5) without a double-fault. A fault that jumps over the guard (large `alloca`) is rejected as terminal, not grown. Test on: QEMU WHPX + TCG. Verify on bare metal.
+
+- [ ] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"`
+
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                       | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS       |
 | --- | ----------------------------- | ----------------- | ---------------- | --------------------- |
 | 💎   | EXCEPTION_RECORD/CONTEXT      | ✅ ntdll           | ❌                | ✅ §1 `except.h`       |
 | 💎   | #PF user/kernel triage        | ✅                 | ✅                | ⚠️ §2 kernel-only     |
+| 💎   | Lazy stack commit/auto-grow   | ✅ guard commit    | ✅ expand_stack   | ⬜ §17 reserve/commit  |
 | 💎   | #DB/#BP debugger routing      | ✅                 | ✅ ptrace         | ⬜ §3                  |
 | 💎   | #CP CET shadow-stack          | ✅ 24H2+           | ✅ 6.6+           | ⬜ §3 conditional      |
 | 💎   | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace         | ⬜ §4                  |
