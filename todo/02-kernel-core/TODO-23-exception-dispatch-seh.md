@@ -112,7 +112,7 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 
 **Test checkpoint:** `sizeof(EXCEPTION_RECORD)` matches Windows ABI (152 bytes on x64). `sizeof(CONTEXT)` == 1232 with all GP registers + XMM0-15. `context_from_frame` round-trips correctly: populate from a test `interrupt_frame`, convert back via `frame_from_context`, compare -- RIP/RSP/RFLAGS/CS/SS/GP all match. The `_Static_assert` block + the `except` suite are the ABI proof; the boot-log line is emitted by `except_init()` (§3), which owns kernel init registration. Test on: QEMU WHPX + TCG.
 
-> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 16 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 17 suites, 0 failures
 
 - [x] Commit: `"kernel: add EXCEPTION_RECORD, CONTEXT, and EXCEPTION_POINTERS types"`
 
@@ -122,6 +122,10 @@ Add `context_from_frame(struct interrupt_frame *f, CONTEXT *ctx)` to populate a 
 > - **Downstream effects** -- satisfies `TODO-27`'s T23-§1 CONTEXT reconciliation (single source of truth); adversarial review adopted a 16-byte alignment fix and filed the cross-task panic-FPU dump leak to `TODO-27 §2`.
 > - **Canonical doc** -- the `include/kernel/except.h` header block (the exception-ABI owner).
 > - **Scope boundary** -- §1 owns the ABI types + frame<->CONTEXT converters; per-thread FPU/segment/debug capture is `§5` (NtGetContextThread); the ring-3 dispatch half is `TODO-04 §5`.
+>
+> **Verified:** 2026-07-18 | ship `b8d48470` + review fixes | 7/7 items | build OK | tests 17/17 PASS; smoke PASS (KVM 3.25s)
+> **Accepted:** [H] panic FPU capture can record a prior task's SIMD state under lazy FPU, and lacks an FCW/MXCSR fallback if a caller skips the capture -> XREF: 02-kernel-core/TODO-27 §2 (item: "Cross-task FPU dump leak: sample CR0.TS ..." at line 116)
+> **Quality reviewed:** 2026-07-18 | Codex 3x (adversarial, consistency, perf) + kernel-quality-auditor + parity-analyst | 2M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 
 ---

@@ -318,6 +318,20 @@ static void test_exception_record_divide_by_zero(void)
                 "EXCEPTION_NONCONTINUABLE is detected (CONTINUABLE is absence, value 0)");
 }
 
+/* All seven x87/SSE FLT SEH codes must be exposed and wired to the correct
+ * NTSTATUS values (a wrong ntstatus.h value would fail these hex checks; the
+ * alias mechanism itself is proven by the access-violation test above). */
+static void test_exception_flt_codes(void)
+{
+    TEST_ASSERT_EQ(EXCEPTION_FLT_DENORMAL_OPERAND, 0xC000008Du, "FLT_DENORMAL_OPERAND == 0xC000008D");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_DIVIDE_BY_ZERO, 0xC000008Eu, "FLT_DIVIDE_BY_ZERO == 0xC000008E");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_INEXACT_RESULT, 0xC000008Fu, "FLT_INEXACT_RESULT == 0xC000008F");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_INVALID_OPERATION, 0xC0000090u, "FLT_INVALID_OPERATION == 0xC0000090");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_OVERFLOW, 0xC0000091u, "FLT_OVERFLOW == 0xC0000091");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_STACK_CHECK, 0xC0000092u, "FLT_STACK_CHECK == 0xC0000092");
+    TEST_ASSERT_EQ(EXCEPTION_FLT_UNDERFLOW, 0xC0000093u, "FLT_UNDERFLOW == 0xC0000093");
+}
+
 static void test_exception_pointers_pairing(void)
 {
     EXCEPTION_RECORD rec;
@@ -369,6 +383,8 @@ void test_register_except(void)
                             test_exception_record_access_violation, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: EXCEPTION_RECORD divide by zero",
                             test_exception_record_divide_by_zero, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: FLT exception codes",
+                            test_exception_flt_codes, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: EXCEPTION_POINTERS pairing",
                             test_exception_pointers_pairing, TEST_CAT_EXCEPT);
 }

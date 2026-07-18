@@ -178,6 +178,16 @@ _Static_assert(sizeof(CONTEXT) == 1232, "CONTEXT must be 1232 bytes (Windows x64
 _Static_assert(sizeof(XMM_SAVE_AREA32) == 512, "XMM_SAVE_AREA32 must be 512 bytes (FXSAVE)");
 _Static_assert(_Alignof(CONTEXT) == 16, "CONTEXT must be 16-byte aligned (Windows DECLSPEC_ALIGN(16))");
 _Static_assert(_Alignof(XMM_SAVE_AREA32) == 16, "XMM_SAVE_AREA32 must be 16-byte aligned (FXSAVE)");
+/* Pin the FXSAVE-format field offsets. `packed` + a size assert alone would let
+ * a field reorder relocate MxCsr/ControlWord while sizeof stays 512 --
+ * context_init_fpu_state() writes those two by name and panic.c reads MXCSR at
+ * the hardcoded FXSAVE byte offset 0x18, so a silent desync would break both. */
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, ControlWord)    == 0x00, "FXSAVE ControlWord at 0x00");
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, StatusWord)     == 0x02, "FXSAVE StatusWord at 0x02");
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, MxCsr)          == 0x18, "FXSAVE MxCsr at 0x18");
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, MxCsr_Mask)     == 0x1C, "FXSAVE MxCsr_Mask at 0x1C");
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, FloatRegisters) == 0x20, "FXSAVE FloatRegisters at 0x20");
+_Static_assert(__builtin_offsetof(XMM_SAVE_AREA32, XmmRegisters)   == 0xA0, "FXSAVE XmmRegisters at 0xA0");
 _Static_assert(__builtin_offsetof(CONTEXT, ContextFlags) == 0x30, "ContextFlags at 0x30");
 _Static_assert(__builtin_offsetof(CONTEXT, MxCsr)   == 0x34, "MxCsr at 0x34");
 _Static_assert(__builtin_offsetof(CONTEXT, SegCs)   == 0x38, "SegCs at 0x38");
@@ -226,7 +236,9 @@ _Static_assert(__builtin_offsetof(CONTEXT, VectorControl)  == 0x4A0, "VectorCont
 #define EXCEPTION_IN_PAGE_ERROR         ((uint32_t)STATUS_IN_PAGE_ERROR)
 #define EXCEPTION_GUARD_PAGE            ((uint32_t)STATUS_GUARD_PAGE_VIOLATION)
 #define EXCEPTION_INVALID_DISPOSITION   ((uint32_t)STATUS_INVALID_DISPOSITION)
+#define EXCEPTION_FLT_DENORMAL_OPERAND  ((uint32_t)STATUS_FLOAT_DENORMAL_OPERAND)
 #define EXCEPTION_FLT_DIVIDE_BY_ZERO    ((uint32_t)STATUS_FLOAT_DIVIDE_BY_ZERO)
+#define EXCEPTION_FLT_INEXACT_RESULT    ((uint32_t)STATUS_FLOAT_INEXACT_RESULT)
 #define EXCEPTION_FLT_INVALID_OPERATION ((uint32_t)STATUS_FLOAT_INVALID_OPERATION)
 #define EXCEPTION_FLT_OVERFLOW          ((uint32_t)STATUS_FLOAT_OVERFLOW)
 #define EXCEPTION_FLT_UNDERFLOW         ((uint32_t)STATUS_FLOAT_UNDERFLOW)
