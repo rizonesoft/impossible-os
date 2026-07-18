@@ -72,7 +72,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   3   | Fault-to-exception mapping (#DE/#DB/#BP/#OF/#UD/#NP/#SS/#GP/#CP)  | §1, TODO-10 §9, TODO-29 §5 |  [/]   |
 | 💎   |   4   | Debugger first-chance / second-chance notification                | §1-§3, TODO-29 §5          |  [/]   |
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [/]   |
-| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [ ]   |
+| 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [x]   |
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [ ]   |
 | 💎   |   8   | SEH chain walk + `__C_specific_handler`                           | §5, §6, TODO-11 §6         |  [ ]   |
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                             | §6, §8                     |  [ ]   |
@@ -328,17 +328,30 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 > [!IMPORTANT]
 > → XREF: `TODO-17 §6` -- PE32+ section loader registers `.pdata` with the module list; `exec_find_module_by_pc()` (§7) provides module lookup for `RtlLookupFunctionEntry`.
 
-- [ ] `include/kernel/rtl/unwind.h` -- `RUNTIME_FUNCTION`, `UNWIND_INFO`, `UNWIND_CODE`, `SCOPE_TABLE`
-- [ ] `src/kernel/rtl/unwind.c` -- `RtlLookupFunctionEntry`, `RtlVirtualUnwind`
-- [ ] Support all UWOP opcodes used by Clang/MSVC for x86-64
-- [ ] `RtlAddFunctionTable`/`RtlDeleteFunctionTable`/growable-table APIs + `RtlInstallFunctionTableCallback` (the variant JIT engines prefer) for dynamic code with no backing image 💎 -> XREF: TODO-18 §5.
-- [ ] SMP lifetime for dynamic tables: sorted non-overlapping lookup, overlap rejection, executable-range validation, deferred reclamation so a delete cannot free a table another CPU is unwinding through
-- [ ] `RtlPcToFileHeader(pc, base)` -- public "which module owns this PC" export wrapping `exec_find_module_by_pc()`; crash reporting (§12) and the debugger consume it
-- [ ] Unit test: unwind a 3-frame kernel test stack and verify the recovered RIP chain
+- [x] `include/kernel/rtl/unwind.h` -- `RUNTIME_FUNCTION`, `UNWIND_INFO`, `UNWIND_CODE`, `SCOPE_TABLE`, `KNONVOLATILE_CONTEXT_POINTERS` (ABI structs `_Static_assert`-pinned; mask accessors, no bitfield-packing dependence)
+- [x] `src/kernel/rtl/unwind.c` -- `RtlLookupFunctionEntry` (module `.pdata` binary-search, then dynamic registry) + `RtlVirtualUnwind` (prolog interpreter + iterative chaining/single terminal pop + epilog detection)
+- [x] Support all UWOP opcodes: `PUSH_NONVOL`, `ALLOC_SMALL`, `ALLOC_LARGE`, `SET_FPREG`, `SAVE_NONVOL(_FAR)`, `SAVE_XMM128(_FAR)`, `PUSH_MACHFRAME`; `EPILOG`/`SPARE_CODE` skipped structurally
+- [x] `RtlAddFunctionTable`/`RtlDeleteFunctionTable` + `RtlInstallFunctionTableCallback` (JIT variant) 💎; registry stores a private table copy. Growable variant deferred -> XREF: TODO-18 §5 (item: "Dynamic/JIT unwind ... growable table").
+- [x] SMP lifetime: spinlock sorted list, overlap/order validation at add; delete unlinks-under-lock then frees. Callback lookups snapshot cb+ctx under the lock, so self-unregister never stalls. -> XREF: TODO-18 §5 (item: "Validate unwind ranges").
+- [x] `RtlPcToFileHeader(pc, base)` -- public "which module owns this PC" wrapping `exec_find_module_by_pc()`; crash reporting (§12) and the debugger consume it
+- [x] Unit test: synthetic table via `RtlAddFunctionTable`; 3-frame recovered-RIP chain + prolog/epilog/frame-register/callback/malformed-fail-safe (`test_unwind.c`, 10 suites)
+- [ ] Kernel-mode unwind metadata provider (ELF kernel has no `.pdata`, kernel PCs return NULL); needed before §7 table-walks kernel stacks -> XREF: TODO-18 §5 (item: "Register PE `.pdata` ... Translate `.eh_frame`").
+- [ ] SMP-epoch dynamic-table lookup: close the cross-call window where a concurrent `RtlDeleteFunctionTable` can free a table an unwinder still holds an entry into (needs SMP RCU/epoch) -> XREF: `rcu.h` SMP-future quiescent-state tracking.
+- [ ] UWOP_EPILOG (unwind-info v2) epilog metadata: closes the residual where a PC exactly at an indirect tail-call jmp (frame torn down) is not detected by forward scanning -> XREF: this section (`unwind_try_epilog` indirect note).
+- [ ] Indirect / noncontiguous-fragment RUNTIME_FUNCTION support (UnwindInfoAddress bit 0): pair the fragment range with the shared parent unwind info; currently returns NULL (fail-safe) -> XREF: this section (`RtlLookupFunctionEntry` indirect note).
 
-**Test checkpoint:** `RtlLookupFunctionEntry` for a known kernel function returns a valid `RUNTIME_FUNCTION` with correct `BeginAddress`/`EndAddress`. `RtlVirtualUnwind` on a 3-frame test call chain recovers the correct RIP for each parent frame. Unknown address returns NULL. Serial log: `"rtl: unwind init, <N> .pdata entries registered"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** The kernel is ELF (no `.pdata`), so kernel PCs have no `RUNTIME_FUNCTION` and `RtlLookupFunctionEntry` correctly returns NULL for them; the engine is proven against a SYNTHETIC table registered via `RtlAddFunctionTable`. Lookup returns the registered entry for an in-range PC and NULL out-of-range. `RtlVirtualUnwind` on a 3-frame chain recovers the correct RIP per parent frame; prolog, epilog, and frame-register (`SET_FPREG`) forms all recover RIP/RSP; malformed metadata fails safe (leaf pop, no crash). Serial log: `"rtl: unwind engine ready (dynamic tables: 0, kernel .pdata: ELF none)"`. Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 10 unwind suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/rtl/unwind.{c,h}` (~1010 LOC + 22 test suites): the x64 table-based unwind engine -- `RtlLookupFunctionEntry`, `RtlVirtualUnwind` (prolog interpreter + epilog simulation + chaining + transactional malformed fail-safe), the dynamic function-table registry, `RtlPcToFileHeader`.
+> - Wired into Phase 3 via `rtl_unwind_init()` from `exec_init()` (klog banner; not boot-path, no POST16). Consumes the `.pdata` the PE loader records into `loaded_module_t`.
+> - Owns the unwind ENGINE only; T18 §5 owns metadata lifetime/normalized storage + load-time validation, T17 owns section parsing. Kernel-mode unwind needs the T18 provider (filed item above) before §7 table-walks kernel stacks.
+> - Canonical doc: `include/kernel/rtl/unwind.h` header block (ownership split + SMP/lifetime + bounds-safety contract).
+> - Scope boundary: engine-internal (consumed by §7 stack walk, §12 crash reporting, the debugger); NOT yet exported to user-mode ntdll (`pe.c` export tables unchanged).
+
+- [x] Commit: `"rtl: implement RtlLookupFunctionEntry and RtlVirtualUnwind for x64 unwind"`
 
 
 ---
@@ -350,6 +363,7 @@ Add `NtRaiseException(EXCEPTION_RECORD *, CONTEXT *, BOOLEAN)` and `NtContinue(C
 - [ ] `include/kernel/rtl/unwind.h` -- declare `RtlCaptureStackBackTrace(skip, count, buffer, hash)`, `RtlWalkFrameChain(callers, count, flags)`
 - [ ] `src/kernel/rtl/unwind.c` -- implement `RtlCaptureStackBackTrace`: call `RtlVirtualUnwind` (§6) in a loop, skip `skip` frames, record up to `count` return addresses into `buffer`, compute optional `hash`; max 0xFE frames
 - [ ] `src/kernel/rtl/unwind.c` -- implement `RtlWalkFrameChain`: thin wrapper; `flags & 1` = user-mode stack walk (read user RSP/RBP via safe probe §13)
+- [ ] Fault-safe frame reads: an untrusted or crash-time-corrupt stack walk must read each `RtlVirtualUnwind` frame slot fault-safely + validate the frame stays in range -> XREF: TODO-23 §6 (engine trusts the establisher frame).
 - [ ] IRQL requirement: callable at `IRQL <= DISPATCH_LEVEL` (→ XREF: `TODO-07 §3`)
 
 **Test checkpoint:** `RtlCaptureStackBackTrace(0, 10, buf, NULL)` called from a 4-deep call chain returns ≥4 frames. `RtlCaptureStackBackTrace(2, 10, buf, NULL)` skips 2 frames -- first captured RIP differs from skip=0 case. Hash output is non-zero and deterministic for the same call site. Serial log: `"rtl: captured <N> stack frames"`. Test on: QEMU WHPX + TCG.
@@ -625,7 +639,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Debugger 1st/2nd-chance       | ✅ KiDebugRoutine  | ✅ ptrace         | ◐ §4 KiDebugRoutine (deliver §5)       |
 | 💎   | Kernel-mode bugcheck terminal | ✅ KeBugCheckEx    | ✅ oops/panic     | ◐ §4 KeBugCheckExFrame 0x1E/0x3B       |
 | 💎   | KiUserExceptionDispatcher     | ✅                 | ❌                | ⬜ §5                                   |
-| 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ⬜ §6                                   |
+| 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ✅ §6 engine (kernel meta: T18 §5)      |
+| 💎   | Dynamic/JIT function tables    | ✅ RtlAddFunctionTable | ✅ __register_frame | ✅ §6 registry + callback           |
 | 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ⬜ §7                                   |
 | 💎   | SEH + __C_specific_handler    | ✅                 | ❌                | ⬜ §8                                   |
 | 💎   | RtlUnwindEx + __finally       | ✅                 | ❌                | ⬜ §9                                   |

@@ -133,7 +133,7 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 - [ ] Provide range lookup for the exception-dispatch unwind engine (T23).
 - [ ] Validate unwind ranges are inside executable image sections.
 - [ ] Include unwind table hash in image provenance.
-- [ ] [/] Dynamic/JIT unwind (`RtlAddFunctionTable`) for generated code with no backing image -- Windows-parity 💎. T18 stores the growable table; add/delete/grow APIs are a deferred TODO-23 §6 item. -> XREF: TODO-23 §6.
+- [ ] [/] Dynamic/JIT unwind (`RtlAddFunctionTable`) 💎: add/delete/callback APIs shipped in TODO-23 §6; the growable-table variant + T18 normalized storage remain. -> XREF: TODO-23 §6.
 - [ ] Commit: `"kernel: kimage -- unwind metadata registry"`
 
 **Test checkpoint:** An unwind range lookup for an address inside a registered image returns the `.pdata`/`.eh_frame` entry; a range outside executable sections is rejected at registration. Test on: QEMU WHPX + TCG; bare metal.

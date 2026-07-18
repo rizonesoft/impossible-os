@@ -1,0 +1,975 @@
+/* ============================================================================
+ * test_unwind.c -- x64 table-based unwind engine unit tests (TODO-23 s6)
+ *
+ * The kernel is an ELF image with no .pdata, so these tests exercise the engine
+ * against SYNTHETIC RUNTIME_FUNCTION/UNWIND_INFO records registered through the
+ * dynamic function-table registry (RtlAddFunctionTable). They cover: the ABI
+ * struct layout, registry add/delete/validation, prolog-based RtlVirtualUnwind,
+ * a 3-frame recovered-RIP chain, epilog detection, frame-register (SET_FPREG)
+ * unwinding, the lazy callback path, and malformed-metadata fail-safe.
+ *
+ * XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md Unit Tests
+ * ============================================================================ */
+
+#ifdef KERNEL_TESTS
+
+#include "kernel/test/test.h"
+#include "kernel/rtl/unwind.h"
+
+/* An 8-byte-aligned image scratch: RUNTIME_FUNCTION RVAs index into it, and
+ * control_pc = (uint64_t)img + rva. Since img lives on the kernel stack (not a
+ * registered module) the engine treats it as a trusted/unbounded table. */
+typedef union {
+    uint8_t  b[256];
+    uint64_t align;
+} img_buf_t;
+
+/* Build the common "push rbp; sub rsp,0x20" UNWIND_INFO at img+0x40. */
+static void build_simple_uinfo(img_buf_t *img)
+{
+    uint8_t *u = &img->b[0x40];
+    u[0] = 0x01;   /* version 1, flags 0 */
+    u[1] = 0x05;   /* SizeOfProlog = 5 */
+    u[2] = 0x02;   /* CountOfCodes = 2 */
+    u[3] = 0x00;   /* FrameRegister 0, FrameOffset 0 */
+    /* code[0]: UWOP_ALLOC_SMALL, CodeOffset 5, size 0x20 (info=(0x20-8)/8=3) */
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    /* code[1]: UWOP_PUSH_NONVOL rbp(5), CodeOffset 1 */
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));
+}
+
+/* A RUNTIME_FUNCTION covering [0x10,0x30) with UNWIND_INFO at 0x40. */
+static void build_simple_rf(RUNTIME_FUNCTION *rf)
+{
+    rf->BeginAddress = 0x10;
+    rf->EndAddress = 0x30;
+    rf->UnwindInfoAddress = 0x40;
+}
+
+/* ---- ABI layout ---- */
+
+static void test_unwind_abi(void)
+{
+    TEST_ASSERT_EQ(sizeof(RUNTIME_FUNCTION), 12, "RUNTIME_FUNCTION is 12 bytes");
+    TEST_ASSERT_EQ(sizeof(UNWIND_CODE), 2, "UNWIND_CODE is 2 bytes");
+    TEST_ASSERT_EQ(sizeof(SCOPE_TABLE_ENTRY), 16, "SCOPE_TABLE_ENTRY is 16 bytes");
+
+    UNWIND_CODE uc;
+    uc.b.CodeOffset = 7;
+    uc.b.OpAndInfo = (uint8_t)(UWOP_SAVE_NONVOL | (3u << 4));  /* op=4, info=3 */
+    TEST_ASSERT_EQ(UNWIND_CODE_OP(uc), UWOP_SAVE_NONVOL, "UNWIND_CODE_OP extracts low nibble");
+    TEST_ASSERT_EQ(UNWIND_CODE_INFO(uc), 3u, "UNWIND_CODE_INFO extracts high nibble");
+
+    UNWIND_INFO ui;
+    ui.VersionAndFlags = (uint8_t)(1u | (UNW_FLAG_CHAININFO << 3));
+    ui.FrameRegAndOff = (uint8_t)(5u | (2u << 4));
+    TEST_ASSERT_EQ(UNWIND_INFO_VERSION(&ui), 1u, "UNWIND_INFO_VERSION == 1");
+    TEST_ASSERT_EQ(UNWIND_INFO_FLAGS(&ui), UNW_FLAG_CHAININFO, "UNWIND_INFO_FLAGS == CHAININFO");
+    TEST_ASSERT_EQ(UNWIND_INFO_FRAMEREG(&ui), 5u, "UNWIND_INFO_FRAMEREG == 5 (rbp)");
+    TEST_ASSERT_EQ(UNWIND_INFO_FRAMEOFF(&ui), 2u, "UNWIND_INFO_FRAMEOFF == 2");
+}
+
+/* ---- Registry add / lookup / delete ---- */
+
+static void test_unwind_add_lookup_delete(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    RUNTIME_FUNCTION rf;
+    build_simple_uinfo(&img);
+    build_simple_rf(&rf);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    uint32_t before = rtl_unwind_dynamic_table_count();
+    int added = RtlAddFunctionTable(&rf, 1, base);
+    TEST_ASSERT_EQ(added, 1, "RtlAddFunctionTable succeeds");
+    TEST_ASSERT_EQ(rtl_unwind_dynamic_table_count(), before + 1u, "table count +1 after add");
+
+    uint64_t got_base = 0;
+    PRUNTIME_FUNCTION found = RtlLookupFunctionEntry(base + 0x18, &got_base, 0);
+    TEST_ASSERT_NOT_NULL(found, "lookup finds the entry for an in-range PC");
+    TEST_ASSERT_EQ(got_base, base, "lookup reports the table base");
+    if (found) {
+        TEST_ASSERT_EQ(found->BeginAddress, 0x10u, "found entry BeginAddress");
+        TEST_ASSERT_EQ(found->EndAddress, 0x30u, "found entry EndAddress");
+    }
+
+    /* Out-of-range PC below and above the table returns NULL. */
+    TEST_ASSERT_NULL(RtlLookupFunctionEntry(base + 0x08, 0, 0), "PC below range -> NULL");
+    TEST_ASSERT_NULL(RtlLookupFunctionEntry(base + 0x40, 0, 0), "PC above range -> NULL");
+
+    int removed = RtlDeleteFunctionTable(&rf);
+    TEST_ASSERT_EQ(removed, 1, "RtlDeleteFunctionTable removes the table");
+    TEST_ASSERT_EQ(rtl_unwind_dynamic_table_count(), before, "table count restored after delete");
+    TEST_ASSERT_EQ(RtlDeleteFunctionTable(&rf), 0, "deleting an unknown table returns 0");
+    TEST_ASSERT_NULL(RtlLookupFunctionEntry(base + 0x18, 0, 0), "lookup after delete -> NULL");
+}
+
+/* ---- Indirect (redirected) RUNTIME_FUNCTION handling ---- */
+
+static PRUNTIME_FUNCTION g_ind_cb_return;
+static PRUNTIME_FUNCTION test_ind_cb(uint64_t control_pc, void *context)
+{
+    (void)control_pc;
+    (void)context;
+    return g_ind_cb_return;   /* may be an INDIRECT entry (bit 0 set) */
+}
+
+static void test_unwind_indirect_entry(void)
+{
+    /* Static (copied) tables reject indirect entries -- a redirect would point
+     * into the caller's freeable array. */
+    img_buf_t simg = { .b = { 0 } };
+    uint64_t sbase = (uint64_t)(uintptr_t)&simg;
+    RUNTIME_FUNCTION ind = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x50 | 1u };
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&ind, 1, sbase), 0, "static table rejects an indirect entry");
+
+    /* Indirect (fragment) entries are not yet supported: a callback returning an
+     * indirect entry yields NULL (fail-safe leaf) rather than a mis-ranged
+     * unwind. A direct callback entry is returned normally. */
+    img_buf_t img = { .b = { 0 } };
+    build_simple_uinfo(&img);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+    static RUNTIME_FUNCTION ind_child;
+    ind_child.BeginAddress = 0x10; ind_child.EndAddress = 0x30; ind_child.UnwindInfoAddress = 0x50 | 1u;
+    g_ind_cb_return = &ind_child;
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(base | 3u, base, 0x100, test_ind_cb, 0, 0), 1,
+                   "indirect-callback table registered");
+    TEST_ASSERT_NULL(RtlLookupFunctionEntry(base + 0x18, 0, 0),
+                     "indirect callback entry -> NULL (unsupported, fail-safe)");
+    RtlDeleteFunctionTable((PRUNTIME_FUNCTION)(uintptr_t)(base | 3u));
+
+    /* A direct callback entry is returned normally. */
+    static RUNTIME_FUNCTION direct;
+    direct.BeginAddress = 0x10; direct.EndAddress = 0x30; direct.UnwindInfoAddress = 0x40;
+    g_ind_cb_return = &direct;
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(base | 3u, base, 0x100, test_ind_cb, 0, 0), 1,
+                   "direct-callback table registered");
+    uint64_t ib = 0;
+    PRUNTIME_FUNCTION e = RtlLookupFunctionEntry(base + 0x18, &ib, 0);
+    TEST_ASSERT_NOT_NULL(e, "direct callback entry returned");
+    if (e)
+        TEST_ASSERT_EQ(e->UnwindInfoAddress, 0x40u, "direct callback entry unchanged");
+    RtlDeleteFunctionTable((PRUNTIME_FUNCTION)(uintptr_t)(base | 3u));
+}
+
+/* ---- Registration validation ---- */
+
+static void test_unwind_add_validation(void)
+{
+    uint64_t base = 0x400000;
+
+    RUNTIME_FUNCTION bad = { .BeginAddress = 0x20, .EndAddress = 0x10, .UnwindInfoAddress = 0 };
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&bad, 1, base), 0, "Begin >= End rejected");
+    TEST_ASSERT_EQ(RtlAddFunctionTable(0, 1, base), 0, "NULL table rejected");
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&bad, 0, base), 0, "zero entry_count rejected");
+
+    /* Unsorted / overlapping entries in one table rejected. */
+    RUNTIME_FUNCTION unsorted[2] = {
+        { .BeginAddress = 0x10, .EndAddress = 0x40, .UnwindInfoAddress = 0x80 },
+        { .BeginAddress = 0x20, .EndAddress = 0x50, .UnwindInfoAddress = 0x90 },  /* overlaps [0x10,0x40) */
+    };
+    TEST_ASSERT_EQ(RtlAddFunctionTable(unsorted, 2, base), 0, "overlapping entries rejected");
+
+    /* Two disjoint tables at overlapping ranges: second rejected. */
+    RUNTIME_FUNCTION a = { .BeginAddress = 0x10, .EndAddress = 0x20, .UnwindInfoAddress = 0x80 };
+    RUNTIME_FUNCTION b = { .BeginAddress = 0x18, .EndAddress = 0x28, .UnwindInfoAddress = 0x90 };
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&a, 1, base), 1, "first table added");
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&b, 1, base), 0, "overlapping second table rejected");
+    RtlDeleteFunctionTable(&a);
+
+    /* Re-registering the SAME pointer (identity) is rejected even for a disjoint
+     * range, so RtlDeleteFunctionTable's identity key stays unambiguous. */
+    RUNTIME_FUNCTION c = { .BeginAddress = 0x10, .EndAddress = 0x20, .UnwindInfoAddress = 0x80 };
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&c, 1, base), 1, "identity table added");
+    c.BeginAddress = 0x100; c.EndAddress = 0x110;   /* mutate to a disjoint range */
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&c, 1, base), 0, "duplicate identity rejected (disjoint range)");
+    RtlDeleteFunctionTable(&c);
+}
+
+/* ---- Prolog-based RtlVirtualUnwind ---- */
+
+static void test_unwind_virtual_prolog(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    RUNTIME_FUNCTION rf;
+    build_simple_uinfo(&img);
+    build_simple_rf(&rf);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Stack: caller pushed RETADDR at entry_rsp = &stk[10]; prolog saved rbp at
+     * stk[9] and allocated 0x20; body Rsp = &stk[5]. */
+    uint64_t stk[16] = { 0 };
+    const uint64_t RETADDR = 0xC0FFEE1234ULL;
+    const uint64_t SAVED_RBP = 0xB1B2B3B4B5ULL;
+    stk[10] = RETADDR;
+    stk[9] = SAVED_RBP;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;             /* body PC (past 5-byte prolog) */
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[5];
+    ctx.Rbp = 0;
+
+    uint64_t est = 0;
+    void *handler = RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf,
+                                     &ctx, 0, &est, 0);
+    TEST_ASSERT_NULL(handler, "no handler on a frame with UNW_FLAG_NHANDLER");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "prolog unwind recovers the return address");
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "prolog unwind restores saved rbp");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[11], "Rsp popped past the return address");
+}
+
+/* ---- 3-frame recovered-RIP chain ---- */
+
+static void test_unwind_three_frame_chain(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    RUNTIME_FUNCTION rf;
+    build_simple_uinfo(&img);
+    build_simple_rf(&rf);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+    RtlAddFunctionTable(&rf, 1, base);
+
+    /* Three recursive frames, each 0x30 bytes: for frame k the alloc lands rbp
+     * slot at 6k+4, retaddr at 6k+5. Innermost body Rsp = &stk[0]. */
+    uint64_t stk[24] = { 0 };
+    const uint64_t BODY_PC = base + 0x18;
+    const uint64_t SENTINEL = base + 0x1000;   /* outside the table -> lookup NULL */
+    stk[4] = 0xAA11; stk[5] = BODY_PC;         /* frame A -> B */
+    stk[10] = 0xAA22; stk[11] = BODY_PC;       /* frame B -> C */
+    stk[16] = 0xAA33; stk[17] = SENTINEL;      /* frame C -> stop */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = BODY_PC;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    int frames = 0;
+    uint64_t expect_rip[3] = { BODY_PC, BODY_PC, SENTINEL };
+    for (int i = 0; i < 8; i++) {
+        uint64_t ib = 0;
+        PRUNTIME_FUNCTION e = RtlLookupFunctionEntry(ctx.Rip, &ib, 0);
+        if (!e)
+            break;
+        uint64_t est = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, ctx.Rip, e, &ctx, 0, &est, 0);
+        TEST_ASSERT_EQ(ctx.Rip, expect_rip[frames], "chain step recovers expected RIP");
+        frames++;
+    }
+    TEST_ASSERT_EQ(frames, 3, "walk recovers exactly 3 frames then stops at the sentinel");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[18], "final Rsp after 3 frames");
+
+    RtlDeleteFunctionTable(&rf);
+}
+
+/* ---- Epilog detection ---- */
+
+static void test_unwind_epilog(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    RUNTIME_FUNCTION rf;
+    build_simple_uinfo(&img);
+    build_simple_rf(&rf);
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Epilog bytes at RVA 0x18: pop rbp (0x5D); ret (0xC3). */
+    img.b[0x18] = 0x5D;
+    img.b[0x19] = 0xC3;
+
+    uint64_t stk[4] = { 0 };
+    const uint64_t SAVED_RBP = 0xDEAD00ULL;
+    const uint64_t RETADDR = 0xBEEF11ULL;
+    stk[0] = SAVED_RBP;   /* pop rbp reads here */
+    stk[1] = RETADDR;     /* ret reads here */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    uint64_t entry_rsp = ctx.Rsp;
+
+    KNONVOLATILE_CONTEXT_POINTERS cp = { 0 };
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, &cp);
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "epilog simulation pops rbp");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "epilog simulation recovers the return address");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[2], "epilog Rsp past return address");
+    /* M2: the popped rbp's saved slot is recorded in context_pointers. */
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)cp.Integer[5], (uint64_t)(uintptr_t)&stk[0],
+                   "epilog records rbp saved-slot in context_pointers");
+    /* M3: establisher frame identifies this frame (RSP at the fault PC), not the
+     * post-return caller SP. */
+    TEST_ASSERT_EQ(est, entry_rsp, "epilog establisher frame is the fault-PC RSP");
+}
+
+/* ---- Frame-register (SET_FPREG) unwinding ---- */
+
+static void test_unwind_frame_register(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* UNWIND_INFO at 0x40 for prolog:
+     *   push rbp; sub rsp,0x30; lea rbp,[rsp+0x20]; mov [rbp-0x18],rbx
+     * FrameRegister=rbp(5), FrameOffset=2 (0x20/16), SizeOfProlog=13. */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01;                          /* version 1 */
+    u[1] = 0x0D;                          /* SizeOfProlog = 13 */
+    u[2] = 0x05;                          /* CountOfCodes = 5 (SAVE_NONVOL uses 2) */
+    u[3] = (uint8_t)(5u | (2u << 4));     /* FrameReg=5, FrameOff=2 */
+    /* code[0..1]: UWOP_SAVE_NONVOL rbx(3), CodeOffset 13, offset slot = 0x08/8=1 */
+    u[4] = 0x0D; u[5] = (uint8_t)(UWOP_SAVE_NONVOL | (3u << 4));
+    u[6] = 0x01; u[7] = 0x00;             /* FrameOffset value = 1 (=> 8 bytes) */
+    /* code[2]: UWOP_SET_FPREG, CodeOffset 9 */
+    u[8] = 0x09; u[9] = (uint8_t)(UWOP_SET_FPREG | (0u << 4));
+    /* code[3]: UWOP_ALLOC_SMALL 0x30 (info=(0x30-8)/8=5), CodeOffset 5 */
+    u[10] = 0x05; u[11] = (uint8_t)(UWOP_ALLOC_SMALL | (5u << 4));
+    /* code[4]: UWOP_PUSH_NONVOL rbp(5), CodeOffset 1 */
+    u[12] = 0x01; u[13] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    /* Stack layout: entry_rsp = &stk[16]. body_rsp = entry-0x38 = &stk[9];
+     * rbp(body) = entry-0x18 = &stk[13]; frame_base = rbp-0x20 = &stk[9]. */
+    uint64_t stk[20] = { 0 };
+    const uint64_t RETADDR = 0x1111AAAAULL;
+    const uint64_t SAVED_RBP = 0x2222BBBBULL;
+    const uint64_t SAVED_RBX = 0x3333CCCCULL;
+    stk[10] = SAVED_RBX;   /* frame_base + 0x08 */
+    stk[15] = SAVED_RBP;   /* entry_rsp - 0x08 */
+    stk[16] = RETADDR;     /* entry_rsp */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x22;                            /* body PC, past 13-byte prolog */
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[9];
+    ctx.Rbp = (uint64_t)(uintptr_t)&stk[13];
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rbx, SAVED_RBX, "SAVE_NONVOL recovers rbx from the frame base");
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "PUSH_NONVOL recovers rbp");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "frame-register unwind recovers the return address");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[17], "final Rsp past return address");
+    TEST_ASSERT_EQ(est, (uint64_t)(uintptr_t)&stk[9], "establisher frame == frame base");
+}
+
+/* ---- Lazy callback path ---- */
+
+static RUNTIME_FUNCTION g_cb_rf;
+static int g_cb_calls;
+
+static PRUNTIME_FUNCTION test_cb(uint64_t control_pc, void *context)
+{
+    (void)control_pc;
+    (void)context;
+    g_cb_calls++;
+    return &g_cb_rf;
+}
+
+static void test_unwind_callback(void)
+{
+    uint64_t base = 0x500000;
+    g_cb_rf.BeginAddress = 0x10;
+    g_cb_rf.EndAddress = 0x20;
+    g_cb_rf.UnwindInfoAddress = 0x40;
+    g_cb_calls = 0;
+
+    /* Identifier without the low-2-bits convention is rejected. */
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(base, base, 0x100, test_cb, 0, 0), 0,
+                   "callback id without low bits set rejected");
+    /* Out-of-process dll unsupported. */
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(base | 3u, base, 0x100, test_cb, 0, "x.dll"), 0,
+                   "out-of-process callback dll rejected");
+
+    uint32_t before = rtl_unwind_dynamic_table_count();
+    int ok = RtlInstallFunctionTableCallback(base | 3u, base, 0x100, test_cb, 0, 0);
+    TEST_ASSERT_EQ(ok, 1, "valid callback table registered");
+    TEST_ASSERT_EQ(rtl_unwind_dynamic_table_count(), before + 1u, "callback table counted");
+
+    uint64_t ib = 0;
+    PRUNTIME_FUNCTION e = RtlLookupFunctionEntry(base + 0x50, &ib, 0);
+    TEST_ASSERT_NOT_NULL(e, "callback lookup returns the callback's entry");
+    TEST_ASSERT_EQ(g_cb_calls, 1, "callback invoked exactly once");
+    TEST_ASSERT_EQ(ib, base, "callback lookup reports table base");
+
+    TEST_ASSERT_EQ(RtlDeleteFunctionTable((PRUNTIME_FUNCTION)(uintptr_t)(base | 3u)), 1,
+                   "callback table deleted by identifier");
+    TEST_ASSERT_EQ(rtl_unwind_dynamic_table_count(), before, "callback table count restored");
+}
+
+/* ---- Callback that unregisters its own table does not stall ---- */
+
+static uint64_t g_selfdel_id;
+static int g_selfdel_ret;
+static RUNTIME_FUNCTION g_selfdel_rf;
+
+static PRUNTIME_FUNCTION test_selfdel_cb(uint64_t control_pc, void *context)
+{
+    (void)control_pc;
+    (void)context;
+    /* Unregister our own table from within the callback -- must complete (no
+     * teardown wait on our own in-flight call). */
+    g_selfdel_ret = RtlDeleteFunctionTable((PRUNTIME_FUNCTION)(uintptr_t)g_selfdel_id);
+    return &g_selfdel_rf;
+}
+
+static void test_unwind_callback_self_delete(void)
+{
+    uint64_t base = 0x600000;
+    g_selfdel_id = base | 3u;
+    g_selfdel_ret = 0;
+    g_selfdel_rf.BeginAddress = 0x10;
+    g_selfdel_rf.EndAddress = 0x20;
+    g_selfdel_rf.UnwindInfoAddress = 0x40;
+
+    uint32_t before = rtl_unwind_dynamic_table_count();
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(base | 3u, base, 0x100, test_selfdel_cb, 0, 0), 1,
+                   "self-deleting callback table registered");
+
+    uint64_t ib = 0;
+    PRUNTIME_FUNCTION e = RtlLookupFunctionEntry(base + 0x50, &ib, 0);   /* invokes the callback */
+    TEST_ASSERT_NOT_NULL(e, "self-deleting callback still returns its entry");
+    TEST_ASSERT_EQ(g_selfdel_ret, 1, "callback unregistered its own table without stalling");
+    TEST_ASSERT_EQ(rtl_unwind_dynamic_table_count(), before, "table removed after self-delete");
+    TEST_ASSERT_NULL(RtlLookupFunctionEntry(base + 0x50, 0, 0), "no table after self-delete");
+}
+
+/* ---- Malformed metadata fails safe ---- */
+
+static void test_unwind_malformed(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* UNWIND_INFO with an invalid version (3) at 0x40. */
+    img.b[0x40] = 0x03;   /* version 3, flags 0 */
+    img.b[0x41] = 0x02;   /* SizeOfProlog 2 */
+    img.b[0x42] = 0x00;   /* CountOfCodes 0 */
+    img.b[0x43] = 0x00;
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[4] = { 0 };
+    const uint64_t RETADDR = 0x9999ULL;
+    stk[0] = RETADDR;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x11;   /* offset 1, < SizeOfProlog(2): skip epilog scan */
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint64_t est = 0;
+    /* Must not crash; must make forward progress (leaf-style return-address pop). */
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "malformed version falls back to leaf unwind");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[1], "malformed unwind still advances Rsp");
+}
+
+/* ---- Chained unwind info: handler lives in the terminal parent ---- */
+
+static void test_unwind_chained_handler(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Child UNWIND_INFO at 0x40: CHAININFO, 1 push, chained RUNTIME_FUNCTION. */
+    uint8_t *cu = &img.b[0x40];
+    cu[0] = (uint8_t)(1u | (UNW_FLAG_CHAININFO << 3));  /* v1 + CHAININFO */
+    cu[1] = 0x01;                                       /* SizeOfProlog */
+    cu[2] = 0x01;                                       /* CountOfCodes */
+    cu[3] = 0x00;
+    cu[4] = 0x01; cu[5] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));   /* push rbp @1 */
+    /* aligned = (1+1)&~1 = 2 -> chained RUNTIME_FUNCTION at codes+2 = 0x48 */
+    RUNTIME_FUNCTION *chain = (RUNTIME_FUNCTION *)&img.b[0x48];
+    chain->BeginAddress = 0x10; chain->EndAddress = 0x30; chain->UnwindInfoAddress = 0x60;
+
+    /* Parent UNWIND_INFO at 0x60: EHANDLER, 2 codes, then handler RVA 0x100. */
+    uint8_t *pu = &img.b[0x60];
+    pu[0] = (uint8_t)(1u | (UNW_FLAG_EHANDLER << 3));   /* v1 + EHANDLER */
+    pu[1] = 0x05; pu[2] = 0x02; pu[3] = 0x00;
+    pu[4] = 0x05; pu[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));   /* alloc 0x20 @5 */
+    pu[6] = 0x01; pu[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));   /* push rbp @1 */
+    /* aligned = 2 -> handler RVA at codes+2 = 0x68 */
+    img.b[0x68] = 0x00; img.b[0x69] = 0x01; img.b[0x6A] = 0x00; img.b[0x6B] = 0x00;  /* RVA 0x100 */
+
+    RUNTIME_FUNCTION child = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint64_t est = 0;
+    void *handler = RtlVirtualUnwind(UNW_FLAG_EHANDLER, base, ctx.Rip, &child,
+                                     &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)handler, base + 0x100,
+                   "chained unwind returns the terminal parent's handler");
+
+    /* When the requested handler type is not present, no handler is returned. */
+    CONTEXT ctx2 = { 0 };
+    ctx2.Rip = base + 0x18;
+    ctx2.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    void *h2 = RtlVirtualUnwind(UNW_FLAG_UHANDLER, base, ctx2.Rip, &child, &ctx2, 0, &est, 0);
+    TEST_ASSERT_NULL(h2, "no handler returned when handler_type does not match the record");
+}
+
+/* ---- Handler is suppressed when control PC is in the prolog ---- */
+
+static void test_unwind_prolog_no_handler(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Non-chained EHANDLER function; SizeOfProlog=5; handler RVA 0x100 at 0x48. */
+    uint8_t *u = &img.b[0x40];
+    u[0] = (uint8_t)(1u | (UNW_FLAG_EHANDLER << 3));
+    u[1] = 0x05; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));
+    img.b[0x48] = 0x00; img.b[0x49] = 0x01;   /* handler RVA 0x100 */
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+    uint64_t stk[8] = { 0 };
+
+    /* Body PC (offset 8 >= SizeOfProlog 5): handler is active. */
+    CONTEXT cb = { 0 };
+    cb.Rip = base + 0x18;
+    cb.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    uint64_t est = 0;
+    void *hb = RtlVirtualUnwind(UNW_FLAG_EHANDLER, base, cb.Rip, &rf, &cb, 0, &est, 0);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)hb, base + 0x100, "handler active for a body PC");
+
+    /* Prolog PC (offset 2 < SizeOfProlog 5): NO handler is active yet. */
+    CONTEXT cp = { 0 };
+    cp.Rip = base + 0x12;
+    cp.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    void *hp = RtlVirtualUnwind(UNW_FLAG_EHANDLER, base, cp.Rip, &rf, &cp, 0, &est, 0);
+    TEST_ASSERT_NULL(hp, "no handler for a control PC inside the prolog");
+}
+
+/* ---- Tail-call (outbound jmp) epilog detection ---- */
+
+static void test_unwind_tailcall_epilog(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Prolog "push rsi; sub rsp,0x20" (5 bytes). Epilog at 0x18:
+     *   add rsp,0x20 (48 83 C4 20) ; pop rsi (5E) ; jmp rel32 outbound. */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x05; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));   /* alloc 0x20 @5 */
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (6u << 4));   /* push rsi @1 */
+
+    img.b[0x18] = 0x48; img.b[0x19] = 0x83; img.b[0x1A] = 0xC4; img.b[0x1B] = 0x20; /* add rsp,0x20 */
+    img.b[0x1C] = 0x5E;                                                             /* pop rsi */
+    img.b[0x1D] = 0xE9;                                                             /* jmp rel32 */
+    /* target = pc(0x1D)+5+rel = 0x22+0xFDE = 0x1000 (outbound, past EndAddress 0x30) */
+    img.b[0x1E] = 0xDE; img.b[0x1F] = 0x0F; img.b[0x20] = 0x00; img.b[0x21] = 0x00;
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    /* (a) PC AT the jmp: teardown already executed by the CPU, [Rsp] = retaddr. */
+    uint64_t stk[8] = { 0 };
+    const uint64_t RETADDR = 0xAB01ULL;
+    stk[0] = RETADDR;
+    CONTEXT c1 = { 0 };
+    c1.Rip = base + 0x1D;
+    c1.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c1.Rip, &rf, &c1, 0, &est, 0);
+    TEST_ASSERT_EQ(c1.Rip, RETADDR, "tail-call epilog at the jmp recovers the return address");
+    TEST_ASSERT_EQ(c1.Rsp, (uint64_t)(uintptr_t)&stk[1], "tail-call epilog at jmp pops once");
+
+    /* (b) PC AT the add: scanner simulates add+pop+jmp. */
+    uint64_t stk2[8] = { 0 };
+    const uint64_t SAVED_RSI = 0xC0DEULL;
+    const uint64_t RETADDR2 = 0xAB02ULL;
+    stk2[4] = SAVED_RSI;    /* &stk2[0] + 0x20 */
+    stk2[5] = RETADDR2;
+    CONTEXT c2 = { 0 };
+    c2.Rip = base + 0x18;
+    c2.Rsp = (uint64_t)(uintptr_t)&stk2[0];
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, c2.Rip, &rf, &c2, 0, &est, 0);
+    TEST_ASSERT_EQ(c2.Rsi, SAVED_RSI, "tail-call epilog at add restores rsi");
+    TEST_ASSERT_EQ(c2.Rip, RETADDR2, "tail-call epilog at add recovers the return address");
+    TEST_ASSERT_EQ(c2.Rsp, (uint64_t)(uintptr_t)&stk2[6], "tail-call epilog at add pops add+pop+ret");
+
+    /* (c) An INTRA-function jmp is NOT an epilog: it runs the prolog unwind. */
+    img_buf_t img3 = { .b = { 0 } };
+    uint64_t base3 = (uint64_t)(uintptr_t)&img3;
+    uint8_t *u3 = &img3.b[0x40];
+    u3[0] = 0x01; u3[1] = 0x05; u3[2] = 0x02; u3[3] = 0x00;
+    u3[4] = 0x05; u3[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u3[6] = 0x01; u3[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));  /* push rbp */
+    img3.b[0x18] = 0xE9;                                            /* jmp rel32 */
+    /* target = 0x1D + rel; rel = 0x10 - 0x1D = -0x0D -> lands at 0x10 (INTRA) */
+    img3.b[0x19] = 0xF3; img3.b[0x1A] = 0xFF; img3.b[0x1B] = 0xFF; img3.b[0x1C] = 0xFF;
+    RUNTIME_FUNCTION rf3 = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+    uint64_t stk3[8] = { 0 };
+    const uint64_t RBP3 = 0xBB01ULL, RET3 = 0xBB02ULL;
+    stk3[4] = RBP3;    /* after alloc 0x20 */
+    stk3[5] = RET3;
+    CONTEXT c3 = { 0 };
+    c3.Rip = base3 + 0x18;
+    c3.Rsp = (uint64_t)(uintptr_t)&stk3[0];
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base3, c3.Rip, &rf3, &c3, 0, &est, 0);
+    /* Prolog unwind (NOT epilog): alloc 0x20 -> pop rbp -> pop ret. */
+    TEST_ASSERT_EQ(c3.Rbp, RBP3, "intra-function jmp runs prolog unwind (restores rbp)");
+    TEST_ASSERT_EQ(c3.Rip, RET3, "intra-function jmp is not an epilog");
+    TEST_ASSERT_EQ(c3.Rsp, (uint64_t)(uintptr_t)&stk3[6], "intra-jmp prolog unwind Rsp");
+}
+
+/* ---- Indirect tail-call epilogs (Clang-emitted FF /4 forms) ---- *
+ * Indirect jmps are ambiguous with body switch dispatch, so the engine detects
+ * them only after a real teardown/pops prefix (PC at the `add`, the common
+ * fault position). Covers unprefixed `FF 25`, REX-prefixed `48 FF 25` (Clang
+ * import thunk) and `48 FF E0` (register tail call); FF 24 body switch rejected.
+ */
+
+/* Run one indirect-tail-call epilog with `tail_bytes` after `add rsp,0x20; pop
+ * rsi`, control_pc at the add, and assert the caller RIP/RSI/RSP are recovered. */
+static void run_indirect_epilog(const uint8_t *tail, uint32_t tail_len, const char *label)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x05; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (6u << 4));   /* push rsi */
+    img.b[0x18] = 0x48; img.b[0x19] = 0x83; img.b[0x1A] = 0xC4; img.b[0x1B] = 0x20; /* add rsp,0x20 */
+    img.b[0x1C] = 0x5E;                                                             /* pop rsi */
+    for (uint32_t i = 0; i < tail_len; i++)
+        img.b[0x1D + i] = tail[i];
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+    uint64_t stk[8] = { 0 };
+    const uint64_t SAVED_RSI = 0x1771ULL, RETADDR = 0x1772ULL;
+    stk[4] = SAVED_RSI; stk[5] = RETADDR;
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rsi, SAVED_RSI, label);
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, label);
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[6], label);
+}
+
+static void test_unwind_epilog_import_tailcall(void)
+{
+    const uint8_t ff25[6]   = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };        /* jmp [rip+d] */
+    const uint8_t rex_ff25[7] = { 0x48, 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 };/* rex jmp [rip+d] */
+    const uint8_t rex_ffe0[3] = { 0x48, 0xFF, 0xE0 };                        /* rex jmp rax */
+    const uint8_t rexb_ffe0[3] = { 0x41, 0xFF, 0xE0 };                       /* rex.b jmp r8 */
+    run_indirect_epilog(ff25, sizeof(ff25), "FF 25 indirect tail-call epilog (PC at add)");
+    run_indirect_epilog(rex_ff25, sizeof(rex_ff25), "48 FF 25 import tail-call epilog (PC at add)");
+    run_indirect_epilog(rex_ffe0, sizeof(rex_ffe0), "48 FF E0 register tail-call epilog (PC at add)");
+    run_indirect_epilog(rexb_ffe0, sizeof(rexb_ffe0), "41 FF E0 (jmp r8) REX.B tail-call epilog");
+
+    /* FF 24 switch dispatch at a BODY PC (no teardown/pops prefix) must NOT be
+     * classified as an epilog -- the prolog unwind runs instead. */
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x05; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));   /* push rbp */
+    img.b[0x18] = 0xFF; img.b[0x19] = 0x24; img.b[0x1A] = 0x25;    /* jmp [disp32] SIB */
+    img.b[0x1B] = 0x00; img.b[0x1C] = 0x00; img.b[0x1D] = 0x00; img.b[0x1E] = 0x00;
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+    uint64_t stk[8] = { 0 };
+    const uint64_t RBP = 0x1781ULL, RET = 0x1782ULL;
+    stk[4] = RBP; stk[5] = RET;
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rbp, RBP, "FF 24 switch dispatch not an epilog (prolog unwind ran)");
+    TEST_ASSERT_EQ(ctx.Rip, RET, "FF 24 indexed indirect jmp rejected without epilog prefix");
+}
+
+/* ---- R12 frame-pointer epilog: lea rsp,[r12+disp] uses SIB ---- */
+
+static void test_unwind_epilog_r12_lea(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* UNWIND_INFO at 0x40: FrameRegister = r12 (12), SizeOfProlog 8, no codes
+     * (the epilog path is code-independent). */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01;                          /* version 1 */
+    u[1] = 0x08;                          /* SizeOfProlog */
+    u[2] = 0x00;                          /* CountOfCodes */
+    u[3] = (uint8_t)(12u | (0u << 4));    /* FrameReg = r12, FrameOff 0 */
+
+    /* Epilog at 0x18: lea rsp,[r12+0x20] (49 8D 64 24 20); pop r12 (41 5C); ret. */
+    img.b[0x18] = 0x49; img.b[0x19] = 0x8D; img.b[0x1A] = 0x64; img.b[0x1B] = 0x24; img.b[0x1C] = 0x20;
+    img.b[0x1D] = 0x41; img.b[0x1E] = 0x5C;   /* pop r12 */
+    img.b[0x1F] = 0xC3;                       /* ret */
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t SAVED_R12 = 0xF12AULL;
+    const uint64_t RETADDR = 0xF12BULL;
+    stk[4] = SAVED_R12;   /* r12 frame base + 0x20 */
+    stk[5] = RETADDR;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;                       /* at the lea (epilog start) */
+    ctx.R12 = (uint64_t)(uintptr_t)&stk[0];      /* frame base */
+    ctx.Rsp = 0;                                 /* the lea sets rsp = r12 + 0x20 */
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.R12, SAVED_R12, "r12 frame-pointer epilog restores r12");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "lea rsp,[r12+disp] (SIB) epilog recovers the return address");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[6], "r12 epilog final Rsp");
+}
+
+/* ---- RBP frame-pointer epilog via the SIB base-101 encoding ---- */
+
+static void test_unwind_epilog_rbp_sib(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x08; u[2] = 0x00;
+    u[3] = (uint8_t)(5u | (0u << 4));    /* FrameReg = rbp (5) */
+
+    /* Epilog: lea rsp,[rbp+0x20] via SIB (48 8D 64 25 20); pop rbp (5D); ret. */
+    img.b[0x18] = 0x48; img.b[0x19] = 0x8D; img.b[0x1A] = 0x64; img.b[0x1B] = 0x25; img.b[0x1C] = 0x20;
+    img.b[0x1D] = 0x5D;                       /* pop rbp */
+    img.b[0x1E] = 0xC3;                       /* ret */
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t SAVED_RBP = 0xB59AULL;
+    const uint64_t RETADDR = 0xB59BULL;
+    stk[4] = SAVED_RBP;
+    stk[5] = RETADDR;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rbp = (uint64_t)(uintptr_t)&stk[0];
+    ctx.Rsp = 0;
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rbp, SAVED_RBP, "rbp SIB-form epilog restores rbp");
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "lea rsp,[rbp+disp] SIB base-101 (mod1) epilog recovers RIP");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[6], "rbp SIB epilog final Rsp");
+}
+
+/* ---- REX.B add is not a false RSP teardown (epilog misdecode) ---- */
+
+static void test_unwind_epilog_rexb_not_rsp(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* Prolog "push rbp; sub rsp,0x20" (SizeOfProlog 5). */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x05; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u[6] = 0x01; u[7] = (uint8_t)(UWOP_PUSH_NONVOL | (5u << 4));
+
+    /* Body PC bytes: `add r12,0x20` (49 83 C4 20) then `ret` (C3). The REX.B
+     * targets r12, NOT rsp, so this must NOT be classified as an epilog
+     * teardown -- the engine must run the prolog unwind instead. */
+    img.b[0x18] = 0x49; img.b[0x19] = 0x83; img.b[0x1A] = 0xC4; img.b[0x1B] = 0x20;
+    img.b[0x1C] = 0xC3;
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t WRONG = 0xE401ULL;   /* what a false `add rsp,0x20; ret` would return */
+    const uint64_t RIGHT = 0xE402ULL;   /* what the real prolog unwind returns */
+    stk[4] = WRONG;    /* after alloc 0x20: rbp slot / false-epilog ret slot */
+    stk[5] = RIGHT;    /* real return address after pop rbp */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rip, RIGHT, "REX.B add r12 is not a false rsp teardown; prolog unwind ran");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[6], "prolog unwind Rsp (not the false-epilog Rsp)");
+}
+
+/* ---- Unwind-info version 2 is rejected (fails safe) ---- */
+
+static void test_unwind_version2_rejected(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    img.b[0x40] = 0x02;   /* version 2, flags 0 */
+    img.b[0x41] = 0x01;   /* SizeOfProlog */
+    img.b[0x42] = 0x00;   /* CountOfCodes */
+    img.b[0x43] = 0x00;
+    /* Epilog-looking bytes at a BODY PC: version rejection must run BEFORE the
+     * epilog interpreter, so these must NOT be simulated. */
+    img.b[0x18] = 0x5D;   /* pop rbp */
+    img.b[0x19] = 0xC3;   /* ret */
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[4] = { 0 };
+    const uint64_t LEAF_RET = 0x7777ULL;
+    const uint64_t EPILOG_RET = 0x8888ULL;
+    stk[0] = LEAF_RET;     /* leaf pop reads here */
+    stk[1] = EPILOG_RET;   /* an epilog sim (pop rbp; ret) would return here */
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;   /* body PC, past 1-byte prolog, with epilog bytes */
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[0];
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx.Rip, LEAF_RET, "version 2 rejected before epilog sim (leaf pop, not epilog)");
+    TEST_ASSERT_EQ(ctx.Rbp, 0u, "version 2 rejection did not simulate the pop rbp");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[1], "version 2 fail-safe advances Rsp once");
+}
+
+/* ---- Registration arithmetic boundaries ---- */
+
+static void test_unwind_add_arithmetic_bounds(void)
+{
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    /* entry_count over the cap is rejected before the array is walked. */
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&rf, 1000u, 0x400000), 0,
+                   "entry_count over cap rejected (no OOB read)");
+
+    /* A base+RVA span that wraps the address space is rejected (base within
+     * EndAddress of UINT64_MAX so base + 0x30 overflows). */
+    TEST_ASSERT_EQ(RtlAddFunctionTable(&rf, 1, 0xFFFFFFFFFFFFFFF0ULL), 0,
+                   "wrapping base+RVA span rejected");
+
+    /* A callback range that wraps is rejected. */
+    TEST_ASSERT_EQ(RtlInstallFunctionTableCallback(0xFFFFFFFFFFFFFF03ULL,
+                                                   0xFFFFFFFFFFFFFF00ULL, 0x200,
+                                                   test_cb, 0, 0), 0,
+                   "wrapping callback range rejected");
+}
+
+/* ---- Malformed after a stack mutation restores the entry state ---- */
+
+static void test_unwind_malformed_transactional(void)
+{
+    img_buf_t img = { .b = { 0 } };
+    uint64_t base = (uint64_t)(uintptr_t)&img;
+
+    /* UNWIND_INFO at 0x40: version 1, SizeOfProlog 6, 2 codes.
+     *   code[0]: UWOP_ALLOC_SMALL 0x20 @5  (executes, moves RSP by 0x20)
+     *   code[1]: opcode 15 (invalid) -> malformed AFTER the alloc mutated RSP. */
+    uint8_t *u = &img.b[0x40];
+    u[0] = 0x01; u[1] = 0x06; u[2] = 0x02; u[3] = 0x00;
+    u[4] = 0x05; u[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));
+    u[6] = 0x05; u[7] = (uint8_t)(15u | (0u << 4));   /* invalid opcode */
+
+    RUNTIME_FUNCTION rf = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+
+    uint64_t stk[8] = { 0 };
+    const uint64_t RETADDR = 0x7EA1ULL;   /* at the ENTRY RSP slot */
+    const uint64_t WRONG = 0x7EA2ULL;     /* at entry RSP + 0x20 (mutated-RSP slot) */
+    stk[2] = RETADDR;
+    stk[6] = WRONG;
+
+    CONTEXT ctx = { 0 };
+    ctx.Rip = base + 0x18;                          /* body PC (>= SizeOfProlog 6) */
+    ctx.Rsp = (uint64_t)(uintptr_t)&stk[2];         /* entry RSP */
+
+    uint64_t est = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, &rf, &ctx, 0, &est, 0);
+    /* Transactional: the alloc's RSP mutation is rolled back, so the leaf pop
+     * reads the return address from the ORIGINAL RSP, not the moved one. */
+    TEST_ASSERT_EQ(ctx.Rip, RETADDR, "malformed-after-mutation leaf pop uses the entry RSP");
+    TEST_ASSERT_EQ(ctx.Rsp, (uint64_t)(uintptr_t)&stk[3], "transactional restore + single leaf pop");
+
+    /* Semantically-invalid OpInfo (ALLOC_LARGE form 2) after a real allocation
+     * must ALSO take the transactional failure path, not advance RSP by an
+     * attacker-controlled u32 and pop from there. */
+    img_buf_t img2 = { .b = { 0 } };
+    uint64_t base2 = (uint64_t)(uintptr_t)&img2;
+    uint8_t *u2 = &img2.b[0x40];
+    u2[0] = 0x01; u2[1] = 0x06; u2[2] = 0x04; u2[3] = 0x00;   /* 4 code slots */
+    u2[4] = 0x05; u2[5] = (uint8_t)(UWOP_ALLOC_SMALL | (3u << 4));   /* alloc 0x20 */
+    u2[6] = 0x05; u2[7] = (uint8_t)(UWOP_ALLOC_LARGE | (2u << 4));   /* invalid form 2 */
+    u2[8] = 0xFF; u2[9] = 0xFF; u2[10] = 0xFF; u2[11] = 0xFF;       /* would-be huge size */
+    RUNTIME_FUNCTION rf2 = { .BeginAddress = 0x10, .EndAddress = 0x30, .UnwindInfoAddress = 0x40 };
+    uint64_t stk2[8] = { 0 };
+    const uint64_t RET2 = 0x7EB1ULL;
+    stk2[2] = RET2;
+    CONTEXT ctx2 = { 0 };
+    ctx2.Rip = base2 + 0x18;
+    ctx2.Rsp = (uint64_t)(uintptr_t)&stk2[2];
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base2, ctx2.Rip, &rf2, &ctx2, 0, &est, 0);
+    TEST_ASSERT_EQ(ctx2.Rip, RET2, "invalid ALLOC_LARGE OpInfo takes transactional failure path");
+    TEST_ASSERT_EQ(ctx2.Rsp, (uint64_t)(uintptr_t)&stk2[3], "invalid OpInfo -> restore + single leaf pop");
+}
+
+/* ---- RtlPcToFileHeader on an unregistered PC ---- */
+
+static void test_unwind_pctofileheader_null(void)
+{
+    uint64_t stk = 0;
+    void *bad_pc = (void *)(uintptr_t)&stk;   /* stack addr: not a loaded module */
+    void *bimg = (void *)0x1;
+    void *r = RtlPcToFileHeader(bad_pc, &bimg);
+    TEST_ASSERT_NULL(r, "RtlPcToFileHeader returns NULL for a non-module PC");
+    TEST_ASSERT_NULL(bimg, "RtlPcToFileHeader zeroes *base_of_image on miss");
+}
+
+/* ---- Registration ---- */
+
+void test_register_unwind(void)
+{
+    test_suite_register_cat("Unwind: ABI layout",
+                            test_unwind_abi, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: add/lookup/delete",
+                            test_unwind_add_lookup_delete, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: add validation",
+                            test_unwind_add_validation, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: indirect entry resolution",
+                            test_unwind_indirect_entry, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: virtual unwind (prolog)",
+                            test_unwind_virtual_prolog, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: 3-frame RIP chain",
+                            test_unwind_three_frame_chain, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: epilog detection",
+                            test_unwind_epilog, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: frame register (SET_FPREG)",
+                            test_unwind_frame_register, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: lazy callback table",
+                            test_unwind_callback, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: callback self-unregister no stall",
+                            test_unwind_callback_self_delete, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: chained handler (terminal parent)",
+                            test_unwind_chained_handler, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: no handler for prolog PC",
+                            test_unwind_prolog_no_handler, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: tail-call (outbound jmp) epilog",
+                            test_unwind_tailcall_epilog, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: import tail-call (FF 25) epilog",
+                            test_unwind_epilog_import_tailcall, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: REX.B add not a false teardown",
+                            test_unwind_epilog_rexb_not_rsp, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: r12 frame-pointer epilog (SIB lea)",
+                            test_unwind_epilog_r12_lea, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: rbp frame-pointer epilog (SIB base-101)",
+                            test_unwind_epilog_rbp_sib, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: version 2 rejected",
+                            test_unwind_version2_rejected, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: registration arithmetic bounds",
+                            test_unwind_add_arithmetic_bounds, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: malformed fail-safe",
+                            test_unwind_malformed, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: transactional malformed restore",
+                            test_unwind_malformed_transactional, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Unwind: RtlPcToFileHeader NULL",
+                            test_unwind_pctofileheader_null, TEST_CAT_EXCEPT);
+}
+
+#endif /* KERNEL_TESTS */

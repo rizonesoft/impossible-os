@@ -10,6 +10,7 @@
 #include "kernel/elf.h"
 #include "kernel/eif.h"
 #include "kernel/pe.h"
+#include "kernel/rtl/unwind.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
@@ -99,6 +100,10 @@ boot_result_t exec_init(void)
      * scheduler has not started, so no reader can be mid-flight. Any later
      * exec_register_format() call is rejected (see the SMP note above). */
     s_registry_sealed = 1;
+
+    /* Bring up the x64 table-based unwind engine (RtlVirtualUnwind et al.);
+     * consumes the .pdata the PE loader records into each loaded_module_t. */
+    rtl_unwind_init();
 
     klog(LOG_INFO, "exec", "Exec subsystem initialized (%u format(s))",
          (uint64_t)s_format_count);

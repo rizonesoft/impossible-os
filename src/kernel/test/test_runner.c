@@ -465,6 +465,7 @@ extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
 extern void test_register_except(void);
+extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
 extern void test_register_ex(void);
@@ -572,6 +573,7 @@ void test_runner_init(void)
 
     /* Exception dispatch / SEH */
     test_register_except();
+    test_register_unwind();
 
     /* ABI */
     test_register_peb_teb();
