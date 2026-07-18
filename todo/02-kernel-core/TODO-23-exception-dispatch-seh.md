@@ -74,7 +74,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   5   | KiUserExceptionDispatcher -- ring-3 delivery                      | §4, §13, TODO-11 §7        |  [/]   |
 | 💎   |   6   | x64 table-based unwind (.pdata, RtlVirtualUnwind)                 | §1                         |  [x]   |
 | 💎   |   7   | Stack walking (RtlCaptureStackBackTrace)                          | §6, TODO-07 §3             |  [/]   |
-| 💎   |   8   | SEH chain walk + `__C_specific_handler`                           | §5, §6, TODO-11 §6         |  [ ]   |
+| 💎   |   8   | SEH chain walk + `__C_specific_handler` (re-owned ring-3 → T04 §5) | §5, §6, TODO-11 §6         |  [/]   |
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                             | §6, §8                     |  [ ]   |
 | 💎   |  10   | Vectored Exception Handlers (VEH)                                 | §4, TODO-05 §3             |  [ ]   |
 | 💎   |  11   | Vectored Continue Handlers (VCH)                                  | §4, §10                    |  [ ]   |
@@ -408,12 +408,17 @@ Expose `RtlDispatchException(EXCEPTION_RECORD *, CONTEXT *)` -- returns TRUE if 
 > [!IMPORTANT]
 > → XREF: `TODO-11 §6` -- TEB `ExceptionList` is the base for legacy x86 chain; x64 uses `.pdata` tables but TEB still needed for `NtCurrentTeb()` in `__try` lowering.
 
+> [!NOTE]
+> **RE-OWNED to ring-3 ntdll (2026-07-18) -- NOT implemented in kernel `seh.c`.** The 2026-07-15 ring-0/ring-3 boundary correction (the file-top "Address-space boundary" IMPORTANT note, binding for §4-§12) and this TODO's Outcome (line: "`src/kernel/rtl/seh.c` -- kernel-mode SEH SCOPE_TABLE walker (§14) ... The ring-3 `RtlDispatchException` / `__C_specific_handler` ... are ntdll-side") both place `RtlDispatchException`, `__C_specific_handler`, and the SCOPE_TABLE **search-pass** walker in ntdll ring-3 code (`src/user/ntdll/ntdll_except.c`), because the kernel never runs user handlers. This section's original body predates that correction and is stale. What stays in TODO-23: the **kernel-mode** SEH SCOPE_TABLE walker for drivers is §14; the shared table-based search/unwind engine (`RtlLookupFunctionEntry` / `RtlVirtualUnwind`, §6) is already shipped `[x]`; `RtlUnwindEx` (§9) is the kernel-side unwind primitive both walkers call. The shared dispatch ABI still to define (`EXCEPTION_DISPOSITION` enum, `EXCEPTION_EXECUTE_HANDLER`/`_CONTINUE_SEARCH`/`_CONTINUE_EXECUTION` filter constants, `DISPATCHER_CONTEXT`, filter/`__finally` funclet calling convention) travels with the walker to its owner (ntdll §5 for the user path; §14 for the kernel-driver path). -> XREF: `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5` (item: "`KiUserExceptionDispatcher`" at line 277 -- walks SEH via table-based x64 dispatch invoking each frame's `__C_specific_handler`).
+
 - [ ] `src/kernel/rtl/seh.c` -- `RtlDispatchException`, scope-table walker
 - [ ] `src/kernel/rtl/seh.c` -- `__C_specific_handler` -- the language-specific exception handler for C `__try`/`__except`; referenced by `UNWIND_INFO.ExceptionHandler` in compiled PE binaries
 - [ ] Filter expression invocation with correct calling convention
 - [ ] Nested exception handling (`EXCEPTION_NESTED_CALL` flag)
 
-**Test checkpoint:** `RtlDispatchException` with a `SCOPE_TABLE` containing one matching `__try` scope calls the filter expression and returns TRUE. Filter returning `EXCEPTION_CONTINUE_SEARCH` → walks to parent frame. No matching scope in any frame → returns FALSE. `__C_specific_handler` is invoked for functions whose `UNWIND_INFO` references it. Serial log: `"seh: scope match at RVA 0x<rva>, filter=EXECUTE_HANDLER"`. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** `RtlDispatchException` with a `SCOPE_TABLE` containing one matching `__try` scope calls the filter expression and returns TRUE. Filter returning `EXCEPTION_CONTINUE_SEARCH` → walks to parent frame. No matching scope in any frame → returns FALSE. `__C_specific_handler` is invoked for functions whose `UNWIND_INFO` references it. Serial log: `"seh: scope match at RVA 0x<rva>, filter=EXECUTE_HANDLER"`. Test on: QEMU WHPX + TCG. (Now owned ring-3; the acceptance criteria above are validated in ntdll -- see the RE-OWNED note.)
+
+> **Accepted:** [H] ring-3 SEH search-pass dispatch (`RtlDispatchException`, `__C_specific_handler`, SCOPE_TABLE walker, filter/`__finally` funclet invocation, `EXCEPTION_NESTED_CALL` guard) is ntdll-side, not kernel `seh.c` -- the kernel never calls user handlers (ring-0/ring-3 boundary, file-top note + Outcome). Shared dispatch ABI (`EXCEPTION_DISPOSITION`, filter-result constants, `DISPATCHER_CONTEXT`, funclet calling convention) travels with the walker to its owner -> XREF: 12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §5 (item: "`KiUserExceptionDispatcher`" at line 277)
 
 - [ ] Commit: `"rtl: implement RtlDispatchException, __C_specific_handler, and SEH scope-table walker"`
 
@@ -663,7 +668,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | x64 table-based unwind        | ✅ UNWIND_INFO     | ✅ .eh_frame      | ✅ §6 engine (kernel meta: T18 §5)      |
 | 💎   | Dynamic/JIT function tables    | ✅ RtlAddFunctionTable | ✅ __register_frame | ✅ §6 registry + callback           |
 | 💎   | Kernel stack walking          | ✅ RtlCaptureStack | ✅ stack_trace    | ✅ §7 RBP walk + fault-safe read        |
-| 💎   | SEH + __C_specific_handler    | ✅                 | ❌                | ⬜ §8                                   |
+| 💎   | SEH + __C_specific_handler    | ✅                 | ❌                | ⬜ ring-3 → T04 §5 (§8 re-owned)        |
 | 💎   | RtlUnwindEx + __finally       | ✅                 | ❌                | ⬜ §9                                   |
 | 💎   | VEH list                      | ✅ ntdll           | ❌                | ⬜ §10 ABI, D12T04 §5                   |
 | 💎   | VCH list                      | ✅ ntdll           | ❌                | ⬜ §11 ABI, D12T04 §5                   |
