@@ -120,6 +120,7 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] Boot log per AP: `[SCHED] CPU%u: run queue initialised`
 - [ ] Commit: `"sched: per-CPU run queues -- struct rq[MAX_CPUS], local dequeue, task placement"`
 - [ ] task_cleanup reap barrier: a TASK_DEAD task must be off-CPU on ALL CPUs before its lock-free frees (pml4, per-thread/TEB frames, handle table, unveil, `env_free` -> T22 §1); local-CR3 guard covers only the reaper.
+- [ ] thread_join / thread_free_stacks off-CPU barrier: prove a joined thread is off-CPU on ALL CPUs before its kernel stack is freed -- a KI_TRY victim can still run on it after THREAD_DEAD publish -> XREF: 02-kernel-core/TODO-23 §14
 - [ ] `thread_reap_kernel_slot` publishes `THREAD_FREE` before `apc_rundown_thread` + field cleanup finish; a lockless `kthread_create` scan can claim the slot mid-reap and corrupt it. Make FREE the final store after teardown. (TODO-12 §12)
 - [ ] Tasks-publication lock: serialize `num_tasks++`/slot-publish vs scheduler enumeration + `job_kill_all_members`; reconcile an AP-refused timer-resolution release (-> XREF `02-kernel-core/TODO-21-process-model-extensions.md §14`)
 

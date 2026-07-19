@@ -3196,6 +3196,11 @@ void task_cleanup(uint32_t pid)
         tasks[pid].stack_base = (uint8_t *)0;
     }
     tasks[pid].threads[0].kernel_rsp = 0;
+    /* Thread 0's task-owned stack is freed here (NOT via thread_free_stacks,
+     * which only runs for secondary threads below), so clear its SEH chain head
+     * on this path too -- upholds "no KI_TRY chain head outlives its stack" for
+     * thread 0. */
+    tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;
 
     /* Free per-thread kernel + user stacks + TEBs for secondary threads */
     {
@@ -4020,6 +4025,13 @@ static void thread_free_stacks(struct thread *thr)
         thr->stack_base = (uint8_t *)0;
     }
     thr->kernel_rsp = 0;
+    /* A kernel-mode SEH (KI_TRY) chain head points at nodes ON this stack. Clear
+     * it in the SHARED stack-free helper so EVERY teardown path -- thread_join's
+     * direct call, thread_reap_kernel_slot, task_cleanup -- upholds the invariant
+     * "no chain head outlives its stack." A thread killed inside KI_TRY runs no
+     * cleanup handler (thread_exit/task_exit are noreturn), so without this the
+     * dead TCB would retain a pointer into freed stack memory. */
+    thr->kernel_exception_list = (struct ki_exception_registration *)0;
 }
 
 static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)

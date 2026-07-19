@@ -1053,6 +1053,9 @@ static void test_ki_raise_decline_paths(void)
 {
     struct thread *t = thread_current();
     KI_EXCEPTION_REGISTRATION *saved;
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    uintptr_t sp;
     KI_EXCEPTION_REGISTRATION n;
     struct interrupt_frame f;
     EXCEPTION_RECORD rec;
@@ -1064,17 +1067,32 @@ static void test_ki_raise_decline_paths(void)
     fill_frame(&f);
     pf_build_access_violation(&rec, &ctx, &f, 0x5000, f.err_code);
 
+    /* Empty chain declines regardless of IF. */
     f.rflags = 0x202;   /* IF set */
     TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
                    KI_EXCEPTION_UNHANDLED, "empty chain -> declines");
 
-    n.linked = 0;
+    /* IF-clear gate: publish a REAL, matching handler (open a window so register
+     * links it, and set f.rsp inside the window so the node would otherwise
+     * match) -- only the IF-clear gate must make ki_raise decline. If the IF gate
+     * were removed this would HANDLE, so the assertion actually exercises it. */
+    sp = ki_seh_test_open_window(t, &saved_base, &saved_size);
+    n.linked = 0; n.filter = (KI_EXCEPTION_FILTER)0; n.filter_ctx = (void *)0;
+    n.code = 0; n.fault_addr = (void *)0;
+    n.jmp.Rsp = sp; n.jmp.Rip = 0xF00D0000ULL;
     ki_seh_register(&n);
-    f.rflags = 0x002;   /* IF clear */
+    TEST_ASSERT_EQ((uint32_t)n.linked, 1u, "handler registered (window open)");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list,
+                   (uint64_t)(uintptr_t)&n, "handler is the chain head");
+    f.rsp = (uint64_t)(sp - 0x80);   /* fault rsp inside the window */
+    f.rflags = 0x002;                /* IF clear */
     TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
-                   KI_EXCEPTION_UNHANDLED, "IF clear -> declines (no resume in cli section)");
+                   KI_EXCEPTION_UNHANDLED,
+                   "IF clear -> declines despite a matching handler (no cli-section resume)");
     ki_seh_deregister(&n);
 
+    t->stack_base = saved_base;
+    t->stack_size = saved_size;
     t->kernel_exception_list = saved;
 }
 
