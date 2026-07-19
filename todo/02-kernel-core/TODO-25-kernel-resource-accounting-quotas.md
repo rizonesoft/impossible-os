@@ -9,6 +9,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 # TODO-25 -- Kernel Resource Accounting & Quotas
 
 > **Validated:** 2026-07-19 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-07-19 | gap-audit + codex-gap-audit (5 findings verified); filed nested-job chain-charge, inheritance-on-create, per-SID rollup, rate-limit records + CPU/IO enforcement XREFs, PSI stall-time telemetry, quota-failure event contract, OOM victim-select policy, storage-provider XREF, working-set-trim recovery
 
 > **Goal:** Create one kernel authority for resource accounting and quota enforcement across objects, handles, processes, jobs, pools, registry, ALPC, notifications, crash buffers, and system-global limits. Today each subsystem plans local counters. That is not enough for a production OS: quota failures must be consistent, diagnosable, inherited, security-checked, and queryable.
 
@@ -24,14 +25,16 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - → XREF: [`TODO-21-process-model-extensions.md`](./TODO-21-process-model-extensions.md) -- rlimits and Job Objects
 - → XREF: [`TODO-15-security-reference-monitor.md`](./TODO-15-security-reference-monitor.md) -- token quota blocks and privileges
 - → XREF: [`03-memory-concurrency/TODO-03-advanced-allocator.md`](../03-memory-concurrency/TODO-03-advanced-allocator.md) -- allocator statistics provider
+- → XREF: [`TODO-16-kernel-notification-facility.md`](./TODO-16-kernel-notification-facility.md) -- pressure publish + quota-event transport
+- → XREF: [`05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md`](../05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md) -- storage/volume quota provider (§12)
 
 ## Outcome
 
 - Every chargeable kernel resource has a type, owner, current usage, peak usage, hard limit, and failure status.
-- Processes inherit quota blocks from tokens/jobs and can be constrained independently.
+- Processes inherit quota blocks from tokens/jobs and can be constrained independently; charges walk the whole nested-job chain.
 - Job Objects enforce aggregate process, memory, handle, CPU, and notification limits.
-- Quota failures return NTSTATUS-compatible codes and produce audit/diagnostic events.
-- System resource pressure can be queried from user mode and used by health/recovery policy.
+- Quota failures return NTSTATUS-compatible codes and emit a contract-defined diagnostic event (rate-limited, drop-counted).
+- System resource pressure is derived from per-resource stall-time telemetry and queryable from user mode for health/recovery policy.
 
 ## Implementation Order
 
@@ -53,6 +56,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Define resource types: handles, object bodies, namespace entries, paged pool, nonpaged pool, registry bytes, ALPC messages, notification states, timers, threads, processes, sections, mapped views, crash buffers.
 - [ ] Each type includes accounting unit, default limit, privilege override, and human-readable name.
 - [ ] Register types during Phase 2 before subsystem creation.
+- [ ] Persistent storage/volume quota is provider-owned, not a scalar central type (a unified view needs (resource,volume,owner) keying + SID<->uid map -- defer). -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §12`.
 - [ ] Commit: quota: resource type registry with per-type unit/limit/name.
 
 **Test checkpoint:** `quota_dump()` at boot lists all registered resource types with name, accounting unit, and default limit; registration completes in Phase 2 before the first subsystem creation (serial ordering shows the registry line before Object Manager init).
@@ -75,11 +79,13 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 - [ ] Add quota block pointer to `ACCESS_TOKEN`.
 - [ ] Add effective quota block pointer to process/task.
-- [ ] Job Objects may impose lower aggregate limits; a charge must pass both process and job quota.
+- [ ] A charge must pass process quota AND every ancestor job (chain-charge API owned by TODO-21; all-or-nothing rollback). -> XREF: `TODO-21-process-model-extensions.md §13` (item: "nested-job topology").
+- [ ] Quota-block inheritance on process create: child auto-joins parent job chain unless breakaway; a jobless process charges its process+token block only; mirror `ob_job_detach_task` teardown on exit.
+- [ ] Quota blocks are queryable by owner SID across all jobs/processes (per-user aggregate rollup) for a future per-user/session dashboard. Both Win11 and Linux leave this weak; own it here.
 - [ ] Token impersonation uses the thread effective token for security checks but process/job quota for resource charges unless API requires client charging.
-- [ ] Commit: quota: token/process/job ownership and effective-block resolution.
+- [ ] Commit: quota: token/process/job-chain ownership, inheritance, per-SID rollup.
 
-**Test checkpoint:** a freshly created process has a non-NULL effective quota block inherited from its token; a charge that passes the process limit but exceeds the owning Job Object's aggregate limit fails; an impersonating thread charges process/job quota (not the client token) unless the API opts into client charging.
+**Test checkpoint:** a freshly created process has a non-NULL effective quota block inherited from its token and auto-joins its parent's job chain unless breakaway; a charge that passes the process limit but exceeds any ancestor job's aggregate limit fails and rolls back cleanly across the chain; an impersonating thread charges process/job quota (not the client token) unless the API opts into client charging; a per-SID query sums usage across every job the SID owns.
 
 ---
 
@@ -124,10 +130,13 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Track per-process and per-job CPU time with user/kernel split.
 - [ ] Track I/O operation count and bytes by read/write/control.
 - [ ] Track wakeups/sec and timer creation rate for battery/health policy.
+- [ ] Define a rate-limit record (weight, min/max, hard-cap, reservation) distinct from cumulative usage; the quota block carries both. Enforcement CONSUMES the record; this section OWNS it.
+- [ ] CPU rate enforcement (throttle/weight) is owned by the scheduler. -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §3` (item: "prio_to_weight table").
+- [ ] Block-I/O rate enforcement (IOPS/BPS cap) has no owner yet; §7 defines the I/O rate-limit record only. A block-I/O QoS owner must be filed before I/O throttling is claimed.
 - [ ] Feed power and health policy without duplicating scheduler internals.
-- [ ] Commit: quota: CPU/IO/wakeup accounting counters.
+- [ ] Commit: quota: CPU/IO/wakeup accounting + rate-limit records (measurement).
 
-**Test checkpoint:** per-process CPU user/kernel split advances monotonically and the job aggregate equals the sum of member processes; I/O counters break down by read/write/control op and bytes; wakeup/sec and timer-creation-rate samples are readable by policy without re-reading scheduler-private state.
+**Test checkpoint:** per-process CPU user/kernel split advances monotonically and the job aggregate equals the sum of member processes; I/O counters break down by read/write/control op and bytes; the rate-limit record stores weight/min/max/hard-cap/reservation separately from usage; wakeup/sec and timer-creation-rate samples are readable by policy without re-reading scheduler-private state.
 
 ---
 
@@ -136,22 +145,24 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Add `NtQueryQuotaInformationProcess`, `NtSetQuotaInformationProcess`.
 - [ ] `ProcessQuotaLimits`: project `QUOTA_LIMITS` from the TODO-21 §9 `rlimits[]` + real VM/working-set counters; reconcile `RLIMIT_NOFILE` with `handle_table.handle_limit`. -> XREF: `TODO-21-process-model-extensions.md §9`
 - [ ] Extend Job Object information classes for aggregate limits.
-- [ ] Add `SystemResourcePressureInformation`.
+- [ ] Add `SystemResourcePressureInformation`: per-resource (cpu/mem/io) stall-time totals + rolling windows (some/full, avg10/60/300 style), not a single ratio; §9 derives the 4 levels from these.
 - [ ] Require privilege for raising limits; lowering own soft limit is allowed.
 - [ ] Commit: quota: NtQuery/SetQuotaInformationProcess + pressure info class.
 
-**Test checkpoint:** `NtQueryQuotaInformationProcess(ProcessQuotaLimits)` returns a `QUOTA_LIMITS` projected from the TODO-21 §9 rlimits and live VM/working-set counters with `RLIMIT_NOFILE` reconciled to `handle_table.handle_limit`; raising a hard limit without privilege returns `STATUS_PRIVILEGE_NOT_HELD`; lowering the caller's own soft limit succeeds; `SystemResourcePressureInformation` is queryable from user mode.
+**Test checkpoint:** `NtQueryQuotaInformationProcess(ProcessQuotaLimits)` returns a `QUOTA_LIMITS` projected from the TODO-21 §9 rlimits and live VM/working-set counters with `RLIMIT_NOFILE` reconciled to `handle_table.handle_limit`; raising a hard limit without privilege returns `STATUS_PRIVILEGE_NOT_HELD`; lowering the caller's own soft limit succeeds; `SystemResourcePressureInformation` returns per-resource some/full stall-time and rolling-window fields (not a lone ratio).
 
 ---
 
 ## 9. Resource Pressure Events and Recovery Hooks
 
-- [ ] Publish pressure levels through TODO-16: normal, watch, warning, critical.
+- [ ] Derive the 4 levels (normal/watch/warning/critical) from §8 stall-time metrics with hysteresis to prevent flapping; publish level transitions through TODO-16.
 - [ ] On critical pressure, notify TODO-30 recovery orchestrator before panicking.
-- [ ] Trigger targeted cleanup: drain caches, trim logs, ask services to release memory, refuse new handles from offending process.
-- [ ] Commit: quota: resource pressure levels + recovery hooks.
+- [ ] Define the quota-failure diagnostic event contract HERE: event ID, process/job/SID/resource, requested/current/limit, result, rate-limit + dropped-event counter. -> XREF: `TODO-16-kernel-notification-facility.md §6` (transport/fanout only).
+- [ ] Trigger targeted cleanup: drain caches, trim logs, trim offending process working set (§8 Min/Max WS), ask services to release memory, refuse new handles from the offending process.
+- [ ] Last-resort escalation once softer recovery fails: victim-selection policy (highest over-limit ratio, lowest priority, System-protected flag). ARCHITECTURE DECISION: in-kernel termination vs cooperative-only (Win-style).
+- [ ] Commit: quota: pressure levels (hysteresis), quota-failure events, recovery hooks.
 
-**Test checkpoint:** driving usage across thresholds publishes normal->watch->warning->critical transitions through the TODO-16 notification facility; reaching critical notifies the TODO-30 recovery orchestrator before any panic path; the targeted-cleanup hook drains caches and refuses new handles from the offending process while other processes are unaffected.
+**Test checkpoint:** driving usage across thresholds publishes hysteresis-damped normal->watch->warning->critical transitions (derived from §8 stall-time, no flapping) through the TODO-16 notification facility; a per-process quota failure emits the diagnostic event with the full contract fields; reaching critical notifies the TODO-30 recovery orchestrator before any panic path; targeted cleanup trims the offending process working set and refuses its new handles while other processes are unaffected.
 
 ---
 
@@ -178,7 +189,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   | Registry/IPC quota              | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | 🚀 Planned: registry/ALPC/notif caps §6     |
 | ⭐   | CPU/IO/wakeup accounting        | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7  |
 | 💎   | Native query/set quota syscalls | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8 |
-| ⭐   | Resource pressure events        | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: 4-level pressure + recovery §9  |
+| ⭐   | Resource pressure events        | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9   |
+| ⭐   | Last-resort OOM recovery        | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9         |
 | ⭐   | Unified leak sweep + quota_dump | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10     |
 
 ---
@@ -193,6 +205,11 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] `test_quota_rollback_on_partial_failure`: a failing charge in a batch rolls back cleanly (§2).
 - [ ] `test_quota_type_registry`: all resource types registered with name/unit/limit (§1).
 - [ ] `test_quota_process_job_double_check`: charge passes process but fails on job aggregate (§3).
+- [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3).
+- [ ] `test_quota_inherit_on_create`: child auto-joins parent job chain unless breakaway; jobless child charges own block (§3).
+- [ ] `test_quota_per_sid_rollup`: per-SID query sums usage across every job the SID owns (§3).
+- [ ] `test_quota_pressure_hysteresis`: levels derive from stall-time metrics and do not flap at a threshold (§8/§9).
+- [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
 - [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements handle usage (§4).
 - [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§4).
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
