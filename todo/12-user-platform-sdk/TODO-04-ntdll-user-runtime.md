@@ -289,6 +289,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`RtlCaptureStackBackTrace(skip, count, buffer, hash)`**: walk `RBP` chain; store return addresses; return actual count captured
 - [ ] **Re-entrant dispatch + removal safety** (DESIGN OPEN): a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so one lock across the walk is insufficient; define+test a re-entrancy protocol (see NOTE)
 - [ ] **VCH list**: SECOND process-global lock-guarded list of `VECTORED_HANDLER_ENTRY` nodes, separate head from the VEH list; reuses §10 node ABI (no new type); NOT a TEB/PEB anchor. ABI: `TODO-23 §10`; boundary: `§11`
+- [ ] **Ring-3 dispatch telemetry**: `KiUserExceptionDispatcher` emits an `exception_dispatch` event per handler (type veh/seh/vch/filter, disposition, unwound frames) → XREF: `02-kernel-core/TODO-23 §16` (schema owner)
 - [ ] **`PVOID AddVectoredContinueHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)`**: allocate node via `RtlAllocateHeap`; `first != 0` head-insert else tail-append on the VCH list; return opaque handle
 - [ ] **`ULONG RemoveVectoredContinueHandler(PVOID handle)`**: unlink from the VCH list under the ntdll lock; free via `RtlFreeHeap`; return 1 on success, 0 if not found
 - [ ] **VCH walk**: on either continue path (VEH `CONTINUE_EXECUTION` or a frame handler continuing), before context restore, walk the VCH list lock-safe per the shared re-entrancy protocol; validate exact triggers vs a Windows/ReactOS trace

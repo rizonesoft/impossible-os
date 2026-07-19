@@ -39,6 +39,12 @@ extern int klog_using_blackbox;  /* 1 if X:\Logs\, 0 if C:\ fallback */
  * fmt supports: %d, %u, %x, %p, %s, %c, %%  (same as printk) */
 void klog(log_level_t level, const char *subsystem, const char *fmt, ...);
 
+/* Like klog() but bypasses ONLY the per-subsystem rate limiter -- for a caller
+ * that already applied its own (e.g. per-process) rate limit, so the shared
+ * subsystem cap cannot clip one caller's events on behalf of another. Same
+ * verbosity filter, ring/disk/serial sink, and lock discipline as klog(). */
+void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...);
+
 /* Ring buffer access for debug console */
 typedef struct {
     log_level_t level;

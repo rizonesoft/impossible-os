@@ -82,7 +82,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                           | §2                         |  [x]   |
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [/]   |
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
-| ⭐   |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [ ]   |
+| ⭐   |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎   |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §2, §3                     |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
@@ -691,15 +691,24 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > [!TIP]
 > **Competitive edge:** Windows WER only captures the final crash state. Linux core dumps only capture memory. Neither records the dispatch decision chain: "VEH handler at 0x1234 returned CONTINUE_SEARCH, SEH filter at 0x5678 returned EXCEPTION_EXECUTE_HANDLER, unwound 3 frames." This telemetry turns exception handling from a black box into a fully observable pipeline.
 
-- [ ] `src/kernel/except.c` -- `except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition)` -- log each handler invocation with disposition
-- [ ] Log entries: exception code, fault address, handler type (VEH/SEH/VCH/filter/unhandled), handler address, disposition returned, frame count unwound
-- [ ] JSON format compatible with TODO-04 §6 structured events; event type `"exception_dispatch"`
-- [ ] Rate limiting: max 100 exception dispatch logs per second per process to prevent log flooding from intentional exceptions (e.g., guard page probing)
-- [ ] Compile-time `CONFIG_EXCEPT_TELEMETRY` guard (default: enabled in debug builds, disabled in release)
+- [x] `except.c` `except_log_dispatch(rec, handler, disposition)` emits a JSON event per kernel-observed dispatch decision; wired into the klog-safe ring-3 legs of `ki_dispatch_exception`, not the lock-free kernel-SEH walk
+- [x] Log entries: exception `code`, fault `addr`, `handler` (unhandled/debugger at the kernel boundary), `disposition`, `pid`/`tid`; `frames_unwound` is `null` in ring 0 (no in-kernel unwind). Pure `except_format_dispatch_json` builds + escapes it
+- [x] Event is a flat JSON object emitted via `klog_unrated` (type `"exception_dispatch"`); shows directly on serial, in `events.jsonl` as the `msg` field. Native top-level structured fields → XREF: `02-kernel-core/TODO-32 §8`
+- [x] Rate limiting: per-process 100/1s + system-wide 256/1s aggregate (both packed-atomic CAS via `except_telem_rate_gate`); `klog_unrated` skips the subsystem cap. Sink-occupancy async lane → XREF: `02-kernel-core/TODO-32`
+- [x] Compile-time `CONFIG_EXCEPT_TELEMETRY` (`#if`, authoritative 1/0 from `Makefile EXCEPT_TELEMETRY=on/off` + flavor stamp); default on. Release-off default awaits a release build flavor (none exists yet)
+- [ ] Ring-3 per-handler telemetry (VEH/SEH/VCH handler type + address + unwound frame count) → XREF: `12-user-platform-sdk/TODO-04 §5` `KiUserExceptionDispatcher` (ntdll owns the ring-3 chain; kernel has no VEH/VCH walker)
 
-**Test checkpoint:** Trigger a user-mode access violation → serial log contains JSON event: `{"type":"exception_dispatch","code":"0xC0000005","handler":"veh","disposition":"CONTINUE_SEARCH"}` (or similar). Rate limiting: trigger 200 exceptions in rapid succession -- log shows ≤100 entries. `CONFIG_EXCEPT_TELEMETRY=0` build: no telemetry log entries emitted. Test on: QEMU WHPX + TCG.
+**Test checkpoint:** Unit tests (`SUITE=except`) validate `except_format_dispatch_json` (shape / disposition map / escaping / truncation-drop) and `except_telem_rate_gate` (window + cap + NULL fail-open). Live: a user-mode access violation emits `{"type":"exception_dispatch","code":"0xc0000005","handler":"unhandled","disposition":"continue_search","frames_unwound":null,...}` on serial (the kernel-boundary handler is `unhandled`/`debugger`; ring-3 `veh`/`seh`/`vch` names come from TODO-04 §5). Rate: one process exceeding 100 events/1s window is dropped. `EXCEPT_TELEMETRY=off` build: no `exception_dispatch` string in `kernel.exe` (verified via `strings`). Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"kernel: add exception dispatch telemetry to JSON structured log"`
+- [x] Commit: `"kernel: add exception dispatch telemetry to JSON structured log"`
+
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 452 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `except_log_dispatch` + pure `except_format_dispatch_json`/`except_telem_rate_gate` (except.c ~150 LOC); `klog_unrated` rate-bypass; `task.except_telem_rate`; `EXCEPT_TELEMETRY` Makefile flag + flip stamp.
+> - **How it integrates** -- klog-safe ring-3 legs of `ki_dispatch_exception` (not the lock-free kernel-SEH walk); per-process packed-atomic 100/1s gate; `#if CONFIG_EXCEPT_TELEMETRY` (default on) compiles the hook + event string out when off.
+> - **Downstream effects** -- ring-3 per-handler telemetry owned by TODO-04 §5; per-process attribution becomes exact when TODO-07 §3 per-CPU cursor lands. Codex design-review adoptions in the commit message.
+> - **Scope boundary** -- §16 owns the kernel-boundary emitter + shared `exception_dispatch` JSON schema; the ring-3 VEH→SEH→VCH chain telemetry is TODO-04 §5 (the kernel has no ring-0 VEH/VCH walker).
 
 
 ---
@@ -755,8 +764,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Kernel __try/__except         | ✅                     | ❌                  | 🟡 §14 KI_TRY/KI_EXCEPT v1 (regn+setjmp; __finally deferred) |
 | 💎   | POSIX signal from faults      | ❌                     | ✅                  | ⬜ §15 compat                                                |
 | 💎   | sigaltstack overflow          | ❌                     | ✅                  | ⬜ §15 compat                                                |
-| ⭐   | Dispatch telemetry            | ❌                     | ❌                  | ⬜ §16 JSON log                                              |
-| ⭐   | Exception budget / storm ctrl | ❌                     | ❌                  | ⬜ §16 rate-limit ext                                        |
+| ⭐   | Dispatch telemetry            | ❌                     | ❌                  | 🟡 §16 kernel-boundary JSON; ring-3 chain → T04 §5          |
+| ⭐   | Exception budget / storm ctrl | ❌                     | ❌                  | ✅ §16 per-proc 100/1s + 256/1s aggregate gate              |
 
 > **After parity items:** Impossible OS matches Windows on the full SEH/VEH/VCH pipeline and matches Linux on POSIX signal delivery. Exclusive differentiators: **dispatch telemetry** recording the full VEH → SEH → VCH handler chain into the JSON structured log (neither WER nor core dumps capture the decision sequence); and **exception storm control** rate-limiting per-process exceptions to prevent DoS from runaway JITs or intentional exception flooding. (Safe probing itself is parity: §13 ships a standard RIP-keyed usercopy fixup, matching Windows kernel SEH and Linux `__ex_table`.)
 

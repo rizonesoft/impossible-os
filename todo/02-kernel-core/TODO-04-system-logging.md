@@ -208,7 +208,7 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 > - v1 is intentionally superseded by TODO-32 §5 (per-CPU lockless redesign): the global-table fail-open on exhaustion and the per-window drop-summary are owned there, preserved unchanged here.
 > **Verified:** 2026-06-21 | ship `fcd203c2` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.57s); 3212 kernel + 16 user PASS
 > **Accepted:** [H] 32-slot rate table fails open on exhaustion (caller-controlled tags can disable limiting) -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §5 (item: "`klog_rate_v2_t` per CPU ... `s_rate[KLOG_RATE_V2_SLOTS=64]` per CPU" at line 133)
-> **Accepted:** [M] window reset clears `dropped` without a per-window summary, so cross-window drop evidence is lost -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §5 (item: "Drop summary: when rate limit drops a message, increment `tag_drops[tag_id]`" at line 137)
+> **Accepted:** [M] window reset clears `dropped` without a per-window summary, so cross-window drop evidence is lost -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §5 (item: "Drop summary: when rate limit drops a message, increment `tag_drops[tag_id]`" at line 138)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+2M fixed, 1H+1M accepted | scope: kernel-code-quality
 
 ---

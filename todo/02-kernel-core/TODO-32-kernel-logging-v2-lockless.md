@@ -107,6 +107,7 @@ Each priority level has its own slice of the per-CPU ring depth. DEBUG fills a s
 - [ ] Per-lane drop counter: `lane_drops[5]` per CPU; the rendered serial line on first drop per lane reads `[STUB] kernel/klog: lane <name> dropped <n> entries since last drain`
 - [ ] Define lane budget macros in `include/kernel/klog_v2.h`: `KLOG_LANE_DEBUG_DEPTH 64` etc; static_assert sum equals `KLOG_RING_V2_DEPTH`
 - [ ] Lane runtime override: `klog_set_lane_depth(level, depth)` reallocates lanes; protected by per-CPU init-only path (called once at boot)
+- [ ] Exception-telemetry retention lane: `exception_dispatch` events get a bounded reservation lane so a storm cannot evict other diagnostics from the ring (TODO-23 §16 v1 only rate-caps) → XREF: `02-kernel-core/TODO-23 §16`
 - [ ] Commit: `"kernel: klog v2 -- priority lanes + per-level sub-budgets"`
 
 **Test checkpoint:** Spam 1000 DEBUG messages followed by 1 ERROR; drain; assert ERROR is rendered first and DEBUG entries occupy the LANE_DEBUG slot range (verifiable via `klog_v2_dump_state()` introspection). Spam to fill DEBUG lane to overflow; assert DEBUG drop counter increments but ERROR / WARN lanes still accept new entries. Verify all 4 platforms.
@@ -177,6 +178,7 @@ The on-the-wire format for disk + remote consumers is a binary record with a ver
 - [ ] Define wire format `klog_wire_v2_t`: `{uint8_t version=2; uint8_t level; uint16_t tag_id; uint16_t file_id; uint16_t line; uint32_t cpu_id; uint64_t timestamp_ns; uint32_t pid; uint32_t tid; uint16_t msg_len; uint8_t msg[]}` -- variable length, network byte order for portability
 - [ ] Add `s_tag_table[256]` and `s_file_table[512]` snapshot at start of every disk flush so consumer can decode `tag_id`/`file_id` without ambiguity (table grows monotonically; snapshot delta written when new entries added)
 - [ ] Update `klog_disk.c` JSON Lines flush to read `klog_entry_v2_t` directly: emit `{"ts":<ns>,"cpu":N,"pid":P,"tid":T,"level":"WARN","tag":"net","file":"net.c","line":42,"msg":"..."}` -- structured fields native, no string parsing
+- [ ] Native `exception_dispatch` event: emit the TODO-23 §16 telemetry as a top-level structured record (type/code/addr/handler/disposition/frames_unwound as fields), not a `msg`-embedded JSON string → XREF: `02-kernel-core/TODO-23 §16`
 - [ ] Update `etw.c` to read `klog_entry_v2_t` and emit ETW binary record without re-formatting
 - [ ] Plain-text serial render: `klog_render_text(const klog_entry_v2_t *e, char *buf, size_t cap)` -- existing v1 format `[ts] [cpu] [LEVEL] tag: msg`
 - [ ] Add host-side `dmplog2` decoder (added to 14-host-tools): reads binary wire format, prints human-readable, supports filtering by tag/level/cpu

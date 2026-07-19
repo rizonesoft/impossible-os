@@ -1364,6 +1364,134 @@ static void test_ki_seh_deregister_uses_owner(void)
     cur->kernel_exception_list = saved_cur;
 }
 
+#if CONFIG_EXCEPT_TELEMETRY
+/* --- Section 16: Exception Dispatch Telemetry ---------------------------- */
+
+/* The formatter emits a well-formed, self-describing JSON event with every
+ * expected field, and its return value equals the actual string length. */
+static void test_telem_json_shape(void)
+{
+    char buf[192];
+    uint32_t n = except_format_dispatch_json(buf, sizeof(buf),
+                     0xC0000005u, 0xDEADBEEFull, "unhandled",
+                     EXCEPTION_CONTINUE_SEARCH, 7u, 3u);
+    TEST_ASSERT(n > 0u, "formatter returns nonzero length");
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)strlen(buf), "return value == strlen");
+    TEST_ASSERT(strstr(buf, "\"type\":\"exception_dispatch\"") != (char *)0,
+                "event type present");
+    TEST_ASSERT(strstr(buf, "\"code\":\"0xc0000005\"") != (char *)0,
+                "exception code hex present");
+    TEST_ASSERT(strstr(buf, "\"addr\":\"0x00000000deadbeef\"") != (char *)0,
+                "fault address hex present, zero-padded");
+    TEST_ASSERT(strstr(buf, "\"handler\":\"unhandled\"") != (char *)0,
+                "handler name present");
+    TEST_ASSERT(strstr(buf, "\"disposition\":\"continue_search\"") != (char *)0,
+                "disposition string present");
+    TEST_ASSERT(strstr(buf, "\"frames_unwound\":null") != (char *)0,
+                "frame count is null at the kernel boundary");
+    TEST_ASSERT(strstr(buf, "\"pid\":7") != (char *)0, "pid present");
+    TEST_ASSERT(strstr(buf, "\"tid\":3") != (char *)0, "tid present");
+}
+
+/* Each winnt.h disposition maps to its wire string; unknown falls back. */
+static void test_telem_json_disposition_map(void)
+{
+    char buf[192];
+    except_format_dispatch_json(buf, sizeof(buf), 0u, 0u, "seh",
+                                EXCEPTION_CONTINUE_EXECUTION, 0u, 0u);
+    TEST_ASSERT(strstr(buf, "\"disposition\":\"continue_execution\"") != (char *)0,
+                "-1 -> continue_execution");
+    except_format_dispatch_json(buf, sizeof(buf), 0u, 0u, "seh",
+                                EXCEPTION_EXECUTE_HANDLER, 0u, 0u);
+    TEST_ASSERT(strstr(buf, "\"disposition\":\"execute_handler\"") != (char *)0,
+                "1 -> execute_handler");
+    except_format_dispatch_json(buf, sizeof(buf), 0u, 0u, "seh", 42, 0u, 0u);
+    TEST_ASSERT(strstr(buf, "\"disposition\":\"unknown\"") != (char *)0,
+                "out-of-range disposition -> unknown");
+}
+
+/* A handler name carrying JSON metacharacters is escaped (quote/backslash) and
+ * control bytes are dropped, so the event stays well-formed. */
+static void test_telem_json_escape(void)
+{
+    char buf[192];
+    except_format_dispatch_json(buf, sizeof(buf), 0u, 0u, "a\"b\\c\td",
+                                EXCEPTION_CONTINUE_SEARCH, 0u, 0u);
+    TEST_ASSERT(strstr(buf, "\"handler\":\"a\\\"b\\\\cd\"") != (char *)0,
+                "quote+backslash escaped, tab dropped");
+}
+
+/* Too-small buffer returns 0 so the caller drops rather than emit partial JSON. */
+static void test_telem_json_truncation(void)
+{
+    char buf[8];
+    uint32_t n = except_format_dispatch_json(buf, sizeof(buf), 0xC0000005u, 0u,
+                     "unhandled", EXCEPTION_CONTINUE_SEARCH, 0u, 0u);
+    TEST_ASSERT_EQ((uint64_t)n, 0ULL, "truncated event returns 0 (drop)");
+}
+
+/* The packed-atomic rate gate admits exactly EXCEPT_TELEM_MAX_PER_WINDOW events
+ * per window, then drops; a later window resets the budget. */
+static void test_telem_rate_gate_window(void)
+{
+    volatile uint64_t state = 0;
+    uint32_t i, admitted = 0;
+    for (i = 0; i < EXCEPT_TELEM_MAX_PER_WINDOW + 50u; i++)
+        admitted += (uint32_t)except_telem_rate_gate(&state, 1000u /*same window*/,
+                                                     EXCEPT_TELEM_MAX_PER_WINDOW);
+    TEST_ASSERT_EQ((uint64_t)admitted, (uint64_t)EXCEPT_TELEM_MAX_PER_WINDOW,
+                   "exactly MAX admitted within one window");
+
+    /* Advance past the window: budget resets, next event admitted. */
+    TEST_ASSERT_EQ((uint64_t)except_telem_rate_gate(&state,
+                       1000u + EXCEPT_TELEM_WINDOW_MS, EXCEPT_TELEM_MAX_PER_WINDOW),
+                   1ULL, "new window admits again");
+
+    /* A higher cap on the SAME saturated state admits again -- proves the gate is
+     * cap-parameterized (the per-process vs global aggregate distinction). */
+    TEST_ASSERT_EQ((uint64_t)except_telem_rate_gate(&state, 1000u + EXCEPT_TELEM_WINDOW_MS,
+                       EXCEPT_TELEM_GLOBAL_MAX),
+                   1ULL, "larger cap admits in a fresh window");
+}
+
+/* A NULL state pointer fails open (never suppresses). */
+static void test_telem_rate_gate_null(void)
+{
+    TEST_ASSERT_EQ((uint64_t)except_telem_rate_gate((volatile uint64_t *)0, 0u,
+                       EXCEPT_TELEM_MAX_PER_WINDOW),
+                   1ULL, "NULL state = no limiting");
+}
+
+/* Regression: a zero coarse timestamp must NOT perpetually reset the window and
+ * bypass the cap (the `old==0` unset sentinel, not `win==0`). */
+static void test_telem_rate_gate_zero_time(void)
+{
+    volatile uint64_t state = 0;
+    uint32_t i, admitted = 0;
+    for (i = 0; i < EXCEPT_TELEM_MAX_PER_WINDOW + 50u; i++)
+        admitted += (uint32_t)except_telem_rate_gate(&state, 0u,
+                                                     EXCEPT_TELEM_MAX_PER_WINDOW);
+    TEST_ASSERT_EQ((uint64_t)admitted, (uint64_t)EXCEPT_TELEM_MAX_PER_WINDOW,
+                   "now_ms==0 still enforces the cap (no perpetual reset)");
+}
+
+/* The coarse-ms wrap (UINT32_MAX -> 0, delta==1) CONTINUES the same window rather
+ * than resetting it, so the cap holds across the ~49.7-day wrap boundary. */
+static void test_telem_rate_gate_wrap(void)
+{
+    volatile uint64_t state = 0;
+    uint32_t i, admitted = 0;
+    /* Open + charge 1 in a window right at the wrap. */
+    (void)except_telem_rate_gate(&state, 0xFFFFFFFFu, EXCEPT_TELEM_MAX_PER_WINDOW);
+    /* Post-wrap now_ms==0: delta = 0 - 0xFFFFFFFF = 1 < WINDOW -> same window. */
+    for (i = 0; i < EXCEPT_TELEM_MAX_PER_WINDOW + 10u; i++)
+        admitted += (uint32_t)except_telem_rate_gate(&state, 0u,
+                                                     EXCEPT_TELEM_MAX_PER_WINDOW);
+    TEST_ASSERT_EQ((uint64_t)admitted, (uint64_t)(EXCEPT_TELEM_MAX_PER_WINDOW - 1u),
+                   "wrap continues the same window (cap holds, not reset)");
+}
+#endif /* CONFIG_EXCEPT_TELEMETRY */
+
 void test_register_except(void)
 {
     test_suite_register_cat("Except: CONTEXT size",
@@ -1470,6 +1598,24 @@ void test_register_except(void)
                             test_ki_seh_register_rejects_offstack_node, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: deregister uses recorded owner (s14)",
                             test_ki_seh_deregister_uses_owner, TEST_CAT_EXCEPT);
+#if CONFIG_EXCEPT_TELEMETRY
+    test_suite_register_cat("Except: telemetry JSON shape (s16)",
+                            test_telem_json_shape, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry disposition map (s16)",
+                            test_telem_json_disposition_map, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry JSON escaping (s16)",
+                            test_telem_json_escape, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry JSON truncation drop (s16)",
+                            test_telem_json_truncation, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry rate gate window (s16)",
+                            test_telem_rate_gate_window, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry rate gate NULL fail-open (s16)",
+                            test_telem_rate_gate_null, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry rate gate zero-time no-bypass (s16)",
+                            test_telem_rate_gate_zero_time, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: telemetry rate gate ms-wrap holds (s16)",
+                            test_telem_rate_gate_wrap, TEST_CAT_EXCEPT);
+#endif /* CONFIG_EXCEPT_TELEMETRY */
 }
 
 #endif /* KERNEL_TESTS */

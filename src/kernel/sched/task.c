@@ -510,6 +510,7 @@ static void task_init_accounting(struct task *t)
     t->io_write_bytes = 0;
     t->vol_ctxsw      = 0;
     t->invol_ctxsw    = 0;
+    t->except_telem_rate = 0;   /* s16 telemetry: window=0 => first event opens a fresh window */
 }
 
 /* Stamp the sane per-process rlimit defaults. Called for PID 0 ONLY; every other

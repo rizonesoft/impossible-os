@@ -1042,9 +1042,15 @@ uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
     return n;
 }
 
-void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
+/* Shared core for klog() and klog_unrated(). `bypass_rate` skips ONLY the
+ * per-subsystem rate limiter (the verbosity filter, ring/disk/serial path, and
+ * lock discipline are identical) so an already-prelimited caller -- e.g. the
+ * per-process exception-dispatch telemetry (except.c) -- keeps its subsystem tag
+ * and the unified sink without one process's flood clipping another's budget.
+ * `ap` is owned by the caller (va_start/va_end live in the thin wrappers). */
+static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
+                      const char *fmt, va_list ap)
 {
-    va_list ap;
     klog_entry_t snapshot;   /* local copy for output outside the lock */
     uint64_t irq_flags;
     int rate_dropped = 0;
@@ -1060,8 +1066,9 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
     /* ---- Lock: protect ring buffer + rate-limit mutations ---- */
     spin_lock_irqsave(&s_klog_lock, &irq_flags);
 
-    /* Per-subsystem rate limit: drop if over budget this window */
-    if (!rate_check(subsystem)) {
+    /* Per-subsystem rate limit: drop if over budget this window. An
+     * already-prelimited caller (bypass_rate) skips this shared cap. */
+    if (!bypass_rate && !rate_check(subsystem)) {
         klog_rate_slot_t *sl = rate_slot(subsystem);
         if (sl && sl->dropped == 1)
             first_drop = 1;
@@ -1117,9 +1124,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             e->tid = 0;
         }
 
-        va_start(ap, fmt);
         vformat_buf(e->message, sizeof(e->message), fmt, ap);
-        va_end(ap);
 
         /* Snapshot for output outside the lock */
         snapshot = *e;
@@ -1329,4 +1334,24 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         for (;;)
             __asm__ volatile ("hlt");
     }
+}
+
+void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    klog_emit(level, subsystem, 0 /*bypass_rate*/, fmt, ap);
+    va_end(ap);
+}
+
+/* Like klog() but bypasses the per-subsystem rate limiter. For callers that have
+ * already applied their OWN rate limit (e.g. per-process exception-dispatch
+ * telemetry) so the shared subsystem cap cannot clip one caller's events for
+ * another. Keeps the subsystem tag and the unified ring/disk/serial sink. */
+void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    klog_emit(level, subsystem, 1 /*bypass_rate*/, fmt, ap);
+    va_end(ap);
 }

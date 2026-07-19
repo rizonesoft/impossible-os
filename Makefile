@@ -100,10 +100,28 @@ endif
 # would re-enable every seam under an apparent release build.
 override CFLAGS += $(KERNEL_TESTS_FLAG)
 
+# Exception-dispatch telemetry (TODO-23 s16). EXCEPT_TELEMETRY=on emits an
+# AUTHORITATIVE -DCONFIG_EXCEPT_TELEMETRY=1 (so except.h can test it with `#if`,
+# not `#ifdef` -- a `=0` build genuinely compiles the hook and the
+# "exception_dispatch" event string out of the image). Default on; the debug-vs-
+# release automation (default off in a release flavor) awaits a release build
+# flavor -- no such axis exists in the tree yet. `override` mirrors KERNEL_TESTS:
+# neither KERNEL_EXTRA_CFLAGS nor a command-line CFLAGS= can contradict it.
+EXCEPT_TELEMETRY ?= on
+ifeq ($(EXCEPT_TELEMETRY),on)
+    override EXCEPT_TELEMETRY_FLAG := -DCONFIG_EXCEPT_TELEMETRY=1
+else ifeq ($(EXCEPT_TELEMETRY),off)
+    override EXCEPT_TELEMETRY_FLAG := -DCONFIG_EXCEPT_TELEMETRY=0
+else
+    $(error EXCEPT_TELEMETRY must be one of: on, off (got '$(EXCEPT_TELEMETRY)'))
+endif
+override CFLAGS += $(EXCEPT_TELEMETRY_FLAG)
+
 # Flavor stamp -- content is the flavor name. Every C object rule takes it as
 # a REAL (not order-only) prerequisite, so a flip rebuilds every TU instead of
 # silently relinking objects compiled under the opposite flavor.
 KERNEL_TESTS_STAMP := $(BUILD_DIR)/.kernel-tests.stamp
+EXCEPT_TELEMETRY_STAMP := $(BUILD_DIR)/.except-telemetry.stamp
 
 KERNEL_BIN := $(BUILD_DIR)/kernel.exe
 LINKER_SCRIPT := $(SRC_DIR)/boot/linker.ld
@@ -166,6 +184,20 @@ $(KERNEL_TESTS_STAMP): .FORCE
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
 		mv $@.tmp $@; \
 		echo "[GEN] $@ (KERNEL_TESTS=$(KERNEL_TESTS))"; \
+	else \
+		rm -f $@.tmp; \
+	fi
+
+# Same flip-rebuild guarantee for the telemetry flavor: a change to
+# EXCEPT_TELEMETRY moves the stamp mtime, forcing every generic-rule C object
+# (which includes except.o and its "exception_dispatch" string) to recompile so
+# an on->off flip cannot silently relink a telemetry-enabled object.
+$(EXCEPT_TELEMETRY_STAMP): .FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(EXCEPT_TELEMETRY)' > $@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
+		mv $@.tmp $@; \
+		echo "[GEN] $@ (EXCEPT_TELEMETRY=$(EXCEPT_TELEMETRY))"; \
 	else \
 		rm -f $@.tmp; \
 	fi
@@ -1634,7 +1666,7 @@ $(BUILD_DIR)/kernel/lz4.o: $(SRC_DIR)/kernel/lz4.c $(KERNEL_TESTS_STAMP) | $(GEN
 	@echo "[CC] $< (LZ4 wrapper)"
 
 # Compile C source files (64-bit)
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) | $(GENERATED_HDRS)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -I$(BUILD_DIR) -c $< -o $@
 	@echo "[CC] $<"

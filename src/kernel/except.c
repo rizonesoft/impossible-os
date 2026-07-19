@@ -22,6 +22,8 @@
 #include "kernel/wer.h"         /* wer_write_crash_report -- user-mode terminal path */
 #include "kernel/sched/task.h"  /* thread_current()->in_system_service (bugcheck class) */
 #include "kernel/sched/irql.h"  /* KeGetCurrentIrql, APC_LEVEL -- kernel-SEH IRQL gate */
+#include "kernel/time/wall_clock.h" /* KeQueryInterruptTimeCoarse -- s16 telemetry rate window */
+#include "libc/string.h"        /* snprintf -- s16 telemetry JSON line */
 
 /* Local byte-wise zero: the kernel has no memset declaration in a header, and
  * panic.c zeroes CONTEXT the same way. Keeps this file dependency-free so it
@@ -275,8 +277,11 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
 
     /* Debugger first/second-chance via the user-mode debug port. A nonzero return
      * means the debugger continued execution (frame rewritten to resume). */
-    if (DbgkForwardException(rec, ctx, first_chance))
+    if (DbgkForwardException(rec, ctx, first_chance)) {
+        /* s16 telemetry: the debug port resolved the fault (resume). */
+        except_log_dispatch(rec, "debugger", EXCEPTION_CONTINUE_EXECUTION);
         return KI_EXCEPTION_HANDLED;
+    }
 
     /* Ring-3 handover (KiUserExceptionDispatcher) is owned by the ring-3-delivery
      * stage. Until it lands, an undebugged user exception has nowhere to go in
@@ -284,8 +289,179 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
      * user-safe panic). When ring-3 delivery lands, the first-chance leg hands
      * `frame` to KiUserExceptionDispatcher here, and the NtRaiseException
      * (first_chance=0) re-entry drives the second-chance debugger + termination. */
+    /* s16 telemetry: no ring-0 handler claimed this user fault -- the kernel
+     * declines to ring-3. The ring-3 VEH -> SEH -> VCH chain that runs next is
+     * ntdll's, and its per-handler telemetry is emitted there (TODO-04 s5). */
+    except_log_dispatch(rec, "unhandled", EXCEPTION_CONTINUE_SEARCH);
     return KI_EXCEPTION_UNHANDLED;
 }
+
+/* --- Section 16: Exception Dispatch Telemetry -------------------------------
+ *
+ * A flat JSON structured-log event recording each exception-dispatch decision the
+ * kernel can observe at the ring-3 boundary. Emitted ONLY from klog-safe legs (a
+ * ring-3 fault holds no kernel spinlock); never from ki_raise_kernel_exception
+ * (lock-free). Per-process rate-limited via a packed-atomic CAS and routed through
+ * klog_unrated() so one process's flood cannot clip another's events. The full
+ * VEH -> SEH -> VCH chain runs in ntdll (no ring-0 walker); its per-handler
+ * telemetry is owned by 12-user-platform-sdk/TODO-04 s5, sharing this schema.
+ * ------------------------------------------------------------------------- */
+#if CONFIG_EXCEPT_TELEMETRY
+
+/* Packing for the per-process rate state: window ms in the high bits, event count
+ * in the low bits. 20 count bits (max ~1M) dwarf the 100-per-window cap; the ms
+ * window uses the remaining bits (a coarse-time ms value is <= 32 bits and wraps
+ * only every ~49 days -- an unsigned window-delta absorbs that as one reset). */
+#define EXCEPT_TELEM_COUNT_BITS  20u
+#define EXCEPT_TELEM_COUNT_MASK  ((1ull << EXCEPT_TELEM_COUNT_BITS) - 1ull)
+
+/* Map a winnt.h filter disposition to its wire string. */
+static const char *except_disp_str(int disposition)
+{
+    switch (disposition) {
+    case EXCEPTION_CONTINUE_EXECUTION: return "continue_execution";
+    case EXCEPTION_CONTINUE_SEARCH:    return "continue_search";
+    case EXCEPTION_EXECUTE_HANDLER:    return "execute_handler";
+    default:                           return "unknown";
+    }
+}
+
+/* Escape a handler-name label into out[] for safe JSON string embedding: quote
+ * and backslash are backslash-escaped; control / non-ASCII bytes are dropped
+ * (labels never need \uXXXX). Bounded; always NUL-terminates. Handler names are
+ * internal literals today -- this is defense-in-depth per the kernel-code-quality
+ * "escape structured output" gate against a future untrusted caller. */
+static void except_json_escape(char *out, uint32_t outlen, const char *in)
+{
+    uint32_t o = 0;
+    if (outlen == 0)
+        return;
+    if (in) {
+        for (; *in && o + 2u < outlen; in++) {
+            unsigned char c = (unsigned char)*in;
+            if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = (char)c; }
+            else if (c >= 0x20 && c < 0x7f) { out[o++] = (char)c; }
+            /* else: drop control / non-ASCII byte */
+        }
+    }
+    out[o] = '\0';
+}
+
+uint32_t except_format_dispatch_json(char *buf, uint32_t buflen,
+                                     uint32_t code, uint64_t fault_addr,
+                                     const char *handler_name, int disposition,
+                                     uint32_t pid, uint32_t tid)
+{
+    char esc[48];
+    int n;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+    except_json_escape(esc, sizeof(esc), handler_name ? handler_name : "unknown");
+    n = snprintf(buf, buflen,
+        "{\"type\":\"exception_dispatch\",\"code\":\"0x%08x\","
+        "\"addr\":\"0x%016llx\",\"handler\":\"%s\",\"disposition\":\"%s\","
+        "\"frames_unwound\":null,\"pid\":%u,\"tid\":%u}",
+        code, (unsigned long long)fault_addr, esc, except_disp_str(disposition),
+        pid, tid);
+
+    /* snprintf returns the would-be length (C99); a truncated event is dropped
+     * rather than emitted as malformed JSON. */
+    if (n < 0 || (uint32_t)n >= buflen)
+        return 0;
+    return (uint32_t)n;
+}
+
+int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t max)
+{
+    if (!state)
+        return 1;   /* no state = no limiting (fail open) */
+
+    for (;;) {
+        uint64_t old = __atomic_load_n(state, __ATOMIC_RELAXED);
+        uint64_t win = old >> EXCEPT_TELEM_COUNT_BITS;
+        uint64_t cnt = old & EXCEPT_TELEM_COUNT_MASK;
+        uint64_t nwin, ncnt, nv;
+
+        /* Fresh window when the state is UNSET (whole packed word == 0, i.e. the
+         * zero-initialized state, count==0) or the coarse-ms delta rolled past the
+         * window. `old == 0` (not `win == 0`) is the unset test: a live window may
+         * legitimately have win==0 (now_ms is 0 before the first tick and again at
+         * the ~49.7-day ms wrap), and the stored count>=1 keeps the word nonzero,
+         * so a real now_ms==0 window is not mistaken for "unset" and cannot bypass
+         * the cap. Unsigned subtraction makes a coarse-time wrap self-correct. */
+        if (old == 0 || ((uint32_t)now_ms - (uint32_t)win) >= EXCEPT_TELEM_WINDOW_MS) {
+            nwin = now_ms;   /* store as-is; 0 is a valid window (count>=1 marks set) */
+            ncnt = 1;
+        } else if (cnt >= max) {
+            return 0;   /* saturated -- drop WITHOUT mutating (bounded, no CAS churn) */
+        } else {
+            nwin = win;
+            ncnt = cnt + 1;
+        }
+
+        nv = (nwin << EXCEPT_TELEM_COUNT_BITS) | (ncnt & EXCEPT_TELEM_COUNT_MASK);
+        if (__atomic_compare_exchange_n(state, &old, nv, 0 /*strong*/,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            return 1;   /* within budget -- emit */
+        /* CAS lost to a concurrent fault on another CPU: retry with the new value. */
+    }
+}
+
+/* System-wide aggregate telemetry window (packed like the per-task state). A
+ * farm of processes each within its own per-process budget still cannot exceed
+ * EXCEPT_TELEM_GLOBAL_MAX events/window in total. Lock-free CAS -- no lock. */
+static volatile uint64_t s_except_telem_global;
+
+void except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition)
+{
+    struct task   *t;
+    struct thread *th;
+    uint32_t now_ms, pid, tid, code;
+    uint64_t fault_addr;
+    char line[256];   /* max event ~189B; headroom so a valid event never truncates */
+
+    if (!rec)
+        return;
+
+    /* Per-process budget FIRST (packed-atomic CAS), then the system-wide aggregate
+     * ceiling -- so one process cannot starve another's per-process reservation and
+     * the total is still bounded. Attribution uses task_current(), a process-global
+     * cursor today; a ring-3 fault is serviced on the CPU that was running the
+     * faulting thread, so this is accurate in the common case and best-effort under
+     * a concurrent cross-CPU reschedule -- the same caveat klog documents (klog.c),
+     * exact once per-CPU current-task lands
+     * (-> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md). */
+    t = task_current();
+    now_ms = (uint32_t)(KeQueryInterruptTimeCoarse() / 10000ull);   /* 100ns -> ms */
+    if (t && !except_telem_rate_gate(&t->except_telem_rate, now_ms,
+                                     EXCEPT_TELEM_MAX_PER_WINDOW))
+        return;   /* this process is over budget this window -- drop */
+    if (!except_telem_rate_gate(&s_except_telem_global, now_ms,
+                                EXCEPT_TELEM_GLOBAL_MAX))
+        return;   /* system-wide aggregate ceiling reached this window -- drop */
+
+    th = thread_current();
+    pid = t  ? (uint32_t)t->pid : 0;
+    tid = th ? (uint32_t)th->id : 0;
+    code = (uint32_t)rec->ExceptionCode;
+    fault_addr = (rec->NumberParameters >= 2)
+        ? rec->ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR]
+        : (uint64_t)(uintptr_t)rec->ExceptionAddress;
+
+    if (except_format_dispatch_json(line, (uint32_t)sizeof(line), code, fault_addr,
+                                    handler_name, disposition, pid, tid) == 0)
+        return;   /* truncated/failed -- drop rather than emit partial JSON */
+
+    /* klog_unrated: keeps the "except.telem" tag + unified ring/disk/serial sink,
+     * but bypasses the shared per-subsystem cap (this event is already
+     * per-process rate-limited above). Safe here: caller guarantees a ring-3-
+     * originated fault leg, which holds no kernel spinlock. */
+    klog_unrated(LOG_INFO, "except.telem", "%s", line);
+}
+
+#endif /* CONFIG_EXCEPT_TELEMETRY */
 
 /* --- Kernel-mode structured exception handling (KI_TRY / KI_EXCEPT) ---------
  *

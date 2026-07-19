@@ -521,6 +521,73 @@ uint32_t ki_kernel_bugcheck_code(void);
  * right slots. Pure/side-effect-free (unit-testable without invoking the terminal). */
 uint32_t ki_kernel_bugcheck_params(EXCEPTION_RECORD *rec, CONTEXT *ctx, uint64_t params[4]);
 
+/* --- Section 16: Exception Dispatch Telemetry -------------------------------
+ *
+ * Records each exception-dispatch decision the KERNEL can observe -- the ring-3
+ * boundary: a debugger handoff, or the unhandled decline to ring-3 -- as a flat
+ * JSON structured-log event, per-process rate-limited and compile-time gated.
+ * The full ring-3 VEH -> SEH -> VCH handler chain runs in ntdll (there is NO
+ * ring-0 VEH/VCH walker), so that chain's per-handler telemetry is owned by
+ * 12-user-platform-sdk/TODO-04 s5, which shares this event schema.
+ * ------------------------------------------------------------------------- */
+
+/* Default the compile-time gate ON when the build did not set it. The Makefile
+ * EXCEPT_TELEMETRY=on/off flavor emits -DCONFIG_EXCEPT_TELEMETRY=1 / =0. This
+ * MUST be tested with #if (NOT #ifdef): a =0 build has to genuinely compile the
+ * hook and the "exception_dispatch" event string out of the image, and #ifdef is
+ * true even for a macro defined as 0. */
+#ifndef CONFIG_EXCEPT_TELEMETRY
+#define CONFIG_EXCEPT_TELEMETRY 1
+#endif
+
+/* Per-process telemetry rate limit: at most EXCEPT_TELEM_MAX_PER_WINDOW dispatch
+ * events per EXCEPT_TELEM_WINDOW_MS window, so a process spraying intentional
+ * exceptions (guard-page probing, a runaway JIT) cannot flood the structured log.
+ * EXCEPT_TELEM_GLOBAL_MAX is a SYSTEM-WIDE aggregate ceiling on the same window,
+ * checked after the per-process gate, so a farm of processes each within its own
+ * budget cannot raise the aggregate telemetry RATE without bound. This is a
+ * THROUGHPUT mitigation ONLY: 256/window slows a storm to a fraction of a single
+ * subsystem's default klog rate. It does NOT reserve klog-ring capacity -- klog is
+ * a continuously-overwritten 1000-entry ring, so a sustained storm can still churn
+ * telemetry through most slots over several windows. GUARANTEED diagnostic
+ * retention (occupancy reservation, priority lanes, async drain) is owned by the
+ * per-CPU lockless logging rework (-> XREF: 02-kernel-core/TODO-32). */
+#define EXCEPT_TELEM_WINDOW_MS       1000u
+#define EXCEPT_TELEM_MAX_PER_WINDOW  100u
+#define EXCEPT_TELEM_GLOBAL_MAX      256u
+
+#if CONFIG_EXCEPT_TELEMETRY
+/* Pure JSON formatter (unit-testable, no I/O): writes a flat
+ * {"type":"exception_dispatch",...} object into buf and returns its length
+ * (excluding the NUL), or 0 if buf is too small. `frames_unwound` is emitted as
+ * null at the kernel boundary -- no frames are unwound in ring 0; TODO-04 s5
+ * supplies the real count from the ntdll table-based unwind. `handler_name` is
+ * escaped defensively for JSON string safety. */
+uint32_t except_format_dispatch_json(char *buf, uint32_t buflen,
+                                     uint32_t code, uint64_t fault_addr,
+                                     const char *handler_name, int disposition,
+                                     uint32_t pid, uint32_t tid);
+
+/* Pure rate gate (unit-testable): packed {window_ms:44, count:20} state updated
+ * by a lock-free CAS so concurrent faults on two CPUs cannot lose an increment or
+ * tear the window reset. Admits up to `max` events per window. Returns 1 if this
+ * event is within budget (emit), 0 if the window is saturated (drop). now_ms is a
+ * coarse monotonic ms stamp (KeQueryInterruptTimeCoarse()/10000 in the live path).
+ * Drives BOTH the per-process gate (max=EXCEPT_TELEM_MAX_PER_WINDOW) and the
+ * system-wide aggregate gate (max=EXCEPT_TELEM_GLOBAL_MAX). */
+int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t max);
+
+/* Emit one exception-dispatch telemetry event for the current process. Safe ONLY
+ * on ring-3-originated fault legs (a ring-3 fault holds no kernel spinlock, so the
+ * klog path is deadlock-free); NEVER call from ki_raise_kernel_exception (its
+ * lock-free contract). Rate-limited per process; routed through klog_unrated() so
+ * the shared "except.telem" subsystem cap cannot clip one process's events on
+ * behalf of another. */
+void except_log_dispatch(EXCEPTION_RECORD *rec, const char *handler_name, int disposition);
+#else
+#define except_log_dispatch(rec, handler_name, disposition) ((void)0)
+#endif
+
 /* --- General fault-to-exception mapping -------------------------------------
  *
  * Registers ISR handlers for the CPU fault vectors that map to a Windows

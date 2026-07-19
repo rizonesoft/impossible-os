@@ -298,6 +298,12 @@ struct task {
     uint64_t    io_write_bytes;      /* bytes written via handle file path */
     uint64_t    vol_ctxsw;           /* voluntary switches (yield/block) */
     uint64_t    invol_ctxsw;         /* involuntary switches (preempt) */
+    /* Exception-dispatch telemetry rate gate (TODO-23 s16): packed
+     * {window_ms:44, count:20}, updated by a lock-free CAS in
+     * except_telem_rate_gate(). Caps per-process dispatch-telemetry events so a
+     * process spraying intentional exceptions cannot flood the structured log.
+     * Attribution is best-effort until per-CPU current-task lands (TODO-07). */
+    uint64_t    except_telem_rate;
     uintptr_t   cr3;            /* per-process PML4 phys addr (0 = kernel PML4) */
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */
