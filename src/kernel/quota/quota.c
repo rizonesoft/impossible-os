@@ -27,7 +27,12 @@ extern void *memcpy(void *dst, const void *src, size_t n);
 #define Q_PRIV  SE_INCREASE_QUOTA_PRIVILEGE
 #define Q_UNL   QUOTA_LIMIT_UNLIMITED
 
-static const quota_resource_desc_t g_quota_desc[QUOTA_RESOURCE_TYPE_COUNT] = {
+/* UNSIZED on purpose: sizing this [QUOTA_RESOURCE_TYPE_COUNT] would make the
+ * Layer 1 assert below tautological (sizeof/sizeof would equal the bound by
+ * definition, whether or not every row is initialized). Leaving it unsized
+ * makes the array exactly as long as the rows present, so a new enum member
+ * without a matching row shrinks it and trips the assert at compile time. */
+static const quota_resource_desc_t g_quota_desc[] = {
     [QUOTA_RES_HANDLE]             = { "handles",             Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
     [QUOTA_RES_OBJECT_BODY]        = { "object-bodies",       Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
     [QUOTA_RES_NAMESPACE_ENTRY]    = { "namespace-entries",   Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
@@ -50,7 +55,7 @@ static const quota_resource_desc_t g_quota_desc[QUOTA_RESOURCE_TYPE_COUNT] = {
 /* Layer 1 defense: the parallel array must have exactly one entry per type, so
  * a new enum member without a matching row is a compile error, not a runtime
  * gap (a designated-initializer table would otherwise leave holes zero-filled
- * with a NULL name). */
+ * with a NULL name). This only bites because the array above is UNSIZED. */
 _Static_assert(sizeof(g_quota_desc) / sizeof(g_quota_desc[0]) == QUOTA_RESOURCE_TYPE_COUNT,
                "quota descriptor table must have one entry per resource type");
 
@@ -180,12 +185,26 @@ struct quota_block {
 _Static_assert(sizeof(quota_block_t) <= 4096,
     "quota_block_t must stay within the kmalloc size rule (<= 4 KB)");
 
-/* The counter arrays are indexed by quota_resource_type_t; if the enum grows,
- * every parallel array grows with it (they are declared with the same bound,
- * so this assert documents the coupling and fails loudly on a hand-edit). */
-_Static_assert(sizeof(((quota_block_t *)0)->usage) ==
-               sizeof(atomic64_t) * QUOTA_RESOURCE_TYPE_COUNT,
-    "quota_block_t.usage must have one slot per resource type");
+/* Every counter array is indexed by quota_resource_type_t, so EACH must have
+ * one slot per type. Asserting only one of them would let a hand-edited
+ * smaller bound on any other array compile while the loops and accessors keep
+ * indexing across the full enum, writing into adjacent struct fields. */
+#define QUOTA_ASSERT_PER_TYPE_ARRAY(field)                          \
+    _Static_assert(sizeof(((quota_block_t *)0)->field) ==           \
+                   sizeof(atomic64_t) * QUOTA_RESOURCE_TYPE_COUNT,  \
+                   "quota_block_t." #field " must have one slot per resource type")
+
+QUOTA_ASSERT_PER_TYPE_ARRAY(usage);
+QUOTA_ASSERT_PER_TYPE_ARRAY(peak);
+QUOTA_ASSERT_PER_TYPE_ARRAY(failures);
+QUOTA_ASSERT_PER_TYPE_ARRAY(limit);
+
+/* The SID capture buffer is uint32_t-typed (SubAuthority alignment) and sized
+ * by division, which truncates DOWN. If SID_MAX_SIZE ever stops being a
+ * multiple of 4 the buffer would be short and the bounded memcpy in
+ * quota_block_create would run past it into the following fields. */
+_Static_assert(sizeof(((quota_block_t *)0)->owner_sid_buf) >= SID_MAX_SIZE,
+    "owner_sid_buf must hold a maximum-length SID (SID_MAX_SIZE must be 4-aligned)");
 
 static int quota_type_valid(quota_resource_type_t type)
 {
@@ -241,6 +260,7 @@ typedef enum {
     QUOTA_DIAG_NONE = 0,
     QUOTA_DIAG_NEGATIVE_USAGE,          /* corrupted counter, failed closed   */
     QUOTA_DIAG_NEGATIVE_USAGE_SOURCE,   /* ... on a transfer's SOURCE block   */
+    QUOTA_DIAG_NEGATIVE_USAGE_DEST,     /* ... on a transfer's DESTINATION    */
     QUOTA_DIAG_RETURN_UNDERFLOW         /* returned more than was charged     */
 } quota_diag_t;
 
@@ -277,8 +297,14 @@ static void quota_emit_diag(quota_diag_t diag, quota_resource_type_t type)
              "transfer %s: negative usage on SOURCE block, failing closed",
              quota_resource_type_name(type));
         break;
+    case QUOTA_DIAG_NEGATIVE_USAGE_DEST:
+        klog(LOG_ERROR, "quota",
+             "transfer %s: negative usage on DESTINATION block, failing closed",
+             quota_resource_type_name(type));
+        break;
     case QUOTA_DIAG_RETURN_UNDERFLOW:
-        klog(LOG_WARN, "quota", "return %s: returning more than charged, clamping",
+        klog(LOG_ERROR, "quota",
+             "return %s: returning more than charged, refusing (stale bookkeeping)",
              quota_resource_type_name(type));
         break;
     case QUOTA_DIAG_NONE:
@@ -325,17 +351,32 @@ static void quota_commit_locked(quota_block_t *block, quota_resource_type_t type
     quota_lift_peak(&block->peak[type], total);
 }
 
-/* Subtract `sub`, clamping at 0. Lock held. Never logs; sets *diag. */
-static void quota_release_locked(quota_block_t *block, quota_resource_type_t type,
-                                 int64_t sub, quota_diag_t *diag)
+/* Subtract `sub`. Lock held. Never logs; sets *diag on refusal.
+ *
+ * An over-return FAILS CLOSED and leaves usage untouched. Clamping to 0 (the
+ * obvious alternative) is unsafe: returning more than is charged means the
+ * caller is working from stale bookkeeping, and zeroing would erase OTHER
+ * live charges. Concretely -- A charges 5 and returns 5, B then charges 4, and
+ * a duplicate/retried cleanup for A returns 5 again: clamping resets usage
+ * from 4 to 0 while B is still holding its 4, so every later charge is
+ * measured against a counter that has silently lost B. Refusing keeps the
+ * accounting honest and surfaces the double-return as a failure. */
+static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t type,
+                                     int64_t sub, quota_diag_t *diag)
 {
     int64_t cur = atomic64_read(&block->usage[type]);
+    if (cur < 0) {
+        *diag = QUOTA_DIAG_NEGATIVE_USAGE;
+        quota_bump_failures(&block->failures[type]);
+        return STATUS_INTEGER_OVERFLOW;
+    }
     if (cur < sub) {
         *diag = QUOTA_DIAG_RETURN_UNDERFLOW;
-        atomic64_set(&block->usage[type], 0);
-        return;
+        quota_bump_failures(&block->failures[type]);
+        return STATUS_INTEGER_OVERFLOW;
     }
     atomic64_set(&block->usage[type], cur - sub);
+    return STATUS_SUCCESS;
 }
 
 quota_block_t *quota_block_create(const SID *owner, uint32_t owner_len)
@@ -439,7 +480,10 @@ NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t
         quota_bump_failures(&block->failures[type]);
     spin_unlock_irqrestore(&block->lock, flags);
 
-    quota_emit_diag(diag, type);         /* logging happens OUTSIDE the lock */
+    /* Outside the lock, and only when there is something to say: the normal
+     * charge path must not pay a call into the diagnostic helper. */
+    if (diag != QUOTA_DIAG_NONE)
+        quota_emit_diag(diag, type);
     return status;
 }
 
@@ -454,11 +498,14 @@ NTSTATUS quota_return(quota_block_t *block, quota_resource_type_t type, uint64_t
     quota_diag_t diag = QUOTA_DIAG_NONE;
 
     spin_lock_irqsave(&block->lock, &flags);
-    quota_release_locked(block, type, (int64_t)amount, &diag);
+    NTSTATUS status = quota_release_locked(block, type, (int64_t)amount, &diag);
     spin_unlock_irqrestore(&block->lock, flags);
 
-    quota_emit_diag(diag, type);         /* logging happens OUTSIDE the lock */
-    return STATUS_SUCCESS;
+    /* Logging happens OUTSIDE the lock, and only when there is something to
+     * say -- the normal path must not pay a call into the diagnostic helper. */
+    if (diag != QUOTA_DIAG_NONE)
+        quota_emit_diag(diag, type);
+    return status;
 }
 
 NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
@@ -502,6 +549,9 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
         quota_bump_failures(&src->failures[type]);
         status = STATUS_INTEGER_OVERFLOW;
     } else if (src_cur < move) {
+        /* Counted like every other refusal so the per-type failure telemetry
+         * sees the most common transfer failure mode, not just the rare ones. */
+        quota_bump_failures(&src->failures[type]);
         status = STATUS_QUOTA_EXCEEDED;      /* src does not hold that much */
     } else {
         int64_t dst_total = 0;
@@ -511,13 +561,19 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
             atomic64_set(&src->usage[type], src_cur - move);
         } else {
             quota_bump_failures(&dst->failures[type]);
+            /* Re-label: quota_check_locked cannot know it was called for a
+             * transfer destination, so a corrupted dst would otherwise be
+             * logged as an ordinary charge and be indistinguishable from one. */
+            if (diag == QUOTA_DIAG_NEGATIVE_USAGE)
+                diag = QUOTA_DIAG_NEGATIVE_USAGE_DEST;
         }
     }
 
     spin_unlock_irqrestore(&second->lock, flags_second);
     spin_unlock_irqrestore(&first->lock, flags_first);
 
-    quota_emit_diag(diag, type);         /* logging happens OUTSIDE both locks */
+    if (diag != QUOTA_DIAG_NONE)
+        quota_emit_diag(diag, type);     /* outside BOTH locks, only if needed */
     return status;
 }
 

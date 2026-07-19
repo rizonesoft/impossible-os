@@ -59,10 +59,16 @@ typedef enum {
     QUOTA_UNIT_BYTES       /* byte-denominated (pool, registry, payloads)      */
 } quota_unit_t;
 
-/* A default_limit of 0 means "no cap" (unlimited). Concrete numeric caps are a
- * policy decision owned by the kernel configuration layer; the charge-time
- * limit precedence (documented contract, enforced by the charge API) is:
- *   per-block explicit limit  >  kernel-config override  >  default_limit. */
+/* A default_limit of 0 means "no cap" (unlimited).
+ *
+ * What the charge API enforces TODAY is exactly one value: the per-block limit,
+ * seeded from this default_limit at create time and thereafter changed only by
+ * quota_set_limit. There is no kernel-config override layer yet, so a caller
+ * that never calls quota_set_limit gets an UNLIMITED block -- do not rely on
+ * this table to impose a cap. Concrete numeric caps remain a kernel-config
+ * policy decision; when that layer ships, the intended precedence is
+ * per-block explicit > kernel-config override > default_limit, and this
+ * comment must move from "intended" to "enforced" in the same change. */
 #define QUOTA_LIMIT_UNLIMITED  0ULL
 
 /* --- Descriptor ---------------------------------------------------------- *
@@ -136,6 +142,15 @@ void quota_types_dump(void);
  *   contend one block's lock; that batching belongs to the pool integration
  *   section, not here.
  *
+ * Failure semantics (uniform across every mutation):
+ *   Every refusal bumps that type's saturating failure counter -- an invalid
+ *   amount, a debit underflow, a limit rejection, an
+ *   arithmetic overflow, or a corrupted counter. Statuses are uniform too:
+ *   STATUS_QUOTA_EXCEEDED means "would exceed a cap / not enough charged to
+ *   move", STATUS_INTEGER_OVERFLOW means "the counter domain or its integrity
+ *   was violated", STATUS_INVALID_PARAMETER means "the arguments were wrong".
+ *   The same logical condition never reports two different codes.
+ *
  * Limit-lowering contract:
  *   Lowering a limit never revokes an accepted charge -- usage may sit above
  *   the limit right after a lowering, and such a block simply refuses the next
@@ -160,7 +175,11 @@ void quota_types_dump(void);
  *   then call in.
  *
  * No nested calls (HARD contract):
- *   Never enter any function here while a quota block's lock is held. Only
+ *   Never enter any function here while a quota block's lock is held, and do
+ *   not call in while holding a plain (non-irqsave) spinlock: spin_lock() masks
+ *   interrupts without raising the tracked IRQL, so the PASSIVE_LEVEL gate that
+ *   keeps diagnostics off the blocking log path cannot see that context.
+ *   Only
  *   quota.c takes those locks, and quota_try_transfer is the only path that
  *   holds two -- which it orders by address. A caller that could hold one
  *   block's lock and then charge another would defeat that ordering and
@@ -219,10 +238,17 @@ const SID *quota_block_owner(const quota_block_t *block);
  * failure counter is bumped (saturating) for QUOTA_EXCEEDED/OVERFLOW. */
 NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t amount);
 
-/* Return `amount` of `type` previously charged. Returning more than is charged
- * is an accounting bug: the counter clamps at 0 and a warning is logged rather
- * than wrapping negative. Returns STATUS_INVALID_PARAMETER on a bad argument,
- * STATUS_SUCCESS otherwise (including the clamped case). */
+/* Return `amount` of `type` previously charged.
+ *
+ * Returning MORE than is currently charged fails closed: usage is left exactly
+ * as it was and STATUS_INTEGER_OVERFLOW is returned. It does not clamp to zero.
+ * A caller returning more than it holds is working from stale bookkeeping, and
+ * zeroing would erase OTHER live charges -- a duplicate cleanup for a freed
+ * resource would silently wipe the accounting for everything allocated since.
+ * Refusing keeps the counter honest and makes the double-return visible.
+ *
+ * Returns STATUS_INVALID_PARAMETER on a bad argument, STATUS_INTEGER_OVERFLOW
+ * on an over-return or a corrupted counter, STATUS_SUCCESS otherwise. */
 NTSTATUS quota_return(quota_block_t *block, quota_resource_type_t type, uint64_t amount);
 
 /* Move `amount` of `type` from `src` to `dst`.
@@ -239,10 +265,13 @@ NTSTATUS quota_return(quota_block_t *block, quota_resource_type_t type, uint64_t
  * therefore not drive an irreversible decision; take the mutation path, or
  * tolerate the skew, if an exact aggregate matters.
  *
- * Fails (leaving BOTH blocks as it found them) with STATUS_INVALID_PARAMETER on
- * a bad argument, STATUS_QUOTA_EXCEEDED if src holds less than `amount` or dst
- * is at its cap, or STATUS_INTEGER_OVERFLOW if dst cannot represent the total.
- * `src` == `dst` is a no-op success. */
+ * On failure NO usage moves and neither block's usage, peak, or limit changes;
+ * the failing block's failure COUNTER does advance (that is the point of the
+ * telemetry), so "unchanged" means the accounting state, not every byte.
+ * Fails with STATUS_INVALID_PARAMETER on a bad argument, STATUS_QUOTA_EXCEEDED
+ * if src holds less than `amount` or dst is at its cap, or
+ * STATUS_INTEGER_OVERFLOW if dst cannot represent the total or either block's
+ * counter is corrupt. `src` == `dst` is a no-op success. */
 NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
                             quota_resource_type_t type, uint64_t amount);
 

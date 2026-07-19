@@ -601,22 +601,21 @@ static void *kmalloc_locked(size_t req, uint32_t tag)
  * zeroing allocator must be just as testable on its failure path as a caller
  * of the plain one.
  *
-     * Thread-context gate: the hook only consumes the countdown when
-     * we are at PASSIVE_LEVEL. IRQ / DPC / spinlock-holding callers on
-     * the same CPU (e.g. the RTL8139 RX ISR calling kmalloc for a work
-     * packet) would otherwise steal the pending injection from the
-     * thread-context test that armed it -- turning the test
-     * nondeterministic and giving false confidence. Tests that want to
-     * inject into IRQ-context allocations need a different harness
-     * scoped to that context; is thread-context only.
-     *
-     * gates, applied in order (each skips the fire without touching
-     * the countdown so subsequent qualifying calls can still fire):
-     *   1. Task filter: kmalloc_fail_task_pid != 0 requires
-     *      task_current()->pid match.
-     *   2. Max-injections cap: if fired_counter has reached the cap,
-     *      don't fire (even with countdown armed). Cap of 0 = no cap.
-     *   3. Countdown check: --countdown == 0 triggers the fire. */
+ * Thread-context gate: the hook only consumes the countdown when we are at
+ * PASSIVE_LEVEL. IRQ / DPC / spinlock-holding callers on the same CPU (e.g.
+ * the RTL8139 RX ISR calling kmalloc for a work packet) would otherwise steal
+ * the pending injection from the thread-context test that armed it -- turning
+ * the test nondeterministic and giving false confidence. Tests that want to
+ * inject into IRQ-context allocations need a different harness scoped to that
+ * context; this hook is thread-context only.
+ *
+ * Three gates, applied in order (each skips the fire without touching the
+ * countdown so subsequent qualifying calls can still fire):
+ *   1. Task filter: kmalloc_fail_task_pid != 0 requires
+ *      task_current()->pid match.
+ *   2. Max-injections cap: if fired_counter has reached the cap,
+ *      don't fire (even with countdown armed). Cap of 0 = no cap.
+ *   3. Countdown check: --countdown == 0 triggers the fire. */
 static int heap_fault_injection_fires(void)
 {
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
@@ -691,15 +690,19 @@ void *kmalloc_zeroed(size_t size)
     void *result;
     uint64_t irq_flags;
 
-    if (size == 0 || size > KMALLOC_MAX)
-        return (void *)0;
-
 #ifdef KERNEL_TESTS
-    /* Same injection gate as kmalloc(): checked before the heap is touched, so
-     * a forced failure leaves the free list exactly as a real OOM would. */
+    /* Same injection gate as kmalloc(), and in the SAME position relative to
+     * the size checks: consuming the countdown here but not there (or vice
+     * versa) would make an armed "fail the next allocation" behave differently
+     * across the two entry points, which is exactly the drift extracting the
+     * gate was meant to remove. Checked before the heap is touched, so a
+     * forced failure leaves the free list exactly as a real OOM would. */
     if (heap_fault_injection_fires())
         return (void *)0;
 #endif
+
+    if (size == 0 || size > KMALLOC_MAX)
+        return (void *)0;
 
     spin_lock_irqsave(&s_heap_lock, &irq_flags);
     result = kmalloc_locked(size, 0);

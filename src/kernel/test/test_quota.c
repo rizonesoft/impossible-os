@@ -254,8 +254,10 @@ static void test_quota_overflow_domain_guarded(void)
     quota_block_deref(b);
 }
 
-/* Returning more than was charged clamps at zero instead of wrapping negative. */
-static void test_quota_return_underflow_clamps(void)
+/* Returning more than was charged FAILS CLOSED and leaves usage untouched --
+ * clamping to zero would erase other live charges (a duplicate cleanup for one
+ * resource would wipe the accounting for everything allocated since). */
+static void test_quota_return_underflow_refused(void)
 {
     quota_block_t *b = quota_block_create(NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
@@ -265,9 +267,38 @@ static void test_quota_return_underflow_clamps(void)
     TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_THREAD, 3),
                    (uint64_t)STATUS_SUCCESS, "charge 3 threads");
     TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_THREAD, 10),
-                   (uint64_t)STATUS_SUCCESS, "over-return reports success");
-    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_THREAD), 0ULL,
-                   "over-return clamped to 0, never negative");
+                   (uint64_t)STATUS_INTEGER_OVERFLOW, "over-return is refused");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_THREAD), 3ULL,
+                   "refused over-return left usage exactly as it was");
+    TEST_ASSERT_EQ(quota_failures(b, QUOTA_RES_THREAD), 1ULL,
+                   "the refused over-return was counted");
+    quota_block_deref(b);
+}
+
+/* The concrete hazard the fail-closed semantic exists for: a stale duplicate
+ * return must not erase a newer, unrelated charge. */
+static void test_quota_stale_return_cannot_erase_newer_charge(void)
+{
+    quota_block_t *b = quota_block_create(NULL, 0);
+    TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
+    if (!b)
+        return;
+
+    /* Resource A charges 5 and is cleaned up correctly. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_HANDLE, 5),
+                   (uint64_t)STATUS_SUCCESS, "A charges 5");
+    TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_HANDLE, 5),
+                   (uint64_t)STATUS_SUCCESS, "A returns its 5");
+
+    /* Resource B then charges 4 and is still live. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_HANDLE, 4),
+                   (uint64_t)STATUS_SUCCESS, "B charges 4");
+
+    /* A retried/duplicate cleanup for A returns the stale 5. */
+    TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_HANDLE, 5),
+                   (uint64_t)STATUS_INTEGER_OVERFLOW, "the stale duplicate return is refused");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_HANDLE), 4ULL,
+                   "B's live charge survives the stale return (clamping would have zeroed it)");
     quota_block_deref(b);
 }
 
@@ -496,8 +527,10 @@ static void test_quota_transfer_cannot_duplicate(void)
     quota_block_deref(dst2);
 }
 
-/* When the destination refuses, the source debit is compensated exactly -- the
- * failed transfer must not leave usage stranded in neither block. */
+/* When the destination refuses, the source must be left exactly as it was.
+ * (The shipped transfer never debits speculatively -- it commits to dst and
+ * only then writes src, both under the two block locks -- so there is no
+ * compensating write to verify, just the absence of any change.) */
 static void test_quota_transfer_refusal_compensates(void)
 {
     quota_block_t *src = quota_block_create(NULL, 0);
@@ -525,9 +558,9 @@ static void test_quota_transfer_refusal_compensates(void)
     quota_block_deref(dst);
 }
 
-/* A charge refused by the post-commit limit re-check must leave usage exactly
- * as it was and count exactly one failure -- the withdrawal is its own charge,
- * never someone else's. */
+/* A refused charge must leave usage exactly as it was and count exactly one
+ * failure per refusal. (Check and commit share one critical section, so a
+ * refusal never touches the counter in the first place.) */
 static void test_quota_charge_refusal_is_exact(void)
 {
     quota_block_t *b = quota_block_create(NULL, 0);
@@ -866,6 +899,7 @@ static void test_quota_block_create_failure_paths(void)
     kmalloc_fail_next();
     quota_block_t *b = quota_block_create(NULL, 0);
     TEST_ASSERT_NULL((void *)b, "allocation failure returns NULL, not a partial block");
+    quota_block_t *leaked_on_failure = b;   /* NULL when the injection fired */
 
     uint8_t buf[SID_MAX_SIZE] = { 0 };
     SID *sid = (SID *)buf;
@@ -902,6 +936,10 @@ static void test_quota_block_create_failure_paths(void)
             TEST_ASSERT(RtlEqualSid(got, sid) != 0, "maximum-length SID copied intact");
         quota_block_deref(b);
     }
+
+    /* Any block a refusal-path assertion above unexpectedly produced must be
+     * released, or a FAILING run also reports a leak and masks the real cause. */
+    quota_block_deref(leaked_on_failure);
 }
 
 /* Remaining public boundary matrix: the argument contracts each entry point
@@ -1008,8 +1046,10 @@ void test_register_quota(void)
                             test_quota_unlimited_allows_large_charge, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: overflow domain guarded",
                             test_quota_overflow_domain_guarded, TEST_CAT_QUOTA);
-    test_suite_register_cat("Quota: return underflow clamps",
-                            test_quota_return_underflow_clamps, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: return underflow refused",
+                            test_quota_return_underflow_refused, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: stale return cannot erase newer charge",
+                            test_quota_stale_return_cannot_erase_newer_charge, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: lowering limit keeps committed",
                             test_quota_lowering_limit_keeps_committed, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: transfer moves and refuses",

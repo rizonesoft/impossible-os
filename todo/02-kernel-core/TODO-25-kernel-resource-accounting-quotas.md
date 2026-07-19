@@ -76,23 +76,29 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 2. Quota Block and Charge API
 
-- [x] `quota_block_t` in `quota.h`: `atomic_t` refcount, embedded copied owner SID (`owner_sid_buf`, 4-aligned), per-type `limit/usage/peak/failures` arrays, and one `lock` guarding every mutation.
+- [x] `quota_block_t`, opaque (defined in `quota.c` so no caller can take its lock): `atomic_t` refcount, embedded copied owner SID, per-type `limit/usage/peak/failures` arrays, one `lock` guarding every mutation.
 - [x] `quota_charge` / `quota_return` / `quota_try_transfer` in `quota.c`, plus `quota_block_create/ref/deref/owner`, `quota_set_limit`, and `quota_usage/peak/failures/limit` queries.
 - [x] Charges are atomic and rollback-safe: limit check and commit share ONE critical section, so a refused charge leaves `usage` byte-identical; transfer holds both block locks in address order and is all-or-nothing.
-- [x] Failures return `STATUS_QUOTA_EXCEEDED` (over cap), `STATUS_INTEGER_OVERFLOW` (outside the 0..`QUOTA_AMOUNT_MAX` domain, or a corrupted negative counter), or `STATUS_INVALID_PARAMETER`; each bumps a saturating failure counter.
+- [x] Failures return `STATUS_QUOTA_EXCEEDED` (over cap / source short), `STATUS_INTEGER_OVERFLOW` (outside the 0..`QUOTA_AMOUNT_MAX` domain, over-return, or corruption), or `STATUS_INVALID_PARAMETER`; every refusal bumps a saturating counter.
 - [x] Diagnostics are recorded under the lock, emitted after it, gated to PASSIVE_LEVEL, with suppressed events counted. -> XREF: `TODO-32-kernel-logging-v2-lockless.md §6` (klog live-disk flush re-enters VFS).
 - [x] Commit: quota: quota_block_t + atomic charge/return/transfer API.
 
-**Test checkpoint:** a charge/return round-trip leaves `usage` at 0 and `peak` at the high-water mark; an over-limit charge returns `STATUS_QUOTA_EXCEEDED` and leaves `usage` unchanged; the counter domain is enforced at both ends (oversized amount rejected, `+1` past the max overflows instead of wrapping, over-return clamps at 0); a transfer leaves BOTH blocks untouched when either side refuses, and interleaved multi-thread charges sum exactly with no lost updates (verified: SUITE=quota 25 suites / 393 assertions, 0 failures).
+**Test checkpoint:** a charge/return round-trip leaves `usage` at 0 and `peak` at the high-water mark; an over-limit charge returns `STATUS_QUOTA_EXCEEDED` and leaves `usage` unchanged; the counter domain is enforced at both ends (oversized amount rejected, `+1` past the max overflows instead of wrapping, an over-return is REFUSED so a stale duplicate return cannot erase a newer live charge); a refused transfer moves no usage in either block; interleaved multi-thread charges sum exactly with no lost updates (verified: SUITE=quota 27 suites / 400 assertions, 0 failures).
 
-> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 25 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 27 suites, 0 failures
 
 > **Notes:**
 > - **What shipped** -- `quota_block_t` + the charge API in `quota.h`/`quota.c`: create/ref/deref, charge/return/transfer, limit set, and four queries over the 14-type taxonomy from §1.
-> - **How it runs** -- one per-block spinlock (`spin_lock_irqsave`) makes each operation's several counter updates indivisible; transfer takes both locks in `uintptr_t` address order; queries stay lock-free atomic reads.
+> - **How it runs** -- one per-block spinlock (`spin_lock_irqsave`) makes each operation's several counter updates indivisible; transfer takes both locks in `uintptr_t` address order; queries stay lock-free atomic reads; over-returns fail closed rather than clamping.
 > - **Downstream effects** -- §3 wires blocks to tokens/processes/jobs and owns safe publication for the caller-holds-a-reference contract; §4-§7 charge through this API; Codex review adoptions in the commit message.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (counter domain, lifetime, limit-lowering, and transfer-visibility contracts).
 > - **Scope boundary** -- §2 owns the mechanism only: no subsystem is charged yet (§4-§7), per-CPU batching for hot paths is §5, and cross-CPU contention test infrastructure is §10.
+> **Verified:** 2026-07-19 | commit `860c95ba` | 6/6 items | build OK | smoke PASS (TCG 2.75s), tests 27/27 PASS
+> **Accepted:** [M] counter layout: four per-type arrays cost ~3 cache lines per charge; an array-of-records is the candidate, but no consumer exists to benchmark against yet (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §5` (item: "Benchmark contended pool charging" at line 137)
+> **Accepted:** [M] klog's live-disk path re-enters VFS, so a PASSIVE caller holding a storage lock can deadlock; kernel-wide, mitigated here by the PASSIVE_LEVEL gate + deferred count (reason: scope) -> XREF: `02-kernel-core/TODO-32 §6` (item: "`klog_v2()` enqueue must never synchronously enter the live-disk flush" at line 156)
+> **Deferred:** [M] cross-CPU contention proof: the scheduler is single-CPU today, so the multi-thread suites show interleaving, not parallel contention (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path" at line 203)
+> **Deferred:** [L] bounded worker join + CPU-pinned fault injection for the quota tests (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 204)
+> **Quality reviewed:** 2026-07-19 | Codex 12x (design, adversarial, re-adversarial, test-coverage, consistency, perf) | 14H+9M+8L fixed, 3M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -128,6 +134,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Charge nonpaged/paged pool through allocator provider hooks.
 - [ ] Ensure kernel-internal early boot allocations are charged to System.
 - [ ] Refuse user-triggered unbounded allocation paths without quota owner.
+- [ ] Benchmark contended pool charging, then decide the `quota_block_t` counter layout: the four per-type arrays cost ~3 cache lines per charge; an array of per-type records is the candidate. -> XREF: `§2` (charge API)
 - [ ] Commit: quota: paged/nonpaged pool charging via allocator hooks.
 
 **Test checkpoint:** a tagged allocation with a quota owner charges that owner's paged/nonpaged usage and frees return it; early-boot allocations are attributed to the System quota block (never NULL-owner leaks); a user-triggered unbounded allocation path with no quota owner is refused rather than charged to System.
@@ -193,6 +200,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Boot leak sweep compares all quota blocks before/after test categories.
 - [ ] Add `quota_dump()` for serial and crash dumps.
 - [ ] Bulletproofing: every charge path must name a resource type and owner.
+- [ ] Cross-CPU contention proof for the §2 charge path: needs per-CPU run queues plus an operation-level checkpoint, so single-CPU interleaving cannot show the lock is load-bearing. -> XREF: `§2` (charge API)
+- [ ] Bounded worker join + CPU-pinned `kmalloc_fail_next` for quota tests: `thread_join` has no timeout and the injection countdown is per-CPU. -> XREF: `§2` (charge API)
 - [ ] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
 **Test checkpoint:** the quota unit suite passes (charge/return, rollback, concurrent charges, duplicate-handle quota, registry quota, ALPC quota); the boot leak sweep reports zero net quota delta across every test category; `quota_dump()` renders per-type usage/peak/limit on serial and in crash dumps.
@@ -253,4 +262,3 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Verify on bare metal -- VM behavior differs for pool/working-set counters.
 
 **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
-
