@@ -108,6 +108,25 @@ def test_start_and_verified_rollover_set_epoch():
         assert mod.load_state()["last_rollover_epoch"] >= int(time.time()) - 60
 
 
+def test_mark_rotation_stamps_epoch_and_consumes_pending():
+    # R1: overnight-launch.sh calls `mark-rotation` at every spawn -- a
+    # relaunch IS a fresh context, so a pre-crash ship must not force the
+    # fresh worker through a redundant rollover.
+    with tempfile.TemporaryDirectory() as d:
+        mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))
+        mod.save_state({"active": True, "file": "todo/T.md", "section_idx": 2,
+                        "last_rollover_epoch": 1000,
+                        "rollover": {"pending": True, "epoch": 1000}})
+        assert mod.cli(["mark-rotation"]) == 0
+        st = mod.load_state()
+        assert st["last_rollover_epoch"] >= int(time.time()) - 60
+        assert "rollover" not in st  # leftover pending flag consumed
+        # inactive state stays untouched (start owns the fresh-run epoch)
+        mod.save_state({"active": False})
+        assert mod.cli(["mark-rotation"]) == 0
+        assert "last_rollover_epoch" not in mod.load_state()
+
+
 def _git(cwd, *args):
     subprocess.run(["git", "-C", str(cwd), *args], check=True,
                    capture_output=True, text=True)

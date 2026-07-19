@@ -421,6 +421,9 @@ scope, tests in `scripts/overnight/tests/`):
   skill-level check is the load-bearing one: the SECTIONS loop never re-calls
   `cursor` between sections of one file. Deferrals (no stamp) advance freely;
   review/close skills stay unblocked (they legitimately run post-ship).
+  `overnight-launch.sh` stamps the boundary at every spawn (`mark-rotation`):
+  a relaunch IS a fresh context, so a crash/usage-limit relaunch never forces
+  a redundant rollover before the fresh worker's first section.
 - **R2 bypass-shape hardening** (`build_offload_reminder.py`): the P3.4 block
   now also catches `make test-*`, absolute-path, `./`-prefixed, and direct
   execution of the suite scripts; the sanctioned `run-artifact.sh` reroute logs

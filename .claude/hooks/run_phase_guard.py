@@ -1091,6 +1091,23 @@ def cli(argv):
         save_state({"active": False})
         print(f"[sequencer] cleared: {' '.join(argv[1:]) or 'no reason'}", file=sys.stderr)
         return 0
+    if cmd == "mark-rotation":
+        # R1 (2026-07-19): called by overnight-launch.sh at every spawn. A
+        # (re)launch IS a fresh worker context, so it counts as a rotation
+        # boundary -- without this, a crash / usage-limit relaunch (which
+        # never ran the `rollover` verb) would leave last_rollover_epoch
+        # pointing before the dead session's ship and force the fresh worker
+        # through a redundant rollover (plus a 10-min watchdog wait) before
+        # its first section. Also consumes a leftover rollover-pending flag
+        # (its one permitted stop already happened -- the session is gone).
+        if not state.get("active"):
+            return 0  # not-yet-started run: `start` sets its own epoch
+        state["last_rollover_epoch"] = int(time.time())
+        state.pop("rollover", None)
+        save_state(state)
+        print("[sequencer] rotation boundary stamped (fresh worker context)",
+              file=sys.stderr)
+        return 0
     if cmd == "relifecycle":
         # One-shot Stage 1-2 override for a mature file that grew a genuinely
         # NEW section. Consumed by the next Stage 1-2 skill invocation.

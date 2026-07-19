@@ -218,6 +218,12 @@ if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" = "1" ]; then
   exit 0
 fi
 
+# R1 (2026-07-19): a (re)launch IS a fresh worker context -- stamp the
+# rotation boundary so a crash/usage-limit relaunch does not force the fresh
+# worker through a redundant rollover before its first section. No-op when
+# the run has not started (`start` sets its own epoch). Best-effort.
+python3 "$PROJECT_DIR/.claude/hooks/run_phase_guard.py" mark-rotation 2>/dev/null || true
+
 # ChromeMCP lane isolation (I5): FAIL-SAFE OFF. The lane is acquired ONLY on an
 # explicit positive browser signal (OVERNIGHT_WITH_BROWSER=1 or the sentinel file
 # .claude/state/overnight-with-browser, written by arm-sequencer.sh
