@@ -709,6 +709,9 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > - **How it integrates** -- klog-safe ring-3 legs of `ki_dispatch_exception` (not the lock-free kernel-SEH walk); per-process packed-atomic 100/1s gate; `#if CONFIG_EXCEPT_TELEMETRY` (default on) compiles the hook + event string out when off.
 > - **Downstream effects** -- ring-3 per-handler telemetry owned by TODO-04 §5; per-process attribution becomes exact when TODO-07 §3 per-CPU cursor lands. Codex design-review adoptions in the commit message.
 > - **Scope boundary** -- §16 owns the kernel-boundary emitter + shared `exception_dispatch` JSON schema; the ring-3 VEH→SEH→VCH chain telemetry is TODO-04 §5 (the kernel has no ring-0 VEH/VCH walker).
+> **Verified:** 2026-07-19 | commit `ddd82c57` | 5/6 items | build OK | tests 455/455, smoke PASS
+> **Accepted:** [M] telemetry emission adds a synchronous `klog_disk` flush+alloc on the ring-3 fault leg (pre-existing same-leg `klog` behavior; kernel-quality-auditor rated LOW) -> XREF: `02-kernel-core/TODO-32 §2` (item: "`klog_v2` ... atomic enqueue, returns" at line 88)
+> **Quality reviewed:** 2026-07-19 | Codex 12x (design, adversarial, re-adversarial, consistency, perf) | 1H+8M fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
 
 ---
@@ -764,8 +767,8 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | Kernel __try/__except         | ✅                     | ❌                  | 🟡 §14 KI_TRY/KI_EXCEPT v1 (regn+setjmp; __finally deferred) |
 | 💎   | POSIX signal from faults      | ❌                     | ✅                  | ⬜ §15 compat                                                |
 | 💎   | sigaltstack overflow          | ❌                     | ✅                  | ⬜ §15 compat                                                |
-| ⭐   | Dispatch telemetry            | ❌                     | ❌                  | 🟡 §16 kernel-boundary JSON; ring-3 chain → T04 §5          |
-| ⭐   | Exception budget / storm ctrl | ❌                     | ❌                  | ✅ §16 per-proc 100/1s + 256/1s aggregate gate              |
+| ⭐   | Dispatch telemetry            | ❌                     | ❌                  | 🟡 §16 kernel-boundary JSON; ring-3 chain → T04 §5           |
+| ⭐   | Exception budget / storm ctrl | ❌                     | ❌                  | ✅ §16 per-proc 100/1s + 256/1s aggregate gate               |
 
 > **After parity items:** Impossible OS matches Windows on the full SEH/VEH/VCH pipeline and matches Linux on POSIX signal delivery. Exclusive differentiators: **dispatch telemetry** recording the full VEH → SEH → VCH handler chain into the JSON structured log (neither WER nor core dumps capture the decision sequence); and **exception storm control** rate-limiting per-process exceptions to prevent DoS from runaway JITs or intentional exception flooding. (Safe probing itself is parity: §13 ships a standard RIP-keyed usercopy fixup, matching Windows kernel SEH and Linux `__ex_table`.)
 

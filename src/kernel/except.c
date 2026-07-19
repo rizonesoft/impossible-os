@@ -315,6 +315,12 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
 #define EXCEPT_TELEM_COUNT_BITS  20u
 #define EXCEPT_TELEM_COUNT_MASK  ((1ull << EXCEPT_TELEM_COUNT_BITS) - 1ull)
 
+/* Bounded CAS retry budget: the rate gate runs in fault context with interrupts
+ * disabled (CPU exceptions enter through interrupt gates), so a contended global
+ * counter under a multi-CPU exception storm must NOT spin unbounded. On budget
+ * exhaustion the best-effort telemetry event is simply dropped. */
+#define EXCEPT_TELEM_CAS_RETRIES 64u
+
 /* Map a winnt.h filter disposition to its wire string. */
 static const char *except_disp_str(int disposition)
 {
@@ -375,10 +381,14 @@ uint32_t except_format_dispatch_json(char *buf, uint32_t buflen,
 
 int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t max)
 {
+    unsigned retry;
+
     if (!state)
         return 1;   /* no state = no limiting (fail open) */
 
-    for (;;) {
+    /* Bounded retry (fault context, IF cleared): never spin unbounded on a
+     * contended global counter -- drop the best-effort event on exhaustion. */
+    for (retry = 0; retry < EXCEPT_TELEM_CAS_RETRIES; retry++) {
         uint64_t old = __atomic_load_n(state, __ATOMIC_RELAXED);
         uint64_t win = old >> EXCEPT_TELEM_COUNT_BITS;
         uint64_t cnt = old & EXCEPT_TELEM_COUNT_MASK;
@@ -405,8 +415,10 @@ int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t m
         if (__atomic_compare_exchange_n(state, &old, nv, 0 /*strong*/,
                                         __ATOMIC_RELAXED, __ATOMIC_RELAXED))
             return 1;   /* within budget -- emit */
-        /* CAS lost to a concurrent fault on another CPU: retry with the new value. */
+        /* CAS lost to a concurrent fault on another CPU: back off, then retry. */
+        __asm__ volatile("pause" ::: "memory");
     }
+    return 0;   /* CAS contention budget exhausted -- drop this best-effort event */
 }
 
 /* System-wide aggregate telemetry window (packed like the per-task state). A

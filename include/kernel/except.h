@@ -571,10 +571,16 @@ uint32_t except_format_dispatch_json(char *buf, uint32_t buflen,
 /* Pure rate gate (unit-testable): packed {window_ms:44, count:20} state updated
  * by a lock-free CAS so concurrent faults on two CPUs cannot lose an increment or
  * tear the window reset. Admits up to `max` events per window. Returns 1 if this
- * event is within budget (emit), 0 if the window is saturated (drop). now_ms is a
- * coarse monotonic ms stamp (KeQueryInterruptTimeCoarse()/10000 in the live path).
- * Drives BOTH the per-process gate (max=EXCEPT_TELEM_MAX_PER_WINDOW) and the
- * system-wide aggregate gate (max=EXCEPT_TELEM_GLOBAL_MAX). */
+ * event is within budget (EMIT); returns 0 to DROP in two cases: the window is
+ * saturated (>= max this window), OR the bounded CAS retry budget is exhausted
+ * under heavy multi-CPU contention (a fault-context loop must not spin unbounded
+ * with interrupts disabled -- dropping a best-effort telemetry event is the safe
+ * outcome). now_ms is a coarse monotonic ms stamp (KeQueryInterruptTimeCoarse()/
+ * 10000 in the live path). Drives BOTH the per-process gate
+ * (max=EXCEPT_TELEM_MAX_PER_WINDOW) and the system-wide aggregate gate
+ * (max=EXCEPT_TELEM_GLOBAL_MAX). The contention-exhaustion path is reachable only
+ * under real concurrent faults (single-threaded callers never lose the CAS), so it
+ * is validated on multi-CPU hardware, not the unit harness. */
 int except_telem_rate_gate(volatile uint64_t *state, uint32_t now_ms, uint32_t max);
 
 /* Emit one exception-dispatch telemetry event for the current process. Safe ONLY
