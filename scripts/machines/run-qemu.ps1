@@ -27,7 +27,7 @@ Param(
     [int]$Smp = 0,  # 0 = auto (2 for WHPX/KVM, 1 for TCG)
     [switch]$DebugTests,  # boot with debug=1 (unit + boot tests)
     [switch]$TestOnly,    # boot with test=1 (unit tests, then shutdown)
-    [ValidateSet('', 'mm', 'fs', 'sched', 'ob', 'security', 'ipc', 'boot', 'abi', 'storage', 'exec', 'x86', 'desktop')]
+    [ValidateSet('', 'mm', 'fs', 'sched', 'ob', 'security', 'ipc', 'boot', 'abi', 'storage', 'exec', 'x86', 'desktop', 'ex', 'nls', 'knf', 'except', 'quota')]
     [string]$TestSuite = '',  # category filter: must match a kernel TEST_CAT_* enum
     [switch]$Quiet,       # suppress PASS lines, show FAIL + summary only
     [string]$ExtraArgs = '',  # additional QEMU arguments (e.g., "-machine pc,i8042=on")

@@ -59,7 +59,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [x] Persistent storage/volume quota is provider-owned, not a scalar central type (a unified view needs (resource,volume,owner) keying + SID<->uid map -- defer). -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §12`.
 - [x] Commit: quota: resource type registry with per-type unit/limit/name.
 
-**Test checkpoint:** `quota_types_dump()` at boot lists all 14 registered types with name, accounting unit, and default limit (verified: serial shows the 14-row dump at `[0.000]` before Object Manager init); `test=1` shows 9 Quota suites, 0 failures; smoke boots to `C:\>`.
+**Test checkpoint:** in a test boot (`test=1`) `quota_types_dump()` lists all 14 registered types with name, unit, and default limit (verified: SUITE=quota serial shows the 14-row dump); production boots emit only the one-line validated-count summary; `test=1` shows 9 Quota suites / 211 assertions, 0 failures; smoke boots to `C:\>`.
 
 > **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
 
@@ -69,6 +69,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Downstream effects** -- the taxonomy is the single source of truth every later section (charge API §2 onward) keys off; no section may invent a type outside this table.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (design invariants).
 > - **Scope boundary** -- §1 owns the taxonomy only; concrete numeric caps are TODO-02 config policy (§6); persistent storage/volume quota is provider-owned (TODO-07 §12).
+> **Verified:** 2026-07-19 | commit `0df5e3ee` | 5/5 items | build OK | smoke PASS (TCG 2.9s), tests 9/9 PASS
+> **Quality reviewed:** 2026-07-19 | Codex 13x (design, adversarial, consistency, perf) | 8M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -207,7 +209,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## Unit Tests
 
-> Test file: `src/kernel/test/test_quota.c`, registered via `test_suite_register_cat(...)` in `test_runner_init()`. Core charge/pool assertions land under `TEST_CAT_MM` (quota accounting is pool-anchored and its bat already exists); object/handle-quota and security-quota assertions may extend `TEST_CAT_OB` / `TEST_CAT_SECURITY` respectively when §4/§3 integrations land. Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
+> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
 - [ ] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
 - [ ] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
@@ -233,10 +235,10 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 ## Verification
 
 - [ ] `bash scripts/build.sh` -> `=== BUILD OK ===`.
-- [ ] `bash scripts/test.sh SUITE=mm QUIET=1` -> quota suites pass, 0 failures.
+- [ ] `bash scripts/test.sh SUITE=quota QUIET=1` -> quota suites pass, 0 failures.
 - [ ] `grep -R "quota_charge" src/kernel` shows every charge path names a resource type and owner.
 - [ ] `quota_dump()` output appears in the boot serial log and in a forced crash dump.
 - [ ] Verify on bare metal -- VM behavior differs for pool/working-set counters.
 
-**Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | N suites, 0 failures
+**Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
 

@@ -62,22 +62,27 @@ static void test_quota_out_of_range_safe(void)
  * row, not just a sampled few. */
 static void test_quota_units_all_rows(void)
 {
-    static const quota_unit_t expect[QUOTA_RESOURCE_TYPE_COUNT] = {
-        [QUOTA_RES_HANDLE]             = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_OBJECT_BODY]        = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_NAMESPACE_ENTRY]    = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_PAGED_POOL]         = QUOTA_UNIT_BYTES,
-        [QUOTA_RES_NONPAGED_POOL]      = QUOTA_UNIT_BYTES,
-        [QUOTA_RES_REGISTRY_BYTES]     = QUOTA_UNIT_BYTES,
-        [QUOTA_RES_ALPC_MESSAGE]       = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_NOTIFICATION_STATE] = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_TIMER]              = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_THREAD]             = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_PROCESS]            = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_SECTION]            = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_MAPPED_VIEW]        = QUOTA_UNIT_COUNT,
-        [QUOTA_RES_CRASH_BUFFER]       = QUOTA_UNIT_BYTES,
+    /* Positional (unsized) in enum order: an appended enum member without a
+     * matching row here shrinks sizeof(expect) so the assert fails at compile
+     * time -- a sized [COUNT] array would tautologically always pass. */
+    static const quota_unit_t expect[] = {
+        QUOTA_UNIT_COUNT,   /* HANDLE             */
+        QUOTA_UNIT_COUNT,   /* OBJECT_BODY        */
+        QUOTA_UNIT_COUNT,   /* NAMESPACE_ENTRY    */
+        QUOTA_UNIT_BYTES,   /* PAGED_POOL         */
+        QUOTA_UNIT_BYTES,   /* NONPAGED_POOL      */
+        QUOTA_UNIT_BYTES,   /* REGISTRY_BYTES     */
+        QUOTA_UNIT_COUNT,   /* ALPC_MESSAGE       */
+        QUOTA_UNIT_COUNT,   /* NOTIFICATION_STATE */
+        QUOTA_UNIT_COUNT,   /* TIMER              */
+        QUOTA_UNIT_COUNT,   /* THREAD             */
+        QUOTA_UNIT_COUNT,   /* PROCESS            */
+        QUOTA_UNIT_COUNT,   /* SECTION            */
+        QUOTA_UNIT_COUNT,   /* MAPPED_VIEW        */
+        QUOTA_UNIT_BYTES,   /* CRASH_BUFFER       */
     };
+    _Static_assert(sizeof(expect) / sizeof(expect[0]) == QUOTA_RESOURCE_TYPE_COUNT,
+                   "expected-unit table must have one positional entry per resource type");
     for (uint32_t i = 0; i < QUOTA_RESOURCE_TYPE_COUNT; i++)
         TEST_ASSERT_EQ((uint64_t)quota_resource_desc((quota_resource_type_t)i)->unit,
                        (uint64_t)expect[i], "resource type unit matches expected");

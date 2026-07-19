@@ -173,12 +173,16 @@ void boot_phase2(void)
     /* --- Resource quota registry: validate the resource-type taxonomy at the
      * very start of Phase 2 -- before SMP, storage, VFS, and any subsystem that
      * will later charge quota. The table is static const (valid at link time);
-     * this validates it, halts boot on a malformed table, then dumps the table
-     * to serial so metadata can be verified on real hardware. --- */
+     * this validates it and halts boot on a malformed table (the full table is
+     * dumped to serial only in test boots -- see below). --- */
     POST16(POST16_QUOTA);
     if (quota_register_types() == BOOT_FATAL)
         boot_halt("Resource quota registry validation failed");
-    quota_types_dump();
+    /* The one-line validated-count summary above ships on every boot; the full
+     * 14-row table is diagnostic metadata (~1 KB of polled serial), so emit it
+     * only in test boots to keep production boot latency down. */
+    if (g_boot_info.config.test)
+        quota_types_dump();
     POST16(POST16_QUOTA_OK);
     boot_progress(2, "QUOTA", POST16_QUOTA_OK);
 

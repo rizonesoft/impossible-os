@@ -71,18 +71,18 @@ boot_result_t quota_register_types(void)
     for (uint32_t i = 0; i < QUOTA_RESOURCE_TYPE_COUNT; i++) {
         const quota_resource_desc_t *d = &g_quota_desc[i];
         if (d->name == (const char *)0 || d->name[0] == '\0') {
-            klog(LOG_FATAL, "quota", "resource type %u has no name", (uint64_t)i);
+            klog(LOG_ERROR, "quota", "resource type %u has no name", (uint64_t)i);
             return BOOT_FATAL;
         }
         if (d->unit != QUOTA_UNIT_COUNT && d->unit != QUOTA_UNIT_BYTES) {
-            klog(LOG_FATAL, "quota", "resource type %u (%s) has bad unit %d",
+            klog(LOG_ERROR, "quota", "resource type %u (%s) has bad unit %d",
                  (uint64_t)i, d->name, (int64_t)d->unit);
             return BOOT_FATAL;
         }
         /* Security-sensitive: every row must name a real override privilege; a
          * zero LUID would mean nothing gates raising this resource's cap. */
         if (RtlIsZeroLuid(&d->override_privilege)) {
-            klog(LOG_FATAL, "quota", "resource type %u (%s) has a zero override privilege",
+            klog(LOG_ERROR, "quota", "resource type %u (%s) has a zero override privilege",
                  (uint64_t)i, d->name);
             return BOOT_FATAL;
         }
@@ -90,7 +90,7 @@ boot_result_t quota_register_types(void)
          * to one label. */
         for (uint32_t j = 0; j < i; j++) {
             if (quota_name_eq(d->name, g_quota_desc[j].name)) {
-                klog(LOG_FATAL, "quota", "resource type %u (%s) duplicates type %u",
+                klog(LOG_ERROR, "quota", "resource type %u (%s) duplicates type %u",
                      (uint64_t)i, d->name, (uint64_t)j);
                 return BOOT_FATAL;
             }
