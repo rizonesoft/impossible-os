@@ -25,6 +25,11 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
 
+/* Forward declaration: kernel-mode SEH (KI_TRY/KI_EXCEPT) registration chain
+ * head lives in struct thread. Full type in kernel/except.h; forward-declared
+ * here so task.h stays free of the exception-ABI include. */
+struct ki_exception_registration;
+
 /* Task states */
 #define TASK_RUNNING    0   /* currently on the CPU */
 #define TASK_READY      1   /* runnable, waiting for scheduler */
@@ -191,6 +196,15 @@ struct thread {
                                      * Acquired/released via atomic exchange in knf.c: the
                                      * global scheduler cursor can alias one thread across
                                      * CPUs, so a plain set/clear could tear. Zero-init. */
+    /* --- Kernel-mode SEH (KI_TRY/KI_EXCEPT) --- */
+    struct ki_exception_registration *kernel_exception_list; /* newest-first chain of active
+                                     * KI_TRY registrations on THIS thread's kernel stack; NULL =
+                                     * no guard active. Follows the thread across CPU migration.
+                                     * ki_raise_kernel_exception walks it in fault context after
+                                     * snapshotting thread_current() once and validating the trap
+                                     * RSP against this thread's stack bounds. Zero-init; reset to
+                                     * NULL on thread-slot (re)creation (a leaked node would point
+                                     * at freed stack). Mutated only by the owning thread. */
     /* --- Impersonation (SRM token assignment) --- */
     void       *impersonation_token; /* ACCESS_TOKEN *; thread-level override, NULL = use the
                                       * owning task's primary token. Swapped only by the current

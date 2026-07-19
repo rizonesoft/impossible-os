@@ -18,6 +18,7 @@
 #include "kernel/nt/zw.h"    /* ssdt_syscall_enter/leave -- bugcheck classification */
 #include "kernel/cpu_security.h" /* __uaccess_copy_* / __uaccess_touch_w -- guarded copies */
 #include "kernel/mm/pmm.h"       /* pmm_alloc_frame -- live fault-recovery test */
+#include "kernel/sched/task.h"   /* thread_current, struct thread -- kernel SEH chain (s14) */
 #include "kernel/wer.h"          /* wer_format_fault_line -- WerpReportFault line (TODO-23 s12) */
 #include "libc/string.h"         /* memcmp -- exact-bytes assertion */
 
@@ -457,7 +458,7 @@ static void test_dispatch_user_no_debugger_declines(void)
                    KI_EXCEPTION_UNHANDLED,
                    "user dispatch, no debug port -> UNHANDLED (caller terminates)");
     TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
-                   KI_EXCEPTION_UNHANDLED, "kernel SEH walk stub declines");
+                   KI_EXCEPTION_UNHANDLED, "kernel SEH walk declines with no registration");
 }
 
 /* Section 4: DbgkForwardException is a stub returning FALSE until a user-mode
@@ -957,6 +958,394 @@ static void test_wer_format_fault_line(void)
                    "wer_format_fault_line rejects a NULL buffer");
 }
 
+/* ---- Kernel-mode structured exception handling (KI_TRY / KI_EXCEPT, s14) ----
+ *
+ * The frame-rewrite tests below bracket the current stack in thread_current()'s
+ * stack window so ki_raise_kernel_exception can validate the trap RSP without a
+ * live fault, then restore it -- deterministic, no crash risk. The final test IS
+ * a controlled live fault (guarded by TEST-SIDE-EFFECT-ALLOWED). */
+
+/* Publish a stack window bracketing the current frame so ki_seh_register's
+ * publication guard and ki_raise's RSP validation accept synthetic nodes/frames;
+ * caller restores. */
+static uintptr_t ki_seh_test_open_window(struct thread *t, uint8_t **saved_base,
+                                         uint32_t *saved_size)
+{
+    volatile uint8_t probe = 0;
+    uintptr_t sp = (uintptr_t)&probe;
+    *saved_base = t->stack_base;
+    *saved_size = t->stack_size;
+    t->stack_base = (uint8_t *)(sp - 0x4000);   /* 16 KiB below current SP */
+    t->stack_size = 0x8000;                     /* 32 KiB window around SP */
+    return sp;
+}
+
+/* The initial return of ki_seh_setjmp is 0, with a plausible RSP/RIP captured
+ * (the "second return" of 1 is synthesized only by a frame rewrite, never here). */
+static void test_ki_seh_setjmp_initial_return(void)
+{
+    KI_JMP_BUF jb;
+    int rc;
+    uint32_t i;
+    for (i = 0; i < (uint32_t)sizeof(jb); i++)
+        ((uint8_t *)&jb)[i] = 0xAA;   /* poison before capture */
+    rc = ki_seh_setjmp(&jb);
+    TEST_ASSERT_EQ((uint32_t)rc, 0u, "ki_seh_setjmp initial return is 0");
+    TEST_ASSERT(jb.Rip != 0xAAAAAAAAAAAAAAAAULL && jb.Rip != 0,
+                "ki_seh_setjmp captured a return RIP");
+    TEST_ASSERT(jb.Rsp != 0xAAAAAAAAAAAAAAAAULL && jb.Rsp != 0,
+                "ki_seh_setjmp captured a stack RSP");
+    /* The captured RSP (the test frame's SP at the call) sits in the same frame
+     * as &jb; direction-agnostic proximity, since SP is below locals. */
+    {
+        uintptr_t addr = (uintptr_t)&jb;
+        uintptr_t diff = (addr > jb.Rsp) ? (addr - jb.Rsp) : (jb.Rsp - addr);
+        TEST_ASSERT(diff < 0x2000, "captured Rsp is within the calling stack frame");
+    }
+}
+
+/* ki_seh_register / ki_seh_deregister maintain a LIFO chain on the current
+ * thread; ki_seh_auto_pop is idempotent. Pure pointer bookkeeping -- no stack
+ * bounds needed, so it runs on the boot thread. */
+static void test_ki_seh_chain_lifo(void)
+{
+    struct thread *t = thread_current();
+    KI_EXCEPTION_REGISTRATION *saved;
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    KI_EXCEPTION_REGISTRATION a, b;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+    /* register now requires the node on the thread stack; open a window covering
+     * these locals (a/b live in this frame). */
+    (void)ki_seh_test_open_window(t, &saved_base, &saved_size);
+    a.linked = 0; b.linked = 0;
+
+    ki_seh_register(&a);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list,
+                   (uint64_t)(uintptr_t)&a, "register a -> a is head");
+    TEST_ASSERT_EQ((uint32_t)a.linked, 1u, "a linked");
+    ki_seh_register(&b);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list,
+                   (uint64_t)(uintptr_t)&b, "register b -> b is head");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)b.prev, (uint64_t)(uintptr_t)&a, "b.prev == a");
+    ki_seh_deregister(&b);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list,
+                   (uint64_t)(uintptr_t)&a, "deregister b -> a is head");
+    TEST_ASSERT_EQ((uint32_t)b.linked, 0u, "b unlinked");
+    ki_seh_auto_pop(&b);   /* idempotent: b already unlinked */
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list,
+                   (uint64_t)(uintptr_t)&a, "auto_pop of unlinked b is a no-op");
+    ki_seh_deregister(&a);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list, 0ULL,
+                   "deregister a -> empty chain");
+
+    t->stack_base = saved_base;
+    t->stack_size = saved_size;
+    t->kernel_exception_list = saved;
+}
+
+/* ki_raise declines (stays terminal) before any chain walk when the chain is
+ * empty, and when the trapped RFLAGS.IF is clear (a fault in a cli section must
+ * not be resumed with interrupts disabled). */
+static void test_ki_raise_decline_paths(void)
+{
+    struct thread *t = thread_current();
+    KI_EXCEPTION_REGISTRATION *saved;
+    KI_EXCEPTION_REGISTRATION n;
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+
+    fill_frame(&f);
+    pf_build_access_violation(&rec, &ctx, &f, 0x5000, f.err_code);
+
+    f.rflags = 0x202;   /* IF set */
+    TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
+                   KI_EXCEPTION_UNHANDLED, "empty chain -> declines");
+
+    n.linked = 0;
+    ki_seh_register(&n);
+    f.rflags = 0x002;   /* IF clear */
+    TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f),
+                   KI_EXCEPTION_UNHANDLED, "IF clear -> declines (no resume in cli section)");
+    ki_seh_deregister(&n);
+
+    t->kernel_exception_list = saved;
+}
+
+/* A matching handler (filter NULL == EXECUTE_HANDLER) rewrites the trap frame to
+ * the landing pad, delivers the code, normalizes RFLAGS, and pops the node. */
+static void test_ki_raise_matches_and_rewrites(void)
+{
+    struct thread *t = thread_current();
+    KI_EXCEPTION_REGISTRATION *saved_head;
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    uintptr_t sp;
+    KI_EXCEPTION_REGISTRATION reg;
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    KI_EXCEPTION_DISPOSITION d;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved_head = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+    sp = ki_seh_test_open_window(t, &saved_base, &saved_size);
+
+    reg.linked = 0; reg.filter = (KI_EXCEPTION_FILTER)0; reg.filter_ctx = (void *)0;
+    reg.code = 0; reg.fault_addr = (void *)0;
+    reg.jmp.Rbx = 0xB0; reg.jmp.Rbp = 0xB1; reg.jmp.R12 = 0xB2; reg.jmp.R13 = 0xB3;
+    reg.jmp.R14 = 0xB4; reg.jmp.R15 = 0xB5;
+    reg.jmp.Rsp = sp;                /* landing rsp within window */
+    reg.jmp.Rip = 0xCAFE1000ULL;     /* landing rip sentinel */
+    ki_seh_register(&reg);
+
+    fill_frame(&f);
+    f.rflags = 0x202ULL | 0x400ULL | 0x40000ULL; /* IF set + DF + AC (prove they clear) */
+    f.rsp = (uint64_t)(sp - 0x100);              /* fault rsp below the landing, in window */
+    pf_build_access_violation(&rec, &ctx, &f, 0x6000, f.err_code);
+    rec.ExceptionCode = STATUS_ACCESS_VIOLATION;
+
+    d = ki_raise_kernel_exception(&rec, &ctx, &f);
+    {
+        /* Capture the post-raise head BEFORE restoring: reg->prev was NULL, so a
+         * clean pop leaves the chain empty. */
+        KI_EXCEPTION_REGISTRATION *head_after = t->kernel_exception_list;
+        uint8_t node_linked_after = reg.linked;
+        t->stack_base = saved_base;
+        t->stack_size = saved_size;
+        t->kernel_exception_list = saved_head;
+
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)head_after, 0ULL,
+                       "node popped after handle (chain empty)");
+        TEST_ASSERT_EQ((uint32_t)node_linked_after, 0u, "node unlinked after handle");
+    }
+
+    TEST_ASSERT_EQ(d, KI_EXCEPTION_HANDLED, "matching handler -> HANDLED");
+    TEST_ASSERT_EQ(f.rip, 0xCAFE1000ULL, "frame RIP rewritten to landing");
+    TEST_ASSERT_EQ(f.rsp, (uint64_t)sp, "frame RSP rewritten to landing");
+    TEST_ASSERT_EQ(f.rax, 1ULL, "frame RAX = 1 (setjmp second return)");
+    TEST_ASSERT_EQ(f.rbx, 0xB0ULL, "frame RBX from landing pad");
+    TEST_ASSERT_EQ(f.r15, 0xB5ULL, "frame R15 from landing pad");
+    TEST_ASSERT_EQ((uint32_t)(f.rflags & 0x400ULL), 0u, "DF cleared on landing");
+    TEST_ASSERT_EQ((uint32_t)(f.rflags & 0x40000ULL), 0u, "AC cleared on landing");
+    TEST_ASSERT_EQ((uint32_t)(f.rflags & 0x200ULL), 0x200u, "IF preserved on landing");
+    TEST_ASSERT_EQ((uint32_t)reg.code, (uint32_t)STATUS_ACCESS_VIOLATION,
+                   "fault code delivered to the node");
+}
+
+static int ki_seh_test_filter_search(NTSTATUS c, void *a, void *ctx)
+{ (void)c; (void)a; (void)ctx; return EXCEPTION_CONTINUE_SEARCH; }
+static int ki_seh_test_filter_execute_none(NTSTATUS c, void *a, void *ctx)
+{ (void)c; (void)a; (void)ctx; return EXCEPTION_CONTINUE_EXECUTION; }
+
+/* A filter returning CONTINUE_EXECUTION resolves without rewriting the frame
+ * (resume at the faulting instruction). A CONTINUE_SEARCH inner frame is skipped
+ * so an outer EXECUTE_HANDLER frame takes the exception. */
+static void test_ki_raise_filter_dispositions(void)
+{
+    struct thread *t = thread_current();
+    KI_EXCEPTION_REGISTRATION *saved_head;
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    uintptr_t sp;
+    KI_EXCEPTION_REGISTRATION inner, outer, cont;
+    struct interrupt_frame f;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved_head = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+    sp = ki_seh_test_open_window(t, &saved_base, &saved_size);
+
+    /* --- CONTINUE_EXECUTION: HANDLED, frame untouched --- */
+    cont.linked = 0; cont.filter = ki_seh_test_filter_execute_none;
+    cont.filter_ctx = (void *)0; cont.code = 0; cont.fault_addr = (void *)0;
+    cont.jmp.Rsp = sp; cont.jmp.Rip = 0xEEEE0000ULL;
+    ki_seh_register(&cont);
+    fill_frame(&f);
+    f.rflags = 0x202ULL;
+    f.rsp = (uint64_t)(sp - 0x80);
+    pf_build_access_violation(&rec, &ctx, &f, 0x7000, f.err_code);
+    TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f), KI_EXCEPTION_HANDLED,
+                   "CONTINUE_EXECUTION -> HANDLED");
+    TEST_ASSERT_EQ(f.rip, 0x0000000000401000ULL, "CONTINUE_EXECUTION leaves RIP unchanged");
+    ki_seh_deregister(&cont);
+
+    /* --- CONTINUE_SEARCH inner, EXECUTE outer: outer landing taken --- */
+    outer.linked = 0; outer.filter = (KI_EXCEPTION_FILTER)0; outer.filter_ctx = (void *)0;
+    outer.code = 0; outer.fault_addr = (void *)0;
+    outer.jmp.Rbx = 0; outer.jmp.Rbp = 0; outer.jmp.R12 = 0; outer.jmp.R13 = 0;
+    outer.jmp.R14 = 0; outer.jmp.R15 = 0;
+    outer.jmp.Rsp = sp; outer.jmp.Rip = 0x0DDD0000ULL;
+    ki_seh_register(&outer);
+    inner.linked = 0; inner.filter = ki_seh_test_filter_search; inner.filter_ctx = (void *)0;
+    inner.code = 0; inner.fault_addr = (void *)0;
+    inner.jmp.Rsp = (uint64_t)(sp - 0x40); inner.jmp.Rip = 0x1BAD0000ULL;
+    ki_seh_register(&inner);
+
+    fill_frame(&f);
+    f.rflags = 0x202ULL;
+    f.rsp = (uint64_t)(sp - 0x100);
+    pf_build_access_violation(&rec, &ctx, &f, 0x7000, f.err_code);
+    TEST_ASSERT_EQ(ki_raise_kernel_exception(&rec, &ctx, &f), KI_EXCEPTION_HANDLED,
+                   "CONTINUE_SEARCH inner -> outer HANDLED");
+    TEST_ASSERT_EQ(f.rip, 0x0DDD0000ULL, "outer landing RIP taken (inner searched past)");
+
+    t->stack_base = saved_base;
+    t->stack_size = saved_size;
+    t->kernel_exception_list = saved_head;
+}
+
+/* Live end-to-end: KI_TRY around a write to an unmapped VA takes a real kernel
+ * #PF; ki_raise resumes into the KI_EXCEPT body -- reaching the assert IS the
+ * proof the fault was caught, not fatal. Runs on the boot thread, so a stack
+ * window is temporarily published (the boot stack is not tracked in stack_base).
+ * TEST-SIDE-EFFECT-ALLOWED: triggers one controlled #PF and briefly overrides the
+ * thread stack window; both are restored, no persistent state change. */
+static void test_ki_try_recovers_live_kernel_fault(void)
+{
+    const uintptr_t va = 0x100000000UL;  /* 4 GiB: above the huge identity map, unmapped */
+    struct thread *t = thread_current();
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    volatile int handled = 0;
+    volatile uint8_t probe = 0;
+    uintptr_t sp = (uintptr_t)&probe;
+
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    if (vmm_get_physical(va) != 0) { TEST_SKIP("scratch VA unexpectedly mapped"); return; }
+
+    saved_base = t->stack_base;
+    saved_size = t->stack_size;
+    t->stack_base = (uint8_t *)(sp - 0x4000);
+    t->stack_size = 0x8000;
+
+    {
+        KI_EXCEPTION_FRAME(reg);
+        KI_TRY(reg)
+            *(volatile uint32_t *)va = 0xDEAD;   /* unmapped -> real kernel #PF */
+        KI_EXCEPT(reg)
+            handled = 1;
+        KI_END_TRY;
+
+        t->stack_base = saved_base;
+        t->stack_size = saved_size;
+
+        TEST_ASSERT_EQ((uint32_t)handled, 1u,
+                       "KI_TRY recovered a live kernel #PF (handler fired, kernel continued)");
+        TEST_ASSERT_EQ((uint32_t)KI_EXCEPTION_CODE(reg), (uint32_t)STATUS_ACCESS_VIOLATION,
+                       "delivered exception code is STATUS_ACCESS_VIOLATION");
+    }
+}
+
+/* A non-local exit (break) out of a KI_TRY body must not leave a stale node on
+ * the chain: the do-block cleanup guard pops it on the way out. */
+static void test_ki_try_nonlocal_exit_pops(void)
+{
+    struct thread *t = thread_current();
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    KI_EXCEPTION_REGISTRATION *saved_head;
+    int ran = 0;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved_head = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+    (void)ki_seh_test_open_window(t, &saved_base, &saved_size);
+
+    {
+        KI_EXCEPTION_FRAME(reg);
+        KI_TRY(reg)
+            ran = 1;
+            break;   /* non-local exit: skips KI_EXCEPT's deregister */
+        KI_EXCEPT(reg)
+            ran = 2; /* not reached */
+        KI_END_TRY;
+    }
+
+    t->stack_base = saved_base;
+    t->stack_size = saved_size;
+
+    TEST_ASSERT_EQ((uint32_t)ran, 1u, "try body ran, handler did not");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list, 0ULL,
+                   "non-local break out of KI_TRY pops the node (chain restored)");
+
+    t->kernel_exception_list = saved_head;
+}
+
+/* ki_seh_register refuses to publish a node that is not on the resolved thread's
+ * kernel stack (the SMP global-cursor publication guard). */
+static void test_ki_seh_register_rejects_offstack_node(void)
+{
+    struct thread *t = thread_current();
+    uint8_t *saved_base;
+    uint32_t saved_size;
+    KI_EXCEPTION_REGISTRATION *saved_head;
+    KI_EXCEPTION_REGISTRATION node;
+    if (!t) { TEST_SKIP("no current thread"); return; }
+    saved_head = t->kernel_exception_list;
+    t->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+    saved_base = t->stack_base;
+    saved_size = t->stack_size;
+    /* A stack window that deliberately does NOT contain &node (simulates a wrong
+     * global cursor resolving to a foreign thread). */
+    t->stack_base = (uint8_t *)0x10000;
+    t->stack_size = 0x1000;
+
+    node.linked = 0;
+    node.prev = (KI_EXCEPTION_REGISTRATION *)0;
+    ki_seh_register(&node);
+
+    t->stack_base = saved_base;
+    t->stack_size = saved_size;
+
+    TEST_ASSERT_EQ((uint32_t)node.linked, 0u,
+                   "register skips a node off the resolved thread's stack");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->kernel_exception_list, 0ULL,
+                   "chain unchanged when register is skipped");
+
+    t->kernel_exception_list = saved_head;
+}
+
+/* Owner-stable deregistration: a node unlinks from its RECORDED owner's chain,
+ * NOT thread_current()'s. This is the SMP race the single-CPU non-local-exit test
+ * cannot reach -- if the global cursor changed between register and cleanup,
+ * deregistration must still clear the real owner's chain. Simulated with a
+ * synthetic owner distinct from the current thread. */
+static struct thread ki_seh_test_fake_owner;   /* BSS: avoid a huge stack frame */
+static void test_ki_seh_deregister_uses_owner(void)
+{
+    struct thread *cur = thread_current();
+    KI_EXCEPTION_REGISTRATION node;
+    KI_EXCEPTION_REGISTRATION *saved_cur;
+    if (!cur) { TEST_SKIP("no current thread"); return; }
+    saved_cur = cur->kernel_exception_list;
+
+    /* Publish `node` on the FAKE owner's chain (as register would if the cursor
+     * had pointed there); thread_current() is a DIFFERENT thread with an empty
+     * chain. */
+    ki_seh_test_fake_owner.kernel_exception_list = &node;
+    node.prev = (KI_EXCEPTION_REGISTRATION *)0;
+    node.owner = &ki_seh_test_fake_owner;
+    node.linked = 1;
+    cur->kernel_exception_list = (KI_EXCEPTION_REGISTRATION *)0;
+
+    ki_seh_deregister(&node);
+
+    TEST_ASSERT_EQ((uint32_t)node.linked, 0u, "node unlinked via its recorded owner");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)ki_seh_test_fake_owner.kernel_exception_list, 0ULL,
+                   "removed from the OWNER's chain, not thread_current()'s");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)cur->kernel_exception_list, 0ULL,
+                   "thread_current()'s chain untouched by the owner-stable pop");
+
+    cur->kernel_exception_list = saved_cur;
+}
+
 void test_register_except(void)
 {
     test_suite_register_cat("Except: CONTEXT size",
@@ -1045,6 +1434,24 @@ void test_register_except(void)
                             test_veh_handler_abi, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: WER fault line format (s12)",
                             test_wer_format_fault_line, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ki_seh_setjmp initial return 0 (s14)",
+                            test_ki_seh_setjmp_initial_return, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: KI_TRY chain LIFO push/pop (s14)",
+                            test_ki_seh_chain_lifo, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ki_raise decline paths (s14)",
+                            test_ki_raise_decline_paths, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ki_raise match + frame rewrite (s14)",
+                            test_ki_raise_matches_and_rewrites, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: ki_raise filter dispositions (s14)",
+                            test_ki_raise_filter_dispositions, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: KI_TRY recovers live kernel #PF (s14)",
+                            test_ki_try_recovers_live_kernel_fault, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: KI_TRY non-local exit pops node (s14)",
+                            test_ki_try_nonlocal_exit_pops, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: register rejects off-stack node (s14)",
+                            test_ki_seh_register_rejects_offstack_node, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: deregister uses recorded owner (s14)",
+                            test_ki_seh_deregister_uses_owner, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

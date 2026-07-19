@@ -21,6 +21,7 @@
 #include "kernel/boot_init.h"   /* POST16 (except_init is boot-path phase 1) */
 #include "kernel/wer.h"         /* wer_write_crash_report -- user-mode terminal path */
 #include "kernel/sched/task.h"  /* thread_current()->in_system_service (bugcheck class) */
+#include "kernel/sched/irql.h"  /* KeGetCurrentIrql, APC_LEVEL -- kernel-SEH IRQL gate */
 
 /* Local byte-wise zero: the kernel has no memset declaration in a header, and
  * panic.c zeroes CONTEXT the same way. Keeps this file dependency-free so it
@@ -286,14 +287,275 @@ KI_EXCEPTION_DISPOSITION ki_dispatch_exception(EXCEPTION_RECORD *rec, CONTEXT *c
     return KI_EXCEPTION_UNHANDLED;
 }
 
-/* Kernel-mode SEH chain walk. Owned by the kernel-__try/__except stage; the stub
- * declines so an unresolved kernel fault stays terminal (bugcheck) as it is
- * today. -> XREF: TODO-23 kernel-mode __try/__except for drivers. */
+/* --- Kernel-mode structured exception handling (KI_TRY / KI_EXCEPT) ---------
+ *
+ * A registration-list __try/__except: KI_TRY pushes a stack-local node onto the
+ * current thread's chain (kernel_exception_list) and captures a setjmp-style
+ * landing pad via ki_seh_setjmp; a kernel fault walks the chain here and, on a
+ * matching handler, rewrites the trap frame to the landing pad and returns
+ * HANDLED (the IRETQ then "returns 1" from ki_seh_setjmp into the __except body).
+ * See include/kernel/except.h for the full contract; this file owns the raise +
+ * chain-management side. All of it runs in fault context: klog-free, alloc-free.
+ * -------------------------------------------------------------------------- */
+
+/* Per-CPU "inside kernel-SEH dispatch" flag. A fault that RE-ENTERS the walk or
+ * a filter on this CPU is a collided kernel exception -- possibly on a different
+ * vector than the original (so the per-vector in_use scratch guards do not catch
+ * it) -- and terminates. File-static per-CPU array (not the gs:-based per-CPU
+ * struct, so the ABI/offsets are untouched); cache-line padded like the scratch
+ * to avoid false sharing between CPUs. */
+#define EXCEPT_CACHELINE 64u   /* shared with the per-CPU fault scratch below */
+struct ki_seh_disp {
+    volatile uint32_t active;
+} __attribute__((aligned(EXCEPT_CACHELINE)));
+static struct ki_seh_disp ki_seh_dispatch[MAX_CPUS] __attribute__((aligned(EXCEPT_CACHELINE)));
+
+/* RFLAGS bits normalized on a handler landing (or checked at raise time). */
+#define KI_RFLAGS_TF  0x00000100u
+#define KI_RFLAGS_IF  0x00000200u
+#define KI_RFLAGS_DF  0x00000400u
+#define KI_RFLAGS_NT  0x00004000u
+#define KI_RFLAGS_RF  0x00010000u
+#define KI_RFLAGS_AC  0x00040000u
+
+/* Bound on the chain walk so a corrupt/cyclic chain cannot spin forever. A real
+ * kernel call chain nests far below this. */
+#define KI_SEH_MAX_WALK  512u
+
+/* True if [lo, hi) is a valid window and `p` lies within it. */
+static int ki_seh_in_range(uint64_t p, uint64_t lo, uint64_t hi)
+{
+    return (lo != 0) && (hi > lo) && (p >= lo) && (p < hi);
+}
+
+/* Does `addr` fall within one of THIS thread's kernel-mode stacks? A kernel
+ * thread executes on stack_base..+stack_size (kernel_rsp == 0); a ring-3 thread
+ * that trapped into the kernel executes on the per-thread kernel stack
+ * (kernel_stack_base..kernel_rsp, kernel_rsp being the TOP). Best-effort: a
+ * kmalloc'd kernel stack has no kernel_stack_base and is only covered by the
+ * primary window, which is acceptable -- a miss declines (safe), never corrupts. */
+static int ki_seh_addr_on_kstack(const struct thread *t, uint64_t addr)
+{
+    uint64_t base = (uint64_t)(uintptr_t)t->stack_base;
+    uint64_t top  = base + (uint64_t)t->stack_size;
+    if (ki_seh_in_range(addr, base, top))
+        return 1;
+    if (t->kernel_stack_base && t->kernel_rsp) {
+        base = (uint64_t)(uintptr_t)t->kernel_stack_base;
+        top  = t->kernel_rsp;
+        if (ki_seh_in_range(addr, base, top))
+            return 1;
+    }
+    return 0;
+}
+
+/* Push a registration onto the current thread's chain. Normal (non-fault)
+ * context only (KI_TRY lowering). Publishes ONLY when the node lives on the
+ * resolved thread's kernel stack: because thread_current() reads a process-global
+ * cursor (the per-CPU cursor is TODO-07 SMP phase-2), an SMP mismatch could
+ * otherwise link this thread's stack node onto ANOTHER thread's chain. The node
+ * is a local on the CALLING thread's stack, so a mismatch (or no current thread,
+ * or a thread with untracked stack bounds like the boot stack) fails the check
+ * and we skip publication -- KI_TRY then provides no protection (the fault stays
+ * terminal), never cross-thread corruption. */
+void ki_seh_register(KI_EXCEPTION_REGISTRATION *reg)
+{
+    struct thread *t = thread_current();
+    reg->prev = (KI_EXCEPTION_REGISTRATION *)0;
+    reg->owner = (struct thread *)0;
+    reg->linked = 0;
+    if (!t || !ki_seh_addr_on_kstack(t, (uint64_t)(uintptr_t)reg))
+        return;
+    /* Record the VALIDATED owner so deregistration is owner-stable: a later
+     * cursor change on another CPU can no longer make cleanup resolve a foreign
+     * chain and orphan this node into a returned frame. */
+    reg->owner = t;
+    reg->prev = t->kernel_exception_list;
+    reg->linked = 1;
+    t->kernel_exception_list = reg;
+}
+
+/* Pop a registration off its OWNER's chain (KI_END_TRY / KI_EXCEPT / cleanup-guard
+ * lowering). Idempotent via `linked`. Unlinks through the owner recorded at
+ * publication -- NOT thread_current() -- so a global-cursor change between
+ * register and cleanup cannot leave the node dangling on the real owner's chain
+ * as the frame ends. The normal case is a LIFO pop of the head; the scan branch
+ * defensively unlinks a node a leaked inner frame left ahead of it. */
+void ki_seh_deregister(KI_EXCEPTION_REGISTRATION *reg)
+{
+    struct thread *t;
+    int removed = 0;
+    if (!reg->linked)
+        return;
+    t = reg->owner;
+    if (t) {
+        if (t->kernel_exception_list == reg) {
+            t->kernel_exception_list = reg->prev;
+            removed = 1;
+        } else {
+            KI_EXCEPTION_REGISTRATION *p = t->kernel_exception_list;
+            uint32_t guard = 0;
+            while (p && p->prev != reg && guard < KI_SEH_MAX_WALK) {
+                p = p->prev;
+                guard++;
+            }
+            if (p && p->prev == reg) {
+                p->prev = reg->prev;
+                removed = 1;
+            }
+        }
+    }
+    /* Clear linked once removed. If the owner pointer was somehow stale (never
+     * happens on the publication path above) removed stays 0 and linked persists,
+     * but no foreign chain was touched. */
+    if (removed)
+        reg->linked = 0;
+}
+
+/* clang `cleanup` handler for KI_EXCEPTION_FRAME: pops the node on ANY scope
+ * exit (including a forbidden non-local exit). Idempotent -- a no-op once the
+ * normal path (KI_EXCEPT) or the fault path (ki_raise) already cleared `linked`. */
+void ki_seh_auto_pop(KI_EXCEPTION_REGISTRATION *reg)
+{
+    if (reg->linked)
+        ki_seh_deregister(reg);
+}
+
+/* Pointer form of ki_seh_auto_pop for the KI_TRY do-block cleanup guard: clang
+ * `cleanup` passes the ADDRESS of the guarded variable (a
+ * KI_EXCEPTION_REGISTRATION *), so this pops through one level of indirection.
+ * The do-block guard fires on EVERY exit from the KI_TRY construct -- normal
+ * fall-through, a fault-resume, AND a non-local break/continue/goto/return that
+ * the lexically-scoped KI_EXCEPTION_FRAME cleanup alone would miss. */
+void ki_seh_auto_pop_ptr(KI_EXCEPTION_REGISTRATION *const *reg)
+{
+    if (reg && *reg)
+        ki_seh_auto_pop(*reg);
+}
+
+/* Kernel-mode SEH chain walk. Called by ki_dispatch_exception (KernelMode leg)
+ * after the first-chance debugger declines. Fault-safe: no klog, no allocation,
+ * no locks. Returns HANDLED (frame rewritten to the landing pad, or left as-is
+ * for CONTINUE_EXECUTION) or UNHANDLED (fault stays terminal). */
 KI_EXCEPTION_DISPOSITION ki_raise_kernel_exception(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                                                    struct interrupt_frame *frame)
 {
-    (void)rec; (void)ctx; (void)frame;
-    return KI_EXCEPTION_UNHANDLED;
+    struct thread *t;
+    KI_EXCEPTION_REGISTRATION *reg;
+    KI_EXCEPTION_DISPOSITION result = KI_EXCEPTION_UNHANDLED;
+    uint32_t cpu;
+    uint32_t walk = 0;
+
+    (void)ctx;
+
+    /* Fault-safe IRQL gate: kernel SEH is only legal at PASSIVE/APC. A fault at
+     * elevated IRQL may be inside klog holding s_klog_lock, so this MUST be a
+     * non-logging check -- KeGetCurrentIrql is a bare per-CPU read (no klog, no
+     * lock). Above APC_LEVEL the fault stays terminal. */
+    if (KeGetCurrentIrql() > APC_LEVEL)
+        return KI_EXCEPTION_UNHANDLED;
+
+    /* Never resume a handler with interrupts disabled: the faulting code was in
+     * a cli / raw critical section, and landing in the __except body would leave
+     * IF clear after abandoning whatever would have re-enabled it. Stay terminal. */
+    if (!(frame->rflags & KI_RFLAGS_IF))
+        return KI_EXCEPTION_UNHANDLED;
+
+    cpu = smp_this_cpu()->cpu_id;
+    if (cpu >= MAX_CPUS)
+        return KI_EXCEPTION_UNHANDLED;
+
+    /* Collided-exception guard: a fault raised while this CPU is mid-walk or in
+     * a filter is a kernel bug -- terminate with KMODE_EXCEPTION_NOT_HANDLED. */
+    if (ki_seh_dispatch[cpu].active) {
+        KeBugCheckExFrame(frame, BUGCHECK_KMODE_EXCEPTION_NOT_HANDLED,
+                          (uint64_t)(uint32_t)rec->ExceptionCode,
+                          (uint64_t)(uintptr_t)rec->ExceptionAddress, 0, 0);
+        return KI_EXCEPTION_UNHANDLED;  /* unreachable */
+    }
+
+    /* Snapshot the current thread EXACTLY ONCE. Every check below uses `t`, so a
+     * concurrent global-cursor change on another CPU cannot make us push onto one
+     * thread and walk another (the reviewed SMP hazard). */
+    t = thread_current();
+    if (!t || !t->kernel_exception_list)
+        return KI_EXCEPTION_UNHANDLED;
+
+    /* SMP cursor validation: the trap RSP must belong to THIS thread's kernel
+     * stack. If the global cursor points at a thread that did NOT fault here, the
+     * stacks will not match and we decline (terminal) rather than IRET into a
+     * foreign thread. */
+    if (!ki_seh_addr_on_kstack(t, frame->rsp))
+        return KI_EXCEPTION_UNHANDLED;
+
+    ki_seh_dispatch[cpu].active = 1;
+
+    for (reg = t->kernel_exception_list; reg && walk < KI_SEH_MAX_WALK; reg = reg->prev, walk++) {
+        int disp;
+        uint64_t node = (uint64_t)(uintptr_t)reg;
+
+        /* Node lifetime + bounds validation (defense-in-depth vs a leaked node):
+         * the node must be owned by THIS thread, the node and its saved landing
+         * RSP must be on this stack, and the landing must be at or above the fault
+         * point (you resume UP the stack, never into an already-passed deeper
+         * frame). A stale/corrupt/foreign node fails here and stops the walk. */
+        if (reg->owner != t ||
+            !ki_seh_addr_on_kstack(t, node) ||
+            !ki_seh_addr_on_kstack(t, reg->jmp.Rsp) ||
+            reg->jmp.Rsp < frame->rsp) {
+            result = KI_EXCEPTION_UNHANDLED;
+            break;
+        }
+
+        disp = reg->filter
+                   ? reg->filter(rec->ExceptionCode, rec->ExceptionAddress, reg->filter_ctx)
+                   : EXCEPTION_EXECUTE_HANDLER;
+
+        if (disp == EXCEPTION_CONTINUE_EXECUTION) {
+            /* Resume at the faulting instruction, frame unchanged. */
+            result = KI_EXCEPTION_HANDLED;
+            break;
+        }
+
+        if (disp == EXCEPTION_EXECUTE_HANDLER) {
+            /* Deliver the code, unlink through the matched node (pop this frame
+             * and every inner one that declined via CONTINUE_SEARCH), then
+             * rewrite the trap frame to the landing pad. */
+            KI_EXCEPTION_REGISTRATION *p;
+            uint32_t g = 0;
+            reg->code = rec->ExceptionCode;
+            reg->fault_addr = rec->ExceptionAddress;
+            for (p = t->kernel_exception_list; p && g < KI_SEH_MAX_WALK; p = p->prev, g++) {
+                p->linked = 0;
+                if (p == reg)
+                    break;
+            }
+            t->kernel_exception_list = reg->prev;
+
+            /* Frame rewrite == the synthesized "ki_seh_setjmp returned 1". */
+            frame->rbx = reg->jmp.Rbx;
+            frame->rbp = reg->jmp.Rbp;
+            frame->r12 = reg->jmp.R12;
+            frame->r13 = reg->jmp.R13;
+            frame->r14 = reg->jmp.R14;
+            frame->r15 = reg->jmp.R15;
+            frame->rsp = reg->jmp.Rsp;
+            frame->rip = reg->jmp.Rip;
+            frame->rax = 1;  /* setjmp second-return value */
+
+            /* Normalize landing RFLAGS: clear DF/AC/TF/NT/RF so the handler runs
+             * with sane SysV ABI state (the ISR stub does not CLD, and a stale AC
+             * would weaken SMAP). IF is guaranteed set (checked above). */
+            frame->rflags &= ~(uint64_t)(KI_RFLAGS_DF | KI_RFLAGS_AC | KI_RFLAGS_TF |
+                                         KI_RFLAGS_NT | KI_RFLAGS_RF);
+            result = KI_EXCEPTION_HANDLED;
+            break;
+        }
+        /* EXCEPTION_CONTINUE_SEARCH: fall through to the next-older frame. */
+    }
+
+    ki_seh_dispatch[cpu].active = 0;
+    return result;
 }
 
 /* --- General fault-to-exception mapping ----------------------------------
@@ -387,7 +649,6 @@ void except_build_record(EXCEPTION_RECORD *rec, CONTEXT *ctx,
  * uses the VMM slot, so no aliasing). Cache-line aligned + padded so two CPUs'
  * simultaneous faults never bounce a shared line. `in_use` is a one-shot
  * recursion guard: a nested fault mid-build escalates straight to a panic. */
-#define EXCEPT_CACHELINE 64u
 struct except_scratch {
     EXCEPTION_RECORD  rec;
     CONTEXT           ctx;

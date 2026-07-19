@@ -550,3 +550,166 @@ int except_vector_kernel_fatal(uint8_t vector);
 void except_build_record(EXCEPTION_RECORD *rec, CONTEXT *ctx,
                          const struct interrupt_frame *frame,
                          NTSTATUS code, uint32_t exception_flags);
+
+/* --- Kernel-mode structured exception handling (KI_TRY / KI_EXCEPT) ---------
+ *
+ * A driver-facing __try/__except facility for wrapping dangerous kernel work
+ * (MMIO probes, DMA buffer reads) so a fault becomes a recoverable branch
+ * instead of a bugcheck. Owned by TODO-23 kernel-mode __try/__except.
+ *
+ * Why not the MSVC __try/__except keywords: the kernel is built with
+ * clang-19 --target=x86_64-elf (SysV/ELF), which does NOT lower the MSVC SEH
+ * keywords and emits no .pdata/.xdata for them. So this is a REGISTRATION-LIST
+ * facility, independent of compiler-emitted table unwind: each KI_TRY pushes a
+ * stack-local KI_EXCEPTION_REGISTRATION onto the current thread's chain and
+ * captures a setjmp-style landing pad; a fault walks the chain and resumes at
+ * the innermost matching handler by rewriting the trap frame (the same
+ * KI_EXCEPTION_HANDLED frame-ownership contract the dispatcher already uses).
+ *
+ * Scope of this v1 (a deliberately limited facility):
+ *   - __try/__except with an optional filter. filter == NULL is an
+ *     unconditional EXECUTE_HANDLER (the common "catch any fault" driver case).
+ *   - NO __try/__finally termination handlers and NO EXCEPTION_COLLIDED_UNWIND
+ *     two-pass unwind -- those extend the table-based RtlUnwindEx work and are
+ *     tracked in TODO-23 (RtlUnwindEx section).
+ *
+ * SMP + lifetime safety:
+ *   - The chain head lives in `struct thread` so it FOLLOWS a thread across a
+ *     CPU migration. Because thread_current() still resolves a process-global
+ *     cursor (the per-CPU current-thread cursor is TODO-07 SMP phase-2), a fault
+ *     on one CPU could read a DIFFERENT thread's chain. ki_raise_kernel_exception
+ *     snapshots thread_current() EXACTLY ONCE and validates the trap frame RSP
+ *     (and every node it walks) against that one thread's kernel-stack bounds: a
+ *     cursor that does not match the faulting stack fails the check and the fault
+ *     stays TERMINAL (safe decline) rather than IRET-ing into another thread. The
+ *     per-CPU cursor only improves the SMP recovery RATE; it is not a safety
+ *     prerequisite. -> XREF: 03-memory-concurrency/TODO-07 SMP phase-2.
+ *   - A non-local exit (return/break/goto) out of a KI_TRY body is FORBIDDEN --
+ *     it would leave a stale node published on the thread chain. KI_EXCEPTION_FRAME
+ *     gives the node a clang `cleanup` handler (ki_seh_auto_pop) that pops it on
+ *     ANY scope exit, and ki_raise revalidates node bounds + chain ordering, so
+ *     the ban is defense-in-depth rather than the sole control.
+ */
+
+/* setjmp-style landing pad. ASSEMBLY-VISIBLE: the byte offsets below are
+ * hardcoded in src/kernel/except_seh.asm (ki_seh_setjmp) and pinned by
+ * _Static_assert (Layer 1). Rsp is the caller RSP AFTER ki_seh_setjmp returns
+ * (post-`ret`); Rip is the return address into the KI_TRY caller. */
+typedef struct ki_jmp_buf {
+    uint64_t Rbx;   /* 0x00 */
+    uint64_t Rbp;   /* 0x08 */
+    uint64_t R12;   /* 0x10 */
+    uint64_t R13;   /* 0x18 */
+    uint64_t R14;   /* 0x20 */
+    uint64_t R15;   /* 0x28 */
+    uint64_t Rsp;   /* 0x30 -- caller RSP after ki_seh_setjmp returns */
+    uint64_t Rip;   /* 0x38 -- return address into the KI_TRY caller */
+} KI_JMP_BUF;
+
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, Rbx) == 0x00, "KI_JMP_BUF.Rbx @ 0x00");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, Rbp) == 0x08, "KI_JMP_BUF.Rbp @ 0x08");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, R12) == 0x10, "KI_JMP_BUF.R12 @ 0x10");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, R13) == 0x18, "KI_JMP_BUF.R13 @ 0x18");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, R14) == 0x20, "KI_JMP_BUF.R14 @ 0x20");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, R15) == 0x28, "KI_JMP_BUF.R15 @ 0x28");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, Rsp) == 0x30, "KI_JMP_BUF.Rsp @ 0x30");
+_Static_assert(__builtin_offsetof(KI_JMP_BUF, Rip) == 0x38, "KI_JMP_BUF.Rip @ 0x38");
+_Static_assert(sizeof(KI_JMP_BUF) == 0x40, "KI_JMP_BUF is 64 bytes");
+
+/* __except filter. Returns EXCEPTION_EXECUTE_HANDLER (1), EXCEPTION_CONTINUE_SEARCH
+ * (0), or EXCEPTION_CONTINUE_EXECUTION (-1). Runs in fault context (klog-free,
+ * allocation-free); a fault RAISED inside a filter is a collided exception and
+ * bugchecks. */
+typedef int (*KI_EXCEPTION_FILTER)(NTSTATUS code, void *fault_addr, void *ctx);
+
+/* Owner thread of a registration; forward-declared so this header stays free of
+ * the scheduler include (full type in kernel/sched/task.h). */
+struct thread;
+
+/* Per-KI_TRY registration node. Allocated on the caller kernel stack; linked
+ * newest-first on struct thread.kernel_exception_list. */
+typedef struct ki_exception_registration {
+    struct ki_exception_registration *prev;  /* next-older frame (NULL = base) */
+    struct thread      *owner;                /* thread whose stack holds this node +
+                                               * whose chain it is linked on; fixed at
+                                               * publication so deregistration is
+                                               * owner-stable across a cursor change */
+    KI_JMP_BUF          jmp;                  /* landing pad (ki_seh_setjmp target) */
+    KI_EXCEPTION_FILTER filter;               /* NULL = unconditional EXECUTE_HANDLER */
+    void               *filter_ctx;           /* opaque cookie handed to the filter */
+    NTSTATUS            code;                  /* fault code delivered to the handler */
+    void               *fault_addr;           /* faulting address (best-effort) */
+    uint8_t             linked;               /* 1 while on the chain (idempotent pop) */
+} KI_EXCEPTION_REGISTRATION;
+
+/* Capture the callee-saved regs + caller RSP/RIP into `buf`, return 0. The
+ * "second return" (value 1) is synthesized by ki_raise_kernel_exception
+ * rewriting the trap frame; this routine never itself returns 1. Declared
+ * returns_twice so clang does not cache locals across the call assuming a single
+ * return (SEH correctness under -O2). Implemented in except_seh.asm. */
+int ki_seh_setjmp(KI_JMP_BUF *buf) __attribute__((returns_twice));
+
+/* Push / pop a registration on thread_current()->kernel_exception_list. Normal
+ * (non-fault) context only; ki_raise pops nodes it resolves. ki_seh_auto_pop is
+ * the clang cleanup handler (idempotent: no-op once `linked` is clear). */
+void ki_seh_register(KI_EXCEPTION_REGISTRATION *reg);
+void ki_seh_deregister(KI_EXCEPTION_REGISTRATION *reg);
+void ki_seh_auto_pop(KI_EXCEPTION_REGISTRATION *reg);
+/* Pointer-indirection form for the KI_TRY do-block cleanup guard (clang passes
+ * the address of the guarded `const` variable). Fires on every exit from the
+ * construct. */
+void ki_seh_auto_pop_ptr(KI_EXCEPTION_REGISTRATION *const *reg);
+
+/* Declare a KI_TRY registration frame with automatic cleanup. MUST be used to
+ * declare the node so a non-local exit cannot leak it onto the thread chain. */
+#define KI_EXCEPTION_FRAME(reg) \
+    KI_EXCEPTION_REGISTRATION reg __attribute__((cleanup(ki_seh_auto_pop))) = { 0 }
+
+/* Structured-exception blocks. Usage (no user braces):
+ *     KI_EXCEPTION_FRAME(reg);
+ *     KI_TRY(reg)
+ *         *(volatile uint32_t *)mmio = 0;   // may fault
+ *     KI_EXCEPT(reg)
+ *         // recovered; KI_EXCEPTION_CODE(reg) holds the NTSTATUS
+ *     KI_END_TRY;
+ * Non-local exits (return/break/goto/continue) out of the KI_TRY body are
+ * discouraged, but the do-block cleanup guard (`_ki_seh_g`) pops the node on ANY
+ * exit from the construct, so a non-local exit cannot leave a stale registration
+ * on the chain. Non-volatile locals modified in the body are indeterminate in the
+ * handler (the setjmp contract). */
+#define KI_TRY(reg)                                              \
+    do {                                                         \
+        (reg).filter     = (KI_EXCEPTION_FILTER)0;               \
+        (reg).filter_ctx = (void *)0;                            \
+        (reg).code       = 0;                                    \
+        (reg).fault_addr = (void *)0;                            \
+        ki_seh_register(&(reg));                                 \
+        KI_EXCEPTION_REGISTRATION *const _ki_seh_g                \
+            __attribute__((cleanup(ki_seh_auto_pop_ptr))) = &(reg); \
+        (void)_ki_seh_g;                                         \
+        if (ki_seh_setjmp(&(reg).jmp) == 0) {
+
+/* Variant with a filter expression callback + opaque cookie. */
+#define KI_TRY_FILTER(reg, fn, cookie)                           \
+    do {                                                         \
+        (reg).filter     = (fn);                                 \
+        (reg).filter_ctx = (cookie);                             \
+        (reg).code       = 0;                                    \
+        (reg).fault_addr = (void *)0;                            \
+        ki_seh_register(&(reg));                                 \
+        KI_EXCEPTION_REGISTRATION *const _ki_seh_g                \
+            __attribute__((cleanup(ki_seh_auto_pop_ptr))) = &(reg); \
+        (void)_ki_seh_g;                                         \
+        if (ki_seh_setjmp(&(reg).jmp) == 0) {
+
+#define KI_EXCEPT(reg)                                           \
+            ki_seh_deregister(&(reg));                           \
+        } else {
+
+#define KI_END_TRY                                               \
+        }                                                        \
+    } while (0)
+
+/* NTSTATUS + address delivered to the handler body (valid in a KI_EXCEPT block). */
+#define KI_EXCEPTION_CODE(reg)  ((reg).code)
+#define KI_EXCEPTION_ADDR(reg)  ((reg).fault_addr)

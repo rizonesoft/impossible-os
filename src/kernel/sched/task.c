@@ -431,6 +431,7 @@ boot_result_t task_init(void)
             tasks[i].threads[j].kernel_stack_pages = 0;
             tasks[i].threads[j].user_stack_va = 0;
             tasks[i].threads[j].user_stack_pages = 0;
+            tasks[i].threads[j].kernel_exception_list = (struct ki_exception_registration *)0;
         }
     }
 
@@ -776,6 +777,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -985,6 +987,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -1897,6 +1900,8 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[child_pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
+    tasks[child_pid].threads[0].kernel_exception_list =
+        (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].threads[0].rsp = (uint64_t)sp;
     /* Reset the child main thread's APC state (sets apc_state.process; the
@@ -3675,6 +3680,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     t->threads[tid].pledge_pending = 0;
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
     t->threads[tid].kernel_stack_base = (uint8_t *)0;
@@ -3893,6 +3899,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     t->threads[tid].pledge_pending = 0;
 
     /* Per-thread kernel stack ownership (for thread_free_stacks) */
@@ -4039,6 +4046,11 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
         if (imp)
             PsDereferencePrimaryToken(imp);
     }
+    /* Drop any kernel-mode SEH (KI_TRY) chain before advertising THREAD_FREE: a
+     * thread killed while inside a KI_TRY body would otherwise leave a chain head
+     * pointing at its now-freed kernel stack for the next tenant of this slot. The
+     * nodes are stack-local (no ownership to release), so a plain clear suffices. */
+    thr->kernel_exception_list = (struct ki_exception_registration *)0;
     /* Publish THREAD_FREE under the APC lock so a concurrent cross-thread
      * KeInsertQueueApc observes a consistent exiting/reaped state and rejects
      * (no APC enqueued onto a slot being reaped for reuse). */
