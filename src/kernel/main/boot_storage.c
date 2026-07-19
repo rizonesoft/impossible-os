@@ -51,6 +51,7 @@
 #include "kernel/timer.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_trace.h"
+#include "kernel/quota/quota.h"
 #include "kernel/knf/knf.h"
 #include "kernel/ex.h"
 #include "main/main_internal.h"
@@ -168,6 +169,18 @@ void boot_phase2(void)
 {
     uint32_t i;
     uint64_t total_ram = 0;
+
+    /* --- Resource quota registry: validate the resource-type taxonomy at the
+     * very start of Phase 2 -- before SMP, storage, VFS, and any subsystem that
+     * will later charge quota. The table is static const (valid at link time);
+     * this validates it, halts boot on a malformed table, then dumps the table
+     * to serial so metadata can be verified on real hardware. --- */
+    POST16(POST16_QUOTA);
+    if (quota_register_types() == BOOT_FATAL)
+        boot_halt("Resource quota registry validation failed");
+    quota_types_dump();
+    POST16(POST16_QUOTA_OK);
+    boot_progress(2, "QUOTA", POST16_QUOTA_OK);
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Storage & Filesystem ---------------------------------------------------");

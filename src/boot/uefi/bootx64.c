@@ -2897,6 +2897,7 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "nls"))      cfg->test_suite = 13;
         else if (ascii_streq(val, "knf"))      cfg->test_suite = 14;
         else if (ascii_streq(val, "except"))   cfg->test_suite = 15;
+        else if (ascii_streq(val, "quota"))    cfg->test_suite = 16;
         else                                   cfg->test_suite = 0xFF;
     }
     else if (ascii_streq(key, "test_quiet")) {

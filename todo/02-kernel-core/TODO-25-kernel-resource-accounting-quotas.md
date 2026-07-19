@@ -40,7 +40,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 | ⭐   | Order | Deliverable                                 | Depends On              | Status |
 | --- | :---: | ------------------------------------------- | ----------------------- | :----: |
-| 💎   |   1   | Resource type registry                      | --                      |  [ ]   |
+| 💎   |   1   | Resource type registry                      | --                      |  [x]   |
 | 💎   |   2   | Quota block and charge API                  | §1                      |  [ ]   |
 | 💎   |   3   | Process/token/job ownership model           | T21 §9, T15 §4          |  [ ]   |
 | 💎   |   4   | Object and handle quota integration         | T05 §14                 |  [ ]   |
@@ -53,13 +53,22 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 1. Resource Type Registry
 
-- [ ] Define resource types: handles, object bodies, namespace entries, paged pool, nonpaged pool, registry bytes, ALPC messages, notification states, timers, threads, processes, sections, mapped views, crash buffers.
-- [ ] Each type includes accounting unit, default limit, privilege override, and human-readable name.
-- [ ] Register types during Phase 2 before subsystem creation.
-- [ ] Persistent storage/volume quota is provider-owned, not a scalar central type (a unified view needs (resource,volume,owner) keying + SID<->uid map -- defer). -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §12`.
-- [ ] Commit: quota: resource type registry with per-type unit/limit/name.
+- [x] Define resource types: handles, object bodies, namespace entries, paged pool, nonpaged pool, registry bytes, ALPC messages, notification states, timers, threads, processes, sections, mapped views, crash buffers (`quota_resource_type_t`).
+- [x] Each type has accounting unit (COUNT/BYTES), default limit (0=unlimited), override privilege, and name in a static const `quota_resource_desc_t` table; `quota_register_types` validates + halts on drift.
+- [x] Validate + register at Phase 2 entry, before SMP/storage/VFS and any quota consumer: `quota_register_types()` + `quota_types_dump()` at the top of `boot_phase2()` (`POST16_QUOTA`), halts boot on a malformed table.
+- [x] Persistent storage/volume quota is provider-owned, not a scalar central type (a unified view needs (resource,volume,owner) keying + SID<->uid map -- defer). -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §12`.
+- [x] Commit: quota: resource type registry with per-type unit/limit/name.
 
-**Test checkpoint:** `quota_dump()` at boot lists all registered resource types with name, accounting unit, and default limit; registration completes in Phase 2 before the first subsystem creation (serial ordering shows the registry line before Object Manager init).
+**Test checkpoint:** `quota_types_dump()` at boot lists all 14 registered types with name, accounting unit, and default limit (verified: serial shows the 14-row dump at `[0.000]` before Object Manager init); `test=1` shows 9 Quota suites, 0 failures; smoke boots to `C:\>`.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `quota.h` + `quota.c`: 14-type static const registry (name/unit/limit/privilege) + bounds-checked accessors + `quota_types_dump`; new `TEST_CAT_QUOTA` wired end to end.
+> - **How it runs** -- `quota_register_types()` validates name/unit/privilege/uniqueness at Phase 2 entry, halts boot on drift; `quota_types_dump()` emits the 14-row table to serial; reads are lock-free (const table + release/acquire flag).
+> - **Downstream effects** -- the taxonomy is the single source of truth every later section (charge API §2 onward) keys off; no section may invent a type outside this table.
+> - **Canonical doc** -- `include/kernel/quota/quota.h` (design invariants).
+> - **Scope boundary** -- §1 owns the taxonomy only; concrete numeric caps are TODO-02 config policy (§6); persistent storage/volume quota is provider-owned (TODO-07 §12).
 
 ---
 
@@ -182,6 +191,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 | ⭐   | Feature                         | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                            |
 | --- | ------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| 💎   | Unified resource-type registry  | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 14-type registry §1                  |
 | 💎   | Central quota/charge API        | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | 🚀 Planned: one `quota_charge`/`return` §2  |
 | 💎   | Per-token quota block           | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | 🚀 Planned: token+process+job block §3      |
 | 💎   | Handle/object quota             | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §4    |

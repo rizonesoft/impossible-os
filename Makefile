@@ -265,7 +265,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-nls test-knf test-except test-x86 test-desktop test-ex test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-nls test-knf test-except test-quota test-x86 test-desktop test-ex test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -1173,6 +1173,9 @@ test-knf: all
 
 test-except: all
 	@bash scripts/test.sh SUITE=except
+
+test-quota: all
+	@bash scripts/test.sh SUITE=quota
 
 test-x86: all
 	@bash scripts/test.sh SUITE=x86

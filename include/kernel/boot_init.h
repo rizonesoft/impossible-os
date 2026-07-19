@@ -262,6 +262,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_NLS_OK           0x20D1
 #define POST16_KNF              0x20E0
 #define POST16_KNF_OK           0x20E1
+#define POST16_QUOTA            0x20F0
+#define POST16_QUOTA_OK         0x20F1
 
 /* Phase 3 -- Desktop (0x3000–0x3FFF) */
 #define POST16_SCHED            0x3000

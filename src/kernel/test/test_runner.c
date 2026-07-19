@@ -38,6 +38,7 @@ static const char *cat_names[] = {
     [TEST_CAT_NLS]      = "nls",
     [TEST_CAT_KNF]      = "knf",
     [TEST_CAT_EXCEPT]   = "except",
+    [TEST_CAT_QUOTA]    = "quota",
 };
 
 static const char *cat_labels[] = {
@@ -57,6 +58,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_NLS]      = "Atom/NLS/Locale",
     [TEST_CAT_KNF]      = "Notification Facility",
     [TEST_CAT_EXCEPT]   = "Exception Dispatch",
+    [TEST_CAT_QUOTA]    = "Resource Quotas",
 };
 
 /* Layer 1 -- both tables are indexed by test_category_t. A new enum entry
@@ -465,6 +467,7 @@ extern void test_register_usermode_launcher(void);
 extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
 extern void test_register_except(void);
+extern void test_register_quota(void);
 extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
@@ -574,6 +577,9 @@ void test_runner_init(void)
     /* Exception dispatch / SEH */
     test_register_except();
     test_register_unwind();
+
+    /* Resource accounting & quotas */
+    test_register_quota();
 
     /* ABI */
     test_register_peb_teb();

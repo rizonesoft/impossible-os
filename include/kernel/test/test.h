@@ -56,6 +56,7 @@ typedef enum {
     TEST_CAT_NLS,       /* Atom/NLS/locale subsystem (UNICODE_STRING, case fold, code page) */
     TEST_CAT_KNF,       /* Kernel Notification Facility (WNF-style state notifications) */
     TEST_CAT_EXCEPT,    /* Exception dispatch / SEH (CONTEXT, EXCEPTION_RECORD, unwind) */
+    TEST_CAT_QUOTA,     /* Resource accounting & quotas (type registry, charge API) */
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF,
 } test_category_t;
