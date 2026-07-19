@@ -277,11 +277,12 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`ULONG RemoveVectoredExceptionHandler(PVOID handle)`**:
   - Unlink entry from the process-global VEH list (under the ntdll lock); free via `RtlFreeHeap`; return 1 on success, 0 if not found
 - [ ] **`KiUserExceptionDispatcher`** (called by kernel on exception, via `NtRaiseException`):
-  - Walk the process-global VEH list (under the ntdll lock): call each `handler(EXCEPTION_POINTERS *)`:
-    - Returns `EXCEPTION_CONTINUE_EXECUTION` → restore context and resume; done
+  - Walk the process-global VEH list (lock-safe per the re-entrancy protocol below, NOT one lock held across the callbacks): call each `handler(EXCEPTION_POINTERS *)`:
+    - Returns `EXCEPTION_CONTINUE_EXECUTION` → go to the **VCH walk** convergence step, then resume
     - Returns `EXCEPTION_CONTINUE_SEARCH` → continue to next handler
-  - If list exhausted: walk SEH via **table-based x64 dispatch** -- `RtlLookupFunctionEntry` + `RtlVirtualUnwind` per frame, invoking each frame's language handler (`__C_specific_handler`). x64 has NO frame-linked chain: do NOT walk `TEB.ExceptionList` (that is the legacy x86-32 mechanism; the kernel sets it to -1 "no SEH" at `task.c:2319`) (→ XREF `02-kernel-core/TODO-23 §6`, `§8`)
-  - If SEH also exhausted: call `UnhandledExceptionFilter(EXCEPTION_POINTERS *)`
+  - If VEH list exhausted: walk SEH via **table-based x64 dispatch** -- `RtlLookupFunctionEntry` + `RtlVirtualUnwind` per frame, invoking each frame's language handler (`__C_specific_handler`). x64 has NO frame-linked chain: do NOT walk `TEB.ExceptionList` (that is the legacy x86-32 mechanism; the kernel sets it to -1 "no SEH" at `task.c:2319`) (→ XREF `02-kernel-core/TODO-23 §6`, `§8`). A frame handler that elects to continue execution → go to the **VCH walk** convergence step, then resume
+  - **VCH walk** (convergence for BOTH the VEH-continue and SEH-continue paths, before context restore): walk the VCH list per the VCH items below, then restore context and resume
+  - If SEH also exhausted and no handler continued: call `UnhandledExceptionFilter(EXCEPTION_POINTERS *)` (VCH is NOT walked on this terminal path)
     - Default: `MessageBox`-style crash dialog with exception code + module name + offset + stack trace (10 frames via `RtlCaptureStackBackTrace`)
     - Call `ExitProcess(1)` after dialog dismissed
 - [ ] **`VOID RaiseException(code, flags, nargs, args)`**: build `EXCEPTION_RECORD`; call `NtRaiseException(record, context, TRUE)` → kernel delivers back via `KiUserExceptionDispatcher`
@@ -290,7 +291,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **VCH list**: SECOND process-global lock-guarded list of `VECTORED_HANDLER_ENTRY` nodes, separate head from the VEH list; reuses §10 node ABI (no new type); NOT a TEB/PEB anchor. ABI: `TODO-23 §10`; boundary: `§11`
 - [ ] **`PVOID AddVectoredContinueHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)`**: allocate node via `RtlAllocateHeap`; `first != 0` head-insert else tail-append on the VCH list; return opaque handle
 - [ ] **`ULONG RemoveVectoredContinueHandler(PVOID handle)`**: unlink from the VCH list under the ntdll lock; free via `RtlFreeHeap`; return 1 on success, 0 if not found
-- [ ] **VCH walk**: when dispatch CONTINUES execution (VEH returned CONTINUE_EXECUTION, or a frame/SEH handler continued), before context restore, walk the VCH list under the lock; validate exact trigger conditions vs a Windows/ReactOS trace
+- [ ] **VCH walk**: on either continue path (VEH `CONTINUE_EXECUTION` or a frame handler continuing), before context restore, walk the VCH list lock-safe per the shared re-entrancy protocol; validate exact triggers vs a Windows/ReactOS trace
 - [ ] **VCH return semantics**: each `handler(EXCEPTION_POINTERS *)` returns a disposition -- `EXCEPTION_CONTINUE_EXECUTION` stops the VCH walk, `EXCEPTION_CONTINUE_SEARCH` proceeds to the next; shares the VEH re-entrancy protocol
 - [ ] **VCH ordering + re-entrancy tests**: assert VCH fires on both continue paths (VEH-continue and SEH-continue) and stops on `CONTINUE_EXECUTION`, in registration order, and removal-during-walk is safe under the shared protocol
 

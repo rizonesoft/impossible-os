@@ -493,7 +493,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > - **Canonical doc** -- `include/kernel/except.h` VEH shared ABI block.
 > - **Scope boundary** -- §10 owns the shared node/disposition ABI; TODO-04 §5 owns the list head, lock, add/remove APIs, and the walk; TODO-11 owns the TEB layout (no VEH field added).
 > **Verified:** 2026-07-19 | commit `6bf93677` | 4/4 items | build OK | tests 387/387 PASS
-> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 289)
+> **Accepted:** [H] VEH re-entrancy/lifetime -- a handler may call `RemoveVectoredExceptionHandler` or fault into nested dispatch, so the 24-byte node is provisional; the re-entrant-dispatch protocol is ntdll's -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "Re-entrant dispatch + removal safety" at line 290)
 > **Quality reviewed:** 2026-07-19 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement Vectored Exception Handler (VEH) list"`
@@ -503,25 +503,27 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 
 ## 11. Vectored Continue Handlers (VCH)
 
-**Prompt:** Implement the Vectored Continue Handler list -- a separate mechanism from VEH (§10). On Windows, VCH handlers are called **after** a frame-based (SEH) handler has been found and has decided to continue execution, but **before** execution actually resumes. This allows monitoring/logging handlers to observe that an exception was handled without interfering with the dispatch. The VCH list uses the same `VECTORED_HANDLER_ENTRY` node type as VEH (§10) but is a separate ntdll process-global list head.
+**Prompt:** Confirm the kernel-side boundary for the Vectored Continue Handler (VCH) list -- a separate mechanism from VEH (§10). This section ships NO kernel VCH code; the VCH list, its APIs, and its walk are ntdll-side. On Windows, VCH handlers run when exception dispatch **continues execution** -- after a VEH handler returns `EXCEPTION_CONTINUE_EXECUTION` OR a frame-based (SEH) handler decides to continue -- but **before** execution actually resumes. This lets monitoring/logging handlers observe that an exception was handled without interfering with the dispatch. The VCH list reuses the same `VECTORED_HANDLER_ENTRY` node type as VEH (§10) but is a separate ntdll process-global list head.
 
-Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `RemoveVectoredContinueHandler`, and the post-SEH walk -- are implemented in ntdll (D12 T04 §5). The kernel contributes only the shared node ABI (already published by §10); the second list head is ntdll process-global state, NOT a kernel/TEB/PEB field.
+Like VEH (§10), all three ring-3 pieces -- `AddVectoredContinueHandler`, `RemoveVectoredContinueHandler`, and the continuation walk -- are implemented in ntdll (D12 T04 §5). The kernel contributes only the shared node ABI (already published by §10); the second list head is ntdll process-global state, NOT a kernel/TEB/PEB field.
 
 > [!NOTE]
-> VCH is distinct from VEH. VEH runs BEFORE frame-based handlers; VCH runs AFTER. Both are per-process and both live in ring 3 (§10 ownership note applies verbatim: the list head is ntdll process-global, never a TEB/PEB anchor). Full order: kernel debugger first-chance (§4) → [ring 3: VEH → SEH → VCH] → kernel second-chance via `NtRaiseException` re-entry (§4) → terminate.
+> VCH is distinct from VEH. VEH runs BEFORE frame-based handlers; VCH runs when dispatch CONTINUES execution -- on EITHER the VEH-continue or the SEH-continue path -- before resume. Both are per-process and both live in ring 3 (§10 ownership note applies verbatim: the list head is ntdll process-global, never a TEB/PEB anchor). Full order: kernel debugger first-chance (§4) → ring 3 [walk VEH; if VEH continues → VCH → resume; else walk SEH; if a frame handler continues → VCH → resume; if none continue → top-level filter] → kernel second-chance via `NtRaiseException` re-entry (§4) → terminate.
 
 - [x] Confirmed: VCH reuses §10's `VECTORED_HANDLER_ENTRY` node (no new kernel type); `except.h` comment now pins ONE node / TWO ntdll heads, no kernel anchor -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "VCH list") owns both heads + locks
-- [x] Scope boundary: `AddVectoredContinueHandler` / `RemoveVectoredContinueHandler` + the post-SEH walk are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "VCH walk"); grep proves no `ki_call_vch_list` in ring 0
+- [x] Scope boundary: `AddVectoredContinueHandler` / `RemoveVectoredContinueHandler` + the continuation walk are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5` (item: "VCH walk"); grep proves no `ki_call_vch_list` in ring 0
 
-**Test checkpoint:** The kernel publishes NO second anchor (VCH reuses §10's `VECTORED_HANDLER_ENTRY` and the ntdll process-global model); grep proves no `ki_call_vch_list` and no VCH TEB/PEB field exist in ring 0. Behavioural VCH ordering ("fires only after SEH succeeds") is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
+**Test checkpoint:** The kernel publishes NO second anchor (VCH reuses §10's `VECTORED_HANDLER_ENTRY` and the ntdll process-global model); grep proves no `ki_call_vch_list` and no VCH TEB/PEB field exist in ring 0. Behavioural VCH ordering (fires on EITHER continue path -- VEH-continue or SEH-continue -- before resume) is tested with the ntdll implementation (D12 T04 §5). Test on: QEMU WHPX + TCG.
 
 > **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | 387 suites, 0 failures
 > **Notes:**
 > - **What shipped** -- `include/kernel/except.h` node comment now states the ONE-node / TWO-ntdll-heads / no-kernel-anchor boundary for VEH+VCH; no new kernel type, function, anchor, or test was added for VCH.
 > - **How it integrates** -- VCH reuses §10's `VECTORED_HANDLER_ENTRY` verbatim; the relabelled layout test ("VEH/VCH shared node ABI layout") proves the shared node TYPE's ABI, not runtime lists (D12T04 §5); a grep confirms no ring-0 VCH anchor.
-> - **Downstream effects** -- `12-user-platform-sdk/TODO-04 §5` gained concrete VCH items (list head, both APIs, post-SEH walk, ordering/re-entrancy tests); design review caught the empty-XREF + tautological-test traps.
+> - **Downstream effects** -- `12-user-platform-sdk/TODO-04 §5` gained concrete VCH items (list head, both APIs, VCH walk, return semantics, ordering/re-entrancy tests) + a both-continue-paths dispatch recipe; design review caught the empty-XREF + tautological-test traps.
 > - **Canonical doc** -- `include/kernel/except.h` VEH/VCH shared node ABI block.
-> - **Scope boundary** -- §11 owns only the kernel boundary confirmation; TODO-04 §5 owns the second list head, both VCH APIs, and the post-SEH continuation walk.
+> - **Scope boundary** -- §11 owns only the kernel boundary confirmation; TODO-04 §5 owns the second list head, both VCH APIs, and the VCH continuation walk.
+> **Verified:** 2026-07-19 | commit `066c44d2` | 2/2 items | build OK | 387 except suites
+> **Quality reviewed:** 2026-07-19 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 3H+4M fixed | scope: kernel-code-quality
 
 - [x] Commit: `"rtl: implement Vectored Continue Handler (VCH) list"`
 
