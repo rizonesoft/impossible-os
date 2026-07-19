@@ -18,6 +18,8 @@
 #include "kernel/nt/zw.h"    /* ssdt_syscall_enter/leave -- bugcheck classification */
 #include "kernel/cpu_security.h" /* __uaccess_copy_* / __uaccess_touch_w -- guarded copies */
 #include "kernel/mm/pmm.h"       /* pmm_alloc_frame -- live fault-recovery test */
+#include "kernel/wer.h"          /* wer_format_fault_line -- WerpReportFault line (TODO-23 s12) */
+#include "libc/string.h"         /* memcmp -- exact-bytes assertion */
 
 /* ---- ABI layout (Layer 3 of the 5-layer defense; the _Static_asserts in
  *      except.h are Layer 1 -- these prove the same contract at runtime so a
@@ -920,6 +922,40 @@ static void test_veh_handler_abi(void)
     TEST_ASSERT_EQ((int)EXCEPTION_EXECUTE_HANDLER, 1, "EXECUTE_HANDLER == 1");
 }
 
+/* TODO-23 s12: WerpReportFault's message body is produced by the pure
+ * wer_format_fault_line helper. Assert the exact wording -- the "wer: " prefix
+ * is added by klog's subsystem tag, so the formatter emits only
+ * "fault report code=0x..., addr=0x..." (composed serial line: "wer: fault
+ * report code=..."). Pure: no live serial, no boot infrastructure. */
+static void test_wer_format_fault_line(void)
+{
+    char buf[WER_FAULT_LINE_MAX];
+    const char *want = "fault report code=0xc0000005, addr=0x1234abcd";
+    int wl = 0, n;
+
+    while (want[wl]) wl++;
+    n = wer_format_fault_line(buf, sizeof(buf), 0xC0000005u, 0x1234abcdULL);
+    TEST_ASSERT_EQ(n, wl, "wer_format_fault_line returns the exact length");
+    TEST_ASSERT_EQ(memcmp(buf, want, (size_t)wl + 1), 0,
+                   "wer_format_fault_line writes the exact bytes incl NUL");
+
+    /* addr=0 renders as 0x0 (hex64 keeps a single 0 digit). */
+    n = wer_format_fault_line(buf, sizeof(buf), 0x0Du, 0);
+    {
+        const char *w2 = "fault report code=0xd, addr=0x0";
+        int w2l = 0; while (w2[w2l]) w2l++;
+        TEST_ASSERT_EQ(n, w2l, "wer_format_fault_line zero addr length");
+        TEST_ASSERT_EQ(memcmp(buf, w2, (size_t)w2l + 1), 0,
+                       "wer_format_fault_line zero addr exact bytes");
+    }
+
+    /* Guards: an undersized buffer or NULL pointer writes nothing and returns 0. */
+    TEST_ASSERT_EQ(wer_format_fault_line(buf, 8, 1, 2), 0,
+                   "wer_format_fault_line rejects an undersized buffer");
+    TEST_ASSERT_EQ(wer_format_fault_line((char *)0, sizeof(buf), 1, 2), 0,
+                   "wer_format_fault_line rejects a NULL buffer");
+}
+
 void test_register_except(void)
 {
     test_suite_register_cat("Except: CONTEXT size",
@@ -1006,6 +1042,8 @@ void test_register_except(void)
                             test_veh_node_layout, TEST_CAT_EXCEPT);
     test_suite_register_cat("Except: VEH handler ms_abi + disposition",
                             test_veh_handler_abi, TEST_CAT_EXCEPT);
+    test_suite_register_cat("Except: WER fault line format (s12)",
+                            test_wer_format_fault_line, TEST_CAT_EXCEPT);
 }
 
 #endif /* KERNEL_TESTS */

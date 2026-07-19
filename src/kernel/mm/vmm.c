@@ -32,6 +32,7 @@
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
 #include "kernel/except.h"              /* #PF triage: EXCEPTION_RECORD/CONTEXT + dispatch ABI */
+#include "kernel/wer.h"                  /* WerpReportFault -- serial WER hook on the user terminal */
 #include "kernel/boot_halt.h"           /* boot_halt: fatal NX-policy enforcement failure */
 #include "kernel/bugcheck.h"            /* KeBugCheckEx: pt_walk hard-error on a corrupt PTE */
 #include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
@@ -787,6 +788,12 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
          * panic_screen) if that contract ever changes. Ring-3 delivery +
          * per-process termination land with the ring-3-delivery stage. */
         if (mode == UserMode) {
+            /* WER hook: serial-only (no VFS on the #PF path -- adding the JSON
+             * report writer here would extend its filed reentrancy risk to the
+             * most-common fault; TODO-24 s.BlackBox). Terminal action stays
+             * panic_screen until the TODO-23 s5 per-process terminate primitive
+             * lands -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md. */
+            WerpReportFault((uint32_t)s->rec.ExceptionCode, fault_addr);
             klog(LOG_ERROR, "mm",
                  "pf: user fault at %p code=0x%x rip=%p (access violation)",
                  (void *)fault_addr, (unsigned int)err_code, (void *)(uintptr_t)frame->rip);

@@ -78,7 +78,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |   9   | RtlUnwindEx -- unwind to target frame                              | §6, §8                     |  [/]   |
 | 💎   |  10   | Vectored Exception Handlers (VEH)                                  | §4, TODO-05 §3             |  [x]   |
 | 💎   |  11   | Vectored Continue Handlers (VCH)                                   | §4, §10                    |  [x]   |
-| 💎   |  12   | Unhandled exception filter + WER hook                              | §7, §8, §10                |  [ ]   |
+| 💎   |  12   | Unhandled exception filter + WER hook                              | §7, §8, §10                |  [/]   |
 | ⭐   |  13   | Kernel safe probing (ProbeForRead/Write)                           | §2                         |  [x]   |
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [ ]   |
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
@@ -541,15 +541,26 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > [!WARNING]
 > **There is no `PEB.UnhandledExceptionFilter` field -- do not add one.** On Windows `SetUnhandledExceptionFilter` stores an `EncodePointer`-obfuscated pointer in the kernel32 global `BasepCurrentTopLevelFilter`, NOT in the PEB. Inventing a PEB field would also collide with `TODO-11 §17`, which rebuilds the post-0x28 PEB region to authoritative x64 `_PEB` offsets so a real ntdll can read it unpatched. The Impossible OS analogue is a user-runtime process-global in ntdll -> XREF: `12-user-platform-sdk/TODO-04 §5`.
 
-- [ ] Kernel terminal path: on `NtRaiseException(first_chance=FALSE)` re-entry, second-chance debugger → terminate with the exception NTSTATUS as exit status
-- [ ] Terminate cleanly when ring 3 CANNOT be reached at all (no ntdll mapped, or §5 delivery failed) -- this is the only path that must not depend on user state
-- [ ] Structured crash log: exception code, fault address, top-8 frames via `RtlCaptureStackBackTrace` (§7)
-- [ ] `WerpReportFault()` stub -- serial log only for now
-- [ ] Scope boundary: `SetUnhandledExceptionFilter` / `UnhandledExceptionFilter` / the crash dialog are ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5`
+- [/] Kernel terminal on `NtRaiseException(first_chance=FALSE)` second-chance -> terminate with the exception NTSTATUS as exit status -- DEFERRED: needs the §5 terminate primitive (see Deferred stamp)
+- [/] Terminate cleanly when ring 3 CANNOT be reached at all (no ntdll / §5 delivery failed) -- DEFERRED: same §5 terminate primitive; `task_exit` uses the global `current_task` cursor, unsafe from a trap frame (see Deferred stamp)
+- [x] Structured crash log: `wer_write_crash_report` adds `status` (NTSTATUS), `fault_addr`, `stack` (frame 0 = faulting RIP + up to 7 kernel frames via `RtlCaptureStackBackTrace` §7); `user_trace_available:false` (user walk deferred)
+- [x] `WerpReportFault(code, addr)` serial-only stub via pure `wer_format_fault_line` (`wer: fault report code=0x.., addr=0x..`); fault-safe; werfault.exe reporter ntdll-side -> XREF: `12-user-platform-sdk/TODO-04 §5`
+- [x] Scope boundary: `SetUnhandledExceptionFilter` / `UnhandledExceptionFilter` / the crash dialog are ntdll-side (no kernel PEB field added) -> XREF: `12-user-platform-sdk/TODO-04 §5`
 
-**Test checkpoint:** An access violation that ring 3 declines re-enters via `NtRaiseException(first_chance=FALSE)` and terminates: `WerpReportFault()` logs `"wer: fault report code=0xC0000005, addr=0x<addr>"` plus an 8-frame stack trace, and the process exit code is the exception NTSTATUS. A fault with §5 delivery deliberately failed (bad user RSP) still terminates the process without a kernel panic. Grep proves no `PEB.UnhandledExceptionFilter` field was added. Test on: QEMU WHPX + TCG.
+**Test checkpoint (shipped subset):** A user access-violation terminal calls `WerpReportFault()`, which logs `"wer: fault report code=0x<ntstatus>, addr=0x<addr>"` (verified byte-exact by `test_wer_format_fault_line`), and `wer_write_crash_report` emits the enriched JSON (`status`/`fault_addr`/`stack`). The terminal ACTION stays `panic_screen` (per-process termination is the deferred §5 work); grep proves no `PEB.UnhandledExceptionFilter` field was added. The full ring-3-decline -> `NtRaiseException(first_chance=FALSE)` -> terminate round-trip awaits §5. Test on: QEMU WHPX + TCG.
 
-- [ ] Commit: `"rtl: implement unhandled exception filter, WER stub, and crash log"`
+> **Test runner:** `scripts\debug\kernel\run-except-tests.bat` (SUITE=except) | WER line format asserted byte-exact; 0 failures
+
+> **Notes:**
+> - **What shipped** -- `WerpReportFault()` + pure `wer_format_fault_line` serial stub in `src/kernel/wer.c`; `wer_write_crash_report` enriched with `status`/`fault_addr`/`stack` (up to `WER_CRASH_MAX_FRAMES`=8, frame 0 = faulting RIP).
+> - **How it runs** -- the `except.c` and `vmm.c` #PF user terminals call `WerpReportFault` (serial-only, fault-safe) before `panic_screen`; the VFS `wer_write_crash_report` stays on `except.c`/`idt.c` (#PF reentrancy risk).
+> - **Downstream effects** -- items 1-2 (terminate-instead-of-panic) deferred to §5's `KI_EXCEPTION_TERMINATE` primitive; Codex design-review adoptions (4 findings) in the commit message.
+> - **Canonical doc** -- `include/kernel/wer.h` (WER hook + crash-report ABI).
+> - **Scope boundary** -- §12 owns the WER hook + crash log; per-process TERMINATION is §5 (needs TODO-07 per-CPU cursor); the top-level filter + crash dialog are ntdll (TODO-04 §5).
+
+> **Deferred:** [H] terminal PROCESS-TERMINATION (items 1-2) needs the §5 `KI_EXCEPTION_TERMINATE` primitive (per-CPU current-thread cursor + per-CPU idle frame + caller-owned scratch release); the terminal action stays `panic_screen` until then -> XREF: TODO-23 §5 (item: "Delivery failure ... returns a new `KI_EXCEPTION_TERMINATE` disposition"); `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 119)
+
+- [x] Commit: `"rtl: WER fault hook + enriched crash log (unhandled-filter terminate deferred to s5)"`
 
 
 ---
@@ -715,7 +726,7 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 | 💎   | RtlUnwindEx + __finally       | ✅                     | ❌                  | ✅ §9 unwind-to-target + RtlRestoreContext |
 | 💎   | VEH list                      | ✅ ntdll               | ❌                  | ✅ §10 node ABI (list D12T04 §5)           |
 | 💎   | VCH list                      | ✅ ntdll               | ❌                  | ✅ §11 kernel boundary (list D12T04 §5)    |
-| 💎   | Unhandled exception filter    | ✅ WER                 | ✅ core dump        | ⬜ §12 kernel terminal                     |
+| 💎   | Unhandled exception filter    | ✅ WER                 | ✅ core dump        | 🟡 WER hook + crash log (§12); terminate → §5 |
 | 💎   | `__fastfail` / INT 0x29       | ✅ 0xC0000409          | ❌                  | ◐ §3 handler (DPL=3; per-proc term §5)    |
 | 💎   | CONTEXT ContextFlags + FXSAVE | ✅ 0x4D0 ABI           | ✅ ucontext_t       | ✅ §1 layout                               |
 | 💎   | Fault-recoverable usercopy    | ✅ kernel SEH          | ✅ `__ex_table`     | ✅ §13 try_copy_* / RIP-keyed table        |

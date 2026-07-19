@@ -7,6 +7,9 @@
 
 #include "kernel/wer.h"
 #include "kernel/idt.h"
+#include "kernel/except.h"        /* except_vector_to_status -- report status field */
+#include "kernel/vectors.h"       /* VECTOR_NMI/DOUBLE_FAULT/MACHINE_CHECK -- abort-ctx gate */
+#include "kernel/rtl/unwind.h"    /* RtlCaptureStackBackTrace (TODO-23 s7) -- crash frames */
 #include "kernel/sched/task.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/time/wall_clock.h"
@@ -244,13 +247,50 @@ static int dec32(char *buf, uint32_t val)
     return pos;
 }
 
+/* ---- WER fault hook (TODO-23 s12) --------------------------------------- */
+
+/* Pure, allocation-free formatter for the WerpReportFault serial line. Kept
+ * separate from klog so the exact "wer: fault report ..." wording is
+ * unit-testable without emitting to live serial. */
+int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fault_addr)
+{
+    /* No "wer: " prefix here -- klog prepends the "wer" subsystem tag ("wer: ")
+     * so WerpReportFault's composed serial line is "wer: fault report code=...". */
+    static const char pre[] = "fault report code=";
+    static const char mid[] = ", addr=";
+    int pos = 0, j;
+
+    if (!buf || bufsz < WER_FAULT_LINE_MAX)
+        return 0;
+    for (j = 0; pre[j]; j++) buf[pos++] = pre[j];
+    pos += hex64(buf + pos, (uint64_t)code);
+    for (j = 0; mid[j]; j++) buf[pos++] = mid[j];
+    pos += hex64(buf + pos, fault_addr);
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* WER fault hook: serial-only stub. Called from the fault terminal once a user
+ * fault is unhandled. A real werfault.exe reporter (named pipe) is ntdll/user
+ * side -> XREF: 12-user-platform-sdk/TODO-04 s5. Deliberately does NO VFS and NO
+ * allocation so it is safe on the interrupts-disabled fault path (unlike the
+ * JSON report writer below, whose VFS I/O carries a filed reentrancy risk --
+ * TODO-24 s.BlackBox). */
+void WerpReportFault(uint32_t code, uint64_t fault_addr)
+{
+    char line[WER_FAULT_LINE_MAX];
+    if (wer_format_fault_line(line, sizeof(line), code, fault_addr) > 0)
+        klog(LOG_ERROR, "wer", "%s", line);
+}
+
 /* ---- Report writer ------------------------------------------------------ */
 
-void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
+void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception,
+                            uint64_t fault_addr)
 {
     struct task *t;
     char path[80];
-    char buf[1024];
+    char buf[1536];     /* header + registers + up to WER_CRASH_MAX_FRAMES frames */
     int pos = 0;
     int pi, j;
     const char *dir;
@@ -308,11 +348,13 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
 
     /* ,"name":"xxx" -- JSON-escape so a crafted task name cannot break the
      * report syntax or inject forged fields into post-mortem tooling. Cap at
-     * pos < 820 (not 890): worst case is a name ending at the cap (+6-byte
-     * escape ~826) followed by the unconditional fixed tail -- closing quote,
-     * exception/rip/rsp/error_code keys+values, "registers" key, the register
-     * loop (which self-skips once pos>900), cs, and closing braces/newline
-     * (~120 bytes) -- which together stay comfortably within buf[1024]. */
+     * pos < 820: worst case is a name ending at the cap (+6-byte escape ~826)
+     * followed by the unconditional fixed tail -- closing quote, exception/
+     * status/fault_addr/rip/rsp/error_code keys+values (~166 bytes), the
+     * registers block (self-skips once pos>1200), cs, the stack array (up to
+     * WER_CRASH_MAX_FRAMES 0x-hex frames, self-skips near the buffer end), the
+     * user_trace_available field, and closing braces/newline -- which together
+     * stay within buf[1536]. */
     { const char *k = ",\"name\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
     if (t->name) {
         for (j = 0; t->name[j] && pos < 820; j++) {
@@ -332,9 +374,29 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
     }
     buf[pos++] = '"';
 
-    /* ,"exception":N */
+    /* ,"exception":N -- the raw fault vector (e.g. 14 for #PF). */
     { const char *k = ",\"exception\":"; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
     pos += dec32(buf + pos, exception);
+
+    /* ,"status":"0xNNN" -- the mapped exception NTSTATUS (e.g. 0xc0000005). Only
+     * the 9 general-dispatch vectors map; unregistered fallback vectors (#MF/#XM/
+     * #DF/#MC) have no NTSTATUS here, so emit JSON null rather than a misleading
+     * "0x0" that reads as a valid status. */
+    {
+        NTSTATUS st = except_vector_to_status((uint8_t)exception);
+        if (st != 0) {
+            const char *k = ",\"status\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j];
+            pos += hex64(buf + pos, (uint64_t)(uint32_t)st);
+            buf[pos++] = '"';
+        } else {
+            const char *k = ",\"status\":null"; for (j = 0; k[j]; j++) buf[pos++] = k[j];
+        }
+    }
+
+    /* ,"fault_addr":"0xNNN" -- faulting linear address when known (0 otherwise). */
+    { const char *k = ",\"fault_addr\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
+    pos += hex64(buf + pos, fault_addr);
+    buf[pos++] = '"';
 
     /* ,"rip":"0xNNN" */
     { const char *k = ",\"rip\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
@@ -358,7 +420,7 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
             {"rsi", 80},  {"rdi", 72},  {"rbp", 64}, {"r8", 56},
         };
         int ri;
-        for (ri = 0; ri < 8 && pos < 900; ri++) {
+        for (ri = 0; ri < 8 && pos < 1200; ri++) {
             if (ri > 0) buf[pos++] = ',';
             buf[pos++] = '"';
             for (j = 0; regs[ri].name[j]; j++) buf[pos++] = regs[ri].name[j];
@@ -372,6 +434,45 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
     /* ,"cs":N -- helps identify user vs kernel mode */
     { const char *k = ",\"cs\":"; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
     pos += dec32(buf + pos, (uint32_t)frame->cs);
+
+    /* ,"stack":["0x<rip>",...] -- frame 0 is the faulting RIP (the crash PC);
+     * the remainder are the kernel terminal call chain via RtlCaptureStackBackTrace
+     * (TODO-23 s7, fault-safe RBP walk). User-space frames beyond frame 0 are NOT
+     * walkable yet (the RBP walker rejects user PCs; user-mode RtlWalkFrameChain is
+     * deferred), so "user_trace_available" is false rather than emitting a
+     * misleading or attacker-forgeable trace. */
+    { const char *k = ",\"stack\":[\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
+    pos += hex64(buf + pos, frame->rip);
+    buf[pos++] = '"';
+    {
+        /* Frame 0 (the faulting RIP above) is always safe -- it is a register
+         * value, no memory walk. The kernel-frame walk below reads the live stack
+         * via __kstack_read_u64, whose #PF recovery is UNAVAILABLE from a #DF/#MC/
+         * NMI abort context (cpu_security.h). This function is reachable from the
+         * idt.c vec<32 fallback for the unhandled #DF(8)/#MC(18) vectors, so skip
+         * the walk there: a corrupt RBP would nested-fault with no recovery and
+         * triple-fault, destroying the very crash evidence we are capturing. */
+        int abort_ctx = (exception == VECTOR_NMI ||
+                         exception == VECTOR_DOUBLE_FAULT ||
+                         exception == VECTOR_MACHINE_CHECK);
+        void *kframes[WER_CRASH_MAX_FRAMES];
+        uint16_t nk = abort_ctx ? 0
+                    : RtlCaptureStackBackTrace(0, WER_CRASH_MAX_FRAMES - 1u, kframes, 0);
+        uint16_t ki;
+        /* Reserve room for one more frame (<=21B) PLUS the trailing "]",
+         * ,"user_trace_available":false, "}" and "\n" (~32B) so a fired guard
+         * cannot overflow buf. */
+        for (ki = 0; ki < nk && pos < (int)sizeof(buf) - 64; ki++) {
+            buf[pos++] = ','; buf[pos++] = '"';
+            pos += hex64(buf + pos, (uint64_t)(uintptr_t)kframes[ki]);
+            buf[pos++] = '"';
+        }
+    }
+    buf[pos++] = ']';
+
+    /* ,"user_trace_available":false -- see the stack comment above. */
+    { const char *k = ",\"user_trace_available\":false";
+      for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
 
     buf[pos++] = '}';
     buf[pos++] = '\n';

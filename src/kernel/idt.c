@@ -308,11 +308,13 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* ---- Default: CPU exceptions (0-31) -- panic ---- */
     if (vec < 32) {
-        /* Write WER crash report for user-mode faults */
+        /* Write WER crash report for user-mode faults. This is the truly-
+         * unhandled-vector fallback (no registered handler), so no EXCEPTION_RECORD
+         * was built -- the faulting address is unknown here (0). */
         {
             extern void wer_write_crash_report(struct interrupt_frame *frame,
-                                                uint32_t exception);
-            wer_write_crash_report(frame, vec);
+                                                uint32_t exception, uint64_t fault_addr);
+            wer_write_crash_report(frame, vec, 0);
         }
         panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);

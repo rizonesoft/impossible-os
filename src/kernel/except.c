@@ -497,11 +497,21 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
          * contract ever changes. Ring-3 delivery + per-process termination land
          * with the ring-3-delivery stage. */
         if (mode == UserMode) {
-            wer_write_crash_report(frame, vec);
+            /* Faulting linear address if the record carries one (AV records set
+             * ExceptionInformation[1]); 0 otherwise. */
+            uint64_t fault_addr = (s->rec.NumberParameters >= 2)
+                ? s->rec.ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR] : 0;
+            wer_write_crash_report(frame, vec, fault_addr);
+            WerpReportFault((uint32_t)m->code, fault_addr);
             klog(LOG_ERROR, "except",
                  "%s at %p err=0x%x -> status 0x%x (user, unhandled)",
                  m->name, (void *)(uintptr_t)frame->rip,
                  (uint64_t)frame->err_code, (uint64_t)(uint32_t)m->code);
+            /* Terminal action is panic_screen for now: per-process termination
+             * (mark the faulting task DEAD + hand to a guaranteed idle frame)
+             * needs the per-CPU current-thread cursor + KI_EXCEPTION_TERMINATE
+             * primitive owned by TODO-23 s5 -> XREF: 03-memory-concurrency/
+             * TODO-07-smp-phase2.md. */
             panic_screen(frame, frame->err_code, m->name, "except.c", 0);
         } else {
             panic_screen(frame, frame->err_code, m->name, "except.c", 0);
