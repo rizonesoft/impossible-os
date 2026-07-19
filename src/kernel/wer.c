@@ -16,6 +16,7 @@
 #include "kernel/nt/filetime.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
+#include "kernel/drivers/serial.h" /* serial_write -- fault-safe serial primitive for the WER hook */
 #include "libc/string.h"
 
 /* ---- Path helpers ------------------------------------------------------- */
@@ -254,9 +255,11 @@ static int dec32(char *buf, uint32_t val)
  * unit-testable without emitting to live serial. */
 int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fault_addr)
 {
-    /* No "wer: " prefix here -- klog prepends the "wer" subsystem tag ("wer: ")
-     * so WerpReportFault's composed serial line is "wer: fault report code=...". */
-    static const char pre[] = "fault report code=";
+    /* Emits the COMPLETE logical line incl. "wer: " prefix and a trailing LF, the
+     * exact buffer WerpReportFault hands to serial_write -- so it is unit-testable
+     * end to end. (serial_write normalizes the LF to CRLF on the UART; the wire
+     * byte is CR LF, the logical line is LF.) */
+    static const char pre[] = "wer: fault report code=";
     static const char mid[] = ", addr=";
     int pos = 0, j;
 
@@ -266,6 +269,7 @@ int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fau
     pos += hex64(buf + pos, (uint64_t)code);
     for (j = 0; mid[j]; j++) buf[pos++] = mid[j];
     pos += hex64(buf + pos, fault_addr);
+    buf[pos++] = '\n';
     buf[pos] = '\0';
     return pos;
 }
@@ -275,12 +279,21 @@ int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fau
  * side -> XREF: 12-user-platform-sdk/TODO-04 s5. Deliberately does NO VFS and NO
  * allocation so it is safe on the interrupts-disabled fault path (unlike the
  * JSON report writer below, whose VFS I/O carries a filed reentrancy risk --
- * TODO-24 s.BlackBox). */
+ * TODO-24 s.BlackBox). Emits via serial_write (the same fault-safe primitive
+ * panic.c uses), NOT klog: klog's live-disk path (klog_disk_flush) allocates
+ * pages and does VFS, which would defeat the point of a safe fallback. The
+ * "wer: " prefix matches the former klog subsystem tag. */
 void WerpReportFault(uint32_t code, uint64_t fault_addr)
 {
+    /* wer_format_fault_line builds the whole "wer: ...\n" line; emit it with a
+     * SINGLE serial_write so another CPU cannot interleave its output mid-record
+     * (serial_write locks g_serial_lock per call). Safe ONLY on the lock-free
+     * ring-3 user terminals (except.c, vmm.c #PF): a kernel-context caller could
+     * self-deadlock on g_serial_lock, which is why the idt.c abort fallback does
+     * NOT call this. */
     char line[WER_FAULT_LINE_MAX];
     if (wer_format_fault_line(line, sizeof(line), code, fault_addr) > 0)
-        klog(LOG_ERROR, "wer", "%s", line);
+        serial_write(line);
 }
 
 /* ---- Report writer ------------------------------------------------------ */
@@ -297,6 +310,19 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception,
     struct vfs_node *f;
 
     if (!frame) return;
+
+    /* Caller-independent abort-context invariant: NEVER do VFS/task/clock/klog
+     * work from a #DF/#MC/NMI abort handler (IST stack, #PF recovery
+     * unavailable). A CS-based caller gate is insufficient -- a machine check
+     * can interrupt CPL3, so a user-mode #MC carries CS RPL 3 yet runs in abort
+     * context. In practice this writer's only caller (except.c) already passes a
+     * non-abort vector; this guard is the belt-and-suspenders safety net. Abort
+     * vectors terminate via panic_screen (its trap-frame serial dump is the crash
+     * evidence there). */
+    if (exception == VECTOR_NMI || exception == VECTOR_DOUBLE_FAULT ||
+        exception == VECTOR_MACHINE_CHECK)
+        return;
+
     if (!vfs_is_mounted('X') && !vfs_is_mounted('C')) return;
 
     t = task_current();
@@ -393,10 +419,18 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception,
         }
     }
 
-    /* ,"fault_addr":"0xNNN" -- faulting linear address when known (0 otherwise). */
-    { const char *k = ",\"fault_addr\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
-    pos += hex64(buf + pos, fault_addr);
-    buf[pos++] = '"';
+    /* ,"fault_addr":"0xNNN" or null. The sole current JSON-writer caller
+     * (except.c's user-fault terminal) supplies 0 = unknown -- #GP/#NP carry no
+     * CR2, and the real #PF address goes to the serial WerpReportFault line, not
+     * here. Emit JSON null for the unknown case so it is not conflated with a
+     * genuine fault at address 0 (matching the "status":null convention above). */
+    if (fault_addr != 0) {
+        const char *k = ",\"fault_addr\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j];
+        pos += hex64(buf + pos, fault_addr);
+        buf[pos++] = '"';
+    } else {
+        const char *k = ",\"fault_addr\":null"; for (j = 0; k[j]; j++) buf[pos++] = k[j];
+    }
 
     /* ,"rip":"0xNNN" */
     { const char *k = ",\"rip\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
@@ -447,17 +481,12 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception,
     {
         /* Frame 0 (the faulting RIP above) is always safe -- it is a register
          * value, no memory walk. The kernel-frame walk below reads the live stack
-         * via __kstack_read_u64, whose #PF recovery is UNAVAILABLE from a #DF/#MC/
-         * NMI abort context (cpu_security.h). This function is reachable from the
-         * idt.c vec<32 fallback for the unhandled #DF(8)/#MC(18) vectors, so skip
-         * the walk there: a corrupt RBP would nested-fault with no recovery and
-         * triple-fault, destroying the very crash evidence we are capturing. */
-        int abort_ctx = (exception == VECTOR_NMI ||
-                         exception == VECTOR_DOUBLE_FAULT ||
-                         exception == VECTOR_MACHINE_CHECK);
+         * via __kstack_read_u64, whose #PF recovery is UNAVAILABLE in a #DF/#MC/
+         * NMI abort context -- but those vectors already returned early at the top
+         * of this function (the caller-independent abort invariant), so control
+         * only reaches here for a non-abort context where the walk is safe. */
         void *kframes[WER_CRASH_MAX_FRAMES];
-        uint16_t nk = abort_ctx ? 0
-                    : RtlCaptureStackBackTrace(0, WER_CRASH_MAX_FRAMES - 1u, kframes, 0);
+        uint16_t nk = RtlCaptureStackBackTrace(0, WER_CRASH_MAX_FRAMES - 1u, kframes, 0);
         uint16_t ki;
         /* Reserve room for one more frame (<=21B) PLUS the trailing "]",
          * ,"user_trace_available":false, "}" and "\n" (~32B) so a fired guard

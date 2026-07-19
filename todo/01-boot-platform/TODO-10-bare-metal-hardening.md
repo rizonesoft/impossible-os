@@ -152,6 +152,7 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 - [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt -- no separate handler needed for the fatal-fault path (corrected/recoverable MCE recovery is a separate RAS scope, not yet owned -- see gap report)
 - [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
 - [ ] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
+- [ ] Abort-safe serial for the panic path: panic_screen's serial_write holds g_serial_lock, so a #DF/#MC/NMI mid-write self-deadlocks before the BSOD -- add an emergency try-lock/raw serial primitive -> XREF: 02-kernel-core/TODO-23 §12
 - [x] Commit: `"kernel: IST stacks for #DF, NMI, MCE -- no more silent triple faults"`
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

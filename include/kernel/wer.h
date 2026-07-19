@@ -19,17 +19,20 @@ struct interrupt_frame;
  * unavailable rather than emitting a misleading or attacker-forgeable trace. */
 #define WER_CRASH_MAX_FRAMES 8u
 
-/* Fixed-size buffer for wer_format_fault_line's output (prefix + two 0x-hex
- * 64-bit values + separators + NUL, rounded up). */
-#define WER_FAULT_LINE_MAX 64
+/* Fixed-size buffer for wer_format_fault_line's output. Worst case: "wer: fault
+ * report code=" (23) + "0x"+8 code hex (10) + ", addr=" (7) + "0x"+16 addr hex
+ * (18) + "\n" (1) + NUL (1) = 60; 72 leaves margin. */
+#define WER_FAULT_LINE_MAX 72
 
-/* Format the WerpReportFault message body into buf:
- *   "fault report code=0x<code>, addr=0x<addr>"
- * (lowercase hex, no leading-zero padding). NO "wer: " prefix -- klog prepends
- * the "wer" subsystem tag, so the composed serial line is
- * "wer: fault report code=...". Pure and allocation-free so it is unit-testable
- * without touching live infrastructure. Returns the number of bytes written
- * excluding the NUL (0 if buf is NULL or bufsz < WER_FAULT_LINE_MAX). */
+/* Format the COMPLETE WerpReportFault logical line into buf, including the "wer: "
+ * prefix and trailing LF:
+ *   "wer: fault report code=0x<code>, addr=0x<addr>\n"
+ * (lowercase hex, no leading-zero padding). This is the exact buffer
+ * WerpReportFault hands to serial_write, so the unit test asserts the whole
+ * logical line (prefix, body, and LF), not just the body. Note serial_write
+ * normalizes the LF to CRLF on the UART, so the on-wire terminator is CR LF while
+ * this logical buffer ends in a single LF. Pure and allocation-free. Returns the
+ * bytes written excluding the NUL (0 if buf is NULL or bufsz < WER_FAULT_LINE_MAX). */
 int wer_format_fault_line(char *buf, uint32_t bufsz, uint32_t code, uint64_t fault_addr);
 
 /* WER fault hook (TODO-23 s12). The terminal path calls this once a user fault

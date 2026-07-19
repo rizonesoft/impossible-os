@@ -308,14 +308,17 @@ uint64_t isr_handler(struct interrupt_frame *frame)
 
     /* ---- Default: CPU exceptions (0-31) -- panic ---- */
     if (vec < 32) {
-        /* Write WER crash report for user-mode faults. This is the truly-
-         * unhandled-vector fallback (no registered handler), so no EXCEPTION_RECORD
-         * was built -- the faulting address is unknown here (0). */
-        {
-            extern void wer_write_crash_report(struct interrupt_frame *frame,
-                                                uint32_t exception, uint64_t fault_addr);
-            wer_write_crash_report(frame, vec, 0);
-        }
+        /* Truly-unhandled-vector fallback -- terminal panic path, no WER hook. The
+         * exception vectors are 0x8E interrupt gates (IF cleared) and this reaches
+         * mainly the #DF(8)/#MC(18) abort vectors on an IST stack; neither the
+         * serial hook (serial_write can self-deadlock on g_serial_lock) nor the VFS
+         * writer (FAT32/AHCI can wait on an IRQ that cannot fire with IF=0, and the
+         * abort context has no #PF recovery) is safe here. panic_screen dumps the
+         * full trap frame to serial, which IS the crash evidence for this path. The
+         * lock-free WER hook lives on the recoverable ring-3 user terminals
+         * (except.c general faults, vmm.c #PF); unregistered ring-3 FP/SIMD faults
+         * (#MF/#XM) reach WER once mapped into that terminal by the TODO-23 fault-
+         * to-exception mapping follow-up. */
         panic_screen(frame, frame->err_code, exception_names[vec],
                      "idt.c", 0);
         /* panic_screen never returns */

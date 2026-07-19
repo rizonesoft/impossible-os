@@ -501,8 +501,16 @@ static uint64_t except_common_handler(struct interrupt_frame *frame)
              * ExceptionInformation[1]); 0 otherwise. */
             uint64_t fault_addr = (s->rec.NumberParameters >= 2)
                 ? s->rec.ExceptionInformation[EXCEPTION_INFO_FAULT_ADDR] : 0;
-            wer_write_crash_report(frame, vec, fault_addr);
+            /* Serial-safe hook FIRST, so the lightweight crash evidence is on the
+             * wire before the fallible VFS report (which can block/fault on
+             * degraded media -- the filed TODO-24 reentrancy risk, the likelier
+             * failure). The inverse risk (a stuck UART stalling serial_write, which
+             * has no timeout, before the VFS report runs) is a rarer hardware
+             * failure that would also stall panic_screen's serial output; the real
+             * fix is a bounded/try-lock serial primitive -> XREF: bare-metal
+             * hardening abort-safe serial (TODO-10). */
             WerpReportFault((uint32_t)m->code, fault_addr);
+            wer_write_crash_report(frame, vec, fault_addr);
             klog(LOG_ERROR, "except",
                  "%s at %p err=0x%x -> status 0x%x (user, unhandled)",
                  m->name, (void *)(uintptr_t)frame->rip,

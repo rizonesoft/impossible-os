@@ -393,24 +393,24 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 > Neither Win11 WER nor Linux apport stages crash reports on a separate cross-platform-readable partition. BlackBox WER reports are FAT32-readable by any OS -- plug the disk into any machine and read the crash context.
 
 - [x] `X:\Crash\WER\` already in boot skeleton (§4)
-- [x] `wer_write_crash_report()` in `wer.c`: writes JSON report on unhandled CPU exception
-- [x] Report: `{"pid":N,"name":"app","exception":N,"rip":"0xN","rsp":"0xN","error_code":N,"registers":{...},"cs":N}`
-- [x] Wired into `isr_handler()` default exception path (before `panic_screen`)
+- [x] `wer_write_crash_report()` in `wer.c`: writes a JSON report for an unhandled general user fault routed through `except.c` (not vmm.c #PF, which is serial-only, nor the idt.c panic-only fallback)
+- [x] Report: `{"pid","name","exception","status","fault_addr","rip","rsp","error_code","registers","cs","stack","user_trace_available"}` (status/fault_addr are `0xN` or `null`; TODO-23 §12 added status/fault_addr/stack/user_trace_available)
+- [x] Wired into the user-fault exception terminal (`except.c`, before `panic_screen`); the idt.c unhandled-vector fallback is `panic_screen`-only (TODO-23 §12)
 - [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
 - [x] Falls back to C:\ when BlackBox not mounted
-- [ ] WER in exception path: `wer_write_crash_report` (idt.c:309) does vfs I/O in the ISR handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
+- [ ] WER in exception path: `wer_write_crash_report` (`except.c` user-fault terminal) does vfs I/O in the fault handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
 - [ ] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
 - [x] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
-**Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** Trigger a user-mode general fault that routes through `except.c` (e.g. `#UD` from an illegal instruction). `X:\Crash\WER\` contains a JSON report with PID, exception code, and the crash frames. Note: a NULL dereference is a `#PF` handled by `vmm.c`, whose terminal emits only the serial WER line (`WerpReportFault`), not a JSON report -- a safe JSON path for #PF is deferred with the exception-path VFS-safety work (TODO-23 §12 design decision). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 > **Notes:**
-> - `wer_write_crash_report` (wer.c) writes a JSON crash report (`{pid,name,exception,rip,rsp,error_code,registers,cs}`, filename `PID_YYYYMMDDHHMMSS.json`) to `X:\Crash\WER\` (C:\ fallback) from the ISR exception path (idt.c:309).
-> - Fixed a JSON-injection bug: `t->name` is now escaped (`"`,`\`,control -> `\u00XX`) with a `pos<820` bound, so a crafted/long name can't break the report or overflow `buf[1024]` (re-adversarial-confirmed margin).
+> - `wer_write_crash_report` (wer.c) writes a JSON crash report (`{pid,name,exception,status,fault_addr,rip,rsp,error_code,registers,cs,stack,user_trace_available}`, filename `PID_YYYYMMDDHHMMSS.json`) to `X:\Crash\WER\` (C:\ fallback) from the `except.c` user-fault exception terminal (TODO-23 §12 enriched it; the idt.c fallback is panic-only).
+> - Fixed a JSON-injection bug: `t->name` is now escaped (`"`,`\`,control -> `\u00XX`) with a `pos<820` bound, so a crafted/long name can't break the report or overflow `buf[1536]` (re-adversarial-confirmed margin).
 > - Two robustness items remain open (`[/]`): WER persistence runs in the exception path (FS-reentrancy/deadlock risk) and open-failure is silent; the write-honesty (flush/return-check) is owned by §5's durable-write retrofit.
 > **Accepted:** [M] WER writer ignores `vfs_write`/`vfs_close` returns + no `vfs_flush` (false success) -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 185)
-> **Deferred:** [H] WER persistence does VFS I/O in the ISR exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 397)
-> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 398)
+> **Deferred:** [H] WER persistence does VFS I/O in the exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 401)
+> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 402)
 
 ---
 
