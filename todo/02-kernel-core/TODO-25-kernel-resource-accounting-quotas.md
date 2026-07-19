@@ -169,17 +169,17 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                              | 🐧 Linux                                  | 🚀 Impossible OS                          |
-| --- | -------------------------------- | ------------------------------------- | ----------------------------------------- | ----------------------------------------- |
-| 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | 🚀 Planned: one `quota_charge`/`return` §2 |
-| 💎   | Per-token quota block            | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                 | 🚀 Planned: token+process+job block §3     |
-| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                 | 🚀 Planned: handle+object body charge §4   |
-| 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc | 🚀 Planned: allocator-hook charging §5      |
-| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`  | 🚀 Planned: registry/ALPC/notif caps §6     |
-| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers          | 🚀 Planned: per-proc/job split counters §7  |
-| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                  | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8 |
-| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                | 🚀 Planned: 4-level pressure + recovery §9  |
-| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep    | ⚠️ slabinfo, no per-boot delta sweep       | 🚀 Planned: boot delta sweep + dump §10     |
+| ⭐   | Feature                         | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                            |
+| --- | ------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| 💎   | Central quota/charge API        | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | 🚀 Planned: one `quota_charge`/`return` §2  |
+| 💎   | Per-token quota block           | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | 🚀 Planned: token+process+job block §3      |
+| 💎   | Handle/object quota             | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §4    |
+| 💎   | Paged/nonpaged pool quota       | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5      |
+| 💎   | Registry/IPC quota              | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | 🚀 Planned: registry/ALPC/notif caps §6     |
+| ⭐   | CPU/IO/wakeup accounting        | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7  |
+| 💎   | Native query/set quota syscalls | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8 |
+| ⭐   | Resource pressure events        | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: 4-level pressure + recovery §9  |
+| ⭐   | Unified leak sweep + quota_dump | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10     |
 
 ---
 
