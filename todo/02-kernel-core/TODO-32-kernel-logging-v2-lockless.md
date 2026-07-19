@@ -153,6 +153,7 @@ A dedicated kernel thread reads per-CPU rings round-robin, batches entries, and 
 - [ ] On lane drop summary: worker emits one `[STUB] klog/<lane> lane dropped N` line per drain pass when drop counter advanced
 - [ ] Worker exposes runtime stats via `klog_v2_get_stats()`: total enqueued, total dequeued, total drops by lane and by tag, drain batch size avg/max, serial latency avg/max
 - [ ] Worker can be suspended via `klog_v2_drain_pause()` for debugging; while paused, FATAL messages still go via emergency path (§4)
+- [ ] `klog_v2()` enqueue must never synchronously enter the live-disk flush: v1 `klog_disk_flush` calls `vfs_write`, so a PASSIVE caller holding a VFS lock deadlocks. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §2` (charge API)
 - [ ] Commit: `"kernel: klog v2 -- background drain worker"`
 
 **Test checkpoint:** Boot with worker enabled; assert serial output appears within 10ms of `klog_v2` calls under normal load. Pause worker via `klog_v2_drain_pause()`; spam 100 INFO messages; resume; assert all 100 appear in batch. Stats query returns sensible values. Verify all 4 platforms.

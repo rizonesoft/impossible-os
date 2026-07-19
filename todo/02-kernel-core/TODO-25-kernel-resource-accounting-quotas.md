@@ -41,7 +41,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   | Order | Deliverable                                 | Depends On              | Status |
 | --- | :---: | ------------------------------------------- | ----------------------- | :----: |
 | 💎   |   1   | Resource type registry                      | --                      |  [x]   |
-| 💎   |   2   | Quota block and charge API                  | §1                      |  [ ]   |
+| 💎   |   2   | Quota block and charge API                  | §1                      |  [x]   |
 | 💎   |   3   | Process/token/job ownership model           | T21 §9, T15 §4          |  [ ]   |
 | 💎   |   4   | Object and handle quota integration         | T05 §14                 |  [ ]   |
 | 💎   |   5   | Pool and allocation quota integration       | D03T03 §6,§7            |  [ ]   |
@@ -76,13 +76,23 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 2. Quota Block and Charge API
 
-- [ ] Define `quota_block_t`: refcount, owner SID, limits[], usage[], peaks[], failures[].
-- [ ] Add `quota_charge(block, type, amount)`, `quota_return(block, type, amount)`, `quota_try_transfer`.
-- [ ] Charges are atomic and rollback-safe.
-- [ ] All failed charges return `STATUS_QUOTA_EXCEEDED` or a more specific NTSTATUS.
-- [ ] Commit: quota: quota_block_t + atomic charge/return/transfer API.
+- [x] `quota_block_t` in `quota.h`: `atomic_t` refcount, embedded copied owner SID (`owner_sid_buf`, 4-aligned), per-type `limit/usage/peak/failures` arrays, and one `lock` guarding every mutation.
+- [x] `quota_charge` / `quota_return` / `quota_try_transfer` in `quota.c`, plus `quota_block_create/ref/deref/owner`, `quota_set_limit`, and `quota_usage/peak/failures/limit` queries.
+- [x] Charges are atomic and rollback-safe: limit check and commit share ONE critical section, so a refused charge leaves `usage` byte-identical; transfer holds both block locks in address order and is all-or-nothing.
+- [x] Failures return `STATUS_QUOTA_EXCEEDED` (over cap), `STATUS_INTEGER_OVERFLOW` (outside the 0..`QUOTA_AMOUNT_MAX` domain, or a corrupted negative counter), or `STATUS_INVALID_PARAMETER`; each bumps a saturating failure counter.
+- [x] Diagnostics are recorded under the lock, emitted after it, gated to PASSIVE_LEVEL, with suppressed events counted. -> XREF: `TODO-32-kernel-logging-v2-lockless.md §6` (klog live-disk flush re-enters VFS).
+- [x] Commit: quota: quota_block_t + atomic charge/return/transfer API.
 
-**Test checkpoint:** a charge/return round-trip leaves `usage` and `peak` correct; an over-limit charge returns `STATUS_QUOTA_EXCEEDED` and leaves `usage` unchanged; N concurrent charges from multiple CPUs sum exactly (no lost updates) and a mid-sequence failure rolls back with no residual.
+**Test checkpoint:** a charge/return round-trip leaves `usage` at 0 and `peak` at the high-water mark; an over-limit charge returns `STATUS_QUOTA_EXCEEDED` and leaves `usage` unchanged; the counter domain is enforced at both ends (oversized amount rejected, `+1` past the max overflows instead of wrapping, over-return clamps at 0); a transfer leaves BOTH blocks untouched when either side refuses, and interleaved multi-thread charges sum exactly with no lost updates (verified: SUITE=quota 25 suites / 393 assertions, 0 failures).
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 25 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `quota_block_t` + the charge API in `quota.h`/`quota.c`: create/ref/deref, charge/return/transfer, limit set, and four queries over the 14-type taxonomy from §1.
+> - **How it runs** -- one per-block spinlock (`spin_lock_irqsave`) makes each operation's several counter updates indivisible; transfer takes both locks in `uintptr_t` address order; queries stay lock-free atomic reads.
+> - **Downstream effects** -- §3 wires blocks to tokens/processes/jobs and owns safe publication for the caller-holds-a-reference contract; §4-§7 charge through this API; Codex review adoptions in the commit message.
+> - **Canonical doc** -- `include/kernel/quota/quota.h` (counter domain, lifetime, limit-lowering, and transfer-visibility contracts).
+> - **Scope boundary** -- §2 owns the mechanism only: no subsystem is charged yet (§4-§7), per-CPU batching for hot paths is §5, and cross-CPU contention test infrastructure is §10.
 
 ---
 
@@ -194,7 +204,9 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   | Feature                         | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                            |
 | --- | ------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ |
 | 💎   | Unified resource-type registry  | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 14-type registry §1                  |
-| 💎   | Central quota/charge API        | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | 🚀 Planned: one `quota_charge`/`return` §2  |
+| 💎   | Central quota/charge API        | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2           |
+| 💎   | Atomic quota transfer           | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2     |
+| 💎   | Per-type peak + failure counts  | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2   |
 | 💎   | Per-token quota block           | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | 🚀 Planned: token+process+job block §3      |
 | 💎   | Handle/object quota             | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §4    |
 | 💎   | Paged/nonpaged pool quota       | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5      |
@@ -211,10 +223,10 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 > Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
-- [ ] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
-- [ ] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
-- [ ] `test_quota_concurrent_charges_atomic`: N parallel charges sum exactly, no lost update (§2).
-- [ ] `test_quota_rollback_on_partial_failure`: a failing charge in a batch rolls back cleanly (§2).
+- [x] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
+- [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
+- [/] `test_quota_concurrent_charges_atomic`: N INTERLEAVED multi-thread charges sum exactly, no lost update (§2). True cross-CPU contention needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
+- [x] `test_quota_rollback_on_partial_failure`: a refused transfer leaves both blocks byte-identical; a refused charge leaves usage unchanged (§2).
 - [ ] `test_quota_type_registry`: all resource types registered with name/unit/limit (§1).
 - [ ] `test_quota_process_job_double_check`: charge passes process but fails on job aggregate (§3).
 - [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3).

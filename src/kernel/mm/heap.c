@@ -594,20 +594,13 @@ static void *kmalloc_locked(size_t req, uint32_t tag)
     return (void *)0;
 }
 
-void *kmalloc(size_t size)
-{
-    void *result;
-    uint64_t irq_flags;
-
-    if (size == 0)
-        return (void *)0;
-
 #ifdef KERNEL_TESTS
-    /* Test-only fault-injection hook. Checked BEFORE walking the block
-     * list so the heap state is unaltered on a forced failure; a
-     * returning test then sees the exact same free-list shape it would
-     * on a real OOM. Decrement reaches 0 on the armed call: return NULL.
-     *
+/* Shared fault-injection decision for every allocator entry point. Returns
+ * non-zero when this call should be forced to fail. Kept in ONE place so
+ * kmalloc() and kmalloc_zeroed() cannot drift apart -- a caller of the
+ * zeroing allocator must be just as testable on its failure path as a caller
+ * of the plain one.
+ *
      * Thread-context gate: the hook only consumes the countdown when
      * we are at PASSIVE_LEVEL. IRQ / DPC / spinlock-holding callers on
      * the same CPU (e.g. the RTL8139 RX ISR calling kmalloc for a work
@@ -624,40 +617,53 @@ void *kmalloc(size_t size)
      *   2. Max-injections cap: if fired_counter has reached the cap,
      *      don't fire (even with countdown armed). Cap of 0 = no cap.
      *   3. Countdown check: --countdown == 0 triggers the fire. */
-    if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
-        struct per_cpu_data *pc = smp_this_cpu();
-        if (pc && pc->kmalloc_fail_countdown) {
-            int may_fire = 1;
+static int heap_fault_injection_fires(void)
+{
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return 0;
 
-            if (pc->kmalloc_fail_task_pid != 0) {
-                struct task *t = task_current();
-                if (!t || t->pid != pc->kmalloc_fail_task_pid)
-                    may_fire = 0;
-            }
+    struct per_cpu_data *pc = smp_this_cpu();
+    if (!pc || !pc->kmalloc_fail_countdown)
+        return 0;
 
-            if (may_fire && pc->kmalloc_fail_max_injections != 0 &&
-                pc->kmalloc_fail_fired_counter >=
-                    pc->kmalloc_fail_max_injections) {
-                may_fire = 0;
-            }
-
-            if (may_fire && --pc->kmalloc_fail_countdown == 0) {
-                __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull,
-                                   __ATOMIC_RELAXED);
-                pc->kmalloc_fail_fired_counter++;
-                /* auto-reload: with a max-injections cap set and
-                 * not yet reached, re-arm countdown=1 so the next
-                 * qualifying call fires too. Delivers the 'fail N of
-                 * the next M calls' multi-fire semantic from one arm. */
-                if (pc->kmalloc_fail_max_injections != 0 &&
-                    pc->kmalloc_fail_fired_counter <
-                        pc->kmalloc_fail_max_injections) {
-                    pc->kmalloc_fail_countdown = 1;
-                }
-                return (void *)0;
-            }
-        }
+    if (pc->kmalloc_fail_task_pid != 0) {
+        struct task *t = task_current();
+        if (!t || t->pid != pc->kmalloc_fail_task_pid)
+            return 0;
     }
+
+    if (pc->kmalloc_fail_max_injections != 0 &&
+        pc->kmalloc_fail_fired_counter >= pc->kmalloc_fail_max_injections) {
+        return 0;
+    }
+
+    if (--pc->kmalloc_fail_countdown != 0)
+        return 0;
+
+    __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull, __ATOMIC_RELAXED);
+    pc->kmalloc_fail_fired_counter++;
+    /* auto-reload: with a max-injections cap set and not yet reached, re-arm
+     * countdown=1 so the next qualifying call fires too. Delivers the 'fail N
+     * of the next M calls' multi-fire semantic from one arm. */
+    if (pc->kmalloc_fail_max_injections != 0 &&
+        pc->kmalloc_fail_fired_counter < pc->kmalloc_fail_max_injections) {
+        pc->kmalloc_fail_countdown = 1;
+    }
+    return 1;
+}
+#endif
+
+void *kmalloc(size_t size)
+{
+    void *result;
+    uint64_t irq_flags;
+
+    if (size == 0)
+        return (void *)0;
+
+#ifdef KERNEL_TESTS
+    if (heap_fault_injection_fires())
+        return (void *)0;
 #endif
 
     /* Overflow guard: reject absurd sizes before any size + overhead
@@ -687,6 +693,13 @@ void *kmalloc_zeroed(size_t size)
 
     if (size == 0 || size > KMALLOC_MAX)
         return (void *)0;
+
+#ifdef KERNEL_TESTS
+    /* Same injection gate as kmalloc(): checked before the heap is touched, so
+     * a forced failure leaves the free list exactly as a real OOM would. */
+    if (heap_fault_injection_fires())
+        return (void *)0;
+#endif
 
     spin_lock_irqsave(&s_heap_lock, &irq_flags);
     result = kmalloc_locked(size, 0);
