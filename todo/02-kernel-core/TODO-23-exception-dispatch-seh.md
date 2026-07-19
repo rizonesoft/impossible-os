@@ -83,7 +83,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |  14   | Kernel-mode `__try`/`__except` for drivers                         | §6, §9, §13                |  [/]   |
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
 | ⭐   |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
-| 💎   |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §2, §3                     |  [ ]   |
+| 💎   |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -727,6 +727,14 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > → XREF: `§3` -- `#SS` maps to `STATUS_STACK_OVERFLOW`; the terminal path reuses that mapping.
 > → XREF: `TODO-11 §5` -- `task->peb`/thread stack bounds for the user-mode range check.
 
+> [!NOTE]
+> **DEFERRED (2026-07-19) -- blocked on four unbuilt prerequisites.** A pre-implementation Codex design review (3 High + 1 Medium), a kernel-explorer integration map, and a concurrency-evidence inventory converged on a no-ship: a correct, SMP-safe, address-space-correct auto-grow is not buildable until the following land. Verified at file:line:
+> 1. **Per-CPU current-thread cursor** -- the #PF handler must know the FAULTING task's `cr3` to look up its growable stack and commit via `vmm_map_user_page(cr3,...)`. A global VA-keyed registry is wrong: secondary user-stack VAs stride from `USER_THREAD_STACK_BASE` and are REUSED across per-process PML4s (`task.c:3795-3810`). The cursor is absent (`schedule_now` has no per-CPU current-thread) -- the same blocker that deferred §5/§16.
+> 2. **Reserved-VA lazy-commit layout** -- every stack today is a contiguous identity-mapped physical alloc with an adjacent allocation directly below (`task.c:676`, `smp.c:378`, `gdt.c:88`); there is NO reserve headroom to grow into. Growable stacks need a reserved user-VA window backed on demand (demand paging + a per-process frame-map primitive).
+> 3. **Safe terminal delivery/termination** -- reserve-exhausted overflow must deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack; ring-3 delivery + process termination is itself deferred (§5), so the terminal path can only `panic_screen` today, not terminate the process.
+> 4. **PMM + page-table SMP locking** -- the COMMIT path (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run inside a short spinlock critical section; per-process PML4 + kernel PT-creation locks are unbuilt.
+> When these land: implement the mechanism (per-`cr3` growable-stack registry; GROWING-state commit performed OUTSIDE the registry lock with rollback; guard move + one-shot re-arm; a distinct TERMINAL result routed through the existing #PF per-CPU scratch path) and convert user-thread stacks to the reserved/lazy-commit layout. Kernel-task stacks are NOT growable on the current non-IST #PF path (the handler runs on the exhausted stack -> #DF); that requires separate safe-entry-stack/IST work.
+
 - [ ] Guard-page / stack-growth detection with a configurable stack reserve (default 1 MiB); track per-stack committed and reserved bounds separately
 - [ ] Successful grow: commit one page, MOVE the guard one page down and re-arm it (one-shot); reject a fault that jumped OVER the guard instead of growing into it
 - [ ] Reserve exhausted = terminal: deliver `STATUS_STACK_OVERFLOW` WITHOUT touching the exhausted stack; never grow past the reserve into adjacent mappings
@@ -735,6 +743,11 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 **Test checkpoint:** A recursive user thread that walks its stack down past the committed low-water mark auto-grows one page per guard hit and continues; serial shows the commit_low moving down. A runaway recursion that exhausts the 1 MiB reserve delivers `STATUS_STACK_OVERFLOW` (labeled panic until §5) without a double-fault. A fault that jumps over the guard (large `alloca`) is rejected as terminal, not grown. Test on: QEMU WHPX + TCG. Verify on bare metal.
 
 - [ ] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"`
+
+> **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 119)
+> **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 117)
+> **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 309)
+> **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 122)
 
 
 ---
