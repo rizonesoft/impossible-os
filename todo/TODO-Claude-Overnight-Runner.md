@@ -408,6 +408,36 @@ the single source of truth for "what is control plane" is
    consecutive fast deaths (`run_secs < --fast-death-secs`, default 120s) trip
    the breaker EARLY and jump to the backoff cap with a `crash_loop` flag.
 
+**Cost gates (R1-R4, 2026-07-19).** The 2026-07-19 night cost ~75% cache reads
+(547M tokens re-read at ~325K/turn); four gates attack the turn-count and
+context-size drivers measured in that night's transcripts (fail-open, headless
+scope, tests in `scripts/overnight/tests/`):
+
+- **R1 rollover-required-after-ship** (`run_phase_guard.py`, section-start
+  chokepoint): P3.2 only trapped a REFUSED rollover; R1 blocks the next
+  section-starter skill (implement-todo-section/-item/-ssdt-range) and any
+  `cursor` move to a different section when a ship-stamp commit postdates
+  `last_rollover_epoch` (set on `start` + every verified `rollover`). The
+  skill-level check is the load-bearing one: the SECTIONS loop never re-calls
+  `cursor` between sections of one file. Deferrals (no stamp) advance freely;
+  review/close skills stay unblocked (they legitimately run post-ship).
+- **R2 bypass-shape hardening** (`build_offload_reminder.py`): the P3.4 block
+  now also catches `make test-*`, absolute-path, `./`-prefixed, and direct
+  execution of the suite scripts; the sanctioned `run-artifact.sh` reroute logs
+  a `follow` event so `offload-report.py` counts command-reroute compliance
+  (the old dispatch-only metric misread the working block as 9% follow).
+- **R3 wait discipline** (`codex_wait_discipline.py`): a headless
+  `wait-for-codex-verdict.sh` call must be ONE long wait (`--max >= 300` + a
+  Bash tool `timeout` outliving it). Measured: 51 short polls x ~350K cached
+  tokens (~18M read tokens, 27% of the session's Bash calls) in
+  run-20260719-022200.
+- **R4 web-research reroute** (`websearch_offload_gate.py`): headless
+  MAIN-session WebSearch/WebFetch blocks with a reroute to the three
+  researcher agents; subagent calls pass (keyed on the agent transcript path,
+  so the reroute cannot deadlock). Measured: 10 main-session WebSearch calls
+  fired in parallel with a parity-research-analyst dispatch on the same
+  question (run-20260719-100809).
+
 **Fail-direction policy (audited 2026-07-11 -- do not silently flip):** the
 LOAD-BEARING gates fail CLOSED -- `section_commit_gate.py` treats missing
 evidence as refusal, and `run_phase_guard.py` `_rollover_failures` appends a

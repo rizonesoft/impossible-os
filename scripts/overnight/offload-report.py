@@ -42,25 +42,41 @@ def main(argv) -> int:
             continue
     events.sort(key=lambda e: e["ts"])
     dispatch_ts = [e["ts"] for e in events if e.get("kind") == "dispatch"]
+    # R2 (2026-07-19): non-Agent compliance. A hook whose sanctioned follow-up
+    # is a rerouted COMMAND (build_offload_reminder -> run-artifact.sh) logs
+    # kind="follow"; counting only Agent dispatches misread the working P3.4
+    # block as a 9% follow rate. Follows are per-hook, dispatches stay global.
+    follow_ts = defaultdict(list)
+    for e in events:
+        if e.get("kind") == "follow":
+            follow_ts[e.get("hook", "?")].append(e["ts"])
 
     stats = defaultdict(lambda: {"fires": 0, "followed": 0, "unfollowed": []})
     for e in events:
         if e.get("kind") != "fire":
             continue
-        s = stats[e.get("hook", "?")]
+        hook = e.get("hook", "?")
+        s = stats[hook]
         s["fires"] += 1
-        if any(e["ts"] <= t <= e["ts"] + window_s for t in dispatch_ts):
+        if (any(e["ts"] <= t <= e["ts"] + window_s for t in dispatch_ts)
+                or any(e["ts"] <= t <= e["ts"] + window_s
+                       for t in follow_ts[hook])):
             s["followed"] += 1
         else:
             s["unfollowed"].append(f"ts={e['ts']} {e.get('detail', '')}")
 
     total_dispatches = len(dispatch_ts)
-    print(f"offload events: {len(events)} ({total_dispatches} dispatches), "
-          f"follow window {window_s}s")
+    total_follows = sum(len(v) for v in follow_ts.values())
+    print(f"offload events: {len(events)} ({total_dispatches} dispatches, "
+          f"{total_follows} follows), follow window {window_s}s")
+    # A hook can be compliant on every attempt (wrapped from the start ->
+    # follow events, zero fires); surface it instead of looking unused.
+    for hook in follow_ts:
+        stats[hook]  # materialize the row
     for hook, s in sorted(stats.items()):
         rate = s["followed"] / s["fires"] if s["fires"] else 0.0
         print(f"  {hook:<28} fires={s['fires']:>4} followed={s['followed']:>4} "
-              f"rate={rate:.0%}")
+              f"rate={rate:.0%} follows={len(follow_ts[hook]):>4}")
         for u in s["unfollowed"][-3:]:
             print(f"      unfollowed: {u}")
     if not stats:

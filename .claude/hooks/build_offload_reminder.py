@@ -43,8 +43,42 @@ FRESH_NS = 900 * 1_000_000_000  # 15 min: a dispatch this recent counts
 # J2b: `lint.sh` is intentionally NOT here -- lint is cheap and does not flood
 # the context like a full build/test/smoke run, so BLOCKing it to force the
 # run-artifact.sh reroute was mild over-reach. Only the output-heavy scripts route.
-_SCRIPT_RE = re.compile(
-    r"\bbash\s+scripts/(?:build|test|test-smoke|test-tooling)\.sh\b")
+#
+# R2 (2026-07-19): bypass-shape hardening. The original pattern matched ONLY
+# the literal `bash scripts/X.sh` form; absolute paths, `./`-prefix, direct
+# execution at a command position, `make test-*`, interpreter flags
+# (`bash -x`), quoted paths, env-var prefixes (`FOO=1 scripts/test.sh`),
+# subshells, and newline-separated statements all sailed through raw
+# (review 2026-07-19, finders A/B/altitude -- each shape verified live).
+# Three separate patterns so each detector stays auditable:
+#   - interpreter form: bash/sh (+ optional flags/quote) directly before the
+#     script path, anywhere in the command (so `cat scripts/test.sh` stays
+#     un-gated -- no interpreter);
+#   - direct-exec form: the script path at a COMMAND position (start of
+#     string/line or after ; & | ( ), optionally behind env-var assignments,
+#     so a quoted mention mid-string does not trip the block;
+#   - make form: a `test`/`test-<suite>` target at a command position
+#     ((?!=) keeps `make test=1` variable assignments out).
+_SUITE_SCRIPTS = r"scripts/(?:build|test|test-smoke|test-tooling)\.sh\b"
+_CMD_POS = r"(?:^|[;&|(]\s*)"
+_ENV_PREFIX = r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+_SCRIPT_RES = (
+    re.compile(r"\b(?:bash|sh)\s+(?:-\S+\s+)*[\"']?(?:\S*/)?" + _SUITE_SCRIPTS),
+    re.compile(_CMD_POS + _ENV_PREFIX + r"[\"']?(?:\./|\S*/)?" + _SUITE_SCRIPTS,
+               re.MULTILINE),
+    re.compile(_CMD_POS + _ENV_PREFIX
+               + r"make\s+(?:\S+\s+)*?test(?:-[A-Za-z0-9_-]+)?\b(?!=)",
+               re.MULTILINE),
+)
+
+
+def _match_suite_invocation(cmd: str):
+    """First match of any suite-script/make-test invocation shape, else None."""
+    for rx in _SCRIPT_RES:
+        m = rx.search(cmd)
+        if m:
+            return m
+    return None
 
 _MSG = (
     "[build-offload BLOCK -- reroute] Overnight SECTIONS phase ran `{script}` "
@@ -127,8 +161,11 @@ def main() -> int:
     if not isinstance(d, dict) or d.get("tool_name") != "Bash":
         return 0
     cmd = (d.get("tool_input") or {}).get("command") or ""
-    m = _SCRIPT_RE.search(cmd)
+    m = _match_suite_invocation(cmd)
     if not m:
+        return 0
+    root = _repo_root()
+    if root is None or not _in_sections(root):
         return 0
     # Exempt the SANCTIONED wrapped route: `run-artifact.sh <label> -- bash
     # scripts/build.sh` legitimately contains the inner `bash scripts/build.sh`
@@ -136,10 +173,17 @@ def main() -> int:
     # BLOCK, would BLOCK) the very route this reminder recommends -- it fired 9x
     # on one properly-wrapped sequence (Codex audit 2026-07-13, verified). If an
     # outer run-artifact.sh wrapper is present, the command is already offloaded.
+    # R2: record the reroute as a `follow` event -- offload-report.py counted
+    # only Agent dispatches as compliance, so the P3.4 reroute (a Bash call, not
+    # an Agent) read as a 9% follow rate when the block was in fact working
+    # (2026-07-19 measurement: all bare attempts blocked pre-execution).
     if re.search(r"\brun-artifact\.sh\b", cmd):
-        return 0
-    root = _repo_root()
-    if root is None or not _in_sections(root):
+        try:
+            import _offload_log
+            _offload_log.log_event(root, "follow", "build_offload_reminder",
+                                   m.group(0))
+        except Exception:
+            pass
         return 0
     if _recent_checks_runner_dispatch(root):
         return 0

@@ -193,6 +193,16 @@ PHASE_ALLOWED_SKILLS = {
 # one-shot override consumed by the next Stage 1-2 skill invocation.
 LIFECYCLE_SKILLS = {"validate-todo-file", "gap-audit-todo", "codex-gap-audit"}
 
+# R1 (2026-07-19): the skills that START a new section work unit. When a
+# ship-stamp commit postdates the last verified rotation, invoking any of
+# these in the SAME worker is the un-rotated section-to-section advance the
+# flow invariant forbids -- the only legal next step is `rollover`. The
+# review/close skills are deliberately NOT here: review-todo-section MUST run
+# post-ship (it writes the stamps), and complete-todo-file closes the file
+# in-session (the cursor gate still forces rotation before the next file).
+R1_SECTION_STARTERS = {"implement-todo-section", "implement-todo-item",
+                       "implement-ssdt-range"}
+
 
 def load_state():
     if not STATE_PATH.exists():
@@ -222,7 +232,7 @@ def _skill_name(tool_input):
 
 
 def evaluate(tool_name, tool_input, state, armed=False, headless=False,
-             stages_done=False):
+             stages_done=False, ship_pending=""):
     """Return (allow: bool, message: str). Pure -- unit-testable.
 
     The guard governs ONLY the headless unattended run. An interactive operator
@@ -232,6 +242,9 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
 
     `stages_done` is the cursor file's `stages_1_2_done` verdict (computed by
     the caller only when the tool is a Stage 1-2 skill; False otherwise).
+    `ship_pending` is the sha of a ship-stamp commit newer than the last
+    verified rotation ("" if none; computed by the caller only when the tool
+    is an R1 section-starter skill).
     """
     if not headless:
         return True, ""
@@ -313,6 +326,25 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
                 "`run_phase_guard.py phase <PHASE>` and re-invoke. "
                 "Details: docs/infrastructure/hook-codes.md#seq-phase")
 
+    # R1 (2026-07-19): rollover-required-after-ship, at the SECTION-START
+    # chokepoint. The cursor verb only sees FILE-to-file moves (the SECTIONS
+    # loop never re-calls `cursor` between sections of one file -- review
+    # 2026-07-19 finder C), so the enforcement lives here: starting a NEW
+    # section work unit after an un-rotated ship is blocked. Deferrals leave
+    # no ship stamp; the fresh post-rotation worker's ship predates its
+    # last_rollover_epoch -- both pass.
+    if tool_name == "Skill" and ship_pending:
+        sk = _skill_name(tool_input)
+        if sk in R1_SECTION_STARTERS:
+            return False, (
+                f"[SEQ-R1] Skill({sk}) blocked: ship-stamp commit "
+                f"{ship_pending[:12]} landed after the last verified rotation. "
+                "A fully-shipped section ENDS the worker context: run "
+                "`python3 .claude/hooks/run_phase_guard.py rollover` and END "
+                "the turn -- the watchdog relaunches a fresh worker that "
+                "resumes at the next section. Operator override: "
+                "`run_phase_guard.py clear`.")
+
     # Everything else (Bash, Edit, Write, Read, Grep, Glob, inner-pipeline
     # skills) passes -- the within-section gates govern it.
     return True, ""
@@ -346,9 +378,15 @@ def handle_pretool():
     if (is_headless() and state.get("active") and tool_name == "Skill"
             and _skill_name(tool_input) in LIFECYCLE_SKILLS):
         stages_done = _cursor_stages_done(state)
+    ship_pending = ""
+    if (is_headless() and state.get("active") and tool_name == "Skill"
+            and _skill_name(tool_input) in R1_SECTION_STARTERS):
+        ship_pending = _ship_stamp_since(repo_root(),
+                                         state.get("last_rollover_epoch"))
     allow, msg = evaluate(tool_name, tool_input, state,
                           armed=ARMED_MARKER.exists(),
-                          headless=is_headless(), stages_done=stages_done)
+                          headless=is_headless(), stages_done=stages_done,
+                          ship_pending=ship_pending)
     if allow:
         # Consume the one-shot relifecycle override when a Stage 1-2 skill
         # actually fires against a mature file under it.
@@ -574,6 +612,50 @@ def _head_adds_ship_stamp(root: Path) -> bool:
     if r.returncode != 0:
         return False
     return any(_SHIP_STAMP_RE.match(ln) for ln in r.stdout.splitlines())
+
+
+def _ship_stamp_since(root: Path, epoch) -> str:
+    """R1 (2026-07-19): sha of a commit STRICTLY NEWER than `epoch` that adds a
+    review ship-stamp to a todo/ file, or '' if none. A ship-stamp commit after
+    the last verified rotation means the worker is about to advance un-rotated
+    (P3.2 only catches a REFUSED rollover; a never-ATTEMPTED one sailed through
+    -- measured 2026-07-19: multi-section sessions reached ~600K context and
+    cache reads were 75% of the night's cost). Bounded to the newest 30 commits
+    (a single worker session never ships more). Fail-open ('') on missing epoch
+    or any git error: a broken git / mid-migration state must not wedge the
+    cursor -- the Stop hook still holds the session either way."""
+    if not isinstance(epoch, (int, float)) or epoch <= 0:
+        return ""
+    try:
+        # One bounded walk over todo/-touching commits newer than the rotation
+        # (--since bounds the traversal itself, so this is cheap on the linear
+        # runner history; the python-side ct compare stays as the exact belt).
+        # Review 2026-07-19: the first cut walked `git log -30` + one `git
+        # show` per commit -- a fixed window unrelated commits could push the
+        # stamp out of, at up to 31 subprocess spawns per check.
+        since = time.strftime("%Y-%m-%dT%H:%M:%S +0000",
+                              time.gmtime(int(epoch)))
+        r = subprocess.run(["git", "-C", str(root), "log", "--since", since,
+                            "-n", "50", "--format=%H %ct", "--", "todo"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return ""
+        for ln in r.stdout.splitlines():
+            parts = ln.split()
+            if len(parts) != 2:
+                continue
+            sha, ct = parts[0], int(parts[1])
+            if ct <= epoch:
+                continue  # same-second/older commit slipped the --since bound
+            show = subprocess.run(["git", "-C", str(root), "show", "--format=",
+                                   sha, "--", "todo"],
+                                  capture_output=True, text=True, timeout=10)
+            if show.returncode == 0 and any(
+                    _SHIP_STAMP_RE.match(l) for l in show.stdout.splitlines()):
+                return sha
+        return ""
+    except Exception:
+        return ""
 
 
 _REVIEW_RESOLUTION_REL = ".claude/state/last-review-resolution.json"
@@ -847,6 +929,9 @@ def cli(argv):
             "progress_this_pass": False,
             "started_at": argv[1] if len(argv) > 1 else "unknown",
             "updated_at": argv[1] if len(argv) > 1 else "unknown",
+            # R1 baseline: ships from BEFORE this run must not block the first
+            # cursor move; only a ship inside the run demands a rotation.
+            "last_rollover_epoch": int(time.time()),
         }
         save_state(state)
         # NOTE: the armed marker is intentionally NOT removed here. It is the
@@ -887,10 +972,10 @@ def cli(argv):
             # until a `rollover` VERIFIES (which clears the flag) or the operator
             # `clear`s. Safe because B4/F2 stop benign coverage.* from refusing
             # the rollover forever.
+            new_file = argv[2]
+            new_idx = int(argv[3]) if len(argv) >= 4 else state.get("section_idx")
             rr = state.get("rollover_refused")
             if isinstance(rr, dict) and state.get("active"):
-                new_file = argv[2]
-                new_idx = int(argv[3]) if len(argv) >= 4 else state.get("section_idx")
                 if new_file != rr.get("file") or new_idx != rr.get("section_idx"):
                     print("[sequencer] cursor BLOCKED (P3.2): a rollover was "
                           f"REFUSED at {rr.get('file')} section "
@@ -898,6 +983,28 @@ def cli(argv):
                           "(commit/clean/push + receipts) and re-run `rollover` -- "
                           "do NOT start the next section un-rotated. Operator "
                           "override: `run_phase_guard.py clear`.", file=sys.stderr)
+                    return 1
+            # R1 (2026-07-19): rollover-required-after-ship. P3.2 above only
+            # traps a REFUSED rollover; a worker that never ATTEMPTS one could
+            # advance into the next section un-rotated. If any commit newer
+            # than the last verified rotation adds a ship stamp, the only
+            # legal next step is `rollover`. Deferrals add no stamp and
+            # advance freely; the fresh post-rotation worker passes because
+            # the ship predates its last_rollover_epoch (set on `start` and
+            # on every verified `rollover`).
+            if state.get("active") and (new_file != state.get("file")
+                                        or new_idx != state.get("section_idx")):
+                sha = _ship_stamp_since(repo_root(),
+                                        state.get("last_rollover_epoch"))
+                if sha:
+                    print("[sequencer] cursor BLOCKED (R1): ship-stamp commit "
+                          f"{sha[:12]} landed after the last verified rotation. "
+                          "A fully-shipped section ENDS the worker context: run "
+                          "`python3 .claude/hooks/run_phase_guard.py rollover` "
+                          "and END the turn -- the watchdog relaunches a fresh "
+                          "worker that resumes at the next section. Do NOT "
+                          "advance un-rotated. Operator override: "
+                          "`run_phase_guard.py clear`.", file=sys.stderr)
                     return 1
             state["domain"], state["file"] = argv[1], argv[2]
             if len(argv) >= 4:
@@ -1026,8 +1133,13 @@ def cli(argv):
             return 1
         # Atomic pending flag; the Stop hook permits ONE exit and the *:0/10
         # watchdog relaunches a fresh session. No custom watcher.
-        state["rollover"] = {"pending": True, "epoch": int(time.time())}
+        now = int(time.time())
+        state["rollover"] = {"pending": True, "epoch": now}
         state.pop("rollover_refused", None)  # P3.2: a verified rollover clears it
+        # R1: the rotation boundary -- ship stamps at or before this instant no
+        # longer block a section start (the fresh worker starts clean). Same
+        # `now` as the pending flag so the two windows can never desync.
+        state["last_rollover_epoch"] = now
         save_state(state)
         # P4.1: a verified rollover resets the context-rotation turn counter so
         # the fresh worker counts from zero (best-effort).

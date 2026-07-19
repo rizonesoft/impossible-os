@@ -38,6 +38,13 @@
 # One turn per bounded wait. For a single LONG wait in one turn, raise the bound
 # AND pass an explicit Bash timeout, e.g. `--max 540 <log>` with tool
 # `timeout: 600000`. Otherwise just re-invoke on exit 3 (each call is < 2 min).
+#
+# R3 (2026-07-19): in the HEADLESS run the long form is MANDATORY --
+# codex_wait_discipline.py BLOCKs a call without `--max >= 300` + a matching
+# tool timeout. Rationale: every re-invoke is a full model turn re-reading a
+# ~350K-token cached prefix; run-20260719-022200 spent 51 poll turns (~18M
+# cache-read tokens) on one review convergence. The default 100s bound below is
+# the INTERACTIVE-safe shape and stays.
 set -u
 
 MAX=100          # default < the Bash tool's ~120s ceiling, so a bare call is safe

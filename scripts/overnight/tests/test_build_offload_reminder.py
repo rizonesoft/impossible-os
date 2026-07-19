@@ -117,6 +117,80 @@ def test_lint_is_exempt_from_block():
         assert rc == 0 and err.strip() == "", (rc, err)
 
 
+def test_r2_bypass_shapes_block():
+    # R2 (2026-07-19): absolute paths, ./-prefix, direct execution at a command
+    # position, and make test-* shorthands all route like the literal form.
+    mod = _load()
+    blocked = [
+        "bash /home/u/projects/impossible-os/scripts/test.sh",
+        "bash ./scripts/test-smoke.sh",
+        "./scripts/test.sh",
+        "cd /repo && scripts/test.sh SUITE=mm",
+        "make test-mm",
+        "cd sub && make test-fs",
+        "make test",
+        "sh scripts/build.sh",
+        # review 2026-07-19 (finders A/B/altitude): verified live bypasses
+        "bash -x scripts/test.sh",                # interpreter flag
+        'bash "scripts/test.sh"',                 # quoted path
+        "make test-MM",                           # uppercase suite
+        "make test-abi-foo",                      # multi-hyphen target
+        "cd repo\nmake test-mm",                  # newline-separated
+        "FOO=1\nscripts/test.sh",                 # newline + env prefix
+        "QUIET=1 scripts/test.sh",                # env prefix at cmd position
+        "(scripts/test.sh)",                      # subshell
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        for cmd in blocked:
+            rc, _, err = _run_main(mod, cmd, root)
+            assert rc == 2 and "build-offload BLOCK" in err, (cmd, rc, err)
+
+
+def test_r2_non_invocations_pass():
+    # Reading/grepping a suite script, or `make` targets that are not tests,
+    # must NOT trip the matcher.
+    mod = _load()
+    clean = [
+        "grep -n foo scripts/test.sh",
+        "cat scripts/build.sh",
+        "git log --oneline -- scripts/test.sh",
+        "make -n help",
+        "ls scripts/",
+        "make TESTVAR=1 help",
+        "make test=1 help",                       # variable assignment, no target
+        "git commit -m 'docs: how make test-mm works'",  # quoted mention mid-string
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        for cmd in clean:
+            rc, _, err = _run_main(mod, cmd, root)
+            assert rc == 0 and err.strip() == "", (cmd, rc, err)
+
+
+def test_r2_wrapped_route_logs_follow():
+    # R2: the sanctioned run-artifact.sh reroute records a kind=follow event so
+    # offload-report.py counts command-reroute compliance, not just Agent
+    # dispatches (the 9%-follow misread).
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        rc, _, err = _run_main(
+            mod,
+            "bash scripts/overnight/run-artifact.sh t1 -- bash scripts/test.sh",
+            root)
+        assert rc == 0 and err.strip() == "", (rc, err)
+        log = root / ".claude/state/offload-events.jsonl"
+        entries = [json.loads(x) for x in log.read_text().splitlines() if x.strip()]
+        follows = [e for e in entries
+                   if e.get("kind") == "follow"
+                   and e.get("hook") == "build_offload_reminder"]
+        assert len(follows) == 1, entries
+
+
 if __name__ == "__main__":
     test_wrapped_command_is_exempt()
     test_bare_command_blocks_with_reroute()
@@ -124,4 +198,8 @@ if __name__ == "__main__":
     test_block_is_idempotent_but_log_dedups()
     test_message_has_no_checks_runner_text()
     test_lint_is_exempt_from_block()
-    print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt")
+    test_r2_bypass_shapes_block()
+    test_r2_non_invocations_pass()
+    test_r2_wrapped_route_logs_follow()
+    print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
+          " + R2 bypass shapes + follow log")

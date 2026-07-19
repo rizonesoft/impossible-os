@@ -97,6 +97,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/codex_wait_discipline.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/artifact_pipe_guard.py\"",
             "timeout": 5
           },
@@ -209,6 +214,16 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_preflight.py\"",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebSearch|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/websearch_offload_gate.py\"",
+            "timeout": 5
           }
         ]
       }

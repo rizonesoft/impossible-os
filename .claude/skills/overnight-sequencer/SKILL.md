@@ -98,23 +98,24 @@ re-polls). The fix is one blocking call, no narration:
 #    multi-kind envelope). Reviews are READ-ONLY (adversarial-review sandbox).
 bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: design] <todo> <body>'
 #    -> returns {logFile: ...}; works for design/adversarial/consistency/perf.
-# 2. Poll it with the CANONICAL waiter (B1). It bounds ITSELF to finish under
-#    the Bash tool's ~120s default, so a bare call is NEVER killed at 2m and you
-#    never need to remember a `timeout:` arg (the old hand-rolled `for i in $(seq
-#    1 9); do ... sleep 60; done` was 540s and died at the 120s default every
-#    session). This is ONE model turn, idle while it sleeps:
-bash scripts/overnight/wait-for-codex-verdict.sh <logFile>
-#    (watches <logFile> for the "Turn completed" sentinel; each call is bounded
-#     ~100s so it is NEVER killed at the 2m default) exit 0 = DONE (prints the
-#     verdict tail); exit 3 = STILL RUNNING (reports bytes + last-growth age);
-#     exit 4 = STALE (no growth for --stale-secs, ~hung -- re-dispatch THAT log
-#     only, keep waiting on the rest; B2).
-# 3. On exit 3, just call it AGAIN (the review runs detached; nothing is lost) --
-#    a 16-min review is a handful of clean re-invokes, not a killed 2m call + a
-#    recovery turn. For a single long wait in ONE turn, pass a larger bound WITH
-#    an explicit Bash `timeout:`, e.g. `--max 540 <logFile>` + tool `timeout: 600000`
-#    (it is `--max <secs>`; a bare trailing number is REJECTED as a stray arg).
-#    Then read the verdict and continue -- SAME session.
+# 2. Wait with the CANONICAL waiter (B1) in ONE LONG call (R3, 2026-07-19).
+#    The headless shape is MANDATORY (codex_wait_discipline.py BLOCKs short
+#    polls): `--max 540` AND the Bash tool parameter `timeout: 600000` -- the
+#    tool's ~120s default kill would otherwise end the wait early (B1). The
+#    script exits the moment every verdict lands, so the long bound is FREE
+#    when the review is already done. Measured cost of the short-poll loop
+#    this replaces: 51 polls x ~350K cached tokens in run-20260719-022200
+#    (~27% of that session's Bash calls). One model turn, idle while it sleeps:
+bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool timeout: 600000
+#    (watches <logFile> for the "Turn completed" sentinel) exit 0 = DONE
+#     (prints the verdict tail); exit 3 = STILL RUNNING (reports bytes +
+#     last-growth age); exit 4 = STALE (no growth for --stale-secs, ~hung --
+#     re-dispatch THAT log only, keep waiting on the rest; B2).
+# 3. On exit 3 (review outlived the 9-min bound), re-issue the SAME long call
+#    (the review runs detached; nothing is lost). It is `--max <secs>`; a bare
+#    trailing number is REJECTED as a stray arg. Then read the verdict and
+#    continue -- SAME session. (Interactive sessions may still use short bare
+#    calls; R3 gates only the headless run.)
 ```
 
 - **The session NEVER exits to wait on a review.** There is no `wait`/`wake`
@@ -131,8 +132,9 @@ bash scripts/overnight/wait-for-codex-verdict.sh <logFile>
   '[review-kind: X] <todo> <body>'` call (one Bash call per kind, in one
   parallel message -- the per-kind gate receipts attribute off the command
   line, so NEVER bundle several dispatches behind one opaque shell command).
-  Poll all their logFiles with the canonical waiter (B1)
-  `bash scripts/overnight/wait-for-codex-verdict.sh f1 f2 f3`, then read ONE
+  Poll all their logFiles with the canonical waiter (B1) in one LONG call (R3)
+  `bash scripts/overnight/wait-for-codex-verdict.sh --max 540 f1 f2 f3` (+ tool
+  `timeout: 600000`), then read ONE
   combined envelope SCOPED to this section (E3): `python3
   scripts/overnight/review-envelope.py . --todo <this-section's-todo-path>` --
   the `--todo` filter is REQUIRED because the broker manifest accumulates across
@@ -341,7 +343,14 @@ information or judgment; none of this weakens a gate):**
   items, `Skill(implement-todo-item)` is allowed.
 - **Commit AND push after every section** (one atomic act). After a section
   ships+reviews+pushes, `run_phase_guard.py progress`.
-- **Verified session rollover after every fully-shipped section.** A fresh
+- **Verified session rollover after every fully-shipped section.** ENFORCED
+  (R1, 2026-07-19): when a ship-stamp commit landed after the last verified
+  rotation, the guard BLOCKS the next section-starter skill
+  (implement-todo-section / implement-todo-item / implement-ssdt-range) AND
+  any `cursor` move to a different section -- a shipped section's only legal
+  next step is `rollover`. Deferrals add no ship stamp and advance in-session
+  as before; review-todo-section / complete-todo-file stay unblocked (they
+  legitimately run post-ship). A fresh
   worker context is cheaper and sharper than a long-tail one; the durable
   cursor (sequencer-run.json) carries all run state. After `progress`, run
   `python3 .claude/hooks/run_phase_guard.py rollover`:
