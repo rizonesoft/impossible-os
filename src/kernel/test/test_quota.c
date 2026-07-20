@@ -153,8 +153,8 @@ static void test_quota_dump_smoke(void)
 /* A fresh block starts at zero usage/peak/failures and carries one reference. */
 static void test_quota_block_create_zeroed(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
-    TEST_ASSERT_NOT_NULL((void *)b, "quota_block_create(NULL, 0) returns a block");
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    TEST_ASSERT_NOT_NULL((void *)b, "quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0) returns a block");
     if (!b)
         return;
 
@@ -168,7 +168,7 @@ static void test_quota_block_create_zeroed(void)
 /* Charge then return leaves usage back at 0, but peak retains the high water. */
 static void test_quota_charge_return_roundtrip(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -192,7 +192,7 @@ static void test_quota_charge_return_roundtrip(void)
 /* An over-limit charge is refused, leaves usage untouched, and counts a failure. */
 static void test_quota_charge_over_limit_refused(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -213,7 +213,7 @@ static void test_quota_charge_over_limit_refused(void)
 /* Unlimited (0) means no cap: a large charge under the domain max succeeds. */
 static void test_quota_unlimited_allows_large_charge(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -231,7 +231,7 @@ static void test_quota_unlimited_allows_large_charge(void)
  * overflow rather than a wrap. */
 static void test_quota_overflow_domain_guarded(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -259,7 +259,7 @@ static void test_quota_overflow_domain_guarded(void)
  * resource would wipe the accounting for everything allocated since). */
 static void test_quota_return_underflow_refused(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -279,7 +279,7 @@ static void test_quota_return_underflow_refused(void)
  * return must not erase a newer, unrelated charge. */
 static void test_quota_stale_return_cannot_erase_newer_charge(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -306,7 +306,7 @@ static void test_quota_stale_return_cannot_erase_newer_charge(void)
  * next charge (the documented limit-lowering contract). */
 static void test_quota_lowering_limit_keeps_committed(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -327,8 +327,8 @@ static void test_quota_lowering_limit_keeps_committed(void)
  * the destination cannot accept the charge (both blocks left untouched). */
 static void test_quota_transfer_moves_and_refuses(void)
 {
-    quota_block_t *src = quota_block_create(NULL, 0);
-    quota_block_t *dst = quota_block_create(NULL, 0);
+    quota_block_t *src = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)src, "src block allocated");
     TEST_ASSERT_NOT_NULL((void *)dst, "dst block allocated");
     if (!src || !dst) {
@@ -365,7 +365,7 @@ static void test_quota_transfer_moves_and_refuses(void)
 /* Self-transfer is a no-op success, not a double count or a drain. */
 static void test_quota_transfer_self_is_noop(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -382,7 +382,7 @@ static void test_quota_transfer_self_is_noop(void)
  * faulting, and the queries answer 0 for them. */
 static void test_quota_charge_api_bad_args(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -422,7 +422,7 @@ static void test_quota_charge_api_bad_args(void)
  * readable and correct until the last reference goes. */
 static void test_quota_block_refcount(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -453,7 +453,7 @@ static void test_quota_block_owner_sid(void)
     if (sub)
         *sub = 18;                        /* S-1-5-18, the local system SID */
 
-    quota_block_t *b = quota_block_create(owner, sizeof(buf));
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, owner, sizeof(buf));
     TEST_ASSERT_NOT_NULL((void *)b, "block with an owner SID allocated");
     if (!b)
         return;
@@ -467,6 +467,569 @@ static void test_quota_block_owner_sid(void)
     quota_block_deref(b);
 }
 
+/* ==========================================================================
+ * Section 3: process/token/job ownership model
+ * ========================================================================== */
+
+/* Build S-1-5-<rid> into `buf` and return it. The section-3 tests need SIDs
+ * that are NOT the system SID, so they can exercise the per-SID registry
+ * without disturbing the live SYSTEM user block every process shares. */
+static SID *test_quota_make_sid(uint8_t *buf, uint32_t rid)
+{
+    SID *sid = (SID *)buf;
+    const uint8_t nt_authority[6] = { 0, 0, 0, 0, 0, 5 };
+
+    RtlInitializeSid(sid, nt_authority, 1);
+    uint32_t *sub = RtlSubAuthoritySid(sid, 0);
+    if (sub)
+        *sub = rid;
+    return sid;
+}
+
+/* The principal is recorded at creation and reported back; a NULL block and an
+ * out-of-range principal are both rejected rather than silently defaulted. */
+static void test_quota_principal_recorded(void)
+{
+    quota_block_t *p = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *j = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+
+    TEST_ASSERT_NOT_NULL((void *)p, "process-principal block allocated");
+    TEST_ASSERT_NOT_NULL((void *)j, "job-principal block allocated");
+    if (p)
+        TEST_ASSERT_EQ((uint64_t)quota_block_principal(p),
+                       (uint64_t)QUOTA_PRINCIPAL_PROCESS,
+                       "process block reports QUOTA_PRINCIPAL_PROCESS");
+    if (j)
+        TEST_ASSERT_EQ((uint64_t)quota_block_principal(j),
+                       (uint64_t)QUOTA_PRINCIPAL_JOB,
+                       "job block reports QUOTA_PRINCIPAL_JOB");
+    TEST_ASSERT_EQ((uint64_t)quota_block_principal(NULL),
+                   (uint64_t)QUOTA_PRINCIPAL_COUNT,
+                   "NULL block reports QUOTA_PRINCIPAL_COUNT");
+    TEST_ASSERT_NULL((void *)quota_block_create(QUOTA_PRINCIPAL_COUNT, NULL, 0),
+                     "out-of-range principal refused");
+
+    quota_block_deref(p);
+    quota_block_deref(j);
+}
+
+/* The canonical-user rule: the same SID must resolve to the SAME block, or a
+ * second token lineage would receive its own full budget and the per-user
+ * limit would not be a limit at all. A different SID must NOT collide. */
+static void test_quota_user_block_canonical(void)
+{
+    uint8_t buf_a[SID_MAX_SIZE] = { 0 };
+    uint8_t buf_b[SID_MAX_SIZE] = { 0 };
+    SID *sid_a = test_quota_make_sid(buf_a, 4101);
+    SID *sid_b = test_quota_make_sid(buf_b, 4102);
+
+    quota_block_t *first  = quota_user_block_acquire(sid_a, SID_MAX_SIZE);
+    quota_block_t *second = quota_user_block_acquire(sid_a, SID_MAX_SIZE);
+    quota_block_t *other  = quota_user_block_acquire(sid_b, SID_MAX_SIZE);
+
+    TEST_ASSERT_NOT_NULL((void *)first, "user block acquired for SID A");
+    TEST_ASSERT_NOT_NULL((void *)other, "user block acquired for SID B");
+    TEST_ASSERT(first == second, "same SID resolves to the same canonical block");
+    TEST_ASSERT(first != other, "a different SID gets a different block");
+    if (first)
+        TEST_ASSERT_EQ((uint64_t)quota_block_principal(first),
+                       (uint64_t)QUOTA_PRINCIPAL_USER,
+                       "acquired block is a USER-principal block");
+    TEST_ASSERT_NULL((void *)quota_user_block_acquire(NULL, 0),
+                     "ownerless user block refused (could never be found again)");
+
+    /* Usage charged through one handle is visible through the other, which is
+     * the whole point of the block being shared. */
+    if (first && second) {
+        TEST_ASSERT_EQ((uint64_t)quota_charge(first, QUOTA_RES_HANDLE, 7),
+                       (uint64_t)STATUS_SUCCESS, "charge via first handle");
+        TEST_ASSERT_EQ(quota_usage(second, QUOTA_RES_HANDLE), 7ULL,
+                       "usage visible through the second handle");
+        TEST_ASSERT_EQ((uint64_t)quota_return(second, QUOTA_RES_HANDLE, 7),
+                       (uint64_t)STATUS_SUCCESS, "return via second handle");
+    }
+
+    quota_block_deref(first);
+    quota_block_deref(second);
+    quota_block_deref(other);
+}
+
+/* try_ref pins a block that is still live, and the extra reference keeps it
+ * alive across the owner's deref. */
+static void test_quota_try_ref_live_block(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
+    if (!b)
+        return;
+
+    TEST_ASSERT_EQ((uint64_t)quota_block_try_ref(b), 1ULL,
+                   "try_ref pins a live block");
+    TEST_ASSERT_EQ((uint64_t)quota_block_try_ref(NULL), 0ULL,
+                   "try_ref on NULL reports failure rather than faulting");
+
+    /* Drop the creation reference; the try_ref reference must still hold the
+     * block, which the charge below proves by using it. */
+    quota_block_deref(b);
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_TIMER, 3),
+                   (uint64_t)STATUS_SUCCESS, "block still usable via try_ref reference");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_TIMER), 3ULL, "usage recorded");
+    quota_block_deref(b);
+}
+
+/* The double-count regression: a chain charge hits the process, user, and job
+ * blocks, so an aggregate that summed every block owned by a SID would report
+ * the charge two or three times. The rollup must count the USER layer only. */
+static void test_quota_rollup_counts_user_layer_once(void)
+{
+    uint8_t buf[SID_MAX_SIZE] = { 0 };
+    SID *sid = test_quota_make_sid(buf, 4103);
+    uint64_t usage = 0, peak = 0;
+
+    quota_block_t *user = quota_user_block_acquire(sid, SID_MAX_SIZE);
+    /* A process block carrying the SAME owner SID -- exactly what a process
+     * running as this user has. It must not be added to the aggregate. */
+    quota_block_t *proc = quota_block_create(QUOTA_PRINCIPAL_PROCESS, sid, SID_MAX_SIZE);
+    TEST_ASSERT_NOT_NULL((void *)user, "canonical user block acquired");
+    TEST_ASSERT_NOT_NULL((void *)proc, "same-SID process block created");
+    if (!user || !proc) {
+        quota_block_deref(user);
+        quota_block_deref(proc);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge(user, QUOTA_RES_SECTION, 40),
+                   (uint64_t)STATUS_SUCCESS, "charge the user block");
+    TEST_ASSERT_EQ((uint64_t)quota_charge(proc, QUOTA_RES_SECTION, 40),
+                   (uint64_t)STATUS_SUCCESS, "same charge lands on the process block");
+
+    TEST_ASSERT_EQ((uint64_t)quota_rollup_by_sid(sid, SID_MAX_SIZE,
+                                                 QUOTA_RES_SECTION, &usage, &peak),
+                   (uint64_t)STATUS_SUCCESS, "rollup succeeds");
+    TEST_ASSERT_EQ(usage, 40ULL, "rollup counts the charge ONCE, not per layer");
+    TEST_ASSERT_EQ(peak, 40ULL, "rollup peak counts the user layer only");
+
+    (void)quota_return(user, QUOTA_RES_SECTION, 40);
+    (void)quota_return(proc, QUOTA_RES_SECTION, 40);
+    quota_block_deref(user);
+    quota_block_deref(proc);
+}
+
+/* Rollup argument validation, including a SID the caller under-declares. */
+static void test_quota_rollup_bad_args(void)
+{
+    uint8_t buf[SID_MAX_SIZE] = { 0 };
+    SID *sid = test_quota_make_sid(buf, 4104);
+    uint64_t usage = 0;
+
+    TEST_ASSERT_EQ((uint64_t)quota_rollup_by_sid(NULL, 0, QUOTA_RES_HANDLE, &usage, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL owner refused");
+    TEST_ASSERT_EQ((uint64_t)quota_rollup_by_sid(sid, SID_MAX_SIZE,
+                                                 QUOTA_RESOURCE_TYPE_COUNT, &usage, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "out-of-range type refused");
+    TEST_ASSERT_EQ((uint64_t)quota_rollup_by_sid(sid, 4, QUOTA_RES_HANDLE, &usage, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "SID truncated by owner_len refused");
+    /* Both outputs optional: a caller wanting neither still gets a verdict. */
+    TEST_ASSERT_EQ((uint64_t)quota_rollup_by_sid(sid, SID_MAX_SIZE,
+                                                 QUOTA_RES_HANDLE, NULL, NULL),
+                   (uint64_t)STATUS_SUCCESS, "NULL outputs accepted");
+}
+
+/* Every live task carries both a process block and a shared user block: the
+ * creation paths and PID 0's own wiring must leave no task unaccounted. */
+static void test_quota_task_has_blocks(void)
+{
+    struct task *t = task_current();
+
+    TEST_ASSERT_NOT_NULL((void *)t, "current task resolves");
+    if (!t)
+        return;
+    TEST_ASSERT_NOT_NULL((void *)t->quota, "current task has a process quota block");
+    if (t->quota)
+        TEST_ASSERT_EQ((uint64_t)quota_block_principal(t->quota),
+                       (uint64_t)QUOTA_PRINCIPAL_PROCESS,
+                       "task block is a PROCESS-principal block");
+    TEST_ASSERT_NOT_NULL((void *)t->quota_user, "current task has a user quota block");
+    if (t->quota_user)
+        TEST_ASSERT_EQ((uint64_t)quota_block_principal(t->quota_user),
+                       (uint64_t)QUOTA_PRINCIPAL_USER,
+                       "task user block is a USER-principal block");
+}
+
+/* A chain charge lands on every principal owning the task and the receipt
+ * returns exactly those blocks. */
+static void test_quota_chain_charge_roundtrip(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t proc_before, user_before;
+
+    if (!t || !t->quota || !t->quota_user)
+        return;                      /* covered by the task-has-blocks test */
+
+    proc_before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    user_before = quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE);
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 11, 0, &r),
+                   (uint64_t)STATUS_SUCCESS, "chain charge admitted");
+    TEST_ASSERT(r.count >= 2, "receipt records at least the process and user blocks");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), proc_before + 11,
+                   "process block charged");
+    TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE), user_before + 11,
+                   "user block charged the same amount");
+
+    quota_return_chain(&r);
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), proc_before,
+                   "process usage restored exactly");
+    TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE), user_before,
+                   "user usage restored exactly");
+    TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "receipt emptied by the return");
+
+    /* A zero-amount charge is a success that owes nothing. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 0, 0, &r),
+                   (uint64_t)STATUS_SUCCESS, "zero-amount chain charge succeeds");
+    TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "zero-amount charge records no blocks");
+}
+
+/* All-or-nothing: when a LATER block in the chain refuses, the prefix already
+ * charged must be given back, leaving no usage stranded anywhere. The user
+ * block sits after the process block, so capping the user block exercises a
+ * genuine mid-chain refusal. */
+static void test_quota_chain_all_or_nothing(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t proc_before, user_before, saved_limit;
+
+    if (!t || !t->quota || !t->quota_user)
+        return;
+
+    proc_before = quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER);
+    user_before = quota_usage(t->quota_user, QUOTA_RES_CRASH_BUFFER);
+    saved_limit = quota_limit(t->quota_user, QUOTA_RES_CRASH_BUFFER);
+
+    /* Cap the user block one unit below what the charge needs. */
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(t->quota_user, QUOTA_RES_CRASH_BUFFER,
+                                             user_before + 9),
+                   (uint64_t)STATUS_SUCCESS, "user block capped for the test");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 10, 0, &r),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED, "chain charge refused at the cap");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER), proc_before,
+                   "process prefix charge was rolled back");
+    TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_CRASH_BUFFER), user_before,
+                   "user block took no usage");
+    TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "failed charge leaves an empty receipt");
+
+    (void)quota_set_limit(t->quota_user, QUOTA_RES_CRASH_BUFFER, saved_limit);
+}
+
+/* A repeated return must not credit back a second time: that is exactly how a
+ * duplicate cleanup would erase charges made since. */
+static void test_quota_chain_return_idempotent(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t proc_before;
+
+    if (!t || !t->quota)
+        return;
+
+    proc_before = quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE);
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_NOTIFICATION_STATE, 5, 0, &r),
+                   (uint64_t)STATUS_SUCCESS, "chain charge admitted");
+    quota_return_chain(&r);
+    quota_return_chain(&r);      /* second return must be a no-op */
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE), proc_before,
+                   "double return does not push usage below the true value");
+
+    /* A charge made after the first return must survive the duplicate. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_NOTIFICATION_STATE, 2),
+                   (uint64_t)STATUS_SUCCESS, "later charge admitted");
+    quota_return_chain(&r);
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE), proc_before + 2,
+                   "duplicate return did not erase the newer charge");
+    (void)quota_return(t->quota, QUOTA_RES_NOTIFICATION_STATE, 2);
+}
+
+/* A receipt that already holds a live charge must NOT be overwritten: doing so
+ * would drop the references the first charge is holding and strand its usage
+ * with nothing left that could ever return it. */
+static void test_quota_chain_receipt_reuse_refused(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t proc_before;
+
+    if (!t || !t->quota)
+        return;
+
+    proc_before = quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW);
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+                   (uint64_t)STATUS_SUCCESS, "first chain charge admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "charging into a live receipt is refused, not silently overwritten");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW), proc_before + 6,
+                   "the refused second charge added nothing");
+
+    quota_return_chain(&r);
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW), proc_before,
+                   "the first charge was still returnable after the refusal");
+
+    /* Once returned, the receipt is idle again and may be reused. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+                   (uint64_t)STATUS_SUCCESS, "receipt reusable after return");
+    quota_return_chain(&r);
+}
+
+/* A task whose process block is gone (death teardown already ran) must NOT get
+ * a successful empty charge -- that would let a dying process allocate with no
+ * accounting at all. */
+static void test_quota_chain_no_process_block_fails_closed(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    struct quota_block *saved;
+    uint64_t flags;
+
+    if (!t || !t->quota)
+        return;
+
+    /* Simulate the post-teardown window by detaching the block, then restore
+     * it: the pointer is swapped under the same lock the charge path uses. */
+    spin_lock_irqsave(&t->quota_lock, &flags);
+    saved = t->quota;
+    t->quota = (struct quota_block *)0;
+    spin_unlock_irqrestore(&t->quota_lock, flags);
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 4, 0, &r),
+                   (uint64_t)STATUS_PROCESS_IS_TERMINATING,
+                   "charge without a process block fails closed");
+    TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "failed charge holds no blocks");
+
+    spin_lock_irqsave(&t->quota_lock, &flags);
+    t->quota = saved;
+    spin_unlock_irqrestore(&t->quota_lock, flags);
+}
+
+/* Joining a job folds the joiner's existing usage into the job block, and a
+ * job that cannot absorb it refuses rather than letting the usage escape. */
+static void test_quota_job_absorb_and_unabsorb(void)
+{
+    struct task *t = task_current();
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+    quota_block_t *job = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    uint64_t proc_usage;
+
+    if (!t || !t->quota || !job) {
+        quota_block_deref(job);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_TIMER, 12),
+                   (uint64_t)STATUS_SUCCESS, "process holds usage before joining");
+    proc_usage = quota_usage(t->quota, QUOTA_RES_TIMER);
+
+    TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
+                   (uint64_t)STATUS_SUCCESS, "job absorbs the joiner's usage");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_TIMER), proc_usage,
+                   "pre-existing usage now counts against the job");
+
+    quota_job_unabsorb(job, &rec);
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_TIMER), 0ULL,
+                   "a refused assignment leaves the job's accounting untouched");
+    TEST_ASSERT_EQ((uint64_t)rec.active, 0ULL, "record emptied by the unwind");
+    quota_job_unabsorb(job, &rec);       /* second unwind must be a no-op */
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_TIMER), 0ULL,
+                   "double unabsorb does not push the job below zero");
+
+    /* A job capped below the joiner's usage must refuse the absorb outright. */
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(job, QUOTA_RES_TIMER, proc_usage - 1),
+                   (uint64_t)STATUS_SUCCESS, "job capped below the joiner's usage");
+    TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED, "absorb refused at the cap");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_TIMER), 0ULL,
+                   "refused absorb folded nothing in");
+
+    (void)quota_return(t->quota, QUOTA_RES_TIMER, 12);
+    quota_block_deref(job);
+}
+
+/* Departure withdraws EXACTLY what joining folded in -- never the member's
+ * current usage. Post-join charges reached the job through chain receipts and
+ * are returned by those receipts; withdrawing them here too would return them
+ * twice, and once another member's usage covered the difference the receipt's
+ * own later return would subtract from THAT member's live charge. */
+static void test_quota_job_departure_withdraws_only_absorbed(void)
+{
+    struct task *t = task_current();
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+    quota_block_t *job = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+
+    if (!t || !t->quota || !job) {
+        quota_block_deref(job);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_SECTION, 20),
+                   (uint64_t)STATUS_SUCCESS, "process holds usage before joining");
+    TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
+                   (uint64_t)STATUS_SUCCESS, "join folds the usage in");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), 20ULL, "job holds it");
+
+    /* A post-join charge reaching the job the way a chain charge would, and a
+     * second member's live charge on the same job. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(job, QUOTA_RES_SECTION, 5),
+                   (uint64_t)STATUS_SUCCESS, "post-join receipt-backed charge");
+    TEST_ASSERT_EQ((uint64_t)quota_charge(job, QUOTA_RES_SECTION, 7),
+                   (uint64_t)STATUS_SUCCESS, "another member charges the job");
+
+    quota_job_unabsorb(job, &rec);
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), 12ULL,
+                   "departure withdrew only the 20 it absorbed, leaving 5+7 live");
+    TEST_ASSERT_EQ((uint64_t)rec.active, 0ULL, "record consumed by the withdrawal");
+
+    /* The post-join charge's own receipt return still finds its usage intact. */
+    TEST_ASSERT_EQ((uint64_t)quota_return(job, QUOTA_RES_SECTION, 5),
+                   (uint64_t)STATUS_SUCCESS, "receipt-backed return still valid");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), 7ULL,
+                   "the other member's live charge was never touched");
+
+    (void)quota_return(t->quota, QUOTA_RES_SECTION, 20);
+    quota_block_deref(job);
+}
+
+/* Pins the DOCUMENTED limitation of absorbing an aggregate snapshot: a
+ * pre-join resource released while still a member reduces the process block
+ * but leaves the job's absorbed copy standing until detach. This test exists so
+ * the behavior cannot change silently -- when section 4 lands receipt-obligation
+ * migration, this assertion is the one that must be rewritten. */
+static void test_quota_prejoin_release_holds_job_until_detach(void)
+{
+    struct task *t = task_current();
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+    quota_block_t *job = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+
+    if (!t || !t->quota || !job) {
+        quota_block_deref(job);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_OBJECT_BODY, 9),
+                   (uint64_t)STATUS_SUCCESS, "pre-join resource charged");
+    TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
+                   (uint64_t)STATUS_SUCCESS, "join absorbs it");
+
+    /* Release the pre-join resource while still a member. Its receipt named
+     * only the process and user blocks, so the job keeps its copy. */
+    TEST_ASSERT_EQ((uint64_t)quota_return(t->quota, QUOTA_RES_OBJECT_BODY, 9),
+                   (uint64_t)STATUS_SUCCESS, "pre-join resource released");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_OBJECT_BODY), 9ULL,
+                   "job still holds the absorbed copy until detach (documented gap)");
+
+    quota_job_unabsorb(job, &rec);
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_OBJECT_BODY), 0ULL,
+                   "detach releases it, so the gap is bounded by membership");
+    quota_block_deref(job);
+}
+
+/* quota_task_init is idempotent (a task that already has a block keeps it) and
+ * quota_task_teardown clears both pointers. Exercised on the CURRENT task with
+ * save/restore rather than a synthetic one, because struct task is far larger
+ * than the kmalloc size rule allows a test to allocate. */
+static void test_quota_task_init_teardown_contract(void)
+{
+    struct task *t = task_current();
+    struct quota_block *saved_proc, *saved_user;
+    uint64_t flags;
+
+    TEST_ASSERT_EQ((uint64_t)quota_task_init(NULL, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL task refused");
+    quota_task_teardown(NULL);          /* must not fault */
+
+    if (!t || !t->quota)
+        return;
+
+    /* Idempotence: a second init must NOT replace the live blocks (which would
+     * strand every charge already recorded against them). */
+    saved_proc = t->quota;
+    saved_user = t->quota_user;
+    TEST_ASSERT_EQ((uint64_t)quota_task_init(t, (struct access_token *)t->token),
+                   (uint64_t)STATUS_SUCCESS, "re-init reports success");
+    TEST_ASSERT(t->quota == saved_proc, "re-init kept the existing process block");
+    TEST_ASSERT(t->quota_user == saved_user, "re-init kept the existing user block");
+
+    /* Teardown clears both. Detach the pointers first so the real blocks are
+     * not released underneath the rest of the suite, then restore them. */
+    spin_lock_irqsave(&t->quota_lock, &flags);
+    t->quota = (struct quota_block *)0;
+    t->quota_user = (struct quota_block *)0;
+    spin_unlock_irqrestore(&t->quota_lock, flags);
+
+    quota_task_teardown(t);             /* already empty: must be a no-op */
+    TEST_ASSERT_NULL((void *)t->quota, "teardown leaves the process block NULL");
+    TEST_ASSERT_NULL((void *)t->quota_user, "teardown leaves the user block NULL");
+
+    spin_lock_irqsave(&t->quota_lock, &flags);
+    t->quota = saved_proc;
+    t->quota_user = saved_user;
+    spin_unlock_irqrestore(&t->quota_lock, flags);
+}
+
+/* A refused un-absorb must be COUNTED, not logged: it runs from the log-free,
+ * elevated-IRQL death-teardown path. Forcing a refusal (a record claiming more
+ * than the job holds) must advance the drift counter. */
+static void test_quota_unabsorb_refusal_counted(void)
+{
+    quota_block_t *job = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+    uint64_t before;
+
+    TEST_ASSERT_NOT_NULL((void *)job, "job block allocated");
+    if (!job)
+        return;
+
+    before = quota_unabsorb_refused_count();
+
+    /* The job holds nothing, so returning 5 is an over-return: refused. */
+    rec.taken[QUOTA_RES_TIMER] = 5;
+    rec.active = 1;
+    quota_job_unabsorb(job, &rec);
+
+    TEST_ASSERT_EQ(quota_unabsorb_refused_count(), before + 1,
+                   "a refused un-absorb advances the drift counter");
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_TIMER), 0ULL,
+                   "the refused return moved no usage");
+    TEST_ASSERT_EQ((uint64_t)rec.active, 0ULL, "record consumed even when refused");
+    quota_block_deref(job);
+}
+
+/* Argument validation for the chain API. */
+static void test_quota_chain_bad_args(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(NULL, QUOTA_RES_HANDLE, 1, 0, &r),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL task refused");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0xFFu, &r),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "unknown flag bits refused");
+    /* Client charging fails CLOSED rather than approximating: reading the
+     * executing thread's impersonation token is not SMP-safe yet, and billing
+     * the wrong user is worse than refusing. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1,
+                                                QUOTA_CHARGE_CLIENT, &r),
+                   (uint64_t)STATUS_NOT_SUPPORTED,
+                   "QUOTA_CHARGE_CLIENT refused pending a teardown-safe token pin");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL receipt refused");
+    /* Returning an untouched receipt is safe and does nothing. */
+    quota_return_chain(&r);
+    quota_return_chain(NULL);
+}
+
 /* An owner SID whose declared readable length cannot hold it is refused rather
  * than read past the caller's buffer. */
 static void test_quota_block_owner_sid_truncated(void)
@@ -477,13 +1040,13 @@ static void test_quota_block_owner_sid_truncated(void)
 
     RtlInitializeSid(owner, nt_authority, 4);   /* needs 8 + 4*4 = 24 bytes */
 
-    quota_block_t *b = quota_block_create(owner, 16);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, owner, 16);
     TEST_ASSERT_NULL((void *)b, "SID longer than the declared readable length is refused");
 
-    b = quota_block_create(owner, 8);
+    b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, owner, 8);
     TEST_ASSERT_NULL((void *)b, "header-only readable length refuses a 4-subauthority SID");
 
-    b = quota_block_create(owner, 24);
+    b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, owner, 24);
     TEST_ASSERT_NOT_NULL((void *)b, "exact readable length is accepted");
     quota_block_deref(b);
 }
@@ -494,9 +1057,9 @@ static void test_quota_block_owner_sid_truncated(void)
  * destinations would jointly hold more than the source ever had. */
 static void test_quota_transfer_cannot_duplicate(void)
 {
-    quota_block_t *src  = quota_block_create(NULL, 0);
-    quota_block_t *dst1 = quota_block_create(NULL, 0);
-    quota_block_t *dst2 = quota_block_create(NULL, 0);
+    quota_block_t *src  = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst1 = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst2 = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)src, "src allocated");
     TEST_ASSERT_NOT_NULL((void *)dst1, "dst1 allocated");
     TEST_ASSERT_NOT_NULL((void *)dst2, "dst2 allocated");
@@ -533,8 +1096,8 @@ static void test_quota_transfer_cannot_duplicate(void)
  * compensating write to verify, just the absence of any change.) */
 static void test_quota_transfer_refusal_compensates(void)
 {
-    quota_block_t *src = quota_block_create(NULL, 0);
-    quota_block_t *dst = quota_block_create(NULL, 0);
+    quota_block_t *src = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)src, "src allocated");
     TEST_ASSERT_NOT_NULL((void *)dst, "dst allocated");
     if (!src || !dst) {
@@ -563,7 +1126,7 @@ static void test_quota_transfer_refusal_compensates(void)
  * refusal never touches the counter in the first place.) */
 static void test_quota_charge_refusal_is_exact(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -695,7 +1258,7 @@ static void quota_race_charge_only_worker(void *arg)
  * updates -- and the peak must equal the exact final total. */
 static void test_quota_concurrent_charges_sum_exactly(void)
 {
-    s_race_block = quota_block_create(NULL, 0);
+    s_race_block = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)s_race_block, "shared race block allocated");
     if (!s_race_block)
         return;
@@ -729,7 +1292,7 @@ static void test_quota_concurrent_charges_sum_exactly(void)
  * with no residual, and the peak must never exceed the worker count. */
 static void test_quota_concurrent_charge_return_balances(void)
 {
-    s_race_block = quota_block_create(NULL, 0);
+    s_race_block = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)s_race_block, "shared race block allocated");
     if (!s_race_block)
         return;
@@ -764,7 +1327,7 @@ static void test_quota_concurrent_charge_return_balances(void)
  * the rest: successes + failures must account for every attempt. */
 static void test_quota_concurrent_limit_is_exact(void)
 {
-    s_race_block = quota_block_create(NULL, 0);
+    s_race_block = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)s_race_block, "shared race block allocated");
     if (!s_race_block)
         return;
@@ -806,8 +1369,8 @@ static void test_quota_concurrent_limit_is_exact(void)
  * otherwise a corrupted block hides behind a routine-looking status. */
 static void test_quota_transfer_corrupt_source(void)
 {
-    quota_block_t *src = quota_block_create(NULL, 0);
-    quota_block_t *dst = quota_block_create(NULL, 0);
+    quota_block_t *src = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)src, "src allocated");
     TEST_ASSERT_NOT_NULL((void *)dst, "dst allocated");
     if (!src || !dst) {
@@ -834,7 +1397,7 @@ static void test_quota_transfer_corrupt_source(void)
  * against nonsense, and the corrupted value is left exactly as found. */
 static void test_quota_negative_usage_fails_closed(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -854,7 +1417,7 @@ static void test_quota_negative_usage_fails_closed(void)
  * wrapping into the negative half and reporting nonsense forever after. */
 static void test_quota_failure_counter_saturates(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -877,7 +1440,7 @@ static void test_quota_failure_counter_saturates(void)
 /* An arithmetic-overflow refusal is counted like any other failure. */
 static void test_quota_overflow_counts_failure(void)
 {
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     if (!b)
         return;
@@ -897,7 +1460,7 @@ static void test_quota_overflow_counts_failure(void)
 static void test_quota_block_create_failure_paths(void)
 {
     kmalloc_fail_next();
-    quota_block_t *b = quota_block_create(NULL, 0);
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NULL((void *)b, "allocation failure returns NULL, not a partial block");
     quota_block_t *leaked_on_failure = b;   /* NULL when the injection fired */
 
@@ -908,13 +1471,13 @@ static void test_quota_block_create_failure_paths(void)
     /* Bad revision. */
     RtlInitializeSid(sid, nt_authority, 1);
     sid->Revision = 7;
-    TEST_ASSERT_NULL((void *)quota_block_create(sid, sizeof(buf)),
+    TEST_ASSERT_NULL((void *)quota_block_create(QUOTA_PRINCIPAL_PROCESS, sid, sizeof(buf)),
                      "malformed revision is refused");
 
     /* Sub-authority count beyond the architectural maximum. */
     RtlInitializeSid(sid, nt_authority, 1);
     sid->SubAuthorityCount = SID_MAX_SUB_AUTHORITIES + 1;
-    TEST_ASSERT_NULL((void *)quota_block_create(sid, sizeof(buf)),
+    TEST_ASSERT_NULL((void *)quota_block_create(QUOTA_PRINCIPAL_PROCESS, sid, sizeof(buf)),
                      "out-of-range sub-authority count is refused");
 
     /* Maximum valid SID: 15 sub-authorities, exactly SID_MAX_SIZE bytes. */
@@ -927,7 +1490,7 @@ static void test_quota_block_create_failure_paths(void)
     TEST_ASSERT_EQ((uint64_t)RtlLengthSid(sid), (uint64_t)SID_MAX_SIZE,
                    "the fixture really is a maximum-length SID");
 
-    b = quota_block_create(sid, SID_MAX_SIZE);
+    b = quota_block_create(QUOTA_PRINCIPAL_PROCESS, sid, SID_MAX_SIZE);
     TEST_ASSERT_NOT_NULL((void *)b, "a maximum-length SID is accepted");
     if (b) {
         const SID *got = quota_block_owner(b);
@@ -946,8 +1509,8 @@ static void test_quota_block_create_failure_paths(void)
  * owns separately from the shared bad-argument sweep. */
 static void test_quota_boundary_matrix(void)
 {
-    quota_block_t *b   = quota_block_create(NULL, 0);
-    quota_block_t *dst = quota_block_create(NULL, 0);
+    quota_block_t *b   = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
+    quota_block_t *dst = quota_block_create(QUOTA_PRINCIPAL_PROCESS, NULL, 0);
     TEST_ASSERT_NOT_NULL((void *)b, "block allocated");
     TEST_ASSERT_NOT_NULL((void *)dst, "dst allocated");
     if (!b || !dst) {
@@ -1088,6 +1651,42 @@ void test_register_quota(void)
                             test_quota_block_create_failure_paths, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: public boundary matrix",
                             test_quota_boundary_matrix, TEST_CAT_QUOTA);
+
+    /* Section 3: process/token/job ownership model */
+    test_suite_register_cat("Quota: principal recorded per block",
+                            test_quota_principal_recorded, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: user block canonical per SID",
+                            test_quota_user_block_canonical, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: try_ref pins a live block",
+                            test_quota_try_ref_live_block, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rollup counts user layer once",
+                            test_quota_rollup_counts_user_layer_once, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rollup bad args",
+                            test_quota_rollup_bad_args, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: task carries process+user blocks",
+                            test_quota_task_has_blocks, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: chain charge round-trip",
+                            test_quota_chain_charge_roundtrip, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: chain charge all-or-nothing",
+                            test_quota_chain_all_or_nothing, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: chain return is idempotent",
+                            test_quota_chain_return_idempotent, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: chain charge bad args",
+                            test_quota_chain_bad_args, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: live receipt reuse refused",
+                            test_quota_chain_receipt_reuse_refused, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: no process block fails closed",
+                            test_quota_chain_no_process_block_fails_closed, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: job absorbs joiner usage",
+                            test_quota_job_absorb_and_unabsorb, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: departure withdraws only absorbed",
+                            test_quota_job_departure_withdraws_only_absorbed, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: pre-join release holds job until detach",
+                            test_quota_prejoin_release_holds_job_until_detach, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: task init/teardown contract",
+                            test_quota_task_init_teardown_contract, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: unabsorb refusal counted",
+                            test_quota_unabsorb_refusal_counted, TEST_CAT_QUOTA);
 }
 
 #endif /* KERNEL_TESTS */

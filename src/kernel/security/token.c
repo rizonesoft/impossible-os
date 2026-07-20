@@ -6,16 +6,55 @@
 
 #include "kernel/security/token.h"
 #include "kernel/ob/ob.h"
+#include "kernel/quota/quota.h"   /* canonical per-user quota block */
 #include "kernel/klog.h"
 
 /* --- Callbacks ----------------------------------------------------------- */
 
 static void token_on_delete(void *body)
 {
-    (void)body;
+    ACCESS_TOKEN *tok = (ACCESS_TOKEN *)body;
+
     /* Token SID/ACL pointers reference either static well-known SIDs
      * or kmalloc'd copies.  Deep-free of dynamic allocations will be
      * added when per-user SID allocation is implemented. */
+
+    /* Release this token's claim on the shared per-user quota block. The block
+     * itself outlives the token whenever another token (or a live process)
+     * still references it -- which is the point of sharing it. */
+    if (tok && tok->QuotaBlock) {
+        quota_block_deref(tok->QuotaBlock);
+        tok->QuotaBlock = (struct quota_block *)0;
+    }
+}
+
+/* Attach the canonical per-user quota block for `tok`'s owner SID.
+ *
+ * Every token for a SID must reach the SAME block: minting a fresh block per
+ * token would hand each new token lineage its own full budget, so a user could
+ * bypass a per-user limit simply by acquiring another token. Acquisition can
+ * fail (allocation, malformed SID); the token is still usable for access
+ * checks, and the process retains its own process-level block, so a NULL here
+ * degrades the aggregate rather than the security decision. */
+static void token_attach_quota(ACCESS_TOKEN *tok)
+{
+    if (!tok || !tok->UserSid) {
+        if (tok)
+            tok->QuotaBlock = (struct quota_block *)0;
+        return;
+    }
+    /* RtlLengthSid derives the length from the SID's OWN SubAuthorityCount, so
+     * it bounds the copy only for a well-formed SID. That is true of every SID
+     * reaching a token today (well-known statics, or kernel-side callers of
+     * SeCreateUserToken), but ACCESS_TOKEN stores UserSid as a bare pointer
+     * with no recorded extent, so a short buffer claiming 15 sub-authorities
+     * could not be detected here. Recording a validated length in the token is
+     * owned by the security reference monitor's ACCESS_TOKEN work. */
+    tok->QuotaBlock = quota_user_block_acquire(tok->UserSid,
+                                               RtlLengthSid(tok->UserSid));
+    if (!tok->QuotaBlock)
+        klog(LOG_WARN, "security",
+             "token: per-user quota block unavailable; user aggregate degraded");
 }
 
 /* --- Type registration --------------------------------------------------- */
@@ -122,6 +161,8 @@ ACCESS_TOKEN *SeCreateSystemToken(void)
     token_add_priv(tok, &SeCreateGlobalPrivilege, enabled);
     token_add_priv(tok, &SeCreateSymbolicLinkPrivilege, enabled);
 
+    token_attach_quota(tok);
+
     klog(LOG_INFO, "security", "SYSTEM token created: %u groups, %u privileges, IL=System",
          (uint64_t)tok->GroupCount, (uint64_t)tok->PrivilegeCount);
 
@@ -208,6 +249,8 @@ ACCESS_TOKEN *SeCreateUserToken(const SID *user_sid, int admin)
 
     tok->LinkedTokenId = (LUID){ 0, 0 };
 
+    token_attach_quota(tok);
+
     klog(LOG_DEBUG, "security", "User token created: admin=%d, %u groups, %u privs, IL=%s",
          (uint64_t)admin, (uint64_t)tok->GroupCount, (uint64_t)tok->PrivilegeCount,
          admin ? "High" : "Medium");
@@ -256,6 +299,15 @@ ACCESS_TOKEN *NtDuplicateToken(const ACCESS_TOKEN *existing,
     dup->RestrictedSids   = existing->RestrictedSids;
     dup->RestrictedSidCount = existing->RestrictedSidCount;
     dup->Flags            = existing->Flags;
+
+    /* Share the source's per-user block rather than acquiring a new one. Both
+     * routes reach the same canonical block for a given SID, but taking a
+     * reference on the one already resolved skips a registry lookup on the
+     * hot path -- every process creation duplicates a token. The caller holds
+     * `existing`, so its block is live here. A source that failed to acquire a
+     * block (NULL) propagates as NULL; ref is a no-op on NULL. */
+    dup->QuotaBlock = existing->QuotaBlock;
+    quota_block_ref(dup->QuotaBlock);
 
     /* Copy groups -- strip disabled if effective_only */
     j = 0;

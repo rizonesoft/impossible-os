@@ -169,6 +169,11 @@ void quota_types_dump(void)
  * acquisition in quota_try_transfer the ONLY multi-lock path in the system
  * and therefore deadlock-free by construction. */
 struct quota_block {
+    /* Registry linkage, guarded by g_registry_lock (NOT by `lock`). Kept first
+     * so a walk touches the same cache line it needs to advance. */
+    struct quota_block *reg_next;
+    struct quota_block *reg_prev;
+    uint8_t    principal;                           /* quota_principal_t, immutable */
     atomic_t   refcount;                            /* live references; 0 frees */
     atomic64_t usage[QUOTA_RESOURCE_TYPE_COUNT];    /* current charge, 0..MAX   */
     atomic64_t peak[QUOTA_RESOURCE_TYPE_COUNT];     /* high-water usage         */
@@ -268,6 +273,21 @@ typedef enum {
  * rather than dropped silently, so a corruption storm arriving from interrupt
  * context is still visible to the dashboard. */
 static uint64_t g_quota_diag_deferred;
+
+/* Job un-absorb refusals (quota_owner.c). Counted rather than logged for the
+ * same reason as the deferred diagnostics above, plus one more: the un-absorb
+ * runs from the process-death teardown path, which is log-free by contract. */
+static uint64_t g_quota_unabsorb_refused;
+
+void quota_note_unabsorb_refused(void)
+{
+    __atomic_fetch_add(&g_quota_unabsorb_refused, 1ull, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_unabsorb_refused_count(void)
+{
+    return __atomic_load_n(&g_quota_unabsorb_refused, __ATOMIC_RELAXED);
+}
 
 /* Emit a recorded diagnostic. MUST be called with no quota lock held.
  *
@@ -379,9 +399,94 @@ static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t
     return STATUS_SUCCESS;
 }
 
-quota_block_t *quota_block_create(const SID *owner, uint32_t owner_len)
+/* --- Live-block registry ------------------------------------------------- *
+ * Every live block is on this list so an aggregate can find the blocks owned
+ * by a SID without walking the process/job trees (and without taking any of
+ * their locks). The lock protects ONLY the list linkage.
+ *
+ * Lock order is absolute: g_registry_lock may be taken while holding nothing,
+ * and NO block's `lock` may be acquired while it is held. A registry walk
+ * therefore reads counters through their lock-free atomic loads only. Taking a
+ * block lock under the registry lock would put the registry INSIDE the charge
+ * path's lock ordering and deadlock a CPU charging a block another CPU is
+ * enumerating. */
+static struct quota_block *g_registry_head;
+static spinlock_t          g_registry_lock = SPINLOCK_INIT;
+
+/* Link a fully constructed block. Caller HOLDS the registry lock: the
+ * canonical-user-block path must scan and link in one critical section, or two
+ * CPUs racing on a first-ever SID could each publish a block and split that
+ * user's budget in half. */
+static void quota_registry_link_locked(quota_block_t *block)
+{
+    block->reg_prev = (struct quota_block *)0;
+    block->reg_next = g_registry_head;
+    if (g_registry_head)
+        g_registry_head->reg_prev = block;
+    g_registry_head = block;
+}
+
+/* Link a fully constructed block. Caller must NOT hold the registry lock. */
+static void quota_registry_add(quota_block_t *block)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    quota_registry_link_locked(block);
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+}
+
+/* Unlink a block whose refcount has already reached zero. Splitting this from
+ * the kfree that follows is what makes teardown safe against a concurrent
+ * lookup: the finder holds the registry lock, so it either completes its
+ * try-ref (which fails, the count being zero) before this unlink, or never
+ * sees the block at all. The block is therefore never freed while a walker
+ * still holds a pointer to it. */
+static void quota_registry_remove(quota_block_t *block)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    if (block->reg_prev)
+        block->reg_prev->reg_next = block->reg_next;
+    else if (g_registry_head == block)
+        g_registry_head = block->reg_next;
+    if (block->reg_next)
+        block->reg_next->reg_prev = block->reg_prev;
+    block->reg_next = (struct quota_block *)0;
+    block->reg_prev = (struct quota_block *)0;
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+}
+
+/* Compare a block's captured owner against a caller SID of known length. The
+ * block's copy was validated at capture, so only the caller side needs the
+ * bounded length check. */
+static int quota_block_owner_is(const quota_block_t *block,
+                                const SID *owner, uint32_t owner_len)
+{
+    if (!block->has_owner_sid || !owner)
+        return 0;
+    const SID *mine = (const SID *)block->owner_sid_buf;
+    uint32_t   len  = RtlLengthSidBounded(owner, owner_len);
+    if (len == 0 || len != RtlLengthSid(mine))
+        return 0;
+    return RtlEqualSid(mine, owner) ? 1 : 0;
+}
+
+/* Build a block WITHOUT publishing it to the registry. Split out so the
+ * canonical-user path can allocate outside the registry lock (allocation and
+ * SID validation are far too much work to hold it for) and then decide, inside
+ * one critical section, whether to publish this block or adopt the one a
+ * racing CPU published first. An unpublished block is unreachable by any other
+ * CPU, so it is discarded with a plain kfree rather than a deref. */
+static quota_block_t *quota_block_alloc(quota_principal_t principal,
+                                        const SID *owner, uint32_t owner_len)
 {
     uint32_t sid_len = 0;
+
+    if ((unsigned)principal >= (unsigned)QUOTA_PRINCIPAL_COUNT) {
+        klog(LOG_WARN, "quota", "block create: invalid principal %u",
+             (uint64_t)principal);
+        return NULL;
+    }
 
     if (owner) {
         /* Validate against the length the CALLER guarantees is readable, never
@@ -405,6 +510,7 @@ quota_block_t *quota_block_create(const SID *owner, uint32_t owner_len)
 
     atomic_set(&block->refcount, 1);
     block->lock = (spinlock_t)SPINLOCK_INIT;
+    block->principal = (uint8_t)principal;
 
     /* Seed limits from the type registry so a fresh block already carries the
      * taxonomy's defaults; callers override per type with quota_set_limit. */
@@ -439,6 +545,19 @@ quota_block_t *quota_block_create(const SID *owner, uint32_t owner_len)
     return block;
 }
 
+quota_block_t *quota_block_create(quota_principal_t principal,
+                                  const SID *owner, uint32_t owner_len)
+{
+    quota_block_t *block = quota_block_alloc(principal, owner, owner_len);
+    if (!block)
+        return NULL;
+    /* Publish LAST: the block is fully constructed (counters, limits, owner)
+     * before any registry walker can reach it, so a concurrent rollup never
+     * reads a half-built block. */
+    quota_registry_add(block);
+    return block;
+}
+
 void quota_block_ref(quota_block_t *block)
 {
     if (!block)
@@ -446,12 +565,35 @@ void quota_block_ref(quota_block_t *block)
     atomic_inc(&block->refcount);
 }
 
+int quota_block_try_ref(quota_block_t *block)
+{
+    if (!block)
+        return 0;
+    /* CAS loop rather than a bare increment: a block whose count has already
+     * reached zero is committed to teardown, and lifting it back to one would
+     * hand out a reference to memory the deref path is about to free. Losing
+     * the CAS only means another CPU changed the count; retry against the
+     * value we just observed. */
+    for (;;) {
+        int32_t cur = atomic_read(&block->refcount);
+        if (cur <= 0)
+            return 0;
+        if (atomic_cmpxchg(&block->refcount, cur, cur + 1) == cur)
+            return 1;
+    }
+}
+
 void quota_block_deref(quota_block_t *block)
 {
     if (!block)
         return;
-    if (atomic_dec_and_test(&block->refcount))
-        kfree(block);
+    if (!atomic_dec_and_test(&block->refcount))
+        return;
+    /* Unlink BEFORE freeing. See quota_registry_remove: this ordering, plus
+     * try-ref's refusal at zero, is what keeps a concurrent registry walk from
+     * ever holding a pointer to freed memory. */
+    quota_registry_remove(block);
+    kfree(block);
 }
 
 const SID *quota_block_owner(const quota_block_t *block)
@@ -459,6 +601,110 @@ const SID *quota_block_owner(const quota_block_t *block)
     if (!block || !block->has_owner_sid)
         return NULL;
     return (const SID *)block->owner_sid_buf;
+}
+
+quota_principal_t quota_block_principal(const quota_block_t *block)
+{
+    if (!block)
+        return QUOTA_PRINCIPAL_COUNT;
+    return (quota_principal_t)block->principal;
+}
+
+quota_block_t *quota_user_block_acquire(const SID *owner, uint32_t owner_len)
+{
+    uint64_t       flags;
+    quota_block_t *found = NULL;
+
+    if (!owner)
+        return NULL;
+
+    /* Fast path: the SID almost always already has its canonical block. */
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    for (quota_block_t *b = g_registry_head; b; b = b->reg_next) {
+        if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
+            quota_block_owner_is(b, owner, owner_len) &&
+            quota_block_try_ref(b)) {
+            found = b;
+            break;
+        }
+    }
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+    if (found)
+        return found;
+
+    /* First use of this SID. Build the candidate OUTSIDE the registry lock --
+     * allocation plus SID validation is far more work than belongs in a lock
+     * every rollup contends -- but do NOT publish it yet. */
+    quota_block_t *fresh = quota_block_alloc(QUOTA_PRINCIPAL_USER, owner, owner_len);
+    if (!fresh)
+        return NULL;
+
+    /* Re-scan and publish in ONE critical section. Publishing before this
+     * re-scan would be a bug with teeth: a third CPU could adopt `fresh` while
+     * the loser here discards it, leaving two live canonical blocks for one
+     * SID and splitting that user's budget into two independently enforced
+     * halves -- the exact failure this function exists to prevent. */
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    for (quota_block_t *b = g_registry_head; b; b = b->reg_next) {
+        if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
+            quota_block_owner_is(b, owner, owner_len) &&
+            quota_block_try_ref(b)) {
+            found = b;
+            break;
+        }
+    }
+    if (!found)
+        quota_registry_link_locked(fresh);
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+
+    if (found) {
+        /* Lost the race. `fresh` was never published, so no other CPU can hold
+         * a pointer to it: free it directly rather than going through deref
+         * (which would try to unlink a block that was never linked). */
+        kfree(fresh);
+        return found;
+    }
+    return fresh;
+}
+
+NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
+                             quota_resource_type_t type,
+                             uint64_t *usage_out, uint64_t *peak_out)
+{
+    uint64_t flags;
+    uint64_t usage = 0;
+    uint64_t peak  = 0;
+
+    if (!owner || !quota_type_valid(type))
+        return STATUS_INVALID_PARAMETER;
+    if (RtlLengthSidBounded(owner, owner_len) == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    for (quota_block_t *b = g_registry_head; b; b = b->reg_next) {
+        /* USER blocks only. Summing every layer would count each chain charge
+         * two or three times; and a job's owner is its creator, not its
+         * members, so job blocks do not describe this SID's usage at all.
+         * Counters are read with the lock-free accessors -- no block lock is
+         * taken here, by the ordering rule above. */
+        if (b->principal != (uint8_t)QUOTA_PRINCIPAL_USER)
+            continue;
+        if (!quota_block_owner_is(b, owner, owner_len))
+            continue;
+        uint64_t u = quota_usage(b, type);
+        uint64_t p = quota_peak(b, type);
+        /* Saturate rather than wrap: an aggregate that silently rolled over
+         * would read as a healthy small number. */
+        usage = (usage > (uint64_t)QUOTA_AMOUNT_MAX - u) ? (uint64_t)QUOTA_AMOUNT_MAX : usage + u;
+        peak  = (peak  > (uint64_t)QUOTA_AMOUNT_MAX - p) ? (uint64_t)QUOTA_AMOUNT_MAX : peak  + p;
+    }
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+
+    if (usage_out)
+        *usage_out = usage;
+    if (peak_out)
+        *peak_out = peak;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t amount)

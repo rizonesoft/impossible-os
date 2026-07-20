@@ -24,6 +24,7 @@
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 #include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
+#include "kernel/quota/quota.h"   /* quota_block_t, quota_absorb_record_t */
 
 /* Forward declaration: kernel-mode SEH (KI_TRY/KI_EXCEPT) registration chain
  * head lives in struct thread. Full type in kernel/except.h; forward-declared
@@ -388,6 +389,34 @@ struct task {
      * unlocked lock. */
     struct job_object *job;
     spinlock_t job_lock;
+    /* What joining `job` folded from this task's usage into the job's quota
+     * block (kernel/quota/quota.h). Published with the membership and consumed
+     * by the detach, both under job_lock, so exactly one detacher withdraws it.
+     *
+     * It must be RECORDED rather than recomputed: only this amount is owned by
+     * the membership. Post-join charges reached the job through chain receipts
+     * and are returned by those receipts, so withdrawing the task's current
+     * usage at detach would return them twice and corrupt other members'
+     * accounting. Zeroed on slot (re)creation like the job pointer. */
+    struct quota_absorb_record job_absorb;
+    /* --- Resource quota accounting (kernel/quota/quota.h) ---
+     * `quota` is this process's own accounting block; `quota_user` is the
+     * canonical block shared by every process running as the same owner SID,
+     * so a per-user budget cannot be multiplied by opening more processes.
+     * The task holds ONE reference on each.
+     *
+     * quota_lock guards BOTH pointers, and guarding them is not a formality: a
+     * charger must load a pointer AND acquire its reference inside this lock,
+     * because teardown clears and dereferences under the same lock. A bare
+     * release-store would order the publication but would not stop a reader
+     * that already loaded the pointer from referencing a block the final
+     * dereference has since freed. The pair is written and cleared together,
+     * so both are read in one critical section. Zero-init (SPINLOCK_INIT) is
+     * an unlocked lock; NULL blocks are normal before quota_task_init and
+     * after quota_task_teardown. */
+    struct quota_block *quota;
+    struct quota_block *quota_user;
+    spinlock_t quota_lock;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */

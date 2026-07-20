@@ -138,6 +138,13 @@ typedef struct job_object {
      * limit_flags never contains an unsupported bit (set path rejects them). */
     uint32_t   limit_flags;
     uint32_t   active_process_limit;       /* valid iff LIMIT_ACTIVE_PROCESS set */
+    /* Aggregate resource accounting for the whole job (kernel/quota/quota.h).
+     * Every member's chain charge is admitted by this block as well as by the
+     * member's own, which is what makes a job limit an aggregate rather than a
+     * per-process one. Created with the job and held for its entire life (so a
+     * member that pinned the job can read it without further synchronization),
+     * released in job_on_delete. NULL only on allocation failure. */
+    struct quota_block *quota;
 } JOB_OBJECT;
 
 /* The registered Job Object type (for ObLookupObjectByName type checks). */
@@ -174,6 +181,12 @@ void ob_job_collect_pid_list(JOB_OBJECT *job, uint64_t *out, uint32_t capacity,
  * internally; releases it before ObDereferenceObject. Safe to call on a task
  * with no job. */
 void ob_job_detach_task(struct task *t);
+
+/* Count of detaches that found `job` set but no matching member entry. Non-zero
+ * means the membership bookkeeping has drifted. Counted (not just logged)
+ * because detach runs from the log-free process-death teardown path, where the
+ * message itself is suppressed above PASSIVE_LEVEL. */
+uint64_t ob_job_detach_mismatch_count(void);
 
 /* Inherit the parent's job into a forking child BEFORE the child is published
  * (num_tasks++). Reserves a membership slot + takes an Ob reference under the

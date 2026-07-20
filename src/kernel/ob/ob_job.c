@@ -25,6 +25,8 @@
  * ============================================================================ */
 
 #include "kernel/ob/ob_job.h"
+#include "kernel/quota/quota.h"   /* per-job aggregate accounting block */
+#include "kernel/sched/irql.h"    /* KeGetCurrentIrql for the detach diag gate */
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_type.h"
@@ -113,6 +115,11 @@ static void job_on_delete(void *body)
         klog(LOG_ERROR, "ob",
              "job_on_delete: %u members still attached at free (refcount bug)",
              (uint64_t)job->num_members);
+
+    /* Release the aggregate block. A member charging through the job pins the
+     * job body first, so no charge can be in flight here. */
+    quota_block_deref(job->quota);
+    job->quota = (struct quota_block *)0;
 }
 
 /* --- Type registration --------------------------------------------------- */
@@ -132,6 +139,16 @@ void ob_job_type_init(void)
         klog(LOG_ERROR, "ob", "Failed to register ObpJobType");
 }
 
+/* Detach-time membership inconsistencies, counted so the anomaly survives even
+ * when the message is suppressed above PASSIVE_LEVEL. Same discipline as the
+ * quota subsystem's deferred diagnostics. */
+static uint64_t g_job_detach_mismatch;
+
+uint64_t ob_job_detach_mismatch_count(void)
+{
+    return __atomic_load_n(&g_job_detach_mismatch, __ATOMIC_RELAXED);
+}
+
 /* --- Membership: detach (every process-death path) ----------------------- */
 
 void ob_job_detach_task(struct task *t)
@@ -140,6 +157,7 @@ void ob_job_detach_task(struct task *t)
     uint64_t tflags, jflags;
     uint32_t i;
     int found = 0;
+    quota_absorb_record_t absorbed;
 
     if (!t)
         return;
@@ -156,6 +174,15 @@ void ob_job_detach_task(struct task *t)
         spin_unlock_irqrestore(&t->job_lock, tflags);
         return;
     }
+    /* Temporary pin, independent of the membership reference: the quota
+     * withdrawal below runs after t->job is cleared and the membership
+     * reference is dropped, so without this the body could be freed first. */
+    ObReferenceObject(job);
+    /* Claim the absorb record here, under the same lock that published it: a
+     * racing detach for this task finds it already empty and cannot withdraw
+     * the same amount twice. */
+    absorbed = t->job_absorb;
+    t->job_absorb.active = 0;
 
     spin_lock_irqsave(&job->lock, &jflags);
     /* Fold this member's CPU/I/O totals into the job's persistent accumulators
@@ -185,12 +212,38 @@ void ob_job_detach_task(struct task *t)
     t->job = NULL;
     spin_unlock_irqrestore(&t->job_lock, tflags);
 
-    if (found)
-        ObDereferenceObject(job);   /* drop THIS task's own membership reference */
-    else
-        klog(LOG_ERROR, "ob",
-             "ob_job_detach_task: PID %u had job set but was not a member",
-             (uint64_t)t->pid);
+    /* Drop the membership reference UNCONDITIONALLY. ob_job_assign takes it in
+     * the same critical section that sets t->job, so "t->job was set" (checked
+     * above) means the reference is held -- whether or not the pid is still in
+     * the member array. Releasing it only on the found path leaked it on the
+     * mismatch path, and an unreachable reference keeps the Job Object and its
+     * quota block alive forever. */
+    ObDereferenceObject(job);
+    if (!found) {
+        /* Membership inconsistency (job set, but not in the member array).
+         * IRQL-GATED rather than logged unconditionally: this runs from
+         * task_death_teardown, which is log-free by contract and reachable at
+         * elevated IRQL, where klog's live-disk flush re-enters the VFS and can
+         * stall or deadlock a dying process. The counter is always bumped, so
+         * the anomaly is never lost even when the message is suppressed. */
+        __atomic_fetch_add(&g_job_detach_mismatch, 1ull, __ATOMIC_RELAXED);
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL)
+            klog(LOG_ERROR, "ob",
+                 "ob_job_detach_task: PID %u had job set but was not a member",
+                 (uint64_t)t->pid);
+    }
+
+    /* Withdraw ONLY what joining folded in -- the other half of the absorb in
+     * ob_job_assign, without which the job's usage could only ever grow. Runs
+     * with NO lock held (quota.h forbids charging under job_lock) and exactly
+     * once (the record was claimed under job_lock above). The member's own
+     * post-join charges are NOT withdrawn here: they reached the job through
+     * chain receipts and are returned by those receipts, so returning them
+     * again would subtract from whichever member's usage covers the difference.
+     */
+    quota_job_unabsorb(job->quota, &absorbed);
+
+    ObDereferenceObject(job);       /* drop the temporary pin */
 }
 
 /* --- Membership: assign (join a live process) ----------------------------
@@ -214,10 +267,47 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
      * permanent member, and no fence/rollback is needed. Holding job_lock across
      * the reference take + t->job write also means no assignment ever frees the
      * job out from under a concurrent detacher. */
+    /* Fold the joiner's outstanding usage into the job BEFORE taking either
+     * lock (charging under job_lock would violate quota.h's no-nested-call
+     * contract). A process that allocated first and joined a capped job
+     * afterwards would otherwise carry that usage past the cap uncounted.
+     * Refuse the assignment outright when the job cannot absorb it; every
+     * rejection BELOW must undo the absorb, or a refused assignment would
+     * leave the joiner's usage permanently inflating the job. */
+    quota_absorb_record_t absorbed = { .taken = { 0 }, .active = 0 };
+    if (job->quota) {
+        /* Settle membership FIRST. Absorbing before this check would fold an
+         * existing member's usage in a SECOND time on the idempotent same-job
+         * re-assign -- double-counting it, and turning that documented success
+         * into STATUS_QUOTA_EXCEEDED whenever the job lacks headroom for the
+         * duplicate. The authoritative re-check under the locks below still
+         * decides the outcome; this pre-check only avoids a pointless absorb. */
+        NTSTATUS pre       = STATUS_SUCCESS;
+        int      may_join  = 0;
+        spin_lock_irqsave(&t->job_lock, &tflags);
+        if (t->state == TASK_DEAD)
+            pre = STATUS_PROCESS_IS_TERMINATING;
+        else if (t->job == job)
+            pre = STATUS_SUCCESS;          /* already a member: nothing to fold */
+        else if (t->job != NULL)
+            pre = STATUS_ACCESS_DENIED;
+        else
+            may_join = 1;                  /* not a member yet: absorb below */
+        spin_unlock_irqrestore(&t->job_lock, tflags);
+
+        if (!may_join)
+            return pre;
+
+        NTSTATUS qst = quota_job_absorb_task(job->quota, t, &absorbed);
+        if (qst != STATUS_SUCCESS)
+            return qst;
+    }
+
     spin_lock_irqsave(&t->job_lock, &tflags);
 
     if (t->state == TASK_DEAD) {
         spin_unlock_irqrestore(&t->job_lock, tflags);
+        quota_job_unabsorb(job->quota, &absorbed);
         return STATUS_PROCESS_IS_TERMINATING;
     }
     if (t->job != NULL) {
@@ -225,6 +315,10 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
          * reject (nested jobs are not supported -- pre-Win8 semantics). */
         NTSTATUS r = (t->job == job) ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
         spin_unlock_irqrestore(&t->job_lock, tflags);
+        /* Undo in BOTH cases: on rejection nothing joined, and on the
+         * idempotent re-assign the usage is already folded in from the first
+         * assignment, so keeping this second fold would double-count it. */
+        quota_job_unabsorb(job->quota, &absorbed);
         return r;
     }
 
@@ -232,23 +326,30 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
     if (job->terminated) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
+        quota_job_unabsorb(job->quota, &absorbed);
         return STATUS_INVALID_PARAMETER;   /* job is dead: no new members */
     }
     if ((job->limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) &&
         job->num_members >= job->active_process_limit) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
+        quota_job_unabsorb(job->quota, &absorbed);
         return STATUS_QUOTA_EXCEEDED;
     }
     if (job->num_members >= JOB_MAX_MEMBERS) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
+        quota_job_unabsorb(job->quota, &absorbed);
         return STATUS_QUOTA_EXCEEDED;
     }
 
     ObReferenceObject(job);                       /* membership reference */
     job->member_pids[job->num_members++] = t->pid;
     job->total_processes++;
+    /* Publish the absorb record WITH the membership, under the same lock that
+     * the detach consumes it under: only this recorded amount is owned by the
+     * membership, and exactly one detacher may withdraw it. */
+    t->job_absorb = absorbed;
     t->job = job;
     spin_unlock_irqrestore(&job->lock, jflags);
     spin_unlock_irqrestore(&t->job_lock, tflags);
@@ -482,6 +583,19 @@ HANDLE ob_job_create(HANDLE_TABLE *ht, const char *name)
         return INVALID_HANDLE_VALUE;
     /* Body is zero-filled by ob_alloc_object: lock unlocked, no members, no
      * limits, not terminated -- no explicit field init required. */
+
+    /* Aggregate accounting block, created with the job so every member finds
+     * it already present. Deliberately OWNERLESS: a job's creator is not its
+     * members (a job can hold processes belonging to other users), so tagging
+     * the block with the creator's SID would make it look like that user's
+     * usage in a per-SID aggregate while describing someone else's. The
+     * per-user rollup reads USER blocks only for exactly this reason. */
+    job->quota = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job->quota) {
+        klog(LOG_ERROR, "ob", "ob_job_create: quota block allocation failed");
+        ObDereferenceObject(job);
+        return INVALID_HANDLE_VALUE;
+    }
 
     if (name) {
         void *bno_dir = NULL;

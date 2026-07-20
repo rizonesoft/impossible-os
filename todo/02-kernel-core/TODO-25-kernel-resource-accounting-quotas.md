@@ -42,7 +42,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | --- | :---: | ------------------------------------------- | ----------------------- | :----: |
 | 💎   |   1   | Resource type registry                      | --                      |  [x]   |
 | 💎   |   2   | Quota block and charge API                  | §1                      |  [x]   |
-| 💎   |   3   | Process/token/job ownership model           | T21 §9, T15 §4          |  [ ]   |
+| 💎   |   3   | Process/token/job ownership model           | T21 §9, T15 §4          |  [x]   |
 | 💎   |   4   | Object and handle quota integration         | T05 §14                 |  [ ]   |
 | 💎   |   5   | Pool and allocation quota integration       | D03T03 §6,§7            |  [ ]   |
 | 💎   |   6   | Registry, ALPC, notification quotas         | T24 §6, T14 §15, T16 §7 |  [ ]   |
@@ -104,15 +104,24 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 3. Process/Token/Job Ownership Model
 
-- [ ] Add quota block pointer to `ACCESS_TOKEN`.
-- [ ] Add effective quota block pointer to process/task.
-- [ ] A charge must pass process quota AND every ancestor job (chain-charge API owned by TODO-21; all-or-nothing rollback). -> XREF: `TODO-21-process-model-extensions.md §13` (item: "nested-job topology").
-- [ ] Quota-block inheritance on process create: child auto-joins parent job chain unless breakaway; a jobless process charges its process+token block only; mirror `ob_job_detach_task` teardown on exit.
-- [ ] Quota blocks are queryable by owner SID across all jobs/processes (per-user aggregate rollup) for a future per-user/session dashboard. Both Win11 and Linux leave this weak; own it here.
-- [ ] Token impersonation uses the thread effective token for security checks but process/job quota for resource charges unless API requires client charging.
-- [ ] Commit: quota: token/process/job-chain ownership, inheritance, per-SID rollup.
+- [x] `ACCESS_TOKEN.QuotaBlock`: the CANONICAL per-SID `QUOTA_PRINCIPAL_USER` block from `quota_user_block_acquire`, shared by every token for that SID (duplicates take a reference), released in `token_on_delete`.
+- [x] `task->quota` (own `QUOTA_PRINCIPAL_PROCESS` block) + `task->quota_user` (shared), published and cleared under `task->quota_lock`: load-and-reference must be INSIDE that lock, a release store cannot make it teardown-safe.
+- [/] `quota_charge_chain` charges process + user + job all-or-nothing (ref-held snapshot, one lock at a time, prefix rollback); ANCESTOR jobs need nesting. -> XREF: `TODO-21-process-model-extensions.md §13` (item: "Nested-job topology").
+- [/] Inheritance: child gets its own process block and SHARES the parent user block; teardown mirrors `ob_job_detach_task`; job BREAKAWAY unimplemented. -> XREF: `TODO-21-process-model-extensions.md §13` (item: "Nested-job topology").
+- [x] `quota_rollup_by_sid` aggregates by owner SID over the USER layer ONLY: summing every layer would multiply each chain charge by its depth, and a job's owner is its creator, not its members.
+- [/] Charges use the process chain, never the thread impersonation token. `QUOTA_CHARGE_CLIENT` is defined but fails closed with `STATUS_NOT_SUPPORTED`: client billing needs an SMP-safe token pin. -> XREF: `TODO-15-security-reference-monitor.md §4`
+- [x] Commit: quota: token/process/job-chain ownership, inheritance, per-SID rollup.
 
-**Test checkpoint:** a freshly created process has a non-NULL effective quota block inherited from its token and auto-joins its parent's job chain unless breakaway; a charge that passes the process limit but exceeds any ancestor job's aggregate limit fails and rolls back cleanly across the chain; an impersonating thread charges process/job quota (not the client token) unless the API opts into client charging; a per-SID query sums usage across every job the SID owns.
+**Test checkpoint:** every live task (including PID 0) carries a non-NULL process block plus the shared user block; a chain charge lands on both and its receipt returns exactly those blocks; a charge refused by a later block in the chain rolls the charged prefix back so no usage is stranded; a repeated `quota_return_chain` cannot erase a newer charge; one SID always resolves to one canonical user block while a different SID does not collide; a per-SID rollup counts a chain charge ONCE (verified: SUITE=quota 45 suites / 457 assertions, 0 failures).
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 45 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `quota_owner.c` (ownership + chain charge) plus a live-block registry, `quota_principal_t`, `quota_block_try_ref`, `quota_user_block_acquire`, and `quota_rollup_by_sid` in `quota.c`.
+> - **How it runs** -- blocks are created beside job inheritance on the task-creation paths (fail-closed, unwound on later failure) and released in `task_death_teardown`; the chain is snapshotted under owner locks, then charged one lock at a time.
+> - **Downstream effects** -- §4-§7 charge through `quota_charge_chain` and hold its receipt; ancestor-job depth and breakaway wait on TODO-21 §13; Codex adoptions are in the commit message.
+> - **Canonical doc** -- `include/kernel/quota/quota.h` (chain-charging contract, principal kinds, canonical-user rule).
+> - **Scope boundary** -- §3 owns WHO is charged; nothing is charged yet (§4-§7), privilege-checked limits are §8, nested-job topology is TODO-21 §13.
 
 ---
 
@@ -122,6 +131,9 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Charge object body and name entry on object creation.
 - [ ] Object Manager exposes per-type usage from quota counters, not local-only counters.
 - [ ] DuplicateHandle checks target quota before inserting.
+- [ ] Migrate outstanding receipt obligations at `ob_job_assign`: a per-task registry of live receipts, so pre-join resources released while still a member credit the job back instead of holding its headroom until detach. -> XREF: `§3` (chain charge)
+- [ ] Close the `ob_job_assign` absorb-to-publish window: a charge landing between `quota_job_absorb_task` and membership publication misses the job block. Needs a per-task membership-transition state. -> XREF: `§3` (chain charge)
+- [ ] Add a caller-held generation token to `quota_charge_receipt_t` so recycled receipt STORAGE cannot let a stale returner credit back a later charge; §3 documents the no-recycle rule instead. -> XREF: `§3` (chain charge)
 - [ ] Commit: quota: object/handle charge integration in Object Manager.
 
 **Test checkpoint:** inserting a handle increments the handle-type usage and closing it returns the charge; the Object Manager per-type usage query matches the quota counter exactly; `NtDuplicateObject` into a target process at its handle cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle.
@@ -175,6 +187,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Extend Job Object information classes for aggregate limits.
 - [ ] Add `SystemResourcePressureInformation`: per-resource (cpu/mem/io) stall-time totals + rolling windows (some/full, avg10/60/300 style), not a single ratio; §9 derives the 4 levels from these.
 - [ ] Require privilege for raising limits; lowering own soft limit is allowed.
+- [ ] Token-local limit overlay so a RESTRICTED token can be capped tighter than the user block it shares, without lowering the unrestricted parent's budget. -> XREF: `§3` (canonical user block)
 - [ ] Commit: quota: NtQuery/SetQuotaInformationProcess + pressure info class.
 
 **Test checkpoint:** `NtQueryQuotaInformationProcess(ProcessQuotaLimits)` returns a `QUOTA_LIMITS` projected from the TODO-21 §9 rlimits and live VM/working-set counters with `RLIMIT_NOFILE` reconciled to `handle_table.handle_limit`; raising a hard limit without privilege returns `STATUS_PRIVILEGE_NOT_HELD`; lowering the caller's own soft limit succeeds; `SystemResourcePressureInformation` returns per-resource some/full stall-time and rolling-window fields (not a lone ratio).
@@ -216,7 +229,9 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   | Central quota/charge API        | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2           |
 | 💎   | Atomic quota transfer           | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2     |
 | 💎   | Per-type peak + failure counts  | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2   |
-| 💎   | Per-token quota block           | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | 🚀 Planned: token+process+job block §3      |
+| 💎   | Per-token quota block           | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | ✅ token+process+job blocks §3              |
+| 💎   | All-or-nothing chain charge     | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3            |
+| ⭐   | Per-user aggregate rollup       | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3      |
 | 💎   | Handle/object quota             | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §4    |
 | 💎   | Paged/nonpaged pool quota       | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5      |
 | 💎   | Registry/IPC quota              | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | 🚀 Planned: registry/ALPC/notif caps §6     |
@@ -237,7 +252,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] `test_quota_concurrent_charges_atomic`: N INTERLEAVED multi-thread charges sum exactly, no lost update (§2). True cross-CPU contention needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
 - [x] `test_quota_rollback_on_partial_failure`: a refused transfer leaves both blocks byte-identical; a refused charge leaves usage unchanged (§2).
 - [ ] `test_quota_type_registry`: all resource types registered with name/unit/limit (§1).
-- [ ] `test_quota_process_job_double_check`: charge passes process but fails on job aggregate (§3).
+- [x] `test_quota_chain_all_or_nothing`: a charge admitted by the process block but refused later in the chain rolls the prefix back, stranding no usage (§3).
 - [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3).
 - [ ] `test_quota_inherit_on_create`: child auto-joins parent job chain unless breakaway; jobless child charges own block (§3).
 - [ ] `test_quota_per_sid_rollup`: per-SID query sums usage across every job the SID owns (§3).

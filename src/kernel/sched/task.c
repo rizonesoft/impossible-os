@@ -36,6 +36,7 @@
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/pledge.h"       /* pledge_unveil_inherit / _teardown */
 #include "kernel/ob/ob_job.h"       /* ob_job_fork_inherit / _detach_task */
+#include "kernel/quota/quota.h"     /* quota_task_init / quota_task_teardown */
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -660,10 +661,26 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].pid = pid;
     tasks[pid].state = TASK_READY;
     tasks[pid].job = NULL;
+    tasks[pid].job_absorb.active = 0;
     tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create: job inheritance rejected (terminated/at-limit); failing closed");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        return -1;
+    }
+    /* Quota blocks, in the same early window as job inheritance and with the
+     * same stale-slot reset: a reused slot's pointers must never survive, or
+     * quota_task_init would mistake a prior tenant's block for its own and
+     * leave this task charging a dead process's accounting. Fail closed --
+     * an unaccounted process is an unenforced limit. */
+    tasks[pid].quota = NULL;
+    tasks[pid].quota_user = NULL;
+    tasks[pid].quota_lock.flag = 0;
+    if (quota_task_init(&tasks[pid], inherited_token) != STATUS_SUCCESS) {
+        klog(LOG_ERROR, "sched", "task_create: quota block allocation failed");
+        ob_job_detach_task(&tasks[pid]);
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
         return -1;
@@ -677,6 +694,7 @@ int task_create(task_entry_t entry, const char *name)
         uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
         if (!stack_base) {
             klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
+            quota_task_teardown(&tasks[pid]);  /* roll back the early quota init */
             ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
             if (inherited_token)
                 PsDereferencePrimaryToken(inherited_token);
@@ -857,10 +875,23 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].pid = pid;
     tasks[pid].state = TASK_READY;
     tasks[pid].job = NULL;
+    tasks[pid].job_absorb.active = 0;
     tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create_user: job inheritance rejected (terminated/at-limit); failing closed");
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        return -1;
+    }
+    /* Quota blocks, with the same stale-slot reset and fail-closed policy as
+     * task_create (see the comment there). */
+    tasks[pid].quota = NULL;
+    tasks[pid].quota_user = NULL;
+    tasks[pid].quota_lock.flag = 0;
+    if (quota_task_init(&tasks[pid], inherited_token) != STATUS_SUCCESS) {
+        klog(LOG_ERROR, "sched", "task_create_user: quota block allocation failed");
+        ob_job_detach_task(&tasks[pid]);
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
         return -1;
@@ -870,6 +901,7 @@ int task_create_user(task_entry_t entry, const char *name)
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_create_user: cannot allocate kernel stack");
+        quota_task_teardown(&tasks[pid]);  /* roll back the early quota init */
         ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
@@ -1541,6 +1573,12 @@ void task_assign_initial_token(void)
          * broken authorization model. */
         boot_halt("SRM: PID 0 SYSTEM token creation failed");
     }
+    /* PID 0 is built by task_init, not task_create, so it never passes through
+     * the creation-path quota wiring. Attach its blocks here, as soon as it
+     * has the token whose SID owns them -- otherwise the initial system
+     * process would be the one process in the system charging nothing. */
+    if (quota_task_init(&tasks[0], (struct access_token *)tasks[0].token) != STATUS_SUCCESS)
+        boot_halt("quota: PID 0 quota block creation failed");
     /* Release-store so a concurrent task_inherit_primary_token on another CPU
      * that acquire-loads the flag also observes tasks[0].token (set above). */
     __atomic_store_n(&g_primary_tokens_active, 1, __ATOMIC_RELEASE);
@@ -1784,6 +1822,7 @@ int task_fork(struct interrupt_frame *frame)
      * liveness check does not see a reused slot's stale TASK_DEAD. */
     tasks[child_pid].pid = child_pid;
     tasks[child_pid].state = TASK_READY;
+    tasks[child_pid].job_absorb.active = 0;
     tasks[child_pid].job_lock.flag = 0;   /* unlocked; guards t->job for assign/detach */
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
@@ -1803,10 +1842,29 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
+    /* Child quota blocks, alongside the job inherit above and rolled back on
+     * every later fork-failure path (same stale-slot reset as task_create).
+     * The child gets its OWN process block but SHARES its parent's user block,
+     * so forking cannot multiply a user's budget. */
+    tasks[child_pid].quota = NULL;
+    tasks[child_pid].quota_user = NULL;
+    tasks[child_pid].quota_lock.flag = 0;
+    if (quota_task_init(&tasks[child_pid], inherited_token) != STATUS_SUCCESS) {
+        klog(LOG_ERROR, "sched", "task_fork: quota block allocation failed");
+        ob_job_detach_task(&tasks[child_pid]);
+        pledge_unveil_teardown(&tasks[child_pid]);
+        if (inherited_token)
+            PsDereferencePrimaryToken(inherited_token);
+        if (inherited_filter)
+            kfree(inherited_filter);
+        return -1;
+    }
+
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate kernel stack");
+        quota_task_teardown(&tasks[child_pid]);
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
@@ -1821,6 +1879,7 @@ int task_fork(struct interrupt_frame *frame)
     if (!ustack) {
         klog(LOG_ERROR, "sched", "task_fork: cannot allocate user stack");
         kfree(kstack);
+        quota_task_teardown(&tasks[child_pid]);
         if (inherited_token)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
@@ -1875,6 +1934,10 @@ int task_fork(struct interrupt_frame *frame)
     /* Initialize child TCB */
     tasks[child_pid].pid = child_pid;
     tasks[child_pid].state = TASK_READY;
+    /* NOTE: job_absorb is deliberately NOT reset here. Like `job`, it is owned
+     * by the earlier ob_job_fork_inherit call above, which may already have
+     * recorded what the inherited job absorbed; clearing it here would strand
+     * that amount in the job forever. It is zeroed in the pre-inherit block. */
     tasks[child_pid].rsp = (uint64_t)sp;
     tasks[child_pid].stack_base = kstack;
     tasks[child_pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
@@ -2984,6 +3047,14 @@ void task_death_teardown(struct task *t)
     /* Leave any Job Object cleanly: removes the pid, decrements the active
      * count, drops the membership Ob reference. No-op when unassigned. */
     ob_job_detach_task(t);
+    /* Release the process and user quota blocks. Ordered AFTER the job detach
+     * so the chain is torn down from the inside out, and idempotent like every
+     * other sub-call here (a doubled death path must not double-deref). Any
+     * charge still outstanding is released by its owner's own cleanup, which
+     * holds its own receipt; dropping these references only ends this task's
+     * claim on the blocks, and a block with usage left in it stays alive until
+     * that last reference goes. */
+    quota_task_teardown(t);
     /* Reap any leaked timer-resolution request so a fast tick this process
      * asked for does not outlive it. No-op when the pid held none. */
     timer_resolution_release_process(t->pid);

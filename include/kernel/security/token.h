@@ -16,6 +16,9 @@
 #include "kernel/security/acl.h"
 #include "kernel/ob/handle_table.h"
 
+/* Quota blocks are opaque (kernel/quota/quota.h); a pointer needs no layout. */
+struct quota_block;
+
 /* --- Limits -------------------------------------------------------------- */
 
 #define TOKEN_MAX_GROUPS  32
@@ -79,6 +82,13 @@ typedef struct access_token {
     SID                          *RestrictedSids;
     uint32_t                      RestrictedSidCount;
     uint32_t                      Flags;
+    /* The canonical per-owner-SID quota block (kernel/quota/quota.h). Every
+     * token for the same UserSid points at the SAME block, including every
+     * duplicate: a per-user budget that a second token lineage could bypass
+     * would not be a budget at all. The token holds one reference, released
+     * when the token object is deleted. NULL only if the block could not be
+     * acquired (allocation failure or a malformed SID). */
+    struct quota_block           *QuotaBlock;
 } ACCESS_TOKEN;
 
 /* --- Token Ob type ------------------------------------------------------- */

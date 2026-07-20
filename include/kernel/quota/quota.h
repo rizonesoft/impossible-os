@@ -31,6 +31,12 @@
 #include "kernel/security/luid.h"    /* LUID */
 #include "kernel/security/sid.h"     /* SID, SID_MAX_SIZE */
 
+/* The chain-charge API is expressed in terms of a task without pulling in the
+ * scheduler's headers: task.h reaches into most of the kernel, and every
+ * charging subsystem would inherit that. */
+struct task;
+struct access_token;
+
 /* --- Resource types ------------------------------------------------------ *
  * Index into the descriptor table. APPEND new types immediately before
  * QUOTA_RESOURCE_TYPE_COUNT; never renumber (later sections key off the
@@ -197,10 +203,30 @@ void quota_types_dump(void);
  * enforced at all if callers can reach the lock themselves. */
 typedef struct quota_block quota_block_t;
 
+/* Which KIND of principal a block accounts for. A single charge is recorded
+ * against one block of EACH kind along the owner chain (the process, its user
+ * block, then its job), so the same resource legitimately appears in several
+ * blocks at once. Any aggregate that sums blocks must therefore select ONE
+ * kind, or it multiplies every charge by the chain depth -- which is exactly
+ * why quota_rollup_by_sid reads USER blocks only. */
+typedef enum quota_principal {
+    QUOTA_PRINCIPAL_PROCESS = 0,   /* one per live process (task slot)        */
+    QUOTA_PRINCIPAL_USER    = 1,   /* one per owner SID, shared by its tokens */
+    QUOTA_PRINCIPAL_JOB     = 2,   /* one per Job Object                      */
+    QUOTA_PRINCIPAL_COUNT
+} quota_principal_t;
+
 /* Allocate a block with every counter zeroed and every limit seeded from the
  * type registry's default_limit. `owner` may be NULL (no owner SID recorded);
  * a non-NULL owner is COPIED into the block, so the caller keeps ownership of
  * its own SID storage.
+ *
+ * `principal` records which accounting layer the block belongs to. It is fixed
+ * for the block's life and is what lets an aggregate pick a single layer. A
+ * USER block should be obtained from quota_user_block_acquire rather than
+ * created here: minting a second USER block for a SID that already has one
+ * splits that user's budget into two independently enforced halves, which is
+ * not an aggregate at all.
  *
  * `owner_len` is the number of bytes the caller GUARANTEES are readable at
  * `owner` (ignored when owner is NULL). It is required rather than assumed:
@@ -217,10 +243,27 @@ typedef struct quota_block quota_block_t;
  * Returns NULL on allocation failure, or when the SID is malformed, truncated
  * by owner_len, or structurally inconsistent after capture. The returned block
  * carries one reference, owned by the caller. */
-quota_block_t *quota_block_create(const SID *owner, uint32_t owner_len);
+quota_block_t *quota_block_create(quota_principal_t principal,
+                                  const SID *owner, uint32_t owner_len);
 
 /* Acquire an additional reference. The caller must already hold one. */
 void quota_block_ref(quota_block_t *block);
+
+/* Acquire a reference ONLY if the block is still live (refcount > 0), for a
+ * finder that reached the block through the global registry rather than
+ * through an owner that holds a reference. Returns 1 on success, 0 if the
+ * block is already being torn down.
+ *
+ * quota_block_ref cannot serve that case: it increments unconditionally, so a
+ * finder racing the final deref would lift the count 0 -> 1 on a block whose
+ * teardown is already committed, and the teardown would then free memory the
+ * finder still holds. The registry lock alone does not close that window
+ * either -- the count reaching zero, not the unlink, is what decides the
+ * block's fate. Callers must hold the registry lock across this call (which
+ * quota.c's own lookups do); the deref path unlinks under the same lock before
+ * freeing, so a block observed in the registry is never freed underneath a
+ * try-ref that succeeded. */
+int quota_block_try_ref(quota_block_t *block);
 
 /* Release a reference; frees the block when the last one goes away. */
 void quota_block_deref(quota_block_t *block);
@@ -228,6 +271,24 @@ void quota_block_deref(quota_block_t *block);
 /* The block's owner SID, or NULL if none was recorded. Valid while the caller
  * holds a reference; the storage belongs to the block. */
 const SID *quota_block_owner(const quota_block_t *block);
+
+/* Which accounting layer this block belongs to. QUOTA_PRINCIPAL_COUNT for a
+ * NULL block, so a caller filtering by kind never needs to pre-validate. */
+quota_principal_t quota_block_principal(const quota_block_t *block);
+
+/* The ONE canonical USER block for `owner`, creating it on first use.
+ *
+ * Every token for a SID must reach the SAME block or the "per-user budget" is
+ * not enforced at all: a second, independently created token lineage would get
+ * its own full budget. Lookup and create are atomic with respect to each other,
+ * so two CPUs racing on a first-ever SID still end up sharing one block.
+ *
+ * Returns a block carrying one reference owned by the caller (balance with
+ * quota_block_deref), or NULL when the SID is malformed/truncated by owner_len
+ * or allocation fails. `owner` must be non-NULL: a user block is defined by its
+ * SID, so an ownerless one could not be found again and would silently become
+ * a private budget. Same SID-stability requirement as quota_block_create. */
+quota_block_t *quota_user_block_acquire(const SID *owner, uint32_t owner_len);
 
 /* Charge `amount` of `type` against `block`.
  *   STATUS_SUCCESS            charge committed (amount 0 is a no-op success)
@@ -284,6 +345,13 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
  * whose log lines were suppressed. */
 uint64_t quota_diag_deferred_count(void);
 
+/* Count of job un-absorb returns that were REFUSED, i.e. the job's counter no
+ * longer held what a membership's absorb record folded in. Non-zero means the
+ * job accounting has drifted. Counted rather than logged because the un-absorb
+ * runs from the log-free, elevated-IRQL process-death teardown path. */
+void     quota_note_unabsorb_refused(void);
+uint64_t quota_unabsorb_refused_count(void);
+
 uint64_t quota_usage(const quota_block_t *block, quota_resource_type_t type);
 uint64_t quota_peak(const quota_block_t *block, quota_resource_type_t type);
 uint64_t quota_failures(const quota_block_t *block, quota_resource_type_t type);
@@ -294,6 +362,240 @@ uint64_t quota_limit(const quota_block_t *block, quota_resource_type_t type);
  * current usage is allowed and does not revoke committed charges; see the
  * limit-lowering contract above. */
 NTSTATUS quota_set_limit(quota_block_t *block, quota_resource_type_t type, uint64_t limit);
+
+/* Sum the usage and peak recorded for `type` across every live block owned by
+ * `owner`, counting the USER layer only so a chain charge is not multiplied by
+ * its depth. With one canonical block per SID this reads that block; the loop
+ * exists so a SID whose canonical block was replaced mid-flight still reports a
+ * total rather than a gap. Either output pointer may be NULL.
+ *
+ * This is a DIAGNOSTIC aggregate, not an enforcement input: the counters are
+ * read without any block lock, so a total can straddle a concurrent charge.
+ * Enforcement happens per block, inside the charge path.
+ *
+ * Returns STATUS_INVALID_PARAMETER for a NULL/malformed owner or bad type. */
+NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
+                             quota_resource_type_t type,
+                             uint64_t *usage_out, uint64_t *peak_out);
+
+/* ========================================================================== *
+ * Chain charging
+ *
+ * A resource is not owned by one principal: it is owned by the process, by the
+ * user behind the process's token, and by every job the process belongs to. A
+ * charge must therefore be admitted by ALL of them or by none, and the matching
+ * return must credit back EXACTLY the blocks that were charged.
+ *
+ * Recomputing the chain at return time cannot do that. The chain is mutable
+ * while a charge is outstanding -- a process is assigned to a job, or dies and
+ * detaches from one (task_death_teardown drops job membership while other
+ * resources are released later at reap) -- so a recomputed chain can be missing
+ * a block that was charged, permanently stranding usage in it. The receipt
+ * below is the fix: it records the exact block set, holds a reference on each,
+ * and is the ONLY thing consulted on the way back.
+ *
+ * The receipt is opaque in practice (callers only pass it back), but its
+ * storage is public so it can live on the caller's stack or be embedded next
+ * to the resource it accounts for -- charge paths must not have to allocate.
+ * ========================================================================== */
+
+/* Chain depth ceiling: process + user + the job chain. Sized with headroom for
+ * nested jobs, which are not implemented yet (see quota_charge_chain). A chain
+ * that would exceed this is refused rather than silently truncated -- an
+ * untracked link means an unenforced limit. */
+#define QUOTA_CHAIN_MAX  8u
+
+/* Proof of a completed chain charge. Treat every field as private: build it
+ * only with quota_charge_chain, consume it only with quota_return_chain.
+ * Zero-initialized (`= {0}`) is a valid empty receipt that returns nothing.
+ *
+ * `state` makes ownership EXCLUSIVE rather than merely documented. A receipt
+ * embedded next to the resource it accounts for is reachable from more than
+ * one CPU, so two cleanup paths can race on it: without the state word both
+ * would see a non-empty receipt, both would credit the amount back, and the
+ * second credit would erase charges made since -- while dereferencing the same
+ * references twice. Charging into a receipt that already holds a live charge
+ * is refused for the same reason: it would silently drop the references to the
+ * blocks the first charge is still holding and strand that usage forever. */
+typedef struct quota_charge_receipt {
+    quota_block_t        *blocks[QUOTA_CHAIN_MAX]; /* charged set, one ref each */
+    uint32_t              count;                   /* live entries in blocks[]  */
+    quota_resource_type_t type;                    /* what was charged          */
+    uint64_t              amount;                  /* how much, per block       */
+    atomic_t              state;                   /* QUOTA_RECEIPT_* below     */
+} quota_charge_receipt_t;
+
+/* Receipt states. IDLE is 0 so a zero-initialized receipt is valid. */
+#define QUOTA_RECEIPT_IDLE       0   /* holds nothing; may be charged into  */
+#define QUOTA_RECEIPT_ACTIVE     1   /* holds a live charge; may be returned */
+#define QUOTA_RECEIPT_BUSY       2   /* a charge or return owns it right now */
+
+/* SUBSTITUTE the client (thread impersonation) user block for the process's own
+ * user block, for the rare API whose contract bills the client rather than the
+ * server. The process and job blocks would still be charged -- the resource is
+ * held by the server process either way -- but the per-user aggregate would
+ * land on the client.
+ *
+ * CURRENTLY REFUSED: quota_charge_chain returns STATUS_NOT_SUPPORTED for this
+ * flag. Billing the client means reading the executing thread's impersonation
+ * token, and neither prerequisite is SMP-safe yet: thread_current() resolves
+ * through process-global scheduler cursors, so it can sample a SIBLING thread
+ * of the same task, and the token slot has no teardown-safe pin, so a
+ * concurrent RevertToSelf can free the token between the load and the
+ * reference. Either defect bills the WRONG user, which is worse than refusing
+ * -- so the flag fails closed instead of approximating.
+ *
+ * The flag and this contract stay defined so callers can be written against the
+ * final shape. Owned by the security reference monitor's token pin and the
+ * per-CPU current-thread cursor.
+ *
+ * Default (flag clear) is correct for essentially every caller anyway: a server
+ * impersonating a client uses the client's identity for ACCESS checks, but the
+ * memory and handles it allocates belong to the SERVER, so billing the client
+ * by default would let any client drain a stranger's budget for resources it
+ * cannot even reach. */
+#define QUOTA_CHARGE_CLIENT  0x1u
+
+/* Charge `amount` of `type` against every principal owning `task`, all or
+ * nothing, and record the result in `receipt`.
+ *
+ * The chain is snapshotted first (taking a reference on each block under the
+ * owner's own lock), and only then charged -- the no-nested-call contract above
+ * forbids charging while holding job_lock or a job's lock. Blocks are charged
+ * one at a time, each under its own lock, so no two block locks are ever held
+ * at once and no ordering hazard is introduced. If any block refuses, the
+ * already-charged prefix is returned exactly (quota_return ignores limits, so a
+ * concurrently lowered limit cannot block the unwind) and the failing status is
+ * reported with no net usage anywhere.
+ *
+ * A charge admitted here is judged against the chain as it existed at snapshot
+ * time. A job assigned to the process immediately afterwards does not
+ * retroactively capture that charge; making live assignment migrate outstanding
+ * usage needs a subsystem that actually charges, and is owned by section 4.
+ *
+ * Nested jobs do not exist yet (a task has at most one job), so the chain today
+ * is process + user + at most one job. The receipt and this signature are
+ * already chain-shaped, so adding ancestor jobs later changes only the snapshot
+ * walk inside quota.c -- no caller changes.
+ *
+ * The task's own process block MUST be present or the charge is refused with
+ * STATUS_PROCESS_IS_TERMINATING. An absent block means the task is dead (its
+ * teardown already cleared it) or not yet fully created; admitting an empty
+ * chain there would return success having charged nothing, letting a dying
+ * process allocate entirely unaccounted.
+ *
+ * `flags` is 0 or QUOTA_CHARGE_CLIENT. On failure the receipt is left empty, so
+ * an unconditional quota_return_chain on the error path is safe (and correct).
+ * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
+ * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
+ * STATUS_NOT_SUPPORTED (QUOTA_CHARGE_CLIENT -- see the flag),
+ * STATUS_PROCESS_IS_TERMINATING (no process block), or whatever the refusing
+ * block returned. */
+NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
+                            uint64_t amount, uint32_t flags,
+                            quota_charge_receipt_t *receipt);
+
+/* Return a charge recorded by quota_charge_chain and release the receipt's
+ * references. Exactly one caller performs the return even if several race; the
+ * losers are no-ops, so a double return cannot erase a newer live charge. Safe
+ * on an empty or zero-initialized receipt.
+ *
+ * Returning a receipt while the charge that fills it is still in flight on
+ * another CPU is a CALLER ORDERING ERROR, not a race this can resolve: the
+ * return finds the receipt still being built, does nothing, and the charge
+ * stands. There is no correct alternative -- crediting back a charge that has
+ * not finished would corrupt the counters. Complete the charge first.
+ *
+ * SCOPE OF THAT GUARANTEE: it covers repeated returns of the SAME charge. It
+ * does NOT make receipt STORAGE reuse safe -- if a caller returns a charge,
+ * reuses the same receipt for a new charge, and only then a stale returner from
+ * the first charge arrives, that returner wins the state claim and returns the
+ * SECOND charge. Distinguishing them needs a caller-held generation token, and
+ * no charging subsystem exists yet to hold one. Until then the rule for callers
+ * is the simple one: a receipt belongs to exactly one resource for its lifetime
+ * and is not recycled while any cleanup path for the old charge can still run.
+ * -> the generation-token upgrade is owned by section 4 (first real consumer).
+ */
+void quota_return_chain(quota_charge_receipt_t *receipt);
+
+/* --- Owner wiring (quota_owner.c) ---------------------------------------- *
+ * Attach and detach the per-process block. Both are idempotent; teardown is
+ * called from every process-death path. */
+
+/* Create this task's QUOTA_PRINCIPAL_PROCESS block and attach the canonical
+ * USER block for `token`'s owner SID, publishing both under the task's quota
+ * lock.
+ *
+ * `token` is passed in rather than read from the task because creation wires
+ * quota before the token slot is published (it belongs in the same early
+ * unwind window as job inheritance, where a failure is still cheap to roll
+ * back). It may be NULL -- pre-SRM kernel threads have no token yet and get an
+ * ownerless process block, which is fully chargeable; only the per-user
+ * aggregate needs a SID.
+ *
+ * The caller must keep `token` alive across the call (creation paths hold the
+ * duplicate's reference). Returns STATUS_SUCCESS, or
+ * STATUS_INSUFFICIENT_RESOURCES if allocation failed; a task that already has
+ * a block is left alone and reports success. */
+NTSTATUS quota_task_init(struct task *task, struct access_token *token);
+
+/* Clear and release this task's process block. Log-free and lock-safe for the
+ * death-teardown path. */
+void quota_task_teardown(struct task *task);
+
+/* Exactly what an absorb folded into a job, so it can be undone byte-for-byte
+ * if the assignment it was preparing for is then refused. Re-reading the
+ * process block at unwind time would NOT do: its usage may have moved since,
+ * and returning the new value would credit back an amount that was never
+ * charged. Zero-initialize before use. */
+typedef struct quota_absorb_record {
+    uint64_t taken[QUOTA_RESOURCE_TYPE_COUNT];
+    uint32_t active;                  /* non-zero once something was folded in */
+} quota_absorb_record_t;
+
+/* Fold a joining task's CURRENT usage into `job_block` before its membership
+ * is published, so the job's aggregate limit covers what the process already
+ * holds. A process that allocated first and joined a capped job afterwards
+ * would otherwise carry that usage past the cap entirely uncounted.
+ *
+ * All-or-nothing: if any resource type would exceed the job's limit, everything
+ * folded in so far is returned and the status is reported so the CALLER can
+ * refuse the assignment. On success `rec` records what was folded in; the
+ * caller MUST pass it to quota_job_unabsorb if the assignment then fails for
+ * any other reason. Must be called with NO quota block lock, job lock, or task
+ * job_lock held (the no-nested-call contract above).
+ *
+ * The absorb deliberately precedes publication: a charge landing in the window
+ * between them misses the job (a bounded under-count that unwinds symmetrically
+ * because its receipt has no job block), whereas absorbing after publication
+ * would count such a charge TWICE and permanently inflate the job. Closing the
+ * window entirely is owned by section 4's live-assignment item. Returns
+ * STATUS_SUCCESS when there is nothing to absorb.
+ *
+ * KNOWN LIMITATION -- absorbed usage is billed to the job until the member
+ * DEPARTS, not until the underlying resource is freed. The receipts for
+ * pre-join resources name only the process and user blocks, so returning one
+ * while still a member reduces those two and leaves the job's copy standing;
+ * the absorb record only unwinds at detach. A long-lived member can therefore
+ * hold job headroom for resources it has already released. Fixing this needs
+ * outstanding receipts to be MIGRATED into the job at assignment, which needs a
+ * per-task registry of live receipts -- there is no charging subsystem yet to
+ * have any. Owned by section 4 (receipt-obligation migration); today no
+ * subsystem charges, so no member can hold a pre-join receipt at all. */
+NTSTATUS quota_job_absorb_task(struct quota_block *job_block, struct task *task,
+                               quota_absorb_record_t *rec);
+
+/* Give back exactly what an absorb folded in. Used for BOTH halves of the
+ * membership lifetime: to undo a refused assignment, and -- with the record
+ * that was stored alongside the membership -- to withdraw the absorbed amount
+ * when the member departs. No-op on an empty record.
+ *
+ * ONLY the absorbed amount may be withdrawn this way. A member's post-join
+ * charges reached the job through chain receipts and belong to those receipts;
+ * withdrawing the member's CURRENT usage instead would return those charges a
+ * second time, and once another member's usage covers the difference the
+ * receipt's own later return would subtract from THAT member's live charge. */
+void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *rec);
 
 #ifdef KERNEL_TESTS
 /* --- Test-only raw counter access ---------------------------------------- *
