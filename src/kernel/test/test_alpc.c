@@ -21,6 +21,7 @@
 #include "kernel/mm/heap.h" /* kmalloc_fail_next -- retrofit (a) */
 #include "kernel/ipc/alpc.h"
 #include "kernel/ipc/alpc_port.h"
+#include "kernel/quota/quota.h"  /* central sender-quota assertions */
 #include "kernel/nt/nt_types.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
@@ -1398,6 +1399,203 @@ static void test_alpc_disconnect_then_send(void)
                                  msg, rx, sizeof(rxbuf), 50);
     TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_PORT_DISCONNECTED,
                    "sync request on disconnected port => PORT_DISCONNECTED");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* ---- Central sender quota on queued messages (TODO-25 s6) ---------- */
+
+/* PoolUsageBytes caps ONE port's bytes; QUOTA_RES_ALPC_MESSAGE caps how many
+ * messages a single USER can leave queued across every port. These tests
+ * observe the CENTRAL charge, which the pre-existing pool tests cannot see --
+ * a stranded or double-returned sender charge is invisible to PoolUsageBytes.
+ *
+ * Usage is read from the current task's PROCESS block, which every chain
+ * charge bills alongside the user and job blocks. */
+static void test_alpc_message_quota_roundtrip(void)
+{
+    struct task *t = task_current();
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h;
+    uint64_t before;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+    client_h = alpc_setup_pair("QuotaRT", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table, client_h,
+                                                     0, msg, (PORT_MESSAGE *)0,
+                                                     0, 0),
+                   (uint32_t)STATUS_SUCCESS, "datagram queued");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "a queued message charges the sender exactly one");
+
+    uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
+    PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
+    TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table,
+                                                     server_comm, 0,
+                                                     (PORT_MESSAGE *)0, rx,
+                                                     sizeof(rxbuf), 100),
+                   (uint32_t)STATUS_SUCCESS, "message received");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "receiving the message returns the sender's charge");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* The teardown case the entry-scoped release helper exists for: messages still
+ * queued when the port dies are freed by the drain path, which has no port to
+ * uncharge. If the central charge were returned only in AlpcFreeMessage, every
+ * undrained message would strand the sender's quota permanently. */
+static void test_alpc_message_quota_returned_on_teardown(void)
+{
+    struct task *t = task_current();
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h;
+    uint64_t before;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+    client_h = alpc_setup_pair("QuotaTeardown", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    for (uint32_t i = 0; i < 3; i++)
+        TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table,
+                                                         client_h, 0, msg,
+                                                         (PORT_MESSAGE *)0, 0, 0),
+                       (uint32_t)STATUS_SUCCESS, "datagram queued for teardown");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 3,
+                   "three queued messages charge three");
+
+    /* Tear the pair down WITHOUT draining: the port-delete queue drain must
+     * return all three charges. */
+    alpc_teardown_pair(client_h, server_comm);
+
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "port teardown returns every undrained message's charge");
+}
+
+/* A sender at its message cap must get STATUS_QUOTA_EXCEEDED -- distinct from
+ * the STATUS_INSUFFICIENT_RESOURCES a full port pool returns -- and the
+ * refused send must leave the port's byte reservation untouched. */
+static void test_alpc_message_quota_refusal_status(void)
+{
+    struct task *t = task_current();
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h;
+    uint64_t restore, usage_now;
+    HANDLE_TABLE_ENTRY *server_entry;
+    ALPC_PORT *server_port;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+    client_h = alpc_setup_pair("QuotaRefuse", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+
+    server_entry = ObpLookupHandle(&t->handle_table, server_comm);
+    TEST_ASSERT_NOT_NULL(server_entry, "server entry lookup");
+    if (!server_entry) {
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+    server_port = (ALPC_PORT *)server_entry->object;
+
+    restore   = quota_limit(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    usage_now = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    /* Cap at usage + 1 rather than at usage: a limit of 0 is
+     * QUOTA_LIMIT_UNLIMITED, so capping at a zero usage would refuse nothing.
+     * One message therefore fits and the second must not. */
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(t->quota, QUOTA_RES_ALPC_MESSAGE,
+                                             usage_now + 1),
+                   (uint64_t)STATUS_SUCCESS, "message budget capped");
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table, client_h,
+                                                     0, msg, (PORT_MESSAGE *)0,
+                                                     0, 0),
+                   (uint32_t)STATUS_SUCCESS, "the message that fits is queued");
+
+    uint64_t pool_at_cap = server_port->PoolUsageBytes;
+    TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table, client_h,
+                                                     0, msg, (PORT_MESSAGE *)0,
+                                                     0, 0),
+                   (uint32_t)STATUS_QUOTA_EXCEEDED,
+                   "over-cap send reports quota, not insufficient resources");
+    TEST_ASSERT_EQ((uint64_t)server_port->PoolUsageBytes, pool_at_cap,
+                   "a quota-refused send releases its port byte reservation");
+
+    /* Deliberately NOT asserting PoolUsageBytes after the teardown below:
+     * alpc_teardown_pair closes the last handles, so the port body is freed
+     * and server_port becomes a dangling pointer. The reservation assertion
+     * above, taken while the port is live, is the meaningful one. */
+    (void)quota_set_limit(t->quota, QUOTA_RES_ALPC_MESSAGE, restore);
+    alpc_teardown_pair(client_h, server_comm);
+}
+
+/* The changed allocator contract: NULL arguments and an over-length request
+ * are argument errors, and out_entry must be untouched on every failure. */
+static void test_alpc_allocate_message_bad_args(void)
+{
+    PORT_MESSAGE_ENTRY *entry = (PORT_MESSAGE_ENTRY *)0xA5A5A5A5u;
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h = alpc_setup_pair("QuotaArgs", &server_comm);
+    HANDLE_TABLE_ENTRY *e;
+
+    if (client_h == INVALID_HANDLE_VALUE)
+        return;
+    e = ObpLookupHandle(&task_current()->handle_table, server_comm);
+    TEST_ASSERT_NOT_NULL(e, "server entry lookup");
+    if (!e) {
+        alpc_teardown_pair(client_h, server_comm);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint32_t)AlpcAllocateMessage((ALPC_PORT *)0, 16, &entry),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL port refused");
+    TEST_ASSERT_EQ((uint32_t)AlpcAllocateMessage((ALPC_PORT *)e->object, 16,
+                                                 (PORT_MESSAGE_ENTRY **)0),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "NULL out_entry refused");
+    TEST_ASSERT_EQ((uint32_t)AlpcAllocateMessage((ALPC_PORT *)e->object,
+                                                 ALPC_MAX_ALLOWED_MESSAGE_LENGTH + 1,
+                                                 &entry),
+                   (uint32_t)STATUS_INVALID_PARAMETER, "over-length request refused");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)entry, (uint64_t)0xA5A5A5A5u,
+                   "out_entry is untouched on every failure");
 
     alpc_teardown_pair(client_h, server_comm);
 }
@@ -3008,6 +3206,14 @@ void test_register_alpc(void)
                             test_alpc_disconnect_then_send, TEST_CAT_IPC);
     test_suite_register_cat("alpc: PORT_CLOSED marker uncharged",
                             test_alpc_port_closed_marker_uncharged, TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: sender message quota round-trip",
+                            test_alpc_message_quota_roundtrip, TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: message quota returned on port teardown",
+                            test_alpc_message_quota_returned_on_teardown, TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: message quota refusal status",
+                            test_alpc_message_quota_refusal_status, TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: AlpcAllocateMessage bad args",
+                            test_alpc_allocate_message_bad_args, TEST_CAT_IPC);
     test_suite_register_cat("alpc: remote disconnect-then-send => DISCONNECTED",
                             test_alpc_remote_disconnect_then_send, TEST_CAT_IPC);
     test_suite_register_cat("alpc: sync request with no peer",

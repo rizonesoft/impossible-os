@@ -18,6 +18,7 @@
 #include "kernel/atomic.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/quota/quota.h"   /* per-state / per-subscription charge receipts */
 
 /* --- Limits -------------------------------------------------------------- */
 
@@ -141,6 +142,14 @@ struct knf_subscriber {
     uint64_t               missed;        /* updates coalesced away since last poll (lock):
                                            * level-triggered publishes that landed while a
                                            * notification was already pending. Saturating. */
+    /* QUOTA_RES_NOTIFICATION_SUB charge for this node, billed to the task that
+     * subscribed. Owned by the node, so every path that frees the node returns
+     * it -- there is no separate lookup to get wrong. The token is stored BY
+     * VALUE beside the receipt exactly as quota.h requires: the node is freed
+     * immediately after the return, so a token loaded back through recycled
+     * storage could otherwise return a stranger's charge. */
+    quota_charge_receipt_t quota;
+    uint64_t               quota_token;
 };
 
 /* --- KNF_STATE object body ----------------------------------------------- */
@@ -167,6 +176,24 @@ typedef struct knf_state {
     uint32_t        subscriber_count;    /* len(subscribers); bounds lock-hold walk */
     uint32_t        trace_flags;         /* KNF_TRACE_* bridge opt-ins (set/read under lock) */
     uint32_t        mode_flags;          /* KNF_MODE_* delivery/retention policy (set/read under lock) */
+    /* Quota charges for this state, both billed to the creating task and both
+     * returned in knf_state_on_delete -- the ONE teardown point every path
+     * (normal delete AND the create-or-open loser) funnels through.
+     *
+     * `quota_bytes` charges the state's retention BUDGET (KNF_MAX_PAYLOAD), not
+     * its current payload_len. Charging actual bytes would need to re-charge a
+     * delta as the buffer grows, and a receipt holds one charge at a time by
+     * design, so a grow would have to drop the old charge before taking the new
+     * one and could then find the budget gone while still holding the buffer.
+     * The budget is the honest quantity anyway: a live state can retain up to
+     * KNF_MAX_PAYLOAD at any moment, so that is what it pins from the user.
+     * Tightening this to high-water actual bytes needs the atomic multi-block
+     * adjust primitive (TODO-25 s11), which does not exist yet. */
+    quota_charge_receipt_t quota_state;  /* QUOTA_RES_NOTIFICATION_STATE, 1  */
+    uint64_t        quota_state_token;
+    quota_charge_receipt_t quota_bytes;  /* QUOTA_RES_NOTIFICATION_BYTES     */
+    uint64_t        quota_bytes_token;
+
     uint8_t         diag_counted;        /* 1 once counted into the live-state diag tally
                                           * (only after a successful insert): gates the
                                           * on_delete decrement so a create-or-open loser,
@@ -356,7 +383,13 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
  * Returns STATUS_SUCCESS with *out_sub set, STATUS_INVALID_PARAMETER,
  * STATUS_UNSUCCESSFUL (called at >= DISPATCH_LEVEL -- allocates, PASSIVE-only),
  * or STATUS_INSUFFICIENT_RESOURCES (OOM, or the per-state subscriber cap
- * KNF_MAX_SUBSCRIBERS_PER_STATE is reached). Call at PASSIVE_LEVEL (allocates).
+ * KNF_MAX_SUBSCRIBERS_PER_STATE is reached), or STATUS_QUOTA_EXCEEDED (the
+ * caller is at its QUOTA_RES_NOTIFICATION_SUB budget). The quota status is
+ * distinct from INSUFFICIENT_RESOURCES on purpose: the subscriber cap bounds
+ * ONE state's list, while the quota bounds how many subscriptions a single
+ * user holds across every state, and a caller that cannot tell them apart
+ * would retry forever against a budget that is not going to move.
+ * Call at PASSIVE_LEVEL (allocates).
  */
 NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub);
 

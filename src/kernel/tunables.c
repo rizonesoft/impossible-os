@@ -25,9 +25,6 @@ _Static_assert(TUNABLE_MAX == KERNEL_TUNABLE_CAPACITY,
 #define TUNABLE_PENDING    32u   /* deferred-callback slot pool */
 #define TUNABLE_NAME_CAP   48u   /* incl. NUL */
 
-/* Owner id for builtin tunables without a dedicated subsystem slot. */
-#define TUNABLE_OWNER_CORE 0xFEu
-
 typedef struct {
     char         name[TUNABLE_NAME_CAP];
     int64_t      cur;

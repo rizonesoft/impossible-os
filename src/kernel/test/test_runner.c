@@ -470,6 +470,7 @@ extern void test_register_except(void);
 extern void test_register_quota(void);
 extern void test_register_quota_owner(void);
 extern void test_register_quota_perf(void);
+extern void test_register_quota_config(void);
 extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
@@ -584,6 +585,7 @@ void test_runner_init(void)
     test_register_quota();
     test_register_quota_owner();
     test_register_quota_perf();
+    test_register_quota_config();
 
     /* ABI */
     test_register_peb_teb();

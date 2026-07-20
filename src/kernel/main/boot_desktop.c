@@ -28,6 +28,7 @@
 #include "kernel/sched/syscall.h"
 #include "kernel/env.h"
 #include "kernel/tunables.h"
+#include "kernel/quota/quota.h"
 #include "kernel/policy_lock.h"
 #include "kernel/boot_status.h"
 #include "kernel/config.h"
@@ -168,6 +169,14 @@ void boot_phase3(void)
     /* Register the runtime tunable registry's core knobs now that the work
      * queue exists (deferred tunable callbacks enqueue onto sys_wq). */
     kernel_tunables_register_core();
+
+    /* Per-user quota default caps. These live with the tunables (not with the
+     * Phase 2 taxonomy validation) because registration must follow the work
+     * queue: a change callback re-limits every live USER block and may be
+     * dispatched deferred. USER blocks created before this point keep the
+     * taxonomy default; a later boot.conf or runtime set fires the callback and
+     * re-limits them, so the window costs no enforcement. */
+    quota_config_register_tunables();
 
     /* Register the core feature flags (resolution uses the cmdline + cohort +
      * Secure Boot state, all available by this point). */

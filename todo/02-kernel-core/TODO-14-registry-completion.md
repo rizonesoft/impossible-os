@@ -682,6 +682,7 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 - [ ] Convert the five oversized stack buffers to heap/PMM-backed: `registry.c:1296` (RegGetValue expand), `2380` (hive_deserialize_key), `2524` (hive_load root), `nt_registry.c:360` + `595` (NtQueryValueKey/enum)
 - [ ] Update on-disk wire format (`hive_serialize_key`/`hive_deserialize_key`, `registry.c:2049`/`2344`): name len is u16 (16383 fits), data len already u32; bump `HIVE_VERSION` only if record layout changes + add a v1 read path
 - [ ] Free heap-backed name/data on value delete + key free; no leak on `RegDeleteValue` / `RegDeleteKey` / hive unload
+- [ ] Charge registry names/data bytes and watchers via `quota_charge_current` once value slots are reusable; route `hive_parse_value` through the same transaction so hive load cannot bypass the cap. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Commit: `"kernel/registry: value size expansion to 16KiB names + 1MiB data (heap-backed)"`
 
 **Test checkpoint:** `RegSetValueEx` with a 4096-byte `REG_BINARY` succeeds; a 1 MiB value round-trips through `hive_save`/`hive_load`; a 300-char value name round-trips; no kernel-stack guard fault on a large-value query. Serial log: `"[REG] large value: name=%u data=%u bytes"`. Test on: QEMU WHPX + TCG.

@@ -28,6 +28,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/ipc/alpc.h"
+#include "kernel/quota/quota.h"   /* per-message charge receipt */
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/event.h"
 #include "kernel/ob/ob_type.h"
@@ -78,6 +79,20 @@ typedef struct port_message_entry {
                                                  * PORT_CLOSED marker queued
                                                  * by AlpcDisconnectPort) */
     uint32_t                   _pad_charged;
+    /* Central-quota charge for this queued message (QUOTA_RES_ALPC_MESSAGE),
+     * billed to the SENDING task. Distinct from ChargedSize, which is the
+     * per-port MaxPoolUsage byte reservation: that caps ONE port, this caps how
+     * many messages a single user can leave queued across every port.
+     *
+     * The receipt travels with the entry because a queued message outlives the
+     * send call and can be freed by the receiver or by port teardown, none of
+     * which can look up the sender. The token is stored BY VALUE beside it, as
+     * quota.h requires -- the entry is freed immediately after the return, so a
+     * token read back through recycled storage could return a stranger's
+     * charge. Zero-initialized by the allocator's header zero-fill, which is
+     * the valid "holds nothing" receipt for the uncharged PORT_CLOSED marker. */
+    quota_charge_receipt_t     Quota;
+    uint64_t                   QuotaToken;
     /* uint8_t Body[Header.DataLength]; -- flexible tail (no [] because the
      * struct already has well-defined size; payload is laid out by hand) */
 } PORT_MESSAGE_ENTRY;
@@ -411,20 +426,31 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle);
  * write the payload into ALPC_MSG_BODY(entry); ChargedSize is set by
  * this helper so AlpcFreeMessage can decrement the same amount.
  *
- * Returns NULL when data_length exceeds ALPC_MAX_ALLOWED_MESSAGE_LENGTH,
- * when MaxPoolUsage > 0 and the allocation would push PoolUsageBytes
- * past the cap, or when kmalloc fails. MaxPoolUsage == 0 means
- * "no per-port limit" (still bounded by ALPC_MAX_ALLOWED_MESSAGE_LENGTH
- * and overall heap availability).
+ * It also charges the SENDING task one QUOTA_RES_ALPC_MESSAGE against the
+ * central quota, recorded in the entry's own receipt. That charge is taken
+ * with NO port lock held (the quota API takes block locks and must never nest
+ * beneath one) and is unwound along with the port reservation on failure.
+ *
+ * Returns STATUS_INVALID_PARAMETER (NULL argument or data_length above
+ * ALPC_MAX_ALLOWED_MESSAGE_LENGTH), STATUS_PORT_DISCONNECTED,
+ * STATUS_INSUFFICIENT_RESOURCES (per-port MaxPoolUsage cap or kmalloc), or
+ * STATUS_QUOTA_EXCEEDED when the sender is at its message quota. The status is
+ * returned rather than collapsed into a NULL pointer specifically so a caller
+ * can tell "this user is over quota" from "the machine is out of memory".
+ * MaxPoolUsage == 0 means "no per-port limit" (still bounded by
+ * ALPC_MAX_ALLOWED_MESSAGE_LENGTH and overall heap availability).
+ *
+ * `*out_entry` is written only on success.
  */
-PORT_MESSAGE_ENTRY *AlpcAllocateMessage(struct alpc_port *charge_port,
-                                        uint32_t data_length);
+NTSTATUS AlpcAllocateMessage(struct alpc_port *charge_port,
+                             uint32_t data_length,
+                             PORT_MESSAGE_ENTRY **out_entry);
 
 /*
- * AlpcFreeMessage -- decrement charge_port->PoolUsageBytes by entry's
- * ChargedSize and kfree the entry. Pass the SAME charge_port that was
- * passed to AlpcAllocateMessage. The entry MUST NOT be on any queue
- * when this is called.
+ * AlpcFreeMessage -- return the entry's central quota charge, decrement
+ * charge_port->PoolUsageBytes by its ChargedSize, and kfree it. Pass the SAME
+ * charge_port that was passed to AlpcAllocateMessage. The entry MUST NOT be on
+ * any queue when this is called.
  */
 void AlpcFreeMessage(struct alpc_port *charge_port, PORT_MESSAGE_ENTRY *entry);
 

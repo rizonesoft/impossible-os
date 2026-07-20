@@ -34,6 +34,7 @@
 #include "kernel/ob/ob_job.h"
 #include "kernel/security/token.h"
 #include "kernel/sched/irql.h"   /* KeGetCurrentIrql for the diagnostic gate */
+#include "kernel/boot_init.h"    /* kernel_subsystem_ready for the boot exemption */
 #include "kernel/klog.h"
 
 
@@ -562,4 +563,49 @@ void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
     /* Release at the SAME generation the charge published. The next charge
      * advances it, so this token can never open a future charge. */
     atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_IDLE));
+}
+
+/* ==========================================================================
+ * The one charge entry point for subsystems (section 6)
+ *
+ * Every charging subsystem -- notifications, ALPC, and the ones that follow --
+ * calls THIS, not quota_charge_chain directly, and none of them inspects
+ * task->quota. That is a security boundary, not tidiness.
+ *
+ * The problem it solves: these charge points also run during boot, before any
+ * task owns a quota block. The obvious per-subsystem workaround ("if the task
+ * has no block, skip the charge") pushes a fail-open decision into every
+ * consumer and, worse, makes it UNCONDITIONAL -- a user-reachable request that
+ * races its own process teardown finds the block already cleared and inherits
+ * the boot exemption, allocating entirely unaccounted. quota_charge_chain
+ * deliberately refuses that case with STATUS_PROCESS_IS_TERMINATING; a
+ * consumer-side skip would quietly repeal it.
+ *
+ * So the exemption is bound to a MILESTONE rather than to the absence of a
+ * block. Before the scheduler is ready there is provably no principal to bill
+ * and nothing user-reachable to bill it for; from that point on a missing
+ * block means a dying or half-built task and the refusal stands.
+ * ========================================================================== */
+NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
+                              quota_charge_receipt_t *receipt,
+                              uint64_t *out_token)
+{
+    struct task *task;
+
+    if (!receipt || !out_token)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Boot exemption. Both conditions are milestones, not per-caller state:
+     * the taxonomy must be validated before any limit means anything, and the
+     * scheduler must be publishing tasks before one can be billed. */
+    if (!quota_registry_ready() || !kernel_subsystem_ready(SUBSYS_SCHED)) {
+        *out_token = 0;                  /* canonical no-obligation token */
+        return STATUS_SUCCESS;
+    }
+
+    task = task_current();
+    if (!task)
+        return STATUS_PROCESS_IS_TERMINATING;
+
+    return quota_charge_chain(task, type, amount, 0, receipt, out_token);
 }

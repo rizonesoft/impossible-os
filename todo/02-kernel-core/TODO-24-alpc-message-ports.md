@@ -289,6 +289,7 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [ ] `AlpcpValidateMessageAttributes(attrs, buffer_len)` (D4/D5):
   - COPY attrs once into kernel memory; validate the SNAPSHOT (subtraction-based bounds), never a live user buffer
   - Reject unknown bits; reject `ALPC_TOKEN_ATTR` / `ALPC_WORK_ON_BEHALF` until §7 provenance lands
+- [ ] Charge port sections and completion-list entries to the creating task via `quota_charge_current`, storing the receipt beside each allocation. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Commit: `"kernel/ipc/alpc: port sections, view mapping, message attributes dispatch"`
 
 **Test checkpoint:** `NtAlpcCreatePortSection(NULL, 64*1024)` creates anonymous 64 KiB section. `NtAlpcCreateSectionView` maps it into caller's VA; writing a pattern to `ViewBase` succeeds. Send message with `ALPC_DATA_VIEW_ATTR`; receiver calls `NtAlpcCreateSectionView` with received `SectionHandle`; reads back matching pattern; zero copies. `NtAlpcDeleteSectionView` unmaps without crash. `NtAlpcDeletePortSection` dereferences section. `AlpcpValidateMessageAttributes` rejects invalid `buffer_len`. Serial log: `"[ALPC] section view mapped: base=%p size=%llu"`. Test on: QEMU WHPX + TCG.

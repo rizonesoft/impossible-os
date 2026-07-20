@@ -49,15 +49,37 @@ typedef enum {
     QUOTA_RES_NONPAGED_POOL,     /* nonpaged pool bytes              */
     QUOTA_RES_REGISTRY_BYTES,    /* registry key/value/data bytes    */
     QUOTA_RES_ALPC_MESSAGE,      /* queued ALPC messages             */
-    QUOTA_RES_NOTIFICATION_STATE,/* notification state objects       */
-    QUOTA_RES_TIMER,             /* timer objects                    */
-    QUOTA_RES_THREAD,            /* threads                          */
-    QUOTA_RES_PROCESS,           /* processes                        */
-    QUOTA_RES_SECTION,           /* section (shared-memory) objects  */
-    QUOTA_RES_MAPPED_VIEW,       /* mapped views of sections         */
-    QUOTA_RES_CRASH_BUFFER,      /* retained crash-dump buffers      */
-    QUOTA_RESOURCE_TYPE_COUNT
+    QUOTA_RES_NOTIFICATION_STATE = 7, /* notification state objects  */
+    QUOTA_RES_TIMER              = 8, /* timer objects               */
+    QUOTA_RES_THREAD             = 9, /* threads                     */
+    QUOTA_RES_PROCESS            = 10,/* processes                   */
+    QUOTA_RES_SECTION            = 11,/* section (shared-memory) objects */
+    QUOTA_RES_MAPPED_VIEW        = 12,/* mapped views of sections    */
+    QUOTA_RES_CRASH_BUFFER       = 13,/* retained crash-dump buffers */
+    /* Appended by section 6. New types go HERE, at the END. Adding one beside
+     * a related type instead shifts every value after it, and the enum value
+     * IS the identity (counter index, dump rows, the later query ABI). */
+    QUOTA_RES_NOTIFICATION_SUB   = 14,/* notification subscriptions  */
+    QUOTA_RES_NOTIFICATION_BYTES = 15,/* retained notification payload */
+    QUOTA_RESOURCE_TYPE_COUNT    = 16
 } quota_resource_type_t;
+
+/* Every stable value is pinned explicitly above AND re-asserted here, so a
+ * future insertion in the middle is a COMPILE error rather than a silent
+ * renumber that makes an existing record address a different counter. This
+ * assert is the mechanism the "never renumber" rule needed to actually hold:
+ * the prose alone did not stop section 6's first draft from inserting two
+ * types in the middle of the enum. */
+_Static_assert(QUOTA_RES_HANDLE == 0 && QUOTA_RES_OBJECT_BODY == 1 &&
+               QUOTA_RES_NAMESPACE_ENTRY == 2 && QUOTA_RES_PAGED_POOL == 3 &&
+               QUOTA_RES_NONPAGED_POOL == 4 && QUOTA_RES_REGISTRY_BYTES == 5 &&
+               QUOTA_RES_ALPC_MESSAGE == 6 && QUOTA_RES_NOTIFICATION_STATE == 7 &&
+               QUOTA_RES_TIMER == 8 && QUOTA_RES_THREAD == 9 &&
+               QUOTA_RES_PROCESS == 10 && QUOTA_RES_SECTION == 11 &&
+               QUOTA_RES_MAPPED_VIEW == 12 && QUOTA_RES_CRASH_BUFFER == 13 &&
+               QUOTA_RES_NOTIFICATION_SUB == 14 &&
+               QUOTA_RES_NOTIFICATION_BYTES == 15,
+    "quota resource type IDs are ABI: append new types, never renumber");
 
 /* --- Accounting unit ----------------------------------------------------- */
 typedef enum {
@@ -111,6 +133,49 @@ int quota_registry_ready(void);
  * Distinct from the per-block charge-state dump quota_dump() added by the
  * quota dashboard. */
 void quota_types_dump(void);
+
+/* --- Configurable per-user default limits (quota_config.c) ---------------- *
+ * The kernel-config override layer named in the precedence rule above. One
+ * runtime tunable per resource type, "quota.user.<type-name>", consulted when
+ * a USER block is seeded and re-applied to live USER blocks when changed. */
+
+/* Register one tunable per resource type. Call once, in Phase 2, immediately
+ * after quota_register_types(): the taxonomy supplies each tunable's default
+ * and its name, so it must be validated first. Idempotent -- a second call
+ * finds every name already taken and registers nothing. */
+void quota_config_register_tunables(void);
+
+/* The effective default limit for `type` on a USER block: the configured
+ * override when one is registered, otherwise the taxonomy's default_limit.
+ * Returns 0 (QUOTA_LIMIT_UNLIMITED) for an out-of-range type. Safe to call
+ * before quota_config_register_tunables -- it falls back to the taxonomy. */
+uint64_t quota_config_user_default(quota_resource_type_t type);
+
+/* The tunable name for `type` ("quota.user.handles", ...), or NULL if the type
+ * is out of range. Exposed so callers and tests name a tunable through the one
+ * table rather than rebuilding the string. */
+const char *quota_config_tunable_name(quota_resource_type_t type);
+
+/* Apply `limit` to every LIVE USER block whose limit for `type` was never set
+ * explicitly by quota_set_limit. Called by the tunable change callback; also
+ * the tested seam for the walk. Lowering below current usage is allowed and
+ * does not rewrite usage -- later charges are simply refused. */
+void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit);
+
+/* Publish the effective USER default for `type` WITHOUT walking live blocks.
+ * Used to seed the cache from the taxonomy at validation and to prime it from
+ * the tunables at registration -- both points where no live USER block can yet
+ * disagree. To change a default at runtime use quota_user_default_relimit,
+ * which publishes AND re-limits; publishing alone would leave existing users
+ * on the old value. Limits above QUOTA_AMOUNT_MAX are clamped into the counter
+ * domain; an out-of-range type is a no-op. */
+void quota_user_default_publish(quota_resource_type_t type, uint64_t limit);
+
+/* The currently published effective USER default for `type`, or 0 (unlimited)
+ * for an out-of-range type. This is the value a new USER block is seeded with,
+ * which is NOT necessarily what the tunable registry reports: it is re-read
+ * from the tunables only at registration and on a change callback. */
+uint64_t quota_user_default_current(quota_resource_type_t type);
 
 /* ========================================================================== *
  * Quota blocks and the charge API
@@ -589,6 +654,23 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
  * it tracks, or keep the receipt and token alive until every path that could
  * return that charge has run. */
 void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token);
+
+/* THE charge entry point for a charging subsystem: bill the CURRENT task's
+ * chain, or take the boot exemption. Consumers call this and NEVER inspect
+ * task->quota themselves -- see the contract in quota_owner.c.
+ *
+ * Before the scheduler is ready (and before the taxonomy is validated) there
+ * is no principal to bill: the call succeeds with token 0, having charged
+ * nothing. AFTER that milestone a task with no process block is dying or
+ * half-built and the charge is REFUSED with STATUS_PROCESS_IS_TERMINATING --
+ * the exemption is bound to boot, never to the absence of a block, so a
+ * request racing its own process teardown cannot inherit it.
+ *
+ * Otherwise this is quota_charge_chain with flags 0: same receipt/token
+ * contract, same statuses, and quota_return_chain returns the charge. */
+NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
+                              quota_charge_receipt_t *receipt,
+                              uint64_t *out_token);
 
 /* --- Owner wiring (quota_owner.c) ---------------------------------------- *
  * Attach and detach the per-process block. Both are idempotent; teardown is

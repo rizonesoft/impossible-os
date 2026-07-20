@@ -48,6 +48,9 @@ static const quota_resource_desc_t g_quota_desc[] = {
     [QUOTA_RES_SECTION]            = { "sections",            Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
     [QUOTA_RES_MAPPED_VIEW]        = { "mapped-views",        Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
     [QUOTA_RES_CRASH_BUFFER]       = { "crash-buffers",       Q_PRIV, Q_UNL, QUOTA_UNIT_BYTES },
+    /* Appended by section 6 -- rows follow enum order, which is ABI. */
+    [QUOTA_RES_NOTIFICATION_SUB]   = { "notification-subs",   Q_PRIV, Q_UNL, QUOTA_UNIT_COUNT },
+    [QUOTA_RES_NOTIFICATION_BYTES] = { "notification-bytes",  Q_PRIV, Q_UNL, QUOTA_UNIT_BYTES },
 };
 
 #undef Q_PRIV
@@ -59,6 +62,10 @@ static const quota_resource_desc_t g_quota_desc[] = {
  * with a NULL name). This only bites because the array above is UNSIZED. */
 _Static_assert(sizeof(g_quota_desc) / sizeof(g_quota_desc[0]) == QUOTA_RESOURCE_TYPE_COUNT,
                "quota descriptor table must have one entry per resource type");
+
+/* Defined with the USER-block registry below; declared here because the
+ * taxonomy validation seeds the effective defaults as its last step. */
+void quota_user_default_publish(quota_resource_type_t type, uint64_t limit);
 
 /* Registry-ready flag. Written once by quota_register_types() on the BSP in
  * Phase 2 before any consumer charges; read-only thereafter. Release/acquire
@@ -108,6 +115,14 @@ boot_result_t quota_register_types(void)
             }
         }
     }
+
+    /* Seed the effective USER defaults from the validated taxonomy. Every USER
+     * block created before the config layer registers (Phase 3) uses these;
+     * quota_config_register_tunables then re-publishes them from the tunables,
+     * and any later change flows through quota_user_default_relimit. */
+    for (uint32_t i = 0; i < QUOTA_RESOURCE_TYPE_COUNT; i++)
+        quota_user_default_publish((quota_resource_type_t)i,
+                                   g_quota_desc[i].default_limit);
 
     __atomic_store_n(&g_quota_ready, 1, __ATOMIC_RELEASE);
     klog(LOG_INFO, "quota", "resource type registry: %u types validated",
@@ -222,11 +237,23 @@ struct quota_block {
     /* One record per resource type: see quota_counters_t above. */
     quota_counters_t counter[QUOTA_RESOURCE_TYPE_COUNT];
     spinlock_t lock;                                /* guards ALL mutations    */
+    /* Per-type limit PROVENANCE, guarded by `lock` alongside the limit it
+     * describes. 0 = the limit is still whatever the block was seeded with at
+     * create time (a policy default); 1 = quota_set_limit set it explicitly.
+     *
+     * This is what makes the runtime config default safe to re-apply: a live
+     * USER block whose limit was never set explicitly is still expressing the
+     * administrator's default and must follow it when that default changes,
+     * while a block someone deliberately capped must NOT be silently raised or
+     * lowered back to the default. Without the distinction the config layer
+     * would have to choose between never reaching live blocks (a default no
+     * administrator can actually change) or trampling explicit limits. */
+    uint8_t    limit_explicit[QUOTA_RESOURCE_TYPE_COUNT];
     uint32_t   owner_sid_buf[SID_MAX_SIZE / 4];     /* SID capture, 4-aligned  */
     uint8_t    has_owner_sid;                       /* 0 = no owner recorded    */
 };
 
-/* A block must fit the kmalloc size rule (<= 4 KB). 14 types x 4 counters
+/* A block must fit the kmalloc size rule (<= 4 KB). 16 types x 4 counters
  * plus the SID buffer is far under that; assert so a future type-count growth
  * cannot silently push allocation into pmm_alloc_contiguous territory. */
 _Static_assert(sizeof(quota_block_t) <= 4096,
@@ -572,6 +599,53 @@ static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t
 static struct quota_block *g_registry_head;
 static spinlock_t          g_registry_lock = SPINLOCK_INIT;
 
+/* EFFECTIVE per-type default for USER blocks: the value a new USER block is
+ * seeded with and the value the re-limit walk applies. Cached as plain atomics
+ * rather than read from the tunable registry at each use for one specific
+ * reason -- seeding must be doable while holding g_registry_lock, and reaching
+ * into another subsystem's lock from under this one would invent a lock order
+ * that does not exist today.
+ *
+ * Seeded from the taxonomy by quota_register_types and re-published by the
+ * config layer. The publish-then-walk ordering in quota_user_default_relimit
+ * is what closes the seed/publish race: see the comment there. */
+static atomic64_t g_user_default[QUOTA_RESOURCE_TYPE_COUNT];
+
+/* Apply the current effective defaults to a block that is NOT YET PUBLISHED.
+ *
+ * Deliberately takes no block lock, and must not: the caller holds
+ * g_registry_lock, under which acquiring a block lock is forbidden. That is
+ * sound only because the block is unreachable -- it is not on the registry
+ * list and no other CPU has ever seen its address -- so there is no concurrent
+ * reader or writer to exclude. Calling this on a PUBLISHED block would be a
+ * bug, not merely a style violation. */
+static void quota_seed_user_limits_unpublished(quota_block_t *block)
+{
+    for (uint32_t i = 0; i < QUOTA_RESOURCE_TYPE_COUNT; i++) {
+        if (block->limit_explicit[i])
+            continue;   /* an explicit limit outranks the config default */
+        atomic64_set(&block->counter[i].limit,
+                     atomic64_read(&g_user_default[i]));
+    }
+}
+
+void quota_user_default_publish(quota_resource_type_t type, uint64_t limit)
+{
+    if ((uint32_t)type >= QUOTA_RESOURCE_TYPE_COUNT)
+        return;
+    if (limit > (uint64_t)QUOTA_AMOUNT_MAX)
+        limit = (uint64_t)QUOTA_AMOUNT_MAX;
+    atomic64_set(&g_user_default[type], (int64_t)limit);
+}
+
+uint64_t quota_user_default_current(quota_resource_type_t type)
+{
+    if ((uint32_t)type >= QUOTA_RESOURCE_TYPE_COUNT)
+        return QUOTA_LIMIT_UNLIMITED;
+    int64_t v = atomic64_read(&g_user_default[type]);
+    return (v > 0) ? (uint64_t)v : 0;
+}
+
 /* Link a fully constructed block. Caller HOLDS the registry lock: the
  * canonical-user-block path must scan and link in one critical section, or two
  * CPUs racing on a first-ever SID could each publish a block and split that
@@ -668,10 +742,20 @@ static quota_block_t *quota_block_alloc(quota_principal_t principal,
     block->lock = (spinlock_t)SPINLOCK_INIT;
     block->principal = (uint8_t)principal;
 
-    /* Seed limits from the type registry so a fresh block already carries the
-     * taxonomy's defaults; callers override per type with quota_set_limit. */
+    /* Seed limits so a fresh block already carries the effective default;
+     * callers override per type with quota_set_limit.
+     *
+     * Precedence (ENFORCED here and in quota_set_limit, no longer "intended"):
+     * per-block explicit > kernel-config override > taxonomy default_limit.
+     * The config override is consulted for USER blocks ONLY -- it expresses a
+     * PER-USER cap, and the same allocator builds PROCESS and JOB blocks, so
+     * applying it to those would cap a single process at the whole user's
+     * budget. Before the config layer registers (early boot) the lookup falls
+     * back to the taxonomy default, so ordering imposes no constraint. */
     for (uint32_t i = 0; i < QUOTA_RESOURCE_TYPE_COUNT; i++) {
-        uint64_t def = g_quota_desc[i].default_limit;
+        uint64_t def = (principal == QUOTA_PRINCIPAL_USER)
+                     ? quota_user_default_current((quota_resource_type_t)i)
+                     : g_quota_desc[i].default_limit;
         if (def > (uint64_t)QUOTA_AMOUNT_MAX)
             def = (uint64_t)QUOTA_AMOUNT_MAX;   /* clamp into the counter domain */
         atomic64_set(&block->counter[i].limit, (int64_t)def);
@@ -807,8 +891,25 @@ quota_block_t *quota_user_block_acquire(const SID *owner, uint32_t owner_len)
             break;
         }
     }
-    if (!found)
+    if (!found) {
+        /* RE-SEED under the registry lock, immediately before publishing.
+         *
+         * This closes the seed/publish race: quota_block_alloc read the
+         * effective defaults outside any lock, so a concurrent re-limit could
+         * have changed them since. The walk deliberately misses blocks linked
+         * at the head after it passes, on the premise that a new block already
+         * carries the new value -- a premise this re-seed is what makes true.
+         *
+         * The interleaving argument, given that a re-limit PUBLISHES the new
+         * default before it starts walking: either this link completes before
+         * the walk's first lock acquisition, in which case the block is at the
+         * head and the walk sees it; or the link happens after, in which case
+         * this re-seed ran after that publish and reads the new value. Without
+         * it, a user whose block was born in that window would keep an
+         * unlimited budget until the next configuration change. */
+        quota_seed_user_limits_unpublished(fresh);
         quota_registry_link_locked(fresh);
+    }
     spin_unlock_irqrestore(&g_registry_lock, flags);
 
     if (found) {
@@ -1026,6 +1127,109 @@ NTSTATUS quota_set_limit(quota_block_t *block, quota_resource_type_t type, uint6
     uint64_t flags;
     quota_block_lock(block, &flags);
     atomic64_set(&block->counter[type].limit, (int64_t)limit);
+    /* An explicit set pins this limit against the config default: from here on
+     * a change to quota.user.<type>_default leaves this block alone. Recorded
+     * under the same lock as the limit so the two can never disagree. */
+    block->limit_explicit[type] = 1;
     quota_block_unlock(block, flags);
     return STATUS_SUCCESS;
+}
+
+/* ==========================================================================
+ * Runtime configurable default limits (section 6)
+ *
+ * The config layer registers one tunable per resource type and calls in here
+ * when an administrator changes one. Two properties make that a CREDIBLE cap
+ * rather than a create-time cosmetic:
+ *
+ *   - It is scoped to USER blocks. The same allocator builds PROCESS and JOB
+ *     blocks, so applying a "per-user default" to all three would silently cap
+ *     every process at the user's aggregate budget.
+ *   - It reaches blocks that ALREADY EXIST. The canonical USER block for a
+ *     logged-in SID is created once and lives for the session, so a default
+ *     that only seeded new blocks would never affect the users actually
+ *     running -- an administrative control that changes nothing.
+ *
+ * The walk obeys the absolute lock order above (no block lock under the
+ * registry lock) by PINNING a bounded batch under the registry lock, dropping
+ * it, and only then calling quota_set_limit. Batching bounds the interrupts-off
+ * hold time regardless of how many users exist.
+ *
+ * The cursor keeps its reference across the gap between batches. That is what
+ * makes resuming safe: a block we hold a reference to cannot reach refcount 0,
+ * so it cannot be unlinked, so its reg_next is still meaningful when we retake
+ * the lock. Blocks LINKED during the walk are missed by design -- they are
+ * created at the head and already carry the new default from their seed.
+ * ========================================================================== */
+
+/* Blocks pinned per registry-lock acquisition. Small enough that the
+ * interrupts-off walk stays short, large enough that a system with many live
+ * users does not pay a lock round-trip per block. */
+#define QUOTA_RELIMIT_BATCH  16u
+
+void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
+{
+    quota_block_t *cursor = (quota_block_t *)0;   /* pinned resume point */
+
+    if (!quota_type_valid(type) || limit > (uint64_t)QUOTA_AMOUNT_MAX)
+        return;
+
+    /* PUBLISH the new default BEFORE walking. The order is load-bearing, not
+     * incidental: a block being created concurrently re-seeds from this value
+     * under the registry lock just before it links, so publishing first means
+     * a block that the walk misses has necessarily already read the new value.
+     * Walking first and publishing after would leave exactly the window this
+     * ordering exists to close. */
+    quota_user_default_publish(type, limit);
+
+    for (;;) {
+        quota_block_t *batch[QUOTA_RELIMIT_BATCH];
+        uint32_t n = 0;
+        uint64_t flags;
+
+        spin_lock_irqsave(&g_registry_lock, &flags);
+        quota_block_t *b = cursor ? cursor->reg_next : g_registry_head;
+        while (b && n < QUOTA_RELIMIT_BATCH) {
+            /* try_ref, not ref: a block whose count already reached zero is
+             * committed to teardown and must not be lifted back to life. */
+            if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
+                quota_block_try_ref(b))
+                batch[n++] = b;
+            b = b->reg_next;
+        }
+        spin_unlock_irqrestore(&g_registry_lock, flags);
+
+        /* Release the previous cursor only after the new batch is pinned, so
+         * the list position we resumed from stayed valid for the whole walk. */
+        if (cursor)
+            quota_block_deref(cursor);
+        cursor = (quota_block_t *)0;
+
+        if (n == 0)
+            break;
+
+        for (uint32_t i = 0; i < n; i++) {
+            uint64_t bflags;
+            quota_block_lock(batch[i], &bflags);
+            /* Re-test provenance UNDER the block lock. Between the pin and
+             * here another CPU may have set an explicit limit on this block;
+             * overwriting it would be exactly the trampling the provenance
+             * flag exists to prevent. Lowering below current usage is allowed
+             * and leaves usage untouched -- subsequent charges are refused,
+             * which is the documented contract, not a counter rewrite. */
+            if (!batch[i]->limit_explicit[type])
+                atomic64_set(&batch[i]->counter[type].limit, (int64_t)limit);
+            quota_block_unlock(batch[i], bflags);
+        }
+
+        /* Keep the LAST entry referenced as the next resume point; release the
+         * rest. A short batch means the list ended, so stop after applying it. */
+        for (uint32_t i = 0; i + 1 < n; i++)
+            quota_block_deref(batch[i]);
+        if (n < QUOTA_RELIMIT_BATCH) {
+            quota_block_deref(batch[n - 1]);
+            break;
+        }
+        cursor = batch[n - 1];
+    }
 }

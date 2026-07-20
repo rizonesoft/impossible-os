@@ -45,7 +45,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   3   | Process/token/job ownership model             | T21 §9, T15 §4          |  [x]   |
 | 💎   |   4   | Receipt identity (generation-tokened charges) | §3                      |  [x]   |
 | 💎   |   5   | Pool and allocation quota integration         | D03T03 §6,§7            |  [/]   |
-| 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [ ]   |
+| 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [/]   |
 | ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [ ]   |
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [ ]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [ ]   |
@@ -54,19 +54,19 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 1. Resource Type Registry
 
-- [x] Define resource types: handles, object bodies, namespace entries, paged pool, nonpaged pool, registry bytes, ALPC messages, notification states, timers, threads, processes, sections, mapped views, crash buffers (`quota_resource_type_t`).
+- [x] Define resource types: handles, object bodies, namespace entries, paged/nonpaged pool, registry bytes, ALPC messages, notification states, timers, threads, processes, sections, mapped views, crash buffers (14; §6 appended 2 more).
 - [x] Each type has accounting unit (COUNT/BYTES), default limit (0=unlimited), override privilege, and name in a static const `quota_resource_desc_t` table; `quota_register_types` validates + halts on drift.
 - [x] Validate + register at Phase 2 entry, before SMP/storage/VFS and any quota consumer: `quota_register_types()` + `quota_types_dump()` at the top of `boot_phase2()` (`POST16_QUOTA`), halts boot on a malformed table.
 - [x] Persistent storage/volume quota is provider-owned, not a scalar central type (a unified view needs (resource,volume,owner) keying + SID<->uid map -- defer). -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §12`.
 - [x] Commit: quota: resource type registry with per-type unit/limit/name.
 
-**Test checkpoint:** in a test boot (`test=1`) `quota_types_dump()` lists all 14 registered types with name, unit, and default limit (verified: SUITE=quota serial shows the 14-row dump); production boots emit only the one-line validated-count summary; `test=1` shows 9 Quota suites / 211 assertions, 0 failures; smoke boots to `C:\>`.
+**Test checkpoint:** in a test boot (`test=1`) `quota_types_dump()` lists every registered type with name, unit, and default limit (verified at §1: SUITE=quota serial shows the 14-row dump; §6 appended 2 types, so the dump is 16 rows today); production boots emit only the one-line validated-count summary; `test=1` showed 9 Quota suites / 211 assertions, 0 failures; smoke boots to `C:\>`.
 
 > **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
 
 > **Notes:**
-> - **What shipped** -- `quota.h` + `quota.c`: 14-type static const registry (name/unit/limit/privilege) + bounds-checked accessors + `quota_types_dump`; new `TEST_CAT_QUOTA` wired end to end.
-> - **How it runs** -- `quota_register_types()` validates name/unit/privilege/uniqueness at Phase 2 entry, halts boot on drift; `quota_types_dump()` emits the 14-row table to serial; reads are lock-free (const table + release/acquire flag).
+> - **What shipped** -- `quota.h` + `quota.c`: static const type registry (name/unit/limit/privilege, 14 types at §1) + bounds-checked accessors + `quota_types_dump`; new `TEST_CAT_QUOTA` wired end to end.
+> - **How it runs** -- `quota_register_types()` validates name/unit/privilege/uniqueness at Phase 2 entry, halts boot on drift; `quota_types_dump()` emits the whole table to serial; reads are lock-free (const table + release/acquire flag).
 > - **Downstream effects** -- the taxonomy is the single source of truth every later section (charge API §2 onward) keys off; no section may invent a type outside this table.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (design invariants).
 > - **Scope boundary** -- §1 owns the taxonomy only; concrete numeric caps are TODO-02 config policy (§6); persistent storage/volume quota is provider-owned (TODO-07 §12).
@@ -191,13 +191,24 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 6. Registry, ALPC, Notification Quotas
 
-- [ ] Registry: charge key/value names, data bytes, notification watchers, transactions.
-- [ ] ALPC: charge queued messages, port sections, completion-list entries.
-- [ ] Notifications: charge state objects, subscriptions, retained payload bytes.
-- [ ] Default per-user caps are configurable through TODO-02.
-- [ ] Commit: quota: registry/ALPC/notification subsystem charge points.
+- [ ] Registry: charge names, data bytes, watchers, transactions. BLOCKED: value slots are monotonic (delete only tombstones), `hive_parse_value` bypasses the charge point, transactions do not exist. -> XREF: `TODO-14 §15`
+- [/] ALPC: queued messages charged (`QUOTA_RES_ALPC_MESSAGE` per entry, receipt in `PORT_MESSAGE_ENTRY`). Port sections and completion-list entries have no allocation site to charge yet. -> XREF: `TODO-24 §6`
+- [x] Notifications: `knf_create_state` charges state + retention budget and `knf_subscribe` charges the subscription; all returned at teardown. New types appended at the END of the enum (IDs are ABI, pinned by `_Static_assert`).
+- [x] Default per-user caps configurable through TODO-02: `quota_config.c` registers one `quota.user.<type>` tunable per type and the callback re-limits LIVE USER blocks, not just newly created ones.
+- [x] `quota_charge_current` is the one charge entry point; its boot exemption is bound to `kernel_subsystem_ready(SUBSYS_SCHED)`, never to a task missing a block, so a request racing teardown cannot inherit it.
+- [x] Charge precedence ENFORCED (was "intended" in `quota.h`): per-block explicit > kernel-config override > taxonomy default, via a per-type `limit_explicit` provenance flag.
+- [x] Commit: quota: registry/ALPC/notification subsystem charge points.
 
-**Test checkpoint:** writing a registry value past the per-user data-byte cap fails with a quota status and leaves the hive unchanged; queuing an ALPC message past the port's message cap fails; retaining notification payload past the cap fails; each cap is read from the TODO-02 config surface (not a hardcoded constant).
+**Test checkpoint:** creating a notification state charges one state plus its full `KNF_MAX_PAYLOAD` retention budget and deleting it returns both; a create whose retention charge is refused returns the state charge it already took; subscribing past a capped budget returns `STATUS_QUOTA_EXCEEDED` with no node and unchanged usage; a queued ALPC message charges the SENDER one message and is returned on receive AND on port teardown with the queue still full, while an over-cap send reports `STATUS_QUOTA_EXCEEDED` (not `INSUFFICIENT_RESOURCES`) and releases its port byte reservation; every `quota.user.<type>` tunable is registered rather than merely falling back, and a `kernel_tunable_set` re-limits a block that already existed while a block created afterwards is seeded with the new value; the re-limit walk crosses more than two 16-block batches and leaves explicit limits at the batch boundaries untouched (verified: SUITE=quota 80 suites / 958 assertions, SUITE=ipc 361, full 23043 kernel + 16 user-mode, 0 failures).
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 80 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `quota_config.c` (per-type `quota.user.<type>` tunables + a live re-limit walk), `quota_charge_current` as the single subsystem charge entry point, two appended resource types, and charge points in `knf.c` and `alpc_port.c`.
+> - **How it integrates** -- tunables register in Phase 3; a change callback publishes the new default then walks the USER registry in pinned 16-block batches, so no block lock is taken under `g_registry_lock`.
+> - **Downstream effects** -- turns the `quota.h` precedence rule from "intended" into enforced; registry charging is filed on TODO-14 §15 and ALPC port sections on TODO-24 §6. Codex adoptions in the commit message.
+> - **Canonical doc** -- `include/kernel/quota/quota.h` ("Configurable per-user default limits").
+> - **Scope boundary** -- §6 owns the charge points and the config layer ONLY; the registry slot allocator is TODO-14, ALPC port sections are TODO-24 §6, delta-adjusting a live charge needs §11.
 
 ---
 
@@ -282,7 +293,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 | ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                            |
 | --- | -------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ |
-| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 14-type registry §1                  |
+| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 16-type registry §1                  |
 | 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2           |
 | 💎   | Atomic quota transfer            | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2     |
 | 💎   | Per-type peak + failure counts   | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2   |
@@ -293,7 +304,9 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §11   |
 | 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5      |
 | 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5    |
-| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | 🚀 Planned: registry/ALPC/notif caps §6     |
+| 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ✅ state + subscription + retention §6      |
+| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC messages charged §6; registry §6   |
+| 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ✅ tunable re-limits LIVE user blocks §6    |
 | ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7  |
 | 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8 |
 | ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9   |

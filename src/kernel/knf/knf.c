@@ -79,6 +79,14 @@ static void knf_state_on_delete(void *body)
         kfree(st->payload);
         st->payload = NULL;
     }
+    /* Return both quota charges here and ONLY here. Every way a state dies --
+     * a normal knf_delete_state, the last reference going away, and the
+     * create-or-open loser that is torn down without ever being inserted --
+     * ends at this callback, so one return site covers them all. An empty or
+     * never-charged receipt returns nothing, which is what makes that safe for
+     * the loser and for a state whose charge was refused. */
+    quota_return_chain(&st->quota_bytes, st->quota_bytes_token);
+    quota_return_chain(&st->quota_state, st->quota_state_token);
     /* Body is actually being destroyed (refcount 0). Only decrement if this state
      * was counted (successfully inserted): a create-or-open loser is destroyed
      * here without ever being counted, and must not underflow the tally. */
@@ -209,8 +217,28 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
         return NULL;
     }
 
-    /* Body is zero-filled by ob_alloc_object: sequence=0, payload=NULL,
-     * subscribers=NULL, spinlock flag=0 (its init state) all hold already. */
+    /* Charge the creating task for the state and its retention budget BEFORE
+     * the object is published, so a user at its cap never gets a live state it
+     * could not pay for. Both charges are returned by knf_state_on_delete,
+     * which this failure path reaches through ObDereferenceObject -- so a
+     * refused SECOND charge does not strand the first.
+     *
+     * Body is zero-filled by ob_alloc_object, so both receipts start IDLE at
+     * generation 0, which is the valid "holds nothing" state. That zero-fill
+     * also gives sequence=0, payload=NULL, subscribers=NULL, and the spinlock
+     * its init state. */
+    if (quota_charge_current(QUOTA_RES_NOTIFICATION_STATE, 1,
+                             &st->quota_state, &st->quota_state_token)
+            != STATUS_SUCCESS ||
+        quota_charge_current(QUOTA_RES_NOTIFICATION_BYTES, KNF_MAX_PAYLOAD,
+                             &st->quota_bytes, &st->quota_bytes_token)
+            != STATUS_SUCCESS) {
+        klog(LOG_WARN, "knf", "create: quota refused '%s\\%s'", category, name);
+        ObDereferenceObject(st);
+        ObDereferenceObject(dir);
+        return NULL;
+    }
+
     strncpy(st->name, name, KNF_NAME_MAX - 1);
     st->name[KNF_NAME_MAX - 1] = '\0';
     strncpy(st->category, category, KNF_NAME_MAX - 1);
@@ -682,6 +710,18 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(sub, 0, sizeof(*sub));
 
+    /* Charge the subscribing task before the node can be reached by anyone
+     * else. A subscription is a real per-state cost (publish walks the list
+     * with interrupts disabled), so it is billed rather than only capped by
+     * KNF_MAX_SUBSCRIBERS_PER_STATE -- that cap bounds ONE state's list, while
+     * this bounds how many a single user can hold across every state. The
+     * memset above left the receipt IDLE, which is the valid empty state. */
+    if (quota_charge_current(QUOTA_RES_NOTIFICATION_SUB, 1,
+                             &sub->quota, &sub->quota_token) != STATUS_SUCCESS) {
+        kfree(sub);
+        return STATUS_QUOTA_EXCEEDED;
+    }
+
     /* Pin the state so it cannot be torn down while this subscription is live
      * (knf_unsubscribe drops this reference). */
     ObReferenceObject(st);
@@ -693,6 +733,7 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
     if (st->subscriber_count >= KNF_MAX_SUBSCRIBERS_PER_STATE) {
         spin_unlock_irqrestore(&st->lock, flags);
         ObDereferenceObject(st);      /* undo the pin taken above */
+        quota_return_chain(&sub->quota, sub->quota_token);
         kfree(sub);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -749,6 +790,11 @@ NTSTATUS knf_unsubscribe(struct knf_subscriber **psub)
     if (!found)
         return STATUS_NOT_FOUND;
 
+    /* Return the subscription charge BEFORE the node is freed: the receipt and
+     * its token live in the node, so reading them afterwards would be a
+     * use-after-free, and a token loaded out of recycled storage could match a
+     * later charge and return a resource this path never took. */
+    quota_return_chain(&sub->quota, sub->quota_token);
     kfree(sub);                       /* free the node OUTSIDE the lock */
     ObDereferenceObject(st);          /* drop the pin taken by knf_subscribe */
     *psub = (struct knf_subscriber *)0;   /* consumed: caller cannot reuse it */

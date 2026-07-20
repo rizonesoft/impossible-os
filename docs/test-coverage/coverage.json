@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-07-20T10:26:02+02:00",
-  "total_suites": 2328,
-  "total_assertions": 8835,
+  "timestamp": "2026-07-20T11:15:39+02:00",
+  "total_suites": 2350,
+  "total_assertions": 8943,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
-    {"file": "test_alpc.c", "suites": 60, "assertions": 238},
+    {"file": "test_alpc.c", "suites": 64, "assertions": 258},
     {"file": "test_blackbox.c", "suites": 12, "assertions": 10},
     {"file": "test_boot_audit.c", "suites": 22, "assertions": 41},
     {"file": "test_boot_caps.c", "suites": 15, "assertions": 32},
@@ -69,6 +69,7 @@
     {"file": "test_pmm.c", "suites": 16, "assertions": 58},
     {"file": "test_proc_ext.c", "suites": 76, "assertions": 160},
     {"file": "test_quota.c", "suites": 52, "assertions": 300},
+    {"file": "test_quota_config.c", "suites": 18, "assertions": 88},
     {"file": "test_quota_owner.c", "suites": 3, "assertions": 20},
     {"file": "test_quota_perf.c", "suites": 7, "assertions": 59},
     {"file": "test_registry.c", "suites": 41, "assertions": 133},

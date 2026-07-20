@@ -89,6 +89,8 @@ static void test_quota_units_all_rows(void)
         QUOTA_UNIT_COUNT,   /* SECTION            */
         QUOTA_UNIT_COUNT,   /* MAPPED_VIEW        */
         QUOTA_UNIT_BYTES,   /* CRASH_BUFFER       */
+        QUOTA_UNIT_COUNT,   /* NOTIFICATION_SUB   */
+        QUOTA_UNIT_BYTES,   /* NOTIFICATION_BYTES */
     };
     _Static_assert(sizeof(expect) / sizeof(expect[0]) == QUOTA_RESOURCE_TYPE_COUNT,
                    "expected-unit table must have one positional entry per resource type");

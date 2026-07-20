@@ -64,6 +64,12 @@ typedef void (*tunable_cb_t)(const char *name, int64_t new_value, void *ctx);
 #define TUNABLE_SET_PRIVILEGED  0x01u  /* caller holds the required privilege */
 #define TUNABLE_SET_DEFER       0x02u  /* force the callback to run deferred (syscall path) */
 
+/* Owner id for builtin tunables without a dedicated kernel_subsys_t slot.
+ * Distinct from every real subsystem id so kernel_tunable_unregister_owner
+ * (the module-unload sweep) can never match a builtin: these are compiled into
+ * the image and are never unregistered. */
+#define TUNABLE_OWNER_CORE 0xFEu
+
 /* Register a tunable. Returns STATUS_SUCCESS, STATUS_OBJECT_NAME_COLLISION on a
  * duplicate name, STATUS_INSUFFICIENT_RESOURCES when the table is full, or
  * STATUS_INVALID_PARAMETER on a malformed descriptor (def out of [min,max],

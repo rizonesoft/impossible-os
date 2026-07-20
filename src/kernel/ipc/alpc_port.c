@@ -75,15 +75,33 @@ static void queue_init(ALPC_MSG_QUEUE *q)
     q->Count = 0;
 }
 
+/* Return the sender's central quota charge and free the entry. EVERY path that
+ * destroys a PORT_MESSAGE_ENTRY goes through here, including the port-teardown
+ * drain below that has no port left to uncharge: a charge returned only on the
+ * normal free path would be stranded by every message still queued when its
+ * port dies, and stranded quota is indistinguishable from a leaking user.
+ *
+ * The return MUST precede the kfree -- the receipt and its token live inside
+ * the entry. An empty receipt (the uncharged PORT_CLOSED marker, or an entry
+ * whose charge was already returned) returns nothing, so this is safe on every
+ * entry regardless of how it was allocated. */
+static void alpc_destroy_message(PORT_MESSAGE_ENTRY *entry)
+{
+    quota_return_chain(&entry->Quota, entry->QuotaToken);
+    kfree(entry);
+}
+
 static void queue_drain(ALPC_MSG_QUEUE *q)
 {
     PORT_MESSAGE_ENTRY *cur = q->Head;
     while (cur) {
         PORT_MESSAGE_ENTRY *next = cur->Link_next;
         /* on_delete drains the queue; the port is being freed, so
-         * PoolUsageBytes accounting is moot. Use the uncharged
-         * destroy path. */
-        kfree(cur);
+         * PoolUsageBytes accounting is moot. The SENDER's central quota
+         * charge is NOT moot -- the sender may still be alive and would
+         * otherwise be billed forever for a message this teardown destroyed --
+         * so this uses the shared destroy path rather than a bare kfree. */
+        alpc_destroy_message(cur);
         cur = next;
     }
     q->Head = (PORT_MESSAGE_ENTRY *)0;
@@ -1428,74 +1446,98 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
 
 /* ---- AlpcAllocateMessage / AlpcFreeMessage ---------------------------- */
 
-PORT_MESSAGE_ENTRY *AlpcAllocateMessage(ALPC_PORT *charge_port,
-                                        uint32_t data_length)
+/* Release the per-port byte reservation an entry holds. Split out because the
+ * two things an entry owes on free -- the port's PoolUsageBytes and the
+ * sender's central quota charge -- have different lifetimes: the port may
+ * already be gone when the entry is drained, but the quota charge must be
+ * returned regardless. */
+static void alpc_uncharge_port_bytes_raw(ALPC_PORT *charge_port, uint32_t size)
+{
+    uint64_t irqf;
+
+    /* size == 0 means the bytes were never reserved through this path (e.g.
+     * the PORT_CLOSED marker AlpcDisconnectPort queues with raw kmalloc when
+     * the peer is being torn down). Skip the decrement so we do not release
+     * reservation that belongs to other entries. */
+    if (!charge_port || size == 0)
+        return;
+
+    spin_lock_irqsave(&charge_port->Lock, &irqf);
+    if (charge_port->PoolUsageBytes >= size)
+        charge_port->PoolUsageBytes -= size;
+    spin_unlock_irqrestore(&charge_port->Lock, irqf);
+}
+
+NTSTATUS AlpcAllocateMessage(ALPC_PORT *charge_port, uint32_t data_length,
+                             PORT_MESSAGE_ENTRY **out_entry)
 {
     uint32_t alloc_size;
     uint64_t cap;
     uint64_t irqf;
     PORT_MESSAGE_ENTRY *entry;
+    NTSTATUS status;
 
-    if (!charge_port)
-        return (PORT_MESSAGE_ENTRY *)0;
+    if (!charge_port || !out_entry)
+        return STATUS_INVALID_PARAMETER;
     if (data_length > ALPC_MAX_ALLOWED_MESSAGE_LENGTH)
-        return (PORT_MESSAGE_ENTRY *)0;
+        return STATUS_INVALID_PARAMETER;
 
     alloc_size = (uint32_t)sizeof(PORT_MESSAGE_ENTRY) + data_length;
 
-    /* Reserve quota under the lock. Drop the lock before kmalloc so
-     * heap allocation never runs under a spinlock. */
+    /* Reserve the per-port bytes under the lock. Drop the lock before kmalloc
+     * so heap allocation never runs under a spinlock -- and, for the same
+     * reason plus the quota API's no-nested-lock contract, before the central
+     * charge below. */
     spin_lock_irqsave(&charge_port->Lock, &irqf);
     if (charge_port->Disconnected) {
         spin_unlock_irqrestore(&charge_port->Lock, irqf);
-        return (PORT_MESSAGE_ENTRY *)0;
+        return STATUS_PORT_DISCONNECTED;
     }
     cap = charge_port->Attributes.MaxPoolUsage;
     if (cap > 0 && (charge_port->PoolUsageBytes + alloc_size) > cap) {
         spin_unlock_irqrestore(&charge_port->Lock, irqf);
-        return (PORT_MESSAGE_ENTRY *)0;
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
     charge_port->PoolUsageBytes += alloc_size;
     spin_unlock_irqrestore(&charge_port->Lock, irqf);
 
     entry = (PORT_MESSAGE_ENTRY *)kmalloc(alloc_size);
     if (!entry) {
-        spin_lock_irqsave(&charge_port->Lock, &irqf);
-        if (charge_port->PoolUsageBytes >= alloc_size)
-            charge_port->PoolUsageBytes -= alloc_size;
-        spin_unlock_irqrestore(&charge_port->Lock, irqf);
-        return (PORT_MESSAGE_ENTRY *)0;
+        alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    /* Zero header + bookkeeping. Body bytes are caller-filled. */
+    /* Zero header + bookkeeping. Body bytes are caller-filled. This also
+     * leaves the embedded receipt IDLE at generation 0, the valid empty
+     * state that must exist before anything charges into it. */
     {
         uint8_t *zp = (uint8_t *)entry;
         for (uint32_t i = 0; i < sizeof(PORT_MESSAGE_ENTRY); i++)
             zp[i] = 0;
     }
     entry->ChargedSize = alloc_size;
-    return entry;
+
+    /* Charge the SENDER, with no port lock held. Done last so the two cheap
+     * reservations are already known good; on refusal both are unwound and the
+     * caller learns it was quota, not memory, that failed. */
+    status = quota_charge_current(QUOTA_RES_ALPC_MESSAGE, 1,
+                                  &entry->Quota, &entry->QuotaToken);
+    if (status != STATUS_SUCCESS) {
+        kfree(entry);   /* nothing charged into the receipt: nothing to return */
+        alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
+        return status;
+    }
+
+    *out_entry = entry;
+    return STATUS_SUCCESS;
 }
 
 void AlpcFreeMessage(ALPC_PORT *charge_port, PORT_MESSAGE_ENTRY *entry)
 {
-    uint64_t irqf;
-
     if (!entry)
         return;
-    /* ChargedSize == 0 means the entry was allocated outside the pool
-     * accounting path (e.g. the PORT_CLOSED marker AlpcDisconnectPort
-     * queues with raw kmalloc when the peer is being torn down). Skip
-     * the decrement in that case so we don't undercount quota that
-     * belongs to other entries. */
-    if (charge_port && entry->ChargedSize > 0) {
-        uint32_t size = entry->ChargedSize;
-        spin_lock_irqsave(&charge_port->Lock, &irqf);
-        if (charge_port->PoolUsageBytes >= size)
-            charge_port->PoolUsageBytes -= size;
-        spin_unlock_irqrestore(&charge_port->Lock, irqf);
-    }
-    kfree(entry);
+    alpc_uncharge_port_bytes_raw(charge_port, entry->ChargedSize);
+    alpc_destroy_message(entry);
 }
 
 /* ---- Pending-reply allocator (file-local) ----------------------------- */
@@ -1741,6 +1783,7 @@ static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
     uint64_t irqf;
     uint64_t local_msg_id;
     int local_disc, peer_disc;
+    NTSTATUS status;
 
     if (!send_msg)
         return STATUS_INVALID_PARAMETER;
@@ -1773,10 +1816,13 @@ static NTSTATUS alpc_datagram_send(ALPC_PORT *sender_port,
         return STATUS_PORT_DISCONNECTED;
     }
 
-    entry = AlpcAllocateMessage(peer, data_len);
-    if (!entry) {
+    /* Propagate the allocator's status rather than flattening it: a sender at
+     * its message quota must see STATUS_QUOTA_EXCEEDED, not a memory error it
+     * would retry forever. */
+    status = AlpcAllocateMessage(peer, data_len, &entry);
+    if (status != STATUS_SUCCESS) {
         ObDereferenceObject(peer);
-        return STATUS_INSUFFICIENT_RESOURCES;
+        return status;
     }
 
     /* Snapshot the MessageId locally BEFORE enqueue so the post-signal
@@ -1841,6 +1887,7 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
     ALPC_PORT *first, *second;
     int waited_ok;
     NTSTATUS final_status;
+    NTSTATUS status;
 
     if (!send_msg || !recv_msg || recv_buf_len < sizeof(PORT_MESSAGE))
         return STATUS_BUFFER_TOO_SMALL;
@@ -1889,11 +1936,13 @@ static NTSTATUS alpc_sync_request(ALPC_PORT *sender_port,
         ObDereferenceObject(peer);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    entry = AlpcAllocateMessage(peer, data_len);
-    if (!entry) {
+    /* Same status-preserving rule as the datagram path: quota refusal is a
+     * distinct, actionable outcome and must not read as out-of-memory. */
+    status = AlpcAllocateMessage(peer, data_len, &entry);
+    if (status != STATUS_SUCCESS) {
         alpc_free_pending_reply(sender_port, pending);
         ObDereferenceObject(peer);
-        return STATUS_INSUFFICIENT_RESOURCES;
+        return status;
     }
 
     message_id = __atomic_fetch_add(&sender_port->NextMessageId, 1u,
