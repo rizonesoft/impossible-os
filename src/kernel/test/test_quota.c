@@ -18,6 +18,9 @@
 #include "kernel/security/sid.h"         /* SID helpers for the owner-SID test */
 #include "kernel/mm/heap.h"              /* kmalloc_fail_next for the OOM path */
 #include "kernel/sched/task.h"           /* kthread_create / thread_join       */
+#include "kernel/ob/ob_job.h"            /* job membership generation test      */
+#include "kernel/ob/handle_table.h"      /* scratch table behind the job handle */
+#include "kernel/ob/ob.h"                /* ObDereferenceObject                 */
 
 /* The registry is validated in Phase 2 (quota_register_types) before any
  * consumer runs; the test sweep runs in Phase 3, so it is already ready. */
@@ -663,6 +666,7 @@ static void test_quota_chain_charge_roundtrip(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
     uint64_t proc_before, user_before;
 
     if (!t || !t->quota || !t->quota_user)
@@ -671,7 +675,7 @@ static void test_quota_chain_charge_roundtrip(void)
     proc_before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
     user_before = quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE);
 
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 11, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 11, 0, &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "chain charge admitted");
     TEST_ASSERT(r.count >= 2, "receipt records at least the process and user blocks");
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), proc_before + 11,
@@ -679,7 +683,7 @@ static void test_quota_chain_charge_roundtrip(void)
     TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE), user_before + 11,
                    "user block charged the same amount");
 
-    quota_return_chain(&r);
+    quota_return_chain(&r, tok);
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), proc_before,
                    "process usage restored exactly");
     TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_ALPC_MESSAGE), user_before,
@@ -688,10 +692,10 @@ static void test_quota_chain_charge_roundtrip(void)
 
     /* A zero-amount charge is a success that owes nothing -- but it still
      * validates the type, so a taxonomy mistake is never masked by amount 0. */
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 0, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 0, 0, &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "zero-amount chain charge succeeds");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "zero-amount charge records no blocks");
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RESOURCE_TYPE_COUNT, 0, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RESOURCE_TYPE_COUNT, 0, 0, &r, &tok),
                    (uint64_t)STATUS_INVALID_PARAMETER,
                    "zero-amount charge still rejects an out-of-range type");
 }
@@ -704,6 +708,7 @@ static void test_quota_chain_all_or_nothing(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
     uint64_t proc_before, user_before, saved_limit;
 
     if (!t || !t->quota || !t->quota_user)
@@ -718,7 +723,7 @@ static void test_quota_chain_all_or_nothing(void)
                                              user_before + 9),
                    (uint64_t)STATUS_SUCCESS, "user block capped for the test");
 
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 10, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 10, 0, &r, &tok),
                    (uint64_t)STATUS_QUOTA_EXCEEDED, "chain charge refused at the cap");
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER), proc_before,
                    "process prefix charge was rolled back");
@@ -735,23 +740,24 @@ static void test_quota_chain_return_idempotent(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
     uint64_t proc_before;
 
     if (!t || !t->quota)
         return;
 
     proc_before = quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE);
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_NOTIFICATION_STATE, 5, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_NOTIFICATION_STATE, 5, 0, &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "chain charge admitted");
-    quota_return_chain(&r);
-    quota_return_chain(&r);      /* second return must be a no-op */
+    quota_return_chain(&r, tok);
+    quota_return_chain(&r, tok);      /* second return must be a no-op */
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE), proc_before,
                    "double return does not push usage below the true value");
 
     /* A charge made after the first return must survive the duplicate. */
     TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_NOTIFICATION_STATE, 2),
                    (uint64_t)STATUS_SUCCESS, "later charge admitted");
-    quota_return_chain(&r);
+    quota_return_chain(&r, tok);
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_NOTIFICATION_STATE), proc_before + 2,
                    "duplicate return did not erase the newer charge");
     (void)quota_return(t->quota, QUOTA_RES_NOTIFICATION_STATE, 2);
@@ -764,28 +770,35 @@ static void test_quota_chain_receipt_reuse_refused(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
     uint64_t proc_before;
 
     if (!t || !t->quota)
         return;
 
     proc_before = quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW);
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "first chain charge admitted");
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+    uint64_t live_tok = tok;
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r, &tok),
                    (uint64_t)STATUS_INVALID_PARAMETER,
                    "charging into a live receipt is refused, not silently overwritten");
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW), proc_before + 6,
                    "the refused second charge added nothing");
+    /* The refusal must not clobber the token of the charge it refused to
+     * overwrite -- that charge is still the caller's, and its token is the only
+     * key that can return it. */
+    TEST_ASSERT_EQ(tok, live_tok,
+                   "a refused charge leaves the live charge's token intact");
 
-    quota_return_chain(&r);
+    quota_return_chain(&r, tok);
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_MAPPED_VIEW), proc_before,
                    "the first charge was still returnable after the refusal");
 
     /* Once returned, the receipt is idle again and may be reused. */
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_MAPPED_VIEW, 6, 0, &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "receipt reusable after return");
-    quota_return_chain(&r);
+    quota_return_chain(&r, tok);
 }
 
 /* A task whose process block is gone (death teardown already ran) must NOT get
@@ -795,6 +808,7 @@ static void test_quota_chain_no_process_block_fails_closed(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
     struct quota_block *saved;
     uint64_t flags;
 
@@ -808,13 +822,13 @@ static void test_quota_chain_no_process_block_fails_closed(void)
     t->quota = (struct quota_block *)0;
     spin_unlock_irqrestore(&t->quota_lock, flags);
 
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 4, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 4, 0, &r, &tok),
                    (uint64_t)STATUS_PROCESS_IS_TERMINATING,
                    "charge without a process block fails closed");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "failed charge holds no blocks");
     /* A ZERO charge must fail closed on a dead task too -- reporting success
      * there would let a caller read it as "the task is still chargeable". */
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 0, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 0, 0, &r, &tok),
                    (uint64_t)STATUS_PROCESS_IS_TERMINATING,
                    "zero-amount charge also fails closed without a process block");
 
@@ -822,6 +836,9 @@ static void test_quota_chain_no_process_block_fails_closed(void)
     t->quota = saved;
     spin_unlock_irqrestore(&t->quota_lock, flags);
 }
+
+
+
 
 /* Joining a job folds the joiner's existing usage into the job block, and a
  * job that cannot absorb it refuses rather than letting the usage escape. */
@@ -1028,23 +1045,28 @@ static void test_quota_chain_bad_args(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
 
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(NULL, QUOTA_RES_HANDLE, 1, 0, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(NULL, QUOTA_RES_HANDLE, 1, 0, &r, &tok),
                    (uint64_t)STATUS_INVALID_PARAMETER, "NULL task refused");
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0xFFu, &r),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0xFFu, &r, &tok),
                    (uint64_t)STATUS_INVALID_PARAMETER, "unknown flag bits refused");
     /* Client charging fails CLOSED rather than approximating: reading the
      * executing thread's impersonation token is not SMP-safe yet, and billing
      * the wrong user is worse than refusing. */
     TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1,
-                                                QUOTA_CHARGE_CLIENT, &r),
+                                                QUOTA_CHARGE_CLIENT, &r, &tok),
                    (uint64_t)STATUS_NOT_SUPPORTED,
                    "QUOTA_CHARGE_CLIENT refused pending a teardown-safe token pin");
-    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0, NULL),
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0, NULL, &tok),
                    (uint64_t)STATUS_INVALID_PARAMETER, "NULL receipt refused");
+    /* A charge with nowhere to record its token would be unreturnable, so the
+     * missing out-parameter is refused rather than silently charged. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_HANDLE, 1, 0, &r, NULL),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL out_token refused");
     /* Returning an untouched receipt is safe and does nothing. */
-    quota_return_chain(&r);
-    quota_return_chain(NULL);
+    quota_return_chain(&r, tok);
+    quota_return_chain(NULL, tok);
 }
 
 /* An owner SID whose declared readable length cannot hold it is refused rather

@@ -327,12 +327,25 @@ void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *re
 
 NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
                             uint64_t amount, uint32_t flags,
-                            quota_charge_receipt_t *receipt)
+                            quota_charge_receipt_t *receipt,
+                            uint64_t *out_token)
 {
     NTSTATUS st;
     int      chain;
 
-    if (!receipt || !task || (flags & ~QUOTA_CHARGE_CLIENT) != 0)
+    /* `out_token` is MANDATORY: the token is the only key that returns the
+     * charge, so admitting a charge with nowhere to put it would strand the
+     * usage and every block reference the receipt holds, permanently. Rejected
+     * up front, before the receipt is claimed, so a NULL argument cannot even
+     * disturb a receipt someone else is using.
+     *
+     * `*out_token` is then written ONLY on success, deliberately. Clearing it
+     * on failure would destroy a live token when the caller reuses one variable
+     * across charges: refusing a charge into an already-live receipt leaves
+     * that earlier charge owned by the caller, and zeroing its token would
+     * strand the usage with nothing able to return it. A stale token left in
+     * the variable is harmless -- it matches no live charge. */
+    if (!receipt || !task || !out_token || (flags & ~QUOTA_CHARGE_CLIENT) != 0)
         return STATUS_INVALID_PARAMETER;
 
     /* Client charging is REFUSED, not approximated. Billing the impersonated
@@ -348,13 +361,31 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
     if (flags & QUOTA_CHARGE_CLIENT)
         return STATUS_NOT_SUPPORTED;
 
-    /* Claim the receipt EXCLUSIVELY before touching a single field. Losing
-     * this CAS means the receipt already holds a live charge (or another CPU
-     * is mid-operation on it); overwriting it would drop the references that
-     * charge is holding and strand its usage permanently. */
-    if (atomic_cmpxchg(&receipt->state, QUOTA_RECEIPT_IDLE, QUOTA_RECEIPT_BUSY)
-        != QUOTA_RECEIPT_IDLE)
+    /* Claim the receipt EXCLUSIVELY before touching a single field, CASing the
+     * WHOLE tag so the claim carries the generation it was made against. Losing
+     * this CAS means the receipt already holds a live charge (or another CPU is
+     * mid-operation on it); overwriting it would drop the references that charge
+     * is holding and strand its usage permanently. The generation is preserved
+     * across the BUSY claim and only advances at publication, so a stale
+     * returner cannot match a receipt that is merely being rebuilt. */
+    int64_t  claim = atomic64_read(&receipt->tag);
+    uint64_t gen   = QUOTA_RECEIPT_TAG_GEN(claim);
+
+    if (QUOTA_RECEIPT_TAG_STATE(claim) != QUOTA_RECEIPT_IDLE)
         return STATUS_INVALID_PARAMETER;
+    /* Refuse at the ceiling rather than wrap: a wrapped generation reissues a
+     * token that a stalled returner may still be holding, which is exactly the
+     * stale-token identity the tag exists to prevent. */
+    if (gen >= QUOTA_RECEIPT_GEN_MAX)
+        return STATUS_INTEGER_OVERFLOW;
+    if (atomic64_cmpxchg(&receipt->tag, claim,
+                         QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_BUSY)) != claim)
+        return STATUS_INVALID_PARAMETER;
+
+    /* The claim is held for every early return below; each releases it back to
+     * the SAME generation with QUOTA_RECEIPT_IDLE, leaving the receipt reusable
+     * and no token issued. */
+    const int64_t idle_tag = QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_IDLE);
 
     receipt->count  = 0;
     receipt->type   = type;
@@ -367,21 +398,44 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * same reason quota_charge validates its type before its own zero fast
      * path. */
     if (!quota_resource_desc(type)) {
-        atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
+        atomic64_set(&receipt->tag, idle_tag);
         return STATUS_INVALID_PARAMETER;
     }
 
     if (amount == 0) {
         /* No-op: nothing charged, nothing owed -- but still only for a task
          * that could have been charged. Release the claim so the receipt stays
-         * reusable. */
+         * reusable.
+         *
+         * This is a SUCCESS, so the mandatory out-token is written like any
+         * other success, and the value meaning "no obligation" is 0 -- the one
+         * token quota_return_chain always refuses. Leaving it untouched would
+         * be an identity hole, not a harmless omission: a caller is entitled to
+         * capture the token of a successful charge, and because this path does
+         * NOT advance the generation, a value already sitting in that variable
+         * can equal the token the next non-zero charge on this receipt
+         * publishes. A delayed cleanup holding it would then win the
+         * {token, ACTIVE} CAS and return a charge it never made. */
         int live;
         uint64_t qflags;
         spin_lock_irqsave(&task->quota_lock, &qflags);
         live = (task->quota != NULL);
         spin_unlock_irqrestore(&task->quota_lock, qflags);
-        atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
-        return live ? STATUS_SUCCESS : STATUS_PROCESS_IS_TERMINATING;
+
+        /* Order matters: the token is written while the receipt is still BUSY,
+         * and releasing to IDLE is the LAST thing this path does. Releasing
+         * first would end this operation's exclusivity early -- another CPU
+         * could claim the receipt, complete a real charge, and write its live
+         * generation to the same token slot, which this CPU would then
+         * overwrite with 0. The receipt would stay ACTIVE with its only key
+         * destroyed, stranding the usage and every block reference it holds. */
+        if (live) {
+            *out_token = 0;
+            atomic64_set(&receipt->tag, idle_tag);
+            return STATUS_SUCCESS;
+        }
+        atomic64_set(&receipt->tag, idle_tag);
+        return STATUS_PROCESS_IS_TERMINATING;
     }
 
     /* Snapshot the whole chain FIRST, holding a reference on every block, and
@@ -402,7 +456,7 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
 
     if (chain != 1) {
         quota_chain_release(receipt);
-        atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
+        atomic64_set(&receipt->tag, idle_tag);
         if (chain < 0) {
             /* No process block: the task is dead (teardown cleared it) or not
              * yet fully built. Admitting an empty chain here would report
@@ -432,33 +486,58 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
             for (uint32_t j = 0; j < i; j++)
                 (void)quota_return(receipt->blocks[j], type, amount);
             quota_chain_release(receipt);
-            atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
+            atomic64_set(&receipt->tag, idle_tag);
             return st;
         }
     }
-    /* Publish the receipt as returnable only now that every block is charged:
-     * a returner must never see a half-built block set. */
-    atomic_set(&receipt->state, QUOTA_RECEIPT_ACTIVE);
+
+    /* Publish the receipt as returnable only now that every block is charged: a
+     * returner must never see a half-built block set. Advancing the generation
+     * here is what makes the token unique to THIS charge, so a returner still
+     * holding a previous token cannot claim it. The token is written BEFORE the
+     * release-publish so the key exists the instant the charge becomes
+     * returnable. */
+    gen++;
+    *out_token = gen;
+    atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_ACTIVE));
     return STATUS_SUCCESS;
 }
 
-void quota_return_chain(quota_charge_receipt_t *receipt)
+void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
 {
-    if (!receipt)
+    /* A token outside the generation field is NOT merely invalid, it is
+     * dangerous: QUOTA_RECEIPT_TAG shifts the token past the state bits, so
+     * bits at or above the generation width are discarded and a fabricated
+     * `live_token | (1 << 62)` would build the SAME tag as the live token and
+     * win the CAS. Reject non-canonical tokens instead of letting them alias. */
+    if (!receipt || token == 0 || token > QUOTA_RECEIPT_GEN_MAX)
         return;
-    /* EXACTLY ONE caller may return a given charge. Without this claim two
-     * cleanup paths sharing an embedded receipt would both credit the amount
-     * back -- the second credit erasing charges made since -- and both would
-     * drop the same block references, which is a double free. A losing caller
-     * (IDLE: nothing to return, or BUSY: another CPU owns it) does nothing,
-     * which is what makes the documented idempotence true under SMP. */
-    if (atomic_cmpxchg(&receipt->state, QUOTA_RECEIPT_ACTIVE, QUOTA_RECEIPT_BUSY)
-        != QUOTA_RECEIPT_ACTIVE)
+
+    /* EXACTLY ONE caller may return a given charge, and only the caller holding
+     * THAT charge's token. CASing the whole {generation, state} word in one
+     * step is what makes both true at once: two cleanup paths sharing an
+     * embedded receipt cannot both credit the amount back (the second would
+     * erase charges made since and double-drop the block references), and a
+     * stale returner whose charge was already returned cannot claim a LATER
+     * charge that reused the same storage -- its token no longer matches, so it
+     * is a no-op. A losing caller (wrong token, IDLE, or BUSY on another CPU)
+     * does nothing, which is what makes the documented idempotence true on SMP.
+     *
+     * Splitting this into a generation check beside a state CAS breaks in both
+     * orders: check-first lets the stale returner resume between the two and
+     * take the newer charge; CAS-first makes the rightful returner see BUSY and
+     * abandon a charge nobody else will return. */
+    const int64_t active_tag = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_ACTIVE);
+    const int64_t busy_tag   = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_BUSY);
+
+    if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag) != active_tag)
         return;
 
     for (uint32_t i = 0; i < receipt->count; i++)
         (void)quota_return(receipt->blocks[i], receipt->type, receipt->amount);
     quota_chain_release(receipt);
     receipt->amount = 0;
-    atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
+    /* Release at the SAME generation the charge published. The next charge
+     * advances it, so this token can never open a future charge. */
+    atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_IDLE));
 }

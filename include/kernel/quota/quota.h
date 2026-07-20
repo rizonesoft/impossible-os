@@ -409,26 +409,64 @@ NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
  * only with quota_charge_chain, consume it only with quota_return_chain.
  * Zero-initialized (`= {0}`) is a valid empty receipt that returns nothing.
  *
- * `state` makes ownership EXCLUSIVE rather than merely documented. A receipt
- * embedded next to the resource it accounts for is reachable from more than
- * one CPU, so two cleanup paths can race on it: without the state word both
- * would see a non-empty receipt, both would credit the amount back, and the
- * second credit would erase charges made since -- while dereferencing the same
- * references twice. Charging into a receipt that already holds a live charge
- * is refused for the same reason: it would silently drop the references to the
- * blocks the first charge is still holding and strand that usage forever. */
+ * `tag` makes ownership EXCLUSIVE and IDENTIFIED rather than merely documented.
+ * A receipt embedded next to the resource it accounts for is reachable from
+ * more than one CPU, so two cleanup paths can race on it: without the state
+ * both would see a non-empty receipt, both would credit the amount back, and
+ * the second credit would erase charges made since -- while dereferencing the
+ * same references twice. Charging into a receipt that already holds a live
+ * charge is refused for the same reason: it would silently drop the references
+ * to the blocks the first charge is still holding and strand that usage.
+ *
+ * The state alone is NOT enough once receipt STORAGE is reused. A returner that
+ * stalls after its charge was already returned, and resumes after the same
+ * storage was charged again, finds ACTIVE and returns the SECOND charge -- an
+ * ABA on the state word. So the state does not stand alone: it is packed with a
+ * monotonic GENERATION into one 64-bit word, and every transition is a single
+ * atomic64_cmpxchg on the pair. A caller receives its generation as a token
+ * from quota_charge_chain and must present it to quota_return_chain, which
+ * CASes the exact {generation, ACTIVE} it was handed. A stale returner presents
+ * a superseded generation, matches nothing, and is a no-op.
+ *
+ * Checking the generation NEXT TO the state CAS rather than inside it does not
+ * work in either order: check-then-CAS lets the stale returner resume between
+ * the two and claim the newer charge, and CAS-then-check makes the legitimate
+ * returner observe BUSY and give up while the stale caller restores ACTIVE,
+ * leaking the charge permanently. One word, one CAS. */
 typedef struct quota_charge_receipt {
     quota_block_t        *blocks[QUOTA_CHAIN_MAX]; /* charged set, one ref each */
     uint32_t              count;                   /* live entries in blocks[]  */
     quota_resource_type_t type;                    /* what was charged          */
     uint64_t              amount;                  /* how much, per block       */
-    atomic_t              state;                   /* QUOTA_RECEIPT_* below     */
+    atomic64_t            tag;                     /* {generation, state}       */
 } quota_charge_receipt_t;
 
-/* Receipt states. IDLE is 0 so a zero-initialized receipt is valid. */
+/* Receipt states. IDLE is 0 so a zero-initialized receipt is valid (generation
+ * 0, IDLE), which is exactly the "empty receipt returns nothing" contract. */
 #define QUOTA_RECEIPT_IDLE       0   /* holds nothing; may be charged into  */
 #define QUOTA_RECEIPT_ACTIVE     1   /* holds a live charge; may be returned */
 #define QUOTA_RECEIPT_BUSY       2   /* a charge or return owns it right now */
+
+/* Tag encoding: the low QUOTA_RECEIPT_STATE_BITS carry the state, everything
+ * above carries the generation. The generation is 62 bits, so exhausting it
+ * needs 2^62 charges on ONE receipt -- unreachable at any real charge rate --
+ * but the charge path still fails closed at the ceiling rather than wrapping a
+ * token back onto a live one (a wrapped generation is the same stale-token
+ * identity the tag exists to prevent). */
+#define QUOTA_RECEIPT_STATE_BITS  2u
+#define QUOTA_RECEIPT_STATE_MASK  ((1u << QUOTA_RECEIPT_STATE_BITS) - 1u)
+#define QUOTA_RECEIPT_GEN_MAX     (0xFFFFFFFFFFFFFFFFull >> QUOTA_RECEIPT_STATE_BITS)
+#define QUOTA_RECEIPT_TAG(gen, state) \
+    ((int64_t)(((uint64_t)(gen) << QUOTA_RECEIPT_STATE_BITS) | (uint64_t)(state)))
+#define QUOTA_RECEIPT_TAG_GEN(tag)   ((uint64_t)(tag) >> QUOTA_RECEIPT_STATE_BITS)
+#define QUOTA_RECEIPT_TAG_STATE(tag) ((uint32_t)((uint64_t)(tag) & QUOTA_RECEIPT_STATE_MASK))
+
+/* Every state value must fit under the state mask, or a state would bleed into
+ * the generation field and two different tags would compare equal. */
+_Static_assert(QUOTA_RECEIPT_BUSY <= QUOTA_RECEIPT_STATE_MASK,
+               "receipt state values must fit in QUOTA_RECEIPT_STATE_BITS");
+_Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
+               "a zero-initialized receipt must decode as generation 0 / IDLE");
 
 /* SUBSTITUTE the client (thread impersonation) user block for the process's own
  * user block, for the rare API whose contract bills the client rather than the
@@ -485,19 +523,41 @@ typedef struct quota_charge_receipt {
  * process allocate entirely unaccounted.
  *
  * `flags` is 0 or QUOTA_CHARGE_CLIENT. On failure THIS call leaves the receipt
- * holding nothing of its own, so an unconditional quota_return_chain on the
- * error path is safe. The one exception is STATUS_INVALID_PARAMETER raised
- * because the receipt was ALREADY holding a live charge: that charge is
- * untouched and still belongs to whoever made it, so a caller must not treat
- * that status as licence to return it.
+ * holding nothing of its own, so an unconditional
+ * quota_return_chain(receipt, token) on the error path is safe. The one
+ * exception is STATUS_INVALID_PARAMETER raised because the receipt was ALREADY
+ * holding a live charge: that charge is untouched and still belongs to whoever
+ * made it, so a caller must not treat that status as licence to return it.
+ *
+ * `out_token` is MANDATORY (NULL is STATUS_INVALID_PARAMETER): on success it
+ * receives the generation identifying THIS charge. It is the caller's proof of
+ * ownership and the only key that will return the charge, so a charge with
+ * nowhere to record it would strand its usage; store it beside the receipt and
+ * pass it to quota_return_chain.
+ *
+ * A zero-amount charge succeeds with token 0, the canonical NO-OBLIGATION
+ * token: it owes nothing, and 0 is the one value quota_return_chain always
+ * refuses. It is written rather than left alone precisely because a zero charge
+ * does not advance the generation -- a value left in the caller's variable
+ * could otherwise collide with the token of the NEXT real charge on the same
+ * receipt.
+ *
+ * `*out_token` is written ONLY on success. A caller that reuses one token
+ * variable across charges therefore keeps its live token when a charge is
+ * refused -- clearing it would strand that earlier charge with no key able to
+ * return it. A token left over from an already-returned charge is harmless: it
+ * matches no live charge and returns nothing.
+ *
  * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
  * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
  * STATUS_NOT_SUPPORTED (QUOTA_CHARGE_CLIENT -- see the flag),
- * STATUS_PROCESS_IS_TERMINATING (no process block), or whatever the refusing
+ * STATUS_PROCESS_IS_TERMINATING (no process block), STATUS_INTEGER_OVERFLOW
+ * (this receipt's generation space is exhausted), or whatever the refusing
  * block returned. */
 NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
                             uint64_t amount, uint32_t flags,
-                            quota_charge_receipt_t *receipt);
+                            quota_charge_receipt_t *receipt,
+                            uint64_t *out_token);
 
 /* Return a charge recorded by quota_charge_chain and release the receipt's
  * references. Exactly one caller performs the return even if several race; the
@@ -510,17 +570,25 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
  * stands. There is no correct alternative -- crediting back a charge that has
  * not finished would corrupt the counters. Complete the charge first.
  *
- * SCOPE OF THAT GUARANTEE: it covers repeated returns of the SAME charge. It
- * does NOT make receipt STORAGE reuse safe -- if a caller returns a charge,
- * reuses the same receipt for a new charge, and only then a stale returner from
- * the first charge arrives, that returner wins the state claim and returns the
- * SECOND charge. Distinguishing them needs a caller-held generation token, and
- * no charging subsystem exists yet to hold one. Until then the rule for callers
- * is the simple one: a receipt belongs to exactly one resource for its lifetime
- * and is not recycled while any cleanup path for the old charge can still run.
- * -> the generation-token upgrade is owned by section 4 (first real consumer).
- */
-void quota_return_chain(quota_charge_receipt_t *receipt);
+ * SCOPE OF THAT GUARANTEE: `token` is what extends it from "the same charge"
+ * to "the same charge in reused storage". Only the exact token handed out by
+ * the quota_charge_chain that filled this receipt returns that charge; a stale
+ * returner holding a superseded token matches nothing and does nothing, even if
+ * the storage has since been recharged. Passing token 0, a non-canonical token
+ * (above QUOTA_RECEIPT_GEN_MAX), or a token from a different charge is a silent
+ * no-op by design -- that is the mechanism, not a swallowed error.
+ *
+ * LIFETIME INVARIANT the guarantee rests on: every potential returner must
+ * CAPTURE the token BY VALUE before the receipt's storage can be reused. The
+ * token identifies the charge, so a cleanup path that instead keeps a POINTER
+ * into the recycled object and loads the token only when it finally runs would
+ * read the token of whatever charge occupies that storage NOW, match it, and
+ * return a resource it never charged. Recycling is safe for the RECEIPT,
+ * because its generation moves; it is NOT safe for a token still being read
+ * through shared storage. Copy the token out beside the resource whose lifetime
+ * it tracks, or keep the receipt and token alive until every path that could
+ * return that charge has run. */
+void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token);
 
 /* --- Owner wiring (quota_owner.c) ---------------------------------------- *
  * Attach and detach the per-process block. Both are idempotent; teardown is
@@ -573,8 +641,13 @@ typedef struct quota_absorb_record {
  * between them misses the job (a bounded under-count that unwinds symmetrically
  * because its receipt has no job block), whereas absorbing after publication
  * would count such a charge TWICE and permanently inflate the job. Closing the
- * window entirely is owned by section 4's live-assignment item. Returns
- * STATUS_SUCCESS when there is nothing to absorb.
+ * window needs more than a membership generation: revalidating a generation
+ * after the charge turns the under-count into a DOUBLE count, because the
+ * absorb has already folded the in-flight charge in and the retry then charges
+ * the job again. It needs a transition protocol that drains in-flight chargers
+ * before absorbing and publishes membership before reopening charging. Owned by
+ * the object and handle charge-integration section. Returns STATUS_SUCCESS when
+ * there is nothing to absorb.
  *
  * KNOWN LIMITATION -- absorbed usage is billed to the job until the member
  * DEPARTS, not until the underlying resource is freed. The receipts for
@@ -583,9 +656,11 @@ typedef struct quota_absorb_record {
  * the absorb record only unwinds at detach. A long-lived member can therefore
  * hold job headroom for resources it has already released. Fixing this needs
  * outstanding receipts to be MIGRATED into the job at assignment, which needs a
- * per-task registry of live receipts -- there is no charging subsystem yet to
- * have any. Owned by section 4 (receipt-obligation migration); today no
- * subsystem charges, so no member can hold a pre-join receipt at all. */
+ * refcounted ledger of live receipts that outlives the task slot -- and the
+ * migration must ADOPT this absorb record rather than charge alongside it, or
+ * the same usage is counted twice. There is no charging subsystem yet to hold a
+ * pre-join receipt at all, so nothing is mis-billed today. Owned by the object
+ * and handle charge-integration section. */
 NTSTATUS quota_job_absorb_task(struct quota_block *job_block, struct task *task,
                                quota_absorb_record_t *rec);
 

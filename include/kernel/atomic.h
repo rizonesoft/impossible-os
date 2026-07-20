@@ -91,6 +91,19 @@ static inline int32_t atomic_cmpxchg(atomic_t *a, int32_t old_val, int32_t new_v
     return old_val;
 }
 
+/* 64-bit CAS. Same contract as atomic_cmpxchg, for the tagged words that pack a
+ * generation counter beside a state so both change in ONE atomic step -- a
+ * separate state CAS plus a generation compare is an ABA race, not a fix (see
+ * quota_charge_receipt_t). x86-64 implements this as LOCK CMPXCHG on a
+ * naturally-aligned qword; no 128-bit or library support is involved. */
+static inline int64_t atomic64_cmpxchg(atomic64_t *a, int64_t old_val,
+                                       int64_t new_val) {
+    __atomic_compare_exchange_n(&a->val, &old_val, new_val,
+                                /*weak=*/0,
+                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return old_val;
+}
+
 /* ---------------------------------------------------------------------------
  * atomic_fetch_add -- Atomic add, returns old value
  *
