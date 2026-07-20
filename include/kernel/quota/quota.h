@@ -676,6 +676,63 @@ NTSTATUS quota_job_absorb_task(struct quota_block *job_block, struct task *task,
  * receipt's own later return would subtract from THAT member's live charge. */
 void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *rec);
 
+/* ========================================================================== *
+ * Charge-path cost contract
+ *
+ * The pool-integration section had to answer "what does a charge cost?" before
+ * any hot path could adopt this API. The answer is expressed STRUCTURALLY --
+ * how many block critical sections an operation enters -- rather than in time.
+ *
+ * Why not a wall-clock budget: a nanosecond threshold asserted in a test would
+ * have to pass on QEMU TCG, KVM, WHPX, VirtualBox, and bare metal, whose timing
+ * differs by more than an order of magnitude. Such a test either fails on the
+ * slow platform or is widened until it accepts every answer and verifies
+ * nothing (CLAUDE.md forbids exactly that widening). A critical-section count
+ * is exact, identical on every platform, and is what actually changed when a
+ * charge got more expensive -- the one number a refactor can regress silently.
+ *
+ * What the count does NOT capture, and must not be read as capturing: lock HOLD
+ * time, contention under concurrent chargers, and cache-miss cost. Those are
+ * genuine latency, and they are measured advisorily (TSC, reported and never
+ * asserted) by the quota performance suite. A real contended-latency budget
+ * needs cross-CPU run queues that the scheduler does not have yet, so it is
+ * owned by the quota contention-test and leak-sweep work.
+ *
+ * The constants below are the enforced structural guard: they are asserted
+ * exactly (not as upper bounds) so that both an added lock and a REMOVED one
+ * are caught -- a charge that stopped taking its lock would otherwise look like
+ * an improvement.
+ * ========================================================================== */
+
+/* Critical sections entered by one successful single-block operation. Charge
+ * and return each take the block's lock exactly once, for the whole of the
+ * check-and-commit; a transfer holds both blocks (address-ordered). */
+#define QUOTA_BUDGET_CHARGE_LOCKS     1u
+#define QUOTA_BUDGET_RETURN_LOCKS     1u
+#define QUOTA_BUDGET_TRANSFER_LOCKS   2u
+#define QUOTA_BUDGET_SET_LIMIT_LOCKS  1u
+
+/* A chain operation enters one BLOCK critical section per layer it charges
+ * (process, user, job): the chain is charged one block at a time, never two at
+ * once, so a depth-N charge costs N and its return costs N. */
+#define QUOTA_BUDGET_CHAIN_LOCKS_PER_LAYER  1u
+
+/* ...plus the OWNER-side sections a chain charge needs to discover that chain
+ * safely, which the budget counts as well. Excluding them would be the whole
+ * mistake this contract exists to prevent: they are irqsave sections on the
+ * same code path, they dominate a shallow chain, and a budget blind to them
+ * would let owner-side locking grow without a single test noticing.
+ *
+ * Three, one per snapshot step: the process/user pointer pair under
+ * task->quota_lock, the liveness re-check of the process pointer, and the job
+ * pin under task->job_lock. A chain RETURN adds none -- it walks the receipt,
+ * which already holds a reference to every block it will touch.
+ *
+ * So a depth-2 charge+return lifetime is 3 + 2 + 2 = 7 sections, which is the
+ * measured cost the pool-integration section had to establish before any hot
+ * path could adopt this API. */
+#define QUOTA_BUDGET_CHAIN_OWNER_LOCKS  3u
+
 #ifdef KERNEL_TESTS
 /* --- Test-only raw counter access ---------------------------------------- *
  * Corrupted-state and saturation fixtures cannot be built through the public
@@ -691,4 +748,47 @@ void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, 
 /* Raw counter read that does NOT clamp negatives, so a test can prove a
  * corrupted counter was left untouched rather than quietly normalized. */
 int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t type);
+
+/* --- Test-only charge-cost instrumentation -------------------------------- *
+ * Counts critical sections entered while counting is ON -- both the block
+ * locks in quota.c and the owner-side locks in quota_owner.c -- so a test can
+ * assert the structural budgets above exactly. Both files funnel their
+ * acquisitions through one helper, so the count cannot drift from the real
+ * lock discipline.
+ *
+ * Counting is EXPLICITLY GATED rather than always-on, because the instrument
+ * would otherwise corrupt the measurement it exists to support: the increment
+ * is a locked read-modify-write, which is not free on x86, and the advisory TSC
+ * loops must time the production path, not the instrumented one. Timing runs
+ * therefore never call begin(), so their locks execute a single predictable
+ * not-taken branch and nothing else.
+ *
+ * The increment happens AFTER the lock is acquired, so the counter means
+ * "sections ENTERED", not "acquisitions attempted" -- a contender still
+ * spinning has not entered anything. It is inside the critical section as a
+ * result, which is acceptable precisely because it is off during timing.
+ *
+ * SCOPE LIMIT: the counter is global, not per-CPU, so a concurrent quota
+ * operation on another CPU (or from an interrupt) would be counted into a
+ * test's window. Nothing in the kernel charges quota yet, so there is no such
+ * traffic today; the first hot-path consumer must revisit this, alongside the
+ * quota contention-test work.
+ *
+ * Usage: begin() zeroes and arms, end() disarms and returns the total. */
+void     quota_test_lock_count_begin(void);
+uint64_t quota_test_lock_count_end(void);
+
+/* Instrumentation hook shared with quota_owner.c so owner-side sections land
+ * in the same total. Not for test use directly. */
+void     quota_test_count_lock_section(void);
+
+/* Byte size of one per-type counter record, so a locality test can report how
+ * many cache lines a charge actually touches at the block's runtime address
+ * without exposing the private struct. */
+uint32_t quota_test_counter_record_bytes(void);
+
+/* Byte offset of the counter array within a block, paired with the record size
+ * so a test can compute the real line span from a block's runtime address
+ * without the private struct definition. */
+uint32_t quota_test_counter_base_offset(void);
 #endif /* KERNEL_TESTS */

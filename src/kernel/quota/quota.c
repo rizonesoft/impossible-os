@@ -168,6 +168,40 @@ void quota_types_dump(void)
  * below take that lock, which is what makes the address-ordered two-block
  * acquisition in quota_try_transfer the ONLY multi-lock path in the system
  * and therefore deadlock-free by construction. */
+/* The four counters for ONE resource type, stored together.
+ *
+ * The original layout was four parallel arrays -- usage[14], peak[14],
+ * failures[14], limit[14] -- so charging type T read or wrote four locations
+ * up to 112 bytes apart, which is as many as four cache lines for a single
+ * charge. Grouping one type's counters into a 32-byte record makes a charge
+ * touch 32 CONTIGUOUS bytes: two lines at worst, one in the common case.
+ *
+ * This deliberately stops short of a no-straddle GUARANTEE. Blocks come from
+ * kmalloc_zeroed, and the heap promises only 16-byte alignment
+ * (include/kernel/mm/heap.h), so an over-aligned member here would assert a
+ * property the allocator does not actually provide -- the static asserts below
+ * pin the record's SIZE and contiguity, never its runtime address. Pinning the
+ * line count needs a 64-byte-aligned allocation path, which the pool work owns.
+ * Owned by the advanced-allocator work that introduces the pool classes.
+ *
+ * Grouping cannot introduce false sharing that the old layout avoided: ONE
+ * lock guards every mutation of a block, so two CPUs never write two different
+ * types' counters in the same block concurrently. The only cross-line traffic
+ * packing can add is between a lock-free reader and a writer, which the split
+ * layout had as well. */
+typedef struct quota_counters {
+    atomic64_t usage;      /* current charge, 0..QUOTA_AMOUNT_MAX     */
+    atomic64_t peak;       /* high-water usage                        */
+    atomic64_t failures;   /* refused charges, saturating             */
+    atomic64_t limit;      /* QUOTA_LIMIT_UNLIMITED = no cap          */
+} quota_counters_t;
+
+/* Bytes in one per-type record, and the smallest cache line on any target this
+ * kernel builds for. The record must not exceed a line, or the locality claim
+ * above ("two lines at worst") stops holding. */
+#define QUOTA_COUNTER_RECORD_BYTES  32u
+#define QUOTA_COUNTER_LINE_BYTES    64u
+
 struct quota_block {
     /* Registry linkage, guarded by g_registry_lock (NOT by `lock`). Kept first
      * so a walk touches the same cache line it needs to advance. */
@@ -176,10 +210,8 @@ struct quota_block {
     uint8_t    principal;                           /* quota_principal_t, immutable */
     uint8_t    registered;                          /* on the USER registry list */
     atomic_t   refcount;                            /* live references; 0 frees */
-    atomic64_t usage[QUOTA_RESOURCE_TYPE_COUNT];    /* current charge, 0..MAX   */
-    atomic64_t peak[QUOTA_RESOURCE_TYPE_COUNT];     /* high-water usage         */
-    atomic64_t failures[QUOTA_RESOURCE_TYPE_COUNT]; /* refused charges, saturating */
-    atomic64_t limit[QUOTA_RESOURCE_TYPE_COUNT];    /* QUOTA_LIMIT_UNLIMITED = no cap */
+    /* One record per resource type: see quota_counters_t above. */
+    quota_counters_t counter[QUOTA_RESOURCE_TYPE_COUNT];
     spinlock_t lock;                                /* guards ALL mutations    */
     uint32_t   owner_sid_buf[SID_MAX_SIZE / 4];     /* SID capture, 4-aligned  */
     uint8_t    has_owner_sid;                       /* 0 = no owner recorded    */
@@ -191,19 +223,29 @@ struct quota_block {
 _Static_assert(sizeof(quota_block_t) <= 4096,
     "quota_block_t must stay within the kmalloc size rule (<= 4 KB)");
 
-/* Every counter array is indexed by quota_resource_type_t, so EACH must have
- * one slot per type. Asserting only one of them would let a hand-edited
- * smaller bound on any other array compile while the loops and accessors keep
- * indexing across the full enum, writing into adjacent struct fields. */
-#define QUOTA_ASSERT_PER_TYPE_ARRAY(field)                          \
-    _Static_assert(sizeof(((quota_block_t *)0)->field) ==           \
-                   sizeof(atomic64_t) * QUOTA_RESOURCE_TYPE_COUNT,  \
-                   "quota_block_t." #field " must have one slot per resource type")
+/* A record must be exactly its four counters with no padding. If the compiler
+ * ever inserted any, the record would grow past 32 bytes and the locality
+ * claim (a charge touches at most two lines) would quietly stop holding while
+ * everything still compiled and passed. */
+_Static_assert(sizeof(quota_counters_t) == 4 * sizeof(atomic64_t),
+    "quota_counters_t must be exactly its four counters, with no padding");
+_Static_assert(sizeof(quota_counters_t) == QUOTA_COUNTER_RECORD_BYTES,
+    "quota_counters_t must be QUOTA_COUNTER_RECORD_BYTES wide");
 
-QUOTA_ASSERT_PER_TYPE_ARRAY(usage);
-QUOTA_ASSERT_PER_TYPE_ARRAY(peak);
-QUOTA_ASSERT_PER_TYPE_ARRAY(failures);
-QUOTA_ASSERT_PER_TYPE_ARRAY(limit);
+/* A record wider than one cache line could span three lines at an unlucky
+ * address, which is worse than the layout this replaced for the peak+limit
+ * pair. This is the assert that keeps a future fifth counter honest: adding
+ * one means re-deriving the locality claim, not silently widening the record. */
+_Static_assert(QUOTA_COUNTER_RECORD_BYTES <= QUOTA_COUNTER_LINE_BYTES,
+    "a per-type counter record must fit within one cache line");
+
+/* The counter array is indexed by quota_resource_type_t, so it must have one
+ * record per type. Without this, a hand-edited smaller bound would compile
+ * while the loops and accessors kept indexing across the full enum, writing
+ * into adjacent struct fields. */
+_Static_assert(sizeof(((quota_block_t *)0)->counter) ==
+               sizeof(quota_counters_t) * QUOTA_RESOURCE_TYPE_COUNT,
+    "quota_block_t.counter must have one record per resource type");
 
 /* The SID capture buffer is uint32_t-typed (SubAuthority alignment) and sized
  * by division, which truncates DOWN. If SID_MAX_SIZE ever stops being a
@@ -218,24 +260,85 @@ static int quota_type_valid(quota_resource_type_t type)
 }
 
 #ifdef KERNEL_TESTS
+/* Critical sections entered while counting is armed. Diagnostic only: it
+ * orders nothing and guards nothing, so a relaxed add is exactly right -- it
+ * needs atomicity (two CPUs must not lose an update) but no barrier. */
+static uint64_t g_lock_sections;
+static uint8_t  g_lock_count_on;
+
+/* Shared with quota_owner.c so owner-side sections land in the same total. */
+void quota_test_count_lock_section(void)
+{
+    if (__atomic_load_n(&g_lock_count_on, __ATOMIC_RELAXED))
+        __atomic_fetch_add(&g_lock_sections, 1, __ATOMIC_RELAXED);
+}
+#endif
+
+/* THE one place a block's lock is taken. Every mutation path goes through this
+ * pair, which is what lets the test-only cost instrumentation stay honest: a
+ * future lock site either uses this helper and is counted, or takes the lock
+ * itself and is visible as an obvious deviation in review.
+ *
+ * The count is bumped AFTER the acquire, so it means "sections ENTERED" -- a
+ * contender still spinning has entered nothing and must not be counted. That
+ * puts the increment inside the critical section, which is only acceptable
+ * because counting is disarmed by default: production never pays for it, and
+ * the advisory timing loops deliberately leave it off so they measure the real
+ * charge path rather than the instrument. */
+static inline void quota_block_lock(quota_block_t *block, uint64_t *flags)
+{
+    spin_lock_irqsave(&block->lock, flags);
+#ifdef KERNEL_TESTS
+    quota_test_count_lock_section();
+#endif
+}
+
+static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
+{
+    spin_unlock_irqrestore(&block->lock, flags);
+}
+
+#ifdef KERNEL_TESTS
 /* Test-only raw counter access (see quota.h). Compiled out in production. */
 void quota_test_poke_usage(quota_block_t *block, quota_resource_type_t type, int64_t value)
 {
     if (block && quota_type_valid(type))
-        atomic64_set(&block->usage[type], value);
+        atomic64_set(&block->counter[type].usage, value);
 }
 
 void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, int64_t value)
 {
     if (block && quota_type_valid(type))
-        atomic64_set(&block->failures[type], value);
+        atomic64_set(&block->counter[type].failures, value);
 }
 
 int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t type)
 {
     if (!block || !quota_type_valid(type))
         return 0;
-    return atomic64_read(&block->usage[type]);
+    return atomic64_read(&block->counter[type].usage);
+}
+
+void quota_test_lock_count_begin(void)
+{
+    __atomic_store_n(&g_lock_sections, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_lock_count_on, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_test_lock_count_end(void)
+{
+    __atomic_store_n(&g_lock_count_on, 0, __ATOMIC_RELAXED);
+    return __atomic_load_n(&g_lock_sections, __ATOMIC_RELAXED);
+}
+
+uint32_t quota_test_counter_record_bytes(void)
+{
+    return QUOTA_COUNTER_RECORD_BYTES;
+}
+
+uint32_t quota_test_counter_base_offset(void)
+{
+    return (uint32_t)__builtin_offsetof(struct quota_block, counter);
 }
 #endif /* KERNEL_TESTS */
 
@@ -345,7 +448,7 @@ uint64_t quota_diag_deferred_count(void)
 static NTSTATUS quota_check_locked(quota_block_t *block, quota_resource_type_t type,
                                    int64_t add, int64_t *out_total, quota_diag_t *diag)
 {
-    int64_t cur = atomic64_read(&block->usage[type]);
+    int64_t cur = atomic64_read(&block->counter[type].usage);
 
     if (cur < 0) {
         /* Corrupted counter: fail closed rather than account against it. */
@@ -356,7 +459,7 @@ static NTSTATUS quota_check_locked(quota_block_t *block, quota_resource_type_t t
         return STATUS_INTEGER_OVERFLOW;   /* checked BEFORE the add (UB guard) */
 
     int64_t next  = cur + add;
-    int64_t limit = atomic64_read(&block->limit[type]);
+    int64_t limit = atomic64_read(&block->counter[type].limit);
     if (limit != (int64_t)QUOTA_LIMIT_UNLIMITED && next > limit)
         return STATUS_QUOTA_EXCEEDED;
 
@@ -368,8 +471,8 @@ static NTSTATUS quota_check_locked(quota_block_t *block, quota_resource_type_t t
 static void quota_commit_locked(quota_block_t *block, quota_resource_type_t type,
                                 int64_t total)
 {
-    atomic64_set(&block->usage[type], total);
-    quota_lift_peak(&block->peak[type], total);
+    atomic64_set(&block->counter[type].usage, total);
+    quota_lift_peak(&block->counter[type].peak, total);
 }
 
 /* Subtract `sub`. Lock held. Never logs; sets *diag on refusal.
@@ -385,18 +488,18 @@ static void quota_commit_locked(quota_block_t *block, quota_resource_type_t type
 static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t type,
                                      int64_t sub, quota_diag_t *diag)
 {
-    int64_t cur = atomic64_read(&block->usage[type]);
+    int64_t cur = atomic64_read(&block->counter[type].usage);
     if (cur < 0) {
         *diag = QUOTA_DIAG_NEGATIVE_USAGE;
-        quota_bump_failures(&block->failures[type]);
+        quota_bump_failures(&block->counter[type].failures);
         return STATUS_INTEGER_OVERFLOW;
     }
     if (cur < sub) {
         *diag = QUOTA_DIAG_RETURN_UNDERFLOW;
-        quota_bump_failures(&block->failures[type]);
+        quota_bump_failures(&block->counter[type].failures);
         return STATUS_INTEGER_OVERFLOW;
     }
-    atomic64_set(&block->usage[type], cur - sub);
+    atomic64_set(&block->counter[type].usage, cur - sub);
     return STATUS_SUCCESS;
 }
 
@@ -523,7 +626,7 @@ static quota_block_t *quota_block_alloc(quota_principal_t principal,
         uint64_t def = g_quota_desc[i].default_limit;
         if (def > (uint64_t)QUOTA_AMOUNT_MAX)
             def = (uint64_t)QUOTA_AMOUNT_MAX;   /* clamp into the counter domain */
-        atomic64_set(&block->limit[i], (int64_t)def);
+        atomic64_set(&block->counter[i].limit, (int64_t)def);
     }
 
     if (owner) {
@@ -721,13 +824,13 @@ NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t
     uint64_t flags;
     quota_diag_t diag = QUOTA_DIAG_NONE;
 
-    spin_lock_irqsave(&block->lock, &flags);
+    quota_block_lock(block, &flags);
     NTSTATUS status = quota_check_locked(block, type, (int64_t)amount, &total, &diag);
     if (status == STATUS_SUCCESS)
         quota_commit_locked(block, type, total);
     else
-        quota_bump_failures(&block->failures[type]);
-    spin_unlock_irqrestore(&block->lock, flags);
+        quota_bump_failures(&block->counter[type].failures);
+    quota_block_unlock(block, flags);
 
     /* Outside the lock, and only when there is something to say: the normal
      * charge path must not pay a call into the diagnostic helper. */
@@ -746,9 +849,9 @@ NTSTATUS quota_return(quota_block_t *block, quota_resource_type_t type, uint64_t
     uint64_t flags;
     quota_diag_t diag = QUOTA_DIAG_NONE;
 
-    spin_lock_irqsave(&block->lock, &flags);
+    quota_block_lock(block, &flags);
     NTSTATUS status = quota_release_locked(block, type, (int64_t)amount, &diag);
-    spin_unlock_irqrestore(&block->lock, flags);
+    quota_block_unlock(block, flags);
 
     /* Logging happens OUTSIDE the lock, and only when there is something to
      * say -- the normal path must not pay a call into the diagnostic helper. */
@@ -784,32 +887,32 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
     uint64_t flags_first, flags_second;
     quota_diag_t diag = QUOTA_DIAG_NONE;
 
-    spin_lock_irqsave(&first->lock, &flags_first);
-    spin_lock_irqsave(&second->lock, &flags_second);
+    quota_block_lock(first, &flags_first);
+    quota_block_lock(second, &flags_second);
 
     NTSTATUS status;
-    int64_t src_cur = atomic64_read(&src->usage[type]);
+    int64_t src_cur = atomic64_read(&src->counter[type].usage);
     if (src_cur < 0) {
         /* Corrupted source: distinct from an ordinary short balance. Reporting
          * this as QUOTA_EXCEEDED would hide an accounting-integrity failure
          * behind a routine-looking refusal, so it fails closed and is counted
          * and logged exactly like a corrupted destination. */
         diag = QUOTA_DIAG_NEGATIVE_USAGE_SOURCE;
-        quota_bump_failures(&src->failures[type]);
+        quota_bump_failures(&src->counter[type].failures);
         status = STATUS_INTEGER_OVERFLOW;
     } else if (src_cur < move) {
         /* Counted like every other refusal so the per-type failure telemetry
          * sees the most common transfer failure mode, not just the rare ones. */
-        quota_bump_failures(&src->failures[type]);
+        quota_bump_failures(&src->counter[type].failures);
         status = STATUS_QUOTA_EXCEEDED;      /* src does not hold that much */
     } else {
         int64_t dst_total = 0;
         status = quota_check_locked(dst, type, move, &dst_total, &diag);
         if (status == STATUS_SUCCESS) {
             quota_commit_locked(dst, type, dst_total);
-            atomic64_set(&src->usage[type], src_cur - move);
+            atomic64_set(&src->counter[type].usage, src_cur - move);
         } else {
-            quota_bump_failures(&dst->failures[type]);
+            quota_bump_failures(&dst->counter[type].failures);
             /* Re-label: quota_check_locked cannot know it was called for a
              * transfer destination, so a corrupted dst would otherwise be
              * logged as an ordinary charge and be indistinguishable from one. */
@@ -818,8 +921,8 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
         }
     }
 
-    spin_unlock_irqrestore(&second->lock, flags_second);
-    spin_unlock_irqrestore(&first->lock, flags_first);
+    quota_block_unlock(second, flags_second);
+    quota_block_unlock(first, flags_first);
 
     if (diag != QUOTA_DIAG_NONE)
         quota_emit_diag(diag, type);     /* outside BOTH locks, only if needed */
@@ -830,7 +933,7 @@ uint64_t quota_usage(const quota_block_t *block, quota_resource_type_t type)
 {
     if (!block || !quota_type_valid(type))
         return 0;
-    int64_t v = atomic64_read(&block->usage[type]);
+    int64_t v = atomic64_read(&block->counter[type].usage);
     return (v > 0) ? (uint64_t)v : 0;
 }
 
@@ -838,7 +941,7 @@ uint64_t quota_peak(const quota_block_t *block, quota_resource_type_t type)
 {
     if (!block || !quota_type_valid(type))
         return 0;
-    int64_t v = atomic64_read(&block->peak[type]);
+    int64_t v = atomic64_read(&block->counter[type].peak);
     return (v > 0) ? (uint64_t)v : 0;
 }
 
@@ -846,7 +949,7 @@ uint64_t quota_failures(const quota_block_t *block, quota_resource_type_t type)
 {
     if (!block || !quota_type_valid(type))
         return 0;
-    int64_t v = atomic64_read(&block->failures[type]);
+    int64_t v = atomic64_read(&block->counter[type].failures);
     return (v > 0) ? (uint64_t)v : 0;
 }
 
@@ -854,7 +957,7 @@ uint64_t quota_limit(const quota_block_t *block, quota_resource_type_t type)
 {
     if (!block || !quota_type_valid(type))
         return 0;
-    int64_t v = atomic64_read(&block->limit[type]);
+    int64_t v = atomic64_read(&block->counter[type].limit);
     return (v > 0) ? (uint64_t)v : 0;
 }
 
@@ -868,8 +971,8 @@ NTSTATUS quota_set_limit(quota_block_t *block, quota_resource_type_t type, uint6
      * sees the new one and is judged against it. There is no window where a
      * charge is admitted against a limit that no longer applies. */
     uint64_t flags;
-    spin_lock_irqsave(&block->lock, &flags);
-    atomic64_set(&block->limit[type], (int64_t)limit);
-    spin_unlock_irqrestore(&block->lock, flags);
+    quota_block_lock(block, &flags);
+    atomic64_set(&block->counter[type].limit, (int64_t)limit);
+    quota_block_unlock(block, flags);
     return STATUS_SUCCESS;
 }

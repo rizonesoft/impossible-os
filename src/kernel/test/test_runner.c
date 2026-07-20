@@ -469,6 +469,7 @@ extern void test_register_crashdump(void);
 extern void test_register_except(void);
 extern void test_register_quota(void);
 extern void test_register_quota_owner(void);
+extern void test_register_quota_perf(void);
 extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
@@ -582,6 +583,7 @@ void test_runner_init(void)
     /* Resource accounting & quotas */
     test_register_quota();
     test_register_quota_owner();
+    test_register_quota_perf();
 
     /* ABI */
     test_register_peb_teb();

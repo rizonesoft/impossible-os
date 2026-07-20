@@ -205,6 +205,7 @@ Mirror `ExAllocatePoolWithTag` -- every allocation carries a 4-byte tag. Tag mis
 - [ ] `kfree_tag(ptr, tag)` -- verify tag matches; panic on mismatch with address + expected/actual tags
 - [ ] Define canonical tags: `PTAG_VFS 'VFS '`, `PTAG_TASK 'TASK'`, `PTAG_NET 'NET '`, `PTAG_REG 'REG '`, `PTAG_OB 'OBJ '`, `PTAG_SEC 'SEC '`
 - [ ] Pool tag tracking: per-tag count + total bytes (atomic counters)
+- [ ] Accept an optional quota owner alongside the tag so a tagged allocation can be billed to a principal; the charge API and its cost budget already ship. -> XREF: `02-kernel-core/TODO-25 §5`
 - [ ] Migrate lookaside backing to tagged pool: swap `backing_alloc`/`backing_free` in `ex_lookaside.c` to `kmalloc_tag`/`kfree_tag`, drop the interim local-IRQ mask once the pool is SMP+reentrancy-safe -> XREF: 02-kernel-core/TODO-06 §5
 - [ ] Commit: `"mm: tagged allocation -- kmalloc_tag/kfree_tag + pool tag mismatch panic"`
 
@@ -223,9 +224,12 @@ Two pool classes matching the Windows NT contract. NonPagedPool: always resident
 - [ ] `kmalloc_paged(size)` -> vmalloc-backed, can be swapped
 - [ ] `ExAllocatePool2(pool_type, size, tag)` Win32 wrapper
 - [ ] IRQL assert: `kmalloc_paged` at above PASSIVE_LEVEL -> panic
+- [ ] Charge paged/nonpaged pool allocations through a quota provider hook, and refuse an owner-less user-triggered allocation rather than billing System. -> XREF: `02-kernel-core/TODO-25 §5`
+- [ ] Attribute pre-registry allocations to System: `kmalloc` is live from Phase 0 but the System block appears at Phase 3, so the hook needs a deferred replay. -> XREF: `02-kernel-core/TODO-25 §5`
+- [ ] Cache-line-aligned pool allocation for quota counter records: `kmalloc` gives 16 bytes, so 7 of 14 per-type records straddle a line today. -> XREF: `02-kernel-core/TODO-25 §5`
 - [ ] Commit: `"mm: NonPagedPool/PagedPool -- PMM-backed and vmalloc-backed pool classes"`
 
-**Test checkpoint:** `kmalloc_nonpaged(4096)` succeeds at DISPATCH_LEVEL. `kmalloc_paged(4096)` at DISPATCH_LEVEL -> panic with IRQL message.
+**Test checkpoint:** `kmalloc_nonpaged(4096)` succeeds at DISPATCH_LEVEL. `kmalloc_paged(4096)` at DISPATCH_LEVEL -> panic with IRQL message. A pool allocation billed to a quota owner charges that owner's paged/nonpaged usage and the free returns it; an owner-less user-triggered allocation is refused rather than billed to System.
 
 ---
 

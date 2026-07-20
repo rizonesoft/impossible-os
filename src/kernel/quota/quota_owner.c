@@ -36,6 +36,25 @@
 #include "kernel/sched/irql.h"   /* KeGetCurrentIrql for the diagnostic gate */
 #include "kernel/klog.h"
 
+
+/* Owner-side critical sections are part of a chain charge's real cost, so they
+ * funnel through this helper and land in the same test-only total as the block
+ * locks in quota.c. A budget that counted only block locks would be blind to
+ * the three snapshot sections a chain charge needs -- which dominate a shallow
+ * chain -- and owner-side locking could grow without a test noticing. */
+static inline void quota_owner_lock(spinlock_t *lock, uint64_t *flags)
+{
+    spin_lock_irqsave(lock, flags);
+#ifdef KERNEL_TESTS
+    quota_test_count_lock_section();
+#endif
+}
+
+static inline void quota_owner_unlock(spinlock_t *lock, uint64_t flags)
+{
+    spin_unlock_irqrestore(lock, flags);
+}
+
 /* --- Task block attach / detach ------------------------------------------ */
 
 NTSTATUS quota_task_init(struct task *task, struct access_token *token)
@@ -85,11 +104,11 @@ NTSTATUS quota_task_init(struct task *task, struct access_token *token)
     if (!proc)
         return STATUS_INSUFFICIENT_RESOURCES;
 
-    spin_lock_irqsave(&task->quota_lock, &flags);
+    quota_owner_lock(&task->quota_lock, &flags);
     if (task->quota) {
         /* Already initialized (idempotent by contract -- a re-created task slot
          * or a doubled create path must not leak the first block). */
-        spin_unlock_irqrestore(&task->quota_lock, flags);
+        quota_owner_unlock(&task->quota_lock, flags);
         quota_block_deref(proc);
         if (user)
             quota_block_deref(user);
@@ -97,7 +116,7 @@ NTSTATUS quota_task_init(struct task *task, struct access_token *token)
     }
     task->quota      = proc;
     task->quota_user = user;
-    spin_unlock_irqrestore(&task->quota_lock, flags);
+    quota_owner_unlock(&task->quota_lock, flags);
     return STATUS_SUCCESS;
 }
 
@@ -114,12 +133,12 @@ void quota_task_teardown(struct task *task)
      * reference can free the block and take the registry lock; neither belongs
      * inside a task lock, and holding one across the free would nest two lock
      * classes for no benefit. */
-    spin_lock_irqsave(&task->quota_lock, &flags);
+    quota_owner_lock(&task->quota_lock, &flags);
     proc = task->quota;
     user = task->quota_user;
     task->quota      = NULL;
     task->quota_user = NULL;
-    spin_unlock_irqrestore(&task->quota_lock, flags);
+    quota_owner_unlock(&task->quota_lock, flags);
 
     quota_block_deref(proc);
     quota_block_deref(user);
@@ -173,12 +192,12 @@ static int quota_chain_add_task_blocks(quota_charge_receipt_t *receipt,
     /* One critical section for both pointers: the pair is replaced together at
      * init and cleared together at teardown, so reading them apart could mix a
      * live block with a stale one. */
-    spin_lock_irqsave(&task->quota_lock, &flags);
+    quota_owner_lock(&task->quota_lock, &flags);
     *seen_process = task->quota;
     ok = quota_chain_append(receipt, task->quota);
     if (ok)
         ok = quota_chain_append(receipt, task->quota_user);
-    spin_unlock_irqrestore(&task->quota_lock, flags);
+    quota_owner_unlock(&task->quota_lock, flags);
 
     if (!*seen_process)
         return -1;
@@ -207,9 +226,9 @@ static int quota_chain_still_live(struct task *task, quota_block_t *seen_process
     uint64_t flags;
     int      live;
 
-    spin_lock_irqsave(&task->quota_lock, &flags);
+    quota_owner_lock(&task->quota_lock, &flags);
     live = (task->quota == seen_process);
-    spin_unlock_irqrestore(&task->quota_lock, flags);
+    quota_owner_unlock(&task->quota_lock, flags);
     return live;
 }
 
@@ -231,11 +250,11 @@ static int quota_chain_add_job_blocks(quota_charge_receipt_t *receipt,
      * membership reference and free the body while its block is read. The job
      * holds its block for its whole life, so the block is live while the job
      * is pinned. */
-    spin_lock_irqsave(&task->job_lock, &flags);
+    quota_owner_lock(&task->job_lock, &flags);
     job = task->job;
     if (job)
         ObReferenceObject(job);
-    spin_unlock_irqrestore(&task->job_lock, flags);
+    quota_owner_unlock(&task->job_lock, flags);
 
     if (!job)
         return 1;
@@ -264,11 +283,11 @@ NTSTATUS quota_job_absorb_task(struct quota_block *job_block, struct task *task,
 
     /* Pin the process block: the absorb runs before membership is published,
      * so nothing else keeps it alive for us. */
-    spin_lock_irqsave(&task->quota_lock, &flags);
+    quota_owner_lock(&task->quota_lock, &flags);
     proc = task->quota;
     if (proc)
         quota_block_ref(proc);
-    spin_unlock_irqrestore(&task->quota_lock, flags);
+    quota_owner_unlock(&task->quota_lock, flags);
 
     if (!proc)
         return STATUS_SUCCESS;    /* nothing charged yet; nothing to absorb */
@@ -418,9 +437,9 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
          * {token, ACTIVE} CAS and return a charge it never made. */
         int live;
         uint64_t qflags;
-        spin_lock_irqsave(&task->quota_lock, &qflags);
+        quota_owner_lock(&task->quota_lock, &qflags);
         live = (task->quota != NULL);
-        spin_unlock_irqrestore(&task->quota_lock, qflags);
+        quota_owner_unlock(&task->quota_lock, qflags);
 
         /* Order matters: the token is written while the receipt is still BUSY,
          * and releasing to IDLE is the LAST thing this path does. Releasing
