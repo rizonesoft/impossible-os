@@ -149,6 +149,8 @@ Implement `NtReadFile`/`NtWriteFile` via synchronous IRP dispatch. Add `SetFileP
 - [ ] `ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)` → `NtReadFile`; set `*lpNumberOfBytesRead = io_status.Information`; return TRUE/FALSE
 - [ ] `WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped)` → `NtWriteFile`
 - [ ] Register `NtReadFile`/`NtWriteFile`/`NtSetInformationFile` in syscall dispatch; retire `SYS_READFILE` primitive
+- [ ] Closing `SYS_READFILE` must close its hazards: it hands the ring-3 `buf` to `vfs_read` for kernel-mode writing, narrows a 64-bit length to `uint32_t`, and reports partial reads as success. -> XREF: `02-kernel-core/TODO-25 §7`
+- [ ] Route the replacement `NtReadFile` path through `task_acct_note_read_io()` so retiring the primitive also closes its accounting gap. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [ ] Publish each completion's (ops, bytes) pair coherently so a job membership snapshot cannot split one request. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7` (item: "I/O split by read/write/control")
 - [ ] Commit: `"win32: ReadFile/WriteFile/SetFilePointerEx -- IRP dispatch, MDL, offset tracking, sync path"`
 

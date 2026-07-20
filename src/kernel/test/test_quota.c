@@ -1886,6 +1886,7 @@ static void test_quota_delta_covers_every_field(void)
     base.io_read_count  = 300ull;  base.io_read_bytes  = 400ull;
     base.io_write_count = 500ull;  base.io_write_bytes = 600ull;
     base.io_other_count = 700ull;  base.io_other_bytes = 800ull;
+    base.wakeup_count   = 900ull;  base.timer_create_count = 1000ull;
 
     /* A distinct increment per field: if two fields were transposed, the
      * expected values below would not match. */
@@ -1897,6 +1898,8 @@ static void test_quota_delta_covers_every_field(void)
     now.io_write_bytes = base.io_write_bytes + 6ull;
     now.io_other_count = base.io_other_count + 7ull;
     now.io_other_bytes = base.io_other_bytes + 8ull;
+    now.wakeup_count   = base.wakeup_count   + 9ull;
+    now.timer_create_count = base.timer_create_count + 10ull;
 
     task_acct_delta_fields(&now, &base, &delta);
     TEST_ASSERT_EQ(delta.user_time_ns,   1ull, "user_time_ns delta is its own field");
@@ -1907,6 +1910,9 @@ static void test_quota_delta_covers_every_field(void)
     TEST_ASSERT_EQ(delta.io_write_bytes, 6ull, "io_write_bytes delta is its own field");
     TEST_ASSERT_EQ(delta.io_other_count, 7ull, "io_other_count delta is its own field");
     TEST_ASSERT_EQ(delta.io_other_bytes, 8ull, "io_other_bytes delta is its own field");
+    TEST_ASSERT_EQ(delta.wakeup_count,   9ull, "wakeup_count delta is its own field");
+    TEST_ASSERT_EQ(delta.timer_create_count, 10ull,
+                   "timer_create_count delta is its own field");
 
     /* Equal baseline: every field contributes nothing. */
     task_acct_delta_fields(&base, &base, &delta);
@@ -1918,6 +1924,8 @@ static void test_quota_delta_covers_every_field(void)
     TEST_ASSERT_EQ(delta.io_write_bytes, 0ull, "equal baseline yields no write-byte delta");
     TEST_ASSERT_EQ(delta.io_other_count, 0ull, "equal baseline yields no control-op delta");
     TEST_ASSERT_EQ(delta.io_other_bytes, 0ull, "equal baseline yields no control-byte delta");
+    TEST_ASSERT_EQ(delta.wakeup_count,   0ull, "equal baseline yields no wakeup delta");
+    TEST_ASSERT_EQ(delta.timer_create_count, 0ull, "equal baseline yields no timer delta");
 
     /* Baseline ABOVE current in EVERY field: all saturate to 0, none wrap. */
     task_acct_delta_fields(&base, &now, &delta);
@@ -1929,6 +1937,8 @@ static void test_quota_delta_covers_every_field(void)
     TEST_ASSERT_EQ(delta.io_write_bytes, 0ull, "inverted io_write_bytes saturates");
     TEST_ASSERT_EQ(delta.io_other_count, 0ull, "inverted io_other_count saturates");
     TEST_ASSERT_EQ(delta.io_other_bytes, 0ull, "inverted io_other_bytes saturates");
+    TEST_ASSERT_EQ(delta.wakeup_count,   0ull, "inverted wakeup_count saturates");
+    TEST_ASSERT_EQ(delta.timer_create_count, 0ull, "inverted timer_create_count saturates");
 
     /* A NULL task captures a fully zeroed baseline, not stack residue. */
     task_acct_capture_base((const struct task *)0, &now);

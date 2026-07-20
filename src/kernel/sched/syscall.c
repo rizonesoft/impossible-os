@@ -185,6 +185,15 @@ static NTSTATUS sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
     if (!file)
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
+    /* NOT instrumented with the task_acct_note_read_io seam, deliberately.
+     * This primitive is slated for RETIREMENT in favour of NtReadFile (which
+     * already routes through the canonical seam), and it hands the caller's
+     * ring-3 `buf` straight to vfs_read for the filesystem to write through in
+     * kernel mode. Adding accounting here would both instrument a path being
+     * deleted and imply this syscall is a supported, reviewed I/O route. The
+     * missing accounting, the unvalidated destination pointer, the 64->32-bit
+     * length narrowing, and the partial-read-reported-as-success behavior are
+     * filed together on the retirement item. */
     to_read = file->size < buf_size ? file->size : buf_size;
     vfs_read(file, 0, (uint32_t)to_read, buf);
     if (opened)

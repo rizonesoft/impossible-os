@@ -289,6 +289,9 @@ Every wait primitive publishes its waiter into the queue BEFORE setting `THREAD_
 - [ ] Add a per-primitive IRQ-safe wait lock covering predicate check, `THREAD_BLOCKED` transition, and queue publication as one critical section.
 - [ ] Wakers take the same lock across dequeue + `task_wake_thread()`, so a waiter is never discoverable before it is blocked.
 - [ ] Give each wait a generation token the wake must match: today the claim tests only `THREAD_BLOCKED`, so a delayed second waker can release a LATER, unrelated wait by the same thread (wake-epoch ABA).
+- [ ] Make `thread->state` uniformly atomic: `task_wake_thread()` CASes it while ~16 other writers use plain stores, so the CAS orders nothing against them. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
+- [ ] Resolve the interrupted task through PER-CPU scheduler state: the tick charges `tasks[current_task]`, one global cursor, so once APs schedule a tick can bill the wrong process. -> XREF: `02-kernel-core/TODO-25 §7`
+- [ ] Derive the tick quantum from the ACTUAL elapsed monotonic delta, not the nominal rate: a one-shot/tickless arm charges a full nominal quantum for an arbitrary interval. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [ ] `thread_join`/`thread_exit` handshake: publish join metadata and blocked state as one transaction, re-check target death before sleeping. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [ ] Deterministic regression test injecting a wake between queue publication and yield; the waiter must not sleep forever.
 - [ ] Commit: `"sched: wait/wake transaction locking -- close the lost-wakeup window in all wait primitives"`

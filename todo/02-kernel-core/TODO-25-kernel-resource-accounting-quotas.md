@@ -127,7 +127,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
 > **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 463)
-> **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 402)
+> **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 405)
 > **Quality reviewed:** 2026-07-20 | Codex 14x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 12H+13M+4L fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -235,7 +235,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 **Test checkpoint:** per-process CPU user/kernel split advances monotonically across two samples; the job aggregate equals the sum of its members' MEMBERSHIP-INTERVAL deltas (a member's pre-join usage is excluded, and an inverted baseline saturates to zero rather than wrapping); I/O counters break down by read/write/control op and bytes, with a zero-byte control counted as an op contributing no bytes; only a BLOCKED-to-READY transition counts as a wakeup; the rate-limit record round-trips every field, refuses an unsatisfiable or unversioned policy without disturbing the stored one, advances its generation only on success, and is unaffected by charging usage on the same block.
 
-> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 1089 assertions, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 1173 assertions, 0 failures
 
 > **Notes:**
 > - Shipped `task_acct_*` metrics on `struct task` (control-I/O, wakeup, timer-creation counters plus `task_acct_sample()`) and `quota_rate_limit_t` policy records on the quota block, published under a seqlock by `quota_rate_limit_set/get`.
@@ -243,6 +243,16 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - Job CPU/I/O aggregation moved from member LIFETIME totals to the MEMBERSHIP INTERVAL, and the `IO_COUNTERS.Other*` fields previously returned as zero are now populated; design-review adoptions are in the commit message.
 > - Canonical doc: [`include/kernel/quota/quota.h`](../../include/kernel/quota/quota.h) (rate-record contract) and the metric block in [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) (canonical event per metric).
 > - Scope boundary: §7 owns MEASUREMENT and the policy RECORD only. CPU bandwidth enforcement is TODO-06 §14, block-I/O QoS is storage TODO-01 §8, the device-control event source is storage TODO-05 §14.
+> **Verified:** 2026-07-20 | commit `4b541c54` | 9/10 items | build OK | tests 23264 PASS, smoke PASS (KVM 3.130s)
+> **Accepted:** [H] paired (ops,bytes) counters are separate atomics, so a membership snapshot can split one I/O event across the boundary (reason: fix belongs at the completion writers) -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §5` (item: "Publish each completion's (ops, bytes) pair coherently" at line 154)
+> **Accepted:** [H] wait paths publish a waiter before setting THREAD_BLOCKED and the wake claim tests only the state, not the wait instance (reason: pre-existing, needs a wait-lock transaction) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Give each wait a generation token the wake must match" at line 291)
+> **Accepted:** [M] the tick charges `tasks[current_task]`, one global cursor, so a tick can bill the wrong process once APs schedule (reason: needs per-CPU scheduler state) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Resolve the interrupted task through PER-CPU scheduler state" at line 293)
+> **Accepted:** [M] `thread->state` is CASed by the wake seam but plain-stored by ~16 other writers (reason: scheduler-wide change) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Make `thread->state` uniformly atomic" at line 292)
+> **Accepted:** [M] `ob_job_collect_accounting` holds `job->lock` with IRQs off across up to 32 members of delta math (reason: snapshot-then-compute refactor) -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §11` (item: "Cut the `ob_job_collect_accounting` lock hold" at line 310)
+> **Accepted:** [L] the tick quantum is the nominal rate, so a one-shot/tickless arm would mis-charge (reason: not-functional-today, no production one-shot caller) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Derive the tick quantum from the ACTUAL elapsed monotonic delta" at line 294)
+> **Accepted:** [H] `SYS_READFILE` is uninstrumented and hands its ring-3 `buf` to `vfs_read` for kernel-mode writing (reason: scope, the primitive is slated for retirement and must not be instrumented) -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §5` (item: "Closing `SYS_READFILE` must close its hazards" at line 152)
+> **Deferred:** [M] control-I/O counters are wired and projected but read zero until a device-control op completes -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §14` (item: "task_acct_note_control_io" at line 313)
+> **Quality reviewed:** 2026-07-20 | Codex 13x (design, adversarial x8, consistency, perf x2, re-adversarial x2, test-coverage) | 5H+11M+3L fixed, 7 accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -298,6 +308,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Charge object body and name entry on creation, returning at `ob_free_object` / `ObpRemoveFromDirectory` via the ledger, not a task lookup (the creator may already be gone).
 - [ ] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
 - [ ] At task death SEAL the ledger against new charges but RETAIN it; return handle charges during the real handle sweep in `task_cleanup`, then drain residual obligations as a leak assertion.
+- [ ] Cut the `ob_job_collect_accounting` lock hold: it scans up to 32 members with per-member delta math while holding `job->lock` with IRQs off. Snapshot under the lock, compute outside. -> XREF: `02-kernel-core/TODO-25 §7`
 - [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
 - [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`

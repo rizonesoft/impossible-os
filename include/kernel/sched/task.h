@@ -230,6 +230,13 @@ struct task_acct_base {
     uint64_t io_write_bytes;
     uint64_t io_other_count;
     uint64_t io_other_bytes;
+    /* Carried here too, so a membership-interval delta covers EVERY metric a
+     * direct sample reports. Omitting them made the two views disagree: a job
+     * could report its members' CPU and I/O while silently losing their wakeup
+     * and timer activity, which is exactly the battery/health signal the
+     * section exists to feed. */
+    uint64_t wakeup_count;
+    uint64_t timer_create_count;
 };
 
 /* One process's cumulative metrics read under a SINGLE timestamp, so a policy
@@ -353,8 +360,10 @@ struct task {
      *                      already-runnable thread, a preemption requeue, and
      *                      thread creation are NOT wakeups: they reach READY
      *                      without a wait ever having been satisfied. Of the
-     *                      17 sites assigning THREAD_READY only the 9 wait
-     *                      grants call task_acct_note_wakeup().
+     *                      17 sites assigning THREAD_READY only the 10 wait
+     *                      grants go through task_wake_thread() (event x2,
+     *                      semaphore, mutex, condvar x2, rwlock x2, ob_mutex,
+     *                      and thread_exit's joiner release).
      *   timer_create_count a timer OBJECT was created. Arming and rearming an
      *                      existing timer are not creations.
      * No RATE is stored here. A sampler reads these through task_acct_sample()

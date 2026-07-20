@@ -511,6 +511,16 @@ static void task_init_accounting(struct task *t)
     t->io_write_bytes = 0;
     t->vol_ctxsw      = 0;
     t->invol_ctxsw    = 0;
+    /* EVERY cumulative metric resets here, not just the original six: tasks[]
+     * slots are REUSED, so a counter left standing is inherited by the next
+     * process in that slot and reported as its own. The saturating subtract in
+     * task_acct_delta_since() assumes exactly this reset -- a baseline taken
+     * against a stale-high counter reports no contribution instead of the
+     * member's real usage, silently zeroing a job's aggregate. */
+    t->io_other_count = 0;
+    t->io_other_bytes = 0;
+    t->wakeup_count   = 0;
+    t->timer_create_count = 0;
     t->except_telem_rate = 0;   /* s16 telemetry: window=0 => first event opens a fresh window */
 }
 
@@ -1847,6 +1857,8 @@ void task_acct_capture_base(const struct task *t, struct task_acct_base *out)
     out->io_write_bytes = 0;
     out->io_other_count = 0;
     out->io_other_bytes = 0;
+    out->wakeup_count   = 0;
+    out->timer_create_count = 0;
     if (!t)
         return;
 
@@ -1858,6 +1870,8 @@ void task_acct_capture_base(const struct task *t, struct task_acct_base *out)
     out->io_write_bytes = task_acct_load(&t->io_write_bytes);
     out->io_other_count = task_acct_load(&t->io_other_count);
     out->io_other_bytes = task_acct_load(&t->io_other_bytes);
+    out->wakeup_count   = task_acct_load(&t->wakeup_count);
+    out->timer_create_count = task_acct_load(&t->timer_create_count);
 }
 
 /* Saturating subtract: a baseline can never legitimately exceed the live
@@ -1889,6 +1903,9 @@ void task_acct_delta_fields(const struct task_acct_base *now,
     out->io_write_bytes = task_acct_sub_sat(now->io_write_bytes, base->io_write_bytes);
     out->io_other_count = task_acct_sub_sat(now->io_other_count, base->io_other_count);
     out->io_other_bytes = task_acct_sub_sat(now->io_other_bytes, base->io_other_bytes);
+    out->wakeup_count   = task_acct_sub_sat(now->wakeup_count,   base->wakeup_count);
+    out->timer_create_count =
+        task_acct_sub_sat(now->timer_create_count, base->timer_create_count);
 }
 
 void task_acct_delta_since(const struct task *t, const struct task_acct_base *base,

@@ -461,6 +461,15 @@ static void quota_rate_copy_out(const quota_rate_limit_t *src,
     quota_rate_load_envelope(&src->bytes,   &dst->bytes);
 }
 
+/* The class->unit mapping below is an else-everything dispatch, so appending a
+ * rate class that is NOT byte/op denominated (a memory-bandwidth or network
+ * class, say) would silently inherit the I/O denominations with no diagnostic.
+ * Pinning the count makes that a BUILD failure instead: adding a class forces
+ * whoever adds it to revisit this mapping. Same rule the resource-type enum
+ * uses, applied to a derived dispatch rather than to a parallel array. */
+_Static_assert(QUOTA_RATE_CLASS_COUNT == 4,
+    "a new rate class must revisit quota_rate_envelope_unit's denomination map");
+
 quota_rate_unit_t quota_rate_envelope_unit(quota_rate_class_t cls, int want_bytes)
 {
     if (cls == QUOTA_RATE_CLASS_CPU)
