@@ -13,7 +13,7 @@
  *
  * Each store has its own lock and its own failure mode, so a naive setter can
  * publish field 3 and then fail field 4. Every mutation therefore goes through
- * quota_policy_set(), which serializes on the task's policy mutex, PRE-
+ * quota_policy_set(), which serializes on the task's policy lock, PRE-
  * VALIDATES the whole request (representation, ordering, flags, privilege)
  * before touching anything, and restores the pre-image if a commit step still
  * fails. A caller never observes a partial transaction.
@@ -24,7 +24,7 @@
  * the unrestricted parent's budget -- and because the charge path already
  * walks process -> user -> job, the tighter of the two is what actually binds.
  *
- * IRQL: PASSIVE_LEVEL only. The transaction takes a mutex (it must be held
+ * IRQL: PASSIVE_LEVEL entry. The transaction takes a SPINLOCK (it is held
  * across other locks) and is reachable only from the syscall path.
  *
  * Owner: TODO-25-kernel-resource-accounting-quotas.md section 8.
@@ -47,7 +47,7 @@ struct task;
 #define QUOTA_TIME_LIMIT_MAX_SEC    (0x7FFFFFFFFFFFFFFFLL / \
                                      (int64_t)QUOTA_TIME_100NS_PER_SEC)
 
-/* The fields with no other home. Guarded by the task's policy mutex; zero
+/* The fields with no other home. Guarded by the task's policy spinlock; zero
  * throughout means "no policy set", which reads back as unlimited. */
 typedef struct quota_policy {
     uint64_t min_working_set;    /* bytes; 0 = unlimited */

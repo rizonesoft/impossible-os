@@ -416,6 +416,7 @@ Register Job Object management syscalls in the SSDT for process-group resource c
 - [x] `NtCreateJobSet` → SSDT 0x0167 -- registered + arg-validated; empty set succeeds; real job-set scheduling deferred (item below)
 - [x] All functions return `NTSTATUS`
 - [x] Commit: `"kernel: wire Job Object syscalls to SSDT (0x0160-0x0167)"`
+- [ ] `JobObjectCpuRateControlInformation` (JOBOBJECT_CPU_RATE_CONTROL_INFORMATION): the Win10/11 CPU-throttling surface real tools use; distinct from `QUOTA_LIMITS_EX.CpuRateLimit`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
 - [ ] Enforce memory limits (`PROCESS_MEMORY`/`JOB_MEMORY`): add to `JOB_SUPPORTED_LIMIT_FLAGS` + enforce on commit once VMM per-process accounting exists (today rejected at set)
 - [ ] Enforce CPU-rate limit (`JOBOBJECT_CPU_RATE_CONTROL_INFORMATION`): per-job scheduler quota (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2, "starvation prevention" line 93)
 - [ ] Real job-set scheduling (`NtCreateJobSet` NumJob>0, today `STATUS_NOT_IMPLEMENTED`): needs scheduler group support (→ XREF: 03-memory-concurrency/TODO-06-scheduler-enhancement.md §2)

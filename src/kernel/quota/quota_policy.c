@@ -236,8 +236,9 @@ NTSTATUS quota_policy_set(struct task *t, const QUOTA_LIMITS_EX *in,
 
     /* Serialize the whole transaction: prevalidation reads the current values,
      * and a second setter landing between the read and the commit would make
-     * the privilege decision stale. A mutex (not a spinlock) because the
-     * commit below takes other locks and must be able to block. */
+     * the privilege decision stale. A SPINLOCK, not a mutex: nothing below
+     * blocks (see task.h), so DO NOT add a blocking or allocating call inside
+     * this region -- it runs with interrupts off. */
     spin_lock_irqsave(&t->quota_policy_lock, &txn_flags);
 
     if (!is_ex) {

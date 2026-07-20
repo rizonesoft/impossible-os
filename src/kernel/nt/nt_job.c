@@ -264,8 +264,13 @@ static NTSTATUS NtQueryInformationJobObject_handler(uint64_t a1, uint64_t a2,
         JOBOBJECT_QUOTA_LIMIT_INFORMATION q;
         NTSTATUS st;
 
-        if (length < sizeof(q))
+        if (length < sizeof(q)) {
+            /* Hand back the size a caller needs, like the sibling process
+             * quota class does -- a probe-then-size caller has no other way
+             * to learn the V1 length. */
+            (void)job_write_ret_len(ret_len, (uint32_t)sizeof(q));
             return STATUS_BUFFER_TOO_SMALL;
+        }
         ob_job_collect_quota_limits(job, &q);
         st = ProbeForWriteIfUser(buffer, (uint32_t)sizeof(q), 8);
         if (st != STATUS_SUCCESS)

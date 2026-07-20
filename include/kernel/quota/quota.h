@@ -61,6 +61,10 @@ typedef enum {
      * IS the identity (counter index, dump rows, the later query ABI). */
     QUOTA_RES_NOTIFICATION_SUB   = 14,/* notification subscriptions  */
     QUOTA_RES_NOTIFICATION_BYTES = 15,/* retained notification payload */
+    /* Appending past 16 is a HARD build failure, not a silent widening: the
+     * job-quota wire class freezes its row array at JOB_QUOTA_V1_RESOURCE_COUNT
+     * (include/kernel/ob/ob_job.h) and static-asserts this count fits. A 17th
+     * resource type needs a V2 information class first. */
     QUOTA_RESOURCE_TYPE_COUNT    = 16
 } quota_resource_type_t;
 
@@ -332,10 +336,16 @@ void quota_block_ref(quota_block_t *block);
  * teardown is already committed, and the teardown would then free memory the
  * finder still holds. The registry lock alone does not close that window
  * either -- the count reaching zero, not the unlink, is what decides the
- * block's fate. Callers must hold the registry lock across this call (which
- * quota.c's own lookups do); the deref path unlinks under the same lock before
- * freeing, so a block observed in the registry is never freed underneath a
- * try-ref that succeeded. */
+ * block's fate. Two admissible caller forms, and ONLY these two:
+ *   (a) hold the REGISTRY lock across the call (what quota.c's own lookups
+ *       do) -- the deref path unlinks under that same lock before freeing, so
+ *       a block observed in the registry is never freed under a successful
+ *       try-ref; or
+ *   (b) for an UNREGISTERED process/job block, hold the OWNER's lock across
+ *       the call AND have the owner's teardown clear its pointer under that
+ *       same lock BEFORE dereferencing (quota_task_teardown and job_on_delete
+ *       are the reference implementations). A teardown that derefs first
+ *       leaves this CAS running on freed memory. */
 int quota_block_try_ref(quota_block_t *block);
 
 /* Release a reference; frees the block when the last one goes away. */

@@ -361,6 +361,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 - [ ] [Critical] NtReadFile/NtQueryDirectoryFile output via a kmalloc'd kernel bounce buffer, then copy_to_user only the bytes produced -- ProbeForWriteIfUser alone is a range check, not a TOCTOU-safe guarded copy-out. (§6 design)
 - [ ] [Critical] NtCreateFile: snapshot OBJECT_ATTRIBUTES + embedded UNICODE_STRING + bounded ObjectName->Buffer via copy_from_user into a kernel NUL-terminated path before `oa_extract_path`; write FileHandle/IOSB via copy_to_user. (§6 design)
 - [ ] [H] NtReadFile/NtWriteFile ByteOffset (a5): ProbeForReadIfUser + copy_from_user into a local uint64_t and use the local -- never deref a5 directly. (§6 design)
+- [ ] Length failures on Nt*Information{Process,Thread,JobObject} should return `STATUS_INFO_LENGTH_MISMATCH`, not `STATUS_BUFFER_TOO_SMALL` (NT convention); repo-wide sweep. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
 - [ ] [Critical] Probe + bounce the INFORMATION-class handlers too: `job_memcpy` and every raw `*ret_length` store in the Query*Information handlers are ring-3-addressed kernel writes. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`
 - [x] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 

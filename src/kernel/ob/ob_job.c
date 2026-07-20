@@ -116,10 +116,21 @@ static void job_on_delete(void *body)
              "job_on_delete: %u members still attached at free (refcount bug)",
              (uint64_t)job->num_members);
 
-    /* Release the aggregate block. A member charging through the job pins the
-     * job body first, so no charge can be in flight here. */
-    quota_block_deref(job->quota);
-    job->quota = (struct quota_block *)0;
+    /* Release the aggregate block. CLEAR the pointer under the lock FIRST and
+     * deref outside it: job_quota_ref() try-refs job->quota under this same
+     * lock, so a deref-then-clear would let that helper CAS on memory this
+     * call already freed. Same ordering as quota_task_teardown's owner path. */
+    {
+        struct quota_block *doomed;
+        uint64_t flags;
+
+        spin_lock_irqsave(&job->lock, &flags);
+        doomed = job->quota;
+        job->quota = (struct quota_block *)0;
+        spin_unlock_irqrestore(&job->lock, flags);
+
+        quota_block_deref(doomed);
+    }
 }
 
 /* --- Type registration --------------------------------------------------- */

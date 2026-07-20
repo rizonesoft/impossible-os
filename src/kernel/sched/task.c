@@ -683,6 +683,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    tasks[pid].quota_policy_lock.flag = 0;   /* same reason: never inherit a held lock word */
     /* Windows quota limits are per-process and NOT inherited (Windows seeds a
      * new process from the system defaults). Reset rather than copy, so a
      * recycled slot cannot present the dead tenant's working-set caps. */
@@ -899,6 +900,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    tasks[pid].quota_policy_lock.flag = 0;   /* same reason: never inherit a held lock word */
     quota_policy_reset(&tasks[pid]);   /* see task_create: per-process, never inherited */
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
@@ -2037,6 +2039,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].quota = NULL;
     tasks[child_pid].quota_user = NULL;
     tasks[child_pid].quota_lock.flag = 0;
+    tasks[child_pid].quota_policy_lock.flag = 0;
     quota_policy_reset(&tasks[child_pid]);  /* per-process, never inherited (see task_create) */
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
