@@ -38,19 +38,19 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                 | Depends On              | Status |
-| --- | :---: | ------------------------------------------- | ----------------------- | :----: |
-| 💎   |   1   | Resource type registry                      | --                      |  [x]   |
-| 💎   |   2   | Quota block and charge API                  | §1                      |  [x]   |
-| 💎   |   3   | Process/token/job ownership model           | T21 §9, T15 §4          |  [x]   |
-| 💎   |   4   | Receipt identity (generation-tokened charges) | §3                    |  [x]   |
-| 💎   |   5   | Pool and allocation quota integration       | D03T03 §6,§7            |  [ ]   |
-| 💎   |   6   | Registry, ALPC, notification quotas         | T24 §6, T14 §15, T16 §7 |  [ ]   |
-| ⭐   |   7   | CPU, I/O, and wakeup accounting             | T08 §6, T21 §9          |  [ ]   |
-| 💎   |   8   | Native query/set quota syscalls             | T12 §10                 |  [ ]   |
-| ⭐   |   9   | Resource pressure events and recovery hooks | T16 §2, T30 §6          |  [ ]   |
-| 💎   |  10   | Tests, leak sweeps, and dashboards          | §1..§9                  |  [ ]   |
-| 💎   |  11   | Object and handle quota integration         | §4, T05 §3, T05 §14     |  [ ]   |
+| ⭐   | Order | Deliverable                                   | Depends On              | Status |
+| --- | :---: | --------------------------------------------- | ----------------------- | :----: |
+| 💎   |   1   | Resource type registry                        | --                      |  [x]   |
+| 💎   |   2   | Quota block and charge API                    | §1                      |  [x]   |
+| 💎   |   3   | Process/token/job ownership model             | T21 §9, T15 §4          |  [x]   |
+| 💎   |   4   | Receipt identity (generation-tokened charges) | §3                      |  [x]   |
+| 💎   |   5   | Pool and allocation quota integration         | D03T03 §6,§7            |  [ ]   |
+| 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [ ]   |
+| ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [ ]   |
+| 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [ ]   |
+| ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [ ]   |
+| 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [ ]   |
+| 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
 
 ## 1. Resource Type Registry
 
