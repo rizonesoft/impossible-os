@@ -189,7 +189,7 @@ void mutex_unlock(mutex_t *m)
         {
             struct task *wt = task_get_by_pid(wake_task);
             if (wt && wake_thread < wt->num_threads) {
-                wt->threads[wake_thread].state = THREAD_READY;
+                task_wake_thread(wt, wake_thread);
             }
         }
     }

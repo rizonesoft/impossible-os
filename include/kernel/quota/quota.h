@@ -830,6 +830,206 @@ void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *re
  * single-block no-ops and the stale-token return. */
 #define QUOTA_BUDGET_CHAIN_ZERO_OWNER_LOCKS  1u
 
+/* ========================================================================== *
+ * Rate-limit policy records
+ *
+ * A quota block carries TWO different kinds of state, and conflating them is
+ * the mistake this separation exists to prevent:
+ *   - CUMULATIVE USAGE (everything above): how much has been consumed, charged
+ *     and returned, enforced per charge.
+ *   - RATE POLICY (here): how fast consumption is ALLOWED to proceed. It is
+ *     never charged, never returned, and has no usage of its own.
+ *
+ * This section OWNS the record. It does not enforce it: enforcement belongs to
+ * the subsystem that schedules the resource, and both consumers (a CPU
+ * bandwidth controller and a block-I/O QoS layer) are tracked as concrete
+ * unowned work rather than implied here. A record with no enforcer is inert --
+ * setting one changes nothing today, which is why it is stored and reported
+ * rather than treated as a cap.
+ *
+ * WHY THE RECORD IS TYPED AND VERSIONED rather than five bare scalars: the two
+ * consumers do not share units. A CPU cap is "runtime nanoseconds per period",
+ * an I/O cap is "operations per period" or "bytes per period", and read, write,
+ * and control traffic are independently limited in practice. A record that did
+ * not carry its own key, unit, and period could not be interpreted correctly by
+ * either consumer, and could not gain a field later without breaking the other.
+ * ========================================================================== */
+
+/* Which stream a record governs. The value is ABI (it indexes the per-block
+ * array and will appear in the later query syscall): APPEND only. */
+typedef enum quota_rate_class {
+    QUOTA_RATE_CLASS_CPU        = 0,  /* processor time                     */
+    QUOTA_RATE_CLASS_IO_READ    = 1,  /* block-device read traffic          */
+    QUOTA_RATE_CLASS_IO_WRITE   = 2,  /* block-device write traffic         */
+    QUOTA_RATE_CLASS_IO_CONTROL = 3,  /* device-control traffic             */
+    QUOTA_RATE_CLASS_COUNT      = 4
+} quota_rate_class_t;
+
+_Static_assert(QUOTA_RATE_CLASS_CPU == 0 && QUOTA_RATE_CLASS_IO_READ == 1 &&
+               QUOTA_RATE_CLASS_IO_WRITE == 2 && QUOTA_RATE_CLASS_IO_CONTROL == 3,
+    "quota rate-class IDs are ABI: append new classes, never renumber");
+
+/* How an envelope's amounts are denominated. This is DERIVED from the class and
+ * which envelope the amounts sit in (see quota_rate_envelope_unit), not stored
+ * as a free field: a stored unit could disagree with its class, which is a
+ * policy no consumer can act on. */
+typedef enum quota_rate_unit {
+    QUOTA_RATE_UNIT_NS    = 0,   /* nanoseconds of runtime per period */
+    QUOTA_RATE_UNIT_OPS   = 1,   /* operations per period            */
+    QUOTA_RATE_UNIT_BYTES = 2    /* bytes per period                 */
+} quota_rate_unit_t;
+
+/* Which fields carry meaning. A zero is a legitimate value for every amount
+ * (reservation 0, hard cap 0 = "allow nothing"), so "set" cannot be inferred
+ * from the value; an unflagged field is UNSET and a consumer must ignore it
+ * rather than read it as zero. */
+#define QUOTA_RATE_F_WEIGHT       0x1u  /* proportional share is meaningful   */
+#define QUOTA_RATE_F_RESERVATION  0x2u  /* guaranteed floor is meaningful     */
+#define QUOTA_RATE_F_MAX          0x4u  /* soft ceiling is meaningful         */
+#define QUOTA_RATE_F_HARD_CAP     0x8u  /* hard ceiling is meaningful         */
+#define QUOTA_RATE_F_ALL \
+    (QUOTA_RATE_F_WEIGHT | QUOTA_RATE_F_RESERVATION | \
+     QUOTA_RATE_F_MAX | QUOTA_RATE_F_HARD_CAP)
+
+/* Record layout version. A consumer that does not recognize the version must
+ * refuse the record instead of interpreting unknown fields. */
+#define QUOTA_RATE_VERSION  1u
+
+/* Amounts share the counter domain so a policy value can never exceed what the
+ * accounting side can represent. */
+#define QUOTA_RATE_AMOUNT_MAX  QUOTA_AMOUNT_MAX
+
+/* One set of amounts in ONE denomination, plus the flags saying which of them
+ * are meaningful. A record carries two of these because a single stream is
+ * legitimately limited in two denominations at once. */
+typedef struct quota_rate_envelope {
+    uint32_t flags;        /* QUOTA_RATE_F_* -- which amounts below apply */
+    uint32_t reserved;     /* MUST be 0 -- see the no-implicit-padding rule */
+    uint64_t weight;       /* proportional share vs. other blocks         */
+    uint64_t reservation;  /* guaranteed floor per period                 */
+    uint64_t max;          /* soft ceiling per period                     */
+    uint64_t hard_cap;     /* enforced ceiling per period                 */
+} quota_rate_envelope_t;
+
+/* One rate policy for one class. Read and written only as a WHOLE (see set/get
+ * below): the fields are one logical decision, and a scheduler that observed a
+ * new hard cap beside an old reservation could admit work no consistent policy
+ * ever allowed.
+ *
+ * TWO ENVELOPES, because one is not enough for a real I/O policy. A storage QoS
+ * layer caps a stream by BOTH operations per second and bytes per second -- a
+ * pure-IOPS cap lets one huge request saturate the device, and a pure-bandwidth
+ * cap lets a flood of tiny requests exhaust the queue. With a single
+ * denomination per record, publishing a bytes policy would silently REPLACE the
+ * ops policy for that stream, so the consumer could only ever enforce one of
+ * the two protections. The denomination of each envelope is implied by the
+ * class (quota_rate_envelope_unit), so a record cannot disagree with itself:
+ *   CPU:      `primary` is nanoseconds of runtime; `bytes` is unused and MUST
+ *             be left unflagged (CPU time has no byte dimension).
+ *   IO_READ / IO_WRITE / IO_CONTROL:
+ *             `primary` is operations, `bytes` is bytes. Either, both, or
+ *             neither may be flagged.
+ *
+ * `generation` is assigned by the publisher and increments on every successful
+ * set. A consumer caches it to detect that the policy changed without having to
+ * compare every field. */
+typedef struct quota_rate_limit {
+    uint32_t              version;    /* QUOTA_RATE_VERSION                     */
+    uint32_t              reserved0;  /* pad to a stable layout; must be 0      */
+    uint64_t              period_ns;  /* accounting window, shared by both      */
+    uint64_t              generation; /* bumped by each successful set          */
+    quota_rate_envelope_t primary;    /* CPU: runtime ns. I/O: operations.      */
+    quota_rate_envelope_t bytes;      /* I/O only: bytes. Unused for CPU.       */
+} quota_rate_limit_t;
+
+/* NO IMPLICIT PADDING, and the layout is PINNED. This record is a versioned ABI
+ * that a later query syscall will copy outward by sizeof(), so a byte the
+ * publisher never defines is a byte of kernel stack residue leaving the kernel.
+ * `uint32_t flags` beside a `uint64_t` would leave a 4-byte hole that no
+ * assignment is required to initialize, so the hole is spelled out as
+ * `reserved` (required to be 0, stored and loaded explicitly like any other
+ * field). The asserts below are what keep that true: a future field added in
+ * the wrong place changes a size or an offset and breaks the build instead of
+ * silently reintroducing a hole or renumbering the ABI. */
+_Static_assert(sizeof(quota_rate_envelope_t) == 40,
+    "quota_rate_envelope_t is ABI: 5 named slots, no implicit padding");
+_Static_assert(__builtin_offsetof(quota_rate_envelope_t, flags) == 0 &&
+               __builtin_offsetof(quota_rate_envelope_t, reserved) == 4 &&
+               __builtin_offsetof(quota_rate_envelope_t, weight) == 8 &&
+               __builtin_offsetof(quota_rate_envelope_t, reservation) == 16 &&
+               __builtin_offsetof(quota_rate_envelope_t, max) == 24 &&
+               __builtin_offsetof(quota_rate_envelope_t, hard_cap) == 32,
+    "quota_rate_envelope_t field offsets are ABI");
+_Static_assert(sizeof(quota_rate_limit_t) == 104,
+    "quota_rate_limit_t is ABI: header + two envelopes, no implicit padding");
+_Static_assert(__builtin_offsetof(quota_rate_limit_t, version) == 0 &&
+               __builtin_offsetof(quota_rate_limit_t, reserved0) == 4 &&
+               __builtin_offsetof(quota_rate_limit_t, period_ns) == 8 &&
+               __builtin_offsetof(quota_rate_limit_t, generation) == 16 &&
+               __builtin_offsetof(quota_rate_limit_t, primary) == 24 &&
+               __builtin_offsetof(quota_rate_limit_t, bytes) == 64,
+    "quota_rate_limit_t field offsets are ABI");
+
+/* The denomination of one envelope of a class's record, so a consumer derives
+ * the unit rather than trusting a stored field. Returns QUOTA_RATE_UNIT_NS for
+ * the CPU primary envelope, OPS for an I/O primary, and BYTES for an I/O bytes
+ * envelope. `want_bytes` selects the envelope. The CPU bytes envelope has no
+ * valid unit and is never published, so it reports NS and carries no flags. */
+quota_rate_unit_t quota_rate_envelope_unit(quota_rate_class_t cls, int want_bytes);
+
+/* Publish a rate policy for `class` on `block`, COHERENTLY: a concurrent getter
+ * observes either the whole previous record or the whole new one, never a mix.
+ * `rec->generation` is ignored on input and assigned by this call.
+ *
+ * CANONICALIZED on publication: an amount whose flag is clear is stored as 0,
+ * and the whole `bytes` envelope of a CPU policy is stored as 0, regardless of
+ * what the caller passed. The contract says an unflagged amount is meaningless,
+ * so persisting whatever happened to be in the caller's struct would store
+ * indeterminate values, make two logically identical policies compare unequal,
+ * and hand uninitialized stack bytes to a future query syscall. What comes back
+ * from a get is therefore always the canonical form of what was set.
+ *
+ * Validated before publication, so an unreadable policy can never be stored:
+ *   - version must be QUOTA_RATE_VERSION, and reserved0 / each envelope's
+ *     `reserved` must be 0
+ *   - neither envelope's flags may contain unknown bits
+ *   - the `bytes` envelope must be unflagged for QUOTA_RATE_CLASS_CPU: CPU time
+ *     has no byte dimension, and accepting one would store something the
+ *     consumer must later ignore -- a silent configuration failure
+ *   - every FLAGGED amount must be <= QUOTA_RATE_AMOUNT_MAX
+ *   - WITHIN each envelope, a flagged reservation must not exceed a flagged max
+ *     or hard cap, and a flagged max must not exceed a flagged hard cap (an
+ *     unsatisfiable policy is a configuration error, not something for a
+ *     consumer to resolve). The two envelopes are independent dimensions and
+ *     are NOT compared against each other
+ *   - period_ns must be non-zero whenever any per-period amount is flagged in
+ *     either envelope
+ *
+ * Returns STATUS_INVALID_PARAMETER on a NULL argument, a bad class, or any
+ * validation failure, and STATUS_SUCCESS otherwise. */
+NTSTATUS quota_rate_limit_set(quota_block_t *block, quota_rate_class_t cls,
+                              const quota_rate_limit_t *rec);
+
+/* Read the current policy for `class` into `out`, as a coherent snapshot.
+ *
+ * NEVER takes the block lock and NEVER spins unboundedly, because the intended
+ * consumer is a scheduler or I/O dispatcher holding its own lock with
+ * interrupts disabled -- a context where the no-nested-call contract above
+ * forbids the lock and an unbounded retry is a hang, not a slowdown. The read
+ * is a per-class seqlock bounded to a fixed number of attempts.
+ *
+ * A block with no policy set for `class` reports a zeroed record with flags 0
+ * and generation 0 -- "no policy", distinct from a policy whose amounts happen
+ * to be zero, which carries flags.
+ *
+ * Returns STATUS_INVALID_PARAMETER on a NULL argument or a bad class, and
+ * STATUS_RETRY if a publisher held this class in flux for every attempt. On
+ * STATUS_RETRY `*out` is UNTOUCHED: the caller keeps whatever snapshot it had,
+ * which is the correct behavior for a policy consumer -- acting on a policy one
+ * update stale is safe, acting on a torn one is not. */
+NTSTATUS quota_rate_limit_get(const quota_block_t *block, quota_rate_class_t cls,
+                              quota_rate_limit_t *out);
+
 #ifdef KERNEL_TESTS
 /* --- Test-only raw counter access ---------------------------------------- *
  * Corrupted-state and saturation fixtures cannot be built through the public
@@ -847,6 +1047,14 @@ void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, 
 /* Raw counter read that does NOT clamp negatives, so a test can prove a
  * corrupted counter was left untouched rather than quietly normalized. */
 int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t type);
+
+/* Force a rate class's publication sequence odd ("write in flight") or even
+ * ("stable"). The bounded-retry path of quota_rate_limit_get is otherwise
+ * unreachable from a single-threaded test -- it needs a publisher held mid-
+ * update on another CPU -- yet it carries a real contract (STATUS_RETRY with
+ * the caller's buffer untouched) that a regression could silently break. Same
+ * test-only-seam pattern as the raw counter pokes above. */
+void quota_test_poke_rate_seq(quota_block_t *block, quota_rate_class_t cls, int odd);
 
 /* --- Test-only charge-cost instrumentation -------------------------------- *
  * Counts critical sections COMPLETED while counting is armed -- both the block

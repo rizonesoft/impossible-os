@@ -31,7 +31,7 @@ static void wake_all_waiters(uint32_t *wtasks, uint32_t *wthreads,
     for (i = 0; i < *num_waiters; i++) {
         struct task *t = task_get_by_pid(wtasks[i]);
         if (t && wthreads[i] < t->num_threads)
-            t->threads[wthreads[i]].state = THREAD_READY;
+            task_wake_thread(t, wthreads[i]);
     }
     *num_waiters = 0;
 }
@@ -46,7 +46,7 @@ static void wake_first_waiter(uint32_t *wtasks, uint32_t *wthreads,
 
     struct task *t = task_get_by_pid(wtasks[0]);
     if (t && wthreads[0] < t->num_threads)
-        t->threads[wthreads[0]].state = THREAD_READY;
+        task_wake_thread(t, wthreads[0]);
 
     /* Shift queue left */
     for (i = 1; i < *num_waiters; i++) {

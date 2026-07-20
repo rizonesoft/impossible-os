@@ -191,6 +191,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_INTEGER_OVERFLOW             ((NTSTATUS)0xC0000095)  /* #OF -- INTO overflow */
 #define STATUS_PRIVILEGED_INSTRUCTION       ((NTSTATUS)0xC0000096)  /* #GP -- ring-3 privileged op */
 #define STATUS_STACK_OVERFLOW               ((NTSTATUS)0xC00000FD)  /* #SS -- guard page on stack */
+#define STATUS_RETRY                        ((NTSTATUS)0xC000022D)  /* transient contention -- retry */
 /* Reported by the __fastfail (int 0x29) path, a GS stack-cookie violation, and a
  * CET #CP shadow-stack RET mismatch. All three surface the same code in real
  * Windows; the specific cause is disambiguated by the fast-fail subcode carried

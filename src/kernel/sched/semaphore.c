@@ -70,7 +70,7 @@ static void sem_wake_head(semaphore_t *s)
     {
         struct task *wt = task_get_by_pid(wake_task);
         if (wt && wake_thread < wt->num_threads)
-            wt->threads[wake_thread].state = THREAD_READY;
+            task_wake_thread(wt, wake_thread);
     }
 }
 

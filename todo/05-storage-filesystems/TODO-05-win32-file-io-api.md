@@ -149,6 +149,7 @@ Implement `NtReadFile`/`NtWriteFile` via synchronous IRP dispatch. Add `SetFileP
 - [ ] `ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)` → `NtReadFile`; set `*lpNumberOfBytesRead = io_status.Information`; return TRUE/FALSE
 - [ ] `WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped)` → `NtWriteFile`
 - [ ] Register `NtReadFile`/`NtWriteFile`/`NtSetInformationFile` in syscall dispatch; retire `SYS_READFILE` primitive
+- [ ] Publish each completion's (ops, bytes) pair coherently so a job membership snapshot cannot split one request. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7` (item: "I/O split by read/write/control")
 - [ ] Commit: `"win32: ReadFile/WriteFile/SetFilePointerEx -- IRP dispatch, MDL, offset tracking, sync path"`
 
 ## 6. Directory APIs + Per-Process CWD `[Sonnet]`
@@ -307,6 +308,7 @@ Win32 `DeviceIoControl(hDev, dwIoControlCode, ...)` is the single entry point fo
 - [ ] `FSCTL_GET_VOLUME_INFORMATION` (0x900C4): mirror of the §13 path through the FSCTL surface (some legacy code uses this instead of `GetVolumeInformationW`)
 - [ ] Win32 `DeviceIoControl(...)` user-mode wrapper that calls `NtDeviceIoControlFile` with the right buffer layout
 - [ ] Unit tests: `test_fsctl_oplock_request_release` (Level 1 grant + acknowledge), `test_fsctl_lock_volume_blocks_new_opens`, `test_fsctl_invalid_returns_invalid_device_request`
+- [ ] On each COMPLETED control request call `task_acct_note_control_io(task_current(), bytes)` so the control-I/O counters and `IO_COUNTERS.Other*` stop reading zero. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [ ] Commit: `"win32: NtDeviceIoControlFile + FSCTL dispatch + oplock + volume-lock ioctls"`
 
 **Test checkpoint:** A user-mode test program calls `DeviceIoControl(hFile, FSCTL_REQUEST_OPLOCK, ...)` with a Level 1 lease request; receives `STATUS_SUCCESS` on initial grant. A second open of the same file triggers a break notification consumable via overlapped completion. `FSCTL_LOCK_VOLUME` blocks a subsequent `CreateFile` on the same volume with `ERROR_ACCESS_DENIED`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.

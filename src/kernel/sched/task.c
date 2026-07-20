@@ -1324,10 +1324,21 @@ uint64_t schedule(struct interrupt_frame *frame)
      * The quantum is the nominal tick period (NSEC_PER_SEC / live tick freq),
      * re-read each tick so a KeSetTimerResolution rate change is tracked; the
      * freq==0 guard skips charging before the timer is up. RELAXED: an
-     * independent monotonic counter, single-writer on the BSP tick path today. */
-    if (sched_enabled) {
+     * independent monotonic counter, single-writer on the BSP tick path today.
+     *
+     * DELIBERATELY NOT GATED ON sched_enabled. That flag means "preemption is
+     * allowed", not "no task is running": scheduler_disable() wraps ordinary
+     * runtime critical sections -- RCU read-side sections and the compositor's
+     * whole compose/swap path -- and time spent inside them is still time the
+     * current task consumed. Charging only when preemption happened to be
+     * enabled produced a systematic under-count for exactly the kernel-heavy
+     * work CPU accounting exists to see, and would let a future rate or health
+     * policy be evaded by doing the work inside a preemption-disabled region.
+     * The gate below still returns early without switching; only the
+     * ACCOUNTING is unconditional. */
+    {
         uint32_t hz = system_get_freq();
-        if (hz) {
+        if (hz && current_task < TASK_MAX) {
             uint64_t quantum_ns = NSEC_PER_SEC / hz;
             struct task *cur = &tasks[current_task];
             if ((frame->cs & 3) == 3)
@@ -1718,6 +1729,177 @@ struct task *task_get_by_pid(uint32_t pid)
     if (pid >= num_tasks)
         return (struct task *)0;
     return &tasks[pid];
+}
+
+/* ============================================================================
+ * Process accounting metrics (CPU / I/O / wakeup / timer)
+ *
+ * The counting seams declared in task.h. Every one is a lock-free RELAXED
+ * atomic add on a per-task counter: no lock, no allocation, no logging, so all
+ * of them are safe in interrupt context and beneath a caller's spinlock. That
+ * is a REQUIREMENT rather than an optimization -- a wait grant is counted while
+ * the waking primitive still holds its own lock, and the quota subsystem's
+ * chain-charge path may not be entered there at all (quota.h forbids nested
+ * entry and its owner-side discovery takes three irqsave sections per charge).
+ * Metric recording therefore enters ZERO quota block critical sections and does
+ * not participate in the QUOTA_BUDGET_* charge-path contract.
+ * ========================================================================== */
+
+void task_acct_note_read_io(struct task *t, uint64_t bytes)
+{
+    if (!t || !bytes)
+        return;
+    __atomic_fetch_add(&t->io_read_count, 1ull, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&t->io_read_bytes, bytes, __ATOMIC_RELAXED);
+}
+
+void task_acct_note_write_io(struct task *t, uint64_t bytes)
+{
+    if (!t || !bytes)
+        return;
+    __atomic_fetch_add(&t->io_write_count, 1ull, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&t->io_write_bytes, bytes, __ATOMIC_RELAXED);
+}
+
+void task_acct_note_control_io(struct task *t, uint64_t bytes)
+{
+    if (!t)
+        return;
+    __atomic_fetch_add(&t->io_other_count, 1ull, __ATOMIC_RELAXED);
+    if (bytes)
+        __atomic_fetch_add(&t->io_other_bytes, bytes, __ATOMIC_RELAXED);
+}
+
+void task_acct_note_wakeup(struct task *t, uint32_t prev_state)
+{
+    /* ONLY a thread that was actually waiting counts. Re-readying an already
+     * runnable thread satisfies no wait, and counting it would let a primitive
+     * that wakes its whole queue report one wakeup per member per signal even
+     * when a single member was blocked. */
+    if (!t || prev_state != THREAD_BLOCKED)
+        return;
+    __atomic_fetch_add(&t->wakeup_count, 1ull, __ATOMIC_RELAXED);
+}
+
+void task_acct_note_timer_create(struct task *t)
+{
+    if (!t)
+        return;
+    __atomic_fetch_add(&t->timer_create_count, 1ull, __ATOMIC_RELAXED);
+}
+
+/* Relaxed load helper: every metric is an independent monotonic counter, so no
+ * acquire is needed and none is implied to the caller. */
+static uint64_t task_acct_load(const uint64_t *field)
+{
+    return __atomic_load_n(field, __ATOMIC_RELAXED);
+}
+
+void task_acct_sample(const struct task *t, task_acct_sample_t *out)
+{
+    if (!out)
+        return;
+
+    /* Zero FIRST so an unknown task yields an all-zero sample rather than
+     * stack residue a caller would divide into a nonsense rate. */
+    out->timestamp_ns      = 0;
+    out->user_time_ns      = 0;
+    out->kernel_time_ns    = 0;
+    out->io_read_count     = 0;
+    out->io_read_bytes     = 0;
+    out->io_write_count    = 0;
+    out->io_write_bytes    = 0;
+    out->io_other_count    = 0;
+    out->io_other_bytes    = 0;
+    out->wakeup_count      = 0;
+    out->timer_create_count = 0;
+    if (!t)
+        return;
+
+    /* One timestamp for the whole sample: the consumer divides the difference
+     * of two samples by the difference of their timestamps, so the stamp must
+     * belong to this read and not to a later one. Taken BEFORE the counters so
+     * an interrupted sample under-reports the rate rather than over-reports it
+     * (a stamp taken afterwards would pair old counts with a newer clock). */
+    out->timestamp_ns       = uptime_ns();
+    out->user_time_ns       = task_acct_load(&t->user_time_ns);
+    out->kernel_time_ns     = task_acct_load(&t->kernel_time_ns);
+    out->io_read_count      = task_acct_load(&t->io_read_count);
+    out->io_read_bytes      = task_acct_load(&t->io_read_bytes);
+    out->io_write_count     = task_acct_load(&t->io_write_count);
+    out->io_write_bytes     = task_acct_load(&t->io_write_bytes);
+    out->io_other_count     = task_acct_load(&t->io_other_count);
+    out->io_other_bytes     = task_acct_load(&t->io_other_bytes);
+    out->wakeup_count       = task_acct_load(&t->wakeup_count);
+    out->timer_create_count = task_acct_load(&t->timer_create_count);
+}
+
+void task_acct_capture_base(const struct task *t, struct task_acct_base *out)
+{
+    if (!out)
+        return;
+
+    out->user_time_ns   = 0;
+    out->kernel_time_ns = 0;
+    out->io_read_count  = 0;
+    out->io_read_bytes  = 0;
+    out->io_write_count = 0;
+    out->io_write_bytes = 0;
+    out->io_other_count = 0;
+    out->io_other_bytes = 0;
+    if (!t)
+        return;
+
+    out->user_time_ns   = task_acct_load(&t->user_time_ns);
+    out->kernel_time_ns = task_acct_load(&t->kernel_time_ns);
+    out->io_read_count  = task_acct_load(&t->io_read_count);
+    out->io_read_bytes  = task_acct_load(&t->io_read_bytes);
+    out->io_write_count = task_acct_load(&t->io_write_count);
+    out->io_write_bytes = task_acct_load(&t->io_write_bytes);
+    out->io_other_count = task_acct_load(&t->io_other_count);
+    out->io_other_bytes = task_acct_load(&t->io_other_bytes);
+}
+
+/* Saturating subtract: a baseline can never legitimately exceed the live
+ * counter (both come from the same monotonic field), so an inversion means the
+ * counter was reset under a live baseline -- a slot reused without clearing the
+ * membership. Reporting 0 there loses one member's contribution; wrapping would
+ * add ~2^64 to a job's aggregate and make every derived rate meaningless. */
+static uint64_t task_acct_sub_sat(uint64_t now, uint64_t base)
+{
+    return (now > base) ? (now - base) : 0ull;
+}
+
+void task_acct_delta_fields(const struct task_acct_base *now,
+                            const struct task_acct_base *base,
+                            struct task_acct_base *out)
+{
+    if (!out || !now)
+        return;
+    if (!base) {
+        *out = *now;                     /* no baseline: the whole lifetime */
+        return;
+    }
+
+    out->user_time_ns   = task_acct_sub_sat(now->user_time_ns,   base->user_time_ns);
+    out->kernel_time_ns = task_acct_sub_sat(now->kernel_time_ns, base->kernel_time_ns);
+    out->io_read_count  = task_acct_sub_sat(now->io_read_count,  base->io_read_count);
+    out->io_read_bytes  = task_acct_sub_sat(now->io_read_bytes,  base->io_read_bytes);
+    out->io_write_count = task_acct_sub_sat(now->io_write_count, base->io_write_count);
+    out->io_write_bytes = task_acct_sub_sat(now->io_write_bytes, base->io_write_bytes);
+    out->io_other_count = task_acct_sub_sat(now->io_other_count, base->io_other_count);
+    out->io_other_bytes = task_acct_sub_sat(now->io_other_bytes, base->io_other_bytes);
+}
+
+void task_acct_delta_since(const struct task *t, const struct task_acct_base *base,
+                           struct task_acct_base *out)
+{
+    struct task_acct_base now;
+
+    if (!out)
+        return;
+    task_acct_capture_base(t, &now);
+    task_acct_delta_fields(&now, base, out);
 }
 
 /* ============================================================================
@@ -4060,12 +4242,21 @@ void thread_exit(int32_t status)
            t->name ? t->name : "?",
            (uint64_t)(uint32_t)status);
 
-    /* Wake any thread in the same task blocked on thread_join(our tid) */
+    /* Wake any thread in the same task blocked on thread_join(our tid).
+     * Through the canonical wait-grant seam: a completed join IS a wait being
+     * satisfied, so it belongs in wakeup_count like every other grant. Counting
+     * it anywhere else, or not at all, would make the metric depend on WHICH
+     * primitive a thread happened to block on. */
     for (j = 0; j < t->num_threads; j++) {
         if (t->threads[j].state == THREAD_BLOCKED &&
             t->threads[j].join_tid == (int32_t)thr->id) {
-            t->threads[j].state = THREAD_READY;
+            /* CLEAR join_tid BEFORE releasing the joiner. The wake makes it
+             * schedulable immediately, so clearing afterwards let it run with
+             * its old join_tid still set -- and if this exiting thread were
+             * preempted before the clear, that stale tid could later match an
+             * unrelated thread reusing the id and steal its wake. */
             t->threads[j].join_tid = -1;
+            task_wake_thread(t, j);
         }
     }
 
@@ -4187,9 +4378,26 @@ int32_t thread_join(uint32_t thread_id)
         return status;
     }
 
-    /* Block current thread until target exits */
-    t->threads[current_thread].state = THREAD_BLOCKED;
+    /* Block current thread until target exits.
+     *
+     * PUBLISH join_tid BEFORE THREAD_BLOCKED. thread_exit's scan matches on
+     * (state == THREAD_BLOCKED && join_tid == its id), and x86-64 stores are
+     * ordered, so any exiting thread that sees BLOCKED necessarily also sees
+     * which tid this thread waits for. The reverse order left a window where
+     * the target sampled BLOCKED beside a stale or cleared join_tid, skipped
+     * this joiner, and left it asleep forever.
+     *
+     * This does NOT make registration atomic with the target's exit, and must
+     * not be read as doing so: the liveness check above and these two stores
+     * are still three unsynchronized steps, so a target that exits and scans
+     * before THREAD_BLOCKED is published sees a non-blocked joiner, skips it,
+     * and the joiner then blocks forever. Store ordering only constrains what
+     * an observer that ALREADY sees BLOCKED can see; it cannot force the scan
+     * to happen after it. That remaining window is the same pre-existing
+     * publish-before-block class as the other wait primitives and is owned by
+     * the scheduler's wait/wake transaction-locking work. */
     t->threads[current_thread].join_tid = (int32_t)thread_id;
+    t->threads[current_thread].state = THREAD_BLOCKED;
 
     /* Yield away -- scheduler will skip us since we're THREAD_BLOCKED */
     yield();

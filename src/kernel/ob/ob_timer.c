@@ -9,6 +9,7 @@
 #include "kernel/ob/ob_timer.h"
 #include "kernel/ob/ob.h"
 #include "kernel/klog.h"
+#include "kernel/sched/task.h"   /* task_current, task_acct_note_timer_create */
 
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
@@ -72,6 +73,7 @@ HANDLE ObCreateTimerEx(HANDLE_TABLE *ht, const char *name,
     TIMER_OBJECT *to;
     HANDLE h;
     int event_kind;
+    int published = 0;      /* object reachable by name, independent of a handle */
 
     if (!ht)
         return INVALID_HANDLE_VALUE;
@@ -136,11 +138,30 @@ HANDLE ObCreateTimerEx(HANDLE_TABLE *ht, const char *name,
                 return INVALID_HANDLE_VALUE;
             }
             ObDereferenceObject(bno_dir);
+            published = 1;      /* the directory now holds a reference */
         }
     }
 
     h = ObpAllocateHandle(ht, to, access, 0);
     ObDereferenceObject(to);
+    /* Count the timer-creation event for the calling process, at the OBJECT
+     * PUBLICATION boundary rather than the handle boundary.
+     *
+     * Both are needed because a timer can outlive its handle attempt: a NAMED
+     * timer is inserted into \BaseNamedObjects first, and that directory takes
+     * its own reference, so the object stays alive and reachable by name even
+     * if ObpAllocateHandle then fails (handle-table or handle-quota
+     * exhaustion). Counting only on a returned handle would let a caller create
+     * persistent named timers while every one of them was reported as a
+     * failure and none reached the churn signal battery policy reads.
+     *
+     * The early returns above are still deliberately uncounted: they hand back
+     * a handle to a timer that ALREADY existed (open-by-name, and the
+     * named-insert collision redirect), and opening an existing timer creates
+     * nothing. An unnamed timer whose handle allocation fails is likewise not
+     * counted -- the deref above was its last reference, so nothing persists. */
+    if (h != INVALID_HANDLE_VALUE || published)
+        task_acct_note_timer_create(task_current());
     return h;
 }
 

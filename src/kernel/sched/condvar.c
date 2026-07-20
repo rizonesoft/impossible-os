@@ -91,7 +91,7 @@ void cond_signal(condvar_t *cond)
     {
         struct task *wt = task_get_by_pid(cond->waiter_tasks[0]);
         if (wt && cond->waiter_threads[0] < wt->num_threads)
-            wt->threads[cond->waiter_threads[0]].state = THREAD_READY;
+            task_wake_thread(wt, cond->waiter_threads[0]);
     }
 
     /* Remove from queue by shifting left */
@@ -110,7 +110,7 @@ void cond_broadcast(condvar_t *cond)
     for (i = 0; i < cond->num_waiters; i++) {
         struct task *wt = task_get_by_pid(cond->waiter_tasks[i]);
         if (wt && cond->waiter_threads[i] < wt->num_threads)
-            wt->threads[cond->waiter_threads[i]].state = THREAD_READY;
+            task_wake_thread(wt, cond->waiter_threads[i]);
     }
 
     /* Clear the wait queue -- all waiters will compete for the mutex */

@@ -23,7 +23,7 @@ static void wake_all_waiters(event_t *ev)
     for (i = 0; i < ev->num_waiters; i++) {
         struct task *t = task_get_by_pid(ev->waiter_tasks[i]);
         if (t && ev->waiter_threads[i] < t->num_threads)
-            t->threads[ev->waiter_threads[i]].state = THREAD_READY;
+            task_wake_thread(t, ev->waiter_threads[i]);
     }
     ev->num_waiters = 0;
 }
@@ -53,7 +53,7 @@ static void wake_first_waiter(event_t *ev)
     {
         struct task *t = task_get_by_pid(wake_task);
         if (t && wake_thread < t->num_threads)
-            t->threads[wake_thread].state = THREAD_READY;
+            task_wake_thread(t, wake_thread);
     }
 }
 

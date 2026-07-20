@@ -46,7 +46,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   4   | Receipt identity (generation-tokened charges) | §3                      |  [x]   |
 | 💎   |   5   | Pool and allocation quota integration         | D03T03 §6,§7            |  [/]   |
 | 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [/]   |
-| ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [ ]   |
+| ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [x]   |
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [ ]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [ ]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [ ]   |
@@ -127,7 +127,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
 > **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 463)
-> **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 359)
+> **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 402)
 > **Quality reviewed:** 2026-07-20 | Codex 14x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 12H+13M+4L fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -222,16 +222,27 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 7. CPU, I/O, and Wakeup Accounting
 
-- [ ] Track per-process and per-job CPU time with user/kernel split.
-- [ ] Track I/O operation count and bytes by read/write/control.
-- [ ] Track wakeups/sec and timer creation rate for battery/health policy.
-- [ ] Define a rate-limit record (weight, min/max, hard-cap, reservation) distinct from cumulative usage; the quota block carries both. Enforcement CONSUMES the record; this section OWNS it.
-- [ ] CPU rate enforcement (throttle/weight) is owned by the scheduler. -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §3` (item: "prio_to_weight table").
-- [ ] Block-I/O rate enforcement (IOPS/BPS cap) has no owner yet; §7 defines the I/O rate-limit record only. A block-I/O QoS owner must be filed before I/O throttling is claimed.
-- [ ] Feed power and health policy without duplicating scheduler internals.
-- [ ] Commit: quota: CPU/IO/wakeup accounting + rate-limit records (measurement).
+- [x] Per-process CPU user/kernel split aggregates per job over the MEMBERSHIP INTERVAL: `task_acct_capture_base()` at assign, `task_acct_delta_since()` at rollup and detach (`ob_job.c`).
+- [x] CPU accounting is charged on EVERY tick, no longer gated on `sched_enabled`: time spent in `scheduler_disable()` regions (RCU read sections, compositor compose/swap) was previously uncharged.
+- [x] I/O split by read/write/control: `task_acct_note_read_io/write_io/control_io` are the canonical seams (file AND pipe paths, legacy + NT), plus `job.acc_other_*` and the `IO_COUNTERS.Other*` fields previously left zeroed.
+- [x] Wakeup and timer counters: `task_wake_thread()` is the single wait-grant seam (10 sites incl. `thread_join`; CAS-claimed so concurrent wakers count once); `ObCreateTimerEx` counts at the object-publication boundary.
+- [x] `quota_rate_limit_t` (versioned, keyed by `quota_rate_class_t`, carrying unit/period/weight/reservation/max/hard-cap/generation) is stored per block distinctly from usage and published under a seqlock.
+- [x] CPU rate enforcement is owned by the scheduler's bandwidth controller, not its weight table. -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §14` (item: "Consume `quota_rate_limit_get()`")
+- [x] Block-I/O rate enforcement now has a concrete owner. -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8` (item: "Consume `quota_rate_limit_get()`")
+- [x] Policy reads metrics via `task_acct_sample()` (all counters under one timestamp) and derives its own rates; the kernel stores no window, so no scheduler-private state is duplicated.
+- [/] Control-I/O counters are wired and projected but read zero until a control op completes (`NtDeviceIoControlFile` is a stub). -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §14` (item: "task_acct_note_control_io")
+- [x] Commit: quota: CPU/IO/wakeup accounting + rate-limit records (measurement).
 
-**Test checkpoint:** per-process CPU user/kernel split advances monotonically and the job aggregate equals the sum of member processes; I/O counters break down by read/write/control op and bytes; the rate-limit record stores weight/min/max/hard-cap/reservation separately from usage; wakeup/sec and timer-creation-rate samples are readable by policy without re-reading scheduler-private state.
+**Test checkpoint:** per-process CPU user/kernel split advances monotonically across two samples; the job aggregate equals the sum of its members' MEMBERSHIP-INTERVAL deltas (a member's pre-join usage is excluded, and an inverted baseline saturates to zero rather than wrapping); I/O counters break down by read/write/control op and bytes, with a zero-byte control counted as an op contributing no bytes; only a BLOCKED-to-READY transition counts as a wakeup; the rate-limit record round-trips every field, refuses an unsatisfiable or unversioned policy without disturbing the stored one, advances its generation only on success, and is unaffected by charging usage on the same block.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 1089 assertions, 0 failures
+
+> **Notes:**
+> - Shipped `task_acct_*` metrics on `struct task` (control-I/O, wakeup, timer-creation counters plus `task_acct_sample()`) and `quota_rate_limit_t` policy records on the quota block, published under a seqlock by `quota_rate_limit_set/get`.
+> - Metric recording is lock-free RELAXED atomics entering ZERO quota critical sections, so it is safe in interrupt context and beneath a caller's spinlock; it does not participate in the `QUOTA_BUDGET_*` charge-path contract.
+> - Job CPU/I/O aggregation moved from member LIFETIME totals to the MEMBERSHIP INTERVAL, and the `IO_COUNTERS.Other*` fields previously returned as zero are now populated; design-review adoptions are in the commit message.
+> - Canonical doc: [`include/kernel/quota/quota.h`](../../include/kernel/quota/quota.h) (rate-record contract) and the metric block in [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) (canonical event per metric).
+> - Scope boundary: §7 owns MEASUREMENT and the policy RECORD only. CPU bandwidth enforcement is TODO-06 §14, block-I/O QoS is storage TODO-01 §8, the device-control event source is storage TODO-05 §14.
 
 ---
 
@@ -317,7 +328,10 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6 |
 | 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC charged §6; registry blocked T14    |
 | 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ⚠️ live re-limit works; no setter yet §6    |
-| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7   |
+| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | ✅ per-proc/job CPU+IO+wakeup+timer §7       |
+| ⭐   | Job aggregate accounting window  | ⚠️ member lifetime totals folded in   | ✅ cgroup counts only while a member         | ✅ membership-interval deltas, baselined §7  |
+| 💎   | Control ("Other") I/O counters   | ✅ `IO_COUNTERS.Other*` populated      | ⚠️ no ioctl split in `/proc/PID/io`         | ⚠️ counters+ABI wired; event source T05 §14 |
+| ⭐   | Rate-limit policy record         | ⚠️ per-Job CPU rate cap only          | ⚠️ per-controller, no shared record shape   | ✅ versioned typed record, seqlock §7        |
 | 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8  |
 | ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9    |
 | ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9          |
@@ -348,6 +362,26 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
 - [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).
 - [ ] `test_quota_leak_sweep_zero_delta`: boot leak sweep shows zero net quota delta (§10).
+- [x] `test_quota_cpu_split_monotonic`: user/kernel CPU time and the sample timestamp never walk backwards (§7).
+- [x] `test_quota_io_split_by_op`: a control op moves only the control counters, leaving read/write untouched (§7).
+- [x] `test_quota_control_io_zero_byte_counts_op`: a zero-byte control counts as an op and contributes no bytes (§7).
+- [x] `test_quota_wakeup_only_from_blocked`: of six wake notifications only the BLOCKED one counts (§7).
+- [x] `test_quota_sample_stamped`: a sample carries its own timestamp; a NULL task samples to all zeroes (§7).
+- [x] `test_quota_membership_delta_excludes_prejoin`: a job delta excludes pre-baseline usage; a fresh baseline yields zero (§7).
+- [x] `test_quota_delta_saturates_on_reset`: an inverted baseline saturates to 0 instead of wrapping to ~2^64 (§7).
+- [x] `test_quota_rate_record_roundtrip`: every policy field round-trips and one class does not leak into another (§7).
+- [x] `test_quota_rate_record_rejects_bad`: bad version/flag/unit/period/range and reservation-above-cap are refused, stored policy intact (§7).
+- [x] `test_quota_rate_generation_advances`: the generation advances on success and never on a refused publication (§7).
+- [x] `test_quota_rate_unset_reports_no_policy`: an unset class reports flags 0 and generation 0 (§7).
+- [x] `test_quota_rate_separate_from_usage`: publishing policy charges no usage and a charge does not alter policy (§7).
+- [x] `test_quota_rate_unflagged_fields_canonicalized`: unflagged amounts and a CPU byte envelope read back as zero, not caller garbage (§7).
+- [x] `test_quota_rate_ops_and_bytes_coexist`: an IOPS cap and a bytes/sec cap on one stream do not overwrite each other (§7).
+- [x] `test_quota_delta_covers_every_field`: all 8 baseline fields assert positive, equal, and inverted deltas independently (§7).
+- [x] `test_quota_rate_get_retry_preserves_output`: a forced in-flux class returns `STATUS_RETRY` leaving the caller's record untouched (§7).
+- [x] `test_quota_rate_boundary_matrix`: exact-MAX and equal-bound acceptance, both reserved fields, bytes-envelope rules, and per-class isolation (§7).
+- [/] Two-CPU concurrent wakers must count ONE wakeup for one BLOCKED->READY claim; the CAS is in place but a real cross-CPU race needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
+- [/] A reader racing a rate publisher must see either the whole old or whole new record, never a mix; needs the same SMP harness. -> XREF: `§10` (test infrastructure).
+- [/] A named timer whose handle allocation fails is still published and counted; proving it needs an exhausted handle table. -> XREF: `§11` (handle quota integration).
 
 **Test checkpoint:** all `test_quota_*` cases pass under the kernel runner; pending assertions render `[STUB]` via `TEST_PENDING` until their owning section ships; the boot leak sweep prints a zero-delta line for the quota category.
 

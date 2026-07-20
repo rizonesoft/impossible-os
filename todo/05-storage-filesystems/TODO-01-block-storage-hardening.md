@@ -43,6 +43,7 @@ title: "TODO-01 -- Block Storage Hardening"
 | 💎  |   5   | §5 AHCI SMART read -- `0xB0/0xD0`, attribute table, `blkdev_smart_query()`           | §4 (reliable ATA command path)                    |  [ ]   |
 | ⭐  |   6   | §6 Block device I/O metrics -- per-device counters, `blkdev_stats()`, `iostat`       | `blkdev.c` dispatch path (all drivers registered) |  [ ]   |
 | ⭐  |   7   | §7 Block-level disk cache -- LRU sector cache, write-back 5 s, `cache_invalidate()`  | §1 + §2 (flush/error path used by cache eviction)  |  [ ]   |
+| ⭐  |   8   | §8 Block-I/O QoS -- per-owner IOPS/bandwidth caps, period refill, backpressure       | §6 (dispatch counters), D02 T25 §7 (rate record)  |  [ ]   |
 
 > §6 (I/O metrics) and §7 (block-level LRU cache) are `⭐` exclusive: Windows exposes I/O counters only through PDH/ETW; Linux exposes them only through procfs. Impossible OS embeds live counters directly in `blkdev_t` and exposes them through both a kernel API and the Task Manager, eliminating the indirection of a separate monitoring daemon. The in-kernel LRU sector cache is a single write-back layer shared by all filesystem drivers -- neither Windows nor Linux unifies this at the `blkdev` level without a more complex page cache or request queue abstraction.
 
@@ -164,6 +165,24 @@ Implement an LRU sector cache (2–8 MiB configurable) in `blkdev.c` as a write-
 - [ ] Commit: `"kernel: blkdev LRU sector cache -- write-back, 5s flush, cache_flush/invalidate, write-through mode"`
 
 ---
+
+## 8. Block-I/O QoS (IOPS / Bandwidth Caps) `[Opus]`
+
+Enforce the I/O rate-limit records published by the quota subsystem at the `blkdev` dispatch layer: per-owner IOPS and bytes-per-second caps with a per-period refill, applied to read, write, and control traffic independently. §6 MEASURES per-device traffic; this section THROTTLES it per owner.
+
+**Files:** `src/kernel/main/blkdev.c` + `include/kernel/main/blkdev.h` (extend)
+
+> [!NOTE]
+> Enforcement belongs in the `blkdev` dispatch path for the same reason the §6 counters do: every registered driver inherits it without per-driver code. The policy record is defined and stored by the quota subsystem; nothing here invents its own limit shape.
+
+- [ ] Consume `quota_rate_limit_get()` for the IO_READ / IO_WRITE / IO_CONTROL classes. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7` (item: "Define a rate-limit record")
+- [ ] Honor both `QUOTA_RATE_UNIT_OPS` (IOPS) and `QUOTA_RATE_UNIT_BYTES` (bandwidth) caps over `period_ns`, refilled at period rollover.
+- [ ] Throttle by delaying submission (queue the request), never by failing the I/O: a rate cap is backpressure, not an error.
+- [ ] Charge the ISSUING owner, not the device, so one process cannot spend another's budget.
+- [ ] Leave `reservation` unenforced until an admission path exists, and say so in the section notes rather than silently ignoring the field.
+- [ ] Commit: `"blkdev: per-owner I/O QoS -- IOPS and bandwidth caps with period refill"`
+
+**Test checkpoint:** a caller capped at N IOPS completes no more than N operations per period across two consecutive periods; a bytes-per-second cap limits throughput without returning an I/O error; read, write, and control caps apply independently; an uncapped caller is unaffected by another caller's cap.
 
 ## OS Comparison
 

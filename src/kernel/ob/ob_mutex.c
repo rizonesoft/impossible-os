@@ -42,7 +42,7 @@ static void mutex_on_delete(void *body)
             struct task *t = task_get_by_pid(tid);
             if (t && thid < t->num_threads &&
                 t->threads[thid].state == THREAD_BLOCKED) {
-                t->threads[thid].state = THREAD_READY;
+                task_wake_thread(t, thid);
             }
         }
     }

@@ -124,16 +124,24 @@ typedef struct job_object {
     uint32_t   total_processes;            /* ever assigned (monotonic) */
     uint32_t   total_terminated;           /* members that died while in the job */
     uint8_t    terminated;                 /* set by NtTerminateJobObject: no new joins */
-    /* Persistent accounting for DEPARTED members: a member's CPU/I/O totals are
-     * folded in here the moment it detaches, so a job's aggregate does not
-     * shrink when a member exits (Windows keeps departed usage in the job).
-     * Live members are summed on top of these at query time. */
+    /* Persistent accounting for DEPARTED members: what a member accumulated
+     * WHILE ASSOCIATED is folded in here the moment it detaches, so a job's
+     * aggregate does not shrink when a member exits (Windows keeps departed
+     * usage in the job). Live members are summed on top of these at query time,
+     * contributing the same membership-interval delta.
+     *
+     * MEMBERSHIP INTERVAL, not member lifetime: each member's join-time
+     * baseline (task.job_acct_base) is subtracted, so the aggregate answers
+     * "what was done in this job" rather than "what its members ever did".
+     * Guarded by `lock` -- every read and write is inside the job spinlock. */
     uint64_t   acc_user_ns;
     uint64_t   acc_kernel_ns;
     uint64_t   acc_read_ops;
     uint64_t   acc_write_ops;
     uint64_t   acc_read_bytes;
     uint64_t   acc_write_bytes;
+    uint64_t   acc_other_ops;      /* device-control operations */
+    uint64_t   acc_other_bytes;    /* device-control bytes */
     /* Stored limits. Only ACTIVE_PROCESS + KILL_ON_JOB_CLOSE are honored;
      * limit_flags never contains an unsupported bit (set path rejects them). */
     uint32_t   limit_flags;

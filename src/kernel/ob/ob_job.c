@@ -158,6 +158,7 @@ void ob_job_detach_task(struct task *t)
     uint32_t i;
     int found = 0;
     quota_absorb_record_t absorbed;
+    struct task_acct_base member_delta;
 
     if (!t)
         return;
@@ -185,15 +186,26 @@ void ob_job_detach_task(struct task *t)
     t->job_absorb.active = 0;
 
     spin_lock_irqsave(&job->lock, &jflags);
-    /* Fold this member's CPU/I/O totals into the job's persistent accumulators
-     * BEFORE removing it, so a job's aggregate usage does not vanish when a
-     * member exits (Windows retains departed-member usage). */
-    job->acc_user_ns    += t->user_time_ns;
-    job->acc_kernel_ns  += t->kernel_time_ns;
-    job->acc_read_ops   += t->io_read_count;
-    job->acc_write_ops  += t->io_write_count;
-    job->acc_read_bytes += t->io_read_bytes;
-    job->acc_write_bytes += t->io_write_bytes;
+    /* Fold what this member accumulated WHILE ASSOCIATED into the job's
+     * persistent accumulators BEFORE removing it, so a job's aggregate usage
+     * does not vanish when a member exits (Windows retains departed-member
+     * usage).
+     *
+     * The MEMBERSHIP INTERVAL, not the member's lifetime: the join-time
+     * baseline is subtracted, so a process that ran for an hour and was then
+     * assigned to a job hands the job only what it spent as a member. Folding
+     * raw totals here (as this did before CPU/I/O accounting was specified)
+     * credited the job retroactively for work done before it existed, and made
+     * the aggregate disagree with the same member's live contribution below. */
+    task_acct_delta_since(t, &t->job_acct_base, &member_delta);
+    job->acc_user_ns     += member_delta.user_time_ns;
+    job->acc_kernel_ns   += member_delta.kernel_time_ns;
+    job->acc_read_ops    += member_delta.io_read_count;
+    job->acc_write_ops   += member_delta.io_write_count;
+    job->acc_read_bytes  += member_delta.io_read_bytes;
+    job->acc_write_bytes += member_delta.io_write_bytes;
+    job->acc_other_ops   += member_delta.io_other_count;
+    job->acc_other_bytes += member_delta.io_other_bytes;
     /* A member leaving a TERMINATED job counts as a termination; a member
      * exiting a live job does not (Windows: TotalTerminatedProcesses tracks
      * limit/TerminateJobObject kills, not normal exits). */
@@ -344,6 +356,11 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
     }
 
     ObReferenceObject(job);                       /* membership reference */
+    /* Capture the CPU/I/O baseline in the SAME critical section that publishes
+     * the membership, so a collector walking member_pids[] under this lock can
+     * never see a member whose baseline is still unset (which would credit the
+     * job with that member's entire prior lifetime). */
+    task_acct_capture_base(t, &t->job_acct_base);
     job->member_pids[job->num_members++] = t->pid;
     job->total_processes++;
     /* Publish the absorb record WITH the membership, under the same lock that
@@ -440,6 +457,8 @@ void ob_job_collect_accounting(JOB_OBJECT *job,
     uint32_t i;
     uint64_t user_ns, kernel_ns;
     uint64_t rd_ops, wr_ops, rd_bytes, wr_bytes;
+    uint64_t oth_ops, oth_bytes;
+    struct task_acct_base live;
 
     /* Zero first so partial fills never leak stack. */
     for (i = 0; i < sizeof(*acct); i++)
@@ -456,16 +475,26 @@ void ob_job_collect_accounting(JOB_OBJECT *job,
     wr_ops    = job->acc_write_ops;
     rd_bytes  = job->acc_read_bytes;
     wr_bytes  = job->acc_write_bytes;
+    oth_ops   = job->acc_other_ops;
+    oth_bytes = job->acc_other_bytes;
     for (i = 0; i < job->num_members; i++) {
         struct task *t = task_get_by_pid(job->member_pids[i]);
         if (!t)
             continue;
-        user_ns   += t->user_time_ns;
-        kernel_ns += t->kernel_time_ns;
-        rd_ops    += t->io_read_count;
-        wr_ops    += t->io_write_count;
-        rd_bytes  += t->io_read_bytes;
-        wr_bytes  += t->io_write_bytes;
+        /* A live member contributes exactly what a departing one folds in: its
+         * usage since it joined. Both halves of the membership lifetime use the
+         * same baseline, so a member's contribution does not jump when it exits.
+         * The baseline was published under THIS lock alongside the pid, so it is
+         * necessarily set for any member reachable from member_pids[]. */
+        task_acct_delta_since(t, &t->job_acct_base, &live);
+        user_ns   += live.user_time_ns;
+        kernel_ns += live.kernel_time_ns;
+        rd_ops    += live.io_read_count;
+        wr_ops    += live.io_write_count;
+        rd_bytes  += live.io_read_bytes;
+        wr_bytes  += live.io_write_bytes;
+        oth_ops   += live.io_other_count;
+        oth_bytes += live.io_other_bytes;
     }
     acct->TotalProcesses          = job->total_processes;   /* ever associated (monotonic) */
     acct->ActiveProcesses         = job->num_members;       /* currently live */
@@ -483,6 +512,11 @@ void ob_job_collect_accounting(JOB_OBJECT *job,
         io->WriteOperationCount = wr_ops;
         io->ReadTransferCount   = rd_bytes;
         io->WriteTransferCount  = wr_bytes;
+        /* Control ("Other") I/O completes the Windows IO_COUNTERS ABI, whose
+         * Other* fields were previously left zeroed. They report the device-
+         * control traffic counted by task_acct_note_control_io(). */
+        io->OtherOperationCount = oth_ops;
+        io->OtherTransferCount  = oth_bytes;
     }
 }
 

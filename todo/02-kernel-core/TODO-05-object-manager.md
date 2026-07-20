@@ -176,6 +176,7 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 - [x] Implement `ObInsertObject(object, name, directory)` -- adds a named entry; fails if name exists and object is not a permanent replacement
 - [x] Implement `ObLookupObjectByName(path, type, access, &result)` -- full parse walk calling `type->on_parse` at each node; calls `ObReferenceObject` on success
 - [x] Implement `OBJECT_SYMBOLIC_LINK` body type -- target string; `on_parse` redirects the walk
+- [ ] Named-object create must be transactional: roll back the `ObInsertObject` publication when handle allocation fails, so a failed create leaves no persistent named object. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
 - [x] Create the root namespace at ObInit: `\`, `\Device`, `\KernelObjects`, `\DosDevices`, `\BaseNamedObjects`, `\Sessions\0\BaseNamedObjects` (alias for user-mode named objects)
 - [x] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
 - [x] Commit: `"kernel: ob -- object namespace directory and symlinks"`

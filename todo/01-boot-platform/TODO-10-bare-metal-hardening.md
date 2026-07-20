@@ -590,7 +590,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 > - NCQ tag-state race surfaced by the adversarial pass is owned by the AHCI NCQ section in 05-storage TODO-01 (Accepted below)
 
 > **Verified:** 2026-06-11 | commit `62112f00` | 8/8 items | build OK | smoke PASS (KVM 2.400s)
-> **Accepted:** [M] NCQ tag state races AHCI ISR in `ncq_sync_rw` timeout path (reason: scope) -> XREF: 05-storage-filesystems/TODO-01 §3 (item: "Guard NCQ tag state vs AHCI ISR" at line 94)
+> **Accepted:** [M] NCQ tag state races AHCI ISR in `ncq_sync_rw` timeout path (reason: scope) -> XREF: 05-storage-filesystems/TODO-01 §3 (item: "Guard NCQ tag state vs AHCI ISR" at line 95)
 > **Quality reviewed:** 2026-06-11 | Codex 7x (adversarial x2, consistency, perf, re-adversarial x3) | 2H+6M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

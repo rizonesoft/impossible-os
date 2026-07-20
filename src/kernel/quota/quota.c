@@ -249,6 +249,26 @@ struct quota_block {
      * would have to choose between never reaching live blocks (a default no
      * administrator can actually change) or trampling explicit limits. */
     uint8_t    limit_explicit[QUOTA_RESOURCE_TYPE_COUNT];
+    /* Rate policy per class, published as a WHOLE under a sequence counter.
+     *
+     * `rate_seq[cls]` is odd while that class is being written and even when
+     * its record is stable; a reader samples it before and after copying and
+     * retries on a change. That is what makes a policy update atomic to a
+     * consumer without making the READ take the block lock -- a scheduler
+     * consulting a policy runs in exactly the contexts (its own lock held,
+     * interrupts disabled) where quota.h forbids entering this API's critical
+     * sections. Writers are serialized by `lock`, so a class never has two
+     * concurrent writers.
+     *
+     * PER CLASS, not one shared counter. A single counter would let a write to
+     * any class restart a reader of a DIFFERENT class, so a busy publisher
+     * could keep a reader retrying indefinitely -- in a context where that
+     * reader may be running with interrupts disabled, which turns a livelock
+     * into a hang. Per-class sequencing bounds the interference to the one
+     * class actually being updated, and the reader is bounded on top of that
+     * (see QUOTA_RATE_READ_TRIES). */
+    uint32_t   rate_seq[QUOTA_RATE_CLASS_COUNT];
+    quota_rate_limit_t rate[QUOTA_RATE_CLASS_COUNT];
     uint32_t   owner_sid_buf[SID_MAX_SIZE / 4];     /* SID capture, 4-aligned  */
     uint8_t    has_owner_sid;                       /* 0 = no owner recorded    */
 };
@@ -367,12 +387,280 @@ static inline void quota_block_unlock_quiet(quota_block_t *block, uint64_t flags
     spin_unlock_irqrestore(&block->lock, flags);
 }
 
+/* ==========================================================================
+ * Rate-limit policy records (see the contract in quota.h)
+ *
+ * Policy is NOT usage: nothing here charges, returns, or consults a counter.
+ * These functions only store and reproduce a record coherently.
+ * ========================================================================== */
+
+/* Bound on the lock-free reader's retries before it falls back to the lock.
+ * A seqlock reader is only livelock-free if something stops it retrying: this
+ * API is documented as callable from a scheduler with interrupts disabled,
+ * where an unbounded retry is a hang rather than a slowdown. Writers hold the
+ * block lock and are rare (an administrative action), so exhausting this many
+ * attempts means real contention, not the common case. */
+#define QUOTA_RATE_READ_TRIES  8u
+
+/* Field accessors used by BOTH sides of the publication, so every shared field
+ * is touched through an atomic access rather than a plain struct copy racing a
+ * plain struct write. */
+static void quota_rate_store_field(uint32_t *dst, uint32_t v)
+{
+    __atomic_store_n(dst, v, __ATOMIC_RELAXED);
+}
+
+static void quota_rate_store_u64(uint64_t *dst, uint64_t v)
+{
+    __atomic_store_n(dst, v, __ATOMIC_RELAXED);
+}
+
+/* Publish one envelope in CANONICAL form: an amount whose flag is clear stores
+ * as 0. The contract says an unflagged amount is meaningless, so copying the
+ * caller's value through would persist an indeterminate number, make two
+ * logically identical policies differ byte-for-byte, and (once a query syscall
+ * copies records outward) export uninitialized caller stack. `keep` lets the
+ * CPU case blank the entire byte envelope. */
+static void quota_rate_store_envelope(quota_rate_envelope_t *dst,
+                                      const quota_rate_envelope_t *src,
+                                      int keep)
+{
+    uint32_t f = keep ? src->flags : 0u;
+
+    quota_rate_store_field(&dst->flags,    f);
+    quota_rate_store_field(&dst->reserved, 0u);   /* pinned ABI hole: always 0 */
+    quota_rate_store_u64(&dst->weight,
+                         (f & QUOTA_RATE_F_WEIGHT)      ? src->weight      : 0ull);
+    quota_rate_store_u64(&dst->reservation,
+                         (f & QUOTA_RATE_F_RESERVATION) ? src->reservation : 0ull);
+    quota_rate_store_u64(&dst->max,
+                         (f & QUOTA_RATE_F_MAX)         ? src->max         : 0ull);
+    quota_rate_store_u64(&dst->hard_cap,
+                         (f & QUOTA_RATE_F_HARD_CAP)    ? src->hard_cap    : 0ull);
+}
+
+static void quota_rate_load_envelope(const quota_rate_envelope_t *src,
+                                     quota_rate_envelope_t *dst)
+{
+    dst->flags       = __atomic_load_n(&src->flags, __ATOMIC_RELAXED);
+    dst->reserved    = __atomic_load_n(&src->reserved, __ATOMIC_RELAXED);
+    dst->weight      = __atomic_load_n(&src->weight, __ATOMIC_RELAXED);
+    dst->reservation = __atomic_load_n(&src->reservation, __ATOMIC_RELAXED);
+    dst->max         = __atomic_load_n(&src->max, __ATOMIC_RELAXED);
+    dst->hard_cap    = __atomic_load_n(&src->hard_cap, __ATOMIC_RELAXED);
+}
+
+static void quota_rate_copy_out(const quota_rate_limit_t *src,
+                                quota_rate_limit_t *dst)
+{
+    dst->version    = __atomic_load_n(&src->version, __ATOMIC_RELAXED);
+    dst->reserved0  = __atomic_load_n(&src->reserved0, __ATOMIC_RELAXED);
+    dst->period_ns  = __atomic_load_n(&src->period_ns, __ATOMIC_RELAXED);
+    dst->generation = __atomic_load_n(&src->generation, __ATOMIC_RELAXED);
+    quota_rate_load_envelope(&src->primary, &dst->primary);
+    quota_rate_load_envelope(&src->bytes,   &dst->bytes);
+}
+
+quota_rate_unit_t quota_rate_envelope_unit(quota_rate_class_t cls, int want_bytes)
+{
+    if (cls == QUOTA_RATE_CLASS_CPU)
+        return QUOTA_RATE_UNIT_NS;          /* bytes envelope is never published */
+    return want_bytes ? QUOTA_RATE_UNIT_BYTES : QUOTA_RATE_UNIT_OPS;
+}
+
+static int quota_rate_class_valid(quota_rate_class_t cls)
+{
+    return (uint32_t)cls < (uint32_t)QUOTA_RATE_CLASS_COUNT;
+}
+
+/* Validate ONE envelope in isolation. The two envelopes of a record are
+ * independent dimensions (operations and bytes), so their amounts are never
+ * compared against each other -- 500 ops and 4 MiB per period is a perfectly
+ * coherent policy, and requiring an ordering between them would be nonsense. */
+static int quota_rate_envelope_valid(const quota_rate_envelope_t *e)
+{
+    if (e->flags & ~(uint32_t)QUOTA_RATE_F_ALL)
+        return 0;
+    if (e->reserved != 0u)          /* pinned ABI hole must be zero */
+        return 0;
+
+    /* Only FLAGGED amounts are meaningful, so only they are range-checked; an
+     * unset field may hold anything and is never read by a consumer. */
+    if ((e->flags & QUOTA_RATE_F_WEIGHT) && e->weight > QUOTA_RATE_AMOUNT_MAX)
+        return 0;
+    if ((e->flags & QUOTA_RATE_F_RESERVATION) && e->reservation > QUOTA_RATE_AMOUNT_MAX)
+        return 0;
+    if ((e->flags & QUOTA_RATE_F_MAX) && e->max > QUOTA_RATE_AMOUNT_MAX)
+        return 0;
+    if ((e->flags & QUOTA_RATE_F_HARD_CAP) && e->hard_cap > QUOTA_RATE_AMOUNT_MAX)
+        return 0;
+
+    /* Ordering: a floor above a ceiling can never be honored simultaneously.
+     * Each pair is checked only when BOTH ends are flagged. */
+    if ((e->flags & QUOTA_RATE_F_RESERVATION) && (e->flags & QUOTA_RATE_F_MAX) &&
+        e->reservation > e->max)
+        return 0;
+    if ((e->flags & QUOTA_RATE_F_RESERVATION) && (e->flags & QUOTA_RATE_F_HARD_CAP) &&
+        e->reservation > e->hard_cap)
+        return 0;
+    if ((e->flags & QUOTA_RATE_F_MAX) && (e->flags & QUOTA_RATE_F_HARD_CAP) &&
+        e->max > e->hard_cap)
+        return 0;
+
+    return 1;
+}
+
+/* Does this envelope carry an amount that only means something per period? */
+static int quota_rate_envelope_needs_period(const quota_rate_envelope_t *e)
+{
+    return (e->flags & (QUOTA_RATE_F_RESERVATION |
+                        QUOTA_RATE_F_MAX |
+                        QUOTA_RATE_F_HARD_CAP)) != 0u;
+}
+
+/* Reject any record a consumer could not act on. Validation lives here, at the
+ * single publication point, so no consumer has to defend against a policy that
+ * contradicts itself -- and so an unsatisfiable policy is reported to whoever
+ * set it rather than silently reinterpreted by a scheduler at runtime. */
+static int quota_rate_record_valid(quota_rate_class_t cls,
+                                   const quota_rate_limit_t *rec)
+{
+    if (rec->version != QUOTA_RATE_VERSION)
+        return 0;
+    if (rec->reserved0 != 0u)
+        return 0;
+
+    if (!quota_rate_envelope_valid(&rec->primary))
+        return 0;
+    if (!quota_rate_envelope_valid(&rec->bytes))
+        return 0;
+
+    /* CPU time has no byte dimension. A byte envelope on a CPU policy is a
+     * caller error, not something to store and hope the consumer ignores. */
+    if (cls == QUOTA_RATE_CLASS_CPU && rec->bytes.flags != 0u)
+        return 0;
+
+    /* Every amount except a bare weight is expressed PER PERIOD, so a policy
+     * carrying one without a window is meaningless: a consumer would have to
+     * invent the window, and two consumers would invent different ones. */
+    if ((quota_rate_envelope_needs_period(&rec->primary) ||
+         quota_rate_envelope_needs_period(&rec->bytes)) &&
+        rec->period_ns == 0ull)
+        return 0;
+
+    return 1;
+}
+
+NTSTATUS quota_rate_limit_set(quota_block_t *block, quota_rate_class_t cls,
+                              const quota_rate_limit_t *rec)
+{
+    uint64_t flags;
+    uint64_t next_gen;
+
+    if (!block || !rec || !quota_rate_class_valid(cls))
+        return STATUS_INVALID_PARAMETER;
+    if (!quota_rate_record_valid(cls, rec))
+        return STATUS_INVALID_PARAMETER;
+
+    /* The block lock serializes WRITERS (so a class's sequence counter never
+     * has two concurrent publishers); the sequence counter is what makes the
+     * update atomic to lock-free READERS. */
+    spin_lock_irqsave(&block->lock, &flags);
+
+    next_gen = block->rate[cls].generation + 1ull;
+
+    /* Odd sequence = "record in flux". The release fence keeps the counter
+     * bump ahead of the field writes, so a reader that saw the even value
+     * cannot also observe a half-written record. */
+    __atomic_store_n(&block->rate_seq[cls], block->rate_seq[cls] + 1u,
+                     __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+
+    /* Field-wise stores through the same helper the reader loads with, so the
+     * publication is expressed in atomic accesses end to end rather than as a
+     * plain struct assignment racing a plain struct read. */
+    quota_rate_store_field(&block->rate[cls].version,   rec->version);
+    quota_rate_store_field(&block->rate[cls].reserved0, rec->reserved0);
+    quota_rate_store_u64(&block->rate[cls].period_ns,   rec->period_ns);
+    quota_rate_store_envelope(&block->rate[cls].primary, &rec->primary, 1);
+    /* CPU has no byte dimension: blank that envelope rather than storing a
+     * zero-flagged copy of whatever the caller left there. */
+    quota_rate_store_envelope(&block->rate[cls].bytes,   &rec->bytes,
+                              cls != QUOTA_RATE_CLASS_CPU);
+    /* The generation is assigned here, never taken from the caller: it must be
+     * monotonic per block so a consumer can use it to detect change. */
+    quota_rate_store_u64(&block->rate[cls].generation,  next_gen);
+
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_store_n(&block->rate_seq[cls], block->rate_seq[cls] + 1u,
+                     __ATOMIC_RELAXED);
+
+    spin_unlock_irqrestore(&block->lock, flags);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS quota_rate_limit_get(const quota_block_t *block, quota_rate_class_t cls,
+                              quota_rate_limit_t *out)
+{
+    uint32_t before, after, tries;
+    quota_rate_limit_t staged;
+
+    if (!block || !out || !quota_rate_class_valid(cls))
+        return STATUS_INVALID_PARAMETER;
+
+    /* Seqlock read: copy, then confirm the sequence neither changed nor was
+     * odd. BOUNDED -- see QUOTA_RATE_READ_TRIES. */
+    for (tries = 0; tries < QUOTA_RATE_READ_TRIES; tries++) {
+        before = __atomic_load_n(&block->rate_seq[cls], __ATOMIC_RELAXED);
+        if (before & 1u)
+            continue;                       /* write in flight; resample */
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+
+        /* Stage into a LOCAL, never straight into *out. A failed attempt reads
+         * a possibly torn record, so writing it to the caller's buffer would
+         * destroy the very snapshot the STATUS_RETRY contract promises to
+         * leave intact -- and would hand a consumer a mixed policy on exactly
+         * the path that exists to prevent one. */
+        quota_rate_copy_out(&block->rate[cls], &staged);
+
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        after = __atomic_load_n(&block->rate_seq[cls], __ATOMIC_RELAXED);
+        if (before == after) {
+            *out = staged;                  /* publish only a stable snapshot */
+            return STATUS_SUCCESS;
+        }
+    }
+
+    /* Sustained contention with a publisher. Report it rather than retrying
+     * forever OR falling back to the block lock: this function is documented as
+     * callable from a scheduler holding its own lock with interrupts disabled,
+     * where spinning is a hang and taking the block lock would violate the
+     * no-nested-call contract in quota.h. `*out` is left UNTOUCHED, so the
+     * caller simply keeps using the snapshot it already had -- a policy that is
+     * one update stale is always safe; a torn or absent one is not. */
+    return STATUS_RETRY;
+}
+
 #ifdef KERNEL_TESTS
 /* Test-only raw counter access (see quota.h). Compiled out in production. */
 void quota_test_poke_usage(quota_block_t *block, quota_resource_type_t type, int64_t value)
 {
     if (block && quota_type_valid(type))
         atomic64_set(&block->counter[type].usage, value);
+}
+
+void quota_test_poke_rate_seq(quota_block_t *block, quota_rate_class_t cls, int odd)
+{
+    uint32_t v;
+
+    if (!block || !quota_rate_class_valid(cls))
+        return;
+    v = __atomic_load_n(&block->rate_seq[cls], __ATOMIC_RELAXED);
+    /* Move to the requested parity without going backwards, so a restored
+     * even value never collides with a sequence a real publish already used. */
+    if (((v & 1u) != 0u) != (odd != 0))
+        v++;
+    __atomic_store_n(&block->rate_seq[cls], v, __ATOMIC_RELAXED);
 }
 
 void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, int64_t value)

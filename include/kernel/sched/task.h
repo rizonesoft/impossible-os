@@ -215,6 +215,46 @@ struct thread {
                                       * pointer from a prior tenant would silently impersonate. */
 };
 
+/* --- Process accounting: job baseline and coherent sampling ---------------
+ * Both structs carry the SAME cumulative metrics in the SAME order, because a
+ * baseline is nothing but a sample taken at join time and every consumer
+ * subtracts one from the other. Keeping them as two named types (rather than
+ * one aliased everywhere) is what keeps `job_acct_base` from being mistaken for
+ * a live reading -- the subtraction is the whole point of the field. */
+struct task_acct_base {
+    uint64_t user_time_ns;
+    uint64_t kernel_time_ns;
+    uint64_t io_read_count;
+    uint64_t io_read_bytes;
+    uint64_t io_write_count;
+    uint64_t io_write_bytes;
+    uint64_t io_other_count;
+    uint64_t io_other_bytes;
+};
+
+/* One process's cumulative metrics read under a SINGLE timestamp, so a policy
+ * consumer can divide two samples into a rate itself. The kernel stores no
+ * rate and no window: see the metric block in struct task for why a shared
+ * window record would let two consumers corrupt each other's baseline.
+ *
+ * NOT a coherent cross-counter snapshot: the counters are independent RELAXED
+ * atomics, so a sample taken while the task runs can straddle an update. That
+ * is the same contract the counters themselves carry, and it is sufficient for
+ * rate derivation, where a one-event skew is absorbed by the next sample. */
+typedef struct task_acct_sample {
+    uint64_t timestamp_ns;          /* uptime_ns() at the moment of the read */
+    uint64_t user_time_ns;
+    uint64_t kernel_time_ns;
+    uint64_t io_read_count;
+    uint64_t io_read_bytes;
+    uint64_t io_write_count;
+    uint64_t io_write_bytes;
+    uint64_t io_other_count;
+    uint64_t io_other_bytes;
+    uint64_t wakeup_count;
+    uint64_t timer_create_count;
+} task_acct_sample_t;
+
 /* Task Control Block */
 struct task {
     uint32_t    pid;            /* process ID */
@@ -299,6 +339,32 @@ struct task {
     uint64_t    io_write_bytes;      /* bytes written via handle file path */
     uint64_t    vol_ctxsw;           /* voluntary switches (yield/block) */
     uint64_t    invol_ctxsw;         /* involuntary switches (preempt) */
+    /* --- Control I/O, wakeup, and timer-creation metrics ---
+     * Same RELAXED monotonic discipline as the counters above. Each metric has
+     * exactly ONE canonical event at ONE instrumentation layer, because the
+     * same logical action is reachable from several layers and counting it at
+     * more than one inflates every rate derived from it:
+     *   io_other_*         a COMPLETED device-control request, counted once at
+     *                      completion with the bytes it actually transferred.
+     *                      A failed or zero-byte control still counts as an OP
+     *                      (it occupied the device) and contributes no bytes.
+     *   wakeup_count       a thread of this task went BLOCKED -> READY because
+     *                      a synchronization primitive released it. Waking an
+     *                      already-runnable thread, a preemption requeue, and
+     *                      thread creation are NOT wakeups: they reach READY
+     *                      without a wait ever having been satisfied. Of the
+     *                      17 sites assigning THREAD_READY only the 9 wait
+     *                      grants call task_acct_note_wakeup().
+     *   timer_create_count a timer OBJECT was created. Arming and rearming an
+     *                      existing timer are not creations.
+     * No RATE is stored here. A sampler reads these through task_acct_sample()
+     * under one coherent timestamp and each policy consumer keeps its own prior
+     * sample; one shared window record in the kernel would let two consumers
+     * reset each other's baseline and read mismatched samples. */
+    uint64_t    io_other_count;      /* completed device-control operations */
+    uint64_t    io_other_bytes;      /* bytes transferred by control operations */
+    uint64_t    wakeup_count;        /* BLOCKED -> READY wait grants received */
+    uint64_t    timer_create_count;  /* timer objects created by this process */
     /* Exception-dispatch telemetry rate gate (TODO-23 s16): packed
      * {window_ms:44, count:20}, updated by a lock-free CAS in
      * except_telem_rate_gate(). Caps per-process dispatch-telemetry events so a
@@ -399,6 +465,29 @@ struct task {
      * usage at detach would return them twice and corrupt other members'
      * accounting. Zeroed on slot (re)creation like the job pointer. */
     struct quota_absorb_record job_absorb;
+    /* Cumulative accounting values captured when this task JOINED `job`, so the
+     * job's CPU/I/O aggregate covers what its members did WHILE ASSOCIATED.
+     *
+     * Without a baseline the aggregate is the sum of member LIFETIME totals, so
+     * a process that burned an hour of CPU and was then assigned to a job would
+     * hand that hour to the job retroactively -- and a job used to measure a
+     * workload would report time nobody spent in it. Subtracting the baseline
+     * makes both halves of the lifetime consistent: a live member contributes
+     * (current - base) at query time and a departing one folds exactly the same
+     * delta into the persistent accumulators.
+     *
+     * Published under job->lock in the SAME critical section that appends the
+     * pid to member_pids[], so a collector walking that array under the same
+     * lock can never observe a member whose baseline is not yet set. Consumed
+     * by the detach that claims the membership.
+     *
+     * Deliberately NOT reset on slot (re)creation, unlike `job` and
+     * `job_absorb`: it is meaningless without a membership and is overwritten
+     * by every path that creates one (ob_job_assign, and fork inheritance,
+     * which routes through it). A reused slot's stale value is therefore never
+     * read -- and zeroing it would suggest the field means something when no
+     * membership exists, which is exactly what it must not be read as. */
+    struct task_acct_base job_acct_base;
     /* --- Resource quota accounting (kernel/quota/quota.h) ---
      * `quota` is this process's own accounting block; `quota_user` is the
      * canonical block shared by every process running as the same owner SID,
@@ -557,6 +646,115 @@ uint32_t task_count(void);
 
 /* Get a task by PID. Returns NULL if invalid. */
 struct task *task_get_by_pid(uint32_t pid);
+
+/* --- Process accounting metrics (CPU / I/O / wakeup / timer) -------------
+ * The instrumentation seams for the metrics documented on struct task. Each is
+ * the SINGLE canonical counting point for its event; adding a second caller at
+ * another layer double-counts and silently inflates every derived rate.
+ *
+ * All three are lock-free RELAXED atomic increments and take no allocation, no
+ * lock, and no log, so they are safe in interrupt context and beneath a caller's
+ * spinlock -- which they must be, since the wake grant is counted while the
+ * waking primitive still holds its own lock. A NULL task is a no-op, so a
+ * counting site never has to pre-validate a lookup that may have raced a death.
+ */
+
+/* Count one COMPLETED read / write of `bytes` bytes. Call at EVERY successful
+ * completion regardless of what backs the handle -- file, pipe, or device --
+ * because these counters describe the PROCESS's I/O, not one subsystem's.
+ * Missing a backing kind does not merely lose those events: it makes the whole
+ * per-process and per-job breakdown wrong for any workload that uses it (a
+ * pipe-heavy process reporting zero I/O). A zero or negative transfer is not a
+ * completion and must not be passed here. */
+void task_acct_note_read_io(struct task *t, uint64_t bytes);
+void task_acct_note_write_io(struct task *t, uint64_t bytes);
+
+/* Count one COMPLETED device-control operation and the bytes it moved. Call
+ * once at completion, never at submission: a control that fails after issue
+ * still occupied the device (so it counts as an op) but moved nothing. */
+void task_acct_note_control_io(struct task *t, uint64_t bytes);
+
+/* Count one wait grant: `prev_state` is the thread's state BEFORE it was set to
+ * THREAD_READY, and only THREAD_BLOCKED counts. Taking the previous state as an
+ * argument (rather than reading it here) keeps the check on the caller's side of
+ * its own lock, where the transition is atomic with respect to other wakers. */
+void task_acct_note_wakeup(struct task *t, uint32_t prev_state);
+
+/* Count one timer OBJECT creation. Not called on arm or rearm. */
+void task_acct_note_timer_create(struct task *t);
+
+/* THE wait-grant seam: make `thread_idx` of `t` runnable and count the wakeup
+ * iff THIS caller is the one that actually took it out of BLOCKED. Every
+ * synchronization primitive that releases a waiter (event, semaphore, mutex,
+ * condvar, rwlock, object-manager mutant) goes through here, so the transition
+ * and its accounting cannot drift apart -- an open-coded `state = THREAD_READY`
+ * at a wait-grant site is a counting bug.
+ *
+ * Sites that reach READY WITHOUT satisfying a wait -- thread creation and the
+ * scheduler's preemption requeue -- deliberately do NOT call this: they assign
+ * the state directly, because no waiter was granted anything.
+ *
+ * THE TRANSITION IS CLAIMED WITH A CAS, AND A LOST CLAIM CHANGES NOTHING. None
+ * of these primitives serializes its wake path under a spinlock (event,
+ * semaphore, mutex, condvar, and rwlock have no lock at all), so two CPUs
+ * waking the same waiter would both observe THREAD_BLOCKED under a plain
+ * read-then-write. The compare-exchange makes exactly one of them the winner.
+ *
+ * A FAILED CAS MUST NOT STORE. The open-coded assignments this replaced set
+ * THREAD_READY unconditionally, which is only safe while nothing else can move
+ * the thread concurrently: once a winner exists, the loser's store would race
+ * the scheduler and could push a thread that has already advanced to
+ * THREAD_RUNNING back to THREAD_READY -- scheduling it twice -- or resurrect
+ * one that reached THREAD_DEAD/THREAD_FREE. Only a BLOCKED thread is waiting
+ * for a grant, so a non-BLOCKED target means there is nothing to grant.
+ *
+ * KNOWN PRE-EXISTING RACE, NOT introduced or worsened here: the wait paths
+ * publish a waiter into the primitive's queue BEFORE setting THREAD_BLOCKED, so
+ * a waker running in that window finds the thread not yet blocked. This seam
+ * does nothing (the wake is lost); the unconditional store it replaced also
+ * lost it, because the waiter's own THREAD_BLOCKED store immediately overwrote
+ * the READY the waker had just written. Closing it needs a per-primitive wait
+ * lock covering predicate, state, and queue as one transaction -- owned by the
+ * scheduler's wait/wake transaction-locking work, not by accounting
+ * instrumentation. Do not read the CAS as proof the window is closed. */
+static inline void task_wake_thread(struct task *t, uint32_t thread_idx)
+{
+    uint32_t expected = THREAD_BLOCKED;
+
+    if (!t || thread_idx >= t->num_threads)
+        return;
+
+    if (__atomic_compare_exchange_n(&t->threads[thread_idx].state, &expected,
+                                    (uint32_t)THREAD_READY, 0 /* strong */,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+        task_acct_note_wakeup(t, THREAD_BLOCKED);   /* sole winner counts */
+}
+
+/* Read every cumulative metric under one timestamp. `out` is fully written (or
+ * fully zeroed when `t` is NULL) so a caller never derives a rate from a
+ * partially filled sample. */
+void task_acct_sample(const struct task *t, task_acct_sample_t *out);
+
+/* Capture the join-time baseline used for job membership-interval accounting.
+ * The caller must hold the lock under which the membership is published, so the
+ * baseline is visible to any collector that can see the membership. */
+void task_acct_capture_base(const struct task *t, struct task_acct_base *out);
+
+/* Cumulative metrics minus a baseline: what the task accumulated since the
+ * baseline was captured. Saturates at zero rather than wrapping, so a counter
+ * that was reset underneath a live baseline reports no contribution instead of
+ * an astronomically large one. */
+void task_acct_delta_since(const struct task *t, const struct task_acct_base *base,
+                           struct task_acct_base *out);
+
+/* The pure arithmetic behind task_acct_delta_since, split out so the
+ * field-by-field subtraction can be exercised against synthetic values without
+ * a live task. Eight independent saturating subtractions is exactly the shape
+ * where a copy/paste field swap hides, and a test driving a real task can only
+ * move the fields it can provoke. `base` may be NULL (the whole of `now`). */
+void task_acct_delta_fields(const struct task_acct_base *now,
+                            const struct task_acct_base *base,
+                            struct task_acct_base *out);
 
 /* Enable/disable preemptive scheduling. */
 void scheduler_enable(void);

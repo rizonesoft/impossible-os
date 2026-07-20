@@ -1618,6 +1618,802 @@ static void test_quota_boundary_matrix(void)
     quota_block_deref(dst);
 }
 
+/* ============================================================================
+ * Section 7: CPU, I/O, and wakeup accounting + rate-limit records
+ *
+ * The metric counters live on `struct task` and are written by lock-free
+ * RELAXED atomics from their canonical event sites. These tests drive the
+ * PUBLIC counting seams (task_acct_note_*) against the CURRENT task and assert
+ * the observable deltas, rather than reaching into scheduler-private state --
+ * which is exactly the property section 7 promises power/health policy.
+ * ========================================================================== */
+
+/* CPU time is charged by the timer tick, which a test may not drive. What IS
+ * assertable without live boot infrastructure: the split is exposed per task,
+ * both halves are readable through the sampling API, and a sample never walks
+ * backwards relative to an earlier one (monotonicity is the contract policy
+ * depends on when it divides two samples). */
+static void test_quota_cpu_split_monotonic(void)
+{
+    struct task *self = task_current();
+    task_acct_sample_t a, b;
+
+    TEST_ASSERT(self != (struct task *)0, "test runs with a current task");
+
+    task_acct_sample(self, &a);
+    task_acct_sample(self, &b);
+
+    TEST_ASSERT(b.user_time_ns >= a.user_time_ns,
+                "user CPU time never decreases between samples");
+    TEST_ASSERT(b.kernel_time_ns >= a.kernel_time_ns,
+                "kernel CPU time never decreases between samples");
+    TEST_ASSERT(b.timestamp_ns >= a.timestamp_ns,
+                "sample timestamps advance monotonically");
+}
+
+/* Read, write, and control are SEPARATE dimensions: counting a control op must
+ * not disturb the read or write counters. */
+static void test_quota_io_split_by_op(void)
+{
+    struct task *self = task_current();
+    task_acct_sample_t before, after;
+
+    task_acct_sample(self, &before);
+    task_acct_note_control_io(self, 4096ull);
+    task_acct_sample(self, &after);
+
+    TEST_ASSERT_EQ(after.io_other_count, before.io_other_count + 1ull,
+                   "one control op counted");
+    TEST_ASSERT_EQ(after.io_other_bytes, before.io_other_bytes + 4096ull,
+                   "control bytes accumulated");
+    TEST_ASSERT_EQ(after.io_read_count, before.io_read_count,
+                   "control op does not touch the read op counter");
+    TEST_ASSERT_EQ(after.io_write_count, before.io_write_count,
+                   "control op does not touch the write op counter");
+    TEST_ASSERT_EQ(after.io_read_bytes, before.io_read_bytes,
+                   "control op does not touch read bytes");
+    TEST_ASSERT_EQ(after.io_write_bytes, before.io_write_bytes,
+                   "control op does not touch write bytes");
+}
+
+/* A zero-byte control still occupied the device: it counts as an OPERATION and
+ * contributes no bytes. This is the boundary the event contract calls out, and
+ * getting it wrong silently changes every bytes-per-op figure derived later. */
+static void test_quota_control_io_zero_byte_counts_op(void)
+{
+    struct task *self = task_current();
+    task_acct_sample_t before, after;
+
+    task_acct_sample(self, &before);
+    task_acct_note_control_io(self, 0ull);
+    task_acct_sample(self, &after);
+
+    TEST_ASSERT_EQ(after.io_other_count, before.io_other_count + 1ull,
+                   "zero-byte control counts as an operation");
+    TEST_ASSERT_EQ(after.io_other_bytes, before.io_other_bytes,
+                   "zero-byte control contributes no bytes");
+}
+
+/* ONLY a thread that was actually blocked counts as a wakeup. Every other
+ * prior state reaches READY without a wait having been satisfied, and counting
+ * those would inflate the wakeup rate battery policy reads. */
+static void test_quota_wakeup_only_from_blocked(void)
+{
+    struct task *self = task_current();
+    task_acct_sample_t before, after;
+
+    task_acct_sample(self, &before);
+
+    task_acct_note_wakeup(self, THREAD_BLOCKED);      /* the one counting case */
+    task_acct_note_wakeup(self, THREAD_READY);        /* already runnable      */
+    task_acct_note_wakeup(self, THREAD_RUNNING);      /* never waited          */
+    task_acct_note_wakeup(self, THREAD_DEAD);         /* not a wait grant      */
+    task_acct_note_wakeup(self, THREAD_FREE);         /* reaped slot           */
+    task_acct_note_wakeup((struct task *)0, THREAD_BLOCKED);  /* NULL is a no-op */
+
+    task_acct_sample(self, &after);
+
+    TEST_ASSERT_EQ(after.wakeup_count, before.wakeup_count + 1ull,
+                   "exactly one of six wake notifications counted");
+
+    /* The wake seam itself rejects an out-of-range thread index rather than
+     * writing past the thread array or counting a wakeup for a thread that
+     * does not exist. Driven on the live task with an index above num_threads,
+     * so nothing runnable is disturbed. */
+    task_acct_sample(self, &before);
+    task_wake_thread(self, self->num_threads);        /* one past the end */
+    task_wake_thread(self, THREAD_MAX + 1u);          /* far out of range   */
+    task_wake_thread((struct task *)0, 0);            /* NULL task          */
+    task_acct_sample(self, &after);
+    TEST_ASSERT_EQ(after.wakeup_count, before.wakeup_count,
+                   "out-of-range and NULL wake targets count nothing");
+}
+
+/* The sample is fully written and carries its own timestamp; a NULL task
+ * yields an all-zero sample rather than stack residue a caller would divide. */
+static void test_quota_sample_stamped(void)
+{
+    task_acct_sample_t s;
+
+    task_acct_sample(task_current(), &s);
+    TEST_ASSERT(s.timestamp_ns != 0ull,
+                "a real task's sample carries a nonzero timestamp");
+
+    task_acct_sample((const struct task *)0, &s);
+    TEST_ASSERT_EQ(s.timestamp_ns, 0ull, "NULL task samples to a zero stamp");
+    TEST_ASSERT_EQ(s.user_time_ns, 0ull, "NULL task samples to zero CPU time");
+    TEST_ASSERT_EQ(s.io_other_count, 0ull, "NULL task samples to zero control ops");
+    TEST_ASSERT_EQ(s.wakeup_count, 0ull, "NULL task samples to zero wakeups");
+}
+
+/* THE membership-interval invariant: a job aggregate must cover what a member
+ * did WHILE ASSOCIATED, so usage accumulated before the baseline was captured
+ * is excluded. Driven through the same delta helper ob_job uses, against a
+ * synthetic baseline -- no job assignment or boot infrastructure required. */
+static void test_quota_membership_delta_excludes_prejoin(void)
+{
+    struct task *self = task_current();
+    struct task_acct_base base, delta;
+
+    /* Pre-join traffic: accumulated BEFORE the baseline is captured. */
+    task_acct_note_control_io(self, 1000ull);
+
+    task_acct_capture_base(self, &base);          /* "join" happens here */
+
+    /* Post-join traffic: exactly this much must appear in the delta. */
+    task_acct_note_control_io(self, 250ull);
+    task_acct_note_control_io(self, 750ull);
+
+    task_acct_delta_since(self, &base, &delta);
+
+    TEST_ASSERT_EQ(delta.io_other_count, 2ull,
+                   "delta counts the two post-baseline control ops only");
+    TEST_ASSERT_EQ(delta.io_other_bytes, 1000ull,
+                   "delta counts post-baseline bytes only, excluding pre-join");
+
+    /* A baseline captured NOW yields a zero delta: nothing has happened since. */
+    task_acct_capture_base(self, &base);
+    task_acct_delta_since(self, &base, &delta);
+    TEST_ASSERT_EQ(delta.io_other_count, 0ull,
+                   "a fresh baseline yields no contribution");
+    TEST_ASSERT_EQ(delta.user_time_ns, 0ull,
+                   "a fresh baseline yields no CPU contribution");
+}
+
+/* A baseline above the live counter means the counter was reset underneath it.
+ * Saturating at zero loses one member's contribution; wrapping would add ~2^64
+ * to a job's aggregate and destroy every rate derived from it. */
+static void test_quota_delta_saturates_on_reset(void)
+{
+    struct task *self = task_current();
+    struct task_acct_base base, delta;
+
+    task_acct_capture_base(self, &base);
+    base.io_other_count = base.io_other_count + 1000ull;   /* impossible future */
+    base.user_time_ns   = base.user_time_ns + 1000ull;
+
+    task_acct_delta_since(self, &base, &delta);
+
+    TEST_ASSERT_EQ(delta.io_other_count, 0ull,
+                   "inverted control-op baseline saturates to zero, not 2^64");
+    TEST_ASSERT_EQ(delta.user_time_ns, 0ull,
+                   "inverted CPU baseline saturates to zero, not 2^64");
+
+    /* A NULL baseline means "no baseline": the whole lifetime counts. */
+    task_acct_delta_since(self, (const struct task_acct_base *)0, &delta);
+    task_acct_capture_base(self, &base);
+    TEST_ASSERT_EQ(delta.io_other_count, base.io_other_count,
+                   "a NULL baseline reports the full lifetime");
+}
+
+/* Start every policy fixture from a defined state: the validator rejects a
+ * non-zero `reserved0`, and an unflagged envelope's amounts are never read, so
+ * a stack-garbage record would produce confusing refusals rather than testing
+ * the rule under examination. */
+static void quota_rate_zero(quota_rate_limit_t *r)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof(*r); i++)
+        ((uint8_t *)r)[i] = 0;
+}
+
+/* A published policy comes back field-for-field, and the record is stored
+ * DISTINCTLY from cumulative usage -- that separation is the section's claim. */
+static void test_quota_rate_record_roundtrip(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for rate policy test");
+
+    quota_rate_zero(&rec);
+    rec.version             = QUOTA_RATE_VERSION;
+    rec.period_ns           = 100000000ull;       /* 100 ms window */
+    rec.primary.flags       = QUOTA_RATE_F_WEIGHT | QUOTA_RATE_F_RESERVATION |
+                              QUOTA_RATE_F_MAX | QUOTA_RATE_F_HARD_CAP;
+    rec.primary.weight      = 1024ull;
+    rec.primary.reservation = 10000000ull;        /* 10 ms floor  */
+    rec.primary.max         = 40000000ull;        /* 40 ms soft   */
+    rec.primary.hard_cap    = 50000000ull;        /* 50 ms hard   */
+    rec.generation          = 999ull;             /* ignored on input */
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU, &rec),
+                   (uint64_t)STATUS_SUCCESS, "valid CPU rate policy accepted");
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_CPU, &got),
+                   (uint64_t)STATUS_SUCCESS, "policy read back");
+    TEST_ASSERT_EQ((uint64_t)got.version, (uint64_t)QUOTA_RATE_VERSION,
+                   "version preserved");
+    TEST_ASSERT_EQ(got.period_ns, 100000000ull, "period preserved");
+    TEST_ASSERT_EQ(got.primary.weight, 1024ull, "weight preserved");
+    TEST_ASSERT_EQ(got.primary.reservation, 10000000ull, "reservation preserved");
+    TEST_ASSERT_EQ(got.primary.max, 40000000ull, "max preserved");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 50000000ull, "hard cap preserved");
+    TEST_ASSERT(got.generation != 999ull,
+                "generation is assigned by the publisher, not the caller");
+
+    /* The unit is DERIVED from class + envelope, never stored, so it cannot
+     * disagree with the class it was published against. */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_envelope_unit(QUOTA_RATE_CLASS_CPU, 0),
+                   (uint64_t)QUOTA_RATE_UNIT_NS, "CPU primary is runtime ns");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_envelope_unit(QUOTA_RATE_CLASS_IO_READ, 0),
+                   (uint64_t)QUOTA_RATE_UNIT_OPS, "I/O primary is operations");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_envelope_unit(QUOTA_RATE_CLASS_IO_READ, 1),
+                   (uint64_t)QUOTA_RATE_UNIT_BYTES, "I/O bytes envelope is bytes");
+
+    /* Each class is independent: setting CPU leaves I/O unset. */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_WRITE, &got),
+                   (uint64_t)STATUS_SUCCESS, "unset class still reads");
+    TEST_ASSERT_EQ((uint64_t)got.primary.flags, 0ull,
+                   "a CPU policy does not leak into the write-I/O class");
+
+    quota_block_deref(b);
+}
+
+/* Every one of the eight baseline fields must be captured and subtracted
+ * independently. The production code hand-writes eight separate subtractions,
+ * so a single copy/paste field swap would corrupt per-job CPU or I/O totals
+ * while leaving a test that only checks one or two fields perfectly green.
+ * Distinct sentinel values per field make a swap impossible to miss. */
+static void test_quota_delta_covers_every_field(void)
+{
+    struct task_acct_base base, now, delta;
+
+    /* Synthetic fixture: base and "current" are plain structs, so this
+     * exercises the arithmetic without perturbing the live task. */
+    base.user_time_ns   = 100ull;  base.kernel_time_ns = 200ull;
+    base.io_read_count  = 300ull;  base.io_read_bytes  = 400ull;
+    base.io_write_count = 500ull;  base.io_write_bytes = 600ull;
+    base.io_other_count = 700ull;  base.io_other_bytes = 800ull;
+
+    /* A distinct increment per field: if two fields were transposed, the
+     * expected values below would not match. */
+    now.user_time_ns   = base.user_time_ns   + 1ull;
+    now.kernel_time_ns = base.kernel_time_ns + 2ull;
+    now.io_read_count  = base.io_read_count  + 3ull;
+    now.io_read_bytes  = base.io_read_bytes  + 4ull;
+    now.io_write_count = base.io_write_count + 5ull;
+    now.io_write_bytes = base.io_write_bytes + 6ull;
+    now.io_other_count = base.io_other_count + 7ull;
+    now.io_other_bytes = base.io_other_bytes + 8ull;
+
+    task_acct_delta_fields(&now, &base, &delta);
+    TEST_ASSERT_EQ(delta.user_time_ns,   1ull, "user_time_ns delta is its own field");
+    TEST_ASSERT_EQ(delta.kernel_time_ns, 2ull, "kernel_time_ns delta is its own field");
+    TEST_ASSERT_EQ(delta.io_read_count,  3ull, "io_read_count delta is its own field");
+    TEST_ASSERT_EQ(delta.io_read_bytes,  4ull, "io_read_bytes delta is its own field");
+    TEST_ASSERT_EQ(delta.io_write_count, 5ull, "io_write_count delta is its own field");
+    TEST_ASSERT_EQ(delta.io_write_bytes, 6ull, "io_write_bytes delta is its own field");
+    TEST_ASSERT_EQ(delta.io_other_count, 7ull, "io_other_count delta is its own field");
+    TEST_ASSERT_EQ(delta.io_other_bytes, 8ull, "io_other_bytes delta is its own field");
+
+    /* Equal baseline: every field contributes nothing. */
+    task_acct_delta_fields(&base, &base, &delta);
+    TEST_ASSERT_EQ(delta.user_time_ns,   0ull, "equal baseline yields no CPU user delta");
+    TEST_ASSERT_EQ(delta.kernel_time_ns, 0ull, "equal baseline yields no CPU kernel delta");
+    TEST_ASSERT_EQ(delta.io_read_count,  0ull, "equal baseline yields no read-op delta");
+    TEST_ASSERT_EQ(delta.io_read_bytes,  0ull, "equal baseline yields no read-byte delta");
+    TEST_ASSERT_EQ(delta.io_write_count, 0ull, "equal baseline yields no write-op delta");
+    TEST_ASSERT_EQ(delta.io_write_bytes, 0ull, "equal baseline yields no write-byte delta");
+    TEST_ASSERT_EQ(delta.io_other_count, 0ull, "equal baseline yields no control-op delta");
+    TEST_ASSERT_EQ(delta.io_other_bytes, 0ull, "equal baseline yields no control-byte delta");
+
+    /* Baseline ABOVE current in EVERY field: all saturate to 0, none wrap. */
+    task_acct_delta_fields(&base, &now, &delta);
+    TEST_ASSERT_EQ(delta.user_time_ns,   0ull, "inverted user_time_ns saturates");
+    TEST_ASSERT_EQ(delta.kernel_time_ns, 0ull, "inverted kernel_time_ns saturates");
+    TEST_ASSERT_EQ(delta.io_read_count,  0ull, "inverted io_read_count saturates");
+    TEST_ASSERT_EQ(delta.io_read_bytes,  0ull, "inverted io_read_bytes saturates");
+    TEST_ASSERT_EQ(delta.io_write_count, 0ull, "inverted io_write_count saturates");
+    TEST_ASSERT_EQ(delta.io_write_bytes, 0ull, "inverted io_write_bytes saturates");
+    TEST_ASSERT_EQ(delta.io_other_count, 0ull, "inverted io_other_count saturates");
+    TEST_ASSERT_EQ(delta.io_other_bytes, 0ull, "inverted io_other_bytes saturates");
+
+    /* A NULL task captures a fully zeroed baseline, not stack residue. */
+    task_acct_capture_base((const struct task *)0, &now);
+    TEST_ASSERT_EQ(now.user_time_ns,   0ull, "NULL task captures zero CPU time");
+    TEST_ASSERT_EQ(now.io_read_bytes,  0ull, "NULL task captures zero read bytes");
+    TEST_ASSERT_EQ(now.io_write_bytes, 0ull, "NULL task captures zero write bytes");
+    TEST_ASSERT_EQ(now.io_other_bytes, 0ull, "NULL task captures zero control bytes");
+}
+
+/* quota_rate_limit_get promises a BOUNDED retry and, on exhaustion,
+ * STATUS_RETRY with the caller's buffer byte-for-byte untouched. That branch
+ * needs a publisher stalled mid-update, which a single-threaded test cannot
+ * produce -- so the sequence is forced odd through the test-only seam. */
+static void test_quota_rate_get_retry_preserves_output(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for retry test");
+
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 1000000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 77ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_WRITE, &rec),
+                   (uint64_t)STATUS_SUCCESS, "policy published for retry test");
+
+    /* Seed the caller's buffer with a policy it must still hold afterwards. */
+    quota_rate_zero(&got);
+    got.version          = QUOTA_RATE_VERSION;
+    got.period_ns        = 4242ull;
+    got.primary.hard_cap = 999ull;
+    got.bytes.hard_cap   = 555ull;
+
+    quota_test_poke_rate_seq(b, QUOTA_RATE_CLASS_IO_WRITE, 1);   /* write in flight */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_WRITE, &got),
+                   (uint64_t)STATUS_RETRY,
+                   "a permanently in-flux class reports STATUS_RETRY, not a torn read");
+    TEST_ASSERT_EQ(got.period_ns, 4242ull,
+                   "STATUS_RETRY leaves the caller's period untouched");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 999ull,
+                   "STATUS_RETRY leaves the caller's primary envelope untouched");
+    TEST_ASSERT_EQ(got.bytes.hard_cap, 555ull,
+                   "STATUS_RETRY leaves the caller's byte envelope untouched");
+
+    /* Restored to stable: the real policy reads back. */
+    quota_test_poke_rate_seq(b, QUOTA_RATE_CLASS_IO_WRITE, 0);
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_WRITE, &got),
+                   (uint64_t)STATUS_SUCCESS, "a stable class reads successfully again");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 77ull, "the published policy is returned");
+
+    /* A stalled class must not block a DIFFERENT class: that is why the
+     * sequence counter is per class rather than shared. */
+    quota_test_poke_rate_seq(b, QUOTA_RATE_CLASS_IO_WRITE, 1);
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_CPU, &got),
+                   (uint64_t)STATUS_SUCCESS,
+                   "an in-flux class does not stall readers of another class");
+    quota_test_poke_rate_seq(b, QUOTA_RATE_CLASS_IO_WRITE, 0);
+
+    quota_block_deref(b);
+}
+
+/* Boundary matrix the earlier rejection test only sampled: exact-MAX
+ * acceptance, equal-bound acceptance, each +1 inversion, both reserved fields,
+ * the BYTES envelope's own range/ordering rules, and per-class isolation. */
+static void test_quota_rate_boundary_matrix(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_JOB, (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+    uint32_t cls;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for boundary matrix");
+
+    /* Exact QUOTA_RATE_AMOUNT_MAX is IN the domain and must be accepted. */
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 1000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = (uint64_t)QUOTA_RATE_AMOUNT_MAX;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_SUCCESS, "exact QUOTA_RATE_AMOUNT_MAX accepted");
+
+    /* Equal reservation == max == hard_cap is satisfiable, not an inversion. */
+    quota_rate_zero(&rec);
+    rec.version             = QUOTA_RATE_VERSION;
+    rec.period_ns           = 1000ull;
+    rec.primary.flags       = QUOTA_RATE_F_RESERVATION | QUOTA_RATE_F_MAX |
+                              QUOTA_RATE_F_HARD_CAP;
+    rec.primary.reservation = 50ull;
+    rec.primary.max         = 50ull;
+    rec.primary.hard_cap    = 50ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_SUCCESS, "equal reservation/max/hard-cap accepted");
+
+    /* The BYTES envelope carries the same range and ordering rules. */
+    quota_rate_zero(&rec);
+    rec.version           = QUOTA_RATE_VERSION;
+    rec.period_ns         = 1000ull;
+    rec.bytes.flags       = QUOTA_RATE_F_HARD_CAP;
+    rec.bytes.hard_cap    = (uint64_t)QUOTA_RATE_AMOUNT_MAX + 1ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "out-of-domain amount in the BYTES envelope refused");
+
+    quota_rate_zero(&rec);
+    rec.version             = QUOTA_RATE_VERSION;
+    rec.period_ns           = 1000ull;
+    rec.bytes.flags         = QUOTA_RATE_F_RESERVATION | QUOTA_RATE_F_MAX;
+    rec.bytes.reservation   = 900ull;
+    rec.bytes.max           = 500ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "reservation above max in the BYTES envelope refused");
+
+    /* A per-period amount in the BYTES envelope alone still needs a period. */
+    quota_rate_zero(&rec);
+    rec.version        = QUOTA_RATE_VERSION;
+    rec.period_ns      = 0ull;
+    rec.bytes.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.bytes.hard_cap = 10ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "BYTES-only per-period amount without a period refused");
+
+    /* Both reserved fields must be zero. */
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 1000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 10ull;
+    rec.primary.reserved = 1u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "non-zero primary-envelope reserved field refused");
+    rec.primary.reserved = 0u;
+    rec.bytes.reserved   = 1u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "non-zero bytes-envelope reserved field refused");
+
+    /* get argument validation. */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get((const quota_block_t *)0,
+                                                  QUOTA_RATE_CLASS_CPU, &got),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "get refuses a NULL block");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b,
+                       (quota_rate_class_t)QUOTA_RATE_CLASS_COUNT, &got),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "get refuses a bad class");
+
+    /* Per-class isolation: publish a distinct policy to every class, then
+     * rewrite ONE and prove the other three are byte-for-byte unchanged. */
+    for (cls = 0; cls < (uint32_t)QUOTA_RATE_CLASS_COUNT; cls++) {
+        quota_rate_zero(&rec);
+        rec.version          = QUOTA_RATE_VERSION;
+        rec.period_ns        = 1000ull;
+        rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+        rec.primary.hard_cap = 1000ull + cls;      /* distinct per class */
+        TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, (quota_rate_class_t)cls, &rec),
+                       (uint64_t)STATUS_SUCCESS, "per-class sentinel published");
+    }
+
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 2000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 4242ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_WRITE, &rec),
+                   (uint64_t)STATUS_SUCCESS, "one class rewritten");
+
+    for (cls = 0; cls < (uint32_t)QUOTA_RATE_CLASS_COUNT; cls++) {
+        TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, (quota_rate_class_t)cls, &got),
+                       (uint64_t)STATUS_SUCCESS, "class readable after the rewrite");
+        if (cls == (uint32_t)QUOTA_RATE_CLASS_IO_WRITE)
+            TEST_ASSERT_EQ(got.primary.hard_cap, 4242ull,
+                           "the rewritten class holds the new policy");
+        else
+            TEST_ASSERT_EQ(got.primary.hard_cap, 1000ull + cls,
+                           "an untouched class keeps its own policy");
+    }
+
+    quota_block_deref(b);
+}
+
+/* A published record is CANONICAL: amounts whose flags are clear come back as
+ * zero rather than as whatever the caller happened to leave in the struct.
+ * Without this, two logically identical policies differ byte-for-byte and a
+ * future query syscall would copy uninitialized caller stack out of the
+ * kernel. Driven with loud sentinels in every unflagged slot. */
+static void test_quota_rate_unflagged_fields_canonicalized(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for canonicalization test");
+
+    quota_rate_zero(&rec);
+    rec.version       = QUOTA_RATE_VERSION;
+    rec.period_ns     = 1000000ull;
+    /* Only the hard cap is declared meaningful... */
+    rec.primary.flags = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 500ull;
+    /* ...but every other amount carries a sentinel the publisher must drop. */
+    rec.primary.weight      = 0xDEADBEEFull;
+    rec.primary.reservation = 0xCAFEBABEull;
+    rec.primary.max         = 0xFEEDFACEull;
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_SUCCESS, "policy with unflagged sentinels accepted");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_READ, &got),
+                   (uint64_t)STATUS_SUCCESS, "policy read back");
+
+    TEST_ASSERT_EQ(got.primary.hard_cap, 500ull, "the flagged amount survives");
+    TEST_ASSERT_EQ(got.primary.weight, 0ull, "unflagged weight canonicalized to 0");
+    TEST_ASSERT_EQ(got.primary.reservation, 0ull,
+                   "unflagged reservation canonicalized to 0");
+    TEST_ASSERT_EQ(got.primary.max, 0ull, "unflagged max canonicalized to 0");
+    TEST_ASSERT_EQ((uint64_t)got.primary.reserved, 0ull,
+                   "the pinned ABI hole always reads back as zero");
+
+    /* A CPU policy blanks the byte envelope entirely, flags and amounts both,
+     * even though an unflagged byte envelope is accepted. */
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 1000000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 42ull;
+    rec.bytes.hard_cap   = 0x1234567ull;      /* unflagged sentinel */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU, &rec),
+                   (uint64_t)STATUS_SUCCESS, "CPU policy with unflagged bytes accepted");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_CPU, &got),
+                   (uint64_t)STATUS_SUCCESS, "CPU policy read back");
+    TEST_ASSERT_EQ((uint64_t)got.bytes.flags, 0ull, "CPU byte envelope has no flags");
+    TEST_ASSERT_EQ(got.bytes.hard_cap, 0ull,
+                   "CPU byte envelope is blanked, not carried through");
+
+    quota_block_deref(b);
+}
+
+/* THE reason the record carries two envelopes: a storage QoS layer caps a
+ * stream by IOPS *and* bytes/sec at once. A pure-IOPS cap lets one huge request
+ * saturate the device; a pure-bandwidth cap lets a flood of tiny requests
+ * exhaust the queue. Publishing one must not erase the other. */
+static void test_quota_rate_ops_and_bytes_coexist(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_USER, (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for dual-cap test");
+
+    quota_rate_zero(&rec);
+    rec.version           = QUOTA_RATE_VERSION;
+    rec.period_ns         = 1000000000ull;        /* 1 s window */
+    rec.primary.flags     = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap  = 500ull;               /* 500 IOPS      */
+    rec.bytes.flags       = QUOTA_RATE_F_HARD_CAP;
+    rec.bytes.hard_cap    = 4194304ull;           /* 4 MiB/s       */
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &rec),
+                   (uint64_t)STATUS_SUCCESS, "IOPS + bandwidth policy accepted");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_READ, &got),
+                   (uint64_t)STATUS_SUCCESS, "dual-cap policy read back");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 500ull,
+                   "the operations cap survived publication of the byte cap");
+    TEST_ASSERT_EQ(got.bytes.hard_cap, 4194304ull,
+                   "the byte cap survived publication of the operations cap");
+
+    /* The two dimensions are independent: 500 ops and 4 MiB is coherent even
+     * though the byte amount dwarfs the op amount. No cross-envelope ordering. */
+    TEST_ASSERT(got.bytes.hard_cap > got.primary.hard_cap,
+                "envelopes are independent dimensions, not an ordered pair");
+
+    /* CPU has no byte dimension: the same record shape is refused there. */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU, &rec),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a byte envelope on a CPU policy is refused");
+
+    quota_block_deref(b);
+}
+
+/* Every validation rule refuses publication rather than storing a policy no
+ * consumer could act on. */
+static void test_quota_rate_record_rejects_bad(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    quota_rate_limit_t ok, bad, got;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for rejection test");
+
+    quota_rate_zero(&ok);
+    ok.version          = QUOTA_RATE_VERSION;
+    ok.period_ns        = 1000000ull;
+    ok.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    ok.primary.hard_cap = 500ull;
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &ok),
+                   (uint64_t)STATUS_SUCCESS, "baseline valid policy accepted");
+
+    bad = ok; bad.version = QUOTA_RATE_VERSION + 1u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "unknown version refused");
+
+    bad = ok; bad.reserved0 = 1u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "non-zero reserved field refused");
+
+    bad = ok; bad.primary.flags = 0x80000000u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "unknown flag bit refused");
+
+    bad = ok; bad.bytes.flags = 0x40000000u;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "unknown flag bit in the BYTES envelope refused too");
+
+    bad = ok; bad.period_ns = 0ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "per-period amount without a period refused");
+
+    bad = ok; bad.primary.hard_cap = (uint64_t)QUOTA_RATE_AMOUNT_MAX + 1ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "amount outside the counter domain refused");
+
+    bad = ok;
+    bad.primary.flags = QUOTA_RATE_F_RESERVATION | QUOTA_RATE_F_HARD_CAP;
+    bad.primary.reservation = 900ull; bad.primary.hard_cap = 500ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "reservation above hard cap refused as unsatisfiable");
+
+    bad = ok; bad.primary.flags = QUOTA_RATE_F_MAX | QUOTA_RATE_F_HARD_CAP;
+    bad.primary.max = 900ull; bad.primary.hard_cap = 500ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "soft max above hard cap refused");
+
+    /* Ordering is checked WITHIN an envelope, never across the two: an op
+     * reservation is not comparable to a byte cap. */
+    bad = ok;
+    bad.primary.flags = QUOTA_RATE_F_RESERVATION;
+    bad.primary.reservation = 400ull;
+    bad.bytes.flags = QUOTA_RATE_F_HARD_CAP;
+    bad.bytes.hard_cap = 8ull;          /* far below the op reservation */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &bad),
+                   (uint64_t)STATUS_SUCCESS,
+                   "envelopes are independent: no cross-dimension ordering rule");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_READ, &ok),
+                   (uint64_t)STATUS_SUCCESS, "baseline policy restored");
+
+    /* CPU has no byte dimension: a flagged byte envelope there is refused. */
+    bad = ok; bad.bytes.flags = QUOTA_RATE_F_HARD_CAP; bad.bytes.hard_cap = 1ull;
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU, &bad),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "byte envelope on a CPU policy refused");
+
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, (quota_rate_class_t)QUOTA_RATE_CLASS_COUNT, &ok),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "out-of-range class refused");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU,
+                                                  (const quota_rate_limit_t *)0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL record refused");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set((quota_block_t *)0,
+                                                  QUOTA_RATE_CLASS_CPU, &ok),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL block refused");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_CPU,
+                                                  (quota_rate_limit_t *)0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL output refused");
+
+    /* Every rejection left the stored policy exactly as the valid set made it. */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_READ, &got),
+                   (uint64_t)STATUS_SUCCESS, "policy still readable");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 500ull,
+                   "a refused publication does not disturb the stored policy");
+    TEST_ASSERT_EQ((uint64_t)got.primary.flags, (uint64_t)QUOTA_RATE_F_HARD_CAP,
+                   "refused publications did not alter the stored flags");
+
+    quota_block_deref(b);
+}
+
+/* The generation is what lets a consumer notice a policy changed without
+ * diffing every field, so it must advance on every successful publication. */
+static void test_quota_rate_generation_advances(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_JOB, (const SID *)0, 0);
+    quota_rate_limit_t rec, first, second, rejected;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for generation test");
+
+    quota_rate_zero(&rec);
+    rec.version        = QUOTA_RATE_VERSION;
+    rec.period_ns      = 0ull;            /* a bare weight needs no window */
+    rec.primary.flags  = QUOTA_RATE_F_WEIGHT;
+    rec.primary.weight = 100ull;
+
+    quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_CONTROL, &rec);
+    quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_CONTROL, &first);
+
+    rec.primary.weight = 200ull;
+    quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_CONTROL, &rec);
+    quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_CONTROL, &second);
+
+    TEST_ASSERT(second.generation > first.generation,
+                "generation advances on each successful publication");
+    TEST_ASSERT_EQ(second.primary.weight, 200ull,
+                   "the newer policy is the one stored");
+
+    /* A REFUSED publication must not advance the generation: a consumer would
+     * re-read a policy that never changed. */
+    rec.version = QUOTA_RATE_VERSION + 1u;
+    quota_rate_limit_set(b, QUOTA_RATE_CLASS_IO_CONTROL, &rec);
+    quota_rate_limit_get(b, QUOTA_RATE_CLASS_IO_CONTROL, &rejected);
+    TEST_ASSERT_EQ(rejected.generation, second.generation,
+                   "a refused publication does not advance the generation");
+
+    quota_block_deref(b);
+}
+
+/* "No policy" is distinct from "a policy whose amounts are zero": the former
+ * carries no flags, so a consumer can tell it must not enforce anything. */
+static void test_quota_rate_unset_reports_no_policy(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_USER, (const SID *)0, 0);
+    quota_rate_limit_t got;
+    uint32_t cls;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for unset-policy test");
+
+    for (cls = 0; cls < (uint32_t)QUOTA_RATE_CLASS_COUNT; cls++) {
+        TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, (quota_rate_class_t)cls, &got),
+                       (uint64_t)STATUS_SUCCESS, "unset class reads successfully");
+        TEST_ASSERT_EQ((uint64_t)got.primary.flags, 0ull,
+                       "a fresh block carries no rate policy");
+        TEST_ASSERT_EQ((uint64_t)got.bytes.flags, 0ull,
+                       "a fresh block carries no byte-dimension policy either");
+        TEST_ASSERT_EQ(got.generation, 0ull,
+                       "an unset policy has generation 0");
+    }
+
+    quota_block_deref(b);
+}
+
+/* Rate policy and cumulative usage are separate state on the same block:
+ * publishing a policy must not move a counter, and charging must not move the
+ * policy. Conflating the two is exactly what the section separates. */
+static void test_quota_rate_separate_from_usage(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    quota_rate_limit_t rec, got;
+    uint64_t usage_before, usage_after;
+
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for separation test");
+
+    usage_before = quota_usage(b, QUOTA_RES_HANDLE);
+
+    quota_rate_zero(&rec);
+    rec.version          = QUOTA_RATE_VERSION;
+    rec.period_ns        = 1000000ull;
+    rec.primary.flags    = QUOTA_RATE_F_HARD_CAP;
+    rec.primary.hard_cap = 42ull;      /* CPU budgets are runtime ns */
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_set(b, QUOTA_RATE_CLASS_CPU, &rec),
+                   (uint64_t)STATUS_SUCCESS, "policy published");
+
+    usage_after = quota_usage(b, QUOTA_RES_HANDLE);
+    TEST_ASSERT_EQ(usage_after, usage_before,
+                   "publishing a rate policy charges no usage");
+
+    /* And a charge leaves the policy untouched. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_HANDLE, 5ull),
+                   (uint64_t)STATUS_SUCCESS, "charge admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_rate_limit_get(b, QUOTA_RATE_CLASS_CPU, &got),
+                   (uint64_t)STATUS_SUCCESS, "policy still readable after a charge");
+    TEST_ASSERT_EQ(got.primary.hard_cap, 42ull,
+                   "a charge does not alter the rate policy");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_HANDLE), usage_before + 5ull,
+                   "the charge landed in usage, not in policy");
+
+    TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_HANDLE, 5ull),
+                   (uint64_t)STATUS_SUCCESS, "charge returned");
+    quota_block_deref(b);
+}
+
 void test_register_quota(void)
 {
     test_suite_register_cat("Quota: registry ready at boot",
@@ -1728,6 +2524,42 @@ void test_register_quota(void)
                             test_quota_task_init_teardown_contract, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: unabsorb refusal counted",
                             test_quota_unabsorb_refusal_counted, TEST_CAT_QUOTA);
+
+    /* Section 7: CPU, I/O, and wakeup accounting + rate-limit records */
+    test_suite_register_cat("Quota: cpu split advances monotonically",
+                            test_quota_cpu_split_monotonic, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: io counters split read/write/control",
+                            test_quota_io_split_by_op, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: control io counts zero-byte op",
+                            test_quota_control_io_zero_byte_counts_op, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: wakeup counts only blocked grants",
+                            test_quota_wakeup_only_from_blocked, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: sample is coherent and stamped",
+                            test_quota_sample_stamped, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: membership delta excludes pre-join usage",
+                            test_quota_membership_delta_excludes_prejoin, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: delta saturates on reset counter",
+                            test_quota_delta_saturates_on_reset, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate record round-trip",
+                            test_quota_rate_record_roundtrip, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: IOPS and bandwidth caps coexist",
+                            test_quota_rate_ops_and_bytes_coexist, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: unflagged rate fields canonicalized",
+                            test_quota_rate_unflagged_fields_canonicalized, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: delta covers every metric field",
+                            test_quota_delta_covers_every_field, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate get retry preserves output",
+                            test_quota_rate_get_retry_preserves_output, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate boundary + isolation matrix",
+                            test_quota_rate_boundary_matrix, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate record rejects bad policy",
+                            test_quota_rate_record_rejects_bad, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate generation advances per set",
+                            test_quota_rate_generation_advances, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: unset rate class reports no policy",
+                            test_quota_rate_unset_reports_no_policy, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: rate policy separate from usage",
+                            test_quota_rate_separate_from_usage, TEST_CAT_QUOTA);
 }
 
 #endif /* KERNEL_TESTS */

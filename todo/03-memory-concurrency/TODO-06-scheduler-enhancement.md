@@ -59,6 +59,8 @@ title: "TODO-06 -- Scheduler Enhancement"
 | 💎   |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                                             |  [x]   |
 | 💎   |  12   | Dynamic thread table + resource-driven thread limits | §11, D02 T11 §15, D02 T21 §9                                   |  [ ]   |
 | 💎   |  13   | Dynamic task table + reusable PID slot allocation    | §12                                                            |  [ ]   |
+| ⭐   |  14   | §14 Process/job CPU bandwidth control (cap/reserve)  | D02 T25 §7 (rate record), §8 (tick calibration)                |  [ ]   |
+| 💎   |  15   | §15 Wait/wake transaction locking (lost-wakeup fix)  | §1 (run-queue lock granularity)                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.
@@ -251,6 +253,47 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 - [x] Commit: `"sched: per-thread kernel_rsp + TSS.rsp0 switching on intra-task thread switch"` (3bf99ed0)
 
 **Test checkpoint:** Boot completes normally (single-threaded tasks unchanged). DPC worker, work queue, cmd.exe all still function. The scheduler log shows `[sched] rsp0 updated` on task switches. No kernel stack corruption on interrupt entry. Test on: QEMU WHPX (2 CPUs), TCG, VirtualBox, bare metal.
+
+---
+
+## 14. Process/Job CPU Bandwidth Control `[Opus]`
+
+Enforce the CPU rate-limit records published by the quota subsystem: a per-period runtime budget for a process or job, refilled each period, with reservation admission and throttle/unthrottle. This is the CONSUMER of the policy record; §3 owns proportional weights within a priority level and does NOT own caps, periods, or reservations.
+
+**Files:** `src/kernel/sched/sched.c`, `src/kernel/sched/task.c`, `include/kernel/sched/sched.h`
+
+> [!IMPORTANT]
+> §3 (CFS weights) and this section are different mechanisms: a weight decides SHARE when threads compete, a bandwidth cap decides whether a runnable thread may run AT ALL this period. A weight table alone cannot cap an otherwise-idle system.
+
+- [ ] Consume `quota_rate_limit_get()` for `QUOTA_RATE_CLASS_CPU` per process/job; honor NS budgets over `period_ns`. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7` (item: "Define a rate-limit record")
+- [ ] Per-period refill: charge consumed runtime against the budget each tick; refill at period rollover without drift accumulation.
+- [ ] Throttle when `hard_cap` is exhausted (dequeue until refill) and unthrottle at rollover; a throttled thread must not spin the run queue.
+- [ ] Hierarchical accounting: a member's runtime consumes both its own and its job's budget; the tighter of the two throttles.
+- [ ] Reservation admission: refuse a `reservation` the remaining CPU capacity cannot honor, rather than overcommitting silently.
+- [ ] Re-read policy on `generation` change only, so the hot path does not copy the record every tick.
+- [ ] Commit: `"sched: process/job CPU bandwidth control -- period refill, hard cap throttle, reservation admission"`
+
+**Test checkpoint:** a process with a `hard_cap` of 20% of `period_ns` consumes no more than that over 10 periods on an otherwise idle CPU; a job cap throttles its members collectively even when each member is individually under its own cap; a reservation exceeding remaining capacity is refused at admission; a throttled thread is off the run queue and resumes at refill.
+
+---
+
+## 15. Wait/Wake Transaction Locking (Lost-Wakeup Class) `[Opus]`
+
+Every wait primitive publishes its waiter into the queue BEFORE setting `THREAD_BLOCKED`, and checks its predicate outside any lock. A waker running in that window finds the thread not yet blocked, dequeues it, and the wake is LOST: the waiter then stores `THREAD_BLOCKED` and sleeps forever. Confirmed in `enqueue_and_block` (`src/kernel/sched/event.c`) and present in the semaphore, mutex, condvar, and rwlock wait paths plus the `thread_join`/`thread_exit` handshake.
+
+**Files:** `src/kernel/sched/event.c`, `semaphore.c`, `mutex.c`, `condvar.c`, `rwlock.c`, `task.c`, `src/kernel/ob/ob_mutex.c`
+
+> [!IMPORTANT]
+> This is a LATENT pre-existing race, not a regression: before the accounting seam landed, the waker's unconditional `state = THREAD_READY` was overwritten by the waiter's own `THREAD_BLOCKED` store, losing the wake identically. Swapping two stores is NOT sufficient; the predicate, the state transition, and the queue mutation must be one transaction.
+
+- [ ] Add a per-primitive IRQ-safe wait lock covering predicate check, `THREAD_BLOCKED` transition, and queue publication as one critical section.
+- [ ] Wakers take the same lock across dequeue + `task_wake_thread()`, so a waiter is never discoverable before it is blocked.
+- [ ] Give each wait a generation token the wake must match: today the claim tests only `THREAD_BLOCKED`, so a delayed second waker can release a LATER, unrelated wait by the same thread (wake-epoch ABA).
+- [ ] `thread_join`/`thread_exit` handshake: publish join metadata and blocked state as one transaction, re-check target death before sleeping. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7`
+- [ ] Deterministic regression test injecting a wake between queue publication and yield; the waiter must not sleep forever.
+- [ ] Commit: `"sched: wait/wake transaction locking -- close the lost-wakeup window in all wait primitives"`
+
+**Test checkpoint:** a test that publishes a waiter and forces a wake before the yield observes the thread runnable rather than permanently blocked; `thread_join` racing `thread_exit` never leaves the joiner asleep; all existing sched/ipc suites stay green.
 
 ---
 
