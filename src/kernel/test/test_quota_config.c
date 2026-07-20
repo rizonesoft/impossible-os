@@ -372,6 +372,69 @@ static void test_quota_config_relimit_crosses_batches(void)
         quota_block_deref(blocks[i]);
 }
 
+/* The walk bounds VISITED nodes per registry-lock acquisition, not just
+ * successful pins, so a pass can now end on the visit budget with more list
+ * left. TQC_BATCH_SPAN blocks already exceed one visit budget's worth of pin
+ * batches; this asserts the every-block outcome still holds when the tunable
+ * path (rather than a direct call) drives the same walk, which is the shape a
+ * resume-logic off-by-one would break. */
+static void test_quota_config_relimit_completes_via_tunable(void)
+{
+    const quota_resource_type_t T = QUOTA_RES_MAPPED_VIEW;
+    const char *name = quota_config_tunable_name(T);
+    static quota_block_t *blocks[TQC_BATCH_SPAN];
+    uint8_t buf[SID_MAX_SIZE] = { 0 };
+    uint32_t n = 0;
+    int64_t restore = 0;
+
+    TEST_ASSERT_NOT_NULL((void *)name, "tunable name resolved");
+    if (!name || kernel_tunable_get(name, &restore) != STATUS_SUCCESS) {
+        TEST_ASSERT(0, "quota tunable readable before the walk test");
+        return;
+    }
+
+    for (uint32_t i = 0; i < TQC_BATCH_SPAN; i++) {
+        SID *sid = tqc_make_sid(buf, TQC_RID_BASE + 0x200 + i);
+        blocks[n] = quota_user_block_acquire(sid, RtlLengthSid(sid));
+        if (blocks[n])
+            n++;
+    }
+    TEST_ASSERT_EQ((uint64_t)n, (uint64_t)TQC_BATCH_SPAN,
+                   "acquired the full span of user blocks");
+
+    TEST_ASSERT_EQ((uint64_t)kernel_tunable_set(name, 7373,
+                                                TUNABLE_SET_PRIVILEGED),
+                   (uint64_t)STATUS_SUCCESS, "tunable set accepted");
+
+    for (uint32_t i = 0; i < n; i++)
+        TEST_ASSERT_EQ(quota_limit(blocks[i], T), 7373ULL,
+                       "every block re-limited, including past the visit budget");
+
+    (void)kernel_tunable_set(name, restore, TUNABLE_SET_PRIVILEGED);
+    for (uint32_t i = 0; i < n; i++)
+        quota_block_deref(blocks[i]);
+}
+
+/* The tunables are GLOBAL policy, so an unprivileged setter must be refused --
+ * otherwise any future user-mode set path silently rewrites every user's cap. */
+static void test_quota_config_tunable_requires_privilege(void)
+{
+    const quota_resource_type_t T = QUOTA_RES_NOTIFICATION_STATE;
+    const char *name = quota_config_tunable_name(T);
+    int64_t before = 0, after = 0;
+
+    TEST_ASSERT_NOT_NULL((void *)name, "tunable name resolved");
+    if (!name || kernel_tunable_get(name, &before) != STATUS_SUCCESS)
+        return;
+
+    TEST_ASSERT_EQ((uint64_t)kernel_tunable_set(name, 4321, 0),
+                   (uint64_t)STATUS_ACCESS_DENIED,
+                   "unprivileged set of a global quota default is refused");
+    (void)kernel_tunable_get(name, &after);
+    TEST_ASSERT_EQ((uint64_t)after, (uint64_t)before,
+                   "a refused set leaves the configured value unchanged");
+}
+
 /* --- The shared charge entry point --------------------------------------- */
 
 /* The exemption is bound to a boot MILESTONE, not to the absence of a block.
@@ -692,6 +755,10 @@ void test_register_quota_config(void)
                             test_quota_config_tunable_set_drives_relimit, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota config: re-limit crosses batch boundaries",
                             test_quota_config_relimit_crosses_batches, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota config: re-limit completes via the tunable",
+                            test_quota_config_relimit_completes_via_tunable, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota config: global default needs privilege",
+                            test_quota_config_tunable_requires_privilege, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota config: scoped to USER principal",
                             test_quota_config_scoped_to_user_principal, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota config: seeds a new user block",

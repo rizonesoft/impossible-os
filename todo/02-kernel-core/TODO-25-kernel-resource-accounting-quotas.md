@@ -194,21 +194,29 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Registry: charge names, data bytes, watchers, transactions. BLOCKED: value slots are monotonic (delete only tombstones), `hive_parse_value` bypasses the charge point, transactions do not exist. -> XREF: `TODO-14 §15`
 - [/] ALPC: queued messages charged (`QUOTA_RES_ALPC_MESSAGE` per entry, receipt in `PORT_MESSAGE_ENTRY`). Port sections and completion-list entries have no allocation site to charge yet. -> XREF: `TODO-24 §6`
 - [x] Notifications: `knf_create_state` charges state + retention budget and `knf_subscribe` charges the subscription; all returned at teardown. New types appended at the END of the enum (IDs are ABI, pinned by `_Static_assert`).
-- [x] Default per-user caps configurable through TODO-02: `quota_config.c` registers one `quota.user.<type>` tunable per type and the callback re-limits LIVE USER blocks, not just newly created ones.
+- [/] Per-user caps wired to TODO-02: `quota_config.c` registers a privileged `quota.user.<type>` tunable per type whose callback re-limits LIVE blocks. MECHANISM only -- no production setter, so no cap is enforced yet. -> XREF: `TODO-02 §6`
 - [x] `quota_charge_current` is the one charge entry point; its boot exemption is bound to `kernel_subsystem_ready(SUBSYS_SCHED)`, never to a task missing a block, so a request racing teardown cannot inherit it.
 - [x] Charge precedence ENFORCED (was "intended" in `quota.h`): per-block explicit > kernel-config override > taxonomy default, via a per-type `limit_explicit` provenance flag.
 - [x] Commit: quota: registry/ALPC/notification subsystem charge points.
 
-**Test checkpoint:** creating a notification state charges one state plus its full `KNF_MAX_PAYLOAD` retention budget and deleting it returns both; a create whose retention charge is refused returns the state charge it already took; subscribing past a capped budget returns `STATUS_QUOTA_EXCEEDED` with no node and unchanged usage; a queued ALPC message charges the SENDER one message and is returned on receive AND on port teardown with the queue still full, while an over-cap send reports `STATUS_QUOTA_EXCEEDED` (not `INSUFFICIENT_RESOURCES`) and releases its port byte reservation; every `quota.user.<type>` tunable is registered rather than merely falling back, and a `kernel_tunable_set` re-limits a block that already existed while a block created afterwards is seeded with the new value; the re-limit walk crosses more than two 16-block batches and leaves explicit limits at the batch boundaries untouched (verified: SUITE=quota 80 suites / 958 assertions, SUITE=ipc 361, full 23043 kernel + 16 user-mode, 0 failures).
+**Test checkpoint:** creating a notification state charges one state plus its full `KNF_MAX_PAYLOAD` retention budget and deleting it returns both; a create whose retention charge is refused returns the state charge it already took; subscribing past a capped budget returns `STATUS_QUOTA_EXCEEDED` with no node and unchanged usage; a queued ALPC message charges the SENDER one message and is returned on receive AND on port teardown with the queue still full, while an over-cap send reports `STATUS_QUOTA_EXCEEDED` (not `INSUFFICIENT_RESOURCES`) and releases its port byte reservation; every `quota.user.<type>` tunable is registered rather than merely falling back, and a `kernel_tunable_set` re-limits a block that already existed while a block created afterwards is seeded with the new value; the re-limit walk crosses more than two 16-block batches and leaves explicit limits at the batch boundaries untouched (verified: SUITE=quota 82 suites / 1004 assertions, SUITE=ipc 361, full 23089 kernel + 16 user-mode, 0 failures).
 
-> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 80 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 82 suites, 0 failures
 
 > **Notes:**
 > - **What shipped** -- `quota_config.c` (per-type `quota.user.<type>` tunables + a live re-limit walk), `quota_charge_current` as the single subsystem charge entry point, two appended resource types, and charge points in `knf.c` and `alpc_port.c`.
 > - **How it integrates** -- tunables register in Phase 3; a change callback publishes the new default then walks the USER registry in pinned 16-block batches, so no block lock is taken under `g_registry_lock`.
-> - **Downstream effects** -- turns the `quota.h` precedence rule from "intended" into enforced; registry charging is filed on TODO-14 §15 and ALPC port sections on TODO-24 §6. Codex adoptions in the commit message.
-> - **Canonical doc** -- `include/kernel/quota/quota.h` ("Configurable per-user default limits").
-> - **Scope boundary** -- §6 owns the charge points and the config layer ONLY; the registry slot allocator is TODO-14, ALPC port sections are TODO-24 §6, delta-adjusting a live charge needs §11.
+> - **Downstream effects** -- makes the `quota.h` precedence MECHANISM enforced; the policy source, registry charging, and ALPC port sections are filed on TODO-02 §6, TODO-14 §15, and TODO-24 §6. Codex adoptions in the commit messages.
+> - **Canonical doc** -- `include/kernel/quota/quota.h` (precedence contract) + `src/kernel/quota/quota_config.c` header ("what this does not yet do").
+> - **Scope boundary** -- §6 owns the charge points and the config mechanism ONLY; no finite cap is enforced until TODO-02 gains a privileged setter, and delta-adjusting a live charge needs §11.
+> **Verified:** 2026-07-20 | commit `8a578023` + review fixes | 4/6 items | build OK | smoke PASS (TCG 2.710s), tests 23089 kernel + 16 user PASS (SUITE=quota 82 suites/1004)
+> **Deferred:** [H] no production `kernel_tunable_set` caller exists and every taxonomy default is unlimited, so the charge points ACCOUNT but enforce no finite cap; the mechanism and its privilege flag ship, the policy source does not (reason: infra) -> XREF: `02-kernel-core/TODO-02 §6` (item: "Privileged production write path for tunables" at line 198)
+> **Deferred:** [H] registry name/data-byte and watcher charging: value slots are a monotonic tombstone pool with no reuse and `hive_parse_value` bypasses the charge point, so returning logical bytes would let slot exhaustion escape the cap (reason: infra) -> XREF: `02-kernel-core/TODO-14 §15` (item: "Charge registry names/data bytes and watchers via `quota_charge_current`" at line 685)
+> **Deferred:** [M] ALPC port sections and completion-list entries have no allocation site to charge yet (reason: scope) -> XREF: `02-kernel-core/TODO-24 §6` (item: "Charge port sections and completion-list entries to the creating task" at line 292)
+> **Accepted:** [H] the 8-slot receipt embedded per message grows `PORT_MESSAGE_ENTRY` 56 -> 152 bytes for a 3-block chain; a compact chain receipt needs the charge-API rework (reason: infra) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Compact per-chain charge receipt" at line 291)
+> **Accepted:** [H] a quota-refused send allocates and zeroes the message before refusing, since a receipt cannot be built before its storage exists; needs a reserve-then-commit charge (reason: infra) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Reserve-then-commit charge so a refused send does not first allocate" at line 292)
+> **Accepted:** [H] same-SID processes serialize on one USER block, so ALPC/KNF charge paths contend; sharded or per-CPU credit needs cross-CPU proof (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 271)
+> **Quality reviewed:** 2026-07-20 | Codex 7x (design, adversarial x2, test-coverage, re-adversarial, consistency, perf) | 2H+7M+1L fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -280,6 +288,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
 - [ ] At task death SEAL the ledger against new charges but RETAIN it; return handle charges during the real handle sweep in `task_cleanup`, then drain residual obligations as a leak assertion.
 - [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
+- [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
+- [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Commit: quota: object/handle charge integration in Object Manager.
 
 **Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta.
@@ -291,27 +301,27 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                            |
-| --- | -------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ |
-| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 16-type registry §1                  |
-| 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2           |
-| 💎   | Atomic quota transfer            | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2     |
-| 💎   | Per-type peak + failure counts   | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2   |
-| 💎   | Per-token quota block            | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | ✅ token+process+job blocks §3              |
-| 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3            |
-| ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3      |
-| 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4    |
-| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §11   |
-| 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5      |
-| 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5    |
-| 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ✅ state + subscription + retention §6      |
-| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC messages charged §6; registry §6   |
-| 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ✅ tunable re-limits LIVE user blocks §6    |
-| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7  |
-| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8 |
-| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9   |
-| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9         |
-| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10     |
+| ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                             |
+| --- | -------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------- |
+| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 16-type registry §1                   |
+| 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2            |
+| 💎   | Atomic quota transfer            | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2      |
+| 💎   | Per-type peak + failure counts   | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2    |
+| 💎   | Per-token quota block            | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | ✅ token+process+job blocks §3               |
+| 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3             |
+| ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3       |
+| 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4     |
+| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §11    |
+| 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5       |
+| 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5     |
+| 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6 |
+| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC charged §6; registry blocked T14    |
+| 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ⚠️ live re-limit works; no setter yet §6    |
+| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | 🚀 Planned: per-proc/job split counters §7   |
+| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8  |
+| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9    |
+| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9          |
+| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10      |
 
 ---
 

@@ -89,14 +89,22 @@ typedef enum {
 
 /* A default_limit of 0 means "no cap" (unlimited).
  *
- * What the charge API enforces TODAY is exactly one value: the per-block limit,
- * seeded from this default_limit at create time and thereafter changed only by
- * quota_set_limit. There is no kernel-config override layer yet, so a caller
- * that never calls quota_set_limit gets an UNLIMITED block -- do not rely on
- * this table to impose a cap. Concrete numeric caps remain a kernel-config
- * policy decision; when that layer ships, the intended precedence is
- * per-block explicit > kernel-config override > default_limit, and this
- * comment must move from "intended" to "enforced" in the same change. */
+ * PRECEDENCE (ENFORCED, section 6). A block's limit for a type resolves as:
+ *
+ *   per-block explicit  >  kernel-config override  >  this default_limit
+ *
+ *   - "per-block explicit" is any limit set by quota_set_limit. It records a
+ *     provenance flag, so a later config change never overwrites it.
+ *   - "kernel-config override" applies to USER blocks ONLY (the tunables are
+ *     a PER-USER policy; PROCESS and JOB blocks continue to seed straight from
+ *     default_limit). It seeds a new USER block and is re-applied to live ones
+ *     -- see quota_config_user_default / quota_user_default_relimit.
+ *
+ * WHAT THIS STILL DOES NOT GUARANTEE: every default_limit in the table is
+ * currently UNLIMITED and no production code sets a quota.user.<type> tunable,
+ * so a caller that never calls quota_set_limit still gets an UNLIMITED block.
+ * The override MECHANISM is enforced; the POLICY that would make it bite is
+ * not wired yet. Do not read this table as imposing a cap. */
 #define QUOTA_LIMIT_UNLIMITED  0ULL
 
 /* --- Descriptor ---------------------------------------------------------- *

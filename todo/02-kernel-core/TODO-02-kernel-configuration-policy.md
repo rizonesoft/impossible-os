@@ -195,6 +195,7 @@ Give subsystems one typed registration surface for mutable policy instead of one
 - [x] Record owner subsystem, lock phase, and `source` provenance per tunable; `kernel_tunable_dump()` exposes them for audit.
 - [x] Callbacks run at PASSIVE only -- inline when caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; recursive self-writes refused; deferred dispatch atomic + monotonic via write-generation.
 - [/] Loadable modules register under a `module.<name>.` namespace (`TUNABLE_SRC_MODULE`); `kernel_tunable_unregister_owner()` quiesces callbacks then drops the module's tunables. Loader-side call owned elsewhere. -> XREF: D04 T05
+- [ ] Privileged production write path for tunables: no non-test `kernel_tunable_set` caller exists, so every `quota.user.<type>` default stays at its unlimited built-in and no quota cap can be enforced. -> XREF: `02-kernel-core/TODO-25 §6`
 - [x] Commit: `"kernel: add runtime tunable registry"`
 
 **Test checkpoint:** Writing `panic.timeout=9999` clamps to the declared max and logs `"[CONF] tunable clamp: panic.timeout"`. A read-only tunable write returns `STATUS_ACCESS_DENIED`, and a callback requested from syscall context runs later at PASSIVE_LEVEL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

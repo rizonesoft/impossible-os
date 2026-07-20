@@ -437,6 +437,13 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle);
  * STATUS_QUOTA_EXCEEDED when the sender is at its message quota. The status is
  * returned rather than collapsed into a NULL pointer specifically so a caller
  * can tell "this user is over quota" from "the machine is out of memory".
+ *
+ * The quota status is FORWARDED, not normalized, so the set is not closed by
+ * the four above: whatever quota_charge_current returns reaches the caller.
+ * In particular STATUS_PROCESS_IS_TERMINATING appears when the sending task
+ * has already lost its process quota block. That distinction is deliberate --
+ * a dying sender is not a retryable resource shortage, and flattening it into
+ * INSUFFICIENT_RESOURCES would invite a caller to spin on it.
  * MaxPoolUsage == 0 means "no per-port limit" (still bounded by
  * ALPC_MAX_ALLOWED_MESSAGE_LENGTH and overall heap availability).
  *

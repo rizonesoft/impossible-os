@@ -23,6 +23,14 @@
  * is logged in, so a create-time-only default would never affect anybody
  * actually running -- an administrative control that changes nothing is worse
  * than none, because it reads as enforcement.
+ *
+ * WHAT THIS DOES NOT YET DO. Every taxonomy default is UNLIMITED and nothing in
+ * the production tree calls kernel_tunable_set (only tests do), so today this
+ * layer ACCOUNTS usage without ENFORCING any finite cap. What ships here is the
+ * mechanism -- registration, precedence, and the live re-limit walk -- not a
+ * policy. Connecting a privileged source (boot.conf / registry / the native set
+ * syscall) is owned by TODO-02; until it lands, no charge point can refuse on a
+ * configured cap, and this file must not be described as enforcing one.
  * ========================================================================== */
 
 #include "kernel/types.h"
@@ -130,19 +138,30 @@ void quota_config_register_tunables(void)
         /* min 0 is QUOTA_LIMIT_UNLIMITED, not "cap everything to nothing" --
          * the same 0-means-unlimited convention the taxonomy uses, so an
          * administrator clearing a cap uses the value the header documents. */
+        /* TUNABLE_PRIVILEGED: this is GLOBAL policy -- it changes the budget of
+         * every user on the machine -- so a setter must present
+         * TUNABLE_SET_PRIVILEGED. Registering it unprivileged would leave the
+         * knob unsafe the moment a native set path is connected, which is the
+         * dangerous order to get wrong. */
         if (kernel_tunable_register(g_quota_tunable_name[i], TUNABLE_UINT,
-                                    TUNABLE_RUNTIME, 0, QUOTA_AMOUNT_MAX, def,
+                                    TUNABLE_RUNTIME | TUNABLE_PRIVILEGED,
+                                    0, QUOTA_AMOUNT_MAX, def,
                                     cb_quota_user_default, (void *)0,
                                     TUNABLE_OWNER_CORE,
                                     TUNABLE_SRC_BUILTIN) == STATUS_SUCCESS)
             registered++;
 
-        /* Publish the registered value as the effective default. Registration
-         * applies boot.conf and any other configured source, so this is the
-         * first point the configured value exists -- and no live USER block
-         * can disagree yet, which is why a plain publish (no re-limit walk) is
-         * the right operation here. */
-        quota_user_default_publish((quota_resource_type_t)i,
+        /* Apply the registered value with a full RE-LIMIT, not a bare publish.
+         * A USER block already exists by this point: task_assign_initial_token
+         * (boot_desktop.c) wires PID 0's quota well before Phase 3 reaches
+         * here, and every kernel task created in between shares that same
+         * SYSTEM user block. Publishing alone would update the seed for FUTURE
+         * blocks and leave SYSTEM on the taxonomy default permanently -- the
+         * exact "administrative control that changes nothing" this file exists
+         * to avoid. Today the registered value equals the taxonomy default so
+         * the walk is a no-op, but it stops being one the moment a real policy
+         * source is wired in. */
+        quota_user_default_relimit((quota_resource_type_t)i,
                                    quota_config_user_default(
                                        (quota_resource_type_t)i));
     }

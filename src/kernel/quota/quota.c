@@ -1167,6 +1167,13 @@ NTSTATUS quota_set_limit(quota_block_t *block, quota_resource_type_t type, uint6
  * users does not pay a lock round-trip per block. */
 #define QUOTA_RELIMIT_BATCH  16u
 
+/* Nodes VISITED per registry-lock acquisition. Distinct from the pin budget
+ * above because a block that fails try_ref (already torn down to refcount 0,
+ * awaiting unlink) consumes a visit without consuming a pin -- so bounding
+ * pins alone does not bound the interrupts-off scan. Set above the pin budget
+ * so ordinary churn never truncates a pass. */
+#define QUOTA_RELIMIT_VISIT_MAX  64u
+
 void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
 {
     quota_block_t *cursor = (quota_block_t *)0;   /* pinned resume point */
@@ -1189,7 +1196,14 @@ void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
 
         spin_lock_irqsave(&g_registry_lock, &flags);
         quota_block_t *b = cursor ? cursor->reg_next : g_registry_head;
-        while (b && n < QUOTA_RELIMIT_BATCH) {
+        /* Bound VISITED nodes, not just successful pins. A block whose refcount
+         * already hit zero fails try_ref and does not advance `n`, so counting
+         * pins alone would let a burst of concurrent teardowns stretch this
+         * interrupts-off critical section arbitrarily. `last` carries the
+         * resume point is batch[n-1] whenever this pass pinned anything. */
+        uint32_t visited = 0;
+        while (b && n < QUOTA_RELIMIT_BATCH && visited < QUOTA_RELIMIT_VISIT_MAX) {
+            visited++;
             /* try_ref, not ref: a block whose count already reached zero is
              * committed to teardown and must not be lifted back to life. */
             if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
@@ -1197,6 +1211,10 @@ void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
                 batch[n++] = b;
             b = b->reg_next;
         }
+        /* Did the visit budget (rather than the list end) stop this pass? If so
+         * the walk is NOT finished, even when this pass pinned a short batch or
+         * nothing at all -- resume from the last block we could pin. */
+        int visit_capped = (b != (quota_block_t *)0);
         spin_unlock_irqrestore(&g_registry_lock, flags);
 
         /* Release the previous cursor only after the new batch is pinned, so
@@ -1205,8 +1223,19 @@ void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
             quota_block_deref(cursor);
         cursor = (quota_block_t *)0;
 
-        if (n == 0)
+        if (n == 0) {
+            /* Nothing pinnable. If the visit budget stopped us there are more
+             * nodes we never reached, but with no pinned block there is no safe
+             * resume point -- restarting from the head would re-walk forever.
+             * Every skipped block failed try_ref, i.e. is already committed to
+             * teardown and about to be unlinked, so stopping loses no live
+             * limit; log it because a persistent occurrence is pathological. */
+            if (visit_capped)
+                klog(LOG_WARN, "quota",
+                     "re-limit stopped early: %u nodes visited, none pinnable",
+                     (uint64_t)visited);
             break;
+        }
 
         for (uint32_t i = 0; i < n; i++) {
             uint64_t bflags;
@@ -1223,10 +1252,12 @@ void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
         }
 
         /* Keep the LAST entry referenced as the next resume point; release the
-         * rest. A short batch means the list ended, so stop after applying it. */
+         * rest. A short batch means the list ENDED -- but only when the visit
+         * budget was not what stopped us; otherwise there is more list to walk
+         * and this pass just could not pin a full batch of it. */
         for (uint32_t i = 0; i + 1 < n; i++)
             quota_block_deref(batch[i]);
-        if (n < QUOTA_RELIMIT_BATCH) {
+        if (!visit_capped && n < QUOTA_RELIMIT_BATCH) {
             quota_block_deref(batch[n - 1]);
             break;
         }
