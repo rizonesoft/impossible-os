@@ -311,7 +311,7 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 > - **Scope boundary** -- §9 owns rlimit STORAGE + accessors + inheritance; enforcement (AS/CPU) is a follow-up owned here, the Windows quota projection is `TODO-25 §8`, Linux `get/set/prlimit` await a `linux_syscall_table`.
 > **Verified:** 2026-07-11 | commit `8e4bfc30` | 4/10 items | build OK | 8 rlimit tests PASS
 > **Accepted:** [H] task-slot allocation race (a tick preempts ring-0 mid-`task_create`; two creators can claim the same `num_tasks` slot) -- pre-existing, systemic across all per-process inheritance -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §13` (item: "Atomic task-slot CLAIM" at line 359)
-> **Accepted:** [H] Windows `QUOTA_LIMITS` projection needs real VM/working-set counters, distinct from Linux rlimits -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §8` (item: "`ProcessQuotaLimits`" at line 186)
+> **Accepted:** [H] Windows `QUOTA_LIMITS` projection needs real VM/working-set counters, distinct from Linux rlimits -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §8` (item: "`ProcessQuotaLimits`" at line 193)
 > **Quality reviewed:** 2026-07-11 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 2H+6M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ## 10. CPU Affinity per Process
@@ -460,6 +460,7 @@ Central cleanup point for all per-process resources when a process terminates. W
 - [ ] Coordinated SMP termination (sibling-stop reap barrier before CR3/stack free) -- DEFERRED, no cross-CPU rendezvous primitive (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §2` TLB-shootdown IPI, `§3`)
 - [ ] Job membership vs publication lock (`num_tasks++` committed atomically) -- DEFERRED, needs a tasks-publication lock; races only under true concurrency (-> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`)
 - [x] Self-directed `SYS_KILL` routes through the non-returning `task_exit` (never resumes in ring-3), so a self-killed task cannot issue further syscalls; `task_terminate_remote` stays remote-only
+- [ ] `ob_job_create` inserts a named job into `\BaseNamedObjects` BEFORE `ObpAllocateHandle`, so a handle-alloc failure leaks the directory entry, the `JOB_OBJECT` and its quota block. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §3`
 - [ ] Wire `signal_check()` into the scheduler / kernel-entry boundary: it is defined but never called, so `signal_default_action` (and its `task_death_teardown` leg) is dormant -- fatal signals set a pending bit nothing dispatches
 - [ ] Remote/signal death (`task_terminate_remote`, `signal_default_action`) skips the thread-0 APC rundown + THREAD_DEAD publish the self-death paths do inline; run it once the target is stopped so queued thread-0 APCs are not leaked
 - [x] Commit: `"kernel: task -- process exit cleanup (timer-res reap, shared death teardown, cleanup log)"`
@@ -550,7 +551,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 553)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 554)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

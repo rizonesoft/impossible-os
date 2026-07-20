@@ -663,6 +663,14 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].job = NULL;
     tasks[pid].job_absorb.active = 0;
     tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
+    /* Stale-slot reset of the quota fields MUST precede ob_job_fork_inherit:
+     * joining a job now reads task->quota under task->quota_lock (the job
+     * absorbs the joiner's usage), so a reused slot would hand that read a
+     * prior tenant's freed block pointer and a possibly-still-locked lock word.
+     * Same reason job/job_absorb are reset just above. */
+    tasks[pid].quota = NULL;
+    tasks[pid].quota_user = NULL;
+    tasks[pid].quota_lock.flag = 0;
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create: job inheritance rejected (terminated/at-limit); failing closed");
@@ -670,14 +678,7 @@ int task_create(task_entry_t entry, const char *name)
             PsDereferencePrimaryToken(inherited_token);
         return -1;
     }
-    /* Quota blocks, in the same early window as job inheritance and with the
-     * same stale-slot reset: a reused slot's pointers must never survive, or
-     * quota_task_init would mistake a prior tenant's block for its own and
-     * leave this task charging a dead process's accounting. Fail closed --
-     * an unaccounted process is an unenforced limit. */
-    tasks[pid].quota = NULL;
-    tasks[pid].quota_user = NULL;
-    tasks[pid].quota_lock.flag = 0;
+    /* Fail closed -- an unaccounted process is an unenforced limit. */
     if (quota_task_init(&tasks[pid], inherited_token) != STATUS_SUCCESS) {
         klog(LOG_ERROR, "sched", "task_create: quota block allocation failed");
         ob_job_detach_task(&tasks[pid]);
@@ -877,6 +878,11 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].job = NULL;
     tasks[pid].job_absorb.active = 0;
     tasks[pid].job_lock.flag = 0;    /* unlocked; guards t->job for assign/detach */
+    /* Quota stale-slot reset BEFORE the job inherit, same ordering requirement
+     * as task_create (see the comment there). */
+    tasks[pid].quota = NULL;
+    tasks[pid].quota_user = NULL;
+    tasks[pid].quota_lock.flag = 0;
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create_user: job inheritance rejected (terminated/at-limit); failing closed");
@@ -884,11 +890,6 @@ int task_create_user(task_entry_t entry, const char *name)
             PsDereferencePrimaryToken(inherited_token);
         return -1;
     }
-    /* Quota blocks, with the same stale-slot reset and fail-closed policy as
-     * task_create (see the comment there). */
-    tasks[pid].quota = NULL;
-    tasks[pid].quota_user = NULL;
-    tasks[pid].quota_lock.flag = 0;
     if (quota_task_init(&tasks[pid], inherited_token) != STATUS_SUCCESS) {
         klog(LOG_ERROR, "sched", "task_create_user: quota block allocation failed");
         ob_job_detach_task(&tasks[pid]);
@@ -1824,6 +1825,12 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].state = TASK_READY;
     tasks[child_pid].job_absorb.active = 0;
     tasks[child_pid].job_lock.flag = 0;   /* unlocked; guards t->job for assign/detach */
+    /* Quota stale-slot reset BEFORE the job inherit: joining a job reads
+     * task->quota under task->quota_lock, so a reused slot must not present a
+     * prior tenant's freed block or a stale lock word (see task_create). */
+    tasks[child_pid].quota = NULL;
+    tasks[child_pid].quota_user = NULL;
+    tasks[child_pid].quota_lock.flag = 0;
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process
@@ -1842,13 +1849,9 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
-    /* Child quota blocks, alongside the job inherit above and rolled back on
-     * every later fork-failure path (same stale-slot reset as task_create).
-     * The child gets its OWN process block but SHARES its parent's user block,
-     * so forking cannot multiply a user's budget. */
-    tasks[child_pid].quota = NULL;
-    tasks[child_pid].quota_user = NULL;
-    tasks[child_pid].quota_lock.flag = 0;
+    /* The child gets its OWN process block but SHARES its parent's user block,
+     * so forking cannot multiply a user's budget. Rolled back on every later
+     * fork-failure path. */
     if (quota_task_init(&tasks[child_pid], inherited_token) != STATUS_SUCCESS) {
         klog(LOG_ERROR, "sched", "task_fork: quota block allocation failed");
         ob_job_detach_task(&tasks[child_pid]);

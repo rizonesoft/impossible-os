@@ -33,6 +33,7 @@
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_job.h"
 #include "kernel/security/token.h"
+#include "kernel/sched/irql.h"   /* KeGetCurrentIrql for the diagnostic gate */
 #include "kernel/klog.h"
 
 /* --- Task block attach / detach ------------------------------------------ */
@@ -58,8 +59,20 @@ NTSTATUS quota_task_init(struct task *task, struct access_token *token)
         if (proc) {
             /* The user block is SHARED, not created per process: that is what
              * makes the per-user budget an aggregate rather than a fresh
-             * allowance handed out once per token. */
-            user = quota_user_block_acquire(tok->UserSid, sid_len);
+             * allowance handed out once per token.
+             *
+             * Take it from the TOKEN, which already resolved it. Re-resolving
+             * by SID here would put a registry walk -- with interrupts disabled
+             * -- on every single process creation, to re-find the exact block
+             * the token is holding a reference to. Only a tokenless or
+             * degraded token (acquisition failed at creation) falls back to a
+             * lookup. */
+            if (tok->QuotaBlock) {
+                user = tok->QuotaBlock;
+                quota_block_ref(user);
+            } else {
+                user = quota_user_block_acquire(tok->UserSid, sid_len);
+            }
             if (!user) {
                 quota_block_deref(proc);
                 proc = NULL;
@@ -172,18 +185,23 @@ static int quota_chain_add_task_blocks(quota_charge_receipt_t *receipt,
     return ok;
 }
 
-/* Confirm the task did not die while the chain was being collected.
+/* Confirm the task's quota identity did not change while the chain was being
+ * collected.
  *
  * The process/user blocks and the job block are captured in SEPARATE critical
  * sections, and death teardown detaches the job BEFORE it clears the quota
- * pointers. Without this re-check a charge could capture the process and user
- * blocks, have the job detached underneath it, then observe no job and commit
- * -- an allocation admitted against a job limit that never saw it, with a
- * receipt that can never restore the missing accounting.
+ * pointers. Re-reading the process pointer catches the case where teardown
+ * COMPLETED in between (the pointer is cleared), which is the reachable one:
+ * task_death_teardown runs both steps back to back.
  *
- * Re-reading the process pointer is a sufficient witness: teardown clears it
- * after the detach, so a pointer that is still the one we captured means no
- * teardown completed in between. Returns 0 when the task died mid-snapshot. */
+ * It NARROWS the window rather than closing it -- a charge can still land
+ * between the detach and the pointer clear, observe no job, and commit. That
+ * residual case is benign: the receipt then names no job block, so its return
+ * is symmetric and nothing is stranded; the charge simply escapes a job limit
+ * for a process that is already dying. Closing it entirely needs a membership
+ * generation under job_lock, owned by section 4's live-assignment item.
+ *
+ * Returns 0 when the task's process block changed or went away mid-snapshot. */
 static int quota_chain_still_live(struct task *task, quota_block_t *seen_process)
 {
     uint64_t flags;
@@ -342,11 +360,28 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
     receipt->type   = type;
     receipt->amount = amount;
 
-    if (amount == 0) {
-        /* No-op: nothing charged, nothing owed. Release the claim so the
-         * receipt stays reusable. */
+    /* Validate the TYPE before the zero-amount shortcut, and check liveness
+     * too. A zero charge that skipped both would report success for an
+     * out-of-range type and for an already-dead task, masking exactly the
+     * taxonomy mistakes and teardown races the non-zero path reports -- the
+     * same reason quota_charge validates its type before its own zero fast
+     * path. */
+    if (!quota_resource_desc(type)) {
         atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (amount == 0) {
+        /* No-op: nothing charged, nothing owed -- but still only for a task
+         * that could have been charged. Release the claim so the receipt stays
+         * reusable. */
+        int live;
+        uint64_t qflags;
+        spin_lock_irqsave(&task->quota_lock, &qflags);
+        live = (task->quota != NULL);
+        spin_unlock_irqrestore(&task->quota_lock, qflags);
+        atomic_set(&receipt->state, QUOTA_RECEIPT_IDLE);
+        return live ? STATUS_SUCCESS : STATUS_PROCESS_IS_TERMINATING;
     }
 
     /* Snapshot the whole chain FIRST, holding a reference on every block, and
@@ -376,9 +411,13 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
             return STATUS_PROCESS_IS_TERMINATING;
         }
         /* Chain deeper than QUOTA_CHAIN_MAX. Refuse rather than charge a
-         * truncated chain: a link left out is a limit left unenforced. */
-        klog(LOG_ERROR, "quota", "charge chain exceeds %u blocks for pid=%u",
-             (uint64_t)QUOTA_CHAIN_MAX, (uint64_t)task->pid);
+         * truncated chain: a link left out is a limit left unenforced.
+         * IRQL-gated like every other diagnostic in this subsystem -- charging
+         * is documented as callable at DISPATCH_LEVEL, where klog's live-disk
+         * flush re-enters the VFS and can stall the caller. */
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL)
+            klog(LOG_ERROR, "quota", "charge chain exceeds %u blocks for pid=%u",
+                 (uint64_t)QUOTA_CHAIN_MAX, (uint64_t)task->pid);
         return STATUS_INVALID_PARAMETER;
     }
 

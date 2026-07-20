@@ -174,6 +174,7 @@ struct quota_block {
     struct quota_block *reg_next;
     struct quota_block *reg_prev;
     uint8_t    principal;                           /* quota_principal_t, immutable */
+    uint8_t    registered;                          /* on the USER registry list */
     atomic_t   refcount;                            /* live references; 0 frees */
     atomic64_t usage[QUOTA_RESOURCE_TYPE_COUNT];    /* current charge, 0..MAX   */
     atomic64_t peak[QUOTA_RESOURCE_TYPE_COUNT];     /* high-water usage         */
@@ -399,10 +400,17 @@ static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t
     return STATUS_SUCCESS;
 }
 
-/* --- Live-block registry ------------------------------------------------- *
- * Every live block is on this list so an aggregate can find the blocks owned
- * by a SID without walking the process/job trees (and without taking any of
- * their locks). The lock protects ONLY the list linkage.
+/* --- Canonical USER-block registry --------------------------------------- *
+ * ONLY QUOTA_PRINCIPAL_USER blocks are listed here, because only they must be
+ * FINDABLE by SID: a process or job block is reachable solely through the
+ * owner that holds it, and nothing ever looks one up.
+ *
+ * That restriction is a security property, not tidiness. Listing every block
+ * would make this list grow with attacker-controlled objects -- NtCreateJobObject
+ * needs no privilege and the handle ceiling allows thousands of live jobs -- and
+ * every lookup walks it with interrupts disabled. Bounding the list to one entry
+ * per distinct owner SID makes the walk independent of how many objects a caller
+ * creates. The lock protects ONLY the list linkage.
  *
  * Lock order is absolute: g_registry_lock may be taken while holding nothing,
  * and NO block's `lock` may be acquired while it is held. A registry walk
@@ -424,15 +432,7 @@ static void quota_registry_link_locked(quota_block_t *block)
     if (g_registry_head)
         g_registry_head->reg_prev = block;
     g_registry_head = block;
-}
-
-/* Link a fully constructed block. Caller must NOT hold the registry lock. */
-static void quota_registry_add(quota_block_t *block)
-{
-    uint64_t flags;
-    spin_lock_irqsave(&g_registry_lock, &flags);
-    quota_registry_link_locked(block);
-    spin_unlock_irqrestore(&g_registry_lock, flags);
+    block->registered = 1;
 }
 
 /* Unlink a block whose refcount has already reached zero. Splitting this from
@@ -445,6 +445,11 @@ static void quota_registry_remove(quota_block_t *block)
 {
     uint64_t flags;
     spin_lock_irqsave(&g_registry_lock, &flags);
+    if (!block->registered) {
+        spin_unlock_irqrestore(&g_registry_lock, flags);
+        return;                     /* process/job block: never listed */
+    }
+    block->registered = 0;
     if (block->reg_prev)
         block->reg_prev->reg_next = block->reg_next;
     else if (g_registry_head == block)
@@ -548,14 +553,12 @@ static quota_block_t *quota_block_alloc(quota_principal_t principal,
 quota_block_t *quota_block_create(quota_principal_t principal,
                                   const SID *owner, uint32_t owner_len)
 {
-    quota_block_t *block = quota_block_alloc(principal, owner, owner_len);
-    if (!block)
-        return NULL;
-    /* Publish LAST: the block is fully constructed (counters, limits, owner)
-     * before any registry walker can reach it, so a concurrent rollup never
-     * reads a half-built block. */
-    quota_registry_add(block);
-    return block;
+    /* Deliberately NOT registered. Process and job blocks are reached only
+     * through the owner holding them, so listing them would grow the lookup
+     * walk with attacker-creatable objects for no benefit. USER blocks are
+     * published by quota_user_block_acquire, which is the only path that must
+     * be able to find one again. */
+    return quota_block_alloc(principal, owner, owner_len);
 }
 
 void quota_block_ref(quota_block_t *block)

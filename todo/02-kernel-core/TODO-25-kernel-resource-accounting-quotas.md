@@ -94,7 +94,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (counter domain, lifetime, limit-lowering, and transfer-visibility contracts).
 > - **Scope boundary** -- §2 owns the mechanism only: no subsystem is charged yet (§4-§7), per-CPU batching for hot paths is §5, and cross-CPU contention test infrastructure is §10.
 > **Verified:** 2026-07-19 | commit `860c95ba` | 6/6 items | build OK | smoke PASS (TCG 2.75s), tests 27/27 PASS
-> **Accepted:** [M] counter layout: four per-type arrays cost ~3 cache lines per charge; an array-of-records is the candidate, but no consumer exists to benchmark against yet (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §5` (item: "Benchmark contended pool charging" at line 137)
+> **Accepted:** [M] counter layout: four per-type arrays cost ~3 cache lines per charge; an array-of-records is the candidate, but no consumer exists to benchmark against yet (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §5` (item: "Benchmark contended pool charging" at line 154)
 > **Accepted:** [M] klog's live-disk path re-enters VFS, so a PASSIVE caller holding a storage lock can deadlock; kernel-wide, mitigated here by the PASSIVE_LEVEL gate + deferred count (reason: scope) -> XREF: `02-kernel-core/TODO-32 §6` (item: "`klog_v2()` enqueue must never synchronously enter the live-disk flush" at line 156)
 > **Deferred:** [M] cross-CPU contention proof: the scheduler is single-CPU today, so the multi-thread suites show interleaving, not parallel contention (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path" at line 203)
 > **Deferred:** [L] bounded worker join + CPU-pinned fault injection for the quota tests (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 204)
@@ -112,16 +112,24 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Charges use the process chain, never the thread impersonation token. `QUOTA_CHARGE_CLIENT` is defined but fails closed with `STATUS_NOT_SUPPORTED`: client billing needs an SMP-safe token pin. -> XREF: `TODO-15-security-reference-monitor.md §4`
 - [x] Commit: quota: token/process/job-chain ownership, inheritance, per-SID rollup.
 
-**Test checkpoint:** every live task (including PID 0) carries a non-NULL process block plus the shared user block; a chain charge lands on both and its receipt returns exactly those blocks; a charge refused by a later block in the chain rolls the charged prefix back so no usage is stranded; a repeated `quota_return_chain` cannot erase a newer charge; one SID always resolves to one canonical user block while a different SID does not collide; a per-SID rollup counts a chain charge ONCE (verified: SUITE=quota 45 suites / 457 assertions, 0 failures).
+**Test checkpoint:** every live task (including PID 0) carries a non-NULL process block plus the shared user block; a chain charge lands on both and its receipt returns exactly those blocks; a charge refused by a later block in the chain rolls the charged prefix back so no usage is stranded; a repeated `quota_return_chain` cannot erase a newer charge; one SID always resolves to one canonical user block while a different SID does not collide; a per-SID rollup counts a chain charge ONCE (verified: SUITE=quota 52 suites / 500 assertions, 0 failures).
 
-> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 45 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 52 suites, 0 failures
 
 > **Notes:**
-> - **What shipped** -- `quota_owner.c` (ownership + chain charge) plus a live-block registry, `quota_principal_t`, `quota_block_try_ref`, `quota_user_block_acquire`, and `quota_rollup_by_sid` in `quota.c`.
+> - **What shipped** -- `quota_owner.c` (ownership + chain charge) plus a canonical per-SID USER-block registry, `quota_principal_t`, `quota_block_try_ref`, `quota_user_block_acquire`, and `quota_rollup_by_sid` in `quota.c`.
 > - **How it runs** -- blocks are created beside job inheritance on the task-creation paths (fail-closed, unwound on later failure) and released in `task_death_teardown`; the chain is snapshotted under owner locks, then charged one lock at a time.
 > - **Downstream effects** -- §4-§7 charge through `quota_charge_chain` and hold its receipt; ancestor-job depth and breakaway wait on TODO-21 §13; Codex adoptions are in the commit message.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (chain-charging contract, principal kinds, canonical-user rule).
 > - **Scope boundary** -- §3 owns WHO is charged; nothing is charged yet (§4-§7), privilege-checked limits are §8, nested-job topology is TODO-21 §13.
+> **Verified:** 2026-07-20 | commit `20ee7781` + review fixes | 4/6 items | build OK | smoke PASS (TCG 2.7s), tests 52/52 PASS
+> **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a per-task live-receipt registry plus a membership generation (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §4` (item: "Migrate outstanding receipt obligations at `ob_job_assign`" at line 140)
+> **Accepted:** [M] a charge+return lifetime costs 7-9 irqsave lock sections; needs a latency budget before the first hot-path consumer (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §5` (item: "Benchmark contended pool charging under a defined latency budget" at line 154)
+> **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
+> **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
+> **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 463)
+> **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 359)
+> **Quality reviewed:** 2026-07-20 | Codex 14x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 12H+13M+4L fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -131,8 +139,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Charge object body and name entry on object creation.
 - [ ] Object Manager exposes per-type usage from quota counters, not local-only counters.
 - [ ] DuplicateHandle checks target quota before inserting.
-- [ ] Migrate outstanding receipt obligations at `ob_job_assign`: a per-task registry of live receipts, so pre-join resources released while still a member credit the job back instead of holding its headroom until detach. -> XREF: `§3` (chain charge)
-- [ ] Close the `ob_job_assign` absorb-to-publish window: a charge landing between `quota_job_absorb_task` and membership publication misses the job block. Needs a per-task membership-transition state. -> XREF: `§3` (chain charge)
+- [ ] Migrate outstanding receipt obligations at `ob_job_assign` (per-task live-receipt registry) AND close the absorb-to-publish window with a membership generation under `job_lock`. BOTH must land before the first charging consumer. -> XREF: `§3`
 - [ ] Add a caller-held generation token to `quota_charge_receipt_t` so recycled receipt STORAGE cannot let a stale returner credit back a later charge; §3 documents the no-recycle rule instead. -> XREF: `§3` (chain charge)
 - [ ] Commit: quota: object/handle charge integration in Object Manager.
 
@@ -146,7 +153,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Charge nonpaged/paged pool through allocator provider hooks.
 - [ ] Ensure kernel-internal early boot allocations are charged to System.
 - [ ] Refuse user-triggered unbounded allocation paths without quota owner.
-- [ ] Benchmark contended pool charging, then decide the `quota_block_t` counter layout: the four per-type arrays cost ~3 cache lines per charge; an array of per-type records is the candidate. -> XREF: `§2` (charge API)
+- [ ] Benchmark contended pool charging under a defined latency budget BEFORE the first hot-path consumer: a charge+return lifetime currently costs 7-9 irqsave lock sections. Then decide the `quota_block_t` counter layout. -> XREF: `§2` (charge API)
 - [ ] Commit: quota: paged/nonpaged pool charging via allocator hooks.
 
 **Test checkpoint:** a tagged allocation with a quota owner charges that owner's paged/nonpaged usage and frees return it; early-boot allocations are attributed to the System quota block (never NULL-owner leaks); a user-triggered unbounded allocation path with no quota owner is refused rather than charged to System.
@@ -255,7 +262,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [x] `test_quota_chain_all_or_nothing`: a charge admitted by the process block but refused later in the chain rolls the prefix back, stranding no usage (§3).
 - [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3).
 - [ ] `test_quota_inherit_on_create`: child auto-joins parent job chain unless breakaway; jobless child charges own block (§3).
-- [ ] `test_quota_per_sid_rollup`: per-SID query sums usage across every job the SID owns (§3).
+- [x] `test_quota_rollup_counts_user_layer_once`: the per-SID query aggregates the USER layer only, so a chain charge is counted once rather than per layer (§3).
 - [ ] `test_quota_pressure_hysteresis`: levels derive from stall-time metrics and do not flap at a threshold (§8/§9).
 - [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
 - [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements handle usage (§4).

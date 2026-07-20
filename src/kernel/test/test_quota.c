@@ -686,10 +686,14 @@ static void test_quota_chain_charge_roundtrip(void)
                    "user usage restored exactly");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "receipt emptied by the return");
 
-    /* A zero-amount charge is a success that owes nothing. */
+    /* A zero-amount charge is a success that owes nothing -- but it still
+     * validates the type, so a taxonomy mistake is never masked by amount 0. */
     TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_ALPC_MESSAGE, 0, 0, &r),
                    (uint64_t)STATUS_SUCCESS, "zero-amount chain charge succeeds");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "zero-amount charge records no blocks");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RESOURCE_TYPE_COUNT, 0, 0, &r),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "zero-amount charge still rejects an out-of-range type");
 }
 
 /* All-or-nothing: when a LATER block in the chain refuses, the prefix already
@@ -808,6 +812,11 @@ static void test_quota_chain_no_process_block_fails_closed(void)
                    (uint64_t)STATUS_PROCESS_IS_TERMINATING,
                    "charge without a process block fails closed");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "failed charge holds no blocks");
+    /* A ZERO charge must fail closed on a dead task too -- reporting success
+     * there would let a caller read it as "the task is still chargeable". */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_THREAD, 0, 0, &r),
+                   (uint64_t)STATUS_PROCESS_IS_TERMINATING,
+                   "zero-amount charge also fails closed without a process block");
 
     spin_lock_irqsave(&t->quota_lock, &flags);
     t->quota = saved;
@@ -830,6 +839,9 @@ static void test_quota_job_absorb_and_unabsorb(void)
 
     TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_TIMER, 12),
                    (uint64_t)STATUS_SUCCESS, "process holds usage before joining");
+    /* Read the ACTUAL current usage rather than assuming 12: the absorb folds
+     * in whatever the process block holds, and a future charging consumer
+     * would otherwise turn this into a confusing off-by-N failure. */
     proc_usage = quota_usage(t->quota, QUOTA_RES_TIMER);
 
     TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
@@ -873,11 +885,15 @@ static void test_quota_job_departure_withdraws_only_absorbed(void)
         return;
     }
 
+    uint64_t base = quota_usage(t->quota, QUOTA_RES_SECTION);
     TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_SECTION, 20),
                    (uint64_t)STATUS_SUCCESS, "process holds usage before joining");
     TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
                    (uint64_t)STATUS_SUCCESS, "join folds the usage in");
-    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), 20ULL, "job holds it");
+    /* The absorb folds the process block's WHOLE current usage, not just the
+     * 20 charged here -- assert against the measured baseline so a future
+     * charging consumer does not turn this into an off-by-N mystery. */
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), base + 20, "job holds it");
 
     /* A post-join charge reaching the job the way a chain charge would, and a
      * second member's live charge on the same job. */
@@ -888,7 +904,7 @@ static void test_quota_job_departure_withdraws_only_absorbed(void)
 
     quota_job_unabsorb(job, &rec);
     TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_SECTION), 12ULL,
-                   "departure withdrew only the 20 it absorbed, leaving 5+7 live");
+                   "departure withdrew exactly what it absorbed, leaving 5+7 live");
     TEST_ASSERT_EQ((uint64_t)rec.active, 0ULL, "record consumed by the withdrawal");
 
     /* The post-join charge's own receipt return still finds its usage intact. */
@@ -917,6 +933,7 @@ static void test_quota_prejoin_release_holds_job_until_detach(void)
         return;
     }
 
+    uint64_t base = quota_usage(t->quota, QUOTA_RES_OBJECT_BODY);
     TEST_ASSERT_EQ((uint64_t)quota_charge(t->quota, QUOTA_RES_OBJECT_BODY, 9),
                    (uint64_t)STATUS_SUCCESS, "pre-join resource charged");
     TEST_ASSERT_EQ((uint64_t)quota_job_absorb_task(job, t, &rec),
@@ -926,7 +943,7 @@ static void test_quota_prejoin_release_holds_job_until_detach(void)
      * only the process and user blocks, so the job keeps its copy. */
     TEST_ASSERT_EQ((uint64_t)quota_return(t->quota, QUOTA_RES_OBJECT_BODY, 9),
                    (uint64_t)STATUS_SUCCESS, "pre-join resource released");
-    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_OBJECT_BODY), 9ULL,
+    TEST_ASSERT_EQ(quota_usage(job, QUOTA_RES_OBJECT_BODY), base + 9,
                    "job still holds the absorbed copy until detach (documented gap)");
 
     quota_job_unabsorb(job, &rec);

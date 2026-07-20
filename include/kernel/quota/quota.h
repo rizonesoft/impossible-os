@@ -484,8 +484,12 @@ typedef struct quota_charge_receipt {
  * chain there would return success having charged nothing, letting a dying
  * process allocate entirely unaccounted.
  *
- * `flags` is 0 or QUOTA_CHARGE_CLIENT. On failure the receipt is left empty, so
- * an unconditional quota_return_chain on the error path is safe (and correct).
+ * `flags` is 0 or QUOTA_CHARGE_CLIENT. On failure THIS call leaves the receipt
+ * holding nothing of its own, so an unconditional quota_return_chain on the
+ * error path is safe. The one exception is STATUS_INVALID_PARAMETER raised
+ * because the receipt was ALREADY holding a live charge: that charge is
+ * untouched and still belongs to whoever made it, so a caller must not treat
+ * that status as licence to return it.
  * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
  * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
  * STATUS_NOT_SUPPORTED (QUOTA_CHARGE_CLIENT -- see the flag),
