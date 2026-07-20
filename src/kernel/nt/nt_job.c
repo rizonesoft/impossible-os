@@ -27,6 +27,9 @@
 #include "kernel/nt/nt_types.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
+#include "kernel/nt/zw.h"                  /* ProbeForReadIfUser / ssdt_previous_mode */
+#include "kernel/cpu_security.h"           /* copy_from_user */
+#include "kernel/security/privileges.h"    /* SeSinglePrivilegeCheck / SeIncreaseQuotaPrivilege */
 
 /* --- Small helpers ------------------------------------------------------- */
 
@@ -35,6 +38,24 @@ static const char *job_oa_name(OBJECT_ATTRIBUTES *oa)
     if (!oa || !oa->ObjectName || !oa->ObjectName->Buffer)
         return (const char *)0;
     return (const char *)oa->ObjectName->Buffer;
+}
+
+/* Write a ReturnLength out-parameter safely. The surrounding classes store
+ * through the caller's uint32_t* directly, which is a ring-3-controlled kernel
+ * write; the quota class must not extend that, and a NULL pointer is legal
+ * (the caller simply does not want the length). */
+static NTSTATUS job_write_ret_len(uint32_t *ret_len, uint32_t value)
+{
+    NTSTATUS st;
+
+    if (!ret_len)
+        return STATUS_SUCCESS;
+    st = ProbeForWriteIfUser(ret_len, (uint32_t)sizeof(value), 4);
+    if (st != STATUS_SUCCESS)
+        return st;
+    if (copy_to_user(ret_len, &value, (uint32_t)sizeof(value)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
 }
 
 /* Resolve a job HANDLE to its JOB_OBJECT body (type-checked). Returns the body
@@ -233,6 +254,26 @@ static NTSTATUS NtQueryInformationJobObject_handler(uint64_t a1, uint64_t a2,
         if (ret_len) *ret_len = sizeof(ext);
         return STATUS_SUCCESS;
     }
+    case JobObjectQuotaLimitInformation: {
+        /* Probe + bounce-copy, NOT the sibling classes' job_memcpy straight
+         * into the caller's pointer: that pattern writes kernel data to
+         * whatever address ring 3 supplied, which is a kernel-write primitive.
+         * This class is new, so it does not inherit that boundary; the older
+         * classes are repaired by their own owner.
+         * -> XREF: TODO-12-native-api-ssdt.md section 6 (usercopy hardening). */
+        JOBOBJECT_QUOTA_LIMIT_INFORMATION q;
+        NTSTATUS st;
+
+        if (length < sizeof(q))
+            return STATUS_BUFFER_TOO_SMALL;
+        ob_job_collect_quota_limits(job, &q);
+        st = ProbeForWriteIfUser(buffer, (uint32_t)sizeof(q), 8);
+        if (st != STATUS_SUCCESS)
+            return st;
+        if (copy_to_user(buffer, &q, (uint32_t)sizeof(q)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+        return job_write_ret_len(ret_len, (uint32_t)sizeof(q));
+    }
     case JobObjectBasicProcessIdList: {
         JOBOBJECT_BASIC_PROCESS_ID_LIST *list =
             (JOBOBJECT_BASIC_PROCESS_ID_LIST *)buffer;
@@ -300,6 +341,26 @@ static NTSTATUS NtSetInformationJobObject_handler(uint64_t a1, uint64_t a2,
          * ob_job_set_basic_limits rejects any unsupported LimitFlags bit
          * (STATUS_NOT_SUPPORTED) rather than silently accepting them. */
         return ob_job_set_basic_limits(job, &ext.BasicLimitInformation);
+    }
+    case JobObjectQuotaLimitInformation: {
+        /* Probe + bounce-copy rather than the sibling classes' direct
+         * job_memcpy from the caller pointer: this class RAISES limits behind a
+         * privilege check, so it is a security boundary and does not inherit
+         * the older classes' raw-deref pattern. */
+        JOBOBJECT_QUOTA_LIMIT_INFORMATION q;
+        NTSTATUS st;
+        int privileged;
+
+        if (length < sizeof(q))
+            return STATUS_BUFFER_TOO_SMALL;
+        st = ProbeForReadIfUser(buffer, (uint32_t)sizeof(q), 8);
+        if (st != STATUS_SUCCESS)
+            return st;
+        if (copy_from_user(&q, buffer, (uint32_t)sizeof(q)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+        privileged = SeSinglePrivilegeCheck(&SeIncreaseQuotaPrivilege,
+                                            ssdt_previous_mode());
+        return ob_job_set_quota_limits(job, &q, privileged);
     }
     default:
         return STATUS_INVALID_INFO_CLASS;

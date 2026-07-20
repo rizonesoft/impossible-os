@@ -9,6 +9,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/nt/quota_syscall_info.h"  /* ProcessQuotaLimits + QUOTA_LIMITS ABI */
 
 /* Register all process/thread SSDT handlers.
  * Call once during Phase 3, after ssdt_init(). */
@@ -22,7 +23,10 @@ void nt_process_register_ssdt(void);
 #define ThreadAffinityMask          4
 #define ThreadIdealProcessor        13
 
-/* ---- Process information classes ---------------------------------------- */
+/* ---- Process information classes ---------------------------------------- *
+ * ProcessQuotaLimits (1) and its QUOTA_LIMITS / QUOTA_LIMITS_EX wire structs
+ * live together in nt/quota_syscall_info.h so the class value and its ABI
+ * cannot drift apart. */
 #define ProcessBasicInformation     0
 #define ProcessTimes                4
 #define ProcessDebugPort            7

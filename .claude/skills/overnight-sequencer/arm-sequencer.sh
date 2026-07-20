@@ -125,6 +125,45 @@ remove_sequencer_model_dropin() {
   done
 }
 
+# Long-lived Claude OAuth token for the headless run (2026-07-20). All overnight
+# runners on this machine share ONE global token file (KEY=VALUE format) so the
+# unattended run stops racing interactive sessions on the single-use refresh
+# token in ~/.claude/.credentials.json -- that race is what forced repeated
+# /login re-auth. EnvironmentFile keeps the secret out of the drop-in and out
+# of every repo; the leading '-' makes it optional, so arming before the token
+# is minted still works (the run then falls back to the shared credentials
+# file, racy but functional). Mint via conclave's token tooling or:
+#   claude setup-token   ->  CLAUDE_CODE_OAUTH_TOKEN=<value> in the file below, chmod 600.
+CLAUDE_TOKEN_ENV_FILE="$HOME/.conclave/secrets/claude-oauth-token.env"
+
+write_claude_token_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    d="$DROPIN_BASE/$svc.d"
+    mkdir -p "$d"
+    cat > "$d/claude-oauth-token.conf" <<EOF
+[Service]
+# Machine-global long-lived Claude token (arm-sequencer.sh). Scopes the token
+# to the overnight units only; interactive sessions keep /login + credentials
+# file. Optional: absent file means fall back to shared credentials.
+EnvironmentFile=-$CLAUDE_TOKEN_ENV_FILE
+EOF
+  done
+  if [ ! -f "$CLAUDE_TOKEN_ENV_FILE" ]; then
+    echo "WARN: no long-lived token file at $CLAUDE_TOKEN_ENV_FILE -- overnight run" >&2
+    echo "      will share ~/.claude/.credentials.json with interactive sessions" >&2
+    echo "      (refresh race can force /login). Mint one: claude setup-token" >&2
+  elif ! grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$CLAUDE_TOKEN_ENV_FILE"; then
+    echo "WARN: $CLAUDE_TOKEN_ENV_FILE exists but has no CLAUDE_CODE_OAUTH_TOKEN= line" >&2
+  fi
+}
+
+remove_claude_token_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    rm -f "$DROPIN_BASE/$svc.d/claude-oauth-token.conf"
+    rmdir "$DROPIN_BASE/$svc.d" 2>/dev/null || true
+  done
+}
+
 remove_runtime_file() {
   local p="$1"
   local label="$2"
@@ -171,6 +210,7 @@ if [ "${1:-}" = "--disarm" ]; then
   rm -f .claude/state/overnight-with-browser  # I5: clear the browser-lane positive signal
   remove_sequencer_env_dropin
   remove_sequencer_model_dropin
+  remove_claude_token_dropin
   reap_overnight_state
   systemctl --user daemon-reload 2>/dev/null || true
   echo "disarmed overnight sequencer (timers + watchdog + chromemcp drop-in + run state)"
@@ -327,6 +367,7 @@ mkdir -p .claude/state
 bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
 write_sequencer_env_dropin
 write_sequencer_model_dropin
+write_claude_token_dropin
 if [ "$WITH_BROWSER" = "1" ]; then
   remove_chromemcp_dropin
   : > .claude/state/overnight-with-browser   # I5: file-based positive signal the launcher reads

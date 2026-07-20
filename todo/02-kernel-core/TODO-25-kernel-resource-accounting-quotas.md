@@ -47,10 +47,11 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   5   | Pool and allocation quota integration         | D03T03 §6,§7            |  [/]   |
 | 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [/]   |
 | ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [x]   |
-| 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [ ]   |
+| 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [ ]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [ ]   |
 | 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
+| ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
 
 ## 1. Resource Type Registry
 
@@ -126,7 +127,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a drain/quiesce transaction plus a refcounted ledger that ADOPTS `job_absorb` (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 244)
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
-> **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 463)
+> **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 462)
 > **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 405)
 > **Quality reviewed:** 2026-07-20 | Codex 14x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 12H+13M+4L fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
@@ -258,21 +259,40 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 8. Native Query/Set Quota Syscalls
 
-- [ ] Add `NtQueryQuotaInformationProcess`, `NtSetQuotaInformationProcess`.
-- [ ] `ProcessQuotaLimits`: project `QUOTA_LIMITS` from the TODO-21 §9 `rlimits[]` + real VM/working-set counters; reconcile `RLIMIT_NOFILE` with `handle_table.handle_limit`. -> XREF: `TODO-21-process-model-extensions.md §9`
-- [ ] Extend Job Object information classes for aggregate limits.
-- [ ] Add `SystemResourcePressureInformation`: per-resource (cpu/mem/io) stall-time totals + rolling windows (some/full, avg10/60/300 style), not a single ratio; §9 derives the 4 levels from these.
-- [ ] Require privilege for raising limits; lowering own soft limit is allowed.
-- [ ] Token-local limit overlay so a RESTRICTED token can be capped tighter than the user block it shares, without lowering the unrestricted parent's budget. -> XREF: `§3` (canonical user block)
-- [ ] Commit: quota: NtQuery/SetQuotaInformationProcess + pressure info class.
+- [x] `ProcessQuotaLimits` (PROCESSINFOCLASS 1) on the EXISTING `NtQueryInformationProcess`/`NtSetInformationProcess`; design review rejected a dedicated `Nt*QuotaInformationProcess` pair (two authorization surfaces, one state).
+- [x] Windows-pinned ABI in `include/kernel/nt/quota_syscall_info.h`: `QUOTA_LIMITS` (48 B) + `QUOTA_LIMITS_EX` (88 B), every offset `_Static_assert`ed; the caller's LENGTH selects the form, never a suffix peek.
+- [x] The projection reads real state only: pool limits from the process quota block, `TimeLimit` from `RLIMIT_CPU` (checked, saturating, rounds up), the rest from the policy record. -> XREF: `TODO-21-process-model-extensions.md §9`
+- [x] `quota_policy_set()` is ONE prevalidate-then-commit transaction over three stores (quota block, rlimits, policy record): a mixed lower+raise request is refused whole, and `rlim_max` survives a soft-limit write.
+- [x] Any widening needs `SeIncreaseQuotaPrivilege` -- a bigger number, a removed cap, a raised CPU-rate percent, or a dropped hard-working-set flag; lowering one's own is unprivileged. Self-only, probe + bounce-copy, `ReturnLength` included.
+- [x] Token-local overlay: pool limits are written to the task's OWN process block, never the shared user block, so a RESTRICTED token caps tighter without lowering the parent's budget. -> XREF: `§3` (canonical user block)
+- [x] Job aggregate limits: `JobObjectQuotaLimitInformation` (0x1000) reports per-resource usage/peak/limit/failures and sets them all-or-nothing under one transaction lock. Frozen 520-byte V1 wire shape (row count is ABI, not the internal enum).
+- [x] EVERY job aggregate write needs the privilege, lowering included: job handles carry no granted-access mask, so any opener of a shared named job could otherwise squeeze its members. -> XREF: `TODO-05-object-manager.md §3`
+- [/] `RLIMIT_NOFILE` is reconciled with `handle_table.handle_limit` READ-only (they encode "no limit" inversely); pushing the rlimit INTO the table needs its reservation/commit lock. -> XREF: `TODO-05-object-manager.md §3`
+- [/] Working-set and pagefile limits are stored and returned but not ENFORCED -- no per-process VM/commit counters exist to enforce them against. -> XREF: `TODO-21-process-model-extensions.md §9`
+- [/] `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`'s memory fields stay 0 (no limit set) rather than carrying pool bytes, which mean something else. -> XREF: `TODO-21-process-model-extensions.md §13`
+- [x] Commit: quota: ProcessQuotaLimits query/set + job aggregate limit class.
 
-**Test checkpoint:** `NtQueryQuotaInformationProcess(ProcessQuotaLimits)` returns a `QUOTA_LIMITS` projected from the TODO-21 §9 rlimits and live VM/working-set counters with `RLIMIT_NOFILE` reconciled to `handle_table.handle_limit`; raising a hard limit without privilege returns `STATUS_PRIVILEGE_NOT_HELD`; lowering the caller's own soft limit succeeds; `SystemResourcePressureInformation` returns per-resource some/full stall-time and rolling-window fields (not a lone ratio).
+**Test checkpoint:** `ProcessQuotaLimits` returns a `QUOTA_LIMITS` whose pool limits are the process block's, whose `TimeLimit` is `RLIMIT_CPU` converted (a 0-second rlimit projects as the TIGHTEST cap rather than "unlimited", sub-second truncates back to it, an unrepresentable second count saturates positive), and whose working-set fields read back what was stored; raising a limit -- a bigger number, a cap removed by writing 0, a raised CPU-rate percent, or a dropped hard-working-set flag -- returns `STATUS_PRIVILEGE_NOT_HELD` unprivileged while lowering succeeds; a mixed lower-plus-raise request commits NOTHING; a soft `TimeLimit` write leaves `rlim_max` intact; `RLIMIT_NOFILE` 0 reconciles to a deny-all cap rather than "unlimited"; a 48-byte request ignores rather than validates the EX suffix; `JobObjectQuotaLimitInformation` keeps its frozen 520-byte V1 shape, reports one row per registered resource type, refuses a request that writes the kernel-owned Usage column, and refuses an unprivileged write even when it only lowers.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 16 suites / 105 assertions, 0 failures
+
+> **Notes:**
+> - Shipped `include/kernel/nt/quota_syscall_info.h` (Windows-pinned `QUOTA_LIMITS`/`QUOTA_LIMITS_EX` ABI) + `quota_policy.{h,c}` (policy record + commit transaction), wired as `ProcessQuotaLimits` on the two existing process-information syscalls.
+> - The set path validates and authorizes the WHOLE request before writing any of its three stores, and restores the pre-image if a commit step still fails; serialized per task by a SPINLOCK (nothing under the transaction blocks, and `mutex_unlock` clears `locked` before the owner fields, which can strand a contended SMP handoff). Lock order: transaction lock -> `quota_lock` / `rlimit_lock` / block lock.
+> - A 48-byte `QUOTA_LIMITS` request carries no suffix, so the EX-only fields are PRESERVED, not zeroed -- a legacy caller cannot destroy a policy it has no way to express, and its tightening request is not misread as a widening.
+> - The two hard-working-set ENABLE flags are asymmetric: dropping `_MAX_ENABLE` loosens a ceiling, adding `_MIN_ENABLE` pins a reservation. Each direction is the privileged one for its own bound.
+> - The job aggregate setter needs NO transaction lock while every write is privileged (the verdict reads no current value, so no pre-image can go stale); restoring unprivileged lowering must restore a PASSIVE_LEVEL per-job lock with it.
+> - Both classes are self-only + probe + bounce-copy: `task_from_handle` still resolves any integer as a raw PID, so a cross-process quota write would be unauthorized by construction. Design-review adoptions are in the commit message.
+> - Adversarial review (1 Critical + 5 High + 4 Medium, all fixed before the ship): the query paths and `ReturnLength` now probe + `copy_to_user` instead of inheriting the sibling classes' raw store into the caller's pointer; every quota-block dereference holds a counted reference (`quota_block_try_ref`) as `quota.h` requires; the job transaction is serialized so an authorization verdict cannot be committed over a different pre-image; the job wire shape is frozen at V1.
+> - The sibling job/process information classes still store straight into the caller's buffer. That pre-existing usercopy boundary is NOT this section's to repair. -> XREF: `TODO-12-native-api-ssdt.md §6`
+> - Canonical doc: [`include/kernel/quota/quota_policy.h`](../../include/kernel/quota/quota_policy.h) (which limit lives in which store, and why the zero encodings differ).
+> - Scope boundary: §8 owns the QUERY/SET surface and its authorization. Working-set/commit ENFORCEMENT is TODO-21 §9/§13, the handle-limit write-back is TODO-05 §3, pressure telemetry is §12.
 
 ---
 
 ## 9. Resource Pressure Events and Recovery Hooks
 
-- [ ] Derive the 4 levels (normal/watch/warning/critical) from §8 stall-time metrics with hysteresis to prevent flapping; publish level transitions through TODO-16.
+- [ ] Derive the 4 levels (normal/watch/warning/critical) from the §12 stall-time metrics with hysteresis to prevent flapping; publish level transitions through TODO-16.
 - [ ] On critical pressure, notify TODO-30 recovery orchestrator before panicking.
 - [ ] Define the quota-failure diagnostic event contract HERE: event ID, process/job/SID/resource, requested/current/limit, result, rate-limit + dropped-event counter. -> XREF: `TODO-16-kernel-notification-facility.md §6` (transport/fanout only).
 - [ ] Trigger targeted cleanup: drain caches, trim logs, trim offending process working set (§8 Min/Max WS), ask services to release memory, refuse new handles from the offending process.
@@ -321,6 +341,22 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ---
 
+## 12. Resource Pressure Stall Telemetry
+
+Split out of §8 by its design review: §8's other items are syscall marshalling over state that already exists, while the pressure metric is new instrumentation across the scheduler, the allocator and the storage layer -- and shipping the info class over uninstrumented seams would report "no pressure" for a system that is actually stalling. §9 derives its four levels from these counters.
+
+- [ ] Per-resource (cpu/mem/io) stall-time accumulators with `some`/`full` totals and avg10/60/300 rolling windows, in the quota module -- Linux PSI's shape, not a single ratio.
+- [ ] Per-CPU scheduler state is a HARD prerequisite for the cpu metric: with one global `current_task` cursor an AP tick attributes the BSP's task. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [ ] `cpu.full` is reported as 0 with an explicit "undefined at system level" contract (Linux reports it the same way) rather than fabricating a plausible number.
+- [ ] Memory stall seam: accumulate while a thread waits on reclaim/allocation, which needs an allocator that WAITS instead of failing immediately. -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §6`
+- [ ] I/O stall seam: accumulate across block-I/O completion waits at the storage layer's wait sites. -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8`
+- [ ] `SystemResourcePressureInformation` (system info class 0x1003, next free after KNF's 0x1002) marshals the accumulators, with a per-resource VALID flag so an uninstrumented seam reads as unsupported, never as "no pressure".
+- [ ] Commit: quota: resource-pressure stall telemetry + SystemResourcePressureInformation.
+
+**Test checkpoint:** a synthetic stall interval advances the owning resource's `some` total and no other resource's; the avg10/60/300 windows decay toward zero once the stall stops and never exceed 100 percent; an uninstrumented resource reports its VALID flag clear rather than a zero that reads as "no pressure"; `cpu.full` is 0 with the documented undefined-at-system-level contract; the info class round-trips every field through a size-checked buffer.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                             |
@@ -343,8 +379,11 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   | Job aggregate accounting window  | ⚠️ member lifetime totals folded in   | ✅ cgroup counts only while a member         | ✅ membership-interval deltas, baselined §7  |
 | 💎   | Control ("Other") I/O counters   | ✅ `IO_COUNTERS.Other*` populated      | ⚠️ no ioctl split in `/proc/PID/io`         | ⚠️ counters+ABI wired; event source T05 §14 |
 | ⭐   | Rate-limit policy record         | ⚠️ per-Job CPU rate cap only          | ⚠️ per-controller, no shared record shape   | ✅ versioned typed record, seqlock §7        |
-| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | 🚀 Planned: Nt{Query,Set}Quota + rlimits §8  |
+| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | ✅ `ProcessQuotaLimits` query/set §8         |
+| 💎   | Quota set as one transaction     | ⚠️ per-field, no documented atomicity | ⚠️ one resource per `prlimit64` call        | ✅ prevalidate-then-commit, all-or-none §8   |
+| ⭐   | Job aggregate limit query        | ⚠️ memory fields only, no per-type    | ✅ per-controller cgroup files               | ✅ per-resource usage/peak/limit class §8    |
 | ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9    |
+| ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | 🚀 Planned: PSI-shaped, VALID-flagged §12    |
 | ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9          |
 | ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10      |
 
@@ -352,7 +391,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## Unit Tests
 
-> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
+> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, and `test_quota_syscall.c` (§8), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
 - [x] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
 - [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
@@ -366,7 +405,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [x] `test_quota_receipt_token_blocks_stale_return`: a spent token cannot return a later charge in recycled receipt storage (§4).
 - [x] `test_quota_receipt_generation_exhaustion`: the last generation still charges and the ceiling fails closed instead of wrapping (§4).
 - [x] `test_quota_zero_charge_reports_no_obligation_token`: a zero charge reports token 0, which cannot return the next real charge (§4).
-- [ ] `test_quota_pressure_hysteresis`: levels derive from stall-time metrics and do not flap at a threshold (§8/§9).
+- [ ] `test_quota_pressure_hysteresis`: levels derive from the §12 stall-time metrics and do not flap at a threshold (§9).
 - [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
 - [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§11).
 - [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§11).
@@ -389,6 +428,19 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [x] `test_quota_rate_ops_and_bytes_coexist`: an IOPS cap and a bytes/sec cap on one stream do not overwrite each other (§7).
 - [x] `test_quota_delta_covers_every_field`: all 8 baseline fields assert positive, equal, and inverted deltas independently (§7).
 - [x] `test_quota_rate_get_retry_preserves_output`: a forced in-flux class returns `STATUS_RETRY` leaving the caller's record untouched (§7).
+- [x] `test_quota_syscall_abi_pinned`: `QUOTA_LIMITS` 48 B / `QUOTA_LIMITS_EX` 88 B and every field offset, re-checked at runtime (§8).
+- [x] `test_quota_syscall_time_conversion`: both spellings of unlimited translate, a sub-second limit rounds UP, an unrepresentable count saturates positive (§8).
+- [x] `test_quota_syscall_projection_reads_real_state`: pool limits come from the process block and `TimeLimit` from `RLIMIT_CPU`, not from a fabricated default (§8).
+- [x] `test_quota_syscall_raise_needs_privilege`: lowering own limit is unprivileged; raising it, or removing the cap by writing 0, is refused and changes nothing (§8).
+- [x] `test_quota_syscall_set_is_all_or_nothing`: a mixed lower-plus-raise request commits neither half, and leaves `RLIMIT_CPU` untouched (§8).
+- [x] `test_quota_syscall_set_preserves_hard_limit`: a soft `TimeLimit` write leaves `rlim_max` intact; a soft value above the hard cap clamps (§8).
+- [x] `test_quota_syscall_set_rejects_malformed`: negative time, min-above-max, contradictory flags, unknown flags, non-zero Reserved, rate above 100 (§8).
+- [x] `test_quota_syscall_non_ex_ignores_suffix`: a 48-byte request ignores rather than validates or stores the EX suffix (§8).
+- [x] `test_quota_syscall_handle_limit_reconcile`: the inverted zero encodings reconcile, so `RLIMIT_NOFILE` 0 is deny-all, not unlimited (§8).
+- [x] `test_quota_syscall_reset_clears_policy`: a reused task slot presents no limits from the dead tenant (§8).
+- [x] `test_quota_syscall_generation_advances_on_commit`: the generation advances once per committed set and never on a refused one (§8).
+- [x] `test_quota_syscall_job_report_shape`: a jobless report is well-formed and fully zeroed, one row per registered resource type (§8).
+- [x] `test_quota_syscall_job_set_rejects_malformed`: a request writing the kernel-owned Usage column is refused (§8).
 - [x] `test_quota_rate_boundary_matrix`: exact-MAX and equal-bound acceptance, both reserved fields, bytes-envelope rules, and per-class isolation (§7).
 - [/] Two-CPU concurrent wakers must count ONE wakeup for one BLOCKED->READY claim; the CAS is in place but a real cross-CPU race needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
 - [/] A reader racing a rate publisher must see either the whole old or whole new record, never a mix; needs the same SMP harness. -> XREF: `§10` (test infrastructure).

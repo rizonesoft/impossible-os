@@ -25,6 +25,7 @@
 #include "kernel/ob/handle_table.h"
 #include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
 #include "kernel/quota/quota.h"   /* quota_block_t, quota_absorb_record_t */
+#include "kernel/quota/quota_policy.h" /* quota_policy_t (ProcessQuotaLimits) */
 
 /* Forward declaration: kernel-mode SEH (KI_TRY/KI_EXCEPT) registration chain
  * head lives in struct thread. Full type in kernel/except.h; forward-declared
@@ -557,6 +558,26 @@ struct task {
      * creator's array at create/fork and preserves it across exec. */
     rlimit_t    rlimits[RLIM_NLIMITS];
     spinlock_t  rlimit_lock;
+    /* --- Windows quota policy (kernel/quota/quota_policy.h) ---
+     * The ProcessQuotaLimits fields that have no other home: working-set
+     * bounds, pagefile limit, flags, CPU rate word. Pool limits live on the
+     * quota block and TimeLimit lives in rlimits[RLIMIT_CPU]; this record is
+     * only the remainder, so no limit is stored in two places.
+     *
+     * quota_policy_lock is a SPINLOCK: it serializes the whole
+     * ProcessQuotaLimits query/commit transaction, and nothing under it can
+     * block -- rlimit_lock and the quota block's lock are themselves irqsave
+     * spinlocks over a bounded number of atomic stores. A mutex would have
+     * been the natural fit for a "long" transaction, but mutex_unlock clears
+     * `locked` before the owner fields (src/kernel/sched/mutex.c), so a
+     * contended SMP handoff can strand the new owner -- a security-relevant
+     * transaction must not depend on that. LOCK ORDER: quota_policy_lock ->
+     * {quota_lock, rlimit_lock, quota block lock}; never the reverse.
+     * Initialized once per slot; the VALUES are reset by quota_policy_reset()
+     * when a slot is reused, so a recycled PID never inherits the dead
+     * process's limits. */
+    quota_policy_t quota_policy;
+    spinlock_t     quota_policy_lock;
 };
 
 /* Task entry function type */

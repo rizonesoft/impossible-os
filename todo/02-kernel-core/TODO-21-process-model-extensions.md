@@ -297,7 +297,7 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 - [/] Wire `RLIMIT_MEMLOCK` as the pin ceiling (reject a lock past the cap) -- deferred (-> XREF: `TODO-12-native-api-ssdt.md §9` Virtual Memory, the `VirtualLock` pin path)
 - [/] Wire `RLIMIT_CORE` as the crash-dump size gate (0 suppresses the dump) -- deferred (-> XREF: `TODO-27-crash-dump-generation.md`, the dump-writer size check)
 - [/] Linux `sys_getrlimit`/`sys_setrlimit`/`sys_prlimit` -- deferred pending a `linux_syscall_table` registration point (same blocker as §8 getrusage); the accessors above are the ready call target
-- [/] Windows `ProcessQuotaLimits` query/set + reconcile `RLIMIT_NOFILE` with the existing `handle_table.handle_limit` -- deferred to the unified quota authority (-> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`)
+- [x] Windows `ProcessQuotaLimits` query/set shipped by the unified quota authority, projecting `RLIMIT_CPU` and reconciling `RLIMIT_NOFILE` with `handle_table.handle_limit` read-only (-> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`)
 
 **Test checkpoint:** `task_rlimit_set(RLIMIT_NOFILE, {500,1500}, caller_privileged=0)` commits (lowering within the cap is unprivileged) and `task_rlimit_get` reads it back. `rlim_cur > rlim_max` returns `RLIMIT_ERR_INVAL`. Raising `rlim_max` with `caller_privileged=0` returns `RLIMIT_ERR_PERM` and leaves the hard limit intact; with `caller_privileged=1` it commits. Lowering `rlim_max` unprivileged is allowed. An out-of-range resource index returns `RLIMIT_ERR_INVAL` (get zeroes its output). PID 0 carries the 8 MiB stack / 4096 NOFILE-max defaults; the task running the suite carries the same inherited defaults. No POST16 (post-Phase-3 task code -- klog only). Test on: QEMU WHPX + TCG.
 
@@ -311,7 +311,6 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 > - **Scope boundary** -- §9 owns rlimit STORAGE + accessors + inheritance; enforcement (AS/CPU) is a follow-up owned here, the Windows quota projection is `TODO-25 §8`, Linux `get/set/prlimit` await a `linux_syscall_table`.
 > **Verified:** 2026-07-11 | commit `8e4bfc30` | 4/10 items | build OK | 8 rlimit tests PASS
 > **Accepted:** [H] task-slot allocation race (a tick preempts ring-0 mid-`task_create`; two creators can claim the same `num_tasks` slot) -- pre-existing, systemic across all per-process inheritance -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §13` (item: "Atomic task-slot CLAIM" at line 405)
-> **Accepted:** [H] Windows `QUOTA_LIMITS` projection needs real VM/working-set counters, distinct from Linux rlimits -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §8` (item: "`ProcessQuotaLimits`" at line 262)
 > **Quality reviewed:** 2026-07-11 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 2H+6M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ## 10. CPU Affinity per Process
@@ -394,11 +393,11 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 397)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 398)
-> **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 659)
-> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 661)
-> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 663)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 396)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 397)
+> **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 660)
+> **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 662)
+> **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 664)
 > **Quality reviewed:** 2026-07-12 | Codex 22x (design, adversarial, re-adversarial, consistency, perf) | ~21H+6M fixed, 3H accepted-XREF, 3M deferred | scope: kernel-code-quality + kernel-quality-auditor (no C/H)
 
 ---
@@ -551,7 +550,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 554)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 553)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

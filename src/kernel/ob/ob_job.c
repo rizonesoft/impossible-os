@@ -536,6 +536,133 @@ void ob_job_collect_limits(JOB_OBJECT *job, JOBOBJECT_BASIC_LIMIT_INFORMATION *l
     spin_unlock_irqrestore(&job->lock, flags);
 }
 
+/* --- Aggregate quota report (NtQueryInformationJobObject extension) ------- */
+
+/* Take a counted reference on the job's quota block, or NULL if the job is on
+ * its way out. quota.h makes a live reference the caller's obligation for every
+ * dereference; job->quota alone is only a pointer, and job_on_delete can drop
+ * the last reference while a syscall is still reading through it. */
+static quota_block_t *job_quota_ref(JOB_OBJECT *job)
+{
+    quota_block_t *block;
+    uint64_t flags;
+
+    if (!job)
+        return (quota_block_t *)0;
+    spin_lock_irqsave(&job->lock, &flags);
+    block = job->quota;
+    if (block && !quota_block_try_ref(block))
+        block = (quota_block_t *)0;
+    spin_unlock_irqrestore(&job->lock, flags);
+    return block;
+}
+
+void ob_job_collect_quota_limits(JOB_OBJECT *job,
+                                 JOBOBJECT_QUOTA_LIMIT_INFORMATION *out)
+{
+    quota_block_t *block;
+    uint32_t i, count;
+
+    if (!out)
+        return;
+
+    for (i = 0; i < sizeof(*out); i++)
+        ((uint8_t *)out)[i] = 0;
+
+    count = quota_resource_type_count();
+    if (count > QUOTA_RESOURCE_TYPE_COUNT)
+        count = QUOTA_RESOURCE_TYPE_COUNT;   /* registry can never exceed the ABI */
+    out->ResourceCount = count;
+
+    block = job_quota_ref(job);
+    if (!block)
+        return;   /* rows stay zero: no block means nothing is charged yet */
+
+    for (i = 0; i < count; i++) {
+        quota_resource_type_t type = (quota_resource_type_t)i;
+        out->Resources[i].Usage    = quota_usage(block, type);
+        out->Resources[i].Peak     = quota_peak(block, type);
+        out->Resources[i].Limit    = quota_limit(block, type);
+        out->Resources[i].Failures = quota_failures(block, type);
+    }
+
+    quota_block_deref(block);
+}
+
+NTSTATUS ob_job_set_quota_limits(JOB_OBJECT *job,
+                                 const JOBOBJECT_QUOTA_LIMIT_INFORMATION *in,
+                                 int caller_privileged)
+{
+    uint64_t previous[QUOTA_RESOURCE_TYPE_COUNT];
+    quota_block_t *block;
+    uint32_t count, i;
+    NTSTATUS st;
+
+    if (!job || !in)
+        return STATUS_INVALID_PARAMETER;
+    count = quota_resource_type_count();
+    if (count > QUOTA_RESOURCE_TYPE_COUNT)
+        count = QUOTA_RESOURCE_TYPE_COUNT;
+    if (in->Reserved != 0 || in->ResourceCount > count)
+        return STATUS_INVALID_PARAMETER;
+
+    /* A job handle carries no per-object access mask yet (job_lookup accepts
+     * any handle of the right type, and NtOpenJobObject installs access 0), so
+     * "lowering is unprivileged" -- correct for a process constraining ITSELF
+     * -- would let any opener of a shared named job tighten the limits of every
+     * member. Until job handles carry rights, EVERY aggregate limit write needs
+     * SeIncreaseQuotaPrivilege, raise or lower. The per-process class keeps the
+     * unprivileged-lowering rule because its principal is provably the caller.
+     * -> XREF: TODO-05-object-manager.md section 3 (granted-access enforcement). */
+    if (!caller_privileged)
+        return STATUS_PRIVILEGE_NOT_HELD;
+
+    /* Representation first: these checks are pure and independent of any state,
+     * so a malformed request is refused as malformed rather than as whatever
+     * the job's current block situation happens to be. */
+    for (i = 0; i < in->ResourceCount; i++) {
+        if (in->Resources[i].Usage || in->Resources[i].Peak ||
+            in->Resources[i].Failures)
+            return STATUS_INVALID_PARAMETER;   /* kernel-owned columns */
+        if (in->Resources[i].Limit > (uint64_t)QUOTA_AMOUNT_MAX)
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    block = job_quota_ref(job);
+    if (!block)
+        return STATUS_INSUFFICIENT_RESOURCES;
+
+    /* No cross-row authorization pass and no transaction lock: because EVERY
+     * write here is privileged, the verdict does not depend on any row's
+     * current value, so there is no pre-image for a concurrent setter to make
+     * stale -- the race that would otherwise need serialization cannot arise.
+     * Two racing privileged administrators land last-writer-wins per row,
+     * exactly as two sequential calls would. Holding a global lock across the
+     * row loop instead would put up to 16 nested quota-block acquisitions
+     * inside one IRQ-off window, far past spinlock.h's hold-time budget. When
+     * job handles carry access rights and unprivileged lowering returns, the
+     * verdict becomes value-dependent again and MUST regain a PASSIVE_LEVEL
+     * per-job transaction lock. -> XREF: TODO-05-object-manager.md section 3.
+     *
+     * ---- Commit, remembering each pre-image so a late failure restores. */
+    st = STATUS_SUCCESS;
+    for (i = 0; i < in->ResourceCount; i++) {
+        previous[i] = quota_limit(block, (quota_resource_type_t)i);
+        st = quota_set_limit(block, (quota_resource_type_t)i,
+                             in->Resources[i].Limit);
+        if (st != STATUS_SUCCESS) {
+            uint32_t back;
+            for (back = 0; back < i; back++)
+                (void)quota_set_limit(block, (quota_resource_type_t)back,
+                                      previous[back]);
+            break;
+        }
+    }
+
+    quota_block_deref(block);
+    return st;
+}
+
 /* --- Limit set (NtSetInformationJobObject BasicLimitInformation) ----------
  * Rejects any limit flag this kernel cannot enforce (STATUS_NOT_SUPPORTED,
  * state unchanged) so a caller can never configure a silent no-op limit. Only

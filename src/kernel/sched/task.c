@@ -409,6 +409,8 @@ boot_result_t task_init(void)
         tasks[i].argc = 0;
         mutex_init(&tasks[i].environ_lock, "environ");
         mutex_init(&tasks[i].chdir_lock, "chdir");   /* SetCurrentDirectory commit txn */
+        tasks[i].quota_policy_lock.flag = 0;   /* ProcessQuotaLimits commit txn */
+        quota_policy_reset(&tasks[i]);
         tasks[i].pledge_mask = 0;
         tasks[i].unveil_list = (struct unveil_entry *)0;
         tasks[i].unveil_locked = 0;
@@ -681,6 +683,10 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    /* Windows quota limits are per-process and NOT inherited (Windows seeds a
+     * new process from the system defaults). Reset rather than copy, so a
+     * recycled slot cannot present the dead tenant's working-set caps. */
+    quota_policy_reset(&tasks[pid]);
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create: job inheritance rejected (terminated/at-limit); failing closed");
@@ -893,6 +899,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    quota_policy_reset(&tasks[pid]);   /* see task_create: per-process, never inherited */
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
         klog(LOG_ERROR, "sched",
              "task_create_user: job inheritance rejected (terminated/at-limit); failing closed");
@@ -2030,6 +2037,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].quota = NULL;
     tasks[child_pid].quota_user = NULL;
     tasks[child_pid].quota_lock.flag = 0;
+    quota_policy_reset(&tasks[child_pid]);  /* per-process, never inherited (see task_create) */
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process

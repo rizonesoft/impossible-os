@@ -26,6 +26,7 @@
 #include "kernel/sched/task.h"          /* TASK_MAX, struct task */
 #include "kernel/ob/ob_type.h"          /* OBJECT_TYPE */
 #include "kernel/ob/handle_table.h"     /* HANDLE, HANDLE_TABLE */
+#include "kernel/quota/quota.h"         /* QUOTA_RESOURCE_TYPE_COUNT, quota_* readers */
 
 /* --- Info classes (JOBOBJECTINFOCLASS subset) ---------------------------- */
 #define JobObjectBasicAccountingInformation      1
@@ -33,6 +34,20 @@
 #define JobObjectBasicProcessIdList              3
 #define JobObjectBasicAndIoAccountingInformation 8
 #define JobObjectExtendedLimitInformation        9
+
+/* Impossible OS extension class. Numbered at 0x1000 like the extension system-
+ * information classes, so it can never collide with a Windows JOBOBJECTINFO-
+ * CLASS value this kernel has not implemented yet.
+ *
+ * Why an extension rather than filling JOBOBJECT_EXTENDED_LIMIT_INFORMATION's
+ * ProcessMemoryLimit / JobMemoryLimit: those two are COMMITTED-memory limits,
+ * and this kernel has no per-process commit accounting to project them from.
+ * Reporting pool bytes in a field that means committed memory would be a
+ * plausible-looking wrong answer. This class reports what the quota subsystem
+ * genuinely knows -- per-resource usage, peak, limit and failure count for the
+ * job's aggregate block -- and the Windows memory fields stay 0 (no limit set)
+ * until commit accounting exists. */
+#define JobObjectQuotaLimitInformation           0x1000
 
 /* --- Limit flags (JOBOBJECT_BASIC_LIMIT_INFORMATION.LimitFlags) ---------- */
 #define JOB_OBJECT_LIMIT_WORKINGSET              0x00000001u
@@ -103,6 +118,46 @@ typedef struct jobobject_extended_limit_information {
     uint64_t PeakProcessMemoryUsed;
     uint64_t PeakJobMemoryUsed;
 } JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+
+/* One row per registered quota resource type, in quota_resource_type_t order.
+ * A row is self-describing: `Limit` 0 means unlimited (QUOTA_LIMIT_UNLIMITED),
+ * matching the rest of the kernel. */
+typedef struct jobobject_quota_resource {
+    uint64_t Usage;
+    uint64_t Peak;
+    uint64_t Limit;
+    uint64_t Failures;
+} JOBOBJECT_QUOTA_RESOURCE;
+
+/* FROZEN V1 row count. The array is deliberately NOT sized by
+ * QUOTA_RESOURCE_TYPE_COUNT: that constant grows whenever the kernel registers
+ * a new resource type, and a wire structure whose size tracks an internal enum
+ * would silently change this information class's required buffer length --
+ * every existing binary would start getting STATUS_BUFFER_TOO_SMALL, and a
+ * newer caller would be rejected by an older kernel. The row count is part of
+ * the ABI, so it is pinned here; ResourceCount reports how many rows the
+ * running kernel actually populated. Adding resource types beyond V1 requires a
+ * V2 class, not a wider array. */
+#define JOB_QUOTA_V1_RESOURCE_COUNT   16U
+
+typedef struct jobobject_quota_limit_information {
+    uint32_t ResourceCount;    /* rows populated == quota_resource_type_count() */
+    uint32_t Reserved;         /* must be zero */
+    JOBOBJECT_QUOTA_RESOURCE Resources[JOB_QUOTA_V1_RESOURCE_COUNT];
+} JOBOBJECT_QUOTA_LIMIT_INFORMATION;
+
+/* Layer 1: the wire size is a constant, and the internal resource enum must fit
+ * inside it. A new resource type that overflows V1 fails the build here rather
+ * than truncating the report or moving the wire size under existing callers. */
+_Static_assert(sizeof(JOBOBJECT_QUOTA_RESOURCE) == 32,
+    "JOBOBJECT_QUOTA_RESOURCE must be 4 x uint64_t");
+_Static_assert(__builtin_offsetof(JOBOBJECT_QUOTA_LIMIT_INFORMATION, Resources) == 8,
+    "JOBOBJECT_QUOTA_LIMIT_INFORMATION.Resources offset");
+_Static_assert(sizeof(JOBOBJECT_QUOTA_LIMIT_INFORMATION) ==
+               8 + 32 * JOB_QUOTA_V1_RESOURCE_COUNT,
+    "JOBOBJECT_QUOTA_LIMIT_INFORMATION V1 wire size is frozen at 520 bytes");
+_Static_assert(QUOTA_RESOURCE_TYPE_COUNT <= JOB_QUOTA_V1_RESOURCE_COUNT,
+    "a resource type past V1 needs a V2 information class, not a wider row array");
 
 typedef struct jobobject_basic_process_id_list {
     uint32_t NumberOfAssignedProcesses;
@@ -179,6 +234,43 @@ NTSTATUS ob_job_set_basic_limits(JOB_OBJECT *job,
                                  const JOBOBJECT_BASIC_LIMIT_INFORMATION *lim);
 void ob_job_collect_pid_list(JOB_OBJECT *job, uint64_t *out, uint32_t capacity,
                              uint32_t *written, uint32_t *assigned);
+
+/* Fill the job's aggregate per-resource quota report. Reads the job's quota
+ * block with the lock-free quota_usage/peak/limit/failures accessors and takes
+ * NO job lock: the counters are already atomic, and adding this walk under
+ * job->lock would extend exactly the IRQ-off hold the CPU-accounting section
+ * already flagged as too long. A row can therefore straddle a concurrent
+ * charge, which is correct for a diagnostic report and is why enforcement
+ * still happens inside the charge path, never off this snapshot.
+ *
+ * A job with no quota block (pre-quota boot) reports every row as zero. */
+void ob_job_collect_quota_limits(JOB_OBJECT *job,
+                                 JOBOBJECT_QUOTA_LIMIT_INFORMATION *out);
+
+/* Apply the aggregate resource limits in `in` to the job's quota block, for
+ * rows [0, in->ResourceCount). Only the `Limit` column is an input; Usage,
+ * Peak and Failures are kernel-owned and MUST be supplied as zero (fail-closed:
+ * accepting them would suggest a caller can write measured state).
+ *
+ * ALL-OR-NOTHING, for the same reason the per-process transaction is: the whole
+ * request is validated and authorized first, and if a commit still fails every
+ * already-written row is restored. The whole transaction is serialized against
+ * other setters, so a raise verdict cannot be authorized against one pre-image
+ * and committed over another.
+ *
+ * EVERY write -- raise or lower -- requires `caller_privileged`. Unlike the
+ * per-process class, whose principal is provably the calling process itself, a
+ * job handle carries no granted-access mask yet, so any opener of a shared
+ * named job could otherwise tighten every member's limits. The unprivileged-
+ * lowering rule returns once job handles enforce rights.
+ * -> XREF: TODO-05-object-manager.md section 3.
+ *
+ * Returns STATUS_INVALID_PARAMETER (bad count/limit/non-zero reserved column),
+ * STATUS_PRIVILEGE_NOT_HELD, or STATUS_INSUFFICIENT_RESOURCES when the job has
+ * no block. */
+NTSTATUS ob_job_set_quota_limits(JOB_OBJECT *job,
+                                 const JOBOBJECT_QUOTA_LIMIT_INFORMATION *in,
+                                 int caller_privileged);
 
 /* --- Membership lifecycle (called from the scheduler) -------------------- */
 

@@ -25,6 +25,27 @@
 #include "kernel/nt/nt_unicode.h"   /* nt_decode_unicode_string / nt_unicode_to_ascii */
 #include "kernel/fs/vfs.h"          /* vfs_open / vfs_close / VFS_DIRECTORY (cwd validation) */
 #include "kernel/env.h"             /* env_set_drive_cwd (hidden =X: per-drive cwd, TODO-22 s12) */
+#include "kernel/quota/quota_policy.h"     /* ProcessQuotaLimits projection + commit txn */
+#include "kernel/security/privileges.h"    /* SeSinglePrivilegeCheck / SeIncreaseQuotaPrivilege */
+
+/* Write a ReturnLength out-parameter safely (probe + bounce), for the quota
+ * class. The older classes in this file store through the caller's pointer
+ * directly, which is a ring-3-controlled kernel write; the quota class does not
+ * extend that boundary. A NULL pointer is legal and succeeds silently.
+ * -> XREF: TODO-12-native-api-ssdt.md section 6 (usercopy hardening). */
+static NTSTATUS quota_write_ret_length(uint32_t *ret_length, uint32_t value)
+{
+    NTSTATUS st;
+
+    if (!ret_length)
+        return STATUS_SUCCESS;
+    st = ProbeForWriteIfUser(ret_length, (uint32_t)sizeof(value), 4);
+    if (st != STATUS_SUCCESS)
+        return st;
+    if (copy_to_user(ret_length, &value, (uint32_t)sizeof(value)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
 
 /* ---- Helper: look up task by HANDLE (currently PID) --------------------- */
 static struct task *task_from_handle(HANDLE h)
@@ -678,6 +699,47 @@ static NTSTATUS NtQueryInformationProcess_handler(uint64_t a1, uint64_t a2,
         if (ret_length) *ret_length = i + 1;
         return STATUS_SUCCESS;
     }
+    case ProcessQuotaLimits: {
+        /* Windows exposes process quotas here, as PROCESSINFOCLASS 1 -- there
+         * is deliberately no separate quota syscall pair (one surface, one
+         * authorization path). Self-only for the same reason the syscall-filter
+         * class below is: task_from_handle resolves any integer handle as a raw
+         * PID with no granted-access check, so a cross-process read here would
+         * disclose another process's limits without PROCESS_QUERY_INFORMATION.
+         * Probe + bounce-copy rather than writing the caller's pointer
+         * directly (the sibling classes' raw-deref pattern is the known kernel-
+         * write boundary; this class does not extend it). */
+        QUOTA_LIMITS_EX limits;
+        uint32_t out_len;
+        NTSTATUS st;
+
+        if (t != task_current())
+            return STATUS_ACCESS_DENIED;
+        /* Size-based dispatch: the caller's LENGTH selects the structure. A
+         * short buffer is never reinterpreted by peeking at a suffix field. */
+        if (length >= QUOTA_LIMITS_EX_SIZE)
+            out_len = QUOTA_LIMITS_EX_SIZE;
+        else if (length >= QUOTA_LIMITS_SIZE)
+            out_len = QUOTA_LIMITS_SIZE;
+        else {
+            /* Even the failure path's length hint goes through the checked
+             * write: *ret_length = X on a ring-3 pointer is a kernel write to
+             * a caller-chosen address. A probe failure does not mask the
+             * BUFFER_TOO_SMALL verdict -- the caller still learns the buffer
+             * was short, just without the hint. */
+            (void)quota_write_ret_length(ret_length, QUOTA_LIMITS_SIZE);
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        st = quota_policy_query(t, &limits);
+        if (st != STATUS_SUCCESS)
+            return st;
+        st = ProbeForWriteIfUser(buffer, out_len, 8);
+        if (st != STATUS_SUCCESS)
+            return st;
+        if (copy_to_user(buffer, &limits, out_len) != 0)
+            return STATUS_ACCESS_VIOLATION;
+        return quota_write_ret_length(ret_length, out_len);
+    }
     case ProcessMitigationPolicy:
         /* Ring-3 query DEFERRED (the set path above defers for the mirror
          * reason): writing the result to a caller-supplied buffer (or
@@ -752,6 +814,52 @@ static NTSTATUS NtSetInformationProcess_handler(uint64_t a1, uint64_t a2,
         if (copy_from_user(&pol, buffer, (uint32_t)sizeof(pol)) != 0)
             return STATUS_ACCESS_VIOLATION;
         return syscall_filter_set_policy(t, &pol);
+    }
+    case ProcessQuotaLimits: {
+        /* Self-only, for a stronger reason than the query: SeIncreaseQuota-
+         * Privilege answers whether an increase is privileged, NOT which
+         * process may be modified. Without the self check an unprivileged
+         * caller could lower an arbitrary PID's limits, and a task slot reused
+         * between the lookup and the commit would redirect the transaction into
+         * a different process entirely. Cross-process quota set waits on real
+         * handle rights (PROCESS_SET_QUOTA) over reference-counted process
+         * handles. t == task_current() also implies t is live. */
+        QUOTA_LIMITS_EX limits;
+        uint32_t in_len;
+        int is_ex;
+        int privileged;
+        NTSTATUS st;
+
+        if (t != task_current())
+            return STATUS_ACCESS_DENIED;
+        if (length >= QUOTA_LIMITS_EX_SIZE) {
+            in_len = QUOTA_LIMITS_EX_SIZE;
+            is_ex = 1;
+        } else if (length >= QUOTA_LIMITS_SIZE) {
+            in_len = QUOTA_LIMITS_SIZE;
+            is_ex = 0;
+        } else {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        /* Zero the whole record first: a 48-byte caller supplies no suffix, and
+         * the unwritten tail must read as "unset", never as stack residue. */
+        {
+            uint8_t *p = (uint8_t *)&limits;
+            uint32_t i;
+            for (i = 0; i < (uint32_t)sizeof(limits); i++)
+                p[i] = 0;
+        }
+        st = ProbeForReadIfUser(buffer, in_len, 8);
+        if (st != STATUS_SUCCESS)
+            return st;
+        if (copy_from_user(&limits, buffer, in_len) != 0)
+            return STATUS_ACCESS_VIOLATION;
+        /* The privilege verdict is computed HERE because this is the only layer
+         * that knows the request's previous mode; quota_policy_set consumes it
+         * as a boolean, exactly like task_rlimit_set's caller_privileged. */
+        privileged = SeSinglePrivilegeCheck(&SeIncreaseQuotaPrivilege,
+                                            ssdt_previous_mode());
+        return quota_policy_set(t, &limits, is_ex, privileged);
     }
     case ProcessMitigationPolicy:
         /* Ring-3 SET DEFERRED (same reason as the query above): reading the
