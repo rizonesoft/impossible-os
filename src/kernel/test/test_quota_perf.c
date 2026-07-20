@@ -35,7 +35,13 @@
 #include "kernel/test/test.h"
 #include "kernel/quota/quota.h"
 #include "kernel/sched/task.h"    /* task_current for the chain-depth budget */
+#if defined(__x86_64__)
+/* The ONLY arch dependency in this file, and it is confined to the two
+ * advisory timing suites. The enforced structural budgets are arch-neutral, so
+ * a future ARM64 port drops the timing legs rather than failing to compile. */
 #include "kernel/cpuid.h"         /* cpu_has / rdtscp_read (advisory timing) */
+#define QUOTA_PERF_HAVE_TSC 1
+#endif
 #include "kernel/klog.h"
 
 /* Iterations behind one advisory measurement. Large enough that the timer's
@@ -43,9 +49,11 @@
  * quick under TCG (where every instruction is emulated). */
 #define QUOTA_PERF_ITERATIONS  1000u
 
-/* Cache line assumed when reporting record locality. Matches the bound quota.c
- * asserts the record against; reported spans are computed from the block's
- * REAL runtime address, so this is the only assumption in the calculation. */
+/* Cache line this test assumes, pinned INDEPENDENTLY of the implementation.
+ * The accessor is cross-checked against it below rather than trusted: reading
+ * the implementation's own value and then validating the implementation with
+ * it is a tautology -- if the production bound drifted from the real x86-64
+ * line size, accessor and test would drift together and still pass. */
 #define QUOTA_PERF_LINE_BYTES  64u
 
 /* Byte offset of the counter array inside quota_block. Pinned INDEPENDENTLY of
@@ -262,6 +270,22 @@ static void test_quota_chain_lock_budget(void)
     TEST_ASSERT_EQ(quota_usage(t->quota_user, QUOTA_RES_NONPAGED_POOL), user_before,
                    "user layer restored to its baseline");
 
+    /* A zero-amount chain charge changes no counter, but it is NOT free: it
+     * still takes one owner section to confirm the task could have been
+     * charged, so a charge against a dying task is refused rather than
+     * silently succeeding. Asserted so that owner-side cost cannot be added
+     * to (or removed from) the no-op path unnoticed. */
+    quota_charge_receipt_t zr = { 0 };
+    uint64_t ztok = 0;
+    quota_test_lock_count_begin();
+    NTSTATUS zst = quota_charge_chain(t, QUOTA_RES_NONPAGED_POOL, 0, 0, &zr, &ztok);
+    uint64_t zero_sections = quota_test_lock_count_end();
+    TEST_ASSERT_EQ((uint64_t)zst, (uint64_t)STATUS_SUCCESS,
+                   "zero-amount chain charge succeeds");
+    TEST_ASSERT_EQ(zero_sections, (uint64_t)QUOTA_BUDGET_CHAIN_ZERO_OWNER_LOCKS,
+                   "a zero-amount chain charge costs exactly one owner section");
+    TEST_ASSERT_EQ((uint64_t)zr.count, 0ULL, "zero-amount charge records no blocks");
+
     /* A stale token cannot re-enter any critical section. */
     quota_test_lock_count_begin();
     quota_return_chain(&r, tok);
@@ -325,11 +349,12 @@ static void test_quota_chain_rollback_lock_budget(void)
 
     TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_QUOTA_EXCEEDED,
                    "chain refused by the capped user layer");
-    /* Owner snapshot + one attempt per layer up to and including the refusal,
+    /* Owner snapshot + one attempt per layer up to and including the refusal
      * + one return per already-charged layer being unwound. With the process
-     * layer charged and the user layer refusing, that is 2 attempts and 1
-     * rollback. */
-    TEST_ASSERT_EQ(n, (uint64_t)QUOTA_BUDGET_CHAIN_OWNER_LOCKS + 2ULL + 1ULL,
+     * layer charged and the user layer refusing that is 2 attempts and 1
+     * rollback, each one per-layer section. */
+    TEST_ASSERT_EQ(n, (uint64_t)QUOTA_BUDGET_CHAIN_OWNER_LOCKS +
+                      3ULL * (uint64_t)QUOTA_BUDGET_CHAIN_LOCKS_PER_LAYER,
                    "a mid-chain refusal costs the attempts plus the prefix rollback");
     TEST_ASSERT_EQ((uint64_t)r.count, 0ULL, "refused chain records no blocks");
 
@@ -361,8 +386,11 @@ static void test_quota_counter_record_locality(void)
 
     uint32_t rec  = quota_test_counter_record_bytes();
     uint32_t base = quota_test_counter_base_offset();
+    uint32_t line = quota_test_counter_line_bytes();
+    TEST_ASSERT_EQ((uint64_t)line, (uint64_t)QUOTA_PERF_LINE_BYTES,
+                   "implementation cache-line bound matches this test's own pin");
     TEST_ASSERT_EQ((uint64_t)rec, 32ULL, "a per-type counter record is 32 bytes");
-    TEST_ASSERT(rec <= QUOTA_PERF_LINE_BYTES,
+    TEST_ASSERT(rec <= line,
                 "a record fits within one cache line, so it can never span three");
 
     /* Pinned independently of the implementation: moving the array changes
@@ -375,8 +403,8 @@ static void test_quota_counter_record_locality(void)
     for (uint32_t i = 0; i < quota_resource_type_count(); i++) {
         uintptr_t start = (uintptr_t)b + base + (uintptr_t)i * rec;
         uintptr_t end   = start + rec - 1;
-        uint64_t  lines = (uint64_t)(end / QUOTA_PERF_LINE_BYTES)
-                        - (uint64_t)(start / QUOTA_PERF_LINE_BYTES) + 1;
+        uint64_t  lines = (uint64_t)(end / line)
+                        - (uint64_t)(start / line) + 1;
         TEST_ASSERT(lines <= 2, "a counter record spans at most two cache lines");
         if (lines == 1)
             single++;
@@ -388,6 +416,8 @@ static void test_quota_counter_record_locality(void)
 }
 
 /* --- Advisory: TSC cost, reported and never asserted ---------------------- */
+
+#ifdef QUOTA_PERF_HAVE_TSC
 
 /* Whether the CPU tag returned beside an RDTSCP sample can be believed.
  *
@@ -520,6 +550,8 @@ static void test_quota_chain_cycles_advisory(void)
     }
 }
 
+#endif /* QUOTA_PERF_HAVE_TSC */
+
 void test_register_quota_perf(void)
 {
     test_suite_register_cat("Quota: charge lock-section budget",
@@ -532,10 +564,12 @@ void test_register_quota_perf(void)
                             test_quota_chain_rollback_lock_budget, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: counter record locality",
                             test_quota_counter_record_locality, TEST_CAT_QUOTA);
+#ifdef QUOTA_PERF_HAVE_TSC
     test_suite_register_cat("Quota: charge cost (advisory)",
                             test_quota_charge_cycles_advisory, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: chain charge cost (advisory)",
                             test_quota_chain_cycles_advisory, TEST_CAT_QUOTA);
+#endif
 }
 
 #endif /* KERNEL_TESTS */

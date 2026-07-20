@@ -12,6 +12,7 @@
 #include "kernel/mm/heap.h"              /* kmalloc_zeroed / kfree */
 #include "kernel/sched/irql.h"           /* KeGetCurrentIrql for the diag gate */
 #include "kernel/klog.h"
+#include "kernel/smp.h"               /* smp_cpu_id for test-only CPU scoping */
 
 /* Same house pattern as src/kernel/security/sid.c: the freestanding build has
  * no string.h, so the compiler-provided memcpy is declared where it is used. */
@@ -176,19 +177,27 @@ void quota_types_dump(void)
  * charge. Grouping one type's counters into a 32-byte record makes a charge
  * touch 32 CONTIGUOUS bytes: two lines at worst, one in the common case.
  *
- * This deliberately stops short of a no-straddle GUARANTEE. Blocks come from
- * kmalloc_zeroed, and the heap promises only 16-byte alignment
- * (include/kernel/mm/heap.h), so an over-aligned member here would assert a
- * property the allocator does not actually provide -- the static asserts below
- * pin the record's SIZE and contiguity, never its runtime address. Pinning the
- * line count needs a 64-byte-aligned allocation path, which the pool work owns.
- * Owned by the advanced-allocator work that introduces the pool classes.
+ * How many lines a record actually spans is decided by the block's runtime
+ * address AND by this array's offset within the block. Records are 32 bytes and
+ * the array starts 24 bytes in, so record i begins at block + 24 + 32i: with
+ * kmalloc's 16-byte guarantee the start alternates between a line-fitting and a
+ * line-straddling offset, and EXACTLY HALF the records straddle -- at every
+ * legal block address, including a 64-byte-aligned one. The measured 7-of-14 is
+ * that structural result, not luck. Fixing it needs the array's offset to be a
+ * multiple of 32 as well as an aligned allocation; a 64-byte-aligned pool
+ * allocation alone would NOT change the ratio. Owned by the advanced-allocator
+ * work that introduces the pool classes. The static asserts below pin the
+ * record's SIZE and contiguity only -- never a runtime address property.
  *
- * Grouping cannot introduce false sharing that the old layout avoided: ONE
- * lock guards every mutation of a block, so two CPUs never write two different
- * types' counters in the same block concurrently. The only cross-line traffic
- * packing can add is between a lock-free reader and a writer, which the split
- * layout had as well. */
+ * Grouping does not introduce WRITER-vs-writer false sharing: one lock guards
+ * every mutation of a block, so two CPUs never write two different types'
+ * counters in the same block concurrently. It DOES change reader-vs-writer
+ * sharing, and not for the better: the old parallel arrays kept limit and
+ * failures on different lines from the usage/peak a charge writes, whereas this
+ * record co-locates all four, so a lock-free quota_limit/quota_failures reader
+ * can now have its line invalidated by an unrelated charge on the same block
+ * and type. That cost is unmeasured on real SMP; the writer-locality win is the
+ * reason it is accepted for now, not a proof that it dominates. */
 typedef struct quota_counters {
     atomic64_t usage;      /* current charge, 0..QUOTA_AMOUNT_MAX     */
     atomic64_t peak;       /* high-water usage                        */
@@ -260,17 +269,30 @@ static int quota_type_valid(quota_resource_type_t type)
 }
 
 #ifdef KERNEL_TESTS
-/* Critical sections entered while counting is armed. Diagnostic only: it
- * orders nothing and guards nothing, so a relaxed add is exactly right -- it
- * needs atomicity (two CPUs must not lose an update) but no barrier. */
+/* Critical sections COMPLETED while counting is armed, on the arming CPU only.
+ * Diagnostic: it orders nothing and guards nothing, so relaxed accesses are
+ * exactly right -- atomicity without a barrier.
+ *
+ * The CPU scoping is load-bearing, not defensive. The counted set is not just
+ * charging: quota_task_init and quota_task_teardown take task->quota_lock on
+ * EVERY task creation and every process death. A thread dying on another CPU
+ * inside a test's counted window would otherwise add a section to the global
+ * total, and every budget assertion is an exact equality -- so that is a hard
+ * test failure, not a tolerated skew. Counting only sections completed on the
+ * CPU that armed the window removes that whole class of interference. */
 static uint64_t g_lock_sections;
 static uint8_t  g_lock_count_on;
+static uint32_t g_lock_count_cpu;
 
-/* Shared with quota_owner.c so owner-side sections land in the same total. */
+/* Shared with quota_owner.c so owner-side sections land in the same total.
+ * Called AFTER the lock is released (see quota_block_unlock). */
 void quota_test_count_lock_section(void)
 {
-    if (__atomic_load_n(&g_lock_count_on, __ATOMIC_RELAXED))
-        __atomic_fetch_add(&g_lock_sections, 1, __ATOMIC_RELAXED);
+    if (!__atomic_load_n(&g_lock_count_on, __ATOMIC_RELAXED))
+        return;
+    if (smp_cpu_id() != __atomic_load_n(&g_lock_count_cpu, __ATOMIC_RELAXED))
+        return;
+    __atomic_fetch_add(&g_lock_sections, 1, __ATOMIC_RELAXED);
 }
 #endif
 
@@ -279,21 +301,41 @@ void quota_test_count_lock_section(void)
  * future lock site either uses this helper and is counted, or takes the lock
  * itself and is visible as an obvious deviation in review.
  *
- * The count is bumped AFTER the acquire, so it means "sections ENTERED" -- a
- * contender still spinning has entered nothing and must not be counted. That
- * puts the increment inside the critical section, which is only acceptable
- * because counting is disarmed by default: production never pays for it, and
- * the advisory timing loops deliberately leave it off so they measure the real
- * charge path rather than the instrument. */
+ * The count is bumped on the UNLOCK side, after the lock is released, so it
+ * counts sections COMPLETED and no instrumentation runs inside a quota
+ * critical section. That ordering matters beyond tidiness: KERNEL_TESTS is ON
+ * by default (Makefile), so this code is in the image that boots on real
+ * hardware -- an armed counter's locked increment inside the critical section
+ * would lengthen every quota hold time and serialize CPUs on the counter's
+ * cache line. Every section entered is also left, so the total matches what an
+ * entry-side counter would produce.
+ *
+ * It does NOT guarantee interrupts are enabled at that point: unlock restores
+ * the CALLER's saved IF, so an interrupt-context caller (supported) or one
+ * beneath an outer irqsave lock still has them masked. See quota.h for the
+ * full contract and the attribution limits. */
 static inline void quota_block_lock(quota_block_t *block, uint64_t *flags)
 {
     spin_lock_irqsave(&block->lock, flags);
+}
+
+static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
+{
+    spin_unlock_irqrestore(&block->lock, flags);
 #ifdef KERNEL_TESTS
     quota_test_count_lock_section();
 #endif
 }
 
-static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
+/* Unlock WITHOUT accounting, for the nested two-lock path.
+ *
+ * Releasing the inner lock does not re-enable interrupts: its saved flags were
+ * captured after the outer acquisition had already cleared IF, so restoring
+ * them leaves IF=0. Accounting there would run with the outer lock still held
+ * and interrupts still masked -- exactly what moving the count to the unlock
+ * side exists to avoid. The transfer path therefore releases both locks with
+ * this helper and records its two sections afterwards. */
+static inline void quota_block_unlock_quiet(quota_block_t *block, uint64_t flags)
 {
     spin_unlock_irqrestore(&block->lock, flags);
 }
@@ -322,6 +364,7 @@ int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t t
 void quota_test_lock_count_begin(void)
 {
     __atomic_store_n(&g_lock_sections, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_lock_count_cpu, smp_cpu_id(), __ATOMIC_RELAXED);
     __atomic_store_n(&g_lock_count_on, 1, __ATOMIC_RELAXED);
 }
 
@@ -334,6 +377,11 @@ uint64_t quota_test_lock_count_end(void)
 uint32_t quota_test_counter_record_bytes(void)
 {
     return QUOTA_COUNTER_RECORD_BYTES;
+}
+
+uint32_t quota_test_counter_line_bytes(void)
+{
+    return QUOTA_COUNTER_LINE_BYTES;
 }
 
 uint32_t quota_test_counter_base_offset(void)
@@ -921,8 +969,13 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
         }
     }
 
-    quota_block_unlock(second, flags_second);
-    quota_block_unlock(first, flags_first);
+    quota_block_unlock_quiet(second, flags_second);
+    quota_block_unlock_quiet(first, flags_first);
+#ifdef KERNEL_TESTS
+    /* Both sections recorded here, with interrupts genuinely restored. */
+    quota_test_count_lock_section();
+    quota_test_count_lock_section();
+#endif
 
     if (diag != QUOTA_DIAG_NONE)
         quota_emit_diag(diag, type);     /* outside BOTH locks, only if needed */

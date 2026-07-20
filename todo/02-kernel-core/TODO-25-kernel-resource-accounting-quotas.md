@@ -96,8 +96,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Scope boundary** -- §2 owns the mechanism only: no subsystem is charged yet (§4-§7), per-CPU batching for hot paths is §5, and cross-CPU contention test infrastructure is §10.
 > **Verified:** 2026-07-19 | commit `860c95ba` | 6/6 items | build OK | smoke PASS (TCG 2.75s), tests 27/27 PASS
 > **Accepted:** [M] klog's live-disk path re-enters VFS, so a PASSIVE caller holding a storage lock can deadlock; kernel-wide, mitigated here by the PASSIVE_LEVEL gate + deferred count (reason: scope) -> XREF: `02-kernel-core/TODO-32 §6` (item: "`klog_v2()` enqueue must never synchronously enter the live-disk flush" at line 156)
-> **Deferred:** [M] cross-CPU contention proof: the scheduler is single-CPU today, so the multi-thread suites show interleaving, not parallel contention (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path" at line 203)
-> **Deferred:** [L] bounded worker join + CPU-pinned fault injection for the quota tests (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 204)
+> **Deferred:** [M] cross-CPU contention proof: the scheduler is single-CPU today, so the multi-thread suites show interleaving, not parallel contention (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path" at line 251)
+> **Deferred:** [L] bounded worker join + CPU-pinned fault injection for the quota tests (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 252)
 > **Quality reviewed:** 2026-07-19 | Codex 12x (design, adversarial, re-adversarial, test-coverage, consistency, perf) | 14H+9M+8L fixed, 3M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -153,14 +153,14 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Downstream effects** -- closes the §3 receipt-storage ABA; the absorb-to-publish half stays open and moved to §11, which now owns the charging consumers, the refcounted ledger, and the membership drain protocol.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (receipt identity contract).
 > - **Scope boundary** -- §4 owns only the IDENTITY of a charge; nothing is charged yet (§11 objects/handles, §5-§7 pool/registry/CPU), membership serialization is §11, and the handle-table lock a charge-on-insert needs is TODO-05 §3.
-> **Accepted:** [M] the receipt-tag guarantees are proven only by sequential tests: concurrent same-token returners, a paused BUSY window, and cross-CPU publication visibility need per-CPU run queues that do not exist yet (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 234)
+> **Accepted:** [M] the receipt-tag guarantees are proven only by sequential tests: concurrent same-token returners, a paused BUSY window, and cross-CPU publication visibility need per-CPU run queues that do not exist yet (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
 > **Deferred:** [H] the absorb-to-publish window stays open: a generation revalidated after charging turns the under-count into a DOUBLE count, so closing it needs a drain/quiesce transaction (reason: design) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 244)
 
 ---
 
 ## 5. Pool and Allocation Quota Integration
 
-- [x] Charge-path cost characterized END-TO-END before any hot-path consumer, confirming this item's 7-section depth-2 estimate: `QUOTA_BUDGET_*` pin owner-side AND block sections per operation, asserted for EQUALITY. -> XREF: `§2`
+- [/] Charge-path cost characterized END-TO-END, confirming the 7-section depth-2 lifetime: `QUOTA_BUDGET_*` pin owner AND block sections, asserted for EQUALITY. UNCONTENDED only; a latency budget needs cross-CPU queues. -> XREF: `§10`
 - [x] `quota_block_t` counter layout decided from that measurement: one 32-byte record per type, not four parallel arrays, so a charge touches 32 contiguous bytes. No alignment claimed (`kmalloc` gives 16); measured 7 of 14 on one line.
 - [/] Add optional quota owner to tagged allocations. BLOCKED: the canonical `PTAG_*` API does not exist; only `kmalloc_tagged`/`kfree_tagged` ship, with no per-tag counters. -> XREF: `03-memory-concurrency/TODO-03 §6`
 - [/] Charge nonpaged/paged pool through allocator provider hooks. BLOCKED: no pool-class allocator exists to hook -- one unified arena, no paged/nonpaged split, no provider seam. -> XREF: `03-memory-concurrency/TODO-03 §7`
@@ -168,19 +168,24 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Refuse user-triggered unbounded allocation paths without quota owner. BLOCKED with the hook: the refusal belongs at a pool entry point that does not exist yet. -> XREF: `03-memory-concurrency/TODO-03 §7`
 - [x] Commit: quota: charge-path cost budget + per-type counter records.
 
-**Test checkpoint:** an admitted charge, a refused charge, an over-return, and a return each enter exactly one critical section, a transfer exactly two (refused included), `set_limit` one, and every argument rejection / no-op zero; a chain charge costs the 3 owner-snapshot sections plus one per charged layer while its return costs only the per-layer ones, and a mid-chain refusal adds exactly one rollback section; a counter record is 32 bytes at a pinned block offset and never spans more than two cache lines at the block's real runtime address; advisory TSC suites report rather than assert, and label a sample whose CPU tag cannot be verified (verified: SUITE=quota 62 suites / 589 assertions, 0 failures; measured on TCG: depth-2 chain = 5 sections to charge + 2 to return = the 7-section lifetime, 143 cycles per charge+return pair, 666 per chain pair).
+**Test checkpoint:** an admitted charge, a refused charge, an over-return, and a return each enter exactly one critical section, a transfer exactly two (refused included), `set_limit` one, and every SINGLE-BLOCK argument rejection or no-op zero; a chain charge costs the 3 owner-snapshot sections plus one per charged layer while its return costs only the per-layer ones, a mid-chain refusal adds exactly one rollback section, and a zero-amount chain charge still costs one owner section (it is not free -- it validates the task); a counter record is 32 bytes at a pinned block offset and never spans more than two cache lines at the block's real runtime address; advisory TSC suites report rather than assert, and label a sample whose CPU tag cannot be verified (verified: SUITE=quota 62 suites / 593 assertions, 0 failures; measured on TCG: depth-2 chain = 5 sections to charge + 2 to return = the 7-section lifetime, 148 cycles per charge+return pair, 892 per chain pair).
 
 > **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 62 suites, 0 failures
 
 > **Notes:**
 > - **What shipped** -- `test_quota_perf.c` (7 suites) plus the `QUOTA_BUDGET_*` charge-cost contract in `quota.h` and a `quota_counters_t` record-per-type layout in `quota.c` replacing four parallel counter arrays.
-> - **How it runs** -- block and owner locks funnel through one counting helper armed only by `quota_test_lock_count_begin`, so production never pays for it and the advisory TSC loops time the real path.
+> - **How it runs** -- block and owner locks funnel through one counting helper, armed by `quota_test_lock_count_begin` and CPU-scoped, and counted on the UNLOCK side so no instrumentation runs inside an IRQ-disabled window.
 > - **Downstream effects** -- closes the counter-layout question §2 and §3 deferred here; the four pool-charging items are BLOCKED and now carry reciprocal items in TODO-03 §6/§7.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` ("Charge-path cost contract").
 > - **Scope boundary** -- §5 owns the cost budget and counter layout ONLY; the pool allocator, its tag API, and the provider seam are TODO-03 §6/§7, and CONTENDED latency needs cross-CPU run queues (§10).
+> **Verified:** 2026-07-20 | commit `1907f55c` + review fixes | 1/6 items | build OK | smoke PASS (TCG 4.360s), tests 62 suites/593 PASS
 > **Deferred:** [H] pool and tagged-allocation charging: no pool-class allocator exists to hook, so all four charging items stay open (reason: infra) -> XREF: `03-memory-concurrency/TODO-03 §7` (item: "Charge paged/nonpaged pool allocations through a quota provider hook")
-> **Accepted:** [M] a no-straddle guarantee for a counter record needs a 64-byte-aligned allocation path; `kmalloc` promises 16, so only "at most 2 lines" is claimed and 7 of 14 records share a line today (reason: not-functional-today) -> XREF: `03-memory-concurrency/TODO-03 §7` (item: "Cache-line-aligned pool allocation for quota counter records")
-> **Accepted:** [M] the section budget is a STRUCTURAL guard, not a latency budget: it cannot see hold time, contention, or cache misses, and the counter is global rather than per-CPU (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 234)
+> **Deferred:** [H] a real latency budget (throughput + p50/p99 IRQ-disabled hold time under simultaneous chargers) cannot be built on a single-CPU scheduler; the shipped budget is structural only (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
+> **Accepted:** [M] EXACTLY half the counter records straddle a line at every legal block address (24-byte prefix, 32-byte records); fixing the ratio needs the array offset to be a multiple of 32, not just an aligned allocation (reason: not-functional-today) -> XREF: `03-memory-concurrency/TODO-03 §7` (item: "Cache-line-aligned pool allocation for quota counter records")
+> **Accepted:** [M] the record co-locates `limit`/`failures` with the `usage`/`peak` a charge writes, so a lock-free reader's line can now be invalidated by an unrelated charge; SoA vs AoS vs hot/cold needs a real SMP benchmark (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
+> **Accepted:** [L] the perf suites read `t->quota`/`t->quota_user` without the owner lock or a block reference; pre-existing house pattern shared with `test_quota.c`, not introduced here (reason: scope) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 252)
+> **Accepted:** [M] the counter attributes sections by CPU at release time, not to the invocation: a same-CPU interrupt or nested quota op can add one and a migration can drop one, so it guards structure under quiescent test conditions rather than measuring SMP (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Invocation-scoped lock-section accounting" at line 253)
+> **Quality reviewed:** 2026-07-20 | Codex 10x (design, adversarial x2, test-coverage, re-adversarial x3, consistency, perf x2) | 2H+12M+5L fixed, 2H+4M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -246,6 +251,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Bulletproofing: every charge path must name a resource type and owner.
 - [ ] Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag (concurrent same-token returners, a paused BUSY window, publication visibility): needs per-CPU run queues plus an operation-level checkpoint. -> XREF: `§2`, `§4`
 - [ ] Bounded worker join + CPU-pinned `kmalloc_fail_next` for quota tests: `thread_join` has no timeout and the injection countdown is per-CPU. -> XREF: `§2` (charge API)
+- [ ] Invocation-scoped lock-section accounting: the §5 counter attributes by CPU at release time, so a same-CPU interrupt or nested quota op can add a section and a migration can drop one. -> XREF: `§5` (cost budget)
 - [ ] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
 **Test checkpoint:** the quota unit suite passes (charge/return, rollback, concurrent charges, duplicate-handle quota, registry quota, ALPC quota); the boot leak sweep reports zero net quota delta across every test category; `quota_dump()` renders per-type usage/peak/limit on serial and in crash dumps.

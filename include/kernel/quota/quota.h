@@ -733,12 +733,21 @@ void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *re
  * path could adopt this API. */
 #define QUOTA_BUDGET_CHAIN_OWNER_LOCKS  3u
 
+/* A zero-amount chain charge is a no-op for the COUNTERS but not for the
+ * owner: it still takes task->quota_lock once to confirm the task could have
+ * been charged at all, so a charge against a dying task is refused rather than
+ * silently succeeding. It is therefore NOT a zero-lock operation, unlike the
+ * single-block no-ops and the stale-token return. */
+#define QUOTA_BUDGET_CHAIN_ZERO_OWNER_LOCKS  1u
+
 #ifdef KERNEL_TESTS
 /* --- Test-only raw counter access ---------------------------------------- *
  * Corrupted-state and saturation fixtures cannot be built through the public
  * API (it exists precisely to keep counters in their domain). These helpers
  * write the counters directly, bypassing every guard on purpose. Same
- * test-only pattern as kmalloc_fail_next(); compiled out in production. */
+ * test-only pattern as kmalloc_fail_next(). Present whenever KERNEL_TESTS is
+ * defined -- which is the Makefile DEFAULT, so these seams are in the image
+ * that boots on real hardware; only a KERNEL_TESTS=off build prunes them. */
 
 /* Raw counter writes for corrupted-state fixtures (negative usage, saturated
  * failure counters). */
@@ -750,31 +759,47 @@ void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, 
 int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t type);
 
 /* --- Test-only charge-cost instrumentation -------------------------------- *
- * Counts critical sections entered while counting is ON -- both the block
+ * Counts critical sections COMPLETED while counting is armed -- both the block
  * locks in quota.c and the owner-side locks in quota_owner.c -- so a test can
  * assert the structural budgets above exactly. Both files funnel their
- * acquisitions through one helper, so the count cannot drift from the real
- * lock discipline.
+ * releases through one helper, so the count cannot drift from the real lock
+ * discipline.
  *
- * Counting is EXPLICITLY GATED rather than always-on, because the instrument
- * would otherwise corrupt the measurement it exists to support: the increment
- * is a locked read-modify-write, which is not free on x86, and the advisory TSC
- * loops must time the production path, not the instrumented one. Timing runs
- * therefore never call begin(), so their locks execute a single predictable
- * not-taken branch and nothing else.
+ * WHERE it counts: on the UNLOCK side, after the lock is released, never
+ * between acquire and release. The nested two-lock transfer path releases both
+ * locks first and records its two sections afterwards, because releasing the
+ * inner lock restores flags captured while the outer acquisition already held
+ * interrupts masked.
  *
- * The increment happens AFTER the lock is acquired, so the counter means
- * "sections ENTERED", not "acquisitions attempted" -- a contender still
- * spinning has not entered anything. It is inside the critical section as a
- * result, which is acceptable precisely because it is off during timing.
+ * That places the work outside the quota lock, but NOT necessarily outside an
+ * IRQ-disabled window: spin_unlock_irqrestore restores the CALLER's saved IF,
+ * so a caller that was already in interrupt context (which this API explicitly
+ * supports) or beneath an outer irqsave lock still has interrupts masked when
+ * the count runs. The guarantee is "never inside a quota critical section",
+ * not "always with interrupts enabled".
  *
- * SCOPE LIMIT: the counter is global, not per-CPU, so a concurrent quota
- * operation on another CPU (or from an interrupt) would be counted into a
- * test's window. Nothing in the kernel charges quota yet, so there is no such
- * traffic today; the first hot-path consumer must revisit this, alongside the
- * quota contention-test work.
+ * WHAT it costs: disarmed, a block unlock adds an inlined relaxed load of the
+ * enable byte plus a not-taken branch; an owner unlock additionally pays an
+ * out-of-line call, because the helper lives in quota.c. Armed, it adds
+ * smp_cpu_id() and a locked read-modify-write. Counting is explicitly gated
+ * rather than always-on precisely so the advisory TSC loops time the
+ * production path instead of the instrument -- arming it measurably moved the
+ * numbers when it was always-on.
  *
- * Usage: begin() zeroes and arms, end() disarms and returns the total. */
+ * SCOPE -- read this before trusting a count. Sections are attributed by the
+ * CPU observed at release time, matched against the CPU that armed the window.
+ * That removes the dominant interference source (task creation and process
+ * death take owner locks on every CPU), but it does NOT bind a count to the
+ * operation under test: a same-CPU interrupt or a nested quota operation can
+ * add a section, a migration between release and attribution can drop one, and
+ * two overlapping measurement windows share one global gate. So this is a
+ * structural regression guard valid under quiescent single-threaded test
+ * conditions -- it is NOT an SMP-safe measurement, and it is not a latency
+ * budget (it sees no hold time, contention, or cache misses). Making it
+ * invocation-scoped is owned by the quota contention-test work.
+ *
+ * Usage: begin() zeroes, records the CPU, and arms; end() disarms and returns
+ * the total. */
 void     quota_test_lock_count_begin(void);
 uint64_t quota_test_lock_count_end(void);
 
@@ -791,4 +816,9 @@ uint32_t quota_test_counter_record_bytes(void);
  * so a test can compute the real line span from a block's runtime address
  * without the private struct definition. */
 uint32_t quota_test_counter_base_offset(void);
+
+/* Cache-line size the implementation's own record-fits-a-line assert uses, so
+ * a locality test computes spans against the same bound instead of re-defining
+ * 64 and silently drifting if that bound ever changes. */
+uint32_t quota_test_counter_line_bytes(void);
 #endif /* KERNEL_TESTS */

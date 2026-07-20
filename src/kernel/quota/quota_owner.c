@@ -45,14 +45,17 @@
 static inline void quota_owner_lock(spinlock_t *lock, uint64_t *flags)
 {
     spin_lock_irqsave(lock, flags);
-#ifdef KERNEL_TESTS
-    quota_test_count_lock_section();
-#endif
 }
 
+/* Counted on the unlock side, after interrupts are restored, for the same
+ * reason quota.c does it there: KERNEL_TESTS is on by default, so no
+ * instrumentation may run inside an IRQ-disabled window. */
 static inline void quota_owner_unlock(spinlock_t *lock, uint64_t flags)
 {
     spin_unlock_irqrestore(lock, flags);
+#ifdef KERNEL_TESTS
+    quota_test_count_lock_section();
+#endif
 }
 
 /* --- Task block attach / detach ------------------------------------------ */

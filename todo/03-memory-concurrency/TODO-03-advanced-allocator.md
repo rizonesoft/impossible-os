@@ -226,7 +226,7 @@ Two pool classes matching the Windows NT contract. NonPagedPool: always resident
 - [ ] IRQL assert: `kmalloc_paged` at above PASSIVE_LEVEL -> panic
 - [ ] Charge paged/nonpaged pool allocations through a quota provider hook, and refuse an owner-less user-triggered allocation rather than billing System. -> XREF: `02-kernel-core/TODO-25 §5`
 - [ ] Attribute pre-registry allocations to System: `kmalloc` is live from Phase 0 but the System block appears at Phase 3, so the hook needs a deferred replay. -> XREF: `02-kernel-core/TODO-25 §5`
-- [ ] Cache-line-aligned pool allocation for quota counter records: `kmalloc` gives 16 bytes, so 7 of 14 per-type records straddle a line today. -> XREF: `02-kernel-core/TODO-25 §5`
+- [ ] Cache-line-aligned pool allocation AND a 32-multiple counter-array offset for quota records: alignment alone leaves exactly half straddling (24-byte block prefix, 32-byte records). -> XREF: `02-kernel-core/TODO-25 §5`
 - [ ] Commit: `"mm: NonPagedPool/PagedPool -- PMM-backed and vmalloc-backed pool classes"`
 
 **Test checkpoint:** `kmalloc_nonpaged(4096)` succeeds at DISPATCH_LEVEL. `kmalloc_paged(4096)` at DISPATCH_LEVEL -> panic with IRQL message. A pool allocation billed to a quota owner charges that owner's paged/nonpaged usage and the free returns it; an owner-less user-triggered allocation is refused rather than billed to System.
