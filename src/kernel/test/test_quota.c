@@ -1203,7 +1203,7 @@ static void test_quota_charge_refusal_is_exact(void)
  * check-then-commit window -- a lock-free implementation could still pass them
  * whenever no preemption lands inside that short window. Genuine cross-CPU
  * contention proof needs per-CPU run queues plus an operation-level checkpoint
- * and is owned by the section 10 test infrastructure work. Do not upgrade
+ * and is blocked on TODO-07 smp-phase2 per-CPU run queues. Do not upgrade
  * these comments to claim parallel coverage until that lands. */
 
 #define QUOTA_RACE_WORKERS     3
@@ -1234,8 +1234,11 @@ static void quota_race_reset(void)
  * never scheduled would still hang the sweep. That is accepted here for the
  * same reason the existing kthread suites accept it: the scheduler is
  * flat-cyclic over all runnable threads, so a created thread is always
- * eventually picked. A bounded join needs scheduler support that does not
- * exist yet (owned by the section 10 test infrastructure work). */
+ * eventually picked. A bounded join needs a thread_join timeout that does not
+ * exist yet; it stays open as the section 10 bounded-worker-join item, blocked
+ * on TODO-07 smp-phase2. Where a test only needs to observe completion (rather
+ * than reap the thread) the DONE-flag + spin-budget pattern in
+ * test_quota_dashboard.c is the bounded alternative available today. */
 static void quota_race_rendezvous(void)
 {
     __atomic_fetch_add(&s_race_started, 1, __ATOMIC_ACQ_REL);

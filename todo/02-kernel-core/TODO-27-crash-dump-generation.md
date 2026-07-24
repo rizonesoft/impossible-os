@@ -255,6 +255,7 @@ Define the WinDbg-compatible MDMP binary format structures for writing crash dum
 - [ ] After writing the full dump body, `dump_sink_finalize()` writes the header to sector 0 with `DumpPresent = 1`
 - [ ] `dump_sink_clear()` -- sets `DumpPresent = 0` after the dump has been safely moved to the filesystem (called by §8)
 
+- [ ] `dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers: `klog_emit` takes the blocking `s_klog_lock`, so a panic that interrupted logging stalls the owner. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §10`
 - [ ] Commit: `"kernel/crashdump: raw partition sink, VFS-bypass DMA write, dump partition header"`
 
 **Test checkpoint:** `dump_sink_probe()` finds dump partition by GPT GUID. `dump_sink_write()` writes to raw partition without VFS. `DUMP_PARTITION_HEADER.DumpPresent` == 1 after write. `dump_sink_clear()` sets `DumpPresent` == 0. `POST16(0xDE4C)` on entry. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.

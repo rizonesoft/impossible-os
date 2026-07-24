@@ -513,6 +513,14 @@ int quota_registry_worst_user(quota_resource_type_t type, uint16_t min_permille,
 void quota_registry_worst_all(uint16_t *out_permille, uint32_t count,
                               const uint8_t *wanted);
 
+/* --- Ring record kinds ---------------------------------------------------- *
+ * Which record a publish-ring slot holds. NOT test-only: the drain and the
+ * enqueue paths in quota_pressure.c switch on these unconditionally, so they
+ * must exist in a KERNEL_TESTS=off build too. They previously sat inside the
+ * test-only block below, which left the release build unbuildable. */
+#define QUOTA_PRESSURE_KIND_TRANSITION  1u
+#define QUOTA_PRESSURE_KIND_FAILURE     2u
+
 #ifdef KERNEL_TESTS
 /* --- Test-only control ---------------------------------------------------- *
  * The state machine is deliberately reachable without quota_pressure_init, so
@@ -537,10 +545,9 @@ void quota_pressure_test_drain(void);
  * derivation. Lets the hysteresis tests be exact without staging live blocks. */
 void quota_pressure_test_sample(quota_resource_type_t type, uint16_t permille);
 
-/* Pop the oldest undrained ring record. Returns the record kind, or 0 when the
- * ring is empty, and fills the matching out-pointer. */
-#define QUOTA_PRESSURE_KIND_TRANSITION  1u
-#define QUOTA_PRESSURE_KIND_FAILURE     2u
+/* Pop the oldest undrained ring record. Returns the record kind (one of the
+ * QUOTA_PRESSURE_KIND_* values above), or 0 when the ring is empty, and fills
+ * the matching out-pointer. */
 uint32_t quota_pressure_test_pop(QUOTA_PRESSURE_RECORD *out_transition,
                                  QUOTA_FAILURE_RECORD *out_failure);
 

@@ -83,6 +83,26 @@ void spin_unlock_irqrestore(spinlock_t *s, uint64_t flags);
 int spin_trylock(spinlock_t *s);
 
 /* ---------------------------------------------------------------------------
+ * spin_tryunlock(s) -- the counterpart to spin_trylock: release the flag and
+ * NOTHING else.
+ *
+ * spin_unlock() is NOT the right pairing. It ends with an unconditional
+ * irq_enable(), and spin_trylock never disabled interrupts in the first place,
+ * so pairing them turns "acquire a lock" into "enable interrupts" -- fatal in
+ * a panic path that acquired the lock precisely because interrupts must stay
+ * masked. spin_unlock_irqrestore() is equally wrong: it also lowers the
+ * per-CPU IRQL that spin_trylock never raised.
+ *
+ * The release fence matches spin_trylock's __ATOMIC_ACQ_REL acquire, so the
+ * critical section's stores are visible before the flag clears. IRQ state is
+ * entirely the caller's business, exactly as it is on the acquire side.
+ * ------------------------------------------------------------------------- */
+static inline void spin_tryunlock(spinlock_t *s)
+{
+    __atomic_store_n(&s->flag, 0, __ATOMIC_RELEASE);
+}
+
+/* ---------------------------------------------------------------------------
  * spin_is_locked(s) -- returns 1 if currently locked (debug / assertions).
  * ------------------------------------------------------------------------- */
 static inline int spin_is_locked(const spinlock_t *s)

@@ -274,6 +274,34 @@ if [ "$LEAKED" -gt 0 ]; then
     FAILED=$((${FAILED:-0} + LEAKED))
 fi
 
+# Quota leak gate (kernel resource accounting). Counted per test CATEGORY, not per
+# suite, and folded into FAILED exactly like the heap gate above -- a category
+# that ends with more quota charged than it started with left an obligation
+# nobody returned, which is a real resource leak even when the heap balances
+# (the charge and the allocation are separate ledgers).
+#
+# Deliberately a SEPARATE counter from 'leaked': that one is defined in bytes
+# of heap per suite, so overloading it would corrupt its meaning and make a
+# legitimately retained canonical USER block read as a heap leak.
+#
+# Fail-CLOSED on parse drift, same rationale as the heap gate: a summary
+# without the field means the kernel emitted an unexpected format, and
+# defaulting to zero would silently disarm the gate.
+if ! echo "$SUMMARY" | grep -qE ' quota-leaked'; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} test summary missing 'quota-leaked' counter (format drift)"
+    echo "  summary: $SUMMARY"
+    exit 1
+fi
+QUOTA_LEAKED=$(echo "$SUMMARY" | grep -oP '\d+(?= quota-leaked)')
+if ! [[ "$QUOTA_LEAKED" =~ ^[0-9]+$ ]]; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} could not parse quota-leak count from summary"
+    echo "  summary: $SUMMARY"
+    exit 1
+fi
+if [ "$QUOTA_LEAKED" -gt 0 ]; then
+    FAILED=$((${FAILED:-0} + QUOTA_LEAKED))
+fi
+
 # Show individual test results (filtered by suite if requested)
 echo ""
 if [ -n "$SUITE_FILTER" ]; then

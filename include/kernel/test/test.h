@@ -24,6 +24,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/quota/quota.h"   /* quota_leak_snapshot_t for the leak sweep */
 
 /* ---- Maximum limits ----
  * Raised 2026-04-19 from 512 to 1024 after the suite count hit 496;
@@ -87,6 +88,17 @@ typedef struct {
                              * after the action drain, absent an
                              * explicit TEST_EXPECT_LEAK. Advisory until
                              * all existing tests clean up. */
+    uint32_t quota_leaked;  /* test CATEGORIES that ended with more
+                             * outstanding USER-block quota than they
+                             * started with. Deliberately NOT folded into
+                             * `leaked`: that counter is defined in bytes of
+                             * heap per SUITE, and overloading it would both
+                             * corrupt its meaning and make a legitimately
+                             * retained zero-usage canonical block read as a
+                             * heap leak. Counted per category, gated on
+                             * positive USAGE deltas only -- a block-count
+                             * change with no usage change is reported and
+                             * not gated (see test_runner.c). */
     uint32_t suite_count;
     uint32_t suites_passed;
     uint32_t suites_failed;
@@ -95,6 +107,27 @@ typedef struct {
 } test_state_t;
 
 extern test_state_t g_test_state;
+
+/* ---- Per-category quota leak sweep (kernel resource accounting) ---- */
+
+/* Verdict for one category's opening/closing quota snapshot pair. Split out of
+ * the runner so every branch is reachable from a suite with SYNTHETIC
+ * snapshots: driving a real category into each state would need a leak
+ * deliberately planted in production code, so without this seam an inverted
+ * comparison or a missing increment would pass the whole suite and leave the
+ * host parser reading a plausible zero. */
+typedef enum {
+    QUOTA_SWEEP_INDETERMINATE = 0, /* either snapshot was incoherent      */
+    QUOTA_SWEEP_CLEAN,             /* same blocks, no positive delta      */
+    QUOTA_SWEEP_COUNT_ONLY,        /* block count moved, no usage delta   */
+    QUOTA_SWEEP_LEAKED             /* >= 1 type ended with more charged   */
+} quota_sweep_verdict_t;
+
+/* Pure classifier: no logging, no counters, no locks. `leaked_types`, when
+ * non-NULL, receives the number of types carrying a positive delta. */
+quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
+                                           const quota_leak_snapshot_t *close,
+                                           uint32_t *leaked_types);
 
 /* ---- API ---- */
 

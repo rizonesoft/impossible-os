@@ -18,6 +18,7 @@
 #include "kernel/mm/vmm.h"              /* vmm_map_fail_* (hygiene) */
 #include "kernel/cpu_security.h"        /* copy_user_fail_* (hygiene) */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql / KeLowerIrql for action drain */
+#include "kernel/quota/quota.h"         /* quota_leak_snapshot (per-category sweep) */
 
 /* ---- Category names (must match test_category_t order) ---- */
 
@@ -76,6 +77,7 @@ test_state_t g_test_state = {
     .skipped       = 0,
     .pending       = 0,
     .leaked        = 0,
+    .quota_leaked  = 0,
     .suite_count   = 0,
     .suites_passed = 0,
     .suites_failed = 0,
@@ -473,6 +475,7 @@ extern void test_register_quota_perf(void);
 extern void test_register_quota_config(void);
 extern void test_register_quota_syscall(void);
 extern void test_register_quota_pressure(void);
+extern void test_register_quota_dashboard(void);
 extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
@@ -590,6 +593,7 @@ void test_runner_init(void)
     test_register_quota_config();
     test_register_quota_syscall();
     test_register_quota_pressure();
+    test_register_quota_dashboard();
 
     /* ABI */
     test_register_peb_teb();
@@ -629,6 +633,110 @@ void test_runner_init(void)
          (uint64_t)g_test_state.suite_count);
 }
 
+/* Close a category's quota sweep: compare the outstanding USER-block quota
+ * now against `open`, taken when the category started.
+ *
+ * Only a POSITIVE per-type usage delta is gated. Three distinct outcomes, kept
+ * distinct on purpose:
+ *
+ *   - indeterminate: either snapshot mixed two registry membership
+ *     generations, so the comparison is between two different populations.
+ *     Reported, never counted -- an indeterminate reading is not evidence.
+ *   - count-only: blocks were created or retained but no type gained usage.
+ *     A canonical USER block is legitimately kept alive by the registry once
+ *     a principal has ever charged, so gating this would fail CI forever
+ *     after the first quota test ran. Reported at INFO.
+ *   - usage: at least one type ends with more charged than it started with.
+ *     That is an obligation nobody returned. Gated.
+ */
+quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
+                                           const quota_leak_snapshot_t *close,
+                                           uint32_t *leaked_types)
+{
+    uint32_t leaked = 0;
+
+    if (leaked_types)
+        *leaked_types = 0;
+    if (!open || !close || !open->coherent || !close->coherent)
+        return QUOTA_SWEEP_INDETERMINATE;
+
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+        /* A NEGATIVE delta is a return, never a leak: a category may legally
+         * end holding less than it started with (an earlier category's charge
+         * returned inside this one). Only growth is an unmet obligation. */
+        if (close->usage[t] > open->usage[t])
+            leaked++;
+    }
+
+    if (leaked_types)
+        *leaked_types = leaked;
+    if (leaked > 0)
+        return QUOTA_SWEEP_LEAKED;
+    if (close->user_blocks != open->user_blocks)
+        return QUOTA_SWEEP_COUNT_ONLY;
+    return QUOTA_SWEEP_CLEAN;
+}
+
+/* Retries allowed when a closing snapshot comes back indeterminate. Membership
+ * churn and mutation are transient at a category boundary (no suite is
+ * running), so a couple of retries almost always settle. */
+#define QUOTA_SWEEP_RETRIES 3u
+
+static void quota_sweep_close(const quota_leak_snapshot_t *open,
+                              const char *cat_name)
+{
+    quota_leak_snapshot_t now;
+    uint32_t leaked_types = 0;
+
+    /* Retry a transient incoherence rather than accepting it. */
+    for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
+        if (quota_leak_snapshot(&now))
+            break;
+
+    switch (quota_sweep_classify(open, &now, &leaked_types)) {
+    case QUOTA_SWEEP_INDETERMINATE:
+        /* FAIL CLOSED. An indeterminate pair means the gate could not be
+         * established for this category -- not that the category was clean.
+         * Reporting it and returning would disarm the gate precisely when
+         * concurrent activity makes measurement hard, and the summary would
+         * still print a reassuring "0 quota-leaked". A gate that cannot run
+         * is a failed gate, so it counts like one. */
+        klog(LOG_ERROR, test_tag(),
+             "[QLEAK] %s :: gate INDETERMINATE after %u retries "
+             "(opening coherent=%u, closing coherent=%u)",
+             cat_name, (uint64_t)QUOTA_SWEEP_RETRIES,
+             (uint64_t)open->coherent, (uint64_t)now.coherent);
+        g_test_state.quota_leaked++;
+        return;
+
+    case QUOTA_SWEEP_LEAKED:
+        for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+            int64_t delta = now.usage[t] - open->usage[t];
+            if (delta <= 0)
+                continue;
+            klog(LOG_ERROR, test_tag(),
+                 "[QLEAK] %s :: %s +%llu still charged (entry %llu -> exit %llu)",
+                 cat_name, quota_resource_type_name((quota_resource_type_t)t),
+                 (uint64_t)delta, (uint64_t)open->usage[t],
+                 (uint64_t)now.usage[t]);
+        }
+        /* ONE per leaking category, not one per type: the counter is folded
+         * into the host FAILED total, and a category leaking four types is
+         * still one category that failed to clean up. */
+        g_test_state.quota_leaked++;
+        return;
+
+    case QUOTA_SWEEP_COUNT_ONLY:
+        klog(LOG_INFO, test_tag(),
+             "[QLEAK-OK] %s :: USER blocks %u -> %u, no outstanding usage",
+             cat_name, (uint64_t)open->user_blocks, (uint64_t)now.user_blocks);
+        return;
+
+    case QUOTA_SWEEP_CLEAN:
+        return;
+    }
+}
+
 /* ---- Run all registered suites ---- */
 
 void test_runner_run(void)
@@ -653,6 +761,20 @@ void test_runner_run(void)
 
     test_category_t current_cat = TEST_CAT_COUNT; /* sentinel: no category printed yet */
 
+    /* Per-CATEGORY quota leak sweep. Suite granularity is deliberately NOT
+     * used: a quota block is a shared, refcounted, cross-suite object (a
+     * canonical USER block is created once and reused by every later suite
+     * charging as that principal), so a per-suite delta would flag ordinary
+     * sharing as a leak. A category is the smallest unit over which
+     * outstanding quota genuinely should return to where it started.
+     *
+     * The boundary is sampled at the point the runner switches categories,
+     * which is AFTER the previous category's last suite ran its action drain
+     * -- so deferred cleanup has already happened when the closing snapshot is
+     * taken. */
+    quota_leak_snapshot_t cat_snap_open;
+    int                   cat_snap_valid = 0;
+
     /* Forward decl: TEST_CAT_DESKTOP auto-isolation. Codex [H] section
      * 15 review -- wiring the reset into the runner so every desktop
      * suite starts from a known baseline without each test having to
@@ -670,9 +792,23 @@ void test_runner_run(void)
 
         /* Print category header on first suite in each category */
         if (s->cat < TEST_CAT_COUNT && s->cat != current_cat) {
+            /* Close the OUTGOING category's quota sweep before announcing the
+             * incoming one, so a QLEAK line is attributed to the category that
+             * actually leaked rather than the one about to start. */
+            if (cat_snap_valid)
+                quota_sweep_close(&cat_snap_open, cat_names[current_cat]);
+
             current_cat = s->cat;
             klog(LOG_INFO, test_tag(), "--- [%s] %s ---",
                  cat_names[current_cat], cat_labels[current_cat]);
+
+            /* Retry the OPENING snapshot too. Its return value is not ignored:
+             * an incoherent opening propagates into an INDETERMINATE verdict
+             * at close, which now fails closed. */
+            for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
+                if (quota_leak_snapshot(&cat_snap_open))
+                    break;
+            cat_snap_valid = 1;
         }
 
         g_test_state.current_suite = s->name;
@@ -795,6 +931,11 @@ void test_runner_run(void)
             g_test_state.suites_passed++;
     }
 
+    /* Close the LAST category: the loop's boundary check only fires on a
+     * transition, so without this the final category is never swept. */
+    if (cat_snap_valid)
+        quota_sweep_close(&cat_snap_open, cat_names[current_cat]);
+
     /* Restore default tag so the final summary renders in the kernel
      * test color even after the last-run suite was a desktop suite. */
     s_current_tag = "TEST";
@@ -807,6 +948,7 @@ void test_runner_run(void)
     uint32_t skipped = g_test_state.skipped;
     uint32_t pending = g_test_state.pending;
     uint32_t leaked  = g_test_state.leaked;
+    uint32_t qleaked = g_test_state.quota_leaked;
 
     /* Single canonical summary including pending (deferred-feature
      * stubs) and leaked (suites with non-zero heap_get_used delta
@@ -818,19 +960,19 @@ void test_runner_run(void)
      * which suppresses the counter at the kernel level. */
     if (g_test_state.failed == 0) {
         klog(LOG_INFO, "TEST",
-             "=== %u tests passed, 0 failed, %u skipped, %u pending, %u leaked (%u.%us) ===",
+             "=== %u tests passed, 0 failed, %u skipped, %u pending, %u leaked, %u quota-leaked (%u.%us) ===",
              (uint64_t)total, (uint64_t)skipped, (uint64_t)pending,
-             (uint64_t)leaked, run_sec, run_frac);
+             (uint64_t)leaked, (uint64_t)qleaked, run_sec, run_frac);
     } else {
         /* Failure form keeps the 'tests passed' prefix so
          * scripts/test.sh:184's `=== [0-9]+ tests? passed` regex still
          * extracts the summary line on a non-zero-failure run. The
          * extra fields (FAILED count, of-total) are appended after. */
         klog(LOG_ERROR, "TEST",
-             "=== %u tests passed, %u FAILED, %u skipped, %u pending, %u leaked (of %u) (%u.%us) ===",
+             "=== %u tests passed, %u FAILED, %u skipped, %u pending, %u leaked, %u quota-leaked (of %u) (%u.%us) ===",
              (uint64_t)g_test_state.passed, (uint64_t)g_test_state.failed,
              (uint64_t)skipped, (uint64_t)pending, (uint64_t)leaked,
-             (uint64_t)total, run_sec, run_frac);
+             (uint64_t)qleaked, (uint64_t)total, run_sec, run_frac);
     }
 }
 

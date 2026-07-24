@@ -114,6 +114,7 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 - [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
 - [x] Per-subsystem files now created on first write (`vfs_open ... VFS_O_CREATE`) so the X:\Logs BlackBox path (dirs-only skeleton) gets the split logs, not just `kernel.log` (§2 review fixed silent-skip)
 - [ ] Live-mode (C:\DEBUG) runs per-subsystem routing on every per-line `klog_disk_flush()` -- batch it to periodic/final drains (needs `klog_disk_flush_all` to clear `live_enabled` so the drain still routes) (§2 review perf)
+- [ ] Left-align flag (`%-Ns`) in `klog`: the parser takes zero-pad + width but no `-`, so `%-18s` is emitted LITERALLY and its argument never consumed, shifting every later field. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §10`
 - [x] Commit: `"kernel: per-subsystem log files"`
 
 **Test checkpoint:** after a flush, `X:\Logs\network.log` / `boot.log` / `fs.log` / `mm.log` / `drivers.log` / `security.log` exist and contain their tagged entries (not just `kernel.log`); an unknown tag routes to `kernel.log`; the numbered boot log keeps all subsystems combined. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -151,7 +152,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 154)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 155)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
@@ -364,7 +365,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 353)
-> **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 293)
+> **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 294)
 
 ---
 

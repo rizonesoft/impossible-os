@@ -1069,7 +1069,7 @@ void quota_pressure_dump(void)
         if (!valid && kind == (uint8_t)QUOTA_PRESSURE_SRC_NONE)
             continue;   /* never sampled: nothing to report */
 
-        klog(LOG_INFO, "quota", "  %-20s %-8s src %u %s (%u permille)",
+        klog(LOG_INFO, "quota", "  %s %s src %u %s (%u permille)",
              quota_resource_type_name((quota_resource_type_t)i),
              quota_pressure_level_name((quota_pressure_level_t)level),
              (uint32_t)kind, valid ? "valid" : "UNKNOWN", (uint32_t)permille);

@@ -142,9 +142,143 @@ uint32_t quota_resource_type_count(void);
 int quota_registry_ready(void);
 
 /* Dump the registered type table (name / unit / limit) to the serial log.
- * Distinct from the per-block charge-state dump quota_dump() added by the
- * quota dashboard. */
+ * Distinct from the per-block charge-state dump quota_dump() below. */
 void quota_types_dump(void);
+
+/* ========================================================================== *
+ * Dashboards and the leak sweep
+ *
+ * WHAT IS ENUMERABLE. Only QUOTA_PRINCIPAL_USER blocks are reachable from a
+ * global list (see the registry rationale in quota.c). A PROCESS block hangs
+ * off task->quota and a JOB block off JOB_OBJECT.quota, and neither a
+ * lifetime-safe task iterator nor a job registry exists today -- so every
+ * facility here reports USER blocks and SAYS so, rather than pretending to a
+ * whole-system view it cannot take. Reaching process blocks is owned by the
+ * lifetime-safe task enumeration item in section 11.
+ *
+ * That restriction costs the leak sweep less than it looks: a chain charge
+ * rolls its amount up into the owning USER block, so a process or job charge
+ * that is never returned still surfaces here as USER-block usage.
+ * ========================================================================== */
+
+/* Monotonic count of registry LINK and UNLINK events, bumped under the
+ * registry lock. A reader that samples this before and after a walk learns
+ * whether list MEMBERSHIP moved underneath it; equal samples mean the walk saw
+ * one generation. It deliberately says nothing about counter mutation, which
+ * needs no such gate because every counter is read atomically. */
+uint64_t quota_registry_generation(void);
+
+/* Render live USER blocks (id, owner-SID digest, and every type whose usage,
+ * peak, or failure count is non-zero) to the serial log.
+ *
+ * CALLING CONTRACT (HARD). PASSIVE_LEVEL, thread context, interrupts enabled,
+ * holding NO lock -- not a quota block lock, not the registry lock, not any
+ * other non-reentrant debug lock. Three reasons, each independently fatal:
+ * the registry lock may be taken only while holding nothing, so entering with
+ * a block lock held inverts the one absolute lock order in this module; the
+ * serial output this emits must not run beneath a spinlock; and releasing the
+ * walk's final pin can enter registry removal, which takes the registry lock
+ * again. From panic, NMI, interrupt context, or inside a charge/return
+ * critical section call quota_dump_crash() instead -- it is the bounded,
+ * non-blocking form built for exactly those callers. */
+void quota_dump(void);
+
+/* Panic-path form. Attempts the registry lock ONCE without blocking: on
+ * success it copies a hard-bounded set of rows into preallocated storage,
+ * releases the lock, and only then emits them; on failure it emits a single
+ * "registry unavailable" line and returns. Allocates nothing, and never waits
+ * on a CPU that died holding the REGISTRY lock.
+ *
+ * It never traverses the list unlocked. A lock-free walk looks appealing on a
+ * dead machine, but quota_block_deref unlinks and then immediately frees, so
+ * an unlocked walker can follow a perfectly aligned pointer into freed or
+ * reused memory -- and a second fault inside the panic path costs the whole
+ * crash report, which is the one thing this function exists to produce.
+ *
+ * WHAT IT DOES NOT GUARANTEE, precisely. Output goes through klog, and
+ * klog_emit takes the blocking s_klog_lock (src/kernel/klog.c). So this is
+ * non-blocking with respect to QUOTA state, not with respect to the logger: a
+ * panic that interrupted logging can still stall here, exactly as
+ * kernel_subsystem_dump and transition_ring_dump_to_serial already can on the
+ * same path. That hazard is repo-wide and predates this function; the
+ * panic-safe raw emitter that fixes it for every panic-path dumper is owned by
+ * TODO-27 crash-dump-generation section 7 ("dump_emit_raw"). Do NOT read this
+ * contract as "safe to call with the logger lock held." */
+void quota_dump_crash(void);
+
+#ifdef KERNEL_TESTS
+/* Times quota_dump_crash took its try-lock FAILURE branch. The fallback path
+ * is the whole reason the function exists, and a test cannot otherwise tell a
+ * successful dump from a skipped one -- both simply return. */
+uint64_t quota_test_crash_fallbacks(void);
+
+/* Hold / release the registry lock, so a single-CPU test can make the lock
+ * genuinely unavailable to quota_dump_crash instead of asserting against an
+ * uncontended path that would stay green through a blocking regression.
+ * Strictly paired; the flags are the caller's, as with spin_lock_irqsave.
+ * Nothing between the two may take a quota block lock -- that is the one
+ * ordering this module forbids. */
+void quota_test_registry_hold(uint64_t *flags);
+void quota_test_registry_release(uint64_t flags);
+
+/* Counter-mutation epoch: advances on every block-lock release, so it moves
+ * for a charge, a return, and a transfer -- the mutations the registry
+ * generation cannot see. Exposed so a test can assert the leak snapshot's
+ * coherence gate actually reacts to them. */
+uint64_t quota_test_mutation_epoch(void);
+
+/* Writers currently inside a block critical section. Zero means no mutation is
+ * in progress; the leak snapshot requires zero at BOTH ends of its walks,
+ * because the epoch only witnesses mutations that already COMPLETED. */
+uint32_t quota_test_writers_active(void);
+#endif
+
+/* One reading of outstanding USER-block quota, for the boot leak sweep. Both
+ * signals are carried because neither implies the other: replacing a
+ * zero-usage block with a charged one leaves `user_blocks` flat while `usage`
+ * rises, and retaining a fresh canonical block moves `user_blocks` with no
+ * usage change at all.
+ *
+ * `coherent` is 1 only when the reading is QUIESCENT, which is stronger than
+ * "membership did not change" and deliberately so. Three independent checks
+ * must all hold, because each catches what the others cannot:
+ *
+ *   1. The registry GENERATION catches a link or unlink.
+ *   2. The counter-mutation EPOCH (KERNEL_TESTS builds) catches a charge,
+ *      return, or transfer that COMPLETED. It is load-bearing and cannot be
+ *      dropped in favour of check 4: a transfer whose source is read before
+ *      the move and whose destination is read after it produces the SAME wrong
+ *      total on both walks, so agreeing walks alone would certify it.
+ *   3. The ACTIVE-WRITER count must be zero at both ends. The epoch witnesses
+ *      only completed mutations, and quota_try_transfer credits the
+ *      destination before it debits the source -- so a writer stalled between
+ *      those two stores leaves the amount visible in BOTH blocks with the
+ *      epoch unmoved on either side of the walk. Requiring no mutation to be
+ *      IN PROGRESS is what rejects that total, which never existed.
+ *   4. TWO independent walks must agree exactly.
+ *
+ * The epoch is KERNEL_TESTS-only and reads as a constant elsewhere, because
+ * the sweep it serves is test infrastructure and a shared RMW on the
+ * production charge path is too high a price for a diagnostic. On a build
+ * without it, checks 1 and 3 still apply and this contract is correspondingly
+ * weaker -- nothing in the production tree consumes this API.
+ *
+ * `coherent` is also 0 when the aggregate would overflow the counter domain
+ * (each block may legally hold up to QUOTA_AMOUNT_MAX == INT64_MAX, so two
+ * blocks can exceed it) or when a node could not be pinned. A comparison
+ * against an incoherent snapshot is INDETERMINATE and must never be reported
+ * as a leak. */
+typedef struct {
+    uint64_t generation;                        /* registry gen at capture   */
+    uint32_t user_blocks;                       /* live USER blocks seen     */
+    uint8_t  coherent;                          /* 0 = mixed generations     */
+    int64_t  usage[QUOTA_RESOURCE_TYPE_COUNT];  /* summed outstanding usage  */
+} quota_leak_snapshot_t;
+
+/* Capture into `out`. Returns non-zero when the snapshot is coherent (the
+ * same value left in out->coherent). A NULL `out` is a no-op returning 0.
+ * Same calling contract as quota_dump: PASSIVE_LEVEL, no lock held. */
+int quota_leak_snapshot(quota_leak_snapshot_t *out);
 
 /* --- Configurable per-user default limits (quota_config.c) ---------------- *
  * The kernel-config override layer named in the precedence rule above. One
@@ -1101,20 +1235,43 @@ void quota_test_poke_rate_seq(quota_block_t *block, quota_rate_class_t cls, int 
  * production path instead of the instrument -- arming it measurably moved the
  * numbers when it was always-on.
  *
- * SCOPE -- read this before trusting a count. Sections are attributed by the
- * CPU observed at release time, matched against the CPU that armed the window.
- * That removes the dominant interference source (task creation and process
- * death take owner locks on every CPU), but it does NOT bind a count to the
- * operation under test: a same-CPU interrupt or a nested quota operation can
- * add a section, a migration between release and attribution can drop one, and
- * two overlapping measurement windows share one global gate. So this is a
- * structural regression guard valid under quiescent single-threaded test
- * conditions -- it is NOT an SMP-safe measurement, and it is not a latency
- * budget (it sees no hold time, contention, or cache misses). Making it
- * invocation-scoped is owned by the quota contention-test work.
+ * SCOPE -- read this before trusting a count. Attribution is INVOCATION-scoped:
+ * a section counts only when it is released by the same THREAD that armed the
+ * window, at PASSIVE_LEVEL. Both halves are load-bearing and each replaced a
+ * specific defect of the earlier CPU-scoped rule:
  *
- * Usage: begin() zeroes, records the CPU, and arms; end() disarms and returns
- * the total. */
+ *   - Thread identity, not CPU identity, is what "this invocation" means. CPU
+ *     matching dropped a section whenever the measured thread migrated between
+ *     release and attribution, and counted a section that some unrelated task
+ *     happened to complete on the armed CPU. Task creation and process death
+ *     take owner locks constantly, and every budget assertion is an exact
+ *     equality, so either direction is a hard test failure.
+ *   - The PASSIVE_LEVEL gate excludes interrupt and DPC context, so a timer or
+ *     device interrupt landing mid-window on the measured thread's stack
+ *     cannot add a section that the operation under test never performed.
+ *
+ * A nested quota operation issued BY the measured thread at PASSIVE still
+ * counts, and should: it is genuinely part of the invocation being budgeted.
+ *
+ * NOT SMP-SOUND, and the limit is in the resolver rather than the rule.
+ * thread_current() reads the GLOBAL current_task / current_thread cursors, not
+ * per-CPU state, so on a real multi-CPU scheduler another CPU can move those
+ * cursors between the measured operation and this comparison -- letting an
+ * unrelated thread match, or the arming thread be rejected. Thread scoping is
+ * strictly better than the CPU scoping it replaced (it survives migration and
+ * excludes sibling tasks, both asserted by tests), but genuine invocation
+ * scoping needs a CPU-local current-thread identity that does not exist yet.
+ * Until then these exact-equality budgets are valid under the single-cursor
+ * scheduler the test runner uses, and no further. Owner: per-CPU run queues in
+ * 03-memory-concurrency/TODO-07-smp-phase2.md section 3.
+ *
+ * What remains outside scope is unchanged -- one global gate means two
+ * overlapping measurement windows still interfere, and this is a structural
+ * lock-count guard, never a latency budget (it sees no hold time, contention,
+ * or cache misses).
+ *
+ * Usage: begin() zeroes, records the arming thread, and arms; end() disarms
+ * and returns the total. */
 void     quota_test_lock_count_begin(void);
 uint64_t quota_test_lock_count_end(void);
 

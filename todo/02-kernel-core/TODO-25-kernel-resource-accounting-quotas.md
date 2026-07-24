@@ -49,7 +49,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [x]   |
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
-| 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [ ]   |
+| 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [x]   |
 | 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
 
@@ -185,7 +185,6 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [M] EXACTLY half the counter records straddle a line at every legal block address (24-byte prefix, 32-byte records); fixing the ratio needs the array offset to be a multiple of 32, not just an aligned allocation (reason: not-functional-today) -> XREF: `03-memory-concurrency/TODO-03 §7` (item: "Cache-line-aligned pool allocation for quota counter records")
 > **Accepted:** [M] the record co-locates `limit`/`failures` with the `usage`/`peak` a charge writes, so a lock-free reader's line can now be invalidated by an unrelated charge; SoA vs AoS vs hot/cold needs a real SMP benchmark (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
 > **Accepted:** [L] the perf suites read `t->quota`/`t->quota_user` without the owner lock or a block reference; pre-existing house pattern shared with `test_quota.c`, not introduced here (reason: scope) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Bounded worker join + CPU-pinned `kmalloc_fail_next`" at line 252)
-> **Accepted:** [M] the counter attributes sections by CPU at release time, not to the invocation: a same-CPU interrupt or nested quota op can add one and a migration can drop one, so it guards structure under quiescent test conditions rather than measuring SMP (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Invocation-scoped lock-section accounting" at line 253)
 > **Quality reviewed:** 2026-07-20 | Codex 10x (design, adversarial x2, test-coverage, re-adversarial x3, consistency, perf x2) | 2H+12M+5L fixed, 2H+4M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -318,23 +317,33 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] critical pressure cannot notify an orchestrator directly; the KNF nomination state is the interim carrier -> XREF: 02-kernel-core/TODO-30 §6 (item: "Accept a resource-exhaustion pressure source from TODO-25 §9" at line 88)
 > **Accepted:** [M] working-set Min/Max is stored but unenforced, so pressure recovery cannot trim an offending process -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §9 (item: "Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process" at line 301)
 > **Accepted:** [M] nomination ranks USER principals only; process-level ranking needs a lifetime-safe task iterator and a System-protected flag, neither of which exists -> XREF: 02-kernel-core/TODO-25 §11 (item: "Lifetime-safe task enumeration for process-level victim nomination" at line 355)
-> **Deferred:** [H] the four levels derive from budget saturation, not the stall-time metric the section names; the stall source is tagged and seamed but unwired -> XREF: 02-kernel-core/TODO-25 §12 (item: "Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall`" at line 375)
+> **Deferred:** [H] the four levels derive from budget saturation, not the stall-time metric the section names; the stall source is tagged and seamed but unwired -> XREF: 02-kernel-core/TODO-25 §12 (item: "Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall`" at line 320)
 > **Quality reviewed:** 2026-07-24 | Codex 6x (design, adversarial, consistency, perf, test-coverage, re-adversarial) | 11H+13M+1L fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
 
 ## 10. Tests, Leak Sweeps, and Dashboards
 
-- [ ] Unit tests: charge/return, rollback, concurrent charges, duplicate handle quota, registry quota, ALPC quota.
-- [ ] Boot leak sweep compares all quota blocks before/after test categories.
-- [ ] Add `quota_dump()` for serial and crash dumps.
-- [ ] Bulletproofing: every charge path must name a resource type and owner.
-- [ ] Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag (concurrent same-token returners, a paused BUSY window, publication visibility): needs per-CPU run queues plus an operation-level checkpoint. -> XREF: `§2`, `§4`
-- [ ] Bounded worker join + CPU-pinned `kmalloc_fail_next` for quota tests: `thread_join` has no timeout and the injection countdown is per-CPU. -> XREF: `§2` (charge API)
-- [ ] Invocation-scoped lock-section accounting: the §5 counter attributes by CPU at release time, so a same-CPU interrupt or nested quota op can add a section and a migration can drop one. -> XREF: `§5` (cost budget)
-- [ ] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
+- [/] Unit tests: charge/return, rollback, concurrent charges ship in `test_quota.c`; ALPC quota under `TEST_CAT_IPC`. Duplicate-handle and registry quota have no charge point yet. -> XREF: `§11`, `§6`
+- [x] Boot leak sweep compares outstanding USER-block quota across every test CATEGORY (`quota_sweep_close`), gated on positive per-type usage deltas through a `quota_leaked` counter the test driver folds into FAILED.
+- [x] `quota_dump()` renders live USER blocks (id, SID digest, per-type usage/peak/limit/failures) on serial; `quota_dump_crash()` is the panic form (try-lock, preallocated rows, header-only fallback), wired into `panic.c`.
+- [x] Bulletproofing: a charge naming no owning block or no valid resource type is refused with `STATUS_INVALID_PARAMETER` and moves no counter; the taxonomy half stays in `test_quota.c`.
+- [/] Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag (same-token returners, a paused BUSY window, publication visibility): needs per-CPU run queues. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [/] Bounded worker join + CPU-pinned `kmalloc_fail_next`: `thread_join` has no timeout, and the injection countdown lives in the armed CPU's per-CPU data so a migrating task never trips it. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [/] Invocation-scoped lock accounting: attributes to the ARMING THREAD at `PASSIVE_LEVEL`, so migration no longer drops a section. NOT SMP-sound: `thread_current()` reads global cursors. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [x] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
-**Test checkpoint:** the quota unit suite passes (charge/return, rollback, concurrent charges, duplicate-handle quota, registry quota, ALPC quota); the boot leak sweep reports zero net quota delta across every test category; `quota_dump()` renders per-type usage/peak/limit on serial and in crash dumps.
+**Test checkpoint:** the quota category passes (charge/return, rollback, concurrent charges; ALPC quota via `TEST_CAT_IPC`); the boot leak sweep reports zero net quota delta across every category and the summary carries a `quota-leaked` field the test driver folds into FAILED; every sweep verdict branch (clean, count-only, leaked, indeterminate) is asserted from synthetic snapshots; `quota_dump()` renders a named per-type usage row without mutating the registry, `quota_dump_crash()` takes its header-only fallback and RETURNS when the registry lock is held, and a snapshot spanning two pin batches sums exactly.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 176 suites, 0 failures
+
+> **Notes:**
+> - Shipped `quota_dump()` / `quota_dump_crash()`, `quota_leak_snapshot()` + a registry generation counter, `spin_tryunlock()` (the missing counterpart to `spin_trylock`), and the per-category leak sweep; 20 suites in `test_quota_dashboard.c`.
+> - The sweep is CATEGORY-scoped and gates only positive per-type USAGE deltas via a separate `quota_leaked` counter; a count-only change is reported, never gated, since a canonical USER block is legitimately retained.
+> - A snapshot is coherent only when registry generation, counter-mutation epoch, ACTIVE-WRITER count zero, and two agreeing walks ALL hold; a transfer parked between its two stores defeats any of them alone.
+> - Only USER blocks are enumerable (PROCESS needs a lifetime-safe task iterator, JOB a job registry); chain charges roll up into the USER block, so a leaked process or job charge still surfaces.
+> - Canonical doc: the "Dashboards and the leak sweep" contract block in `include/kernel/quota/quota.h`.
+> - Scope boundary: §10 owns the dashboards, the sweep, and bulletproofing; §11 owns process-block enumeration, TODO-27 §7 the panic-safe emitter, TODO-07 §3 the per-CPU run queues.
 
 ---
 
@@ -409,13 +418,14 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 | 💎   | Structured quota-failure event   | ⚠️ ETW pool events, no per-charge rec | ⬜ none (errno only, no event)               | ✅ versioned record + rate limit + drops §9  |
 | ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | 🚀 Planned: PSI-shaped, VALID-flagged §12    |
 | ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | ⚠️ cooperative nomination only, no kill §9  |
-| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10      |
+| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | ✅ per-category delta sweep, CI-gated §10    |
+| ⭐   | Crash-time quota dashboard       | ⚠️ `!poolused` needs a live debugger  | ⬜ none (no quota state in a kernel oops)    | ✅ non-blocking panic-path dump §10          |
 
 ---
 
 ## Unit Tests
 
-> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, `test_quota_syscall.c` (§8), and `test_quota_pressure.c` (§9), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
+> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, `test_quota_syscall.c` (§8), `test_quota_pressure.c` (§9), and `test_quota_dashboard.c` (§10 dashboards, leak sweep, charge-path bulletproofing), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
 - [x] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
 - [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
@@ -435,7 +445,7 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 - [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§11).
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
 - [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).
-- [ ] `test_quota_leak_sweep_zero_delta`: boot leak sweep shows zero net quota delta (§10).
+- [x] `test_quota_sweep_classification` + the runner's per-category sweep: every verdict branch (clean / count-only / leaked / indeterminate) asserted from synthetic snapshots, and a real run reports `0 quota-leaked` (§10).
 - [x] `test_quota_cpu_split_monotonic`: user/kernel CPU time and the sample timestamp never walk backwards (§7).
 - [x] `test_quota_io_split_by_op`: a control op moves only the control counters, leaving read/write untouched (§7).
 - [x] `test_quota_control_io_zero_byte_counts_op`: a zero-byte control counts as an op and contributes no bytes (§7).

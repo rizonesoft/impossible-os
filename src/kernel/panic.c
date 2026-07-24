@@ -36,6 +36,7 @@
 #include "kernel/boot_progress.h"   /* boot_stage_history_get (panic evidence) */
 #include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
 #include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
+#include "kernel/quota/quota.h"     /* quota_dump_crash (resource exhaustion) */
 #include "kernel/smp.h"
 #include "kernel/barrier.h"
 
@@ -1300,6 +1301,13 @@ static void panic_screen_impl(struct interrupt_frame *frame, uint64_t error_code
 
     /* Dump subsystem readiness to serial for post-mortem analysis */
     kernel_subsystem_dump();
+
+    /* Outstanding per-principal quota, for the crash class this cannot
+     * otherwise distinguish: a bugcheck that followed a resource exhaustion
+     * looks identical to an unrelated one until you can see which principal
+     * was at its cap. Non-blocking and allocation-free by contract -- see
+     * quota_dump_crash; the plain quota_dump() must NEVER be called here. */
+    quota_dump_crash();
 
     /* If framebuffer is not yet initialized (Phase 0 panic), fall back to
      * serial-only output via boot_halt(). No BSOD drawing is possible. */

@@ -331,20 +331,82 @@ static int quota_type_valid(quota_resource_type_t type)
 }
 
 #ifdef KERNEL_TESTS
-/* Critical sections COMPLETED while counting is armed, on the arming CPU only.
- * Diagnostic: it orders nothing and guards nothing, so relaxed accesses are
- * exactly right -- atomicity without a barrier.
+/* Critical sections COMPLETED while counting is armed, attributed to the
+ * ARMING THREAD at PASSIVE_LEVEL. Diagnostic: it orders nothing and guards
+ * nothing, so relaxed accesses are exactly right -- atomicity without a
+ * barrier.
  *
- * The CPU scoping is load-bearing, not defensive. The counted set is not just
- * charging: quota_task_init and quota_task_teardown take task->quota_lock on
- * EVERY task creation and every process death. A thread dying on another CPU
- * inside a test's counted window would otherwise add a section to the global
- * total, and every budget assertion is an exact equality -- so that is a hard
- * test failure, not a tolerated skew. Counting only sections completed on the
- * CPU that armed the window removes that whole class of interference. */
-static uint64_t g_lock_sections;
-static uint8_t  g_lock_count_on;
-static uint32_t g_lock_count_cpu;
+ * The scoping is load-bearing, not defensive, and it is deliberately by
+ * thread rather than by CPU. The counted set is not just charging:
+ * quota_task_init and quota_task_teardown take task->quota_lock on EVERY task
+ * creation and every process death. Under the earlier CPU-scoped rule a
+ * sibling task completing a section on the armed CPU ADDED to the total while
+ * a measured thread that migrated mid-window DROPPED sections from it, and
+ * every budget assertion is an exact equality -- so either direction is a hard
+ * test failure rather than tolerated skew. Matching the arming thread makes
+ * the count follow the operation under test wherever it runs.
+ *
+ * The PASSIVE_LEVEL gate closes the other half: an interrupt or DPC landing on
+ * the measured thread's stack runs with that thread current, so thread
+ * identity alone would let a timer interrupt's quota work count as the
+ * invocation's. Sections released above PASSIVE are not this invocation's
+ * work and are skipped. */
+static uint64_t      g_lock_sections;
+static uint8_t       g_lock_count_on;
+static struct thread *g_lock_count_thread;
+
+/* COUNTER-mutation epoch, distinct from the registry's membership generation.
+ *
+ * It exists because membership and totals are independent: a transfer moves
+ * usage between two blocks without linking or unlinking anything, so the
+ * generation sits perfectly still while the aggregate the leak sweep is
+ * computing changes underneath it. Two walks that merely AGREE do not close
+ * that hole either -- reading the source before the transfer and the
+ * destination after it yields the same wrong total both times.
+ *
+ * Bumped on every block-lock release, which over-counts (a release need not
+ * have mutated anything) and never under-counts: every counter write happens
+ * under that lock. Over-counting costs the sweep a retry; under-counting would
+ * cost it correctness.
+ *
+ * KERNEL_TESTS only. The sweep it serves is test infrastructure, and putting a
+ * shared relaxed RMW on the production charge path to serve a diagnostic is
+ * exactly the trade this module refuses elsewhere. */
+static uint64_t      g_mutation_epoch;
+
+/* Writers currently INSIDE a block critical section. The epoch alone is not
+ * enough, because it advances on COMPLETION: quota_try_transfer credits the
+ * destination and debits the source before either unlock, so an unlocked
+ * walker can observe the amount in BOTH blocks while the epoch sits still on
+ * either side of the walk. Two agreeing walks then certify a total that never
+ * existed. Requiring this count to be zero before AND after the walks is what
+ * rejects a mutation that is in progress rather than merely finished. */
+static uint32_t      g_writers_active;
+
+/* Entered BEFORE the lock and exited AFTER it, deliberately: these are relaxed
+ * atomics on a shared line, and running them inside the critical section would
+ * lengthen an IRQ-off quota hold in the default (KERNEL_TESTS on) image --
+ * exactly what moving the section count to the unlock side already avoids. */
+static inline void quota_writers_enter(void)
+{
+    __atomic_fetch_add(&g_writers_active, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline void quota_writers_exit(void)
+{
+    __atomic_fetch_add(&g_mutation_epoch, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&g_writers_active, 1, __ATOMIC_ACQ_REL);
+}
+
+uint64_t quota_test_mutation_epoch(void)
+{
+    return __atomic_load_n(&g_mutation_epoch, __ATOMIC_RELAXED);
+}
+
+uint32_t quota_test_writers_active(void)
+{
+    return __atomic_load_n(&g_writers_active, __ATOMIC_ACQUIRE);
+}
 
 /* Shared with quota_owner.c so owner-side sections land in the same total.
  * Called AFTER the lock is released (see quota_block_unlock). */
@@ -352,7 +414,15 @@ void quota_test_count_lock_section(void)
 {
     if (!__atomic_load_n(&g_lock_count_on, __ATOMIC_RELAXED))
         return;
-    if (smp_cpu_id() != __atomic_load_n(&g_lock_count_cpu, __ATOMIC_RELAXED))
+    /* Interrupt/DPC context is never the measured invocation. Checked first:
+     * it is a plain per-CPU read, cheaper than resolving the thread. */
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    /* thread_current() bounds-checks the scheduler cursor and returns NULL
+     * before the scheduler is up; the arming thread is by construction alive
+     * for the whole window, so a NULL here is simply "not us". */
+    if (thread_current() !=
+        __atomic_load_n(&g_lock_count_thread, __ATOMIC_RELAXED))
         return;
     __atomic_fetch_add(&g_lock_sections, 1, __ATOMIC_RELAXED);
 }
@@ -378,6 +448,9 @@ void quota_test_count_lock_section(void)
  * full contract and the attribution limits. */
 static inline void quota_block_lock(quota_block_t *block, uint64_t *flags)
 {
+#ifdef KERNEL_TESTS
+    quota_writers_enter();      /* BEFORE the lock: never inside IRQ-off */
+#endif
     spin_lock_irqsave(&block->lock, flags);
 }
 
@@ -385,6 +458,7 @@ static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
 {
     spin_unlock_irqrestore(&block->lock, flags);
 #ifdef KERNEL_TESTS
+    quota_writers_exit();
     quota_test_count_lock_section();
 #endif
 }
@@ -400,7 +474,22 @@ static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
 static inline void quota_block_unlock_quiet(quota_block_t *block, uint64_t flags)
 {
     spin_unlock_irqrestore(&block->lock, flags);
+    /* Quiet about EVERYTHING, including the writer count and epoch. The inner
+     * release of a nested pair still runs with the OUTER lock held and
+     * interrupts masked, so an atomic RMW here would sit inside a quota
+     * critical section. The transfer path records both exits after releasing
+     * both locks -- see quota_writers_exit_pair. */
 }
+
+#ifdef KERNEL_TESTS
+/* Completion record for the nested two-lock path, called once both locks are
+ * genuinely released and interrupts restored. */
+static inline void quota_writers_exit_pair(void)
+{
+    quota_writers_exit();
+    quota_writers_exit();
+}
+#endif
 
 /* ==========================================================================
  * Rate-limit policy records (see the contract in quota.h)
@@ -703,7 +792,9 @@ int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t t
 void quota_test_lock_count_begin(void)
 {
     __atomic_store_n(&g_lock_sections, 0, __ATOMIC_RELAXED);
-    __atomic_store_n(&g_lock_count_cpu, smp_cpu_id(), __ATOMIC_RELAXED);
+    /* Record the caller's thread, then arm. Arming LAST means the counter can
+     * never admit a section against a stale identity from a prior window. */
+    __atomic_store_n(&g_lock_count_thread, thread_current(), __ATOMIC_RELAXED);
     __atomic_store_n(&g_lock_count_on, 1, __ATOMIC_RELAXED);
 }
 
@@ -1017,6 +1108,15 @@ static NTSTATUS quota_release_locked(quota_block_t *block, quota_resource_type_t
 static struct quota_block *g_registry_head;
 static spinlock_t          g_registry_lock = SPINLOCK_INIT;
 
+/* Monotonic LINK/UNLINK counter, mutated only under g_registry_lock. It exists
+ * so a walker can tell "the list did not move under me" from "it did": the
+ * leak sweep compares two readings taken across a walk and marks the snapshot
+ * indeterminate when they differ, rather than reporting a membership change it
+ * never observed coherently as a leak. Read through an atomic load because
+ * readers sample it OUTSIDE the lock, by design -- taking the lock to learn
+ * whether the lock was taken would defeat the purpose. */
+static uint64_t            g_registry_gen;
+
 /* Source of the never-reused block identity carried in diagnostic records. */
 static uint64_t            g_block_id_next;
 
@@ -1079,6 +1179,12 @@ static void quota_registry_link_locked(quota_block_t *block)
         g_registry_head->reg_prev = block;
     g_registry_head = block;
     block->registered = 1;
+    __atomic_fetch_add(&g_registry_gen, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_registry_generation(void)
+{
+    return __atomic_load_n(&g_registry_gen, __ATOMIC_RELAXED);
 }
 
 /* Unlink a block whose refcount has already reached zero. Splitting this from
@@ -1104,6 +1210,7 @@ static void quota_registry_remove(quota_block_t *block)
         block->reg_next->reg_prev = block->reg_prev;
     block->reg_next = (struct quota_block *)0;
     block->reg_prev = (struct quota_block *)0;
+    __atomic_fetch_add(&g_registry_gen, 1, __ATOMIC_RELAXED);
     spin_unlock_irqrestore(&g_registry_lock, flags);
 }
 
@@ -1665,7 +1772,11 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
     quota_block_unlock_quiet(second, flags_second);
     quota_block_unlock_quiet(first, flags_first);
 #ifdef KERNEL_TESTS
-    /* Both sections recorded here, with interrupts genuinely restored. */
+    /* Both sections recorded here, with interrupts genuinely restored. The
+     * writer-count exits land here too, so the transfer counts as IN PROGRESS
+     * for its whole two-block window -- which is the window a leak snapshot
+     * must refuse to read, since the amount is briefly in both blocks. */
+    quota_writers_exit_pair();
     quota_test_count_lock_section();
     quota_test_count_lock_section();
 #endif
@@ -1879,3 +1990,467 @@ void quota_user_default_relimit(quota_resource_type_t type, uint64_t limit)
      * far in one step. */
     quota_pressure_note_activity(type);
 }
+
+/* ========================================================================== *
+ * Dashboards and the leak sweep
+ *
+ * Everything here walks the USER registry with the same batched pin pattern as
+ * the re-limit walk above -- pin a bounded batch under the registry lock, drop
+ * the lock, act, resume from the last pinned block -- because it obeys the same
+ * absolute rule: no block lock, and no serial output, while the registry lock
+ * is held. The only exception is quota_dump_crash, which does not walk at all.
+ *
+ * Output goes through klog_unrated, NOT klog. The per-subsystem rate limiter
+ * would drop a dashboard's rows precisely when the quota subsystem is busy --
+ * which is exactly when an operator runs it, and always in the crash case. A
+ * dashboard that silently renders nothing under load is not a dashboard. This
+ * is the documented use for the unrated path (klog.h): the caller applies its
+ * own bound, and here the output is structurally bounded by QUOTA_DUMP_BATCH,
+ * QUOTA_DUMP_VISIT_MAX, and QUOTA_DUMP_CRASH_ROWS rather than by a limiter.
+ * ========================================================================== */
+
+/* Blocks pinned per registry-lock acquisition, and nodes VISITED per
+ * acquisition. Separate budgets for the same reason the re-limit walk keeps
+ * them separate: a block already at refcount 0 consumes a visit without
+ * consuming a pin, so bounding pins alone does not bound the interrupts-off
+ * scan. */
+#define QUOTA_DUMP_BATCH      8u
+#define QUOTA_DUMP_VISIT_MAX  64u
+
+/* Blocks rendered by ONE quota_dump() invocation, across all batches.
+ *
+ * QUOTA_DUMP_VISIT_MAX bounds a single registry-lock acquisition and resets
+ * every iteration, so it does NOT bound the dump: the walk resumes until the
+ * registry ends. Without a whole-invocation cap a system with many live users
+ * could emit a header plus up to one row per resource type per user, overrun
+ * the 1000-entry klog ring, and destroy the very diagnostics the dashboard
+ * exists to preserve. This cap is also what makes bypassing the shared rate
+ * limiter legitimate for this function -- the output is bounded by
+ * construction rather than by the limiter. A truncation is reported. */
+#define QUOTA_DUMP_MAX_BLOCKS 32u
+
+/* Rows the panic-path dump copies out. Bounded and statically allocated: the
+ * crash path may not allocate, and a large automatic array would be a stack
+ * hazard in a context whose stack is already suspect. 8 principals is enough
+ * to characterize which user exhausted what; a truncation is reported rather
+ * than silently dropped. */
+#define QUOTA_DUMP_CRASH_ROWS 8u
+
+typedef struct {
+    uint64_t id;
+    uint32_t owner_rid;
+    uint64_t owner_hash;
+    uint8_t  has_owner;
+    int64_t  usage[QUOTA_RESOURCE_TYPE_COUNT];
+    int64_t  limit[QUOTA_RESOURCE_TYPE_COUNT];
+} quota_crash_row_t;
+
+/* Written ONLY by quota_dump_crash, which runs on the panic-owner CPU after
+ * every other CPU has parked (panic.c). Single-writer by construction, so no
+ * lock guards it; it is BSS rather than stack for the reason above. */
+static quota_crash_row_t g_crash_rows[QUOTA_DUMP_CRASH_ROWS];
+
+/* Times the try-lock failed and the dump took its header-only fallback. Both
+ * the panic path and a contention test are otherwise unable to distinguish a
+ * dump that reported rows from one that skipped them -- both just return. */
+static uint64_t g_crash_fallbacks;
+
+/* Emit one block's non-idle types. Called with NO lock held: counters are
+ * lock-free atomic loads and the header is explicit that two counters read in
+ * succession may straddle an update, which is the correct trade for a
+ * diagnostic that must not serialize the charge path.
+ *
+ * A negative counter cannot occur in the documented domain (0..AMOUNT_MAX), so
+ * one is reported as CORRUPT rather than rendered as a plausible number -- a
+ * dashboard that prints 18446744073709551615 for a corrupted counter hides
+ * exactly the failure an operator opened it to find. */
+static void quota_dump_block(const quota_block_t *block)
+{
+    uint32_t rid  = 0;
+    uint64_t hash = 0;
+    quota_owner_digest(block, &rid, &hash);
+
+    klog_unrated(LOG_INFO, "quota", "  block #%llu  user rid %u  sid %llx",
+         block->id, (uint64_t)rid, hash);
+
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+        int64_t usage = atomic64_read(&block->counter[t].usage);
+        int64_t peak  = atomic64_read(&block->counter[t].peak);
+        int64_t fails = atomic64_read(&block->counter[t].failures);
+        int64_t limit = atomic64_read(&block->counter[t].limit);
+
+        if (usage < 0 || peak < 0 || fails < 0 || limit < 0) {
+            klog_unrated(LOG_ERROR, "quota", "    %s CORRUPT (negative counter)",
+                 quota_resource_type_name((quota_resource_type_t)t));
+            continue;
+        }
+        if (usage == 0 && peak == 0 && fails == 0)
+            continue;               /* idle type: not worth a dashboard row */
+
+        if (limit == (int64_t)QUOTA_LIMIT_UNLIMITED)
+            klog_unrated(LOG_INFO, "quota",
+                 "    %s usage %llu  peak %llu  limit -  fail %llu",
+                 quota_resource_type_name((quota_resource_type_t)t),
+                 (uint64_t)usage, (uint64_t)peak, (uint64_t)fails);
+        else
+            klog_unrated(LOG_INFO, "quota",
+                 "    %s usage %llu  peak %llu  limit %llu  fail %llu",
+                 quota_resource_type_name((quota_resource_type_t)t),
+                 (uint64_t)usage, (uint64_t)peak, (uint64_t)limit,
+                 (uint64_t)fails);
+    }
+}
+
+void quota_dump(void)
+{
+    quota_block_t *cursor = (quota_block_t *)0;
+    uint32_t       blocks = 0;
+    int            truncated = 0;
+
+    if (!quota_registry_ready()) {
+        klog_unrated(LOG_INFO, "quota", "dashboard: registry not validated yet");
+        return;
+    }
+
+    klog_unrated(LOG_INFO, "quota", "--- quota dashboard (USER blocks, gen %llu) ---",
+         quota_registry_generation());
+
+    for (;;) {
+        quota_block_t *batch[QUOTA_DUMP_BATCH];
+        uint32_t n = 0, visited = 0;
+        uint64_t flags;
+
+        spin_lock_irqsave(&g_registry_lock, &flags);
+        quota_block_t *b = cursor ? cursor->reg_next : g_registry_head;
+        while (b && n < QUOTA_DUMP_BATCH && visited < QUOTA_DUMP_VISIT_MAX) {
+            visited++;
+            /* try_ref, never ref: a block already at zero is committed to
+             * teardown and must not be lifted back to life by a dashboard. */
+            if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
+                quota_block_try_ref(b))
+                batch[n++] = b;
+            b = b->reg_next;
+        }
+        int visit_capped = (b != (quota_block_t *)0);
+        spin_unlock_irqrestore(&g_registry_lock, flags);
+
+        /* Release the old cursor only after the new batch is pinned, so the
+         * resume position stayed valid across the gap. */
+        if (cursor)
+            quota_block_deref(cursor);
+        cursor = (quota_block_t *)0;
+
+        if (n == 0) {
+            if (visit_capped)
+                klog_unrated(LOG_WARN, "quota",
+                     "dashboard truncated: %u nodes visited, none pinnable",
+                     (uint64_t)visited);
+            break;
+        }
+
+        for (uint32_t i = 0; i < n; i++) {
+            if (blocks >= QUOTA_DUMP_MAX_BLOCKS) {
+                truncated = 1;
+                break;
+            }
+            quota_dump_block(batch[i]);
+            blocks++;
+        }
+
+        /* Release the whole batch and stop: the cap is a whole-invocation
+         * bound, so there is no resume point to keep pinned. */
+        if (truncated) {
+            for (uint32_t i = 0; i < n; i++)
+                quota_block_deref(batch[i]);
+            break;
+        }
+
+        for (uint32_t i = 0; i + 1 < n; i++)
+            quota_block_deref(batch[i]);
+        if (!visit_capped && n < QUOTA_DUMP_BATCH) {
+            quota_block_deref(batch[n - 1]);
+            break;
+        }
+        cursor = batch[n - 1];
+    }
+
+    if (truncated)
+        klog_unrated(LOG_WARN, "quota",
+             "dashboard truncated at %u blocks (whole-invocation cap)",
+             (uint64_t)blocks);
+
+    klog_unrated(LOG_INFO, "quota", "--- %u USER block(s); PROCESS/JOB blocks are not "
+         "enumerable (no lifetime-safe task iterator) ---", (uint64_t)blocks);
+}
+
+void quota_dump_crash(void)
+{
+    uint32_t rows = 0;
+    uint32_t seen = 0;
+    uint64_t flags;
+    int      locked;
+
+    if (!quota_registry_ready()) {
+        klog_unrated(LOG_INFO, "quota", "crash dump: registry not validated");
+        return;
+    }
+
+    /* Non-blocking acquisition, with interrupts masked across the attempt so
+     * this CPU cannot take one while holding the lock. spin_trylock cannot
+     * wait, so a CPU that died holding the registry lock costs this dump its
+     * rows -- never the crash report itself.
+     *
+     * local_irq_save rather than spin_lock_irqsave's machinery: trylock raises
+     * no IRQL, so the release side must lower none (see spin_tryunlock). */
+    flags  = local_irq_save();
+    locked = spin_trylock(&g_registry_lock);
+    if (!locked) {
+        local_irq_restore(flags);
+        __atomic_fetch_add(&g_crash_fallbacks, 1, __ATOMIC_RELAXED);
+        klog_unrated(LOG_ERROR, "quota",
+             "crash dump: registry unavailable (lock held elsewhere)");
+        return;
+    }
+
+    /* Copy, do not print, under the lock. The rows are a fixed-size snapshot
+     * so the locked window is bounded arithmetic with no output in it. */
+    for (quota_block_t *b = g_registry_head;
+         b && seen < QUOTA_DUMP_VISIT_MAX; b = b->reg_next) {
+        seen++;
+        if (b->principal != (uint8_t)QUOTA_PRINCIPAL_USER)
+            continue;
+        if (rows >= QUOTA_DUMP_CRASH_ROWS)
+            continue;               /* keep counting; report the truncation */
+
+        quota_crash_row_t *r = &g_crash_rows[rows++];
+        r->id        = b->id;
+        r->has_owner = b->has_owner_sid;
+        quota_owner_digest(b, &r->owner_rid, &r->owner_hash);
+        for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+            r->usage[t] = atomic64_read(&b->counter[t].usage);
+            r->limit[t] = atomic64_read(&b->counter[t].limit);
+        }
+    }
+
+    spin_tryunlock(&g_registry_lock);
+    local_irq_restore(flags);
+
+    klog_unrated(LOG_INFO, "quota", "--- quota crash dump (%u USER block(s)) ---",
+         (uint64_t)rows);
+
+    for (uint32_t i = 0; i < rows; i++) {
+        const quota_crash_row_t *r = &g_crash_rows[i];
+        klog_unrated(LOG_INFO, "quota", "  block #%llu  rid %u  sid %llx",
+             r->id, (uint64_t)r->owner_rid, r->owner_hash);
+        for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+            if (r->usage[t] == 0)
+                continue;
+            klog_unrated(LOG_INFO, "quota", "    %s usage %llu  limit %llu",
+                 quota_resource_type_name((quota_resource_type_t)t),
+                 (uint64_t)r->usage[t], (uint64_t)r->limit[t]);
+        }
+    }
+
+    if (seen >= QUOTA_DUMP_VISIT_MAX || rows == QUOTA_DUMP_CRASH_ROWS)
+        klog_unrated(LOG_WARN, "quota",
+             "crash dump truncated at %u rows / %u nodes visited",
+             (uint64_t)rows, (uint64_t)seen);
+}
+
+/* The counter-mutation epoch and the in-progress writer count, or constants
+ * when they are not compiled in. Constants make those checks vacuously true
+ * rather than wrong: the remaining checks still apply, and the header says so. */
+static inline uint64_t quota_mutation_epoch_sample(void)
+{
+#ifdef KERNEL_TESTS
+    return quota_test_mutation_epoch();
+#else
+    return 0;
+#endif
+}
+
+static inline uint32_t quota_writers_active_sample(void)
+{
+#ifdef KERNEL_TESTS
+    return quota_test_writers_active();
+#else
+    return 0;
+#endif
+}
+
+/* ONE accumulating pass over the USER registry.
+ *
+ * Returns 1 when the pass covered every node and every addition stayed inside
+ * the counter domain; 0 when a node could not be pinned (its contribution is
+ * missing, so the totals are not a whole) or an addition would overflow.
+ *
+ * The overflow check is not defensive padding: a single block may legally hold
+ * QUOTA_AMOUNT_MAX, which IS INT64_MAX, so two saturated blocks overflow the
+ * aggregate. Signed overflow is undefined behavior, and the plausible outcome
+ * -- a negative total -- would make the sweep read a real leak as "no positive
+ * delta" and pass. Refusing to classify is the only honest answer. */
+static int quota_leak_walk(uint32_t *out_blocks, int64_t *out_usage)
+{
+    quota_block_t *cursor = (quota_block_t *)0;
+    int            ok     = 1;
+
+    *out_blocks = 0;
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++)
+        out_usage[t] = 0;
+
+    for (;;) {
+        quota_block_t *batch[QUOTA_DUMP_BATCH];
+        uint32_t n = 0, visited = 0;
+        uint64_t flags;
+
+        spin_lock_irqsave(&g_registry_lock, &flags);
+        quota_block_t *b = cursor ? cursor->reg_next : g_registry_head;
+        while (b && n < QUOTA_DUMP_BATCH && visited < QUOTA_DUMP_VISIT_MAX) {
+            visited++;
+            if (b->principal == (uint8_t)QUOTA_PRINCIPAL_USER &&
+                quota_block_try_ref(b))
+                batch[n++] = b;
+            b = b->reg_next;
+        }
+        int visit_capped = (b != (quota_block_t *)0);
+        spin_unlock_irqrestore(&g_registry_lock, flags);
+
+        /* Release the previous cursor only after this batch is pinned, so the
+         * resume position stayed valid across the unlocked gap. */
+        if (cursor)
+            quota_block_deref(cursor);
+        cursor = (quota_block_t *)0;
+
+        if (n == 0) {
+            if (visit_capped)
+                ok = 0;         /* unreachable nodes: totals are incomplete */
+            break;
+        }
+
+        for (uint32_t i = 0; i < n; i++) {
+            (*out_blocks)++;
+            for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+                int64_t u = atomic64_read(&batch[i]->counter[t].usage);
+                if (u <= 0)
+                    continue;
+                if (out_usage[t] > QUOTA_AMOUNT_MAX - u) {
+                    ok = 0;     /* checked BEFORE the add: never wraps */
+                    continue;
+                }
+                out_usage[t] += u;
+            }
+        }
+
+        /* Keep the LAST entry pinned as the resume point; release the rest. */
+        for (uint32_t i = 0; i + 1 < n; i++)
+            quota_block_deref(batch[i]);
+        if (!visit_capped && n < QUOTA_DUMP_BATCH) {
+            quota_block_deref(batch[n - 1]);
+            break;
+        }
+        cursor = batch[n - 1];
+    }
+
+    return ok;
+}
+
+int quota_leak_snapshot(quota_leak_snapshot_t *out)
+{
+    uint32_t blocks_b;
+    int64_t  usage_b[QUOTA_RESOURCE_TYPE_COUNT];
+    uint64_t gen_before, gen_after;
+    uint64_t epoch_before, epoch_after;
+
+    if (!out)
+        return 0;
+
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++)
+        out->usage[t] = 0;
+    out->user_blocks = 0;
+    out->coherent    = 0;
+    out->generation  = 0;
+
+    if (!quota_registry_ready())
+        return 0;
+
+    /* THREE independent checks, because each catches what the others cannot.
+     *
+     *   - The membership generation catches a link or unlink.
+     *   - The counter-mutation epoch catches a charge, return, or transfer.
+     *     This one is load-bearing and cannot be replaced by the walks: a
+     *     transfer read source-before/destination-after produces the SAME
+     *     wrong total on both walks, so two agreeing walks would certify it.
+     *   - Two agreeing walks catch a mutation the epoch could theoretically
+     *     miss on a non-KERNEL_TESTS build, where the epoch does not move.
+     *
+     * A reading is coherent only if all three hold. */
+    gen_before   = quota_registry_generation();
+    epoch_before = quota_mutation_epoch_sample();
+    /* No mutation may be IN PROGRESS at either end. The epoch only witnesses
+     * completed ones, and a transfer stalled between crediting the destination
+     * and debiting the source is exactly the state whose total never existed. */
+    if (quota_writers_active_sample() != 0)
+        goto indeterminate;
+
+    if (!quota_leak_walk(&out->user_blocks, out->usage))
+        goto indeterminate;
+    if (!quota_leak_walk(&blocks_b, usage_b))
+        goto indeterminate;
+
+    /* SAMPLE ORDER AT THIS EDGE IS LOAD-BEARING, and it is the mirror image of
+     * the opening edge (epoch, then writers). Reject a live writer FIRST, then
+     * read the epoch.
+     *
+     * Reading the epoch first loses the race it exists to win: a transfer
+     * parked after crediting the destination can span both walks, so both see
+     * the same double-counted total; if it then completes AFTER the epoch is
+     * sampled but BEFORE the writer count is read, the epoch still matches and
+     * the writer count reads zero, and an aggregate that never existed is
+     * certified coherent. Rejecting on the writer count before the epoch
+     * sample closes that window: any writer that had not yet finished at this
+     * point is still counted, and any that finished earlier moved the epoch. */
+    if (quota_writers_active_sample() != 0)
+        goto indeterminate;
+    epoch_after = quota_mutation_epoch_sample();
+    gen_after   = quota_registry_generation();
+    if (gen_before != gen_after || epoch_before != epoch_after ||
+        blocks_b != out->user_blocks)
+        goto indeterminate;
+
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++)
+        if (usage_b[t] != out->usage[t])
+            goto indeterminate;
+
+    out->generation = gen_after;
+    out->coherent   = 1;
+    return 1;
+
+indeterminate:
+    /* Report the generation the caller can actually act on, and leave the
+     * totals visible for diagnosis -- but never claim they are comparable. */
+    out->generation = quota_registry_generation();
+    out->coherent   = 0;
+    return 0;
+}
+
+#ifdef KERNEL_TESTS
+uint64_t quota_test_crash_fallbacks(void)
+{
+    return __atomic_load_n(&g_crash_fallbacks, __ATOMIC_RELAXED);
+}
+
+/* The registry lock is file-private, so making it genuinely unavailable to
+ * quota_dump_crash from a single-CPU test requires a seam here. Taking the
+ * real lock (rather than faking a busy flag) is what makes the test prove the
+ * actual acquire path: quota_dump_crash's try-lock must FAIL and return, and a
+ * blocking regression would hang here rather than pass silently. */
+void quota_test_registry_hold(uint64_t *flags)
+{
+    spin_lock_irqsave(&g_registry_lock, flags);
+}
+
+void quota_test_registry_release(uint64_t flags)
+{
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+}
+#endif
