@@ -85,6 +85,8 @@ title: "TODO-30 -- System Health & Recovery Orchestrator"
 ## 6. Recovery Action Dispatcher
 
 - [ ] Actions: restart subsystem, disable feature flag, unload/quarantine module, trim caches, trigger safe-mode prompt, collect dump, bugcheck.
+- [ ] Accept a resource-exhaustion pressure source from TODO-25 §9: subscribe to the `Kernel\QuotaPressure` and `Kernel\QuotaNomination` states, or expose a `health_report_pressure()` hook §9 can call. -> XREF: `02-kernel-core/TODO-25 §9`
+- [ ] Provide the cleanup entry points TODO-25 §9 has no seam for today: a cache-drain callback registry and a log-trim action, both invocable from a recovery dispatch. -> XREF: `02-kernel-core/TODO-25 §9`
 - [ ] Actions run through Executive work items unless panic path requires synchronous action.
 - [ ] Each action records outcome and retry count.
 - [ ] Add rollback for partially completed recovery actions.

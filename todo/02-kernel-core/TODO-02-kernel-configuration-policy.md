@@ -322,7 +322,7 @@ Turn boot success into an explicit policy-controlled state machine so rollback, 
 > - **Scope boundary:** §10 owns the ledger + policy + durable record + mark-good gate; the LastKnownGood control-set copy is owned by §4; failure-bucket classification + escalation are owned by TODO-30 §7.
 > **Verified:** 2026-06-20 | commit `ae70bfb7` | 4/6 items | build OK | smoke PASS (KVM 2.9s)
 > **Accepted:** [H] LastKnownGood control-set copy at the accepted transition is owned elsewhere -> XREF: 02-kernel-core/TODO-02 §4 (item: "On successful boot, update LastKnownGood only after the §10 acceptance policy confirms critical services and registry flush succeeded" at line 146)
-> **Accepted:** [M] failure-bucket classification + recovery escalation consume §10's durable record -> XREF: 02-kernel-core/TODO-30 §7 (item: "Track crash/hang counts by bucket across boots" at line 94)
+> **Accepted:** [M] failure-bucket classification + recovery escalation consume §10's durable record -> XREF: 02-kernel-core/TODO-30 §7 (item: "Track crash/hang counts by bucket across boots" at line 96)
 > **Quality reviewed:** 2026-06-20 | Codex 10x (design, adversarial, consistency, perf, re-adversarial) | 9H+5M fixed, 1H rejected, 2 accepted-XREF | scope: kernel-code-quality
 
 ---

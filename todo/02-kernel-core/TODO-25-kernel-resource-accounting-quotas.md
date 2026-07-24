@@ -48,7 +48,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   6   | Registry, ALPC, notification quotas           | T24 §6, T14 §15, T16 §7 |  [/]   |
 | ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [x]   |
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
-| ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [ ]   |
+| ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [ ]   |
 | 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
@@ -127,7 +127,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a drain/quiesce transaction plus a refcounted ledger that ADOPTS `job_absorb` (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 244)
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
-> **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 462)
+> **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 464)
 > **Accepted:** [H] two concurrent task constructors can claim the same slot and reset a live lock word; pre-existing and systemic across every per-process inheritance, not introduced here (reason: scope) -> XREF: `03-memory-concurrency/TODO-06 §13` (item: "Atomic task-slot CLAIM" at line 405)
 > **Quality reviewed:** 2026-07-20 | Codex 14x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 12H+13M+4L fixed, 1H+3M accepted-XREF | scope: kernel-code-quality
 
@@ -295,14 +295,23 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## 9. Resource Pressure Events and Recovery Hooks
 
-- [ ] Derive the 4 levels (normal/watch/warning/critical) from the §12 stall-time metrics with hysteresis to prevent flapping; publish level transitions through TODO-16.
-- [ ] On critical pressure, notify TODO-30 recovery orchestrator before panicking.
-- [ ] Define the quota-failure diagnostic event contract HERE: event ID, process/job/SID/resource, requested/current/limit, result, rate-limit + dropped-event counter. -> XREF: `TODO-16-kernel-notification-facility.md §6` (transport/fanout only).
-- [ ] Trigger targeted cleanup: drain caches, trim logs, trim offending process working set (§8 Min/Max WS), ask services to release memory, refuse new handles from the offending process.
-- [ ] Last-resort escalation once softer recovery fails: victim-selection policy (highest over-limit ratio, lowest priority, System-protected flag). ARCHITECTURE DECISION: in-kernel termination vs cooperative-only (Win-style).
-- [ ] Commit: quota: pressure levels (hysteresis), quota-failure events, recovery hooks.
+- [/] 4 levels with asymmetric hysteresis (rise 700/850/950, fall 600/780/900 permille; 3-sample rise, 5-sample fall) sampled by a periodic 50 ms timer; transitions publish via KNF + ETW 0x1300. Input is BUDGET saturation. -> XREF: `§12`
+- [/] Critical pressure publishes a nomination on `Kernel\QuotaNomination` as the interim carrier; a direct orchestrator call needs a hook that does not exist. -> XREF: `02-kernel-core/TODO-30-system-health-recovery-orchestrator.md §6`
+- [x] Quota-failure event contract defined HERE: `QUOTA_FAILURE_RECORD` (packed, versioned, offset-asserted) carrying block id, principal, SID digest, requested/current/limit, status, pid/tid; per-resource token bucket. -> XREF: `TODO-16 §6`
+- [/] Targeted cleanup has no seam: no cache-drain, log-trim, or refuse-new-handles entry point exists and working-set Min/Max is unenforced, so each is filed to its owner. -> XREF: `TODO-21-process-model-extensions.md §9`, `TODO-30 §6`
+- [/] ARCHITECTURE DECISION: COOPERATIVE-ONLY (Win-style). `quota_pressure_nominate` picks the worst-over-budget USER principal and publishes an expiring nomination plus a clear; the kernel never terminates it. -> XREF: `§11`
+- [x] Commit: quota: pressure levels (hysteresis), quota-failure events, recovery hooks.
 
-**Test checkpoint:** driving usage across thresholds publishes hysteresis-damped normal->watch->warning->critical transitions (derived from §8 stall-time, no flapping) through the TODO-16 notification facility; a per-process quota failure emits the diagnostic event with the full contract fields; reaching critical notifies the TODO-30 recovery orchestrator before any panic path; targeted cleanup trims the offending process working set and refuses its new handles while other processes are unaffected.
+**Test checkpoint:** samples across the thresholds walk normal->watch->warning->critical one level per debounce and hold for an arbitrarily long run inside a band (zero transitions recorded); exactly-at-rise enters and exactly-at-fall holds; returning charges walk the level back down while an unlimited cap reads INVALID and never de-escalates; the domain sample tracks the WORST live principal, so an idle user cannot mask a saturated one; a refused charge emits the event carrying usage and limit as they stood at the refusal, and an overflow refusal reports its own status; the token bucket admits a full burst then counts throttled events separately from ring overflow, with the sequence still advancing across a drop; a transition survives a ring already filled by a failure burst; a saturated principal reaching critical is nominated with an expiry and retracted once it returns the charge.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 41 suites, 0 failures
+
+> **Notes:**
+> - Shipped `quota_pressure.h` + `quota_pressure.c`: 4-level hysteresis over 16 domains, 64-slot publish ring drained by a threaded DPC, the failure-event contract, per-resource token buckets, cooperative nomination.
+> - A quota mutation only MARKS its domain; a periodic 50 ms sampler is the single producer of samples, deriving each domain from the registry's worst live USER principal, so a debounce completes for steady pressure and sample order is total.
+> - Publication is deferred by design: the charge API is DISPATCH/interrupt-legal and `knf_publish` is not, so records are copied to the ring and published at PASSIVE. Codex adoptions are in the commit message.
+> - Canonical doc: the contract block at the top of `include/kernel/quota/quota_pressure.h`.
+> - Scope boundary: §9 owns levels, the failure-event contract, and nomination; §12 owns stall telemetry, TODO-30 §6 recovery actions, TODO-21 §9 working-set enforcement.
 
 ---
 
@@ -335,6 +344,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
 - [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`
+- [ ] Lifetime-safe task enumeration for process-level victim nomination: TODO-25 §9 nominates by USER principal because `task_get_by_pid` returns a raw slot with no reference and no System-protected flag exists. -> XREF: `§9`
 - [ ] Commit: quota: object/handle charge integration in Object Manager.
 
 **Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta.
@@ -354,6 +364,7 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 - [ ] Memory stall seam: accumulate while a thread waits on reclaim/allocation, which needs an allocator that WAITS instead of failing immediately. -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §6`
 - [ ] I/O stall seam: accumulate across block-I/O completion waits at the storage layer's wait sites. -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8`
 - [ ] `SystemResourcePressureInformation` (system info class 0x1003, next free after KNF's 0x1002) marshals the accumulators, with a per-resource VALID flag so an uninstrumented seam reads as unsupported, never as "no pressure".
+- [ ] Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall(type, permille, window_ms)`, which already tags them as the STALL source; until then those domains report source_valid clear. -> XREF: `§9`
 - [ ] Commit: quota: resource-pressure stall telemetry + SystemResourcePressureInformation.
 
 **Test checkpoint:** a synthetic stall interval advances the owning resource's `some` total and no other resource's; the avg10/60/300 windows decay toward zero once the stall stops and never exceed 100 percent; an uninstrumented resource reports its VALID flag clear rather than a zero that reads as "no pressure"; `cpu.full` is 0 with the documented undefined-at-system-level contract; the info class round-trips every field through a size-checked buffer.
@@ -385,16 +396,18 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 | 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | ✅ `ProcessQuotaLimits` query/set §8         |
 | 💎   | Quota set as one transaction     | ⚠️ per-field, no documented atomicity | ⚠️ one resource per `prlimit64` call        | ✅ prevalidate-then-commit, all-or-none §8   |
 | ⭐   | Job aggregate limit query        | ⚠️ memory fields only, no per-type    | ✅ per-controller cgroup files               | ✅ per-resource usage/peak/limit class §8    |
-| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | 🚀 Planned: stall-time-derived 4-level §9    |
+| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | ⚠️ 4-level hysteresis, budget-sourced §9    |
+| ⭐   | Pressure source honesty          | ⬜ single opaque low-memory signal     | ⚠️ PSI has no per-source validity flag      | ✅ source kind + VALID, unknown != calm §9   |
+| 💎   | Structured quota-failure event   | ⚠️ ETW pool events, no per-charge rec | ⬜ none (errno only, no event)               | ✅ versioned record + rate limit + drops §9  |
 | ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | 🚀 Planned: PSI-shaped, VALID-flagged §12    |
-| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | 🚀 Planned: victim-select policy §9          |
+| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | ⚠️ cooperative nomination only, no kill §9  |
 | ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | 🚀 Planned: boot delta sweep + dump §10      |
 
 ---
 
 ## Unit Tests
 
-> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, and `test_quota_syscall.c` (§8), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
+> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, `test_quota_syscall.c` (§8), and `test_quota_pressure.c` (§9), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
 - [x] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
 - [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).

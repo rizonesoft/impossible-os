@@ -359,6 +359,13 @@ const SID *quota_block_owner(const quota_block_t *block);
  * NULL block, so a caller filtering by kind never needs to pre-validate. */
 quota_principal_t quota_block_principal(const quota_block_t *block);
 
+/* Stable, never-reused identity for this block; 0 for NULL. Assigned at create
+ * and immutable, so it is readable without the block lock. Diagnostic records
+ * carry it because a block ADDRESS is recycled by the allocator: a consumer
+ * correlating two events by address could attribute a later block's refusal to
+ * an earlier block's owner. */
+uint64_t quota_block_id(const quota_block_t *block);
+
 /* The ONE canonical USER block for `owner`, creating it on first use.
  *
  * Every token for a SID must reach the SAME block or the "per-user budget" is

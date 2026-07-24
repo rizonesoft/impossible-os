@@ -178,6 +178,17 @@ void boot_phase3(void)
      * re-limits them, so the window costs no enforcement. */
     quota_config_register_tunables();
 
+    /* Arm quota pressure publication. Must follow BOTH knf_init (Phase 2, the
+     * publication states live in the notification namespace) and
+     * dpc_start_threads above (the deferred publisher is a threaded DPC, and
+     * arming before a worker exists would leave records queued with nothing to
+     * drain them). The pressure state machine itself has been recording since
+     * the first charge; this is the point transport becomes available. */
+    {
+        extern void quota_pressure_init(void);
+        quota_pressure_init();
+    }
+
     /* Register the core feature flags (resolution uses the cmdline + cohort +
      * Secure Boot state, all available by this point). */
     {
