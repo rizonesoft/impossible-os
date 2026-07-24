@@ -299,12 +299,12 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Critical pressure publishes a nomination on `Kernel\QuotaNomination` as the interim carrier; a direct orchestrator call needs a hook that does not exist. -> XREF: `02-kernel-core/TODO-30-system-health-recovery-orchestrator.md §6`
 - [x] Quota-failure event contract defined HERE: `QUOTA_FAILURE_RECORD` (packed, versioned, offset-asserted) carrying block id, principal, SID digest, requested/current/limit, status, pid/tid; per-resource token bucket. -> XREF: `TODO-16 §6`
 - [/] Targeted cleanup has no seam: no cache-drain, log-trim, or refuse-new-handles entry point exists and working-set Min/Max is unenforced, so each is filed to its owner. -> XREF: `TODO-21-process-model-extensions.md §9`, `TODO-30 §6`
-- [/] ARCHITECTURE DECISION: COOPERATIVE-ONLY (Win-style). `quota_pressure_nominate` picks the worst-over-budget USER principal and publishes an expiring nomination plus a clear; the kernel never terminates it. -> XREF: `§11`
+- [/] ARCHITECTURE DECISION: COOPERATIVE-ONLY (Win-style). `quota_pressure_nominate` picks the most-saturated USER principal at or above the watch threshold; the drain publishes it on a critical transition, never terminating it. -> XREF: `§11`
 - [x] Commit: quota: pressure levels (hysteresis), quota-failure events, recovery hooks.
 
 **Test checkpoint:** samples across the thresholds walk normal->watch->warning->critical one level per debounce and hold for an arbitrarily long run inside a band (zero transitions recorded); exactly-at-rise enters and exactly-at-fall holds; returning charges walk the level back down while an unlimited cap reads INVALID and never de-escalates; the domain sample tracks the WORST live principal, so an idle user cannot mask a saturated one; a refused charge emits the event carrying usage and limit as they stood at the refusal, and an overflow refusal reports its own status; the token bucket admits a full burst then counts throttled events separately from ring overflow, with the sequence still advancing across a drop; a transition survives a ring already filled by a failure burst; a saturated principal reaching critical is nominated with an expiry and retracted once it returns the charge.
 
-> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 41 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 42 suites, 0 failures
 
 > **Notes:**
 > - Shipped `quota_pressure.h` + `quota_pressure.c`: 4-level hysteresis over 16 domains, 64-slot publish ring drained by a threaded DPC, the failure-event contract, per-resource token buckets, cooperative nomination.
@@ -312,6 +312,14 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - Publication is deferred by design: the charge API is DISPATCH/interrupt-legal and `knf_publish` is not, so records are copied to the ring and published at PASSIVE. Codex adoptions are in the commit message.
 > - Canonical doc: the contract block at the top of `include/kernel/quota/quota_pressure.h`.
 > - Scope boundary: §9 owns levels, the failure-event contract, and nomination; §12 owns stall telemetry, TODO-30 §6 recovery actions, TODO-21 §9 working-set enforcement.
+
+> **Verified:** 2026-07-24 | commit `ede7213f` | 2/5 items | build OK | tests 23607/23607 PASS | smoke PASS (KVM 2.800s)
+> **Accepted:** [H] recovery actions (cache drain, log trim, refuse-new-handles) have no seam to call and no orchestrator to dispatch them -> XREF: 02-kernel-core/TODO-30 §6 (item: "Provide the cleanup entry points TODO-25 §9 has no seam for today" at line 89)
+> **Accepted:** [H] critical pressure cannot notify an orchestrator directly; the KNF nomination state is the interim carrier -> XREF: 02-kernel-core/TODO-30 §6 (item: "Accept a resource-exhaustion pressure source from TODO-25 §9" at line 88)
+> **Accepted:** [M] working-set Min/Max is stored but unenforced, so pressure recovery cannot trim an offending process -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §9 (item: "Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process" at line 301)
+> **Accepted:** [M] nomination ranks USER principals only; process-level ranking needs a lifetime-safe task iterator and a System-protected flag, neither of which exists -> XREF: 02-kernel-core/TODO-25 §11 (item: "Lifetime-safe task enumeration for process-level victim nomination" at line 355)
+> **Deferred:** [H] the four levels derive from budget saturation, not the stall-time metric the section names; the stall source is tagged and seamed but unwired -> XREF: 02-kernel-core/TODO-25 §12 (item: "Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall`" at line 375)
+> **Quality reviewed:** 2026-07-24 | Codex 6x (design, adversarial, consistency, perf, test-coverage, re-adversarial) | 11H+13M+1L fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
 

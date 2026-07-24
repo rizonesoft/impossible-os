@@ -134,8 +134,24 @@ _Static_assert(QUOTA_PRESSURE_FALL_WATCH_PERMILLE < QUOTA_PRESSURE_FALL_WARNING_
 #define QUOTA_PRESSURE_RISE_SAMPLES   3u
 #define QUOTA_PRESSURE_FALL_SAMPLES   5u
 
+/* Consecutive UNKNOWN samples that reset a domain sitting at a live level.
+ * Longer than the fall debounce on purpose: an unknown is weaker evidence than
+ * a measured low reading, so it should take longer to act on. */
+#define QUOTA_PRESSURE_INVALID_RESET_SAMPLES  10u
+
+_Static_assert(QUOTA_PRESSURE_INVALID_RESET_SAMPLES > QUOTA_PRESSURE_FALL_SAMPLES,
+               "an unknown must clear a level more slowly than a measured low does");
+
 /* Full scale for a saturation sample. */
 #define QUOTA_PRESSURE_PERMILLE_MAX   1000u
+
+/* The slow-path long division walks a fixed ten-bit multiplier. Changing the
+ * scale without widening that traversal would silently ignore the higher bits
+ * and compile clean, so the two are pinned together here. */
+#define QUOTA_PRESSURE_PERMILLE_BITS  10u
+_Static_assert(QUOTA_PRESSURE_PERMILLE_MAX < (1u << QUOTA_PRESSURE_PERMILLE_BITS) &&
+               QUOTA_PRESSURE_PERMILLE_MAX >= (1u << (QUOTA_PRESSURE_PERMILLE_BITS - 1u)),
+               "permille traversal width must cover exactly the permille scale");
 
 /* --- Published records (ABI) ---------------------------------------------- *
  * PACKED and size-asserted for the same reason the KNF publish record is: an
@@ -270,6 +286,13 @@ _Static_assert(QUOTA_PRESSURE_PENDING_SLOTS >= QUOTA_PRESSURE_LEVEL_COUNT - 1u,
  * drain under sustained production would starve every other threaded DPC. */
 #define QUOTA_PRESSURE_DRAIN_BUDGET   32u
 
+/* Slice of that budget reserved for the per-domain overflow FIFO, drained
+ * before the ring so sustained ring traffic cannot starve level records. */
+#define QUOTA_PRESSURE_PENDING_RESERVE  8u
+
+_Static_assert(QUOTA_PRESSURE_PENDING_RESERVE < QUOTA_PRESSURE_DRAIN_BUDGET,
+               "the reserve must leave budget for the ring, or the ring starves instead");
+
 /* --- KNF publication identity --------------------------------------------- */
 #define QUOTA_PRESSURE_KNF_CATEGORY  "Kernel"
 #define QUOTA_PRESSURE_KNF_STATE     "QuotaPressure"
@@ -324,7 +347,7 @@ static inline uint16_t quota_pressure_permille(uint64_t usage, uint64_t limit)
         return QUOTA_PRESSURE_INVALID_PERMILLE;
 
     uint64_t q = 0, rem = 0;
-    for (int bit = 9; bit >= 0; bit--) {          /* 1000 < 2^10 */
+    for (int bit = (int)QUOTA_PRESSURE_PERMILLE_BITS - 1; bit >= 0; bit--) {
         q   <<= 1;
         rem <<= 1;
         if (rem >= limit) { rem -= limit; q += 1; }
@@ -445,7 +468,18 @@ void quota_pressure_dump(void);
 
 /* --- Escalation ----------------------------------------------------------- */
 
-/* Select the USER principal furthest over its budget for `type` and fill `out`.
+/* Select the MOST SATURATED live USER principal for `type` -- at or above the
+ * watch rise threshold -- and fill `out`.
+ *
+ * Deliberately "most saturated at or above watch", not "furthest over budget":
+ * saturation is clamped at full scale, so a principal at 101 percent of its cap
+ * and one at 1000 percent are indistinguishable here, and ranking them would be
+ * inventing precision the measurement does not carry. A consumer that needs
+ * true overage must read the raw counters.
+ *
+ * This function only FILLS the record. Publication happens from the drain when
+ * a domain transitions into or out of critical; a direct caller gets the
+ * nominee, not a published event.
  *
  * Walks the quota registry, which is the only principal enumeration in this
  * kernel with a lifetime contract: the registry lock covers the linkage and the
@@ -469,6 +503,15 @@ int quota_pressure_nominate(quota_resource_type_t type,
 int quota_registry_worst_user(quota_resource_type_t type, uint16_t min_permille,
                               uint64_t *out_block_id, uint32_t *out_rid,
                               uint64_t *out_sid_hash, uint16_t *out_permille);
+
+/* Same walk, but answering EVERY resource at once: fills out_permille[t] with
+ * the worst live USER principal's saturation for type t, or
+ * QUOTA_PRESSURE_INVALID_PERMILLE where no capped principal exists. One pass
+ * under one registry-lock hold, because the sampler needs all of them each tick
+ * and the per-type variant would take that IRQ-off lock once per type over the
+ * same blocks. */
+void quota_registry_worst_all(uint16_t *out_permille, uint32_t count,
+                              const uint8_t *wanted);
 
 #ifdef KERNEL_TESTS
 /* --- Test-only control ---------------------------------------------------- *

@@ -893,6 +893,9 @@ static void quota_report_refusal(const quota_block_t *block,
     src.current   = current;
     src.limit     = limit;
     src.result    = result;
+    /* The digest is computed here rather than inside the event path so it
+     * describes the block at the moment of refusal; it is a bounded loop over
+     * at most SID_MAX_SIZE bytes with no lock held. */
     quota_owner_digest(block, &src.owner_rid, &src.owner_sid_hash);
 
     /* Identity captured HERE, at the refusal, not inside the event path: that
@@ -904,8 +907,14 @@ static void quota_report_refusal(const quota_block_t *block,
      * per-CPU state, so another CPU scheduling concurrently can still make them
      * disagree with reality. block_id and the SID digest above are the
      * authoritative identity; pid/tid are the convenience. */
-    t   = task_current();
+    /* thread_current() bounds-checks the scheduler cursor and can return NULL
+     * before the scheduler is up; task_current() does NOT -- it returns the
+     * address of a table slot unconditionally, so a NULL test on it is always
+     * false and would set PID_VALID even for a refusal charged against a slot
+     * no thread was running. Tie the pid's validity to the THREAD's, which is
+     * the one that actually knows whether a task context exists. */
     thr = thread_current();
+    t   = thr ? task_current() : (struct task *)0;
     src.pid         = t ? t->pid : 0u;
     src.tid         = thr ? thr->id : 0u;
     src.attribution = QUOTA_ATTRIB_BEST_EFFORT
@@ -1377,6 +1386,58 @@ NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
     return STATUS_SUCCESS;
 }
 
+void quota_registry_worst_all(uint16_t *out_permille, uint32_t count,
+                              const uint8_t *wanted)
+{
+    uint64_t flags;
+
+    if (!out_permille || count == 0)
+        return;
+    if (count > QUOTA_RESOURCE_TYPE_COUNT)
+        count = QUOTA_RESOURCE_TYPE_COUNT;
+
+    for (uint32_t t = 0; t < count; t++)
+        out_permille[t] = QUOTA_PRESSURE_INVALID_PERMILLE;
+
+    /* ONE walk answering every resource's question at once. The per-type
+     * variant below walks the same list for a single type; calling it in a loop
+     * would hold this lock -- with interrupts disabled -- once per type, for the
+     * same set of blocks. */
+    spin_lock_irqsave(&g_registry_lock, &flags);
+    for (struct quota_block *b = g_registry_head; b; b = b->reg_next) {
+        if (b->principal != (uint8_t)QUOTA_PRINCIPAL_USER)
+            continue;
+
+        for (uint32_t t = 0; t < count; t++) {
+            /* Only the types the caller actually needs. The walk runs with the
+             * registry lock held and interrupts disabled, so reading all 16
+             * counters per block when one is wanted would multiply the IRQ-off
+             * window for answers nobody asked for. */
+            if (wanted && !wanted[t])
+                continue;
+            int64_t  l = atomic64_read(&b->counter[t].limit);
+            int64_t  u = atomic64_read(&b->counter[t].usage);
+            if (atomic64_read(&b->counter[t].limit) != l) {
+                l = atomic64_read(&b->counter[t].limit);
+                u = atomic64_read(&b->counter[t].usage);
+            }
+            uint64_t usage = (u > 0) ? (uint64_t)u : 0ull;
+            uint64_t limit = (l > 0) ? (uint64_t)l : 0ull;
+            uint16_t p = quota_pressure_permille(usage, limit);
+
+            if (p == QUOTA_PRESSURE_INVALID_PERMILLE)
+                continue;   /* uncapped here: no ratio, no candidacy */
+            /* An UNKNOWN slot is replaced by any real reading, including 0 --
+             * "the worst capped principal holds nothing" is zero pressure, not
+             * absence of measurement. */
+            if (out_permille[t] == QUOTA_PRESSURE_INVALID_PERMILLE ||
+                p > out_permille[t])
+                out_permille[t] = p;
+        }
+    }
+    spin_unlock_irqrestore(&g_registry_lock, flags);
+}
+
 int quota_registry_worst_user(quota_resource_type_t type, uint16_t min_permille,
                               uint64_t *out_block_id, uint32_t *out_rid,
                               uint64_t *out_sid_hash, uint16_t *out_permille)
@@ -1470,9 +1531,12 @@ NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t
         quota_commit_locked(block, type, total);
     else
         quota_bump_failures(&block->counter[type].failures);
-    /* Snapshot under the lock so the pressure sample and any refusal event both
-     * describe the state this operation actually saw. */
-    quota_snapshot_locked(block, type, &usage_now, &limit_now);
+    /* Snapshot ONLY on the path that consumes it. The pressure machine samples
+     * from the registry on its own cadence now, so a SUCCESSFUL charge has no
+     * reader for these two atomic loads -- and a charge is the hottest path in
+     * the kernel. Only a refusal needs the numbers as they stood. */
+    if (status != STATUS_SUCCESS)
+        quota_snapshot_locked(block, type, &usage_now, &limit_now);
     quota_block_unlock(block, flags);
 
     /* Outside the lock, and only when there is something to say: the normal
@@ -1506,8 +1570,8 @@ NTSTATUS quota_return(quota_block_t *block, quota_resource_type_t type, uint64_t
 
     quota_block_lock(block, &flags);
     NTSTATUS status = quota_release_locked(block, type, (int64_t)amount, &diag);
-    quota_snapshot_locked(block, type, &usage_now, &limit_now);
     quota_block_unlock(block, flags);
+    (void)usage_now; (void)limit_now;
 
     /* Logging happens OUTSIDE the lock, and only when there is something to
      * say -- the normal path must not pay a call into the diagnostic helper. */
@@ -1591,11 +1655,12 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
         }
     }
 
-    /* Both snapshots under both locks: a transfer moves saturation on two
-     * blocks at once, and each side needs its own sample or one of the two
-     * domains would never see the change. */
-    quota_snapshot_locked(src, type, &src_usage, &src_limit);
-    quota_snapshot_locked(dst, type, &dst_usage, &dst_limit);
+    /* Only the refusing side's numbers are consumed (by the failure event);
+     * the pressure sample comes from the registry on its own cadence. */
+    if (refused_block)
+        quota_snapshot_locked(refused_block, type,
+                              (refused_block == dst) ? &dst_usage : &src_usage,
+                              (refused_block == dst) ? &dst_limit : &src_limit);
 
     quota_block_unlock_quiet(second, flags_second);
     quota_block_unlock_quiet(first, flags_first);
@@ -1661,21 +1726,18 @@ NTSTATUS quota_set_limit(quota_block_t *block, quota_resource_type_t type, uint6
      * sees the new one and is judged against it. There is no window where a
      * charge is admitted against a limit that no longer applies. */
     uint64_t flags;
-    uint64_t usage_now = 0, limit_now = 0;
     quota_block_lock(block, &flags);
     atomic64_set(&block->counter[type].limit, (int64_t)limit);
     /* An explicit set pins this limit against the config default: from here on
      * a change to quota.user.<type>_default leaves this block alone. Recorded
      * under the same lock as the limit so the two can never disagree. */
     block->limit_explicit[type] = 1;
-    quota_snapshot_locked(block, type, &usage_now, &limit_now);
     quota_block_unlock(block, flags);
 
     /* A limit change moves saturation without moving usage, and can move it
      * arbitrarily far in one step: raising a cap is the other way (besides a
      * return) that a latched level must be able to fall, and lowering one can
      * put a principal over its budget instantly. */
-    (void)usage_now; (void)limit_now;
     quota_pressure_note_activity(type);
     return STATUS_SUCCESS;
 }

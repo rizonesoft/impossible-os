@@ -72,16 +72,18 @@ static SID *pressure_make_sid(uint8_t *buf, uint32_t rid)
  * and the registry walk, so its boundaries are the contract both rely on. */
 static void test_pressure_permille_boundaries(void)
 {
-    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(0, 1000),
+    const uint64_t cap = QUOTA_PRESSURE_PERMILLE_MAX;   /* usage == permille */
+
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(0, cap),
                    0ull, "zero usage is zero permille");
-    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(500, 1000),
-                   500ull, "half of the cap is 500 permille");
-    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(999, 1000),
-                   999ull, "one under the cap is 999 permille");
-    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(1000, 1000),
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(cap / 2, cap),
+                   cap / 2, "half of the cap is half scale");
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(cap - 1, cap),
+                   cap - 1, "one under the cap is one under full scale");
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(cap, cap),
                    (uint64_t)QUOTA_PRESSURE_PERMILLE_MAX,
                    "usage at the cap saturates at full scale");
-    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(5000, 1000),
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_permille(cap * 5, cap),
                    (uint64_t)QUOTA_PRESSURE_PERMILLE_MAX,
                    "usage over the cap clamps to full scale, never wraps");
 }
@@ -304,16 +306,56 @@ static void test_pressure_invalid_sample_does_not_deescalate(void)
     TEST_ASSERT_EQ((uint64_t)quota_pressure_source_valid(PT_C), 1ull,
                    "a real ratio marks the domain valid");
 
-    /* Many INVALID samples, exactly what an uncapped or uninstrumented source
-     * produces. */
-    for (uint32_t i = 0; i < QUOTA_PRESSURE_FALL_SAMPLES * 3u; i++)
+    /* A run of INVALID samples SHORTER than the reset threshold: exactly what
+     * an uncapped or uninstrumented source produces. */
+    for (uint32_t i = 0; i < QUOTA_PRESSURE_INVALID_RESET_SAMPLES - 1u; i++)
         quota_pressure_test_sample(PT_C, QUOTA_PRESSURE_INVALID_PERMILLE);
 
     TEST_ASSERT_EQ((uint64_t)quota_pressure_source_valid(PT_C), 0ull,
                    "an unlimited cap clears the validity flag");
     TEST_ASSERT_EQ((uint64_t)quota_pressure_level(PT_C),
                    (uint64_t)QUOTA_PRESSURE_WARNING,
-                   "unknown samples never de-escalate a level");
+                   "unknown samples do not de-escalate a level");
+}
+
+/* An unknown must not de-escalate, but it must not LATCH either: once the
+ * subject of the measurement is gone (the capped principal exited, or its cap
+ * was removed) the level has nothing left to describe and must reset, or it
+ * would report a stale condition for the rest of the boot. */
+static void test_pressure_sustained_unknown_resets_level(void)
+{
+    quota_pressure_test_reset();
+
+    pressure_feed(PT_C, (uint16_t)QUOTA_PRESSURE_PERMILLE_MAX,
+                  QUOTA_PRESSURE_RISE_SAMPLES * 2u);
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_level(PT_C),
+                   (uint64_t)QUOTA_PRESSURE_WARNING, "climbed to warning");
+
+    for (uint32_t i = 0; i < QUOTA_PRESSURE_INVALID_RESET_SAMPLES; i++)
+        quota_pressure_test_sample(PT_C, QUOTA_PRESSURE_INVALID_PERMILLE);
+
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_level(PT_C),
+                   (uint64_t)QUOTA_PRESSURE_NORMAL,
+                   "a sustained run of unknowns resets the level rather than latching it");
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_source_valid(PT_C), 0ull,
+                   "and the domain still reports unknown, not zero pressure");
+
+    /* The reset must be PUBLISHED, not silent: a consumer that acted on the old
+     * level needs an event saying the condition ended. */
+    {
+        QUOTA_PRESSURE_RECORD rec;
+        QUOTA_FAILURE_RECORD  unused;
+        uint32_t kind, saw_reset = 0;
+
+        while ((kind = quota_pressure_test_pop(&rec, &unused)) != 0) {
+            if (kind == QUOTA_PRESSURE_KIND_TRANSITION &&
+                rec.to_level == (uint8_t)QUOTA_PRESSURE_NORMAL &&
+                rec.source_valid == 0)
+                saw_reset = 1;
+        }
+        TEST_ASSERT_EQ((uint64_t)saw_reset, 1ull,
+                       "the unknown-driven reset emits a transition marked source_valid=0");
+    }
 }
 
 /* A never-sampled domain reports NONE rather than claiming a budget source it
@@ -1349,6 +1391,8 @@ void test_register_quota_pressure(void)
                             test_pressure_debounce_is_asymmetric, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: invalid sample does not de-escalate",
                             test_pressure_invalid_sample_does_not_deescalate, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: sustained unknown resets the level",
+                            test_pressure_sustained_unknown_resets_level, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: unsampled domain reports no source",
                             test_pressure_unsampled_domain_reports_none, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: stall seam tags its source",

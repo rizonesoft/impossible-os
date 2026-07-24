@@ -40,11 +40,15 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
-#include "kernel/sched/task.h"           /* task_current / thread_current */
 
 /* Freestanding: no string.h. Declared locally, same as every other kernel TU
  * that needs it (knf.c does the same). */
 extern void *memset(void *s, int c, size_t n);
+
+/* Nanoseconds per millisecond. timer.h names NSEC_PER_SEC for the same reason
+ * (accounting math should not carry bare literals) but has no millisecond
+ * counterpart. */
+#define QUOTA_NSEC_PER_MSEC  1000000ull
 
 /* ==========================================================================
  * Per-domain state
@@ -68,6 +72,7 @@ typedef struct pressure_domain {
     uint16_t   window_ms;
     uint16_t   rise_count;     /* consecutive samples above the rise band    */
     uint16_t   fall_count;     /* consecutive samples below the fall band    */
+    uint16_t   invalid_run;    /* consecutive UNKNOWN samples at a live level */
     /* Set by any mutation that could have moved this domain's saturation.
      * A mutation does NOT sample: it only marks. The periodic sampler is the
      * single producer of samples, which is what keeps their ORDER meaningful
@@ -90,7 +95,15 @@ typedef struct pressure_domain {
     uint8_t    pending_used;
 } pressure_domain_t;
 
-static pressure_domain_t g_domain[QUOTA_PRESSURE_DOMAIN_COUNT];
+/* One domain per cache line. Domains are updated from different CPUs (any CPU
+ * can charge any resource), so packing two domains' hot state into one line
+ * would make every charge on resource A invalidate resource B's line for no
+ * reason. The alignment also keeps a domain's hot fields off the same line as
+ * its rarely-touched pending FIFO. */
+#define QUOTA_PRESSURE_DOMAIN_ALIGN  64u
+
+static pressure_domain_t g_domain[QUOTA_PRESSURE_DOMAIN_COUNT]
+    __attribute__((aligned(QUOTA_PRESSURE_DOMAIN_ALIGN)));
 
 /* Rise and fall thresholds indexed by the level being entered / left. Index 0
  * is unused (there is no threshold to enter NORMAL from below, and none to
@@ -176,6 +189,10 @@ static KNF_STATE *g_state_pressure;
 static KNF_STATE *g_state_failure;
 static KNF_STATE *g_state_nomination;
 static KDPC       g_drain_dpc;
+
+/* The CPU whose queues actually get serviced. Matches ktimer's service CPU:
+ * today only the BSP runs the timer ISR and drains DPC queues. */
+#define QUOTA_PRESSURE_SERVICE_CPU  0u
 
 /* Periodic sampler: the single producer of pressure samples. */
 static KDPC           g_sample_dpc;
@@ -284,7 +301,16 @@ static void drain_arm(void)
     if (!dpc_worker_started())
         return;
     if (__atomic_exchange_n(&g_drain_armed, 1u, __ATOMIC_ACQ_REL) == 0u)
-        KeInsertQueueDpc(&g_drain_dpc, (void *)0, (void *)0);
+        /* PINNED to the service CPU, never DPC_TARGET_CURRENT. A threaded DPC
+         * still lands on the queueing CPU's normal queue until that CPU drains
+         * it, and an idle AP parks in sti/hlt without self-draining (there is no
+         * DPC IPI yet). Arming from an AP -- which the charge path can do, since
+         * it is documented callable from interrupt context -- would strand the
+         * callback there, and because only the callback clears g_drain_armed the
+         * exchange would stay wedged at 1 and publication would be dead for the
+         * rest of the boot. ktimer pins its DPCs for exactly this reason. */
+        KeInsertQueueDpcOnCpu(&g_drain_dpc, QUOTA_PRESSURE_SERVICE_CPU,
+                              (void *)0, (void *)0, (int *)0);
 }
 
 /* ==========================================================================
@@ -470,16 +496,36 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
      * it. Checking here as well as in drain_arm is what makes the hold actually
      * hold: otherwise an in-flight callback would consume the records the test
      * is about to inspect. */
-    if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE))
+    if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE)) {
+        /* Disarm on the way out. Returning with the flag still set would mean
+         * no producer could ever re-arm (drain_arm's exchange would always see
+         * 1) and publication would stay dead for the rest of the boot once the
+         * hold is released. */
+        __atomic_store_n(&g_drain_armed, 0u, __ATOMIC_RELEASE);
         return;
+    }
 #endif
 
     __atomic_store_n(&g_drain_armed, 0u, __ATOMIC_RELEASE);
 
-    /* Pending transitions first, and always: they are older than anything the
-     * ring took after they were refused, so publishing the ring first would
-     * hand a consumer a newer level ahead of an older one. */
-    published = drain_pending_transitions(QUOTA_PRESSURE_DRAIN_BUDGET);
+    /* Ring FIRST, then the overflow FIFO. A record only reaches the FIFO when
+     * the ring was full, so everything already in the ring at that moment is
+     * OLDER than it -- draining the FIFO first would hand a consumer a newer
+     * level ahead of an older one.
+     *
+     * That ordering is not a guarantee across the two paths in general: once a
+     * drain frees ring space, a later transition can enter the ring while an
+     * older one still sits in a FIFO. This is why every record carries
+     * transition_seq and why the contract asks consumers to order and
+     * de-duplicate by it rather than by arrival. Recording is exact; ARRIVAL
+     * order is best-effort, like delivery. */
+    /* Reserve a slice of the budget for the overflow FIFO FIRST. A ring kept
+     * permanently non-empty by failure-event traffic would otherwise consume
+     * the whole budget every invocation and the FIFO -- which holds LEVEL
+     * records, the ones a consumer cannot reconstruct -- would never drain at
+     * all. Liveness for those outranks arrival order, which the contract
+     * already declares best-effort. */
+    published = drain_pending_transitions(QUOTA_PRESSURE_PENDING_RESERVE);
 
     while (published < QUOTA_PRESSURE_DRAIN_BUDGET && ring_pop(&entry)) {
         if (entry.kind == QUOTA_PRESSURE_KIND_TRANSITION) {
@@ -490,6 +536,10 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
         }
         published++;
     }
+
+    published += drain_pending_transitions(
+        (published < QUOTA_PRESSURE_DRAIN_BUDGET)
+            ? (QUOTA_PRESSURE_DRAIN_BUDGET - published) : 0u);
 
     /* BOUNDED, then re-arm and return. The threaded-DPC worker is a single
      * system-wide thread, so a callback that drained until empty would starve
@@ -523,6 +573,7 @@ static int domain_step_locked(pressure_domain_t *d, quota_resource_type_t type,
 
     d->source_kind   = (uint8_t)source;
     d->valid         = 1;
+    d->invalid_run   = 0;
     d->last_permille = permille;
     d->window_ms     = window_ms;
 
@@ -573,9 +624,11 @@ static void pressure_sample(quota_resource_type_t type, uint16_t permille,
 {
     pressure_domain_t    *d;
     QUOTA_PRESSURE_RECORD rec;
+    pressure_ring_entry_t entry;
     uint64_t              flags;
     uint64_t              now_ns;
     int                   moved;
+    int                   reset_moved = 0;
 
     if (!domain_valid(type))
         return;
@@ -589,7 +642,56 @@ static void pressure_sample(quota_resource_type_t type, uint16_t permille,
         spin_lock_irqsave(&d->lock, &flags);
         d->valid       = 0;
         d->source_kind = (uint8_t)source;
+        /* An unknown must not de-escalate a level -- but it must not LATCH one
+         * either. A capped principal that logs off or has its cap removed makes
+         * this domain permanently unmeasurable, and without an exit the level
+         * would stay at its peak for the rest of the boot (and keep the sampler
+         * walking the registry every tick for a domain nobody can measure).
+         * After a bounded run of consecutive unknowns the domain resets to
+         * normal-and-unknown: the condition it was reporting is not merely
+         * unobserved, its subject is gone. */
+        if (d->level != (uint8_t)QUOTA_PRESSURE_NORMAL &&
+            ++d->invalid_run >= QUOTA_PRESSURE_INVALID_RESET_SAMPLES) {
+            uint8_t from = d->level;
+            d->level      = (uint8_t)QUOTA_PRESSURE_NORMAL;
+            d->rise_count = 0;
+            d->fall_count = 0;
+            d->invalid_run = 0;
+
+            /* RECORD it like any other transition. Resetting silently would
+             * leave a consumer that acted on the old level -- possibly a
+             * critical nomination -- with no event telling it the condition
+             * ended, which is the same stale-state hazard the explicit clear
+             * exists to prevent. source_valid is 0: this move was driven by the
+             * ABSENCE of a measurement, and the record says so. */
+            memset(&rec, 0, sizeof(rec));
+            rec.layout_version  = QUOTA_PRESSURE_RECORD_VERSION;
+            rec.resource        = (uint32_t)type;
+            rec.from_level      = from;
+            rec.to_level        = (uint8_t)QUOTA_PRESSURE_NORMAL;
+            rec.source_kind     = (uint8_t)source;
+            rec.source_valid    = 0;
+            rec.sample_permille = 0;
+            rec.window_ms       = window_ms;
+            rec.transition_seq  = __atomic_add_fetch(&g_transition_seq, 1ull,
+                                                     __ATOMIC_RELAXED);
+            rec.timestamp_ns    = uptime_ns();
+            reset_moved = 1;
+
+            entry.kind         = QUOTA_PRESSURE_KIND_TRANSITION;
+            entry.u.transition = rec;
+            if (!ring_push(&entry) &&
+                d->pending_used < QUOTA_PRESSURE_PENDING_SLOTS) {
+                d->pending[d->pending_head] = rec;
+                d->pending_head = (uint8_t)((d->pending_head + 1u) %
+                                            QUOTA_PRESSURE_PENDING_SLOTS);
+                d->pending_used++;
+            }
+            __atomic_fetch_add(&g_transitions, 1ull, __ATOMIC_RELAXED);
+        }
         spin_unlock_irqrestore(&d->lock, flags);
+        if (reset_moved)
+            drain_arm();
         return;
     }
 
@@ -623,12 +725,11 @@ static void pressure_sample(quota_resource_type_t type, uint16_t permille,
                 d->pending_head = (uint8_t)((d->pending_head + 1u) %
                                             QUOTA_PRESSURE_PENDING_SLOTS);
                 d->pending_used++;
-            } else {
-                /* Both the ring and the domain's own FIFO are full. Counted,
-                 * never silent -- a consumer seeing a sequence gap must be able
-                 * to tell that a level record was genuinely lost. */
-                __atomic_fetch_add(&g_drop_ring, 1ull, __ATOMIC_RELAXED);
             }
+            /* No second increment here when the FIFO is also full: ring_push
+             * already counted this record's loss, and counting it twice would
+             * make the drop total disagree with the sequence gaps a consumer
+             * can actually observe. */
         }
         __atomic_fetch_add(&g_transitions, 1ull, __ATOMIC_RELAXED);
     }
@@ -641,55 +742,36 @@ static void pressure_sample(quota_resource_type_t type, uint16_t permille,
         drain_arm();
 }
 
-/* Derive this domain's coherent sample and step the machine once.
- *
- * The sample is the saturation of the MOST saturated live USER principal for
- * the resource -- one well-defined quantity per domain. It is deliberately not
- * "the block that was just charged": mixing identities inside one debounce lets
- * a run of low samples from unrelated principals walk the level down while the
- * offender stays pinned at its cap, and lets one uncapped block mark the whole
- * domain unknown.
- *
- * Runs ONLY from the periodic sampler, which is single-threaded (one timer DPC
- * on the service CPU). That is what gives samples a well-defined order: two
- * concurrent derivations could otherwise apply an older reading after a newer
- * one and reverse a transition. It also keeps the registry walk off the charge
- * path, which can run in interrupt context.
- *
- * The registry walk runs with NO domain lock held -- the quota core allows the
- * registry lock to be taken while holding nothing, and taking it under the
- * domain lock would put this file's lock inside the registry's ordering for no
- * reason. */
-static void pressure_derive(quota_resource_type_t type)
-{
-    uint64_t block_id = 0, sid_hash = 0;
-    uint32_t rid = 0;
-    uint16_t permille = 0;
-    uint16_t sample;
-
-    if (quota_registry_worst_user(type, 0, &block_id, &rid, &sid_hash, &permille))
-        sample = permille;
-    else
-        sample = QUOTA_PRESSURE_INVALID_PERMILLE;   /* nobody is capped here */
-
-    pressure_sample(type, sample, (uint16_t)QUOTA_PRESSURE_SAMPLE_WINDOW_MS,
-                    QUOTA_PRESSURE_SRC_BUDGET);
-}
-
 void quota_pressure_note_activity(quota_resource_type_t type)
 {
     if (!domain_valid(type))
         return;
-    /* A MARK, nothing more: one relaxed store, no lock, no clock, no walk. */
-    __atomic_store_n(&g_domain[type].dirty, 1u, __ATOMIC_RELAXED);
+    /* A MARK, nothing more: no lock, no clock, no walk. Read first and store
+     * only when it would change the value -- an unconditional store would take
+     * the line exclusive on EVERY quota mutation from EVERY CPU, and the common
+     * case under load is that the domain is already marked. */
+    if (__atomic_load_n(&g_domain[type].dirty, __ATOMIC_RELAXED) == 0u)
+        __atomic_store_n(&g_domain[type].dirty, 1u, __ATOMIC_RELAXED);
 }
 
 void quota_pressure_sample_all(void)
 {
+    uint16_t worst[QUOTA_PRESSURE_DOMAIN_COUNT];
+    uint8_t  needed[QUOTA_PRESSURE_DOMAIN_COUNT];
+    uint32_t needed_count = 0;
+
+    /* PASS 1 -- consume every mark BEFORE looking at the registry.
+     *
+     * Order matters: if the walk ran first, a mutation landing between the walk
+     * and a domain's mark-clear would have its mark consumed while the sample
+     * applied to it predates the mutation. For an otherwise-idle domain that is
+     * a permanently lost observation. Clearing first inverts the race into a
+     * harmless one -- a mark arriving after its exchange simply survives to the
+     * next tick and costs one redundant sample. */
     for (uint32_t i = 0; i < QUOTA_PRESSURE_DOMAIN_COUNT; i++) {
         pressure_domain_t *d = &g_domain[i];
         uint64_t flags;
-        int      needed;
+        uint8_t  was_dirty = __atomic_exchange_n(&d->dirty, 0u, __ATOMIC_ACQ_REL);
 
         spin_lock_irqsave(&d->lock, &flags);
         /* Sample when something moved, when the level is not resting, or when a
@@ -697,17 +779,31 @@ void quota_pressure_sample_all(void)
          * pressure settle: a principal that charges to its cap once and then
          * goes quiet marks the domain exactly once, and the rise debounce needs
          * two more samples after that to complete. Without it the level would
-         * never move for the most ordinary case there is.
-         *
-         * A fully idle domain -- clean, normal, no debounce -- is skipped, so
-         * an idle system pays nothing for the sampler. */
-        needed = d->dirty || d->level != (uint8_t)QUOTA_PRESSURE_NORMAL ||
-                 d->rise_count != 0 || d->fall_count != 0;
-        d->dirty = 0;
+         * never move for the most ordinary case there is. */
+        needed[i] = (was_dirty || d->level != (uint8_t)QUOTA_PRESSURE_NORMAL ||
+                     d->rise_count != 0 || d->fall_count != 0) ? 1u : 0u;
         spin_unlock_irqrestore(&d->lock, flags);
 
-        if (needed)
-            pressure_derive((quota_resource_type_t)i);
+        if (needed[i])
+            needed_count++;
+    }
+
+    /* A fully idle system does no walk at all -- not a cheap walk, none. */
+    if (needed_count == 0)
+        return;
+
+    /* PASS 2 -- ONE registry walk answering every needed domain at once, and
+     * reading counters ONLY for those. The walk holds the registry lock with
+     * interrupts disabled, so both the number of walks and the per-block work
+     * inside one walk are kept to what is actually being measured. */
+    quota_registry_worst_all(worst, QUOTA_PRESSURE_DOMAIN_COUNT, needed);
+
+    /* PASS 3 -- step each needed domain. */
+    for (uint32_t i = 0; i < QUOTA_PRESSURE_DOMAIN_COUNT; i++) {
+        if (needed[i])
+            pressure_sample((quota_resource_type_t)i, worst[i],
+                            (uint16_t)QUOTA_PRESSURE_SAMPLE_WINDOW_MS,
+                            QUOTA_PRESSURE_SRC_BUDGET);
     }
 }
 
@@ -717,6 +813,18 @@ void quota_pressure_sample_all(void)
 static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2)
 {
     (void)dpc; (void)context; (void)arg1; (void)arg2;
+
+#ifdef KERNEL_TESTS
+    /* The periodic sampler is live in a booted test kernel, so without this it
+     * is a SECOND producer interposing derived samples into whatever domain a
+     * test is driving by hand -- flipping a level or a validity flag
+     * mid-assertion. Held here rather than inside quota_pressure_sample_all so
+     * a test that drives the sampler DELIBERATELY still works; only the
+     * unsolicited timer-driven pass is suppressed. */
+    if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE))
+        return;
+#endif
+
     quota_pressure_sample_all();
 }
 
@@ -735,7 +843,7 @@ void quota_pressure_submit_stall(quota_resource_type_t type,
 static int bucket_take(quota_resource_type_t type)
 {
     uint64_t now = uptime_ns();
-    uint64_t window_ns = (uint64_t)QUOTA_FAILURE_EVENT_WINDOW_MS * 1000000ull;
+    uint64_t window_ns = (uint64_t)QUOTA_FAILURE_EVENT_WINDOW_MS * QUOTA_NSEC_PER_MSEC;
     uint64_t flags;
     int      admitted = 0;
 
@@ -761,6 +869,10 @@ static int bucket_take(quota_resource_type_t type)
             /* Cap the window count before multiplying: a long idle period
              * would otherwise form a product large enough to wrap before the
              * clamp below ever sees it. */
+            /* Cap the window count before multiplying so a long idle cannot
+             * form a product large enough to wrap. Capping at the burst size is
+             * enough: the sum is clamped to the burst anyway, so more windows
+             * could never yield more tokens. */
             if (windows > (uint64_t)QUOTA_FAILURE_EVENT_BURST)
                 windows = (uint64_t)QUOTA_FAILURE_EVENT_BURST;
             uint64_t tok = (uint64_t)b->tokens +
@@ -1013,7 +1125,7 @@ int quota_pressure_nominate(quota_resource_type_t type,
     out->owner_rid      = rid;
     out->over_permille  = permille;
     out->nomination_seq = __atomic_add_fetch(&g_nomination_seq, 1ull, __ATOMIC_RELAXED);
-    out->expires_at_ns  = now + ((uint64_t)QUOTA_NOMINATION_TTL_MS * 1000000ull);
+    out->expires_at_ns  = now + ((uint64_t)QUOTA_NOMINATION_TTL_MS * QUOTA_NSEC_PER_MSEC);
     out->valid          = 1;
     return 1;
 }
@@ -1217,6 +1329,11 @@ void quota_pressure_test_release(void)
     drain_arm();
 }
 
+/* TEST-SIDE-EFFECT-ALLOWED: this runs the real publish path, so it emits real
+ * klog lines and real ETW/KNF records for records the test fabricated. That is
+ * the point -- the publish path is what is under test -- but a serial-log
+ * auditor reading a test boot will see escalation WARN lines for conditions
+ * that never existed, and the notification states' change stamps advance. */
 void quota_pressure_test_drain(void)
 {
     pressure_ring_entry_t entry;
