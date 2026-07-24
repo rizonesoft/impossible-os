@@ -24,6 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVM_NODE_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)"
 export PATH="$HOME/.local/bin${NVM_NODE_BIN:+:$NVM_NODE_BIN}:$PATH"
 
+# Cap the V8 heap of every node process in the run (claude CLI included): an
+# unattended session that balloons must abort at 4GB instead of dragging the
+# whole 14GB VM into swap-death (2026-07-20 crash: three node processes at
+# 3-5GB each took the VM down mid-rollover).
+export NODE_OPTIONS="--max-old-space-size=4096${NODE_OPTIONS:+ $NODE_OPTIONS}"
+
 cd "$PROJECT_DIR"
 RUNTIME_BASE_REL=".claude/overnight"
 export OVERNIGHT_RUNNER_BASE="$RUNTIME_BASE_REL"
