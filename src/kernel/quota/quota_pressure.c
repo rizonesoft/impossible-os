@@ -32,6 +32,7 @@
  * ========================================================================== */
 
 #include "kernel/quota/quota_pressure.h"
+#include "kernel/quota/quota_stall.h"    /* the independent stall lane */
 #include "kernel/quota/quota.h"
 #include "kernel/knf/knf.h"
 #include "kernel/etw.h"
@@ -826,8 +827,35 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
 #endif
 
     quota_pressure_sample_all();
+
+    /* The stall lane rides this timer rather than owning one: it aggregates
+     * every two seconds and this tick is every 50 ms, so the call is a cheap
+     * deadline check forty times out of forty-one. A second ktimer for a 2 s
+     * period would cost a timer slot and another DPC to save nothing. */
+    quota_stall_aggregate();
 }
 
+/* NOT a production path, and deliberately left without source arbitration.
+ *
+ * This seam feeds a stall observation into a domain of the 16-type BUDGET space,
+ * where it shares that domain's single set of rise/fall counters with the 50 ms
+ * budget sampler. The two cadences differ by about forty to one, so whichever
+ * producer runs more often effectively owns the level.
+ *
+ * An earlier revision of section 12 tried to fix that by letting a stall
+ * submission HOLD the domain against budget sampling. That was worse than the
+ * problem: a caller submitting a low or unknown stall reading every couple of
+ * seconds would suppress budget sampling indefinitely, so a domain sitting at
+ * 1000 permille of real quota saturation would keep reporting normal. A
+ * mechanism that can HIDE pressure is not an acceptable fix for one that can
+ * merely mistime it, so the hold was removed rather than tuned.
+ *
+ * The real stall telemetry does not come through here at all: cpu / mem / io
+ * live in their own lane (quota_stall.h) with their own validity, debounce, and
+ * level, and meet the budget lane only in quota_pressure_system_level() as a
+ * max. Giving the 16-type space genuine per-source lanes is tracked as a
+ * follow-up; until then this entry point has no production caller.
+ * -> XREF: the quota charge-path cost and lifetime follow-ups roadmap. */
 void quota_pressure_submit_stall(quota_resource_type_t type,
                                  uint16_t permille, uint16_t window_ms)
 {
@@ -999,7 +1027,15 @@ int quota_pressure_source_valid(quota_resource_type_t type)
 
 quota_pressure_level_t quota_pressure_system_level(void)
 {
-    quota_pressure_level_t worst = QUOTA_PRESSURE_NORMAL;
+    /* Two independent lanes, one answer. The budget lane below derives levels
+     * from quota saturation across the 16 resource types; the stall lane
+     * (quota_stall.c) derives them from PSI-shaped stall time across cpu / mem /
+     * io. They are debounced separately on purpose -- see
+     * QUOTA_PRESSURE_STALL_HOLD_WINDOWS for why sharing a debounce corrupts both
+     * -- and meet only here, as the worse of the two. Taking the max is the only
+     * safe combination: a system stalling badly on I/O while every quota block
+     * sits idle is under pressure, and averaging the two would hide it. */
+    quota_pressure_level_t worst = quota_stall_system_level();
 
     for (uint32_t i = 0; i < QUOTA_PRESSURE_DOMAIN_COUNT; i++) {
         pressure_domain_t *d = &g_domain[i];
@@ -1157,6 +1193,12 @@ void quota_pressure_init(void)
              "pressure: threaded-DPC worker not running yet; records queue until it is");
 
     KeInitializeThreadedDpc(&g_drain_dpc, quota_pressure_drain, (void *)0);
+
+    /* Anchor the stall lane's aggregation clock here rather than letting it
+     * self-seed on its first tick: the interval from boot to this point is not
+     * a measurement of anything, and dividing a window's growth by it would
+     * report a fraction of an interval nobody observed. */
+    quota_stall_init();
 
     /* Pre-size both retention buffers at PASSIVE_LEVEL. Without this a publish
      * from the drain would have to grow the buffer, and knf_publish refuses to

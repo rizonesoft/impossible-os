@@ -180,6 +180,7 @@ Enforce the I/O rate-limit records published by the quota subsystem at the `blkd
 - [ ] Throttle by delaying submission (queue the request), never by failing the I/O: a rate cap is backpressure, not an error.
 - [ ] Charge the ISSUING owner, not the device, so one process cannot spend another's budget.
 - [ ] Leave `reservation` unenforced until an admission path exists, and say so in the section notes rather than silently ignoring the field.
+- [ ] Wrap the submission delay and any completion wait in `quota_stall_task_stalled(QUOTA_STALL_IO)` / `_unstalled`, the seam the PSI io metric needs. -> XREF: `02-kernel-core/TODO-25 §12`
 - [ ] Commit: `"blkdev: per-owner I/O QoS -- IOPS and bandwidth caps with period refill"`
 
 **Test checkpoint:** a caller capped at N IOPS completes no more than N operations per period across two consecutive periods; a bytes-per-second cap limits throughput without returning an I/O error; read, write, and control caps apply independently; an uncapped caller is unaffected by another caller's cap.

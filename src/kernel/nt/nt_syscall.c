@@ -33,6 +33,17 @@
 #include "kernel/nt/sysconfig_info.h" /* SYSTEM_KERNEL_CONFIG_INFORMATION ABI */
 #include "kernel/nt/nls_syscall_info.h" /* SYSTEM_NLS_INFORMATION ABI */
 #include "kernel/nt/knf_syscall_info.h" /* SYSTEM_NOTIFICATION_INFORMATION ABI */
+#include "kernel/nt/quota_pressure_info.h" /* SYSTEM_RESOURCE_PRESSURE_INFORMATION ABI */
+#include "kernel/quota/quota_stall.h"  /* stall telemetry snapshot source */
+
+/* The wire row count and the kernel domain count are two independent
+ * declarations of the same fact. Pinning them together means adding a fourth
+ * stall domain is a compile error here rather than a silently truncated class
+ * that reports three of four resources. */
+_Static_assert(SYSTEM_RESOURCE_PRESSURE_DOMAIN_COUNT == QUOTA_STALL_DOMAIN_COUNT,
+    "resource-pressure row count must match quota_stall_domain_t");
+_Static_assert(SYSTEM_RESOURCE_PRESSURE_WINDOW_COUNT == QUOTA_STALL_WINDOW_COUNT,
+    "resource-pressure window count must match quota_stall_window_t");
 #include "kernel/knf/knf.h"             /* KNF diagnostics counters */
 #include "kernel/nt/nls.h"             /* nls_get_version */
 #include "kernel/nt/nls_cp.h"          /* nls_cp_get_acp / nls_cp_get_oemcp */
@@ -1001,6 +1012,90 @@ NTSTATUS nt_query_notification_information(void *buffer, uint32_t buf_size,
     return STATUS_SUCCESS;
 }
 
+/* SYSTEM_RESOURCE_PRESSURE_INFORMATION marshaller (Impossible OS extension
+ * 0x1003): a read-only PSI-shaped stall-telemetry snapshot -- per resource
+ * domain, cumulative some/full stall time plus 10/60/300 s averages in permille,
+ * each row carrying its own VALID flag.
+ *
+ * The VALID flag is why this class exists in this shape. All three stall seams
+ * (scheduler, allocator, block I/O) are owned by other TODOs and unwired, so
+ * every row reports VALID clear today. A reader must treat that as "not
+ * measured" -- reporting the zeroed averages as "no pressure" would be a
+ * fabrication, and it is exactly what a flagless PSI-style class forces a reader
+ * to do. The snapshot source takes the aggregator lock per row and returns a
+ * copy, so nothing is held while marshalling. Non-static so the stall telemetry
+ * unit test exercises the marshalling directly. */
+NTSTATUS nt_query_resource_pressure_information(void *buffer, uint32_t buf_size,
+                                                uint32_t *return_length)
+{
+    SYSTEM_RESOURCE_PRESSURE_INFORMATION info;
+    quota_stall_summary_t summary;
+    const uint32_t need = (uint32_t)sizeof(info);
+
+    if (return_length) {
+        NTSTATUS pst = ProbeForWriteIfUser(return_length,
+                                           (uint32_t)sizeof(uint32_t), 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        if (copy_to_user(return_length, &need, (uint32_t)sizeof(uint32_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (!buffer || buf_size < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+
+    memset(&info, 0, sizeof(info));
+
+    /* ONE coherent generation of the whole state. Reading the metadata and each
+     * row through separate queries would let the 2 s aggregation land between
+     * two of them, so user mode could receive a window count from after a fold
+     * beside rows from before it -- a torn snapshot an unprivileged caller can
+     * provoke just by querying in a loop. */
+    if (quota_stall_snapshot_all(&summary) != 0)
+        return STATUS_UNSUCCESSFUL;
+
+    info.Version          = SYSTEM_RESOURCE_PRESSURE_INFORMATION_VERSION;
+    info.Size             = (uint16_t)sizeof(info);
+    info.DomainCount      = SYSTEM_RESOURCE_PRESSURE_DOMAIN_COUNT;
+    info.DomainSize       = (uint32_t)sizeof(SYSTEM_RESOURCE_PRESSURE_DOMAIN);
+    info.UpdateIntervalNs = QUOTA_STALL_UPDATE_NS;
+    info.LastUpdateNs     = summary.last_update_ns;
+    info.WindowsClosed    = summary.windows_closed;
+    info.SystemLevel      = (uint32_t)summary.system_level;
+    if (info.WindowsClosed != 0)
+        info.Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_ARMED;
+
+    for (uint32_t d = 0; d < SYSTEM_RESOURCE_PRESSURE_DOMAIN_COUNT; d++) {
+        SYSTEM_RESOURCE_PRESSURE_DOMAIN *row = &info.Domains[d];
+        const quota_stall_snapshot_t s = summary.domain[d];
+
+        row->Domain = d;
+
+        if (s.valid)
+            row->Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_VALID;
+        if (s.instrumented)
+            row->Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_INSTRUMENTED;
+        if (s.full_undefined)
+            row->Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_FULL_UNDEFINED;
+
+        row->SomeTotalNs = s.some_total_ns;
+        row->FullTotalNs = s.full_total_ns;
+        row->SomeAvg10   = s.some_avg[QUOTA_STALL_AVG10];
+        row->SomeAvg60   = s.some_avg[QUOTA_STALL_AVG60];
+        row->SomeAvg300  = s.some_avg[QUOTA_STALL_AVG300];
+        row->FullAvg10   = s.full_avg[QUOTA_STALL_AVG10];
+        row->FullAvg60   = s.full_avg[QUOTA_STALL_AVG60];
+        row->FullAvg300  = s.full_avg[QUOTA_STALL_AVG300];
+        row->Level       = s.level;
+    }
+
+    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_to_user(buffer, &info, need) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 /* SYSTEM_NLS_INFORMATION marshaller (Impossible OS extension 0x1001): a
  * read-only snapshot of the active code-page / locale / UI-language policy and
  * the NLS/collation version. All source values are published (boot-cached ACP/
@@ -1405,6 +1500,8 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
         return nt_query_nls_information(buffer, buf_size, return_length);
     case SystemNotificationInformation:
         return nt_query_notification_information(buffer, buf_size, return_length);
+    case SystemResourcePressureInformation:
+        return nt_query_resource_pressure_information(buffer, buf_size, return_length);
     default:
         /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
          * SystemInformationClass values; Windows ntoskrnl returns the

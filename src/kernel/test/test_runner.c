@@ -477,6 +477,7 @@ extern void test_register_quota_syscall(void);
 extern void test_register_quota_pressure(void);
 extern void test_register_quota_dashboard(void);
 extern void test_register_quota_ledger(void);
+extern void test_register_quota_stall(void);
 extern void test_register_unwind(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
@@ -596,6 +597,7 @@ void test_runner_init(void)
     test_register_quota_pressure();
     test_register_quota_dashboard();
     test_register_quota_ledger();
+    test_register_quota_stall();
 
     /* ABI */
     test_register_peb_teb();

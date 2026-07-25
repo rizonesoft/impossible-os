@@ -127,6 +127,7 @@ Poll PMM free-frame count at 1 Hz; broadcast pressure level to registered callba
 - [ ] Poll in scheduler tick (1 Hz): `pmm_get_free_frames()` -> compute level -> fire callbacks
 - [ ] Hysteresis: 5 consecutive ticks below threshold to transition up; same to transition down
 - [ ] Built-in: glyph cache eviction on `LOW`, disk buffer flush on `HIGH`, `slab_reap_all()` on `CRITICAL`
+- [ ] Blocking allocation path (wait for reclaim instead of returning NULL) plus `quota_stall_task_stalled(QUOTA_STALL_MEM)` around the wait, which is the seam the PSI mem metric needs. -> XREF: `02-kernel-core/TODO-25 §12`
 - [ ] Commit: `"mm: memory pressure notifications -- 4 levels, 1 Hz poll, shrinker callbacks"`
 
 **Test checkpoint:** Artificially exhaust PMM -> serial shows `[MM] PRESSURE HIGH -- %u MiB free`. Restore frames -> returns to NORMAL after 5 ticks.

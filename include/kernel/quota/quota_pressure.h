@@ -142,6 +142,18 @@ _Static_assert(QUOTA_PRESSURE_FALL_WATCH_PERMILLE < QUOTA_PRESSURE_FALL_WARNING_
 _Static_assert(QUOTA_PRESSURE_INVALID_RESET_SAMPLES > QUOTA_PRESSURE_FALL_SAMPLES,
                "an unknown must clear a level more slowly than a measured low does");
 
+/* NO SOURCE ARBITRATION INSIDE THIS SPACE, deliberately.
+ *
+ * A domain here carries ONE set of debounce counters, shared by whichever source
+ * last sampled it. Since real stall telemetry lives in its own lane
+ * (quota_stall.h) with its own validity, debounce, and level, nothing in a
+ * running kernel drives a domain from two sources -- so there is nothing to
+ * arbitrate. See quota_pressure_submit_stall's comment for why the obvious
+ * arbitration (letting a stall observation hold the domain against the budget
+ * sampler) was implemented, measured against its failure mode, and removed: it
+ * could suppress budget sampling of a saturated domain indefinitely, which
+ * trades a mistimed reading for a hidden one. */
+
 /* Full scale for a saturation sample. */
 #define QUOTA_PRESSURE_PERMILLE_MAX   1000u
 
@@ -542,7 +554,9 @@ void quota_pressure_test_release(void);
 void quota_pressure_test_drain(void);
 
 /* Step the state machine with a sample directly, bypassing the registry
- * derivation. Lets the hysteresis tests be exact without staging live blocks. */
+ * derivation. Lets the hysteresis tests be exact without staging live blocks.
+ *
+ */
 void quota_pressure_test_sample(quota_resource_type_t type, uint16_t permille);
 
 /* Pop the oldest undrained ring record. Returns the record kind (one of the

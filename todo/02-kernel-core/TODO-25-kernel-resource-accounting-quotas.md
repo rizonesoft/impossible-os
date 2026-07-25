@@ -51,7 +51,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [/]   |
 | 💎   |  11   | Charge ledger and transactional adjustment    | §4                      |  [x]   |
-| ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
+| ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §2    |  [/]   |
 | 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [ ]   |
 | ⭐   |  14   | Charge-path cost and lifetime follow-ups      | §6, §7, §9              |  [ ]   |
 
@@ -403,16 +403,30 @@ Split out of the original "Object and handle quota integration" by its §11 comp
 
 Split out of §8 by its design review: §8's other items are syscall marshalling over state that already exists, while the pressure metric is new instrumentation across the scheduler, the allocator and the storage layer -- and shipping the info class over uninstrumented seams would report "no pressure" for a system that is actually stalling. §9 derives its four levels from these counters.
 
-- [ ] Per-resource (cpu/mem/io) stall-time accumulators with `some`/`full` totals and avg10/60/300 rolling windows, in the quota module -- Linux PSI's shape, not a single ratio.
-- [ ] Per-CPU scheduler state is a HARD prerequisite for the cpu metric: with one global `current_task` cursor an AP tick attributes the BSP's task. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
-- [ ] `cpu.full` is reported as 0 with an explicit "undefined at system level" contract (Linux reports it the same way) rather than fabricating a plausible number.
-- [ ] Memory stall seam: accumulate while a thread waits on reclaim/allocation, which needs an allocator that WAITS instead of failing immediately. -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §6`
-- [ ] I/O stall seam: accumulate across block-I/O completion waits at the storage layer's wait sites. -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8`
-- [ ] `SystemResourcePressureInformation` (system info class 0x1003, next free after KNF's 0x1002) marshals the accumulators, with a per-resource VALID flag so an uninstrumented seam reads as unsupported, never as "no pressure".
-- [ ] Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall(type, permille, window_ms)`, which already tags them as the STALL source; until then those domains report source_valid clear. -> XREF: `§9`
-- [ ] Commit: quota: resource-pressure stall telemetry + SystemResourcePressureInformation.
+- [x] Per-resource (cpu/mem/io) stall accumulators in their own 3-entry domain space (`quota_stall.h`; `quota_resource_type_t` is frozen at 16 with no cpu/io), with some/full totals and avg10/60/300 EWMAs.
+- [ ] Per-CPU scheduler state is a HARD prerequisite for the cpu SEAM; the telemetry itself is shipped and CPU-pinned. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [x] Producers report ENTER/LEAVE transitions and the owning CPU integrates wall time, so overlapping waits accrue one window, not N.
+- [x] `cpu.full` is 0 by an explicit "undefined at system level" contract (as Linux reports it); the wire row carries FULL_UNDEFINED so the zero reads as a contract.
+- [ ] Memory stall seam: accumulate while a thread waits on reclaim, which needs an allocation path that WAITS instead of failing. -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §2`
+- [ ] I/O stall seam: needs a block-layer completion-wait site (§8 throttles SUBMISSION, a different seam). -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8`
+- [x] `SystemResourcePressureInformation` (info class 0x1003) marshals one coherent snapshot, with a per-resource VALID flag so an uninstrumented seam reads unsupported, never "no pressure".
+- [x] The stall lane is INDEPENDENT of the budget lane, not fed into it; the two meet only in `quota_pressure_system_level()`, as a max. -> XREF: `§9`
+- [x] Commit: quota: resource-pressure stall telemetry + SystemResourcePressureInformation.
 
-**Test checkpoint:** a synthetic stall interval advances the owning resource's `some` total and no other resource's; the avg10/60/300 windows decay toward zero once the stall stops and never exceed 100 percent; an uninstrumented resource reports its VALID flag clear rather than a zero that reads as "no pressure"; `cpu.full` is 0 with the documented undefined-at-system-level contract; the info class round-trips every field through a size-checked buffer.
+**Test checkpoint:** a synthetic stall interval advances the owning resource's `some` total and no other resource's; the avg10/60/300 windows decay to EXACTLY zero once the stall stops and never exceed 100 percent; a sustained exact-permille sample publishes that permille (not one less) and crosses its hysteresis band; two overlapping waits accrue one window, not two; a token consumed twice cannot cancel a second waiter's stall; an uninstrumented resource reports its VALID flag clear rather than a zero that reads as "no pressure"; `cpu.full` is 0 with the documented undefined-at-system-level contract; the info class round-trips every field through a size-checked buffer.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 10 suites, 0 failures
+
+> **Notes:**
+> - Shipped `quota_stall.c`/`.h` (3 domains, per-CPU cache-line-isolated integrators, Q16 EWMAs) and `nt/quota_pressure_info.h` (248-byte class 0x1003, offsets static-asserted).
+> - Aggregation rides the existing 50 ms pressure DPC and folds every 2 s in closed form; producers are CPU-pinned and carry an ownership token, so a task migrating mid-wait still balances.
+> - All three seams are owned elsewhere and unwired, so every domain reports VALID clear by design; `quota_pressure_system_level()` folds this lane in as a max. Codex adoptions in the commit message.
+> - Canonical doc: the `include/kernel/quota/quota_stall.h` header contract.
+> - Scope boundary: §12 owns accumulators, averaging and the query ABI; §9 owns budget-sourced levels; TODO-07 §3, TODO-03 §2 and TODO-01 §8 own the seams.
+
+> **Deferred:** [M] the three stall SEAMS (cpu / mem / io) stay unwired, so every domain reports VALID clear: each needs a wait site owned by another TODO (reason: infra) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3` (item: "Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`" at line 119)
+> **Deferred:** [L] KNF publication of stall-lane level transitions: no producer can fire one until a seam lands, so the wire record would ship unexercisable (reason: no producer) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Publish stall-lane level transitions through the §9 ring")
+> **Accepted:** [M] the 16-type budget space still carries ONE debounce shared by both sources, so `quota_pressure_submit_stall` has no safe production use and the stall lane deliberately does not touch it (reason: needs per-source lanes) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Per-source lanes in the 16-type budget space")
 
 ---
 
@@ -449,6 +463,8 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [ ] Move the `KERNEL_TESTS` writer instrumentation out of `quota_charge_adjust`'s IRQ-off window: `quota_block_lock` runs `quota_writers_enter` before each acquire, contradicting the rule its own exit path states. -> XREF: `§11`
 - [ ] Make KNF state creation status-bearing: `knf_create_state` returns a pointer, so a transient `STATUS_RETRY` from the charge gate flattens to NULL and one-shot callers treat it as permanent. -> XREF: `02-kernel-core/TODO-16 §2`
 - [ ] Per-charge attribution on `quota_charge_receipt_t`: it carries only type and amount, so a task near a limit cannot be broken down by charging subsystem the way NT pool tags allow. -> XREF: `§10`
+- [ ] Per-source lanes in the 16-type budget space so `quota_pressure_submit_stall` becomes usable: today one shared debounce means whichever source samples more often owns the level. -> XREF: `§12`
+- [ ] Publish stall-lane level transitions through the §9 ring: needs a stall-domain-keyed record, and no producer can fire one until a §12 seam lands. -> XREF: `§12`
 - [ ] Commit: quota: charge-path cost + lifetime follow-ups.
 
 **Test checkpoint:** `ob_job_collect_accounting` computes its per-member deltas outside `job->lock` and its lock-held window is asserted against the §5 charge-path cost budget; a 3-block chain receipt fits the compacted `PORT_MESSAGE_ENTRY` and a chain deeper than the compact form still returns exactly; a send refused by quota performs no `AlpcAllocateMessage` allocation at all (injected-failure count unchanged); victim nomination enumerates tasks under a reference that survives a concurrent exit.
@@ -486,7 +502,8 @@ Split out of the original §11 with §13. The first four items were each filed b
 | ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | ⚠️ 4-level hysteresis, budget-sourced §9    |
 | ⭐   | Pressure source honesty          | ⬜ single opaque low-memory signal     | ⚠️ PSI has no per-source validity flag      | ✅ source kind + VALID, unknown != calm §9   |
 | 💎   | Structured quota-failure event   | ⚠️ ETW pool events, no per-charge rec | ⬜ none (errno only, no event)               | ✅ versioned record + rate limit + drops §9  |
-| ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | 🚀 Planned: PSI-shaped, VALID-flagged §12    |
+| ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | ⚠️ PSI-shaped + VALID §12; seams unwired    |
+| 💎   | Stall metric honesty flag        | ⬜ none (no PSI-style metric)          | ⬜ zero and unmeasured are indistinguishable | ✅ per-domain VALID + FULL_UNDEFINED §12     |
 | ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | ⚠️ cooperative nomination only, no kill §9  |
 | ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | ✅ per-category delta sweep, CI-gated §10    |
 | ⭐   | Crash-time quota dashboard       | ⚠️ `!poolused` needs a live debugger  | ⬜ none (no quota state in a kernel oops)    | ✅ non-blocking panic-path dump §10          |
@@ -550,6 +567,20 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [x] `test_quota_syscall_job_report_shape`: a jobless report is well-formed and fully zeroed, one row per registered resource type (§8).
 - [x] `test_quota_syscall_job_set_rejects_malformed`: a request writing the kernel-owned Usage column is refused (§8).
 - [x] `test_quota_rate_boundary_matrix`: exact-MAX and equal-bound acceptance, both reserved fields, bytes-envelope rules, and per-class isolation (§7).
+- [x] `test_stall_domain_isolation`: a stall in one domain advances only that domain's totals and averages (§12).
+- [x] `test_stall_overlapping_waits_not_double_counted`: two waiters across one window accrue one window, not two (§12).
+- [x] `test_stall_double_consume_cannot_cancel_another_waiter`: consuming a token twice cannot clear a second waiter (§12).
+- [x] `test_stall_exact_permille_is_published_exactly`: a sustained exact permille publishes that value, not one less (§12).
+- [x] `test_stall_exact_threshold_crosses`: a sustained exact-threshold sample crosses into WATCH (§12).
+- [x] `test_stall_sub_permille_is_not_erased`: a 0.1-permille stall still lands in the cumulative total (§12).
+- [x] `test_stall_uninstrumented_reports_unknown`: every unwired domain reports VALID clear, never a calm zero (§12).
+- [x] `test_stall_cpu_full_is_undefined`: `cpu.full` is 0 with its flag set; `mem.full` accrues and never exceeds some (§12).
+- [x] `test_stall_averages_decay_to_exactly_zero`: all three windows reach exactly 0, cumulative totals survive (§12).
+- [x] `test_stall_averages_saturate_at_full_scale`: sustained stall converges near 1000 and never past it (§12).
+- [x] `test_stall_over_long_stalled_gap_keeps_its_measurement`: a gap longer than every window keeps its pressure (§12).
+- [x] `test_stall_non_advancing_clock_closes_no_window` / `_backwards_clock_reanchors`: no phantom windows (§12).
+- [x] `test_stall_lane_independent_of_budget_lane`: 40 budget passes cannot move the stall lane (§12).
+- [x] `test_stall_info_abi_pinned` / `_roundtrip` / `_rejects_short_buffer`: class 0x1003 layout and marshalling (§12).
 - [/] Two-CPU concurrent wakers must count ONE wakeup for one BLOCKED->READY claim; the CAS is in place but a real cross-CPU race needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
 - [/] A reader racing a rate publisher must see either the whole old or whole new record, never a mix; needs the same SMP harness. -> XREF: `§10` (test infrastructure).
 - [/] A named timer whose handle allocation fails is still published and counted; proving it needs an exhausted handle table. -> XREF: `§13` (handle quota integration).
