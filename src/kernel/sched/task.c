@@ -3480,14 +3480,6 @@ void task_cleanup(uint32_t pid)
              (uint64_t)pid, (uint64_t)handles_closed);
     }
 
-    /* Release the task's claim on its charge ledger, AFTER the handle sweep --
-     * that ordering is the whole point. The sweep is what returns the charges the
-     * task itself owned, so anything still outstanding afterwards is either held
-     * by a resource that legitimately outlives the task (left alone) or orphaned
-     * with no holder able to return it (reclaimed and counted as a leak).
-     * Deciding that before the sweep would report every open handle as a leak. */
-    quota_ledger_task_release(&tasks[pid]);
-
     /* Free kernel stack (task-level, thread 0).
      *
      * stack_base may have come from EITHER allocator depending on the
@@ -3609,6 +3601,28 @@ void task_cleanup(uint32_t pid)
                 PsDereferencePrimaryToken(pt);
         }
     }
+
+    /* Release the task's claim on its charge ledger, AFTER every teardown step
+     * that can destroy an object body -- and the invariant is exactly that, not a
+     * line number. The release decides which outstanding obligations are orphans
+     * with no holder left to return them, and reclaims those as leaks. So it must
+     * follow EVERY path that still owes a return:
+     *
+     *   - ob_handle_table_destroy above, which returns the charges the task's own
+     *     handles held. Deciding before it would report every open handle a leak.
+     *   - apc_rundown_thread in the per-thread loop above. No production code
+     *     registers a rundown routine today, but the mechanism runs an arbitrary
+     *     caller-supplied function outside apc_lock precisely so one MAY free an
+     *     object body, and this ordering is what keeps that future routine from
+     *     turning into a false leak.
+     *   - the ACCESS_TOKEN derefs immediately above. Token bodies are
+     *     ob_alloc_object allocations, so a body obligation released before them
+     *     would be reclaimed-as-orphan and counted a leak on EVERY process exit
+     *     that had a primary token -- which is every one of them.
+     *
+     * Anything still outstanding after all of that is genuinely either held by a
+     * resource that legitimately outlives the task (left alone) or orphaned. */
+    quota_ledger_task_release(&tasks[pid]);
 
     /* Free user stack.
      *

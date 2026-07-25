@@ -315,8 +315,113 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
  * that the scheduler cannot express yet -- so it is tracked as concrete follow-up
  * work rather than half-built here.
  *
- * 0 is also returned for an empty handle, which owes nothing. */
+ * 0 is also returned for an empty handle, which owes nothing.
+ *
+ * RAISED IRQL. Above PASSIVE_LEVEL the return is DEFERRED rather than performed,
+ * and QUOTA_LEDGER_RETURN_DEFERRED is returned: the handle is emptied exactly as
+ * on the completing path, but the credit, the block-reference release and the
+ * slot release all happen later on the drain worker. The caller therefore never
+ * has to know its own IRQL -- see the deferral contract below for why the work
+ * cannot simply be done in place. */
 int quota_ledger_return(quota_obligation_t *ob);
+
+/* quota_ledger_return outcomes. Named because there are now three, and a caller
+ * that read "not credited yet" as "leaked" would be wrong. */
+#define QUOTA_LEDGER_RETURN_NONE      0  /* owed nothing, or abandoned          */
+#define QUOTA_LEDGER_RETURN_CREDITED  1  /* credited by this call               */
+#define QUOTA_LEDGER_RETURN_DEFERRED  2  /* credited later by the drain worker  */
+
+/* ==========================================================================
+ * Deferred completion above PASSIVE_LEVEL
+ * ==========================================================================
+ *
+ * WHAT IS ACTUALLY UNSAFE, stated precisely, because the imprecise version sends
+ * the fix to the wrong place. kfree is NOT forbidden at raised IRQL: the heap
+ * takes s_heap_lock with spin_lock_irqsave (src/kernel/mm/heap.c), and heap.h
+ * documents an IRQ or DPC calling kmalloc. The defect is UNBOUNDED WORK, and a
+ * completing return is full of it. quota_ledger_return -> quota_return_chain
+ * releases every block reference the receipt holds, and a last quota_block_deref
+ * unlinks that block from the registry and frees it -- up to QUOTA_CHAIN_MAX of
+ * those per return, each a heap free with a coalescing walk. Dropping the last
+ * ledger reference then adds an orphan drain over every slot plus up to
+ * QUOTA_LEDGER_MAX_CHUNKS more frees. A heap fault anywhere in that also panics
+ * from inside whatever interrupt happened to be running.
+ *
+ * The LAPIC timer ISR reaches all of it: nt_timer_tick drops the last reference
+ * on a fired one-shot timer, so ob_free_object -- and any obligation an object
+ * body carries -- runs at DISPATCH_LEVEL.
+ *
+ * SO THE WHOLE RETURN IS DEFERRED, not merely the ledger destruction. Deferring
+ * only the destroy would leave the per-block teardown in the interrupt, which is
+ * the larger half of the work.
+ *
+ * HOW IT IS DEFERRED WITHOUT ALLOCATING. There is no allocation on this path and
+ * there cannot be one: the record IS the slot. A deferred return stamps its token
+ * onto the slot it already owns and pushes the LEDGER onto a global pending list
+ * through an intrusive link inside the ledger itself, so a burst is bounded by
+ * the obligations that exist rather than by a shared node pool that can be
+ * exhausted with no safe fallback left. The caller's ledger reference transfers
+ * to the pending slot, so the storage cannot go away underneath the drain.
+ *
+ * The drain is a THREADED DPC (PASSIVE_LEVEL), pinned to the service CPU. Pinning
+ * is not a preference: dpc.h documents that only the BSP has a guaranteed drain
+ * trigger, so a callback queued from an idle AP can strand -- and because the
+ * single-ownership arming flag is cleared only by the callback, a stranded one
+ * would wedge every later producer out of the queue for the rest of the boot.
+ * quota_pressure.c pins its publisher for exactly this reason.
+ *
+ * BEFORE THE WORKER EXISTS (quota_ledger_init has not run, which is possible for
+ * a window after SUBSYS_SCHED comes up) there is nothing to defer to, so a
+ * raised-IRQL return completes in place and is counted by
+ * quota_ledger_deferrals_forced(). Bounded work is the property lost there, never
+ * correctness, and the count is what keeps that honest rather than asserted. */
+
+/* Initialise the deferred-completion worker. Allocation-free (it only prepares a
+ * static KDPC), idempotent, and MUST run after dpc_start_threads so that a
+ * deferral always has a live worker. Until it runs, raised-IRQL returns complete
+ * in place. */
+void quota_ledger_init(void);
+
+/* Obligations awaiting the drain worker; raised-IRQL returns that had to complete
+ * in place for want of a worker; obligations the drain has completed. Diagnostics
+ * and tests. */
+uint32_t quota_ledger_deferrals_pending(void);
+uint64_t quota_ledger_deferrals_forced(void);
+uint64_t quota_ledger_deferrals_completed(void);
+/* Ledgers whose DESTRUCTION was deferred: the last reference was dropped above
+ * PASSIVE_LEVEL, so the orphan drain and the chunk frees ran on the worker. */
+uint64_t quota_ledger_deferrals_destroyed(void);
+
+/* Run the deferred-completion drain synchronously and report how many
+ * obligations it completed. PASSIVE_LEVEL only. For tests, and for any teardown
+ * that must not leave a deferred return outstanding. */
+uint32_t quota_ledger_drain_now(void);
+
+#ifdef KERNEL_TESTS
+/* Stop the threaded-DPC worker from draining while a test owns the queue, so an
+ * assertion about what a drain completed is not racing the live worker. */
+void quota_ledger_test_hold(int hold);
+#endif
+
+/* quota_ledger_charge for the CURRENT task, preserving the entry-point contract
+ * the embedded-receipt consumers were written against.
+ *
+ * quota_ledger_charge takes an explicit task and has no boot exemption; every
+ * consumer converted from quota_charge_current needs both of those back, or a
+ * charge attempted before the taxonomy and the scheduler are ready would fail
+ * where it used to be exempt. This wrapper reproduces quota_charge_current's two
+ * milestones exactly (registry ready AND SUBSYS_SCHED ready), emptying `out` and
+ * reporting STATUS_SUCCESS during the exempt window -- an empty obligation that
+ * quota_ledger_return correctly treats as owing nothing.
+ *
+ * PASSIVE_LEVEL, and it says so with a status rather than a comment: the ledger
+ * may allocate, so a raised-IRQL caller is refused with STATUS_UNSUCCESSFUL --
+ * the same refusal knf_subscribe already gives a raised-IRQL caller for the same
+ * reason -- instead of being allowed into an allocation path it cannot be in.
+ * That is the one behavioural difference from
+ * quota_charge_current, which needs no such guard because it never allocates. */
+NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount,
+                                     quota_obligation_t *out);
 
 /* Attempts quota_ledger_return makes internally before reporting non-completion.
  * Each attempt re-enters the bounded same-generation BUSY retry, with the tag

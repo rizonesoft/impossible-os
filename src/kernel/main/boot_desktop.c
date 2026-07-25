@@ -189,6 +189,17 @@ void boot_phase3(void)
         quota_pressure_init();
     }
 
+    /* Arm deferred obligation completion. Same dependency as pressure
+     * publication and for the same reason -- the drain is a threaded DPC, so
+     * arming before dpc_start_threads would leave obligations queued with no
+     * worker to complete them. Until this point a raised-IRQL return completes in
+     * place, which is correct but unbounded; quota_ledger_deferrals_forced()
+     * counts how many did. */
+    {
+        extern void quota_ledger_init(void);
+        quota_ledger_init();
+    }
+
     /* Register the core feature flags (resolution uses the cmdline + cohort +
      * Secure Boot state, all available by this point). */
     {

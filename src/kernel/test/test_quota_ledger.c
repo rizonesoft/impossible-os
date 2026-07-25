@@ -28,6 +28,7 @@
 #include "kernel/ob/ob_job.h"       /* real JOB_OBJECT fixture for the unwind test */
 #include "kernel/ob/handle_table.h"  /* ObpLookupHandle / ObpFreeHandle */
 #include "kernel/mm/heap.h"          /* kmalloc_fail_next injection */
+#include "kernel/sched/irql.h"        /* KeRaiseIrql/KeLowerIrql for the deferral tests */
 
 /* The resource type these tests charge. SECTION is used by the sibling receipt
  * tests for the same reason: nothing in a test boot charges it, so a delta
@@ -1108,8 +1109,467 @@ static void test_ob_job_assign_refusal_unwinds_completely(void)
     atomic64_set(&t->quota_gate, saved_gate);
 }
 
+/* ==========================================================================
+ * Deferred completion above PASSIVE_LEVEL (section 14)
+ *
+ * These raise IRQL with the ordinary KeRaiseIrql/KeLowerIrql pair rather than
+ * calling any boot or interrupt machinery: the deferral branches on
+ * KeGetCurrentIrql alone, so a software raise reproduces the ISR case exactly
+ * and needs none of the live infrastructure the test policy forbids.
+ * ========================================================================== */
+
+/* A return taken above PASSIVE_LEVEL must not credit anything in place: it hands
+ * the completion to the drain and says so, and the charge stays charged until the
+ * drain runs. That "stays charged" half is the point -- it is what proves the
+ * block teardown was actually postponed rather than merely reported as such. */
+static void test_quota_ledger_return_at_raised_irql_defers(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    uint64_t           before, pending_before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    pending_before = quota_ledger_deferrals_pending();
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "the charge landed on the block");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    int rc = quota_ledger_return(&ob);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)QUOTA_LEDGER_RETURN_DEFERRED,
+                   "a raised-IRQL return reports DEFERRED, not credited");
+    TEST_ASSERT_NULL((void *)ob.ledger,
+                     "the handle is emptied on the deferring path too");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before + 1,
+                   "the obligation is counted as pending");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "the charge is STILL charged: the credit was postponed, not lost");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "the drain completes exactly the one deferred obligation");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "the drain credits the charge back in full");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before,
+                   "nothing is left pending");
+
+    /* Release the task ledger this suite created, the same cleanup the other
+     * ledger tests do: the ledger is allocated on a task's first obligation and
+     * lives to reap, so leaving it behind would read as a heap leak. Every
+     * obligation above is completed by now, so the release drains nothing. */
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
+/* Draining twice must credit once. The drain claims each slot's deferral with a
+ * CAS before completing it, and without that claim a second pass would complete
+ * the same obligation again and drop its ledger reference a second time. */
+static void test_quota_ledger_deferred_drain_credits_once(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    uint64_t           before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    (void)quota_ledger_return(&ob);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "the first drain completes the obligation");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 0u,
+                   "a second drain finds nothing to complete");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "usage returned to baseline exactly once, not below it");
+
+    /* Release the task ledger this suite created, the same cleanup the other
+     * ledger tests do: the ledger is allocated on a task's first obligation and
+     * lives to reap, so leaving it behind would read as a heap leak. Every
+     * obligation above is completed by now, so the release drains nothing. */
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
+/* A doubled return above PASSIVE_LEVEL must hand the obligation over ONCE, and
+ * the duplicate must NOT be completed inline -- doing the block teardown at
+ * raised IRQL on a charge already promised to the drain is exactly the work this
+ * path exists to remove from an interrupt.
+ *
+ * The duplicate takes its OWN ledger reference before being used. A bare struct
+ * copy would be two handles over one reference, which is the lifetime error the
+ * obligation contract in quota_ledger.h describes, not a case the return owes
+ * any guarantee about. */
+static void test_quota_ledger_double_return_at_raised_irql(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 }, dup;
+    uint64_t           before, pending_before, forced_before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    pending_before = quota_ledger_deferrals_pending();
+    forced_before  = quota_ledger_deferrals_forced();
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+    dup = ob;
+    quota_ledger_ref(dup.ledger);   /* the duplicate owns its own reference */
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    int first  = quota_ledger_return(&ob);
+    int second = quota_ledger_return(&dup);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)first, (uint64_t)QUOTA_LEDGER_RETURN_DEFERRED,
+                   "the first raised-IRQL return defers");
+    TEST_ASSERT_EQ((uint64_t)second, (uint64_t)QUOTA_LEDGER_RETURN_NONE,
+                   "the duplicate coalesces into the pending deferral");
+    TEST_ASSERT_NULL((void *)dup.ledger, "the duplicate handle is emptied");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_forced(), forced_before,
+                   "and is NOT completed inline at raised IRQL");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before + 1,
+                   "the obligation is pending exactly once, not twice");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "and is still charged until the drain runs");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "the drain completes it once");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "the charge is credited exactly once across both returns");
+
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
+/* A deferral must survive the task release that follows it. The caller's handle
+ * is already empty, so the pending slot is the only holder -- and the release
+ * classifies an obligation as an orphan only when nothing else holds the ledger.
+ * A regression that reclaimed the pending obligation would show up here as a
+ * leak count, and one that dropped its reference early as a double credit. */
+static void test_quota_ledger_deferred_survives_task_release(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    uint64_t           before, pending_before, leaks_before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    pending_before = quota_ledger_deferrals_pending();
+    leaks_before   = quota_ledger_leak_count();
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&ob),
+                   (uint64_t)QUOTA_LEDGER_RETURN_DEFERRED,
+                   "the return defers");
+    KeLowerIrql(old);
+
+    /* Release the task's own claim BEFORE draining: the pending slot's
+     * transferred reference is now the only one keeping the ledger alive. */
+    quota_ledger_task_release(t);
+
+    TEST_ASSERT_EQ(quota_ledger_leak_count(), leaks_before,
+                   "a pending deferral is not reclaimed as an orphan");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before + 1,
+                   "it is still pending after the release");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "and still charged");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "the drain completes it after the task let go");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "credited in full");
+    TEST_ASSERT_EQ(quota_ledger_leak_count(), leaks_before,
+                   "and never counted as a leak");
+    quota_ledger_test_hold(0);
+}
+
+/* Dropping the LAST ledger reference above PASSIVE_LEVEL must defer the
+ * destruction, not run an orphan drain plus up to 64 chunk frees inside an
+ * interrupt. An implementation that called quota_ledger_destroy directly here
+ * would pass every other test in this file. */
+static void test_quota_ledger_destroy_at_raised_irql_defers(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    quota_ledger_t    *ledger;
+    uint64_t           destroyed_before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    destroyed_before = quota_ledger_deferrals_destroyed();
+
+    /* Take a charge purely to materialise the ledger, then hold an explicit
+     * reference and give up every other one, so the deref below is the last. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+    ledger = ob.ledger;
+    TEST_ASSERT_NOT_NULL((void *)ledger, "the charge named a ledger");
+    quota_ledger_ref(ledger);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&ob),
+                   (uint64_t)QUOTA_LEDGER_RETURN_CREDITED,
+                   "the obligation is returned at PASSIVE_LEVEL");
+    quota_ledger_task_release(t);   /* drops the task's claim; ours remains */
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    quota_ledger_deref(ledger);     /* the LAST reference, at raised IRQL */
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ(quota_ledger_deferrals_destroyed(), destroyed_before,
+                   "nothing was destroyed inside the raised-IRQL window");
+
+    (void)quota_ledger_drain_now();
+    TEST_ASSERT_EQ(quota_ledger_deferrals_destroyed(), destroyed_before + 1,
+                   "the drain performed exactly one deferred destruction");
+    quota_ledger_test_hold(0);
+}
+
+/* More pending obligations than one pass's slot budget must still all complete.
+ * Without a saved cursor every pass rescans the first QUOTA_LEDGER_DRAIN_SLOTS
+ * slots, finds them already done, and requeues forever -- the obligation past
+ * the budget is never examined and the worker spins. 513 is the smallest count
+ * that crosses the 512-slot bound. */
+static void test_quota_ledger_deferrals_past_the_slot_budget_complete(void)
+{
+    quota_ledger_test_hold(1);
+    enum { N = 513 };
+    struct task       *t = task_current();
+    static quota_obligation_t obs[N];   /* static: too large for a kernel stack */
+    uint64_t           before, pending_before;
+    KIRQL              old;
+    uint32_t           i, charged = 0;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    pending_before = quota_ledger_deferrals_pending();
+
+    for (i = 0; i < (uint32_t)N; i++) {
+        obs[i] = (quota_obligation_t){ 0 };
+        if (quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE, 1,
+                                        &obs[i]) != STATUS_SUCCESS)
+            break;
+        charged++;
+    }
+    TEST_ASSERT_EQ((uint64_t)charged, (uint64_t)N,
+                   "all 513 obligations were charged (the ledger grows past one chunk)");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    for (i = 0; i < charged; i++)
+        (void)quota_ledger_return(&obs[i]);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before + charged,
+                   "every one of them is pending");
+
+    /* Bounded number of passes, so a live-lock fails the test instead of
+     * hanging the suite. */
+    uint32_t completed = 0, rounds = 0;
+    while (completed < charged && rounds++ < 8u)
+        completed += quota_ledger_drain_now();
+
+    TEST_ASSERT_EQ((uint64_t)completed, (uint64_t)charged,
+                   "every deferral past the slot budget is completed, not rescanned forever");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before,
+                   "nothing left pending");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "and every charge is credited back");
+
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
+/* quota_ledger_charge_current allocates, so it refuses a raised-IRQL caller with
+ * a status rather than entering the allocation path. */
+static void test_quota_ledger_charge_current_refuses_raised_irql(void)
+{
+    quota_ledger_test_hold(1);
+    quota_obligation_t ob = { 0 };
+    NTSTATUS           st;
+    KIRQL              old;
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    st = quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE, 1, &ob);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_UNSUCCESSFUL,
+                   "a raised-IRQL ledger charge is refused, not attempted");
+    TEST_ASSERT_NULL((void *)ob.ledger,
+                     "the refused charge leaves an empty obligation");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&ob),
+                   (uint64_t)QUOTA_LEDGER_RETURN_NONE,
+                   "returning the empty obligation owes nothing");
+    quota_ledger_test_hold(0);
+}
+
+/* The drain is only legal at PASSIVE_LEVEL, and says so by doing nothing rather
+ * than by running the very work the deferral exists to keep out of an interrupt. */
+static void test_quota_ledger_drain_now_refuses_raised_irql(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    uint64_t           before;
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge succeeds");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    (void)quota_ledger_return(&ob);
+    uint32_t drained_high = quota_ledger_drain_now();
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)drained_high, 0u,
+                   "the drain does nothing above PASSIVE_LEVEL");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
+                   "so the charge is still outstanding");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "and completes once the caller is back at PASSIVE_LEVEL");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "credited in full");
+
+    /* Release the task ledger this suite created, the same cleanup the other
+     * ledger tests do: the ledger is allocated on a task's first obligation and
+     * lives to reap, so leaving it behind would read as a heap leak. Every
+     * obligation above is completed by now, so the release drains nothing. */
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
+/* Several deferrals on the same ledger complete in ONE drain pass, and the
+ * pending count tracks them exactly. */
+static void test_quota_ledger_deferred_batch_completes(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t = task_current();
+    quota_obligation_t obs[4];
+    uint64_t           before, pending_before;
+    KIRQL              old;
+    uint32_t           i;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    pending_before = quota_ledger_deferrals_pending();
+
+    for (i = 0; i < 4; i++) {
+        obs[i] = (quota_obligation_t){ 0 };
+        TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                             1, &obs[i]),
+                       (uint64_t)STATUS_SUCCESS, "batch ledger charge succeeds");
+    }
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 4,
+                   "all four charges landed");
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    for (i = 0; i < 4; i++)
+        (void)quota_ledger_return(&obs[i]);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before + 4,
+                   "all four are pending, so the ledger was queued once, not four times");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 4u,
+                   "one pass completes the whole batch");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "every charge is credited back");
+    TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before,
+                   "nothing left pending");
+
+    /* Release the task ledger this suite created, the same cleanup the other
+     * ledger tests do: the ledger is allocated on a task's first obligation and
+     * lives to reap, so leaving it behind would read as a heap leak. Every
+     * obligation above is completed by now, so the release drains nothing. */
+    quota_ledger_task_release(t);
+    quota_ledger_test_hold(0);
+}
+
 void test_register_quota_ledger(void)
 {
+    test_suite_register_cat("Quota ledger: a raised-IRQL return defers instead of crediting",
+                            test_quota_ledger_return_at_raised_irql_defers, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a deferred obligation is credited exactly once",
+                            test_quota_ledger_deferred_drain_credits_once, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a doubled raised-IRQL return defers once",
+                            test_quota_ledger_double_return_at_raised_irql, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a deferral survives the task release",
+                            test_quota_ledger_deferred_survives_task_release, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a last-reference drop at raised IRQL defers the destroy",
+                            test_quota_ledger_destroy_at_raised_irql_defers, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: deferrals past the slot budget still complete",
+                            test_quota_ledger_deferrals_past_the_slot_budget_complete, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a raised-IRQL charge is refused, not attempted",
+                            test_quota_ledger_charge_current_refuses_raised_irql, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: the drain refuses to run above PASSIVE_LEVEL",
+                            test_quota_ledger_drain_now_refuses_raised_irql, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a batch of deferrals completes in one pass",
+                            test_quota_ledger_deferred_batch_completes, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: gate entry and exit balance the in-flight count",
                             test_quota_gate_enter_exit_balances, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: a CLOSED gate refuses a charge with STATUS_RETRY",

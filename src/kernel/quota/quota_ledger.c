@@ -8,6 +8,7 @@
 #include "kernel/quota/quota_ledger.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"   /* KeGetCurrentIrql for the diagnostic gate */
+#include "kernel/sched/dpc.h"    /* threaded DPC for deferred completion */
 #include "kernel/mm/heap.h"      /* kmalloc_zeroed / kfree */
 #include "kernel/klog.h"
 
@@ -301,6 +302,13 @@ NTSTATUS quota_gate_quiesce(struct task *task)
 typedef struct quota_ledger_slot {
     quota_charge_receipt_t receipt;
     atomic64_t             owner;   /* 0 = free, else this allocation's epoch */
+    /* Nonzero when a raised-IRQL return handed this slot to the drain worker,
+     * and it holds the token that return must present. This is the ENTIRE
+     * deferral record, which is why the deferral path allocates nothing: the
+     * slot the obligation already owns is the storage. The matching epoch is not
+     * duplicated here -- `owner` already is that epoch, and the deferring
+     * returner is by definition the agent that still owns the slot. */
+    atomic64_t             deferred_token;
 } quota_ledger_slot_t;
 
 typedef struct quota_ledger_chunk {
@@ -337,6 +345,29 @@ struct quota_ledger {
     spinlock_t            lock;       /* chunk-list APPEND only                */
     quota_ledger_chunk_t *chunks;     /* append-only; acquire-loaded           */
     uint32_t              capacity;   /* slots addressable; grows only         */
+    /* Intrusive link for the global pending-completion list, and the flag that
+     * keeps this ledger on it at most once. Both are guarded by g_defer_lock,
+     * never by `lock` above: this list is walked from an interrupt, and mixing
+     * it with the chunk-append lock would put an allocation-adjacent lock in
+     * that path. `defer_destroy` records that the final reference was dropped at
+     * raised IRQL, so the drain must destroy rather than dereference. */
+    struct quota_ledger  *defer_next;
+    uint8_t               defer_queued;
+    uint8_t               defer_destroy;
+    /* Where the NEXT drain pass resumes. Without it a ledger holding more
+     * pending slots than one pass's budget rescans the same prefix forever:
+     * the pass would examine slots 0..budget-1, find them already completed,
+     * hit the bound, requeue, and never reach the deferral at a higher index --
+     * a live-lock that also spins the worker. Guarded by g_defer_lock. */
+    uint32_t              defer_cursor;
+    /* Deferrals stamped on this ledger and not yet completed. It is the REQUEUE
+     * PREDICATE, and it has to be a count rather than "did I run out of budget":
+     * a pass that stops mid-array leaves work behind it, but so does one that
+     * finishes the array having started past zero, because a deferral can land
+     * on an already-queued ledger at a slot the cursor has gone past. Requeuing
+     * on the budget alone misses that one; requeuing whenever the cursor is
+     * nonzero never terminates. Requeuing while work remains does both. */
+    uint32_t              defer_pending;
     quota_ledger_slot_t   inline_slots[QUOTA_LEDGER_INLINE_SLOTS];
 };
 
@@ -600,6 +631,228 @@ static int quota_ledger_try_ref(quota_ledger_t *ledger)
     }
 }
 
+/* ========================================================================== *
+ * Deferred completion above PASSIVE_LEVEL
+ *
+ * The contract, and the precise statement of what is unsafe at raised IRQL,
+ * live in quota_ledger.h. This is the mechanism: one global list of ledgers
+ * with work pending, and one threaded DPC that completes it at PASSIVE_LEVEL.
+ * ========================================================================== */
+
+/* The CPU whose DPC queues actually get serviced. Same value and same reason as
+ * quota_pressure.c's service CPU: only the BSP runs the timer ISR that drains
+ * DPC queues, so a threaded DPC queued from an idle AP can sit there
+ * indefinitely -- and since only the callback clears the arming flag, one
+ * stranded callback would lock every later producer out of the queue for the
+ * rest of the boot. Every insert is therefore PINNED, never DPC_TARGET_CURRENT. */
+#define QUOTA_LEDGER_SERVICE_CPU     0u
+
+/* Work bound for ONE drain callback. The worker is shared (pressure publication
+ * runs on it too), and a ledger can hold QUOTA_LEDGER_MAX_CHUNKS chunks worth of
+ * slots, so an unbounded callback could monopolise it for an arbitrary walk. The
+ * callback stops at whichever bound it reaches first and re-arms itself if work
+ * remains, which turns a burst into several bounded visits instead of one long
+ * one. */
+#define QUOTA_LEDGER_DRAIN_LEDGERS   16u
+#define QUOTA_LEDGER_DRAIN_SLOTS     512u
+
+/* Set in a slot's `owner` word to mark the slot DEFERRED: its charge is owed to
+ * the drain and the slot may not be reclaimed until the drain has completed it.
+ *
+ * IT IS PART OF THE OWNER WORD ON PURPOSE, because validating the epoch and
+ * claiming the deferral have to be ONE transition. Reading the epoch and then
+ * CAS-ing a separate token word leaves an ABA window: between the two, another
+ * CPU can complete the old obligation, release the slot, and let a fresh charge
+ * claim it -- and the stale return then stamps its dead token onto a stranger's
+ * charge, whose own return later finds the slot "already deferred", coalesces,
+ * and throws away the only handle that could have credited it. A compare-and
+ * -swap of `owner` from the exact epoch to epoch|DEFERRED does both at once, and
+ * a nonzero owner is precisely what quota_ledger_claim_slot refuses, so the slot
+ * cannot be reclaimed while the mark stands.
+ *
+ * Bit 63 is free: epochs come from a monotonic counter starting at 1, so no
+ * reachable epoch has the top bit set. */
+#define QUOTA_SLOT_DEFERRED          ((int64_t)1 << 63)
+
+#ifdef KERNEL_TESTS
+/* Bounded wait for an in-flight drain pass to finish when a test takes the
+ * hold. An iteration count rather than a duration, for the same reason the gate
+ * drain wait is: it must behave the same on TCG, KVM, WHPX and bare metal. */
+#define QUOTA_LEDGER_HOLD_WAIT_ITERS 1000000u
+#endif
+
+static spinlock_t      g_defer_lock = SPINLOCK_INIT;
+static quota_ledger_t *g_defer_head;
+static quota_ledger_t *g_defer_tail;
+
+/* Exactly one CPU may hand g_defer_dpc to the DPC queue at a time; dpc.h
+ * documents concurrent same-DPC inserts as caller misuse. The atomic exchange is
+ * what makes that single ownership real -- a read-then-set would let two CPUs
+ * both observe 0. Cleared only by the callback. */
+static uint32_t        g_defer_armed;
+
+/* Set by quota_ledger_init once a worker exists to defer TO. Until then a
+ * raised-IRQL return completes in place: correctness is preserved, the bounded
+ * -work property is not, and g_defer_forced counts exactly how often that
+ * happened rather than leaving it to assumption. */
+static uint32_t        g_defer_ready;
+
+static KDPC            g_defer_dpc;
+
+/* ONE drain pass runs at a time, system-wide. Two concurrent walkers over the
+ * same ledger cannot be made safe cheaply: the pop takes a ledger OFF the list,
+ * so a producer can immediately requeue it and a second walker can then be
+ * inside the same slot array while the first is completing obligations in it.
+ * A single claim removes that entire class, and costs nothing real -- the DPC
+ * is pinned to one CPU, so the only contender is the synchronous drain. A
+ * refused pass is not lost work: the running pass rechecks and re-arms. */
+static uint32_t        g_defer_draining;
+
+static uint32_t        g_defer_pending;
+static uint64_t        g_defer_forced;
+static uint64_t        g_defer_completed;
+static uint64_t        g_defer_destroyed;
+
+static int  quota_ledger_defer_nonempty(void);
+static void quota_ledger_defer_arm(void);
+
+#ifdef KERNEL_TESTS
+/* Drain hold. In a booted test kernel the threaded-DPC worker is already
+ * running, so it would race a test for the very obligations that test just
+ * deferred -- and an assertion like "this drain completed N" would then be
+ * counting against a worker that may have taken some of them first. While the
+ * hold is set the worker neither arms nor drains, and quota_ledger_drain_now
+ * (the tests' own entry point) owns the queue outright. Same mechanism, and the
+ * same reason, as quota_pressure.c's publication hold. */
+static uint32_t g_defer_test_hold;
+
+void quota_ledger_test_hold(int hold)
+{
+    if (hold) {
+        __atomic_store_n(&g_defer_test_hold, 1u, __ATOMIC_RELEASE);
+        /* Setting the flag stops the worker from STARTING a pass; it does not
+         * evict one already running, which would go on racing the very
+         * assertions the hold exists to make deterministic (and would hold the
+         * single-drainer claim, so the test's own quota_ledger_drain_now would
+         * return zero having done nothing). Wait it out. Bounded, because a
+         * pass is bounded by its own ledger and slot budgets, and a timeout here
+         * would only mean the test races as it did before. */
+        for (uint32_t spin = 0; spin < QUOTA_LEDGER_HOLD_WAIT_ITERS; spin++) {
+            if (__atomic_load_n(&g_defer_draining, __ATOMIC_ACQUIRE) == 0u)
+                break;
+        }
+        return;
+    }
+
+    __atomic_store_n(&g_defer_test_hold, 0u, __ATOMIC_RELEASE);
+
+    /* Releasing must RE-ARM. A callback dispatched before the hold was taken
+     * disarms on entry and then returns without draining, so the queue can be
+     * non-empty with nothing armed to come back for it -- deferred work would
+     * then sit until some unrelated producer happened to arrive, which in a test
+     * boot may be never. */
+    if (quota_ledger_defer_nonempty())
+        quota_ledger_defer_arm();
+}
+#endif
+
+static void quota_ledger_defer_arm(void)
+{
+    if (!__atomic_load_n(&g_defer_ready, __ATOMIC_ACQUIRE))
+        return;
+#ifdef KERNEL_TESTS
+    if (__atomic_load_n(&g_defer_test_hold, __ATOMIC_ACQUIRE))
+        return;
+#endif
+    if (__atomic_exchange_n(&g_defer_armed, 1u, __ATOMIC_ACQ_REL) != 0u)
+        return;
+    if (!KeInsertQueueDpcOnCpu(&g_defer_dpc, QUOTA_LEDGER_SERVICE_CPU,
+                               (void *)0, (void *)0, (int *)0)) {
+        /* Already queued, or the queue refused it. Releasing ownership is what
+         * keeps a refusal from being permanent: leaving the flag set would mean
+         * no later producer could ever arm the drain again. */
+        __atomic_store_n(&g_defer_armed, 0u, __ATOMIC_RELEASE);
+    }
+}
+
+/* Put `ledger` on the pending list if it is not already there, and arm the
+ * worker. FIFO, so a ledger that has waited longest is completed first.
+ *
+ * Callable at any IRQL: it allocates nothing and the only lock it takes is this
+ * list's own, held across a couple of pointer stores. */
+static void quota_ledger_defer_push(quota_ledger_t *ledger, int destroy)
+{
+    uint64_t flags;
+    int      enqueued = 0;
+
+    /* TAKE THE MEMBERSHIP REFERENCE BEFORE THE NODE IS VISIBLE. Taking it after
+     * unlocking is a use-after-free: a drain already running can pop and finish
+     * the ledger in that gap, drop the transferred reference AND the membership
+     * reference it believes it holds, reach zero, and free the storage this
+     * function is about to touch. The caller's own reference keeps the ledger
+     * alive up to here, so the ref is always legal to take; if it turns out the
+     * ledger was already queued, the speculative reference is dropped after the
+     * lock is released.
+     *
+     * A DESTROY push takes none: its refcount is already zero, which is exactly
+     * what makes it unreachable by anyone else and its queue node safe to
+     * write. */
+    if (!destroy)
+        quota_ledger_ref(ledger);
+
+    spin_lock_irqsave(&g_defer_lock, &flags);
+    if (destroy)
+        ledger->defer_destroy = 1u;
+    if (!ledger->defer_queued) {
+        ledger->defer_queued = 1u;
+        ledger->defer_next   = (quota_ledger_t *)0;
+        if (g_defer_tail)
+            g_defer_tail->defer_next = ledger;
+        else
+            g_defer_head = ledger;
+        g_defer_tail = ledger;
+        enqueued = 1;
+    }
+    spin_unlock_irqrestore(&g_defer_lock, flags);
+
+    /* Already queued: the membership reference is held by whoever enqueued it,
+     * so give back the speculative one. Safe after the unlock because the
+     * caller still holds its own. */
+    if (!enqueued && !destroy)
+        quota_ledger_deref(ledger);
+
+    quota_ledger_defer_arm();
+}
+
+static quota_ledger_t *quota_ledger_defer_pop(void)
+{
+    quota_ledger_t *ledger;
+    uint64_t        flags;
+
+    spin_lock_irqsave(&g_defer_lock, &flags);
+    ledger = g_defer_head;
+    if (ledger) {
+        g_defer_head = ledger->defer_next;
+        if (!g_defer_head)
+            g_defer_tail = (quota_ledger_t *)0;
+        ledger->defer_next   = (quota_ledger_t *)0;
+        ledger->defer_queued = 0u;
+    }
+    spin_unlock_irqrestore(&g_defer_lock, flags);
+    return ledger;
+}
+
+static int quota_ledger_defer_nonempty(void)
+{
+    int      any;
+    uint64_t flags;
+
+    spin_lock_irqsave(&g_defer_lock, &flags);
+    any = (g_defer_head != (quota_ledger_t *)0);
+    spin_unlock_irqrestore(&g_defer_lock, flags);
+    return any;
+}
+
 /* Return every still-live obligation in a ledger nobody can reach any more, and
  * report how many there were. An ACTIVE slot at this point is unreturnable by
  * anyone else -- no holder exists to present its token -- so leaving it charged
@@ -684,6 +937,24 @@ void quota_ledger_deref(quota_ledger_t *ledger)
         return;
     if (!atomic_dec_and_test(&ledger->refcount))
         return;
+
+    /* The refcount reached zero, so nothing else can reach this ledger and the
+     * intrusive list node inside it is now exclusively ours to write. That
+     * ordering is the whole safety argument for reusing the dying object's own
+     * storage as the queue node, and atomic_dec_and_test is what establishes it:
+     * the push below is strictly after the acquire-release transition to zero,
+     * never concurrent with another walker. */
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        if (__atomic_load_n(&g_defer_ready, __ATOMIC_ACQUIRE)) {
+            quota_ledger_defer_push(ledger, 1);
+            return;
+        }
+        /* No worker yet, so there is nowhere to defer to and the destroy runs
+         * here. Counted rather than silent: this is the one window where the
+         * bounded-work property does not hold. */
+        __atomic_fetch_add(&g_defer_forced, 1, __ATOMIC_RELAXED);
+    }
+
     quota_ledger_destroy(ledger);
 }
 
@@ -846,10 +1117,93 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
     return STATUS_SUCCESS;
 }
 
+/* Complete one obligation against `slot`: credit the charge back, release the
+ * block references, and release the slot against the epoch that claimed it.
+ *
+ * Shared verbatim by the inline return and the drain worker, so a deferred
+ * completion is the SAME completion -- not a second implementation that could
+ * drift from it. Returns 1 when the charge was credited, 0 when it was not
+ * (abandoned to the ledger drain, or the handle was already stale).
+ *
+ * The slot release is deliberately inside this helper: doing it in the caller
+ * would mean the drain had to duplicate the exact-epoch CAS that makes a stale
+ * duplicate harmless. */
+static int quota_ledger_complete_return(quota_ledger_slot_t *slot,
+                                        uint64_t token, uint64_t epoch)
+{
+    /* Retry the WHOLE return, not merely the tag CAS inside it. A return can fail
+     * to land for exactly one reason -- colliding with an in-progress adjust on
+     * this same charge -- and that collision clears the moment the adjust
+     * republishes, so re-reading and trying again keeps the failure off the caller
+     * in every case where the adjust is making progress. And it always is: an
+     * adjust masks interrupts across its whole claim-to-republish window, so it
+     * can only be observed BUSY from ANOTHER CPU, where it is running. */
+    int completed  = 0;
+    int still_live = 0;
+
+    for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_RETURN_TRIES; attempt++) {
+        quota_return_chain(&slot->receipt, token);
+
+        int64_t  tag   = atomic64_read(&slot->receipt.tag);
+        uint64_t gen   = QUOTA_RECEIPT_TAG_GEN(tag);
+        uint32_t state = QUOTA_RECEIPT_TAG_STATE(tag);
+
+        /* ONLY IDLE at our own generation proves the return completed. */
+        if (gen == token && state == QUOTA_RECEIPT_IDLE) {
+            completed = 1;
+            break;
+        }
+        /* Our generation in ANY other state means the charge is still LIVE: BUSY
+         * while an adjust owns it, or ACTIVE again because the adjust just
+         * republished it. Both are retryable, and treating ACTIVE as anything
+         * else would be the worst possible mistake here -- it would classify a
+         * live charge as stale and destroy the only handle able to return it. */
+        if (gen == token) {
+            still_live = 1;
+            continue;
+        }
+        /* A MOVED generation is the only proof of staleness: this charge is long
+         * gone and no further attempt could ever match it. */
+        still_live = 0;
+        break;
+    }
+
+    if (!completed) {
+        if (still_live) {
+            /* The charge is live but an adjust outlasted every attempt. ABANDON
+             * it WITHOUT releasing the slot. That is what makes the reap-time
+             * sweep a real backstop rather than a promise -- retaining the
+             * obligation instead would hold the refcount above the task's own
+             * claim forever, so the drain would never run and the charge, its
+             * block references, and its slot would outlive the boot. Letting go
+             * means the ledger's own drain (at the task release, or at
+             * destruction) reclaims the charge and counts it.
+             *
+             * COUNTED, because the contract in quota_ledger.h claims this is rare
+             * (it needs a cross-CPU collision with an owner queued behind a
+             * contended block lock) and a claim like that should be measurable
+             * rather than merely asserted. A nonzero count here with a matching
+             * rise in the leak count is the signature to investigate. */
+            __atomic_fetch_add(&g_ledger_abandons, 1, __ATOMIC_RELAXED);
+        }
+        /* Otherwise this handle is STALE -- its charge was returned already and
+         * the slot has moved on. It owes nothing. Either way the slot is
+         * deliberately NOT released: this handle does not own it. */
+        return 0;
+    }
+
+    /* Release the slot against the EXACT epoch that claimed it. A stale duplicate
+     * of this handle reaches this line with a superseded epoch, matches nothing,
+     * and therefore cannot free a slot another charger has since claimed and is
+     * about to fill -- which a bare "clear the flag" would do. */
+    (void)atomic64_cmpxchg(&slot->owner, (int64_t)epoch, 0);
+    return 1;
+}
+
 int quota_ledger_return(quota_obligation_t *ob)
 {
     if (!ob || !ob->ledger || ob->token == 0)
-        return 0;
+        return QUOTA_LEDGER_RETURN_NONE;
 
     quota_ledger_t      *ledger = ob->ledger;
     quota_ledger_slot_t *slot   = quota_ledger_slot_at(ledger, ob->slot);
@@ -862,91 +1216,67 @@ int quota_ledger_return(quota_obligation_t *ob)
         ob->token  = 0;
         ob->epoch  = 0;
         quota_ledger_deref(ledger);
-        return 0;
+        return QUOTA_LEDGER_RETURN_NONE;
     }
 
-    /* Retry the WHOLE return, not merely the tag CAS inside it. A return can fail
-     * to land for exactly one reason -- colliding with an in-progress adjust on
-     * this same charge -- and that collision clears the moment the adjust
-     * republishes, so re-reading and trying again keeps the failure off the caller
-     * in every case where the adjust is making progress. And it always is: an
-     * adjust masks interrupts across its whole claim-to-republish window, so it
-     * can only be observed BUSY from ANOTHER CPU, where it is running. */
-    int completed = 0;
-    int still_live = 0;
+    /* ABOVE PASSIVE_LEVEL the completion is handed to the drain worker instead of
+     * performed here, because completing it means releasing every block reference
+     * the receipt holds -- and a last block reference unlinks and frees that block
+     * -- which is unbounded work to do inside an interrupt. See the deferral
+     * contract in quota_ledger.h.
+     *
+     * The slot is the record: stamping the token onto the slot this obligation
+     * already owns is the whole handoff, so nothing is allocated. The CAS from 0
+     * is what makes a double return harmless -- the second one finds a token
+     * already stamped, owes nothing more, and must NOT hand the reference over a
+     * second time. */
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        if (__atomic_load_n(&g_defer_ready, __ATOMIC_ACQUIRE)) {
+            /* ONE transition claims the deferral and proves the handle is still
+             * the slot's owner. It fails for a stale handle (the slot moved on)
+             * and for a slot already marked DEFERRED (someone got there first);
+             * both mean this handle owes nothing further, and neither may fall
+             * through to the inline completion -- doing the block teardown at
+             * raised IRQL is the entire thing this path exists to prevent. */
+            if (atomic64_cmpxchg(&slot->owner, (int64_t)ob->epoch,
+                                 (int64_t)ob->epoch | QUOTA_SLOT_DEFERRED)
+                == (int64_t)ob->epoch) {
+                /* The slot is now ours and unreclaimable, so the token store
+                 * needs no CAS. Ordering against a drain comes from the queue
+                 * itself: this store precedes quota_ledger_defer_push, whose
+                 * spin_unlock releases and whose matching acquire is the pop --
+                 * so no drain can observe the mark without the token that tells
+                 * it what to credit. */
+                atomic64_set(&slot->deferred_token, (int64_t)ob->token);
 
-    for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_RETURN_TRIES; attempt++) {
-        quota_return_chain(&slot->receipt, ob->token);
+                /* The handle's ledger reference TRANSFERS to the pending slot:
+                 * the drain drops it once it has completed the obligation.
+                 * Emptying the handle without a deref is not a leak, it is the
+                 * handoff. */
+                ob->ledger = (quota_ledger_t *)0;
+                ob->slot   = 0;
+                ob->token  = 0;
+                ob->epoch  = 0;
+                __atomic_fetch_add(&g_defer_pending, 1, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&ledger->defer_pending, 1, __ATOMIC_RELAXED);
+                quota_ledger_defer_push(ledger, 0);
+                return QUOTA_LEDGER_RETURN_DEFERRED;
+            }
 
-        int64_t  tag   = atomic64_read(&slot->receipt.tag);
-        uint64_t gen   = QUOTA_RECEIPT_TAG_GEN(tag);
-        uint32_t state = QUOTA_RECEIPT_TAG_STATE(tag);
-
-        /* ONLY IDLE at our own generation proves the return completed. */
-        if (gen == ob->token && state == QUOTA_RECEIPT_IDLE) {
-            completed = 1;
-            break;
-        }
-        /* Our generation in ANY other state means the charge is still LIVE: BUSY
-         * while an adjust owns it, or ACTIVE again because the adjust just
-         * republished it. Both are retryable, and treating ACTIVE as anything
-         * else would be the worst possible mistake here -- it would classify a
-         * live charge as stale and destroy the only handle able to return it. */
-        if (gen == ob->token) {
-            still_live = 1;
-            continue;
-        }
-        /* A MOVED generation is the only proof of staleness: this charge is long
-         * gone and no further attempt could ever match it. */
-        still_live = 0;
-        break;
-    }
-
-    if (!completed) {
-        if (still_live) {
-            /* The charge is live but an adjust outlasted every attempt. ABANDON it:
-             * drop this handle's reference and empty the handle, WITHOUT releasing
-             * the slot. That is what makes the reap-time sweep a real backstop
-             * rather than a promise -- retaining the reference instead would hold
-             * the refcount above the task's own claim forever, so the drain would
-             * never run and the charge, its block references, and its slot would
-             * outlive the boot. Dropping it means the ledger's own drain (at the
-             * task release, or at destruction) reclaims the charge and counts it.
-             *
-             * The adjust that owns the slot holds its own obligation reference, so
-             * this deref can never destroy the ledger underneath it.
-             *
-             * COUNTED, because the contract in quota_ledger.h claims this is rare
-             * (it needs a cross-CPU collision with an owner queued behind a
-             * contended block lock) and a claim like that should be measurable
-             * rather than merely asserted. A nonzero count here with a matching
-             * rise in the leak count is the signature to investigate. */
-            __atomic_fetch_add(&g_ledger_abandons, 1, __ATOMIC_RELAXED);
             ob->ledger = (quota_ledger_t *)0;
             ob->slot   = 0;
             ob->token  = 0;
             ob->epoch  = 0;
             quota_ledger_deref(ledger);
-            return 0;
+            return QUOTA_LEDGER_RETURN_NONE;
         }
-
-        /* Otherwise this handle is STALE -- its charge was returned already and the
-         * slot has moved on. It owes nothing, so it is emptied and its reference
-         * dropped, exactly like the documented no-op double return. The slot is
-         * deliberately NOT released: this handle does not own it. */
-        ob->ledger = (quota_ledger_t *)0;
-        ob->slot   = 0;
-        ob->token  = 0;
-        ob->epoch  = 0;
-        quota_ledger_deref(ledger);
-        return 0;
+        /* No worker: there is nowhere to defer to, so the return completes here.
+         * The bounded-work property is what is lost, never correctness, and the
+         * count is what keeps that visible rather than assumed. */
+        __atomic_fetch_add(&g_defer_forced, 1, __ATOMIC_RELAXED);
     }
 
-    /* Release the slot against the EXACT epoch that claimed it. A stale duplicate
-     * of this handle reaches this line with a superseded epoch, matches nothing,
-     * and therefore cannot free a slot another charger has since claimed and is
-     * about to fill -- which a bare "clear the flag" would do. */
-    (void)atomic64_cmpxchg(&slot->owner, (int64_t)ob->epoch, 0);
+    int completed = quota_ledger_complete_return(slot, ob->token, ob->epoch);
 
     /* Empty the handle BEFORE dropping the reference: after the deref the ledger
      * may be gone, and a handle still naming it is a dangling pointer waiting for
@@ -956,7 +1286,287 @@ int quota_ledger_return(quota_obligation_t *ob)
     ob->token  = 0;
     ob->epoch  = 0;
     quota_ledger_deref(ledger);
-    return 1;
+    return completed ? QUOTA_LEDGER_RETURN_CREDITED : QUOTA_LEDGER_RETURN_NONE;
+}
+
+/* Complete every deferred return stamped on `ledger`, and report how many.
+ *
+ * Resumes at the ledger's saved cursor and stops once `budget` slots have been
+ * EXAMINED, so one enormous ledger cannot hold the shared worker for an
+ * unbounded walk; the caller requeues it and the saved cursor is what makes the
+ * next visit make progress instead of rescanning the same prefix.
+ *
+ * The caller must hold a reference for the duration (the queue membership one).
+ * That is what lets this function drop the obligations' transferred references
+ * SAFELY -- they are dropped after the iteration is finished, never inside it,
+ * because the last of them can destroy the ledger. */
+static uint32_t quota_ledger_drain_ledger(quota_ledger_t *ledger, uint32_t budget,
+                                          int *out_more)
+{
+    quota_ledger_iter_t  it;
+    quota_ledger_slot_t *slot;
+    uint32_t             index    = 0;
+    uint32_t             done     = 0;
+    uint32_t             examined = 0;
+    uint32_t             start;
+    uint32_t             last     = 0;
+    int                  wrapped  = 0;
+    uint64_t             flags;
+
+    *out_more = 0;
+
+    spin_lock_irqsave(&g_defer_lock, &flags);
+    start = ledger->defer_cursor;
+    spin_unlock_irqrestore(&g_defer_lock, flags);
+
+    quota_ledger_iter_init(&it, ledger);
+    while ((slot = quota_ledger_iter_next(&it, &index)) != (quota_ledger_slot_t *)0) {
+        /* Skipping to the cursor is a pointer bump per slot, not work, so it is
+         * deliberately NOT charged against the budget -- charging it would let a
+         * high cursor spend the whole allowance on skips and starve the very
+         * slots the cursor exists to reach. */
+        if (index < start)
+            continue;
+
+        if (examined++ >= budget) {
+            *out_more = 1;
+            break;
+        }
+        last = index;
+
+        int64_t token = atomic64_read(&slot->deferred_token);
+        if (token == 0)
+            continue;
+
+        /* Take the deferral before completing it. The claim is what stops a
+         * later pass from completing the same obligation twice and dropping its
+         * transferred reference twice. */
+        if (atomic64_cmpxchg(&slot->deferred_token, token, 0) != token)
+            continue;
+
+        /* Complete against the owner word AS IT STANDS -- epoch|DEFERRED. That
+         * is the value the release CAS inside the completion must match, and
+         * matching it is what finally clears the mark and frees the slot for
+         * reuse. Nobody can have changed it: the mark is what makes the slot
+         * unclaimable, and this pass owns the mark. */
+        int64_t owner = atomic64_read(&slot->owner);
+        (void)quota_ledger_complete_return(slot, (uint64_t)token, (uint64_t)owner);
+        __atomic_fetch_sub(&ledger->defer_pending, 1, __ATOMIC_RELAXED);
+        done++;
+    }
+    if (!*out_more)
+        wrapped = 1;   /* the sweep reached the end of the slot array */
+
+    spin_lock_irqsave(&g_defer_lock, &flags);
+    ledger->defer_cursor = wrapped ? 0u : (last + 1u);
+    spin_unlock_irqrestore(&g_defer_lock, flags);
+
+    /* Come back if and only if this ledger still owes something. Terminating,
+     * because every visit either completes at least one obligation or finds the
+     * count already zero -- and complete, because it does not depend on where in
+     * the array the remaining work happens to sit. */
+    *out_more = (__atomic_load_n(&ledger->defer_pending, __ATOMIC_RELAXED) != 0u);
+
+    if (done) {
+        __atomic_fetch_sub(&g_defer_pending, done, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_defer_completed, done, __ATOMIC_RELAXED);
+    }
+    return done;
+}
+
+/* One bounded pass over the pending list. PASSIVE_LEVEL, one at a time. */
+static uint32_t quota_ledger_drain_pass(void)
+{
+    uint32_t completed = 0;
+    uint32_t visited   = 0;
+
+    /* Claim the drain. A refused pass returns immediately rather than walking a
+     * ledger another pass is already inside; the pass that holds the claim
+     * rechecks the list before it finishes, so nothing is stranded. */
+    if (__atomic_exchange_n(&g_defer_draining, 1u, __ATOMIC_ACQ_REL) != 0u)
+        return 0;
+
+    while (visited++ < QUOTA_LEDGER_DRAIN_LEDGERS) {
+        quota_ledger_t *ledger = quota_ledger_defer_pop();
+        if (!ledger)
+            break;
+
+        int destroy = ledger->defer_destroy;
+
+        if (destroy) {
+            /* The final reference was dropped at raised IRQL, so nothing else
+             * can reach this ledger and the destroy is ours alone to run --
+             * here, at PASSIVE_LEVEL, where its orphan drain and its chunk frees
+             * cost an interrupt nothing. A destroy entry carries no membership
+             * reference (its refcount is already zero), so there is none to
+             * drop afterwards. */
+            ledger->defer_destroy = 0u;
+            quota_ledger_destroy(ledger);
+            __atomic_fetch_add(&g_defer_destroyed, 1, __ATOMIC_RELAXED);
+            continue;
+        }
+
+        int      more = 0;
+        uint32_t done = quota_ledger_drain_ledger(ledger, QUOTA_LEDGER_DRAIN_SLOTS,
+                                                  &more);
+        completed += done;
+
+        /* Requeue BEFORE releasing anything: the decision reads the ledger, and
+         * the requeue takes its own membership reference. Tail, so a large
+         * ledger cannot starve the ones behind it. */
+        if (more)
+            quota_ledger_defer_push(ledger, 0);
+
+        /* NOW drop what the completions transferred, and the membership
+         * reference last. Every ledger access above is finished, so the deref
+         * that finally destroys it -- possibly this one -- has nothing left to
+         * race. */
+        for (uint32_t i = 0; i < done; i++)
+            quota_ledger_deref(ledger);
+        quota_ledger_deref(ledger);
+    }
+
+    __atomic_store_n(&g_defer_draining, 0u, __ATOMIC_RELEASE);
+    return completed;
+}
+
+/* Threaded DPC routine: PASSIVE_LEVEL, so the block teardown and the heap frees
+ * a completion performs are all legal here.
+ *
+ * The disarm-then-drain-then-recheck shape closes the lost-wakeup window, and it
+ * is the same shape quota_pressure_drain uses: a producer that pushes between
+ * the last pop and the disarm would otherwise find the DPC still armed, skip its
+ * insert, and leave its obligation pending until some unrelated event. Clearing
+ * the flag FIRST means such a producer either arms us again (its exchange sees
+ * 0) or we see its ledger in the recheck below. */
+static void quota_ledger_deferred_drain(KDPC *dpc, void *context, void *arg1,
+                                        void *arg2)
+{
+    (void)dpc; (void)context; (void)arg1; (void)arg2;
+
+    __atomic_store_n(&g_defer_armed, 0u, __ATOMIC_RELEASE);
+
+#ifdef KERNEL_TESTS
+    /* A callback queued before the hold was taken can still be dispatched after
+     * it. Checking here as well as in the arm is what makes the hold actually
+     * hold; the disarm above already ran, so a later producer can re-arm. */
+    if (__atomic_load_n(&g_defer_test_hold, __ATOMIC_ACQUIRE))
+        return;
+#endif
+
+    (void)quota_ledger_drain_pass();
+
+    /* Work left over, either because a producer raced the disarm or because this
+     * pass hit its budget. Re-arm so the remainder is another bounded visit. */
+    if (quota_ledger_defer_nonempty())
+        quota_ledger_defer_arm();
+}
+
+void quota_ledger_init(void)
+{
+    if (__atomic_load_n(&g_defer_ready, __ATOMIC_ACQUIRE))
+        return;
+
+    /* PUBLISH READY ONLY IF A WORKER ACTUALLY EXISTS. dpc_start_threads rolls
+     * its started flag back and lets boot continue when the worker task cannot
+     * be created, and in that degraded state a deferral would be strictly worse
+     * than no deferral at all: the return transfers its only reference to a
+     * queue nothing will ever drain, so the charge, its block references and the
+     * ledger stay outstanding for the rest of the boot. Staying un-ready keeps
+     * the forced-inline behaviour, which is unbounded but correct, and the
+     * counter says how often it happened. This is idempotent, so a later call
+     * once the worker is up promotes the subsystem cleanly. */
+    if (!dpc_worker_started()) {
+        klog(LOG_ERROR, "quota",
+             "no threaded-DPC worker: ledger returns above PASSIVE_LEVEL will "
+             "complete inline (unbounded); see quota_ledger_deferrals_forced");
+        return;
+    }
+
+    KeInitializeThreadedDpc(&g_defer_dpc, quota_ledger_deferred_drain, (void *)0);
+
+    /* Publish LAST. A producer that sees the ready flag must find a fully
+     * prepared KDPC behind it, so the release store is what orders the two. */
+    __atomic_store_n(&g_defer_ready, 1u, __ATOMIC_RELEASE);
+
+    klog(LOG_INFO, "quota", "ledger deferred-completion worker armed (CPU %u)",
+         (uint64_t)QUOTA_LEDGER_SERVICE_CPU);
+
+    /* Anything deferred during the pre-worker window, or pushed by a destroy that
+     * found no worker, is drained now rather than waiting for the next producer. */
+    if (quota_ledger_defer_nonempty())
+        quota_ledger_defer_arm();
+}
+
+uint32_t quota_ledger_drain_now(void)
+{
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return 0;
+    return quota_ledger_drain_pass();
+}
+
+uint32_t quota_ledger_deferrals_pending(void)
+{
+    return __atomic_load_n(&g_defer_pending, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_deferrals_forced(void)
+{
+    return __atomic_load_n(&g_defer_forced, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_deferrals_completed(void)
+{
+    return __atomic_load_n(&g_defer_completed, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_deferrals_destroyed(void)
+{
+    return __atomic_load_n(&g_defer_destroyed, __ATOMIC_RELAXED);
+}
+
+NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount,
+                                     quota_obligation_t *out)
+{
+    struct task *task;
+
+    if (!out)
+        return STATUS_INVALID_PARAMETER;
+
+    out->ledger = (quota_ledger_t *)0;
+    out->slot   = 0;
+    out->token  = 0;
+    out->epoch  = 0;
+
+    /* Validate the TYPE before the boot exemption, for the same reason
+     * quota_charge_current does: an exempted charge that skipped this would
+     * report SUCCESS for an out-of-range type, so a subsystem wired to the wrong
+     * quota_resource_type_t would go unnoticed until the first charge made after
+     * SUBSYS_SCHED came up. A pure range check against the static taxonomy is
+     * valid before the registry is populated. */
+    if (!quota_resource_desc(type))
+        return STATUS_INVALID_PARAMETER;
+
+    /* The ledger allocates, so this entry point is PASSIVE_LEVEL and says so with
+     * a status. quota_charge_current needs no such guard because it never
+     * allocates; a consumer moved from one to the other does. */
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return STATUS_UNSUCCESSFUL;
+
+    /* Boot exemption, reproduced from quota_charge_current so that a converted
+     * consumer keeps the behaviour it was written against. Both conditions are
+     * milestones, not per-caller state: the taxonomy must be validated before a
+     * limit means anything, and the scheduler must be publishing tasks before one
+     * can be billed. The empty obligation left in `out` owes nothing, which
+     * quota_ledger_return already handles as a no-op. */
+    if (!quota_registry_ready() || !kernel_subsystem_ready(SUBSYS_SCHED))
+        return STATUS_SUCCESS;
+
+    task = task_current();
+    if (!task)
+        return STATUS_SUCCESS;
+
+    return quota_ledger_charge(task, type, amount, out);
 }
 
 NTSTATUS quota_ledger_adjust(quota_obligation_t *ob, uint64_t new_amount)
