@@ -379,7 +379,18 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      *     documents would win that charge's {token, ACTIVE} CAS and credit back
      *     a charge it never made. This is the same identity hole the zero-amount
      *     path closes below, closed here for the same reason. */
-    if (!receipt || !task || !out_token || (flags & ~QUOTA_CHARGE_CLIENT) != 0)
+    if (!receipt || !task || !out_token || (flags & ~QUOTA_CHARGE_FLAG_MASK) != 0)
+        return STATUS_INVALID_PARAMETER;
+
+    /* The source rides in a slice of `flags`, so it is validated HERE with the
+     * rest of them and before the receipt is claimed. Refusing an undefined
+     * source rather than folding it to UNKNOWN is deliberate: a caller passing a
+     * value this build does not define has a taxonomy mismatch (a stale
+     * enumerator, a truncated cast), and silently relabelling its charges
+     * "unattributed" would hide exactly the drift the refusal reports. */
+    const quota_charge_source_t source = QUOTA_CHARGE_SOURCE_OF(flags);
+
+    if (!quota_source_valid(source))
         return STATUS_INVALID_PARAMETER;
 
     /* Client charging is REFUSED, not approximated. Billing the impersonated
@@ -432,6 +443,13 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
     receipt->count  = 0;
     receipt->type   = type;
     receipt->amount = amount;
+    /* Recorded under the claim, alongside the type and amount it describes, so
+     * the return can credit the right subsystem without the caller restating it.
+     * Written on every path including the failures below: a receipt released
+     * back to IDLE holds no charge, so the field is inert there, and leaving a
+     * PREVIOUS charge's source visible on an idle receipt would be worse than
+     * inert -- it would be wrong. */
+    receipt->source = (uint16_t)source;
 
     /* Validate the TYPE before the zero-amount shortcut, and check liveness
      * too. A zero charge that skipped both would report success for an
@@ -587,6 +605,24 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * holding a previous token cannot claim it. The token is written BEFORE the
      * release-publish so the key exists the instant the charge becomes
      * returnable. */
+    /* ONE attribution update per OBLIGATION, not one per block. The loop above
+     * billed up to three principals for the same resource, so noting it per
+     * block would treble the figure and put a globally shared cache line inside
+     * the charge path's lock sections. Only the committed path records -- every
+     * refusal above returns before here, having charged nothing.
+     *
+     * RECORDED BEFORE THE RECEIPT GOES ACTIVE, and that ordering is load-bearing
+     * rather than tidy. Publishing first makes the charge RETURNABLE, so another
+     * CPU holding the token can complete a return -- and record its own -amount
+     * -- before this line runs. The cells are clamped at 0, so that credit would
+     * be absorbed against a row that has not been debited yet, and then this
+     * line would add an amount nothing will ever credit back: a permanent
+     * phantom in the row, from an interleaving that is otherwise entirely legal.
+     * Doing it under the BUSY claim removes the window instead of narrowing it.
+     * No lock is held here (each block was charged and released in the loop
+     * above), so the bounded CAS is legal. */
+    quota_source_note(source, type, (int64_t)amount);
+
     gen++;
     *out_token = gen;
     atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_ACTIVE));
@@ -594,6 +630,12 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * let a quiesce observe an empty gate while this charge was still being made
      * visible, which is the precise window the gate exists to close. */
     quota_gate_exit(task);
+
+    /* The cumulative count comes AFTER the publication boundary, deliberately.
+     * It has no ordering requirement -- nothing reconciles it against the primary
+     * counters -- so it does not belong in the exclusive window where the
+     * linearization-sensitive update has to live. */
+    quota_source_count_charge(source, type);
     return STATUS_SUCCESS;
 }
 
@@ -707,10 +749,31 @@ void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
         }
     }
 
+    /* Captured BEFORE the loop clears the receipt, because the loop zeroes the
+     * amount this credit is computed from. */
+    const quota_charge_source_t source = (quota_charge_source_t)receipt->source;
+    const quota_resource_type_t rtype  = receipt->type;
+    const uint64_t              given  = receipt->amount;
+
     for (uint32_t i = 0; i < receipt->count; i++)
         (void)quota_return(receipt->blocks[i], receipt->type, receipt->amount);
     quota_chain_release(receipt);
     receipt->amount = 0;
+
+    /* Credit the SAME subsystem the charge debited, and do it while this return
+     * still holds the receipt BUSY -- for the same reason the charge records
+     * before publishing ACTIVE. Releasing to IDLE first would let another CPU
+     * claim the storage and complete a whole new charge, recording ITS debit
+     * before this credit lands; the credit would then be applied against a row
+     * that already reflects the newer charge, and the clamp at 0 could swallow
+     * it. Ordering the two removes that interleaving rather than relying on the
+     * mismatch counter to notice it afterwards.
+     *
+     * That the source travels ON THE RECEIPT is what makes the pairing symmetric
+     * by construction: no caller can return a charge under a label different from
+     * the one it was made with. */
+    quota_source_note(source, rtype, -(int64_t)given);
+
     /* Release at the SAME generation the charge published. The next charge
      * advances it, so this token can never open a future charge. */
     atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_IDLE));
@@ -741,9 +804,18 @@ NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
                               quota_charge_receipt_t *receipt,
                               uint64_t *out_token)
 {
+    return quota_charge_current_from(type, amount, QUOTA_SOURCE_UNKNOWN,
+                                     receipt, out_token);
+}
+
+NTSTATUS quota_charge_current_from(quota_resource_type_t type, uint64_t amount,
+                                   quota_charge_source_t source,
+                                   quota_charge_receipt_t *receipt,
+                                   uint64_t *out_token)
+{
     struct task *task;
 
-    if (!receipt || !out_token)
+    if (!receipt || !out_token || !quota_source_valid(source))
         return STATUS_INVALID_PARAMETER;
 
     /* Validate the TYPE before the boot exemption, for the same reason
@@ -771,5 +843,6 @@ NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
     if (!task)
         return STATUS_PROCESS_IS_TERMINATING;
 
-    return quota_charge_chain(task, type, amount, 0, receipt, out_token);
+    return quota_charge_chain(task, type, amount, QUOTA_CHARGE_SOURCE(source),
+                              receipt, out_token);
 }

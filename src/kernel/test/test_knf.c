@@ -21,6 +21,9 @@
 #include "kernel/security/privileges.h"
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/knf_syscall_info.h"
+#include "kernel/quota/quota.h"         /* attribution queries */
+#include "kernel/quota/quota_ledger.h"  /* the charge gate, to force STATUS_RETRY */
+#include "kernel/sched/task.h"
 #include "kernel/boot_init.h"   /* SUBSYS_KNF + kernel_subsystem_ready/_set_ready */
 
 extern int   strcmp(const char *a, const char *b);
@@ -1108,6 +1111,268 @@ static void test_knf_stress_no_leak(void)
 
 /* ---- Registration ------------------------------------------------------- */
 
+/* ==========================================================================
+ * Section 16 (TODO-25): status-bearing creation
+ * ========================================================================== */
+
+/* knf_create_state_ex names WHY a creation failed, which knf_create_state
+ * structurally cannot. The distinction that matters most is invisible in this
+ * test and is the reason the function exists: a transient STATUS_RETRY from the
+ * charge gate no longer arrives as NULL, indistinguishable from a permanent
+ * quota refusal. What IS testable here is that every other outcome now has its
+ * own status and that the pointer form still behaves exactly as before. */
+static void test_knf_create_ex_reports_distinct_statuses(void)
+{
+    KNF_STATE *st = (KNF_STATE *)0;
+    char longname[KNF_NAME_MAX + 8];
+    uint32_t i;
+
+    /* Success sets BOTH the status and the out-param. */
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "UtestExState",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_SUCCESS, "a valid creation reports success");
+    TEST_ASSERT_NOT_NULL((void *)st, "success yields a referenced state");
+    ObDereferenceObject(st);
+    TEST_ASSERT_EQ(knf_delete_state("Kernel", "UtestExState"), 0,
+                   "the state created through _ex is a normal state");
+
+    /* A bad argument is INVALID_PARAMETER and, critically, EMPTIES the out-param
+     * so a caller may branch on the status alone. */
+    st = (KNF_STATE *)0xdead;
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex((const char *)0, "X",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "NULL category is a bad argument");
+    TEST_ASSERT_NULL((void *)st, "a failure clears the out-param it was handed");
+
+    for (i = 0; i < sizeof(longname) - 1; i++)
+        longname[i] = 'a';
+    longname[sizeof(longname) - 1] = '\0';
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", longname,
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an over-length leaf name is a bad argument");
+
+    /* An unknown category is NOT a bad argument: the arguments are well-formed
+     * and the path does not exist. Collapsing the two would send a caller
+     * hunting for a mistake in its own parameters. */
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("NoSuchCategory", "X",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_OBJECT_PATH_NOT_FOUND,
+                   "an unknown category is a path failure, not a bad argument");
+
+    /* An out-of-range lifetime must be refused rather than reach the privilege
+     * gate while still qualifying for OB_FLAG_PERMANENT. */
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "UtestExBadLife",
+                        (KNF_LIFETIME)(KNF_LIFETIME_TEMPORARY + 1),
+                        KNF_SCOPE_SYSTEM, (const KNF_TYPE_ID *)0,
+                        KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an undefined lifetime class is refused");
+
+    /* A NULL out-param is itself a bad argument, not a crash. */
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "X",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE,
+                        (KNF_STATE **)0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "a NULL out-param is refused");
+}
+
+/* create-or-open through the status-bearing form: losing the insert race and
+ * adopting the existing winner is a SUCCESS, because one name means one state.
+ * Reporting a collision there would make every second caller handle a failure
+ * that is really the documented behavior. */
+static void test_knf_create_ex_create_or_open_is_success(void)
+{
+    KNF_STATE *a = (KNF_STATE *)0, *b = (KNF_STATE *)0;
+
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Power", "UtestExDup",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &a),
+                   (uint64_t)STATUS_SUCCESS, "first creation succeeds");
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Power", "UtestExDup",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &b),
+                   (uint64_t)STATUS_SUCCESS, "a second creation OPENS rather than fails");
+    TEST_ASSERT_NOT_NULL((void *)a, "the first call yields a state");
+    TEST_ASSERT(a == b, "one name resolves to exactly one state body");
+
+    if (b)
+        ObDereferenceObject(b);
+    if (a)
+        ObDereferenceObject(a);
+    knf_delete_state("Power", "UtestExDup");
+}
+
+/* THE defining assertion for knf_create_state_ex, and the reason section 16 filed
+ * the item: a transient charge-gate closure must arrive as STATUS_RETRY, NOT as
+ * the NULL that a one-shot caller reads as permanent failure.
+ *
+ * Closing the gate with quota_gate_quiesce reproduces exactly the production
+ * condition -- a job-membership transition holding this task's charge gate shut
+ * -- without any fault injection, because the charge path treats both
+ * identically. */
+static void test_knf_create_ex_propagates_transient_retry(void)
+{
+    struct task *t = task_current();
+    KNF_STATE   *st = (KNF_STATE *)0;
+    int64_t      notify_before;
+
+    if (!t || !t->quota)
+        return;                  /* no principal to gate; covered elsewhere */
+
+    notify_before = quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                       QUOTA_RES_NOTIFICATION_STATE);
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "the gate quiesces for the test");
+
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "UtestExRetry",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_RETRY,
+                   "a closed charge gate surfaces as STATUS_RETRY, not a refusal");
+    TEST_ASSERT_NULL((void *)st, "a refused creation yields no state");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_STATE)
+                              - notify_before),
+                   0ull, "a refused creation leaves no attributed charge behind");
+    /* And no state was published under that name -- the failure path unwound. */
+    TEST_ASSERT_NULL((void *)knf_lookup_state("Kernel", "UtestExRetry"),
+                     "a refused creation publishes nothing into the namespace");
+
+    /* Reopening makes the SAME call succeed, which is what proves the status was
+     * transient rather than a permanent condition wearing a retryable name. */
+    quota_gate_reopen(t);
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "UtestExRetry",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_SUCCESS,
+                   "the retry succeeds once the gate reopens");
+    TEST_ASSERT_NOT_NULL((void *)st, "the retry yields a state");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_STATE)
+                              - notify_before),
+                   1ull, "the successful creation charges NOTIFY exactly once");
+
+    ObDereferenceObject(st);
+    TEST_ASSERT_EQ(knf_delete_state("Kernel", "UtestExRetry"), 0,
+                   "the state is removed again");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_STATE)
+                              - notify_before),
+                   0ull, "deleting the state credits the NOTIFY attribution back");
+
+    /* The pointer-returning wrapper is where the distinction is LOST, and that is
+     * by design -- assert it so nobody mistakes the wrapper for the fixed path. */
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "the gate quiesces again");
+    TEST_ASSERT_NULL((void *)knf_create_state("Kernel", "UtestExRetry2",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE),
+                     "the pointer form still collapses a transient refusal to NULL");
+    quota_gate_reopen(t);
+}
+
+/* A privilege refusal must be its OWN status, distinct from every transient one:
+ * a caller that retried it would loop forever. KNF_USER_MODE with a non-temporary
+ * lifetime is the documented gate. */
+static void test_knf_create_ex_privilege_refusal_is_distinct(void)
+{
+    KNF_STATE *st = (KNF_STATE *)0;
+    NTSTATUS   status;
+
+    status = knf_create_state_ex("Kernel", "UtestExPriv",
+                                 KNF_LIFETIME_PERMANENT, KNF_SCOPE_SYSTEM,
+                                 (const KNF_TYPE_ID *)0, KNF_USER_MODE, &st);
+
+    /* A test kernel thread may legitimately hold SeCreatePermanentPrivilege, so
+     * the assertion is on the DISTINCTION rather than on one outcome: either the
+     * privilege check refused it with its own status, or it succeeded. What must
+     * never happen is a transient status for a privilege decision, because that
+     * is what a retry loop would spin on. */
+    if (status == STATUS_SUCCESS) {
+        TEST_ASSERT_NOT_NULL((void *)st, "a permitted creation yields a state");
+        ObDereferenceObject(st);
+        knf_delete_state("Kernel", "UtestExPriv");
+    } else {
+        TEST_ASSERT_EQ((uint64_t)status, (uint64_t)STATUS_PRIVILEGE_NOT_HELD,
+                       "a privilege refusal reports PRIVILEGE_NOT_HELD");
+        TEST_ASSERT_NULL((void *)st, "a refused creation yields no state");
+    }
+    TEST_ASSERT(status != STATUS_RETRY && status != STATUS_INSUFFICIENT_RESOURCES,
+                "a privilege decision is never reported as transient");
+}
+
+/* The PRODUCTION tags, on the real consumers rather than through a test helper.
+ * The attribution helpers are covered in test_quota.c; what is unproven without
+ * this is the WIRING -- mis-tagging or reverting a real charge site would leave
+ * those helper tests green while the operator dashboard blamed the wrong
+ * subsystem. Asserts every one of KNF's three charge sites. */
+static void test_knf_production_charges_are_tagged_notify(void)
+{
+    KNF_STATE             *st = (KNF_STATE *)0;
+    struct knf_subscriber *sub = (struct knf_subscriber *)0;
+    int64_t                state_before, bytes_before, sub_before;
+
+    state_before = quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                      QUOTA_RES_NOTIFICATION_STATE);
+    bytes_before = quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                      QUOTA_RES_NOTIFICATION_BYTES);
+    sub_before   = quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                      QUOTA_RES_NOTIFICATION_SUB);
+
+    TEST_ASSERT_EQ((uint64_t)knf_create_state_ex("Kernel", "UtestTagged",
+                        KNF_LIFETIME_TEMPORARY, KNF_SCOPE_SYSTEM,
+                        (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, &st),
+                   (uint64_t)STATUS_SUCCESS, "the tagged state is created");
+    if (!st)
+        return;
+
+    /* BOTH of creation's charges carry the tag, not just the state count: the
+     * retention budget is the larger of the two and the one an operator chasing
+     * notification memory would look for. */
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_STATE)
+                              - state_before),
+                   1ull, "state creation is attributed to NOTIFY");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_BYTES)
+                              - bytes_before),
+                   (uint64_t)KNF_MAX_PAYLOAD,
+                   "and so is its retention budget, by the exact payload ceiling");
+
+    /* The subscription charge is a THIRD site with its own resource type. */
+    TEST_ASSERT_EQ((uint64_t)knf_subscribe(st, &sub), (uint64_t)STATUS_SUCCESS,
+                   "subscribing succeeds");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_SUB)
+                              - sub_before),
+                   1ull, "a subscription is attributed to NOTIFY");
+
+    TEST_ASSERT_EQ((uint64_t)knf_unsubscribe(&sub), (uint64_t)STATUS_SUCCESS,
+                   "unsubscribing succeeds");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_SUB)
+                              - sub_before),
+                   0ull, "and credits the subscription back to the same tag");
+
+    ObDereferenceObject(st);
+    TEST_ASSERT_EQ(knf_delete_state("Kernel", "UtestTagged"), 0,
+                   "the state is deleted");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_STATE)
+                              - state_before),
+                   0ull, "deletion credits the state count back");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_NOTIFICATION_BYTES)
+                              - bytes_before),
+                   0ull, "and the retention budget too, leaving no residue");
+}
+
 void test_register_knf(void)
 {
     test_suite_register_cat("knf: NotificationState type registered",
@@ -1160,6 +1425,18 @@ void test_register_knf(void)
                             test_knf_diag_query, TEST_CAT_KNF);
     test_suite_register_cat("knf: stress 400 states / 100 subscribers, no leak",
                             test_knf_stress_no_leak, TEST_CAT_KNF);
+
+    /* Status-bearing creation (quota charge-attribution work) */
+    test_suite_register_cat("knf: create_ex reports distinct statuses",
+                            test_knf_create_ex_reports_distinct_statuses, TEST_CAT_KNF);
+    test_suite_register_cat("knf: create_ex create-or-open is success",
+                            test_knf_create_ex_create_or_open_is_success, TEST_CAT_KNF);
+    test_suite_register_cat("knf: create_ex propagates transient RETRY",
+                            test_knf_create_ex_propagates_transient_retry, TEST_CAT_KNF);
+    test_suite_register_cat("knf: create_ex privilege refusal is distinct",
+                            test_knf_create_ex_privilege_refusal_is_distinct, TEST_CAT_KNF);
+    test_suite_register_cat("knf: production charges tagged NOTIFY",
+                            test_knf_production_charges_are_tagged_notify, TEST_CAT_KNF);
 }
 
 #endif /* KERNEL_TESTS */

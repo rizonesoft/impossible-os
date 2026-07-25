@@ -1060,7 +1060,17 @@ NTSTATUS nt_query_resource_pressure_information(void *buffer, uint32_t buf_size,
     info.UpdateIntervalNs = QUOTA_STALL_UPDATE_NS;
     info.LastUpdateNs     = summary.last_update_ns;
     info.WindowsClosed    = summary.windows_closed;
-    info.SystemLevel      = (uint32_t)summary.system_level;
+    /* The composite reports QUOTA_PRESSURE_UNKNOWN when no stall domain has been
+     * measured. That sentinel is kernel-internal and deliberately does NOT cross
+     * this boundary: SystemLevel keeps its published 0..3 space and the honesty
+     * moves to a flag, so a reader that predates the flag decodes exactly what it
+     * always did instead of meeting a 255 it has no case for. */
+    if (quota_pressure_level_measured((quota_pressure_level_t)summary.system_level)) {
+        info.SystemLevel = (uint32_t)summary.system_level;
+        info.Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_SYSTEM_LEVEL_VALID;
+    } else {
+        info.SystemLevel = 0;   /* nothing measured; the flag above says so */
+    }
     if (info.WindowsClosed != 0)
         info.Flags |= SYSTEM_RESOURCE_PRESSURE_FLAG_ARMED;
 

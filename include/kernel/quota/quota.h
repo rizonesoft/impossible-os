@@ -703,6 +703,156 @@ _Static_assert(QUOTA_CHAIN_MAX >= 3u,
                "the chain must hold process + user + one job block; a smaller "
                "ceiling would refuse charges that every limit admits");
 
+/* --- Charge attribution (the NT pool-tag analogue) ------------------------ *
+ *
+ * A block's counters answer "how much of TYPE does this principal hold"; they
+ * cannot answer "who inside the kernel asked for it". NT solves the same
+ * problem for pool with a four-character tag per allocation, which is what
+ * makes a leak attributable rather than merely visible. This taxonomy is that
+ * axis for quota: a charge names the SUBSYSTEM that made it, so a task sitting
+ * at its limit can be broken down instead of only measured.
+ *
+ * Named `source`, not `tag` or `attribution`, because both identifiers are
+ * already taken in this subsystem and mean something else:
+ * quota_charge_receipt_t.tag is the packed {generation, state} ownership word
+ * below, and quota_failure_source_t.attribution in quota_pressure.h carries
+ * pid/tid capture-trust flags.
+ *
+ * The taxonomy is DECLARED WHOLE, the same way the resource-type taxonomy is,
+ * so a subsystem wiring up its first charge picks an existing value instead of
+ * renumbering an enum that is also a STORAGE INDEX (it indexes the system-wide
+ * attribution table in quota.c). Values with no producer yet are marked as
+ * such; that records today's charge points, it is not a reservation to be
+ * trimmed.
+ *
+ * WHERE THE TOTALS LIVE, AND WHY NOT ON THE BLOCK. The obvious shape is a
+ * [SOURCE][TYPE] matrix per quota_block, and it is the shape this was designed
+ * with until the heap arithmetic was done: 8 sources x 16 types x 8 bytes is
+ * 1 KiB, EVERY job object creates its own block (ob_job_create), creating a job
+ * needs no privilege, and the kernel heap is ONE 2 MiB contiguous run
+ * (mm/heap.c) that falls back to less. Per-block attribution would therefore
+ * let an unprivileged caller exhaust the whole heap in roughly two thousand job
+ * creations with TELEMETRY ALONE, turning a diagnostic into an out-of-memory
+ * amplifier. NT does not do this either: a pool tag names the allocation and
+ * the TAG TABLE is system-wide. So the totals here are system-wide, the
+ * per-charge identity rides on the receipt (which costs nothing -- see `source`
+ * below), and the block keeps exactly the counters it already had.
+ *
+ * WHAT THAT ANSWERS AND WHAT IT DOES NOT. It answers "how much of TYPE does
+ * subsystem S hold right now, system-wide, and how many charges has it made" --
+ * the !poolused view. It does NOT answer that PER TASK: a per-task rollup must
+ * walk that task's outstanding obligations, and the two largest producers (ALPC
+ * and KNF) still hold their receipts EMBEDDED beside the resource rather than
+ * in the per-task ledger, so no walk can see them yet. That conversion is owned
+ * by section 17. */
+typedef enum quota_charge_source {
+    QUOTA_SOURCE_UNKNOWN  = 0,  /* unattributed; DERIVED, never stored      */
+    QUOTA_SOURCE_OBJECT   = 1,  /* Object Manager bodies, names, handles    */
+    QUOTA_SOURCE_IPC      = 2,  /* ALPC ports and queued messages           */
+    QUOTA_SOURCE_NOTIFY   = 3,  /* KNF notification states and payloads     */
+    QUOTA_SOURCE_REGISTRY = 4,  /* registry keys/values/data (no producer yet) */
+    QUOTA_SOURCE_MEMORY   = 5,  /* pool, sections, views (no producer yet)  */
+    QUOTA_SOURCE_PROCESS  = 6,  /* process/thread/timer bodies (no producer yet) */
+    QUOTA_SOURCE_DIAG     = 7,  /* diagnostic and test-instrumentation charges */
+    QUOTA_SOURCE_COUNT    = 8
+} quota_charge_source_t;
+
+/* The enum is a storage index into the system-wide attribution table AND is
+ * packed into a 16-bit receipt field AND into an 8-bit slice of the charge
+ * flags, so its ceiling is load-bearing in three places at once. Growing it
+ * multiplies the table by QUOTA_RESOURCE_TYPE_COUNT -- not merely adding a
+ * name. */
+_Static_assert(QUOTA_SOURCE_COUNT <= 256,
+               "the source travels in an 8-bit flags slice; a wider taxonomy "
+               "needs a wider encoding, not just a bigger enum");
+_Static_assert(QUOTA_SOURCE_UNKNOWN == 0,
+               "UNKNOWN must be 0 so a zero-initialized receipt is unattributed");
+
+/* Human-readable name for a source; "?" for an out-of-range value. */
+const char *quota_source_name(quota_charge_source_t source);
+
+/* Is `source` a value this taxonomy defines? UNKNOWN counts: it is the legal
+ * "not attributed" answer, not an error. */
+static inline int quota_source_valid(quota_charge_source_t source)
+{
+    return (uint32_t)source < (uint32_t)QUOTA_SOURCE_COUNT;
+}
+
+/* --- Reading the attribution totals --------------------------------------- *
+ *
+ * COHERENCE CONTRACT, stated plainly because the exact-sum property is the
+ * whole point of the table and it is NOT available to a racing reader. Both
+ * queries below are lock-free single-cell atomic loads, so a caller that reads
+ * several cells and adds them up observes a MIXED GENERATION: one charge may
+ * have landed in its source row but not yet in the type total, or the reverse.
+ *
+ *   sum over s of quota_source_usage(s, t) == the live amount of `t` attributed
+ *   to any subsystem
+ *
+ * holds EXACTLY while no charge or return of `t` is in flight, and is otherwise
+ * off by at most the in-flight amounts. Use quota_source_snapshot for a
+ * single-pass copy when reporting a whole picture, and treat the scalar queries
+ * as approximate instruments -- which is all a diagnostic needs. */
+
+/* Live amount of `type` currently attributed to `source`, or 0 for an
+ * out-of-range argument. Never negative (see the mismatch counter). */
+int64_t quota_source_usage(quota_charge_source_t source, quota_resource_type_t type);
+
+/* Charges `source` has made against `type` since boot, saturating. Cumulative,
+ * so it keeps counting after the charge is returned -- the NT !poolused "Allocs"
+ * column, which answers "who is busy here" even when nothing is held now. */
+int64_t quota_source_charges(quota_charge_source_t source, quota_resource_type_t type);
+
+/* Attribution arithmetic that could NOT be applied exactly, saturating. This is
+ * the honesty counter for the table: it is bumped when a return names a source
+ * whose row does not hold that much (attribution was lost somewhere between the
+ * charge and the return), or when a charge would push a row past
+ * QUOTA_AMOUNT_MAX. Nonzero means the sum contract above no longer holds and the
+ * breakdown is approximate; it never means a resource was mis-charged, because
+ * the primary counters are maintained independently of this table. */
+uint64_t quota_source_mismatch(void);
+
+/* Copy the whole live-usage table in ONE pass, for a caller reporting a
+ * breakdown. Still lock-free (this must be callable from the panic-path dump,
+ * where taking a lock is forbidden), so it is one generation per cell rather
+ * than one generation overall -- strictly better than N scalar queries, and the
+ * contract above is what bounds the difference. No-op on a NULL argument. */
+void quota_source_snapshot(int64_t out[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT]);
+
+/* INTERNAL. Move the live amount `source` holds of `type` by `delta` -- positive
+ * when a charge is admitted, negative when it is credited back, the signed
+ * difference when a charge is resized. Declared here only because the chain entry
+ * points live in quota_owner.c while the tables live in quota.c.
+ *
+ * DO NOT CALL EITHER OF THESE FROM A CHARGING SUBSYSTEM. Exactly one call belongs
+ * to each obligation transition, made by quota_charge_chain / quota_return_chain /
+ * quota_charge_adjust; a consumer calling one as well would double-count itself
+ * and skew the very breakdown it wanted. Name your source in the charge flags and
+ * the recording happens for you.
+ *
+ * Neither ever fails and neither can refuse a charge: an update that does not fit
+ * the documented cell domain is counted by quota_source_mismatch rather than
+ * propagated, because a diagnostic must not be able to fail a resource operation
+ * the primary counters already admitted.
+ *
+ * SPLIT FROM THE CHARGE-COUNT UPDATE ON PURPOSE. This one touches a single cell,
+ * so it is the only half that is cheap enough to run where the caller needs it:
+ * inside the receipt's exclusive window, which quota_charge_adjust enters with
+ * INTERRUPTS MASKED. Bundling the cumulative count in would double both the
+ * bounded compare-exchange budget and the number of shared cache lines touched
+ * with interrupts off, for a statistic that has no ordering requirement at all. */
+void quota_source_note(quota_charge_source_t source, quota_resource_type_t type,
+                       int64_t delta);
+
+/* INTERNAL. Count one CHARGE by `source` against `type` (the cumulative
+ * "Allocs" column). Called once per admitted charge, and NEVER for a return or a
+ * resize -- a resize is the same charge holding a different amount, so counting
+ * it again would inflate the figure that answers "how many charges has this
+ * subsystem made". Ordering does not matter, so callers run it outside any
+ * exclusive or interrupt-masked window. */
+void quota_source_count_charge(quota_charge_source_t source,
+                               quota_resource_type_t type);
+
 /* Proof of a completed chain charge. Treat every field as private: build it
  * only with quota_charge_chain, consume it only with quota_return_chain.
  * Zero-initialized (`= {0}`) is a valid empty receipt that returns nothing.
@@ -740,11 +890,22 @@ _Static_assert(QUOTA_CHAIN_MAX >= 3u,
  * leaking the charge permanently. One word, one CAS. */
 typedef struct quota_charge_receipt {
     quota_block_t        *blocks[QUOTA_CHAIN_MAX]; /* charged set, one ref each */
-    uint32_t              count;                   /* live entries in blocks[]  */
+    uint16_t              count;                   /* live entries in blocks[]  */
+    uint16_t              source;                  /* quota_charge_source_t     */
     quota_resource_type_t type;                    /* what was charged          */
     uint64_t              amount;                  /* how much, per block       */
     atomic64_t            tag;                     /* {generation, state}       */
 } quota_charge_receipt_t;
+
+/* `count` was narrowed from uint32 to uint16 to make room for `source` inside
+ * the SAME eight bytes the old count-plus-type pair occupied, so attribution
+ * costs the receipt nothing. That only holds while the chain ceiling fits the
+ * narrower field -- assert it rather than trust the reader to notice. */
+_Static_assert(QUOTA_CHAIN_MAX <= 0xFFFFu,
+               "receipt.count is uint16 so `source` fits beside it without "
+               "widening the receipt; a chain ceiling past 65535 breaks that");
+_Static_assert(QUOTA_SOURCE_COUNT <= 0xFFFFu,
+               "receipt.source is uint16");
 
 /* PIN THE WIDTH. This type is embedded by value in per-resource storage that the
  * system allocates in bulk -- one per queued ALPC message (PORT_MESSAGE_ENTRY)
@@ -755,11 +916,12 @@ typedef struct quota_charge_receipt {
  * the consumer cost in hand. */
 _Static_assert(sizeof(quota_charge_receipt_t) ==
                    (QUOTA_CHAIN_MAX * sizeof(quota_block_t *))
-                   + sizeof(uint32_t) + sizeof(quota_resource_type_t)
+                   + sizeof(uint16_t) + sizeof(uint16_t)
+                   + sizeof(quota_resource_type_t)
                    + sizeof(uint64_t) + sizeof(atomic64_t),
-               "receipt layout drifted: blocks[] + count/type + amount + tag. A "
-               "wider receipt multiplies across every ALPC message and ledger "
-               "slot -- re-measure those consumers before changing this");
+               "receipt layout drifted: blocks[] + count/source/type + amount + "
+               "tag. A wider receipt multiplies across every ALPC message and "
+               "ledger slot -- re-measure those consumers before changing this");
 
 /* PIN THE CEILING ITSELF. The size assert above is PARAMETERIZED on
  * QUOTA_CHAIN_MAX, so widening the chain back to 8 keeps it true and would add 32
@@ -849,6 +1011,70 @@ _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
  * cannot even reach. */
 #define QUOTA_CHARGE_CLIENT  0x1u
 
+/* --- The source slice inside `flags` -------------------------------------- *
+ *
+ * The charging subsystem travels in bits 8..15 of the SAME flags word rather
+ * than as a new parameter, and that is a deliberate trade rather than
+ * convenience: quota_charge_chain already validates flags against an exact mask,
+ * so an unknown bit or an out-of-range source is refused by the check that is
+ * already there, and the alternative would re-punctuate every one of the call
+ * sites (including dozens of test ones) for a value that is UNKNOWN in almost
+ * all of them. Bits 0..7 stay behavioral flags; bits 16..31 are unused and
+ * refused, so a later flag has room without disturbing the slice.
+ *
+ * A caller writes `QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_IPC)` and may OR a
+ * behavioral flag in. Omitting it entirely means UNKNOWN, which is the correct
+ * answer for a charge nobody has attributed yet -- never a silent default that
+ * hides a missing decision. */
+#define QUOTA_CHARGE_SOURCE_SHIFT  8u
+#define QUOTA_CHARGE_SOURCE_MASK   0xFF00u
+#define QUOTA_CHARGE_FLAG_MASK     (QUOTA_CHARGE_CLIENT | QUOTA_CHARGE_SOURCE_MASK)
+
+/* A value no valid flags word can contain, produced for a source the taxonomy
+ * does not define. It sits ABOVE the source slice and outside
+ * QUOTA_CHARGE_FLAG_MASK, so the existing flags validation refuses it. */
+#define QUOTA_CHARGE_SOURCE_POISON  0x80000000u
+
+/* Encode a source for the `flags` argument.
+ *
+ * CHECKS THE WHOLE VALUE, then encodes. Neither shorter form is safe:
+ *   - masking after the shift makes an oversized source ALIAS a valid one
+ *     (0x100 becomes 0, i.e. UNKNOWN; 0x101 becomes OBJECT), and
+ *   - shifting without masking only moves the problem to where the shift itself
+ *     discards the evidence (0x01000000 shifts clean off the top of a uint32 and
+ *     lands on 0 again; 0x01000001 lands on OBJECT).
+ * Either way an undefined source would be silently MISATTRIBUTED instead of
+ * refused, which is the one outcome this taxonomy must not produce. Poisoning
+ * every out-of-range value makes the refusal total and independent of magnitude.
+ *
+ * Evaluates `s` twice, so do not pass an expression with side effects -- every
+ * caller passes an enumerator. */
+#define QUOTA_CHARGE_SOURCE(s)                                                 \
+    ((uint32_t)((uint32_t)(s) < (uint32_t)QUOTA_SOURCE_COUNT                   \
+                ? ((uint32_t)(s) << QUOTA_CHARGE_SOURCE_SHIFT)                 \
+                : QUOTA_CHARGE_SOURCE_POISON))
+
+/* Decode the source a `flags` word carries. */
+#define QUOTA_CHARGE_SOURCE_OF(f) \
+    ((quota_charge_source_t)(((uint32_t)(f) & QUOTA_CHARGE_SOURCE_MASK) \
+                             >> QUOTA_CHARGE_SOURCE_SHIFT))
+
+/* The slice must actually hold the taxonomy, and it must not collide with the
+ * behavioral bit below it -- both are the kind of drift that would otherwise
+ * compile silently and mis-attribute (or, worse, be read as a behavior flag). */
+_Static_assert((QUOTA_SOURCE_COUNT - 1u) <=
+                   (QUOTA_CHARGE_SOURCE_MASK >> QUOTA_CHARGE_SOURCE_SHIFT),
+               "the source slice must hold every value the taxonomy defines");
+_Static_assert((QUOTA_CHARGE_SOURCE_MASK & QUOTA_CHARGE_CLIENT) == 0,
+               "the source slice must not overlap a behavioral charge flag");
+_Static_assert(QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_UNKNOWN) == 0,
+               "an absent source must encode as zero so flags 0 means UNKNOWN");
+_Static_assert((QUOTA_CHARGE_SOURCE_POISON & QUOTA_CHARGE_FLAG_MASK) == 0,
+               "the poison value must fall outside every legal flag bit, or an "
+               "undefined source would be accepted as some valid combination");
+_Static_assert(QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_COUNT) == QUOTA_CHARGE_SOURCE_POISON,
+               "the first undefined source must poison rather than encode");
+
 /* Charge `amount` of `type` against every principal owning `task`, all or
  * nothing, and record the result in `receipt`.
  *
@@ -877,8 +1103,12 @@ _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
  * chain there would return success having charged nothing, letting a dying
  * process allocate entirely unaccounted.
  *
- * `flags` is 0 or QUOTA_CHARGE_CLIENT. On failure THIS call leaves the receipt
- * holding nothing of its own, so an unconditional
+ * `flags` carries QUOTA_CHARGE_CLIENT and/or a QUOTA_CHARGE_SOURCE() slice; any
+ * other bit, or a source the taxonomy does not define, is
+ * STATUS_INVALID_PARAMETER. The source is recorded on the receipt and is what
+ * the return credits back, so a charge and its return are attributed to the
+ * same subsystem without the caller restating it. On failure THIS call leaves
+ * the receipt holding nothing of its own, so an unconditional
  * quota_return_chain(receipt, token) on the error path is safe. The one
  * exception is STATUS_INVALID_PARAMETER raised because the receipt was ALREADY
  * holding a live charge: that charge is untouched and still belongs to whoever
@@ -908,8 +1138,9 @@ _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
  * value is NOT harmless: one equal to the next generation this receipt will
  * publish would let an error-path return take a charge it never made.
  *
- * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
- * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
+ * Returns STATUS_INVALID_PARAMETER (bad argument, an undefined flag bit or
+ * source, a chain deeper than QUOTA_CHAIN_MAX, or a receipt that already holds a
+ * live charge),
  * STATUS_NOT_SUPPORTED (QUOTA_CHARGE_CLIENT -- see the flag),
  * STATUS_PROCESS_IS_TERMINATING (no process block, or the task's charge gate is
  * SEALED because it is dying), STATUS_INTEGER_OVERFLOW (this receipt's
@@ -1034,10 +1265,24 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
  * request racing its own process teardown cannot inherit it.
  *
  * Otherwise this is quota_charge_chain with flags 0: same receipt/token
- * contract, same statuses, and quota_return_chain returns the charge. */
+ * contract, same statuses, and quota_return_chain returns the charge.
+ *
+ * This form leaves the charge UNATTRIBUTED. A charging subsystem should call
+ * quota_charge_current_from and name itself; this one remains for the paths that
+ * genuinely have no subsystem to name (and for the many callers written before
+ * the taxonomy existed), so that "unattributed" stays a visible state rather
+ * than a wrong label. */
 NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
                               quota_charge_receipt_t *receipt,
                               uint64_t *out_token);
+
+/* quota_charge_current, attributed to `source`. Identical in every other
+ * respect, including the boot exemption and every status it can return, plus
+ * STATUS_INVALID_PARAMETER for a source the taxonomy does not define. */
+NTSTATUS quota_charge_current_from(quota_resource_type_t type, uint64_t amount,
+                                   quota_charge_source_t source,
+                                   quota_charge_receipt_t *receipt,
+                                   uint64_t *out_token);
 
 /* --- Owner wiring (quota_owner.c) ---------------------------------------- *
  * Attach and detach the per-process block. Both are idempotent; teardown is
@@ -1435,6 +1680,24 @@ void quota_test_poke_failures(quota_block_t *block, quota_resource_type_t type, 
 /* Raw counter read that does NOT clamp negatives, so a test can prove a
  * corrupted counter was left untouched rather than quietly normalized. */
 int64_t quota_test_raw_usage(const quota_block_t *block, quota_resource_type_t type);
+
+/* Withdraw `count` synthetic increments from the attribution honesty counter, for
+ * a test that deliberately provokes a mismatch to prove the clamp and the counter
+ * work.
+ *
+ * REQUIRED, not a convenience. quota_source_mismatch is monotonic on purpose (a
+ * counter that could be decremented could be zeroed by the very bug it reports),
+ * and KERNEL_TESTS is the default build -- so a test that raised it and walked away
+ * would leave the shipping image asserting "attribution is approximate" for the
+ * rest of the boot, with every later dump carrying that warning while masking a
+ * genuine mismatch. The test that provokes one MUST withdraw it.
+ *
+ * A DELTA, not a restore to a captured value. An absolute store would erase a
+ * mismatch another CPU recorded between the test's capture and its cleanup, and the
+ * test's own equality assertion would then pass BECAUSE the evidence was
+ * overwritten. Subtracting only what this test added leaves a concurrent real
+ * increment standing. Saturates at 0 rather than wrapping. */
+void quota_test_withdraw_source_mismatch(uint64_t count);
 
 /* Force a rate class's publication sequence odd ("write in flight") or even
  * ("stable"). The bounded-retry path of quota_rate_limit_get is otherwise

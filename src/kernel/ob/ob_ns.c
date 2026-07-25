@@ -150,24 +150,29 @@ int ObpRemoveFromDirectory(void *directory, void *object)
 
 int ObInsertObject(void *object, const char *name, void *directory)
 {
+    return (ObInsertObjectEx(object, name, directory) == STATUS_SUCCESS) ? 0 : -1;
+}
+
+NTSTATUS ObInsertObjectEx(void *object, const char *name, void *directory)
+{
     OBJECT_DIRECTORY *dir = (OBJECT_DIRECTORY *)directory;
     OBJECT_DIRECTORY_ENTRY *entry;
     size_t name_len;
     uint64_t irqf;
 
     if (!object || !name || !directory)
-        return -1;
+        return STATUS_INVALID_PARAMETER;
 
     name_len = strlen(name);
     if (name_len == 0 || name_len >= OB_NAME_MAX)
-        return -1;
+        return STATUS_INVALID_PARAMETER;
 
     /* Allocate outside the lock: kmalloc may take the heap spinlock
      * and the heap is a higher-layer resource. We fill the node and
      * commit it atomically under dir->lock. */
     entry = (OBJECT_DIRECTORY_ENTRY *)kmalloc(sizeof(OBJECT_DIRECTORY_ENTRY));
     if (!entry)
-        return -1;
+        return STATUS_INSUFFICIENT_RESOURCES;
 
     strncpy(entry->name, name, OB_NAME_MAX - 1);
     entry->name[OB_NAME_MAX - 1] = '\0';
@@ -176,11 +181,24 @@ int ObInsertObject(void *object, const char *name, void *directory)
     spin_lock_irqsave(&dir->lock, &irqf);
 
     /* Re-check duplicate + capacity under the lock so a concurrent
-     * insert of the same name cannot slip through. */
-    if (dir_find(dir, name, name_len) || dir->count >= OB_DIR_MAX_ENTRIES) {
+     * insert of the same name cannot slip through.
+     *
+     * REPORTED SEPARATELY, from under the lock that established them, because a
+     * caller must act differently on each: a duplicate name will never succeed
+     * however long the caller waits, a full directory is a capacity ceiling, and a
+     * failed entry allocation is transient. Recovering the distinction AFTERWARDS
+     * by looking the name up cannot work -- the namespace may have moved on, and a
+     * lookup that resolves symlinks is not answering the question the insert
+     * asked. */
+    if (dir_find(dir, name, name_len)) {
         spin_unlock_irqrestore(&dir->lock, irqf);
         kfree(entry);
-        return -1;
+        return STATUS_OBJECT_NAME_COLLISION;
+    }
+    if (dir->count >= OB_DIR_MAX_ENTRIES) {
+        spin_unlock_irqrestore(&dir->lock, irqf);
+        kfree(entry);
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     /* Codex -9 [H] fix: take the directory-owned reference BEFORE
@@ -208,7 +226,7 @@ int ObInsertObject(void *object, const char *name, void *directory)
 
     spin_unlock_irqrestore(&dir->lock, irqf);
 
-    return 0;
+    return STATUS_SUCCESS;
 }
 
 /* --- ObpLookupDirectory -------------------------------------------------- */

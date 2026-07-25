@@ -1067,17 +1067,27 @@ static void fill_snapshot_locked(quota_stall_domain_t domain,
     out->full_undefined = full_ok ? 0u : 1u;
 }
 
-/* Worst level across every VALID domain. Caller holds the aggregate lock. */
+/* Worst level across every VALID domain, or QUOTA_PRESSURE_UNKNOWN when no
+ * domain has been measured. Caller holds the aggregate lock.
+ *
+ * Seeding at UNKNOWN rather than NORMAL is what makes the composite honest while
+ * every stall seam is still unwired (sections 12 and 17 own the producers): with
+ * no valid domain there is no evidence, and NORMAL would assert calm on the
+ * strength of an instrument that has never run. */
 static quota_pressure_level_t system_level_locked(void)
 {
-    quota_pressure_level_t worst = QUOTA_PRESSURE_NORMAL;
+    quota_pressure_level_t worst = QUOTA_PRESSURE_UNKNOWN;
 
     for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
         /* An invalid domain is UNKNOWN, not calm: it can neither raise nor
          * lower the answer. Same rule as quota_pressure_system_level. */
         if (!g_domain[d].valid)
             continue;
-        if ((quota_pressure_level_t)g_domain[d].level > worst)
+        /* First measurement replaces UNKNOWN outright; later ones only if worse.
+         * UNKNOWN sorts above every real level, so a bare `>` would throw away
+         * the first real reading. */
+        if (!quota_pressure_level_measured(worst) ||
+            (quota_pressure_level_t)g_domain[d].level > worst)
             worst = (quota_pressure_level_t)g_domain[d].level;
     }
     return worst;

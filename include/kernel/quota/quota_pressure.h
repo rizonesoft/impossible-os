@@ -80,8 +80,43 @@ typedef enum quota_pressure_level {
     QUOTA_PRESSURE_WATCH    = 1,
     QUOTA_PRESSURE_WARNING  = 2,
     QUOTA_PRESSURE_CRITICAL = 3,
-    QUOTA_PRESSURE_LEVEL_COUNT = 4
+    QUOTA_PRESSURE_LEVEL_COUNT = 4,
+    /* "No instrument has reported yet" -- NOT a fifth degree of pressure.
+     *
+     * WHY IT IS OUT OF BAND rather than appended as 4. The four levels above are
+     * an ORDER, and every fold over them is a `worse-than` comparison. An
+     * appended value would sit above CRITICAL, so a domain nobody has measured
+     * would outrank a domain that is genuinely on fire, and any future
+     * `level >= WARNING` test would read "unmeasured" as "act now". Numbering it
+     * below NORMAL is no better: NORMAL is 0 in a published ABI record.
+     *
+     * So it sits outside both the order and QUOTA_PRESSURE_LEVEL_COUNT, which
+     * means it is ALSO not an array index -- nothing sized by LEVEL_COUNT grows,
+     * and a fold must handle it explicitly (see quota_pressure_level_measured)
+     * rather than absorb it silently. It still fits the uint8_t the published
+     * record uses for a level, so it costs no ABI width.
+     *
+     * It is a RETURN value from the two system-level composites only. No domain
+     * ever stores it: a domain says "unmeasured" with its VALID flag, which is
+     * the same distinction this expresses one level up. */
+    QUOTA_PRESSURE_UNKNOWN  = 0xFFu
 } quota_pressure_level_t;
+
+/* Is `level` one of the four ordered degrees, i.e. is it comparable and
+ * indexable? Use this before any `worse-than` comparison on a value that could
+ * have come from a system-level composite. */
+static inline int quota_pressure_level_measured(quota_pressure_level_t level)
+{
+    return (uint32_t)level < (uint32_t)QUOTA_PRESSURE_LEVEL_COUNT;
+}
+
+_Static_assert(QUOTA_PRESSURE_UNKNOWN > QUOTA_PRESSURE_CRITICAL,
+               "UNKNOWN must not collide with an ordered level");
+_Static_assert(QUOTA_PRESSURE_UNKNOWN >= QUOTA_PRESSURE_LEVEL_COUNT,
+               "UNKNOWN must stay outside the array-index space LEVEL_COUNT "
+               "sizes, so no table indexed by a level has to hold a slot for it");
+_Static_assert(QUOTA_PRESSURE_UNKNOWN <= 0xFFu,
+               "a level travels as uint8_t in the published pressure record");
 
 /* --- Source kinds --------------------------------------------------------- *
  * WHICH instrument produced a sample. Carried in every published record so a
@@ -485,12 +520,24 @@ quota_pressure_level_t  quota_pressure_level(quota_resource_type_t type);
 quota_pressure_source_t quota_pressure_source_kind(quota_resource_type_t type);
 int                     quota_pressure_source_valid(quota_resource_type_t type);
 
-/* Highest level across every VALID domain. Domains whose source is invalid are
- * skipped rather than counted as normal -- an unknown is not a zero. */
+/* Highest level across every VALID domain of EITHER lane (budget saturation and
+ * PSI-shaped stall), or QUOTA_PRESSURE_UNKNOWN when not one domain in either
+ * lane has been measured yet.
+ *
+ * Domains whose source is invalid are skipped rather than counted as normal --
+ * an unknown is not a zero -- and that rule is what forces the UNKNOWN return:
+ * with every domain skipped there is no evidence at all, and answering NORMAL
+ * would state the system is calm on the strength of having measured nothing.
+ * That is exactly the confusion this subsystem refuses to make one level down,
+ * where a domain carries a VALID flag beside its numbers.
+ *
+ * CALLERS MUST NOT ORDER-COMPARE THE RESULT BLINDLY: UNKNOWN is outside the
+ * ordered band (see the enum). Test quota_pressure_level_measured first, or
+ * treat UNKNOWN as its own case. */
 quota_pressure_level_t  quota_pressure_system_level(void);
 
-/* Human-readable level name ("normal"/"watch"/"warning"/"critical"), or "?"
- * for an out-of-range level. */
+/* Human-readable level name ("normal"/"watch"/"warning"/"critical"/"unknown"),
+ * or "?" for a value that is none of those. */
 const char *quota_pressure_level_name(quota_pressure_level_t level);
 
 /* --- Diagnostics ---------------------------------------------------------- *
@@ -560,6 +607,61 @@ void quota_registry_worst_all(uint16_t *out_permille, uint32_t count,
  * test-only block below, which left the release build unbuildable. */
 #define QUOTA_PRESSURE_KIND_TRANSITION  1u
 #define QUOTA_PRESSURE_KIND_FAILURE     2u
+
+/* --- Notification-channel retry policy ------------------------------------ *
+ *
+ * The SCHEDULE for retrying a notification channel whose creation was refused for
+ * a transient reason, as pure state plus pure functions over an explicit clock.
+ *
+ * Separated from the live path rather than left inline, because inline it is
+ * unprovable: the live path owns the clock and the create call, so exercising the
+ * schedule through it needs an injectable clock and an injectable creator (filed
+ * in section 17). The POLICY is arithmetic over explicit state, so it lives here
+ * and is tested directly; the live path just holds one of these structs. What
+ * stays unproven is then the wiring alone, not the decision.
+ *
+ * Every mutation goes through the functions below, so the invariants stay in one
+ * place. */
+typedef struct quota_pressure_retry {
+    uint64_t at_ns;    /* earliest uptime at which the next attempt may run */
+    uint64_t gap_ns;   /* current interval; doubles per failure, capped     */
+    uint32_t tries;    /* consecutive failed attempts                      */
+    uint8_t  warned;   /* the threshold message has been emitted once      */
+} quota_pressure_retry_t;
+
+#define QUOTA_PRESSURE_RETRY_FIRST_NS   (100ull * 1000ull * 1000ull)          /* 100 ms */
+#define QUOTA_PRESSURE_RETRY_MAX_NS     (30ull * 1000ull * 1000ull * 1000ull) /*   30 s */
+
+/* Attempts after which the situation is REPORTED once. A reporting threshold,
+ * deliberately NOT a give-up: retries continue at the capped cadence for the life
+ * of the system. An attempt ceiling was written and then removed -- neither
+ * retryable status (a charge gate closed by a job-membership transition, or
+ * resource exhaustion) has any upper bound on how long it lasts, so a finite
+ * deadline turns "not yet" back into "never" and loses the channel for the rest of
+ * the boot. Bounding the RATE is what a retry storm needs, and the backoff does
+ * exactly that. */
+#define QUOTA_PRESSURE_RETRY_WARN_TRIES  8u
+
+/* Would retrying this status plausibly succeed later? STATUS_RETRY means a
+ * job-membership transition holds the creating task's charge gate shut, which ends
+ * on its own; resource exhaustion may also clear. Everything else (a bad argument,
+ * a missing category, a privilege refusal, a name collision) fails identically
+ * forever, and retrying it would be a log-spam loop rather than recovery. */
+int  quota_pressure_retry_status_retryable(NTSTATUS status);
+
+/* Is an attempt DUE? False when nothing is pending, and false until the deadline
+ * -- which is what stops a caller that runs often (the drain re-arms for queued
+ * records) from turning a pending channel into a retry storm. */
+int  quota_pressure_retry_due(const quota_pressure_retry_t *st, uint32_t pending,
+                              uint64_t now_ns);
+
+/* Fold one attempt's outcome into the schedule. `pending` is the mask STILL
+ * unfinished after that attempt: nonzero doubles the interval toward the cap and
+ * counts the try; zero resets the struct, because the retry is over. `*out_warn`
+ * (optional) is set to 1 exactly once, on the attempt that first reaches
+ * QUOTA_PRESSURE_RETRY_WARN_TRIES, so a caller logs once and keeps going. */
+void quota_pressure_retry_advance(quota_pressure_retry_t *st, uint32_t pending,
+                                  uint64_t now_ns, int *out_warn);
 
 #ifdef KERNEL_TESTS
 /* --- Test-only control ---------------------------------------------------- *

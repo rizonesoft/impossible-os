@@ -9,6 +9,7 @@
 
 #include "kernel/types.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/nt/ntstatus.h"   /* ObInsertObjectEx reports a status */
 
 /* Forward declarations -- full defs need ob.h which includes us */
 struct object_header;
@@ -65,9 +66,31 @@ void *ObpLookupDirectory(const char *path, const char **remaining);
  * ObInsertObject -- insert a named object into a directory.
  *
  * Sets OB_FLAG_NAMED on the object's header and stores the name pointer.
- * Returns 0 on success, -1 if the name already exists or the directory is full.
+ * Returns 0 on success, -1 on any failure. Prefer ObInsertObjectEx when the
+ * caller must tell a permanent failure from a transient one.
  */
 int ObInsertObject(void *object, const char *name, void *directory);
+
+/*
+ * ObInsertObjectEx -- ObInsertObject with the failure reason preserved.
+ *
+ * Identical on success. The three failures a caller has to tell apart are
+ * reported from under the directory lock that established them:
+ *
+ *   STATUS_OBJECT_NAME_COLLISION  the name is taken -- PERMANENT, never retry
+ *   STATUS_INSUFFICIENT_RESOURCES the directory is full, or the entry could not
+ *                                 be allocated -- may succeed later
+ *   STATUS_INVALID_PARAMETER      missing argument, or an empty/over-long name
+ *
+ * WHY A CALLER CANNOT RECOVER THIS ITSELF. The obvious workaround is to look the
+ * name up after a failed insert and infer the cause, and it does not work: the
+ * namespace may have changed in between, and path resolution follows symlinks, so
+ * a name occupied by a dangling symlink reads as absent. A caller that guessed
+ * would classify a permanent collision as retryable (a retry loop that never
+ * ends) or a transient shortage as permanent (a facility disabled for the life of
+ * the boot over a moment of memory pressure).
+ */
+NTSTATUS ObInsertObjectEx(void *object, const char *name, void *directory);
 
 /*
  * ObpRemoveFromDirectory -- reverse of ObInsertObject. Removes `object` from

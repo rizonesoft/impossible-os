@@ -1763,6 +1763,251 @@ int quota_registry_worst_user(quota_resource_type_t type, uint16_t min_permille,
     return found;
 }
 
+/* --- System-wide charge attribution --------------------------------------- *
+ *
+ * Two tables indexed [source][type], plus one honesty counter. Both are sized
+ * from the two taxonomies rather than by hand, so growing either one grows the
+ * storage with it instead of silently truncating an index.
+ *
+ * This is the ONLY state the feature adds, and it is STATIC: 2 KiB for the whole
+ * system, nothing per block. The header carries the reasoning at length; the
+ * short form is that every job object owns a quota block, creating one needs no
+ * privilege, and the heap is a single 2 MiB run -- so a per-block matrix would be
+ * an unprivileged out-of-memory amplifier built out of telemetry.
+ *
+ * Updated ONCE PER OBLIGATION by the chain entry points, never once per block.
+ * A chain charge bills three principals for the SAME resource, so a per-block
+ * update would both count it three times and put a globally shared cache line
+ * inside the hottest lock section in the kernel -- the exact cost section 15
+ * spent its budget removing. One update per obligation also makes the credit
+ * symmetric by construction, because the receipt already carries the source.
+ *
+ * NO LOCK, deliberately. A charger may hold a block lock at raised IRQL with
+ * interrupts masked, so a global lock here would thread a new order through the
+ * charge path; and the panic-path dashboard has to read these with no lock at
+ * all. What that costs is coherence across cells, which is precisely what
+ * quota.h declines to promise. */
+static const char *const g_source_name[QUOTA_SOURCE_COUNT] = {
+    "unattributed", "object", "ipc", "notify",
+    "registry", "memory", "process", "diag",
+};
+
+_Static_assert(sizeof(g_source_name) / sizeof(g_source_name[0]) == QUOTA_SOURCE_COUNT,
+    "one name per charge source: a grown taxonomy must grow this table too");
+
+static atomic64_t g_source_usage[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT];
+static atomic64_t g_source_charges[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT];
+
+/* The honesty counter is a PLAIN fetch-add, not the bounded CAS the cells use,
+ * and the difference is the whole point: this counter is what says the cells can
+ * no longer be trusted, so an update it could DROP would let the table degrade
+ * while still reporting itself healthy. A fetch-add cannot fail. Saturation is
+ * not needed on 64 bits -- reaching 2^64 mismatches is unreachable, whereas
+ * losing the first one to contention is not. */
+static uint64_t   g_source_mismatch;
+
+/* Pin the cost. The whole justification for a system-wide table is that its
+ * size does not scale with anything a caller can create, so the size is the
+ * invariant worth asserting -- a future per-principal dimension would multiply
+ * this and must confront the heap arithmetic in quota.h first. */
+_Static_assert(sizeof(g_source_usage) ==
+                   QUOTA_SOURCE_COUNT * QUOTA_RESOURCE_TYPE_COUNT * sizeof(atomic64_t),
+    "the attribution table must be exactly source x type cells, with no padding");
+_Static_assert(sizeof(g_source_usage) + sizeof(g_source_charges) <= 4096,
+    "system-wide attribution must stay a fixed small cost; a growth that pushes "
+    "it past 4 KiB means re-deriving the storage decision, not widening this");
+
+/* Retry ceiling for one attribution cell. Bounded because this runs on the
+ * charge path, where a CPU may have interrupts masked: an unbounded retry there
+ * is a hang, and the table is a diagnostic whose worst failure is one dropped
+ * update that the mismatch counter then reports. */
+#define QUOTA_SOURCE_CAS_TRIES  8u
+
+/* Move `cell` by `delta`, keeping it inside the documented 0..QUOTA_AMOUNT_MAX
+ * domain. Returns how much was ACTUALLY applied, so the caller can tell an exact
+ * update from a clamped one; 0 when the cell would not move or the bounded retry
+ * was exhausted.
+ *
+ * The clamp is what makes the table safe rather than merely useful. Letting a
+ * cell absorb an unmatched credit and go negative would turn it into an
+ * unbounded residual accumulator, and since a single charge may be as large as
+ * QUOTA_AMOUNT_MAX, the very next charge on that source would then overflow a
+ * signed 64-bit counter. A clamp plus a counted mismatch cannot overflow and
+ * cannot lie about which direction the books are off. */
+static int64_t quota_source_apply_cell(atomic64_t *cell, int64_t delta)
+{
+    for (uint32_t i = 0; i < QUOTA_SOURCE_CAS_TRIES; i++) {
+        int64_t raw  = atomic64_read(cell);
+        /* A negative cell is outside the domain (only a memory error can
+         * produce one). Re-seat the arithmetic at 0 rather than propagating it,
+         * but CAS against the value actually stored so the exchange is honest. */
+        int64_t base = (raw < 0) ? 0 : raw;
+        int64_t want;
+
+        if (delta >= 0)
+            want = (delta > QUOTA_AMOUNT_MAX - base) ? QUOTA_AMOUNT_MAX : base + delta;
+        else
+            want = ((-delta) > base) ? 0 : base + delta;
+
+        if (want == raw)
+            return 0;
+        if (atomic64_cmpxchg(cell, raw, want) == raw)
+            return want - base;
+    }
+    return 0;
+}
+
+/* Mark the table degraded. Never droppable -- see g_source_mismatch. */
+static void quota_source_note_mismatch(void)
+{
+    __atomic_fetch_add(&g_source_mismatch, 1ull, __ATOMIC_RELAXED);
+}
+
+void quota_source_note(quota_charge_source_t source, quota_resource_type_t type,
+                       int64_t delta)
+{
+    if (!quota_source_valid(source) || !quota_type_valid(type) || delta == 0)
+        return;
+    /* INT64_MIN has no negation, and no legitimate amount reaches it (every
+     * charge is validated against QUOTA_AMOUNT_MAX before it gets here), so this
+     * is a corrupted delta rather than a large one: count it and touch nothing. */
+    if (delta < -QUOTA_AMOUNT_MAX) {
+        quota_source_note_mismatch();
+        return;
+    }
+
+    if (quota_source_apply_cell(&g_source_usage[source][type], delta) != delta)
+        quota_source_note_mismatch();
+}
+
+void quota_source_count_charge(quota_charge_source_t source,
+                               quota_resource_type_t type)
+{
+    atomic64_t *cell;
+
+    if (!quota_source_valid(source) || !quota_type_valid(type))
+        return;
+
+    /* EXHAUSTION COUNTS AS A MISMATCH HERE TOO: a count that silently skipped a
+     * charge is the same quiet drift the counter exists to disclose. Saturation at
+     * the ceiling is NOT a mismatch -- the counter is documented as saturating, so
+     * stopping there is the contract rather than a lost update. Read first so the
+     * two are told apart; a cell that reaches the ceiling between the read and the
+     * update is reported as a mismatch, which is the truthful direction (something
+     * did not apply exactly) rather than the convenient one. */
+    cell = &g_source_charges[source][type];
+    if (atomic64_read(cell) < QUOTA_AMOUNT_MAX &&
+        quota_source_apply_cell(cell, 1) != 1)
+        quota_source_note_mismatch();
+}
+
+const char *quota_source_name(quota_charge_source_t source)
+{
+    return quota_source_valid(source) ? g_source_name[source] : "?";
+}
+
+int64_t quota_source_usage(quota_charge_source_t source, quota_resource_type_t type)
+{
+    if (!quota_source_valid(source) || !quota_type_valid(type))
+        return 0;
+    int64_t v = atomic64_read(&g_source_usage[source][type]);
+    return (v > 0) ? v : 0;
+}
+
+int64_t quota_source_charges(quota_charge_source_t source, quota_resource_type_t type)
+{
+    if (!quota_source_valid(source) || !quota_type_valid(type))
+        return 0;
+    int64_t v = atomic64_read(&g_source_charges[source][type]);
+    return (v > 0) ? v : 0;
+}
+
+uint64_t quota_source_mismatch(void)
+{
+    return __atomic_load_n(&g_source_mismatch, __ATOMIC_RELAXED);
+}
+
+#ifdef KERNEL_TESTS
+/* Test-only withdrawal (see quota.h). Compiled out in production. Deliberately the
+ * ONLY way the counter can move backwards: a test that provokes a mismatch has to
+ * be able to put the image back, but nothing in the live path may.
+ *
+ * A bounded CAS on a DELTA rather than a store, so an increment another CPU makes
+ * during cleanup survives -- a store would erase it, and the caller's own
+ * post-cleanup assertion would then pass because the evidence was destroyed. */
+void quota_test_withdraw_source_mismatch(uint64_t count)
+{
+    for (uint32_t i = 0; i < QUOTA_SOURCE_CAS_TRIES; i++) {
+        uint64_t cur  = __atomic_load_n(&g_source_mismatch, __ATOMIC_RELAXED);
+        uint64_t want = (count > cur) ? 0ull : (cur - count);
+
+        if (__atomic_compare_exchange_n(&g_source_mismatch, &cur, want, 0,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            return;
+    }
+}
+#endif
+
+void quota_source_snapshot(int64_t out[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT])
+{
+    if (!out)
+        return;
+    for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT; s++) {
+        for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+            int64_t v = atomic64_read(&g_source_usage[s][t]);
+            out[s][t] = (v > 0) ? v : 0;
+        }
+    }
+}
+
+/* Print the attribution breakdown: for each type any subsystem holds, one row
+ * per contributing source. Lock-free throughout, so it is legal from both the
+ * live dashboard and the panic-path dump. Types nobody holds are skipped, and a
+ * nonzero mismatch is reported FIRST -- it is the flag that says the rows below
+ * no longer add up, and a reader who missed that would trust a broken split. */
+static void quota_dump_sources(void)
+{
+    uint64_t mismatch = quota_source_mismatch();
+
+    if (mismatch != 0)
+        klog_unrated(LOG_WARN, "quota",
+             "  attribution: %llu unmatched update(s) -- the split below is approximate",
+             mismatch);
+
+    for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
+        int nonempty = 0;
+
+        /* A PREDICATE, not a sum. Every cell may legally hold QUOTA_AMOUNT_MAX
+         * (== INT64_MAX), so adding two of them overflows a signed 64-bit
+         * accumulator -- undefined behavior, in the live dashboard and the
+         * crash-time dump both. Nothing here needs the total: the only question
+         * is whether this type has anything worth printing. */
+        for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT && !nonempty; s++) {
+            if (quota_source_usage((quota_charge_source_t)s,
+                                   (quota_resource_type_t)t) != 0 ||
+                quota_source_charges((quota_charge_source_t)s,
+                                     (quota_resource_type_t)t) != 0)
+                nonempty = 1;
+        }
+        if (!nonempty)
+            continue;
+
+        for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT; s++) {
+            int64_t held = quota_source_usage((quota_charge_source_t)s,
+                                              (quota_resource_type_t)t);
+            int64_t made = quota_source_charges((quota_charge_source_t)s,
+                                                (quota_resource_type_t)t);
+
+            if (held == 0 && made == 0)
+                continue;
+            klog_unrated(LOG_INFO, "quota", "  %s by %s: held %llu  charges %llu",
+                 quota_resource_type_name((quota_resource_type_t)t),
+                 quota_source_name((quota_charge_source_t)s),
+                 (uint64_t)held, (uint64_t)made);
+        }
+    }
+}
+
 NTSTATUS quota_charge(quota_block_t *block, quota_resource_type_t type, uint64_t amount)
 {
     if (!block || !quota_type_valid(type) || amount > (uint64_t)QUOTA_AMOUNT_MAX)
@@ -2040,6 +2285,12 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
 
     quota_resource_type_t type = receipt->type;
     uint64_t              old  = receipt->amount;
+    /* Captured INSIDE the BUSY window, by value. The source is immutable for a
+     * charge's life, but the receipt STORAGE is not: once this republishes,
+     * another CPU may return the charge and recharge the same receipt under a
+     * different source, so a read taken after the republish could attribute this
+     * resize to whoever came next. */
+    quota_charge_source_t source = (quota_charge_source_t)receipt->source;
 
     if (!quota_type_valid(type)) {
         /* A live receipt should never carry an invalid type; refuse rather than
@@ -2135,6 +2386,31 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
 
     for (uint32_t i = n; i > 0; i--)
         quota_block_unlock_quiet(sorted[i - 1], lock_flags[i - 1]);
+
+    /* Move the attributed amount by the same signed delta the counters moved by,
+     * and ONLY on the committed path -- a refused adjust moved no usage, so
+     * recording one would make the breakdown disagree with the counters it exists
+     * to explain.
+     *
+     * INSIDE THE BUSY CLAIM, BEFORE THE REPUBLISH BELOW. Republishing first makes
+     * the charge returnable again, so a token-holding returner on another CPU can
+     * credit back the NEW amount before this line has added the delta that
+     * produced it: the credit meets a row still holding the OLD amount, the
+     * clamp at 0 absorbs the difference, and this line then adds a delta nothing
+     * will ever credit back -- a permanent phantom in the row, from an
+     * interleaving that is entirely legal. Attribution is therefore part of the
+     * publication boundary, not a step after it.
+     *
+     * The cost is honest and it is why the recording is SPLIT: every block lock is
+     * already released, and quota_source_note touches exactly ONE cell, so this
+     * adds at most QUOTA_SOURCE_CAS_TRIES compare-exchanges plus one
+     * non-blocking fetch-add to an IRQ-off window that already spans the
+     * block-pointer sort, every block critical section, and the tag CAS. The
+     * cumulative charge-count cell is NOT touched here -- both because a resize is
+     * not a new charge and because a second contended cache line with interrupts
+     * off would double this bound for a statistic with no ordering requirement. */
+    if (status == STATUS_SUCCESS)
+        quota_source_note(source, type, increase ? delta : -delta);
 
     /* Republish at the SAME generation: the holder's token must keep naming this
      * charge, whether the resize was applied or refused. Interrupts are restored
@@ -2578,6 +2854,13 @@ void quota_dump(void)
 
     klog_unrated(LOG_INFO, "quota", "--- %u USER block(s); PROCESS/JOB blocks are not "
          "enumerable (no lifetime-safe task iterator) ---", (uint64_t)blocks);
+
+    /* The per-block rows above answer "which principal holds it"; this answers
+     * "which subsystem asked for it". It is printed even though PROCESS and JOB
+     * blocks are not enumerable, and that is the point: attribution is
+     * system-wide, so it covers the charges those unreachable blocks hold. */
+    klog_unrated(LOG_INFO, "quota", "--- charge attribution (system-wide) ---");
+    quota_dump_sources();
 }
 
 void quota_dump_crash(void)
@@ -2608,6 +2891,11 @@ void quota_dump_crash(void)
         __atomic_fetch_add(&g_crash_fallbacks, 1, __ATOMIC_RELAXED);
         klog_unrated(LOG_ERROR, "quota",
              "crash dump: registry unavailable (lock held elsewhere)");
+        /* The per-principal rows are gone, but attribution needs neither the
+         * registry nor its lock, so it is still reportable -- and this is
+         * exactly the crash where it is the only thing left to report. */
+        klog_unrated(LOG_INFO, "quota", "--- charge attribution (system-wide) ---");
+        quota_dump_sources();
         return;
     }
 
@@ -2697,6 +2985,14 @@ void quota_dump_crash(void)
         klog_unrated(LOG_WARN, "quota",
              "crash dump: visit budget reached after %u nodes; tail not walked",
              (uint64_t)seen);
+
+    /* Attribution is the one part of this report that survives BOTH budgets
+     * above and a registry lock this dump could not take: it is system-wide
+     * static storage read with plain atomic loads, so it needs no walk, no lock,
+     * and no allocation. On a crash where the rows were lost entirely, this may
+     * be the only surviving answer to "which subsystem was holding it". */
+    klog_unrated(LOG_INFO, "quota", "--- charge attribution (system-wide) ---");
+    quota_dump_sources();
 }
 
 /* The counter-mutation epoch and the in-progress writer count, or constants

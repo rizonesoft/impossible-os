@@ -319,9 +319,15 @@ static void test_stall_uninstrumented_reports_unknown(void)
         TEST_ASSERT_EQ((uint32_t)s.level, (uint32_t)QUOTA_PRESSURE_NORMAL,
                        "an unmeasured domain never steps a level");
     }
+    /* And the composite says UNKNOWN, not NORMAL. Per-domain honesty was never
+     * enough on its own: a caller that only reads the system level would have
+     * been told "calm" on the strength of three instruments that have never run.
+     * This is the assertion that makes the flag's promise reach the top. */
     TEST_ASSERT_EQ((uint32_t)quota_stall_system_level(),
-                   (uint32_t)QUOTA_PRESSURE_NORMAL,
-                   "unknown domains neither raise nor lower the system level");
+                   (uint32_t)QUOTA_PRESSURE_UNKNOWN,
+                   "with no valid domain the system level is UNKNOWN, not NORMAL");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_level_measured(quota_stall_system_level()),
+                   0u, "UNKNOWN is not a measured level, so it is not comparable");
 }
 
 /* Declaring a seam is not enough on its own: validity also needs a closed
@@ -922,6 +928,24 @@ static void test_stall_info_class_roundtrip(void)
     NTSTATUS st;
 
     stall_begin();
+
+    /* QUERY FIRST, with nothing instrumented, so the UNMEASURED branch of the
+     * marshalling is actually executed. Asserting only the measured case would
+     * leave a regression free to publish the 0xFF sentinel across the ABI, or to
+     * claim SYSTEM_LEVEL_VALID for a system nothing has measured -- and the
+     * conditional assertion further down cannot catch either, because by then this
+     * fixture has instrumented a lane and the composite is always measured. */
+    st = nt_query_resource_pressure_information(&info, (uint32_t)sizeof(info), &rl);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                   "the query succeeds before anything is instrumented");
+    TEST_ASSERT_EQ((uint32_t)(info.Flags &
+                       SYSTEM_RESOURCE_PRESSURE_FLAG_SYSTEM_LEVEL_VALID), 0u,
+                   "an unmeasured system leaves FLAG_SYSTEM_LEVEL_VALID clear");
+    TEST_ASSERT_EQ(info.SystemLevel, 0u,
+                   "and marshals 0, never the UNKNOWN sentinel");
+    TEST_ASSERT((uint32_t)QUOTA_PRESSURE_UNKNOWN != 0u,
+                "the sentinel is a value the ABI would otherwise have exposed");
+
     quota_stall_declare_instrumented(QUOTA_STALL_MEM);
     tok = quota_stall_task_stalled(QUOTA_STALL_MEM);
     stall_step_windows(6);
@@ -972,8 +996,29 @@ static void test_stall_info_class_roundtrip(void)
     TEST_ASSERT_EQ((uint32_t)info.LastUpdateNs,
                    (uint32_t)quota_stall_last_update_ns(),
                    "LastUpdateNs matches the kernel's closed-window timestamp");
-    TEST_ASSERT_EQ(info.SystemLevel, (uint32_t)quota_stall_system_level(),
-                   "SystemLevel matches the kernel's composite level");
+    /* The composite can now answer UNKNOWN, which is deliberately NOT marshalled
+     * -- SystemLevel keeps its published 0..3 space and a flag carries the
+     * honesty. Assert the TRANSLATION rule rather than a bare equality, so the
+     * test fails if either half is dropped: measured means the flag is set and
+     * the value matches; unmeasured means the flag is clear and the value is 0
+     * (never the 0xFF sentinel leaking across the ABI). */
+    {
+        quota_pressure_level_t composite = quota_stall_system_level();
+        int level_valid = (info.Flags &
+                           SYSTEM_RESOURCE_PRESSURE_FLAG_SYSTEM_LEVEL_VALID) != 0;
+
+        if (quota_pressure_level_measured(composite)) {
+            TEST_ASSERT(level_valid,
+                        "a measured composite level sets FLAG_SYSTEM_LEVEL_VALID");
+            TEST_ASSERT_EQ(info.SystemLevel, (uint32_t)composite,
+                           "SystemLevel matches the kernel's composite level");
+        } else {
+            TEST_ASSERT_EQ((uint32_t)level_valid, 0u,
+                           "an unmeasured composite leaves FLAG_SYSTEM_LEVEL_VALID clear");
+            TEST_ASSERT_EQ(info.SystemLevel, 0u,
+                           "an unmeasured composite marshals 0, not the UNKNOWN sentinel");
+        }
+    }
     TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].Level,
                    (uint32_t)mem.level, "the row's level matches the snapshot");
     TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].FullTotalNs,

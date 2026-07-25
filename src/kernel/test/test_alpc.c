@@ -1418,6 +1418,12 @@ static void test_alpc_message_quota_roundtrip(void)
     HANDLE server_comm = INVALID_HANDLE_VALUE;
     HANDLE client_h;
     uint64_t before;
+    /* The attribution tag on the REAL charge site. The taxonomy helpers are tested
+     * in test_quota.c; what only this can catch is the wiring -- an untagged or
+     * mis-tagged AlpcAllocateMessage would keep those tests green while the
+     * dashboard blamed the wrong subsystem for every queued message. */
+    int64_t ipc_before = quota_source_usage(QUOTA_SOURCE_IPC,
+                                            QUOTA_RES_ALPC_MESSAGE);
 
     if (!t || !t->quota) {
         TEST_ASSERT(0, "current task has a process quota block");
@@ -1442,6 +1448,10 @@ static void test_alpc_message_quota_roundtrip(void)
                    (uint32_t)STATUS_SUCCESS, "datagram queued");
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before + 1,
                    "a queued message charges the sender exactly one");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_ALPC_MESSAGE)
+                              - ipc_before),
+                   1ull, "and attributes it to IPC, not to the unattributed row");
 
     uint8_t rxbuf[sizeof(PORT_MESSAGE) + 64];
     PORT_MESSAGE *rx = (PORT_MESSAGE *)rxbuf;
@@ -1452,6 +1462,10 @@ static void test_alpc_message_quota_roundtrip(void)
                    (uint32_t)STATUS_SUCCESS, "message received");
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
                    "receiving the message returns the sender's charge");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_ALPC_MESSAGE)
+                              - ipc_before),
+                   0ull, "and credits the IPC attribution back with it");
 
     alpc_teardown_pair(client_h, server_comm);
 }

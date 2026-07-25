@@ -171,23 +171,49 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
                             KNF_LIFETIME lifetime, KNF_DATA_SCOPE scope,
                             const KNF_TYPE_ID *type_id, uint32_t access_mode)
 {
+    KNF_STATE *st = NULL;
+
+    /* The status is DELIBERATELY discarded here and nowhere else: this form of
+     * the call cannot express it, which is the whole reason _ex exists. */
+    (void)knf_create_state_ex(category, name, lifetime, scope, type_id,
+                              access_mode, &st);
+    return st;
+}
+
+NTSTATUS knf_create_state_ex(const char *category, const char *name,
+                             KNF_LIFETIME lifetime, KNF_DATA_SCOPE scope,
+                             const KNF_TYPE_ID *type_id, uint32_t access_mode,
+                             KNF_STATE **out_state)
+{
     KNF_STATE     *st;
     OBJECT_HEADER *hdr;
     void          *dir;
 
-    if (!ObpNotificationStateType || !category || !name)
-        return NULL;
+    if (!out_state)
+        return STATUS_INVALID_PARAMETER;
+    /* Emptied FIRST, before any other check, so a caller may branch on the
+     * status alone and never has to wonder whether a failure left the previous
+     * contents of its variable behind. */
+    *out_state = NULL;
+
+    if (!category || !name)
+        return STATUS_INVALID_PARAMETER;
+    /* Distinct from a bad argument: the caller is well-formed, the subsystem is
+     * not up yet. Reporting INVALID_PARAMETER here would send a caller looking
+     * for a mistake in its own arguments. */
+    if (!ObpNotificationStateType)
+        return STATUS_DEVICE_NOT_READY;
 
     /* Lifetime must be a defined class (an out-of-range value must not slip
      * past the privilege gate below while still getting OB_FLAG_PERMANENT). */
     if (lifetime < KNF_LIFETIME_WELLKNOWN || lifetime > KNF_LIFETIME_TEMPORARY)
-        return NULL;
+        return STATUS_INVALID_PARAMETER;
 
     /* Both the category and the leaf name are single namespace components:
      * validate each (non-empty, bounded, no separator) so no crafted value
      * aliases the wrong directory or object. */
     if (!knf_valid_component(category) || !knf_valid_component(name))
-        return NULL;
+        return STATUS_INVALID_PARAMETER;
 
     /* WellKnown / Permanent / Persistent states outlive a normal creator, so a
      * user-mode caller must hold SeCreatePermanentPrivilege (matches WNF: only
@@ -199,7 +225,7 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
             klog(LOG_WARN, "knf",
                  "create '%s\\%s' denied: SeCreatePermanentPrivilege required",
                  category, name);
-            return NULL;
+            return STATUS_PRIVILEGE_NOT_HELD;
         }
     }
 
@@ -208,13 +234,13 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
         /* Unknown category is a caller argument error, not a kernel fault:
          * WARN (not FAIL) so it never looks like a subsystem error. */
         klog(LOG_WARN, "knf", "create: unknown category '%s'", category);
-        return NULL;
+        return STATUS_OBJECT_PATH_NOT_FOUND;
     }
 
     st = (KNF_STATE *)ob_alloc_object(ObpNotificationStateType);
     if (!st) {
         ObDereferenceObject(dir);
-        return NULL;
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     /* Charge the creating task for the state and its retention budget BEFORE
@@ -227,21 +253,30 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
      * generation 0, which is the valid "holds nothing" state. That zero-fill
      * also gives sequence=0, payload=NULL, subscribers=NULL, and the spinlock
      * its init state. */
-    if (quota_charge_current(QUOTA_RES_NOTIFICATION_STATE, 1,
-                             &st->quota_state, &st->quota_state_token)
-            != STATUS_SUCCESS ||
-        quota_charge_current(QUOTA_RES_NOTIFICATION_BYTES, KNF_MAX_PAYLOAD,
-                             &st->quota_bytes, &st->quota_bytes_token)
-            != STATUS_SUCCESS) {
-        /* "not charged" rather than "refused": the charge can also fail
-         * transiently when a job-membership transition holds the task's charge
-         * gate closed, and this function returns a pointer so it cannot carry
-         * that distinction to its caller. Do not assert a refusal it may not
-         * have been. */
-        klog(LOG_WARN, "knf", "create: quota not charged '%s\\%s'", category, name);
-        ObDereferenceObject(st);
-        ObDereferenceObject(dir);
-        return NULL;
+    {
+        NTSTATUS qst = quota_charge_current_from(QUOTA_RES_NOTIFICATION_STATE, 1,
+                                                QUOTA_SOURCE_NOTIFY,
+                                                &st->quota_state,
+                                                &st->quota_state_token);
+        if (qst == STATUS_SUCCESS)
+            qst = quota_charge_current_from(QUOTA_RES_NOTIFICATION_BYTES,
+                                            KNF_MAX_PAYLOAD, QUOTA_SOURCE_NOTIFY,
+                                            &st->quota_bytes,
+                                            &st->quota_bytes_token);
+        if (qst != STATUS_SUCCESS) {
+            /* The status is PROPAGATED VERBATIM, which is the point of this
+             * form: STATUS_RETRY here means a job-membership transition holds
+             * the task's charge gate shut, not that the user is over quota, and
+             * flattening the two told a one-shot caller to give up forever on a
+             * race it could have waited out. The log line stays "not charged"
+             * for the same reason -- the subsystem does not know which it was,
+             * and now it does not have to guess. */
+            klog(LOG_WARN, "knf", "create: quota not charged '%s\\%s' (0x%x)",
+                 category, name, (uint64_t)qst);
+            ObDereferenceObject(st);
+            ObDereferenceObject(dir);
+            return qst;
+        }
     }
 
     strncpy(st->name, name, KNF_NAME_MAX - 1);
@@ -275,7 +310,10 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
     /* Publish under the category directory. The directory takes its own
      * reference on success; on a name collision, open the existing state
      * (WNF create-or-open) so one name maps to one state. */
-    if (ObInsertObject(st, st->name, dir) < 0) {
+    {
+    NTSTATUS ist = ObInsertObjectEx(st, st->name, dir);
+
+    if (ist != STATUS_SUCCESS) {
         char wpath[KNF_PATH_MAX];
         void *winner = NULL;
 
@@ -286,9 +324,27 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
         snprintf(wpath, sizeof(wpath), "\\Notifications\\%s\\%s",
                  category, name);
         if (ObLookupObjectByName(wpath, ObpNotificationStateType, 0,
-                                 &winner) == 0 && winner)
-            return (KNF_STATE *)winner;   /* referenced */
-        return NULL;
+                                 &winner) == 0 && winner) {
+            /* WNF create-or-open: the name resolves to one state, so losing the
+             * insert race and adopting the winner is a SUCCESS, not a collision
+             * the caller must handle. */
+            *out_state = (KNF_STATE *)winner;   /* referenced */
+            return STATUS_SUCCESS;
+        }
+        /* No adoptable winner, so report what the INSERT actually said. The
+         * status comes from under the directory lock that established it, which
+         * is the only place the three causes are distinguishable: a duplicate
+         * name is permanent, a full directory or a failed entry allocation is
+         * not. Inferring it here from a follow-up lookup was wrong twice over --
+         * the namespace can change in between, and path resolution follows
+         * symlinks, so a name held by a dangling symlink reads as free.
+         *
+         * The distinction decides whether a caller retries: reporting COLLISION
+         * for what was really memory pressure is exactly what would disable a
+         * pressure notification channel for the life of the boot over a
+         * transient condition. */
+        return ist;
+    }
     }
 
     ObDereferenceObject(dir);
@@ -299,7 +355,8 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
     __atomic_fetch_add(&knf_diag_live_states.val, 1, __ATOMIC_RELAXED);
     klog(LOG_INFO, "knf", "state \\Notifications\\%s\\%s (lifetime=%d)",
          category, name, (int)lifetime);
-    return st;   /* caller owns the alloc reference */
+    *out_state = st;   /* caller owns the alloc reference */
+    return STATUS_SUCCESS;
 }
 
 KNF_STATE *knf_lookup_state(const char *category, const char *name)
@@ -728,8 +785,9 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
          * closed -- and telling a caller "you are out of quota" for a charge that
          * merely raced a job assignment is a lie it cannot recover from. Only a
          * genuine refusal keeps the quota status it came with. */
-        NTSTATUS qst = quota_charge_current(QUOTA_RES_NOTIFICATION_SUB, 1,
-                                            &sub->quota, &sub->quota_token);
+        NTSTATUS qst = quota_charge_current_from(QUOTA_RES_NOTIFICATION_SUB, 1,
+                                                QUOTA_SOURCE_NOTIFY,
+                                                &sub->quota, &sub->quota_token);
         if (qst != STATUS_SUCCESS) {
             kfree(sub);
             return qst;

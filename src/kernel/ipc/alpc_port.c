@@ -1530,7 +1530,8 @@ NTSTATUS AlpcAllocateMessage(ALPC_PORT *charge_port, uint32_t data_length,
      *
      * The port-bytes reservation above stays first because it is the cheaper of
      * the two checks and is already unwound on every path below. */
-    status = quota_charge_current(QUOTA_RES_ALPC_MESSAGE, 1, &receipt, &token);
+    status = quota_charge_current_from(QUOTA_RES_ALPC_MESSAGE, 1,
+                                      QUOTA_SOURCE_IPC, &receipt, &token);
     if (status != STATUS_SUCCESS) {
         alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
         return status;

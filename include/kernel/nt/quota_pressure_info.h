@@ -45,6 +45,15 @@
 
 /* Whole-class flags. */
 #define SYSTEM_RESOURCE_PRESSURE_FLAG_ARMED          0x1u  /* aggregator has run    */
+/* SystemLevel below is a MEASUREMENT, not a default. Clear means no domain has
+ * reported yet, so SystemLevel reads 0 for want of anything better -- exactly the
+ * "unmeasured is not calm" distinction the per-row FLAG_VALID makes one level
+ * down. A reader that ignores this bit sees the previous behavior unchanged;
+ * SystemLevel keeps its documented 0..3 value space either way, so no existing
+ * decode breaks. (The kernel-internal composite has a fifth sentinel for this,
+ * QUOTA_PRESSURE_UNKNOWN; it is deliberately NOT marshalled -- widening a live
+ * info class's value space is an ABI change, adding a flag bit is not.) */
+#define SYSTEM_RESOURCE_PRESSURE_FLAG_SYSTEM_LEVEL_VALID 0x2u
 
 typedef struct _SYSTEM_RESOURCE_PRESSURE_DOMAIN {
     uint32_t Domain;        /* 0 = cpu, 1 = mem, 2 = io                       */
@@ -107,7 +116,8 @@ typedef struct _SYSTEM_RESOURCE_PRESSURE_INFORMATION {
     uint64_t UpdateIntervalNs;  /* aggregation cadence                          */
     uint64_t LastUpdateNs;      /* uptime of the most recent closed window      */
     uint64_t WindowsClosed;     /* windows aggregated since boot                */
-    uint32_t SystemLevel;       /* worst level across VALID rows                */
+    uint32_t SystemLevel;       /* worst level across VALID rows; 0 and
+                                 * meaningless unless FLAG_SYSTEM_LEVEL_VALID   */
     uint32_t Reserved0;         /* zeroed before copy_to_user                   */
     SYSTEM_RESOURCE_PRESSURE_DOMAIN Domains[SYSTEM_RESOURCE_PRESSURE_DOMAIN_COUNT];
     uint64_t Reserved[4];       /* zeroed; future whole-class counters          */

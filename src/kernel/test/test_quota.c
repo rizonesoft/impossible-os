@@ -2567,6 +2567,573 @@ static void test_ob_type_counters_are_per_type_authoritative(void)
                    "A's peak retains its high-water mark of 1");
 }
 
+/* ==========================================================================
+ * Section 16: charge attribution
+ * ========================================================================== */
+
+/* THE section 16 checkpoint: two charges of the SAME resource type from
+ * DIFFERENT subsystems are reported under distinct tags, and their two amounts
+ * still add up to the movement in the row they both billed.
+ *
+ * Deltas rather than absolute values throughout: this runs on a live system
+ * whose other subsystems hold real charges of the same type, so any assertion
+ * against an absolute total would be asserting the rest of the kernel is idle. */
+static void test_quota_attribution_splits_by_source(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r_ipc = { 0 }, r_notify = { 0 };
+    uint64_t tok_ipc = 0, tok_notify = 0;
+    int64_t  ipc_before, notify_before, unknown_before;
+    uint64_t row_before;
+    uint64_t mismatch_before = quota_source_mismatch();
+
+    if (!t || !t->quota || !t->quota_user)
+        return;                      /* covered by the task-has-blocks test */
+
+    ipc_before     = quota_source_usage(QUOTA_SOURCE_IPC, QUOTA_RES_CRASH_BUFFER);
+    notify_before  = quota_source_usage(QUOTA_SOURCE_NOTIFY, QUOTA_RES_CRASH_BUFFER);
+    unknown_before = quota_source_usage(QUOTA_SOURCE_UNKNOWN, QUOTA_RES_CRASH_BUFFER);
+    row_before     = quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER);
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 3,
+                                               QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_IPC),
+                                               &r_ipc, &tok_ipc),
+                   (uint64_t)STATUS_SUCCESS, "IPC-attributed chain charge succeeds");
+    TEST_ASSERT_EQ((uint64_t)r_ipc.source, (uint64_t)QUOTA_SOURCE_IPC,
+                   "the receipt records the subsystem that charged it");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 5,
+                                               QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_NOTIFY),
+                                               &r_notify, &tok_notify),
+                   (uint64_t)STATUS_SUCCESS, "NOTIFY-attributed chain charge succeeds");
+    TEST_ASSERT_EQ((uint64_t)r_notify.source, (uint64_t)QUOTA_SOURCE_NOTIFY,
+                   "a second charge of the same type carries its OWN source");
+
+    /* DISTINCT tags: each source moved by its own amount and neither absorbed
+     * the other. This is what a per-type total alone cannot express. */
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_CRASH_BUFFER) - ipc_before),
+                   3ull, "the IPC tag holds exactly its own charge");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_CRASH_BUFFER) - notify_before),
+                   5ull, "the NOTIFY tag holds exactly its own charge");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_UNKNOWN,
+                                                QUOTA_RES_CRASH_BUFFER) - unknown_before),
+                   0ull, "an attributed charge never lands in the unattributed row");
+
+    /* AND THEY SUM TO THE ROW: the split is a partition of the same movement the
+     * primary counter recorded, not a parallel set of numbers. */
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER) - row_before,
+                   3ull + 5ull, "the two tags sum to the row usage they billed");
+
+    /* The return credits the SAME source it debited -- carried on the receipt,
+     * so no caller had to restate it and no row can drift. */
+    quota_return_chain(&r_notify, tok_notify);
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_NOTIFY,
+                                                QUOTA_RES_CRASH_BUFFER) - notify_before),
+                   0ull, "returning credits the charging subsystem, not another");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_CRASH_BUFFER) - ipc_before),
+                   3ull, "one subsystem returning cannot disturb another's tag");
+
+    quota_return_chain(&r_ipc, tok_ipc);
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_CRASH_BUFFER) - ipc_before),
+                   0ull, "both tags return to their baseline");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER), row_before,
+                   "and so does the row they billed");
+
+    /* Cumulative charge counts are the NT !poolused "Allocs" column: they keep
+     * counting after the charge is gone, which is what answers "who is busy
+     * here" when nothing is held right now. */
+    TEST_ASSERT(quota_source_charges(QUOTA_SOURCE_IPC, QUOTA_RES_CRASH_BUFFER) >= 1,
+                "a returned charge still counts toward its source's charge count");
+
+    /* Nothing above could not be applied exactly, so the sum contract holds. */
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
+                   "an exactly-matched charge and return record no mismatch");
+}
+
+/* A resize moves the obligation's attributed amount by the same signed delta the
+ * counters moved by -- in BOTH directions, and on the recorded source rather
+ * than wherever the resizing caller happens to be from. */
+static void test_quota_attribution_follows_adjust(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+    int64_t  before;
+    uint64_t mismatch_before = quota_source_mismatch();
+
+    if (!t || !t->quota || !t->quota_user)
+        return;
+
+    before = quota_source_usage(QUOTA_SOURCE_DIAG, QUOTA_RES_CRASH_BUFFER);
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 10,
+                                               QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_DIAG),
+                                               &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "attributed charge for the resize test");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_adjust(&r, tok, 25),
+                   (uint64_t)STATUS_SUCCESS, "growing the charge succeeds");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_DIAG,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   25ull, "an increase lands on the recorded source");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_adjust(&r, tok, 4),
+                   (uint64_t)STATUS_SUCCESS, "shrinking the charge succeeds");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_DIAG,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   4ull, "a decrease lands on the recorded source too");
+
+    quota_return_chain(&r, tok);
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_DIAG,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   0ull, "the return credits back the RESIZED amount, not the original");
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
+                   "a resized charge still reconciles exactly");
+}
+
+/* An unattributed charge is a legal, visible state -- it lands in the UNKNOWN
+ * row rather than being refused or silently relabelled. */
+static void test_quota_attribution_unattributed_is_visible(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+    int64_t  before;
+
+    if (!t || !t->quota || !t->quota_user)
+        return;
+
+    before = quota_source_usage(QUOTA_SOURCE_UNKNOWN, QUOTA_RES_CRASH_BUFFER);
+
+    /* flags 0: no source named at all, which is what every call site written
+     * before the taxonomy existed passes. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 7, 0,
+                                               &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "an unattributed charge is still admitted");
+    TEST_ASSERT_EQ((uint64_t)r.source, (uint64_t)QUOTA_SOURCE_UNKNOWN,
+                   "flags 0 records the charge as unattributed");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_UNKNOWN,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   7ull, "unattributed usage is MEASURED, not discarded");
+
+    quota_return_chain(&r, tok);
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_UNKNOWN,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   0ull, "the unattributed row returns to its baseline");
+}
+
+/* A source the taxonomy does not define is REFUSED, not folded to UNKNOWN: it
+ * means the caller and this build disagree about the enum, and relabelling its
+ * charges "unattributed" would hide exactly that drift. Refused BEFORE the
+ * receipt is claimed, so a live charge in the same receipt is untouched. */
+static void test_quota_attribution_rejects_undefined_source(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+    uint64_t row_before;
+
+    if (!t || !t->quota)
+        return;
+
+    row_before = quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER);
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_COUNT),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a source at the taxonomy ceiling is refused");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0xFFu),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a source past the ceiling is refused");
+    /* A source too wide for the slice must be REFUSED, not folded back into it.
+     * The encoder deliberately does not mask: were it to, 0x100 would encode as 0
+     * and be accepted as UNKNOWN while 0x101 became OBJECT -- silent
+     * misattribution of exactly the taxonomy mismatch the refusal announces. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0x100u),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a source that overflows the slice is refused, not aliased to UNKNOWN");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0x101u),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "and is not aliased to the source its low byte names");
+    /* The values that defeat a shift-without-mask encoder: at 2^24 and above the
+     * shift discards the evidence, so 0x01000000 would land back on 0 (UNKNOWN)
+     * and 0x01000001 on OBJECT. Only checking the WHOLE value before encoding
+     * refuses these, so they are pinned explicitly. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0x01000000u),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a source whose bits shift off the top is refused, not read as UNKNOWN");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0x01000001u),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "nor aliased to the source its surviving bits would name");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               QUOTA_CHARGE_SOURCE(0xFFFFFFFFu),
+                                               &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "and the whole-word maximum is refused too");
+    /* The poison is what makes that total: it must land outside every legal flag. */
+    TEST_ASSERT_EQ((uint64_t)(QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_COUNT)
+                              & QUOTA_CHARGE_FLAG_MASK),
+                   0ull, "an undefined source encodes outside the legal flag mask");
+
+    /* RAW flags, bypassing the encoder entirely. Every case above is refused by the
+     * flag-MASK check, because the encoder poisons out-of-range values before
+     * quota_charge_chain ever decodes one -- so none of them reaches the separate
+     * decoded-source guard, and deleting that guard would leave them all green.
+     * These two words are in-mask and therefore only that guard can refuse them:
+     * without it a charge would be admitted carrying a source the taxonomy cannot
+     * name, and its attribution would be silently discarded. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                       ((uint32_t)QUOTA_SOURCE_COUNT << QUOTA_CHARGE_SOURCE_SHIFT),
+                       &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a raw in-mask flags word at the taxonomy ceiling is refused");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               0xFF00u, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "and so is a raw slice holding the maximum encodable source");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER), row_before,
+                   "neither raw refusal moved any usage");
+    TEST_ASSERT_EQ((uint64_t)tok, 0ull, "nor issued a token");
+    /* An undefined FLAG bit above the source slice is refused the same way, so
+     * the slice cannot be widened by accident without the mask being updated. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 9,
+                                               0x10000u, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a flag bit outside the defined mask is refused");
+    /* The boundary values that MUST round-trip, so the refusals above are not
+     * simply a blanket rejection. */
+    TEST_ASSERT_EQ((uint64_t)QUOTA_CHARGE_SOURCE_OF(
+                       QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_UNKNOWN)),
+                   (uint64_t)QUOTA_SOURCE_UNKNOWN, "source 0 round-trips");
+    TEST_ASSERT_EQ((uint64_t)QUOTA_CHARGE_SOURCE_OF(
+                       QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_COUNT - 1)),
+                   (uint64_t)(QUOTA_SOURCE_COUNT - 1),
+                   "the last defined source round-trips");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_CRASH_BUFFER), row_before,
+                   "a refused charge moved no usage");
+    TEST_ASSERT_EQ((uint64_t)tok, 0ull,
+                   "a pre-claim refusal issues no token");
+}
+
+/* The taxonomy is a storage index and a name table at once, so every defined
+ * value must name itself and nothing out of range may index the table. */
+static void test_quota_source_names_and_bounds(void)
+{
+    for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT; s++) {
+        const char *n = quota_source_name((quota_charge_source_t)s);
+        TEST_ASSERT_NOT_NULL((void *)n, "every defined source has a name");
+        TEST_ASSERT(n[0] != '\0' && n[0] != '?',
+                    "a defined source is named, not rendered as unknown");
+        TEST_ASSERT_EQ((uint32_t)quota_source_valid((quota_charge_source_t)s), 1u,
+                       "every value below the count is valid");
+    }
+    TEST_ASSERT_EQ((uint32_t)quota_source_valid(QUOTA_SOURCE_COUNT), 0u,
+                   "the count itself is not a source");
+    TEST_ASSERT(quota_source_name(QUOTA_SOURCE_COUNT)[0] == '?',
+                "an out-of-range source renders as unknown rather than indexing");
+    /* Out-of-range queries answer 0 rather than reading past the table. */
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_COUNT,
+                                               QUOTA_RES_CRASH_BUFFER), 0ull,
+                   "an out-of-range source reads 0, not memory past the table");
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_IPC,
+                                               QUOTA_RESOURCE_TYPE_COUNT), 0ull,
+                   "an out-of-range type reads 0, not memory past the row");
+}
+
+/* The single-pass snapshot must agree with the scalar queries on a quiescent
+ * system -- that is the exact-sum contract's one guaranteed condition, and the
+ * snapshot is what a whole-picture reporter is supposed to use. */
+static void test_quota_source_snapshot_matches_scalars(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+    static int64_t snap[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT];
+
+    if (!t || !t->quota)
+        return;
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_CRASH_BUFFER, 6,
+                                               QUOTA_CHARGE_SOURCE(QUOTA_SOURCE_OBJECT),
+                                               &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "charge to populate a snapshot cell");
+
+    quota_source_snapshot(snap);
+    TEST_ASSERT(snap[QUOTA_SOURCE_OBJECT][QUOTA_RES_CRASH_BUFFER] >= 6,
+                "the snapshot sees the charge the scalar query sees");
+    for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT; s++) {
+        for (uint32_t ty = 0; ty < QUOTA_RESOURCE_TYPE_COUNT; ty++) {
+            TEST_ASSERT(snap[s][ty] >= 0,
+                        "no snapshot cell is negative: rows are clamped, never "
+                        "used as a residual accumulator");
+        }
+    }
+    /* EVERY cell must equal its scalar query, not just the one under test: the
+     * snapshot is what a whole-picture reporter uses, so a transposed index or an
+     * off-by-one row would be invisible to a single-cell check. */
+    for (uint32_t s = 0; s < QUOTA_SOURCE_COUNT; s++) {
+        for (uint32_t ty = 0; ty < QUOTA_RESOURCE_TYPE_COUNT; ty++) {
+            TEST_ASSERT_EQ((uint64_t)snap[s][ty],
+                           (uint64_t)quota_source_usage((quota_charge_source_t)s,
+                                                        (quota_resource_type_t)ty),
+                           "every snapshot cell equals its scalar query");
+        }
+    }
+
+    /* A NULL argument is a no-op, not a fault: the panic path calls this. */
+    quota_source_snapshot((int64_t (*)[QUOTA_RESOURCE_TYPE_COUNT])0);
+
+    quota_return_chain(&r, tok);
+}
+
+/* The exact-sum contract across MORE than one type and MORE than two sources,
+ * including the taxonomy boundaries (source 0 and COUNT-1). Two sources on one
+ * type cannot catch a row/column mix-up; this can. */
+static void test_quota_attribution_matrix_sums_per_type(void)
+{
+    struct task *t = task_current();
+    /* Boundary sources first and last, plus two interior ones. */
+    static const quota_charge_source_t srcs[] = {
+        QUOTA_SOURCE_UNKNOWN, QUOTA_SOURCE_OBJECT, QUOTA_SOURCE_IPC,
+        (quota_charge_source_t)(QUOTA_SOURCE_COUNT - 1)
+    };
+    const uint32_t nsrc = (uint32_t)(sizeof(srcs) / sizeof(srcs[0]));
+    static const quota_resource_type_t types[] = {
+        QUOTA_RES_CRASH_BUFFER, QUOTA_RES_ALPC_MESSAGE
+    };
+    const uint32_t ntype = (uint32_t)(sizeof(types) / sizeof(types[0]));
+    quota_charge_receipt_t r[4][2];
+    uint64_t tok[4][2];
+    int64_t  src_before[4][2];
+    uint64_t row_before[2];
+    uint64_t mismatch_before = quota_source_mismatch();
+
+    if (!t || !t->quota)
+        return;
+
+    /* Zeroed by assignment rather than memset: this file includes no string
+     * header, and an IDLE receipt is exactly the all-zero value. */
+    for (uint32_t a = 0; a < nsrc; a++) {
+        for (uint32_t b = 0; b < ntype; b++) {
+            const quota_charge_receipt_t empty = { 0 };
+
+            r[a][b]   = empty;
+            tok[a][b] = 0;
+        }
+    }
+
+    for (uint32_t ty = 0; ty < ntype; ty++) {
+        row_before[ty] = quota_usage(t->quota, types[ty]);
+        for (uint32_t s = 0; s < nsrc; s++)
+            src_before[s][ty] = quota_source_usage(srcs[s], types[ty]);
+    }
+
+    /* A distinct amount per (source, type) cell, so any cell that received
+     * another cell's charge shows up as a wrong number rather than cancelling. */
+    for (uint32_t ty = 0; ty < ntype; ty++) {
+        for (uint32_t s = 0; s < nsrc; s++) {
+            uint64_t amount = (uint64_t)(1u + s * 4u + ty);
+
+            TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, types[ty], amount,
+                                                       QUOTA_CHARGE_SOURCE(srcs[s]),
+                                                       &r[s][ty], &tok[s][ty]),
+                           (uint64_t)STATUS_SUCCESS,
+                           "every matrix cell charges successfully");
+        }
+    }
+
+    for (uint32_t ty = 0; ty < ntype; ty++) {
+        uint64_t sum = 0;
+
+        for (uint32_t s = 0; s < nsrc; s++) {
+            uint64_t moved = (uint64_t)(quota_source_usage(srcs[s], types[ty])
+                                        - src_before[s][ty]);
+            TEST_ASSERT_EQ(moved, (uint64_t)(1u + s * 4u + ty),
+                           "each cell holds exactly its own amount");
+            sum += moved;
+        }
+        /* THE contract: per type, the source deltas partition the row delta. */
+        TEST_ASSERT_EQ(quota_usage(t->quota, types[ty]) - row_before[ty], sum,
+                       "the per-source deltas sum to that type's row delta");
+    }
+
+    for (uint32_t ty = 0; ty < ntype; ty++) {
+        for (uint32_t s = 0; s < nsrc; s++)
+            quota_return_chain(&r[s][ty], tok[s][ty]);
+    }
+
+    for (uint32_t ty = 0; ty < ntype; ty++) {
+        for (uint32_t s = 0; s < nsrc; s++) {
+            TEST_ASSERT_EQ((uint64_t)(quota_source_usage(srcs[s], types[ty])
+                                      - src_before[s][ty]),
+                           0ull, "every cell returns to its baseline");
+        }
+        TEST_ASSERT_EQ(quota_usage(t->quota, types[ty]), row_before[ty],
+                       "and so does every row");
+    }
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
+                   "a fully matched matrix records no mismatch");
+}
+
+/* The honesty counter must actually be able to FIRE, and the cells must clamp
+ * rather than go negative. Driving quota_source_note directly is the only way to
+ * produce an unmatched credit -- which is the point: every path that goes through
+ * a receipt is symmetric by construction, so this is the recording primitive being
+ * proven, not a reachable production sequence.
+ *
+ * Touches ONLY the diagnostic table; no primary counter moves, so nothing here
+ * can affect another test's accounting. */
+static void test_quota_attribution_mismatch_and_clamp(void)
+{
+    const quota_resource_type_t ty = QUOTA_RES_CRASH_BUFFER;
+    const quota_charge_source_t s  = QUOTA_SOURCE_DIAG;
+    uint64_t mismatch_before;
+    int64_t  held_before;
+
+    /* Drain whatever this source holds so the clamp boundary is exactly 0. */
+    held_before = quota_source_usage(s, ty);
+    if (held_before > 0)
+        quota_source_note(s, ty, -held_before);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(s, ty), 0ull,
+                   "the cell starts the clamp test empty");
+
+    mismatch_before = quota_source_mismatch();
+
+    /* A zero delta is a no-op and NOT a mismatch. */
+    quota_source_note(s, ty, 0);
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
+                   "a zero delta records nothing at all");
+
+    /* An unmatched credit CLAMPS at 0 and is COUNTED -- it never drives the cell
+     * negative, which is what would make the next large charge overflow it. */
+    quota_source_note(s, ty, -5);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(s, ty), 0ull,
+                   "an unmatched credit clamps at zero rather than going negative");
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before + 1ull,
+                   "and the honesty counter reports it");
+
+    /* A cell may legally reach QUOTA_AMOUNT_MAX; a second charge on top of it
+     * saturates and is likewise counted, never wrapped. */
+    quota_source_note(s, ty, QUOTA_AMOUNT_MAX);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(s, ty), (uint64_t)QUOTA_AMOUNT_MAX,
+                   "a cell can hold the documented maximum");
+    quota_source_note(s, ty, 1000);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(s, ty), (uint64_t)QUOTA_AMOUNT_MAX,
+                   "a charge past the maximum saturates instead of wrapping");
+    TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before + 2ull,
+                   "saturation is counted as a mismatch too");
+
+    /* A row at the maximum must still be REPORTABLE: quota_dump_sources once
+     * summed cells into an int64_t, which two maximum cells overflow. Filling a
+     * second source to the maximum and dumping is what pins that. */
+    quota_source_note(QUOTA_SOURCE_MEMORY, ty, QUOTA_AMOUNT_MAX);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_MEMORY, ty),
+                   (uint64_t)QUOTA_AMOUNT_MAX,
+                   "a second cell in the same row also reaches the maximum");
+    quota_dump();       /* must not overflow, and must still print the row */
+
+    /* Put both cells back so no later test inherits a saturated table. */
+    quota_source_note(s, ty, -QUOTA_AMOUNT_MAX);
+    quota_source_note(QUOTA_SOURCE_MEMORY, ty, -QUOTA_AMOUNT_MAX);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(s, ty), 0ull,
+                   "the test leaves its cells empty");
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_MEMORY, ty), 0ull,
+                   "including the second one");
+    if (held_before > 0)
+        quota_source_note(s, ty, held_before);   /* restore what was there */
+
+    /* AND PUT THE HONESTY COUNTER BACK. This is not tidiness: the counter is
+     * monotonic by design, KERNEL_TESTS is the default build, and the mismatches
+     * above were provoked deliberately -- so leaving them would make the shipping
+     * image report "attribution is approximate" on every later dashboard and crash
+     * dump for the rest of the boot, hiding a real mismatch behind this test's
+     * bookkeeping. The restore is verified rather than assumed. */
+    quota_test_withdraw_source_mismatch(2ull);
+    /* AT MOST the baseline, not exactly it: withdrawing a delta deliberately lets a
+     * mismatch another CPU recorded during this test stand, and asserting equality
+     * would turn that honesty into a spurious failure. */
+    TEST_ASSERT(quota_source_mismatch() >= mismatch_before,
+                "withdrawing the synthetic mismatches cannot erase a concurrent one");
+    TEST_ASSERT(quota_source_mismatch() <= mismatch_before + 2ull,
+                "and the two this test provoked are gone from the shipping image");
+}
+
+/* quota_charge_current_from is the entry point a charging subsystem actually
+ * calls, so its own validation and forwarding need direct coverage rather than
+ * inheritance from quota_charge_chain. */
+static void test_quota_charge_current_from_contract(void)
+{
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+    int64_t  before;
+
+    /* Bad arguments are refused before anything is touched. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER, 1,
+                        QUOTA_SOURCE_IPC, (quota_charge_receipt_t *)0, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "a NULL receipt is refused");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER, 1,
+                        QUOTA_SOURCE_IPC, &r, (uint64_t *)0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "a NULL out-token is refused");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER, 1,
+                        QUOTA_SOURCE_COUNT, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an undefined source is refused at this entry point too");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RESOURCE_TYPE_COUNT, 1,
+                        QUOTA_SOURCE_IPC, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "an undefined type is refused");
+
+    before = quota_source_usage(QUOTA_SOURCE_IPC, QUOTA_RES_CRASH_BUFFER);
+
+    /* A zero-amount charge succeeds owing nothing, and attributes nothing. */
+    tok = 0xdead;
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER, 0,
+                        QUOTA_SOURCE_IPC, &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "a zero-amount attributed charge succeeds");
+    TEST_ASSERT_EQ(tok, 0ull, "and issues the canonical no-obligation token");
+    TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                QUOTA_RES_CRASH_BUFFER) - before),
+                   0ull, "a zero charge attributes nothing");
+
+    /* A real charge FORWARDS the source through to the receipt and the table. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER, 13,
+                        QUOTA_SOURCE_IPC, &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "an attributed charge succeeds");
+    if (tok != 0) {
+        /* token 0 means the boot exemption applied and nothing was charged. */
+        TEST_ASSERT_EQ((uint64_t)r.source, (uint64_t)QUOTA_SOURCE_IPC,
+                       "the source reaches the receipt through this wrapper");
+        TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                    QUOTA_RES_CRASH_BUFFER) - before),
+                       13ull, "and reaches the attribution table");
+        quota_return_chain(&r, tok);
+        TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_IPC,
+                                                    QUOTA_RES_CRASH_BUFFER) - before),
+                       0ull, "the return credits the same source back");
+    }
+
+    /* An amount past the documented ceiling is refused, not truncated. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_current_from(QUOTA_RES_CRASH_BUFFER,
+                        (uint64_t)QUOTA_AMOUNT_MAX + 1ull,
+                        QUOTA_SOURCE_IPC, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an amount above QUOTA_AMOUNT_MAX is refused");
+}
+
 void test_register_quota(void)
 {
     test_suite_register_cat("Quota: registry ready at boot",
@@ -2721,6 +3288,26 @@ void test_register_quota(void)
     test_suite_register_cat("Quota: OBJECT_TYPE counters are per-type authority",
                             test_ob_type_counters_are_per_type_authoritative,
                             TEST_CAT_QUOTA);
+
+    /* Section 16: charge attribution */
+    test_suite_register_cat("Quota: attribution splits by source",
+                            test_quota_attribution_splits_by_source, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: attribution follows an adjust",
+                            test_quota_attribution_follows_adjust, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: unattributed charge is visible",
+                            test_quota_attribution_unattributed_is_visible, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: undefined source refused",
+                            test_quota_attribution_rejects_undefined_source, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: source names and bounds",
+                            test_quota_source_names_and_bounds, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: source snapshot matches scalars",
+                            test_quota_source_snapshot_matches_scalars, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: attribution matrix sums per type",
+                            test_quota_attribution_matrix_sums_per_type, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: attribution mismatch and clamp",
+                            test_quota_attribution_mismatch_and_clamp, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: charge_current_from contract",
+                            test_quota_charge_current_from_contract, TEST_CAT_QUOTA);
 }
 
 #endif /* KERNEL_TESTS */

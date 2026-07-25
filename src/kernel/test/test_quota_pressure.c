@@ -348,8 +348,27 @@ static void test_pressure_sustained_unknown_resets_level(void)
         uint32_t kind, saw_reset = 0;
 
         while ((kind = quota_pressure_test_pop(&rec, &unused)) != 0) {
-            if (kind == QUOTA_PRESSURE_KIND_TRANSITION &&
-                rec.to_level == (uint8_t)QUOTA_PRESSURE_NORMAL &&
+            if (kind != QUOTA_PRESSURE_KIND_TRANSITION)
+                continue;
+            /* THE UNKNOWN SENTINEL MUST NOT REACH THE WIRE. from_level and
+             * to_level are uint8_t fields in a published record, and
+             * QUOTA_PRESSURE_UNKNOWN is 0xFF -- a value a consumer decoding
+             * "0 normal .. 3 critical" has no case for. Only the two system-level
+             * composites may ever answer UNKNOWN; a DOMAIN says "unmeasured" with
+             * source_valid, which is exactly what this record already carries.
+             * Asserted on EVERY popped transition, not just the reset, so the
+             * confinement is proved for the whole stream. */
+            TEST_ASSERT_EQ((uint32_t)quota_pressure_level_measured(
+                               (quota_pressure_level_t)rec.from_level), 1u,
+                           "a published from_level is inside the ordered band");
+            TEST_ASSERT_EQ((uint32_t)quota_pressure_level_measured(
+                               (quota_pressure_level_t)rec.to_level), 1u,
+                           "a published to_level is inside the ordered band");
+            TEST_ASSERT((uint32_t)rec.from_level < QUOTA_PRESSURE_LEVEL_COUNT &&
+                        (uint32_t)rec.to_level < QUOTA_PRESSURE_LEVEL_COUNT,
+                        "and both index the level-name table safely");
+
+            if (rec.to_level == (uint8_t)QUOTA_PRESSURE_NORMAL &&
                 rec.source_valid == 0)
                 saw_reset = 1;
         }
@@ -406,6 +425,50 @@ static void test_pressure_system_level_skips_invalid(void)
     TEST_ASSERT_EQ((uint64_t)quota_pressure_system_level(),
                    (uint64_t)QUOTA_PRESSURE_WATCH,
                    "an unknown domain does not lower the system level");
+}
+
+/* Section 16: with NOTHING measured in either lane, the system level is UNKNOWN
+ * rather than NORMAL. "Unmeasured" and "calm" were previously the same answer at
+ * the top, which is exactly the confusion the per-domain VALID flag refuses to
+ * make one level down.
+ *
+ * Also pins UNKNOWN out of the ORDERED band. A measured level must replace it
+ * outright: if UNKNOWN were merely appended to the enum it would sort above
+ * CRITICAL, so a fold written as `worse-than` would discard the first real
+ * measurement and latch "unmeasured" for the rest of the boot. */
+static void test_pressure_system_level_unknown_when_unmeasured(void)
+{
+    quota_pressure_level_t level;
+
+    quota_pressure_test_reset();
+
+    level = quota_pressure_system_level();
+    TEST_ASSERT_EQ((uint64_t)level, (uint64_t)QUOTA_PRESSURE_UNKNOWN,
+                   "with no valid domain in either lane the answer is UNKNOWN");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_level_measured(level), 0u,
+                   "UNKNOWN is not a measured level");
+    TEST_ASSERT_EQ((uint64_t)QUOTA_PRESSURE_NORMAL, 0ull,
+                   "and it is NOT normal, whose published value stays 0");
+
+    /* One measurement, at the CALMEST level, must still replace UNKNOWN --
+     * the case a bare greater-than comparison gets wrong. */
+    pressure_feed(PT_A, (uint16_t)(QUOTA_PRESSURE_RISE_WATCH_PERMILLE - 1u),
+                  QUOTA_PRESSURE_RISE_SAMPLES);
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_source_valid(PT_A), 1ull,
+                   "the sampled domain is now measured");
+    level = quota_pressure_system_level();
+    TEST_ASSERT_EQ((uint64_t)level, (uint64_t)QUOTA_PRESSURE_NORMAL,
+                   "a single NORMAL measurement replaces UNKNOWN outright");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_level_measured(level), 1u,
+                   "and the answer is now a comparable level");
+
+    /* Named, not rendered "?": an honest unknown and a corrupted value must not
+     * print the same glyph on a dashboard. */
+    TEST_ASSERT(quota_pressure_level_name(QUOTA_PRESSURE_UNKNOWN)[0] == 'u',
+                "UNKNOWN has its own name");
+    TEST_ASSERT(quota_pressure_level_name((quota_pressure_level_t)
+                    (QUOTA_PRESSURE_LEVEL_COUNT))[0] == '?',
+                "a value that is neither a level nor UNKNOWN still renders as ?");
 }
 
 /* ==========================================================================
@@ -1371,6 +1434,122 @@ static void test_pressure_pending_transitions_keep_order(void)
                    "every level entered produced its own record, none coalesced");
 }
 
+/* The notification-channel retry SCHEDULE, asserted directly. The live path owns
+ * a clock and a create call, so the schedule cannot be proved through it -- which
+ * is exactly why the policy is pure functions over explicit state and an explicit
+ * `now`. Every branch that a regression could break is reachable here: the
+ * retryable classification, the backoff floor, the doubling, the cap, the "not yet"
+ * refusal, warn-exactly-once, and the reset after recovery. */
+static void test_pressure_retry_policy_schedule(void)
+{
+    quota_pressure_retry_t st = { 0 };
+    int warn = 0;
+    uint64_t now = 1000ull;
+
+    /* CLASSIFICATION. Only the two genuinely transient statuses are retryable;
+     * everything else must be permanent, or a retry loop would spin on a decision
+     * that will never change. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_status_retryable(STATUS_RETRY), 1u,
+                   "a closed charge gate is retryable");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_status_retryable(
+                       STATUS_INSUFFICIENT_RESOURCES), 1u,
+                   "resource exhaustion is retryable");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_status_retryable(
+                       STATUS_OBJECT_NAME_COLLISION), 0u,
+                   "a name collision is permanent, never retried");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_status_retryable(
+                       STATUS_PRIVILEGE_NOT_HELD), 0u,
+                   "a privilege refusal is permanent");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_status_retryable(
+                       STATUS_OBJECT_PATH_NOT_FOUND), 0u,
+                   "a missing category is permanent");
+
+    /* NOTHING PENDING is never due, whatever the clock says. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_due(&st, 0u, now), 0u,
+                   "an empty pending mask is never due");
+
+    /* FIRST failure takes the floor interval, not zero -- an immediate retry is
+     * the storm the backoff exists to prevent. */
+    quota_pressure_retry_advance(&st, 0x1u, now, &warn);
+    TEST_ASSERT_EQ(st.gap_ns, QUOTA_PRESSURE_RETRY_FIRST_NS,
+                   "the first failure schedules the floor interval");
+    TEST_ASSERT_EQ(st.at_ns, now + QUOTA_PRESSURE_RETRY_FIRST_NS,
+                   "and the deadline is that interval from now");
+    TEST_ASSERT_EQ((uint64_t)st.tries, 1ull, "the attempt is counted");
+    TEST_ASSERT_EQ((uint32_t)warn, 0u, "one failure is not worth a message");
+
+    /* NOT YET: a trigger that fires before the deadline must be refused. This is
+     * the assertion that pins the storm fix -- the drain re-arms for queued
+     * records, and without it every re-arm would carry another attempt. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_due(&st, 0x1u, st.at_ns - 1ull), 0u,
+                   "a trigger before the deadline is refused");
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_due(&st, 0x1u, st.at_ns), 1u,
+                   "and admitted exactly at the deadline");
+
+    /* DOUBLING, checked at EVERY step rather than only at the end. A regression
+     * that jumped straight from 200 ms to the 30 s cap on the third failure would
+     * satisfy a first-and-last assertion while delaying every recovery by half
+     * a minute, so each transition is pinned against min(previous * 2, MAX) -- and
+     * the WARNING EDGE is observed on the exact attempt that crosses the
+     * threshold, because `warn` is a one-shot pulse that later calls clear. */
+    for (uint32_t step = 2u; step <= QUOTA_PRESSURE_RETRY_WARN_TRIES + 3u; step++) {
+        uint64_t prev_gap = st.gap_ns;
+        uint64_t expect   = (prev_gap * 2ull > QUOTA_PRESSURE_RETRY_MAX_NS)
+                                ? QUOTA_PRESSURE_RETRY_MAX_NS
+                                : prev_gap * 2ull;
+
+        now  = st.at_ns;
+        warn = 0xBAD;                    /* poisoned: the callee must write it */
+        quota_pressure_retry_advance(&st, 0x1u, now, &warn);
+
+        TEST_ASSERT_EQ(st.gap_ns, expect,
+                       "each failure doubles the interval until the cap, then holds");
+        TEST_ASSERT_EQ(st.at_ns, now + st.gap_ns,
+                       "and the deadline always follows the current interval");
+        TEST_ASSERT_EQ((uint64_t)st.tries, (uint64_t)step,
+                       "every attempt is counted exactly once");
+
+        /* The pulse fires on the threshold attempt and on no other. */
+        if (step == QUOTA_PRESSURE_RETRY_WARN_TRIES)
+            TEST_ASSERT_EQ((uint32_t)warn, 1u,
+                           "the warning fires exactly on the threshold attempt");
+        else
+            TEST_ASSERT_EQ((uint32_t)warn, 0u,
+                           "and on no other attempt, before or after it");
+    }
+    TEST_ASSERT_EQ(st.gap_ns, QUOTA_PRESSURE_RETRY_MAX_NS,
+                   "the interval saturates at the ceiling rather than growing");
+    /* Still pending, still due later: the schedule NEVER gives up. An attempt
+     * ceiling here was tried and removed -- it rebuilt the permanent-disable
+     * defect, because neither retryable status has a time bound. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_due(&st, 0x1u, st.at_ns), 1u,
+                   "retries continue indefinitely at the capped cadence");
+
+    /* WARN EXACTLY ONCE. The counter kept counting past the threshold above, so by
+     * now the single warning must already have been spent. */
+    TEST_ASSERT(st.tries > QUOTA_PRESSURE_RETRY_WARN_TRIES,
+                "the attempt count keeps rising past the reporting threshold");
+    TEST_ASSERT_EQ((uint32_t)st.warned, 1u, "the latch records that it was reported");
+
+    /* RESET ON RECOVERY: an empty pending mask clears the whole schedule, so a
+     * later deferral starts from the floor rather than inheriting a 30 s gap. */
+    quota_pressure_retry_advance(&st, 0u, now, &warn);
+    TEST_ASSERT_EQ(st.gap_ns, 0ull, "recovery clears the interval");
+    TEST_ASSERT_EQ(st.at_ns, 0ull, "and the deadline");
+    TEST_ASSERT_EQ((uint64_t)st.tries, 0ull, "and the attempt count");
+    TEST_ASSERT_EQ((uint32_t)st.warned, 0u, "and re-arms the single warning");
+    quota_pressure_retry_advance(&st, 0x2u, now, &warn);
+    TEST_ASSERT_EQ(st.gap_ns, QUOTA_PRESSURE_RETRY_FIRST_NS,
+                   "a deferral after recovery starts from the floor again");
+
+    /* NULL is a no-op on both, not a fault. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_retry_due((const quota_pressure_retry_t *)0,
+                                                      0x1u, now), 0u,
+                   "a NULL state is never due");
+    quota_pressure_retry_advance((quota_pressure_retry_t *)0, 0x1u, now, &warn);
+    TEST_ASSERT_EQ((uint32_t)warn, 0u, "advancing a NULL state warns nothing");
+}
+
 void test_register_quota_pressure(void)
 {
     test_suite_register_cat("Quota: permille boundaries",
@@ -1399,6 +1578,11 @@ void test_register_quota_pressure(void)
                             test_pressure_stall_seam_tags_its_source, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: system level skips invalid domains",
                             test_pressure_system_level_skips_invalid, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: system level UNKNOWN when unmeasured",
+                            test_pressure_system_level_unknown_when_unmeasured,
+                            TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: channel retry policy schedule",
+                            test_pressure_retry_policy_schedule, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: transition record contract",
                             test_pressure_transition_record_contract, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: transition sequence monotonic",

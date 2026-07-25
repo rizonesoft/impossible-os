@@ -2416,10 +2416,128 @@ static void test_ob_namespace_case_insensitive(void)
     if (r3) ObDereferenceObject(r3);
 }
 
+/* ObInsertObjectEx must tell a PERMANENT failure from a TRANSIENT one. A caller
+ * deciding whether to retry cannot recover this afterwards: the namespace may
+ * change in between, and path resolution follows symlinks, so a name held by a
+ * dangling symlink would read as free. Added with the status-bearing notification
+ * creation work, where a misclassified collision would have permanently disabled a
+ * notification channel over a moment of memory pressure. */
+static void test_ob_insert_ex_classifies_failures(void)
+{
+    void *dir = NULL;
+    void *a = NULL, *b = NULL;
+
+    TEST_ASSERT(ObLookupObjectByName("\\BaseNamedObjects", (void *)0, 0, &dir) == 0
+                && dir, "BNO directory resolves");
+
+    a = ob_alloc_object(ObpDirectoryType);
+    b = ob_alloc_object(ObpDirectoryType);
+    if (!a || !b) {
+        if (a) ObDereferenceObject(a);
+        if (b) ObDereferenceObject(b);
+        ObDereferenceObject(dir);
+        TEST_ASSERT(0, "the fixture objects allocate");
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(a, "ObInsExUtest", dir),
+                   (uint64_t)STATUS_SUCCESS, "a fresh name inserts");
+
+    /* The SAME name again is a COLLISION -- permanent, and distinct from every
+     * transient status, because a retry loop must never spin on it. */
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(b, "ObInsExUtest", dir),
+                   (uint64_t)STATUS_OBJECT_NAME_COLLISION,
+                   "a duplicate name reports COLLISION, not a generic failure");
+    /* Case-insensitively too: the namespace folds, so the classification must. */
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(b, "obinsexutest", dir),
+                   (uint64_t)STATUS_OBJECT_NAME_COLLISION,
+                   "the collision is detected through the case fold");
+
+    /* Malformed arguments are their own answer, never a collision. */
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(b, "", dir),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "an empty name is refused");
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(b, "ObInsExUtest2", (void *)0),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "a NULL directory is refused");
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx((void *)0, "ObInsExUtest2", dir),
+                   (uint64_t)STATUS_INVALID_PARAMETER, "a NULL object is refused");
+
+    /* The legacy int-returning wrapper must keep its exact contract. */
+    TEST_ASSERT(ObInsertObject(b, "ObInsExUtest", dir) == -1,
+                "the wrapper still reports a duplicate as -1");
+    TEST_ASSERT(ObInsertObject(b, "ObInsExUtestW", dir) == 0,
+                "and still reports success as 0");
+
+    ObpRemoveFromDirectory(dir, a);
+    ObpRemoveFromDirectory(dir, b);
+    ObDereferenceObject(a);
+    ObDereferenceObject(b);
+    ObDereferenceObject(dir);
+}
+
+/* The CAPACITY branch specifically, because it is the one the notification-channel
+ * retry logic depends on: a full directory is transient (entries come and go), so
+ * it must report INSUFFICIENT_RESOURCES. A regression folding it back into
+ * OBJECT_NAME_COLLISION would silently make that retry permanent-fail, and every
+ * other assertion here would still pass.
+ *
+ * Fabricates `count` on a private throwaway directory rather than inserting 128
+ * real objects: OBJECT_DIRECTORY is a transparent struct, and the check under test
+ * reads exactly that field. */
+static void test_ob_insert_ex_capacity_is_transient(void)
+{
+    void *ko_dir = NULL;
+    void *testdir = NULL;
+    void *victim = NULL;
+    OBJECT_DIRECTORY *d;
+
+    TEST_ASSERT(ObLookupObjectByName("\\KernelObjects", (void *)0, 0, &ko_dir) == 0
+                && ko_dir, "KernelObjects resolves");
+
+    testdir = ob_ns_create_directory(ko_dir);
+    victim  = ob_alloc_object(ObpDirectoryType);
+    if (!testdir || !victim) {
+        if (testdir) ObDereferenceObject(testdir);
+        if (victim)  ObDereferenceObject(victim);
+        ObDereferenceObject(ko_dir);
+        TEST_ASSERT(0, "the capacity fixture allocates");
+        return;
+    }
+    TEST_ASSERT(ObInsertObject(testdir, "ObInsExCapDir", ko_dir) == 0,
+                "the throwaway directory is published");
+
+    d = (OBJECT_DIRECTORY *)testdir;
+    TEST_ASSERT_EQ((uint64_t)d->count, 0ull, "the fixture starts empty");
+    d->count = OB_DIR_MAX_ENTRIES;      /* declare it full */
+
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(victim, "ObInsExCapVictim", testdir),
+                   (uint64_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "a full directory reports INSUFFICIENT_RESOURCES, so a caller retries");
+    TEST_ASSERT_NULL((void *)d->first,
+                     "and the refused insert linked nothing into the directory");
+
+    /* One entry of room, and the same call now succeeds -- so the status above was
+     * genuinely about capacity and not about the object or the name. */
+    d->count = OB_DIR_MAX_ENTRIES - 1u;
+    TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(victim, "ObInsExCapVictim", testdir),
+                   (uint64_t)STATUS_SUCCESS, "one slot of room admits the insert");
+
+    ObpRemoveFromDirectory(testdir, victim);
+    d->count = 0;                       /* undo the fabricated count before teardown */
+    ObDereferenceObject(victim);
+    ObpRemoveFromDirectory(ko_dir, testdir);
+    ObMakeTemporaryObject(testdir);
+    ObDereferenceObject(testdir);
+    ObDereferenceObject(ko_dir);
+}
+
 /* ---- Registration ---- */
 
 void test_register_ob(void)
 {
+    test_suite_register_cat("OB: ObInsertObjectEx classifies failures",
+                            test_ob_insert_ex_classifies_failures, TEST_CAT_OB);
+    test_suite_register_cat("OB: ObInsertObjectEx capacity is transient",
+                            test_ob_insert_ex_capacity_is_transient, TEST_CAT_OB);
     test_suite_register_cat("OB: namespace case-insensitive", test_ob_namespace_case_insensitive, TEST_CAT_OB);
     test_suite_register_cat("OB: alloc+header roundtrip", test_ob_alloc_header_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: refcount lifecycle", test_ob_refcount_lifecycle, TEST_CAT_OB);

@@ -55,7 +55,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [/]   |
 | 💎   |  14   | Ledger lifetime: ISR-safe return + adoption   | §11, §13                |  [/]   |
 | ⭐   |  15   | Charge-path cost reduction                    | §6, §7, §14             |  [/]   |
-| ⭐   |  16   | Charge attribution and status fidelity        | §9, §11, T16 §2         |  [ ]   |
+| ⭐   |  16   | Charge attribution and status fidelity        | §9, §11, T16 §2         |  [x]   |
 | ⭐   |  17   | Infra-gated charge bounding and stall lanes   | §10, §12, D03T07 §3     |  [ ]   |
 
 ## 1. Resource Type Registry
@@ -167,8 +167,6 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Deferred:** [H] a return that exhausts its bounded wait on a same-generation BUSY owner still abandons the charge, and the tag cannot say whether that owner is an adjust or a winning duplicate returner; the wait is now counted, not made lossless (reason: needs owner metadata in the tag) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Pending-return handoff so a return colliding with a BUSY owner is never abandoned" at line 550)
 > **Deferred:** [H] the charge gate this path enters spins `for(;;)` with no bound or backoff while interrupts may be masked (reason: scope, the gate is §11 code) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Bound the per-task charge-gate CAS loops" at line 552)
 > **Deferred:** [M] `quota_charge_current` bills the task named by the global `current_task` cursor, the defect class `quota.h` cites when refusing `QUOTA_CHARGE_CLIENT`; not reachable while the scheduler is single-CPU (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Bill `quota_charge_current` off a per-CPU task cursor" at line 553)
-> **Accepted:** [M] the KNF charge consumer flattens a transient `STATUS_RETRY` to NULL, so a one-shot caller reads a racing job assignment as permanent failure (reason: scope) -> XREF: `02-kernel-core/TODO-25 §16` (item: "Make KNF state creation status-bearing" at line 537)
-> **Accepted:** [M] a receipt records only type and amount, so usage cannot be attributed to a charging subsystem the way NT pool tags allow (reason: scope) -> XREF: `02-kernel-core/TODO-25 §16` (item: "Per-charge attribution on `quota_charge_receipt_t`" at line 536)
 > **Quality reviewed:** 2026-07-25 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 2H+4M+5L fixed, 1H rejected, 7 accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -427,7 +425,6 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 > **Verified:** 2026-07-25 | commit `bb1cbd25` | 5/8 items | build OK | tests 24511/24511 PASS | smoke PASS (KVM 2.820s)
 > **Accepted:** [H] previous-mode is not CPU-local, so a user caller can race `ProbeForWriteIfUser` into being skipped -- pre-existing across every system-info extension class (0x1000-0x1002 predate this section), not introduced here (reason: scope) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Previous-mode is not CPU-local" at line 554)
 > **Accepted:** [H] every producer transition reads `uptime_ns()`, which touches a global monotonic floor -- must be replaced before any seam is wired (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Producer clock seam" at line 557)
-> **Accepted:** [M] `quota_pressure_system_level()` has no UNKNOWN value, so "unmeasured" and "calm" are indistinguishable at system level (reason: §9 contract) -> XREF: `02-kernel-core/TODO-25 §16` (item: "`quota_pressure_system_level()` has no UNKNOWN value" at line 538)
 > **Accepted:** [M] the 16-type budget space carries ONE debounce shared by both sources, so `quota_pressure_submit_stall` has no safe production use and the stall lane deliberately does not touch it (reason: needs per-source lanes) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Per-source lanes in the 16-type budget space" at line 555)
 > **Deferred:** [M] the CPU stall seam is unwired: attributing a tick needs a per-CPU current-thread cursor (reason: infra) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3` (item: "Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`" at line 119)
 > **Deferred:** [M] the MEM stall seam is unwired: it needs an allocation path that WAITS on reclaim (reason: infra) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §2` (item: "Blocking allocation path (wait for reclaim instead of returning NULL)" at line 130)
@@ -544,12 +541,22 @@ Split out of the original §14. Every item here is a COST defect against an alre
 
 Split out of the original §14. These three items are about what the charge path REPORTS rather than what it costs: a receipt that cannot name its charging subsystem (NT pool tags can), a creation path that flattens a transient retry into a permanent failure, and a system pressure level that cannot say "unmeasured". Each was accepted-with-XREF by the section that found it (§11, §6, §12) as a fidelity gap, not a correctness bug, so none blocks another section.
 
-- [ ] Per-charge attribution on `quota_charge_receipt_t`: it carries only type and amount, so a task near a limit cannot be broken down by charging subsystem the way NT pool tags allow. -> XREF: `§10`
-- [ ] Make KNF state creation status-bearing: `knf_create_state` returns a pointer, so a transient `STATUS_RETRY` from the charge gate flattens to NULL and one-shot callers treat it as permanent. -> XREF: `02-kernel-core/TODO-16 §2`
-- [ ] `quota_pressure_system_level()` has no UNKNOWN value: it returns NORMAL when every domain is invalid, so "unmeasured" and "calm" are indistinguishable at the system level. -> XREF: `§9`
-- [ ] Commit: quota: charge attribution tags, status-bearing KNF creation, UNKNOWN pressure level.
+- [x] Per-charge attribution: `quota_charge_source_t` rides bits 8..15 of the `quota_charge_chain` flags and lands on `receipt.source`; totals live in a system-wide `[source][type]` table (per-block rejected: OOM amplifier). -> XREF: `§10`
+- [x] Status-bearing KNF creation: `knf_create_state_ex` returns `NTSTATUS` with a `KNF_STATE **` out-param and propagates the charge status, so `STATUS_RETRY` no longer flattens to NULL. -> XREF: `02-kernel-core/TODO-16 §2`
+- [x] `QUOTA_PRESSURE_UNKNOWN` (0xFF) added outside the ordered band and `LEVEL_COUNT`, returned by both system-level composites when nothing is measured; the syscall keeps 0..3 behind a validity flag. -> XREF: `§9`
+- [x] `ObInsertObjectEx` reports the exact insert status (collision vs capacity vs allocation) under the directory lock, so a low-memory insert is not misread as a permanent collision. -> XREF: `§13`
+- [x] Commit: quota: charge attribution tags, status-bearing KNF creation, UNKNOWN pressure level.
 
-**Test checkpoint:** two charges of the same resource type from different subsystems are reported under distinct attribution tags and their sum still equals the row usage; `knf_create_state` returns `STATUS_RETRY` distinctly from a permanent failure when the charge gate is quiescing, and its one-shot caller retries rather than reporting failure; `quota_pressure_system_level()` returns UNKNOWN when every domain is invalid and NORMAL only once at least one domain is measured.
+**Test checkpoint:** two charges of the same resource type from different subsystems are reported under distinct attribution tags and their per-source deltas sum to that type's row delta, proved over a 4-source by 2-type matrix including the taxonomy boundaries; an undefined source is REFUSED rather than aliased, through `0x100`, `0x01000000` and `0xFFFFFFFF`; the honesty counter fires on an unmatched credit, and a cell clamps at 0 and saturates at `QUOTA_AMOUNT_MAX` without overflowing the dashboard; `knf_create_state_ex` reports `STATUS_RETRY` distinctly while the charge gate is quiesced and the same call succeeds once it reopens; `quota_pressure_system_level()` returns UNKNOWN when every domain is invalid, a single NORMAL measurement replaces UNKNOWN outright, and no published `QUOTA_PRESSURE_RECORD` level field can carry the sentinel.
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 §16 quota suites plus 2 under SUITE=knf and 1 under SUITE=ob, 0 failures
+
+> **Notes:**
+> - **What shipped** -- charge attribution (taxonomy, receipt field, 2 KiB system-wide `[source][type]` table, `quota_source_*` queries) wired for IPC and NOTIFY, plus `knf_create_state_ex`, `ObInsertObjectEx` and `QUOTA_PRESSURE_UNKNOWN`.
+> - **How it runs** -- a charger names itself via `QUOTA_CHARGE_SOURCE(...)` or `quota_charge_current_from`; the table moves once per OBLIGATION inside the receipt's exclusive window, so charge, resize and return cannot interleave.
+> - **Downstream effects** -- per-block attribution rejected on heap arithmetic; a per-TASK breakdown needs the embedded-receipt consumers ledgered (filed in §17). Codex 4x adoptions (16 findings fixed) in the commit messages.
+> - **Canonical doc** -- the attribution contract under "Charge attribution" in `include/kernel/quota/quota.h`.
+> - **Scope boundary** -- §16 owns what the charge path REPORTS; §15 owned its cost; §17 owns the per-task rollup, the ledger source pass-through and the retry test seam; §9 owns the pressure record.
 
 ---
 
@@ -570,6 +577,9 @@ Split out of the original §14 as the items whose PREREQUISITE is owned elsewher
 - [ ] Membership generation under `job_lock`, so `ob_job_collect_accounting` can validate a member LOCKLESSLY and compute deltas outside `job->lock` without paying a lock pair per member. -> XREF: `§15`
 - [ ] Page-back ledger chunks so the ceiling is not a heap bound. BLOCKED: unlocked PMM bitmap; `pmm.h` bars lazy allocation on a live path. -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §1`
 - [ ] Per-task TOTAL-obligation limit with a defined status and cross-resource semantics, so one class cannot starve another's. KNF's 4096 bounds ONE state's list, so no derived ceiling is consumer-proof. -> XREF: `§14`
+- [ ] Per-TASK charge-attribution rollup: a `quota_ledger_source_breakdown(task, out)` walk over that task's ledger slots keyed by `receipt.source`. Needs the ALPC/KNF embedded-receipt conversion first. -> XREF: `§14`
+- [ ] Thread the charge source through the ledger: `quota_ledger_charge`/`_charge_current` pass 0 flags, so a converted consumer would lose the attribution §16 gave it. -> XREF: `§14`
+- [ ] Pressure-channel retry test seam: injectable clock plus create hook so §16's backoff (100 ms doubling to 30 s) and recovery after N failures can be asserted without real waits. -> XREF: `§10`
 - [ ] Commit: quota: infrastructure-gated charge-path bounding and stall lanes.
 
 **Test checkpoint:** victim nomination enumerates tasks under a reference that survives a concurrent exit; a return colliding with a BUSY owner is consumed by that owner rather than abandoned, and the leak sweep still reports zero; `quota_charge_adjust` and both charge-gate CAS loops complete within an asserted retry bound under two-CPU contention; a stall-lane transition published through the §9 ring carries its stall domain and does not perturb the budget lane's debounce.
@@ -614,6 +624,10 @@ Split out of the original §14 as the items whose PREREQUISITE is owned elsewher
 | ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | ✅ per-category delta sweep, CI-gated §10                     |
 | ⭐   | Crash-time quota dashboard       | ⚠️ `!poolused` needs a live debugger  | ⬜ none (no quota state in a kernel oops)    | ✅ non-blocking panic-path dump §10                           |
 | ⭐   | Refusal costs no allocation      | ⚠️ quota charged inside the pool call | ⚠️ memcg charge rides the page alloc        | ✅ quota refused before any `kmalloc` §15                     |
+| 💎   | Per-subsystem charge attribution | ✅ pool tags (`!poolused`), pool only  | ⬜ none (no per-subsystem accounting axis)   | ✅ system-wide source x type, all 16 types §16                |
+| 💎   | Attribution self-honesty counter | ⬜ none (tag totals assumed exact)     | ⬜ none                                      | ✅ unmatched updates counted, cells clamped §16               |
+| ⭐   | Transient vs permanent create    | ⚠️ per-API, no shared retryable class | ⚠️ `EAGAIN` only where the API defines it   | ✅ `STATUS_RETRY` propagated, backoff retry §16               |
+| ⭐   | System pressure "unmeasured"     | ⬜ none (absent reads as calm)         | ⬜ PSI reports 0, not unknown                | ✅ UNKNOWN out-of-band + ABI validity flag §16                |
 
 ---
 

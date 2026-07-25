@@ -41,6 +41,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
+#include "kernel/sched/irql.h"           /* the PASSIVE_LEVEL guard on creation */
 
 /* Freestanding: no string.h. Declared locally, same as every other kernel TU
  * that needs it (knf.c does the same). */
@@ -176,6 +177,39 @@ static KNF_STATE *g_state_failure;
 static KNF_STATE *g_state_nomination;
 static KDPC       g_drain_dpc;
 
+/* Channels whose creation was refused for a TRANSIENT reason, one bit each,
+ * indexed by the channel table below. Nonzero means the drain should try again
+ * before it publishes.
+ *
+ * This bitmask is the whole of the retry mechanism, and it exists because the
+ * obvious alternative does not work: a bounded loop around creation inside
+ * quota_pressure_init cannot span the condition it is waiting on. The charge gate
+ * that produces STATUS_RETRY stays shut for the WHOLE of a job-membership
+ * transition (quota.h is explicit that immediate re-probing cannot outlast it),
+ * so a spin there would normally exhaust while the gate is still closed, and then
+ * -- because init is one-shot -- the channel would stay dead for the rest of the
+ * boot over a race that lasted microseconds. Retrying from the drain instead puts
+ * the next attempt at PASSIVE_LEVEL, arbitrarily later, as many times as it
+ * takes, and costs nothing while the mask is clear. */
+static uint32_t   g_channels_pending;
+
+/* Retry SCHEDULE for the pending channels above. The policy itself (backoff,
+ * cap, warn-once, reset) lives in quota_pressure.h as pure functions over this
+ * struct precisely so it can be asserted without a clock or a create hook; this
+ * module supplies the clock and the attempts. Written only from the retry pass
+ * (serialized by g_drain_armed) or from init before any DPC can run, so it needs
+ * no lock -- the trigger reads are relaxed and a stale one only delays or admits a
+ * single attempt. */
+static quota_pressure_retry_t g_channels_retry;
+
+/* Read a published channel. Acquire, because the drain can now publish one
+ * LONG AFTER init: a publisher on another CPU must not see the pointer before
+ * the state it points at is fully constructed. */
+static KNF_STATE *pressure_channel_get(KNF_STATE **slot)
+{
+    return (KNF_STATE *)__atomic_load_n(slot, __ATOMIC_ACQUIRE);
+}
+
 /* The CPU whose queues actually get serviced. Matches ktimer's service CPU:
  * today only the BSP runs the timer ISR and drains DPC queues. */
 #define QUOTA_PRESSURE_SERVICE_CPU  0u
@@ -211,6 +245,12 @@ static inline int domain_valid(quota_resource_type_t type)
 
 const char *quota_pressure_level_name(quota_pressure_level_t level)
 {
+    /* UNKNOWN is checked BEFORE the range test and named, not rendered as "?".
+     * It is a legitimate answer meaning "nothing measured yet", and printing the
+     * same glyph for it as for a corrupted value would put the honest case and
+     * the broken case on the same line of a dashboard. */
+    if (level == QUOTA_PRESSURE_UNKNOWN)
+        return "unknown";
     if ((uint32_t)level >= QUOTA_PRESSURE_LEVEL_COUNT)
         return "?";
     return g_level_name[level];
@@ -330,8 +370,10 @@ static void publish_transition(const QUOTA_PRESSURE_RECORD *rec)
     etw_emit_kernel_event(ETW_EVT_QUOTA_PRESSURE, etw_level, rec,
                           (uint32_t)sizeof(*rec));
 
-    if (g_state_pressure) {
-        NTSTATUS st = knf_publish(g_state_pressure, (const KNF_TYPE_ID *)0,
+    KNF_STATE *state = pressure_channel_get(&g_state_pressure);
+
+    if (state) {
+        NTSTATUS st = knf_publish(state, (const KNF_TYPE_ID *)0,
                                   rec, (uint32_t)sizeof(*rec),
                                   (const uint64_t *)0, (uint64_t *)0, (uint64_t *)0);
         if (st != STATUS_SUCCESS)
@@ -351,8 +393,10 @@ static void publish_failure(const QUOTA_FAILURE_RECORD *rec)
 
     etw_emit_kernel_event(ETW_EVT_QUOTA_FAILURE, 2u, rec, (uint32_t)sizeof(*rec));
 
-    if (g_state_failure) {
-        NTSTATUS st = knf_publish(g_state_failure, (const KNF_TYPE_ID *)0,
+    KNF_STATE *state = pressure_channel_get(&g_state_failure);
+
+    if (state) {
+        NTSTATUS st = knf_publish(state, (const KNF_TYPE_ID *)0,
                                   rec, (uint32_t)sizeof(*rec),
                                   (const uint64_t *)0, (uint64_t *)0, (uint64_t *)0);
         if (st != STATUS_SUCCESS)
@@ -373,8 +417,10 @@ static void publish_nomination(const QUOTA_NOMINATION_RECORD *rec)
 
     etw_emit_kernel_event(ETW_EVT_QUOTA_NOMINATION, 2u, rec, (uint32_t)sizeof(*rec));
 
-    if (g_state_nomination) {
-        NTSTATUS st = knf_publish(g_state_nomination, (const KNF_TYPE_ID *)0,
+    KNF_STATE *state = pressure_channel_get(&g_state_nomination);
+
+    if (state) {
+        NTSTATUS st = knf_publish(state, (const KNF_TYPE_ID *)0,
                                   rec, (uint32_t)sizeof(*rec),
                                   (const uint64_t *)0, (uint64_t *)0, (uint64_t *)0);
         if (st != STATUS_SUCCESS)
@@ -470,12 +516,215 @@ static void escalate_if_critical(const QUOTA_PRESSURE_RECORD *rec)
  * the next unrelated event. Clearing the flag FIRST means such a producer
  * either arms us again (its exchange sees 0) or we see its record in the
  * recheck below. */
+/* The three channels this subsystem publishes on, described as DATA so creation
+ * is one loop rather than three open-coded copies -- which is also what makes a
+ * uniform retry possible at all. */
+typedef struct pressure_channel {
+    KNF_STATE  **slot;           /* where the created state is published       */
+    const char  *name;           /* leaf under QUOTA_PRESSURE_KNF_CATEGORY     */
+    uint32_t     payload_bytes;  /* retention reservation, pre-sized once      */
+    const char  *degraded;       /* what is lost while this channel is absent  */
+} pressure_channel_t;
+
+static const pressure_channel_t g_channel[] = {
+    { &g_state_pressure,   QUOTA_PRESSURE_KNF_STATE,
+      (uint32_t)sizeof(QUOTA_PRESSURE_RECORD),   "transitions log only" },
+    { &g_state_failure,    QUOTA_FAILURE_KNF_STATE,
+      (uint32_t)sizeof(QUOTA_FAILURE_RECORD),    "refusals log only" },
+    { &g_state_nomination, QUOTA_NOMINATION_KNF_STATE,
+      (uint32_t)sizeof(QUOTA_NOMINATION_RECORD), "escalation logs only" },
+};
+
+#define QUOTA_PRESSURE_CHANNEL_COUNT \
+    (sizeof(g_channel) / sizeof(g_channel[0]))
+
+/* One pending bit per channel must fit the mask. */
+_Static_assert(QUOTA_PRESSURE_CHANNEL_COUNT <= 32,
+    "g_channels_pending carries one bit per channel");
+
+/* --- Retry policy (pure; contract in quota_pressure.h) -------------------- */
+
+int quota_pressure_retry_status_retryable(NTSTATUS status)
+{
+    return status == STATUS_RETRY || status == STATUS_INSUFFICIENT_RESOURCES;
+}
+
+int quota_pressure_retry_due(const quota_pressure_retry_t *st, uint32_t pending,
+                             uint64_t now_ns)
+{
+    if (!st || pending == 0)
+        return 0;
+    /* RELAXED ATOMIC, not a plain read. The deadline is written by the retry pass
+     * on whichever CPU ran the threaded drain and read here from the periodic DPC
+     * on the service CPU, so a plain dereference is a data race -- g_drain_armed
+     * serializes the WRITERS, it does not publish the write to a reader. Relaxed is
+     * sufficient: the value is self-contained and guards nothing else, so a reader
+     * that sees the previous deadline merely admits or delays one attempt. */
+    return now_ns >= __atomic_load_n(&st->at_ns, __ATOMIC_RELAXED);
+}
+
+void quota_pressure_retry_advance(quota_pressure_retry_t *st, uint32_t pending,
+                                  uint64_t now_ns, int *out_warn)
+{
+    if (out_warn)
+        *out_warn = 0;
+    if (!st)
+        return;
+
+    if (pending == 0) {
+        /* Everything published: the schedule is over. Cleared rather than left
+         * behind so a later reader is not told about attempts that no longer bound
+         * anything, and so a future deferral starts from the short interval
+         * instead of inheriting a 30-second gap it never earned. */
+        __atomic_store_n(&st->at_ns, 0ull, __ATOMIC_RELAXED);
+        st->gap_ns = 0;
+        st->tries  = 0;
+        st->warned = 0;
+        return;
+    }
+
+    /* Double toward the cap. The FIRST failure has no previous interval to double,
+     * so it takes the floor; every one after that doubles what it inherited and
+     * saturates at the ceiling rather than growing without bound. */
+    st->gap_ns = st->gap_ns ? (st->gap_ns * 2ull) : QUOTA_PRESSURE_RETRY_FIRST_NS;
+    if (st->gap_ns > QUOTA_PRESSURE_RETRY_MAX_NS)
+        st->gap_ns = QUOTA_PRESSURE_RETRY_MAX_NS;
+    /* Paired with the relaxed load in quota_pressure_retry_due: only this field
+     * crosses CPUs, so only this one needs publishing. */
+    __atomic_store_n(&st->at_ns, now_ns + st->gap_ns, __ATOMIC_RELAXED);
+
+    /* Count the try, and report ONCE when it stops looking like a passing race.
+     * `tries` keeps counting past the threshold -- it is evidence for the log line,
+     * not a budget -- and `warned` is what makes the message single. */
+    st->tries++;
+    if (st->tries >= QUOTA_PRESSURE_RETRY_WARN_TRIES && !st->warned) {
+        st->warned = 1;
+        if (out_warn)
+            *out_warn = 1;
+    }
+}
+
+/* Attempt the channels named by `attempt` (a bitmask), and return the new pending
+ * mask. `attempt` is what keeps a retry from being a rescan: the first call, from
+ * init, passes every channel; a retry passes only the bits that were left pending.
+ *
+ * WITHOUT that restriction a retry re-attempts channels that failed
+ * PERMANENTLY -- a name collision, a missing category -- because their slot is
+ * also empty. Every drain would then re-allocate an object, re-charge and
+ * re-return the creating task's quota, and re-log an error for a failure whose
+ * answer cannot change. One channel deferred for a real reason would turn every
+ * other channel's permanent failure into a repeating cost.
+ *
+ * MUST run at PASSIVE_LEVEL: creation allocates an object and knf_reserve_payload
+ * allocates a retention buffer, neither of which is legal above PASSIVE. Both
+ * callers satisfy that (init is pre-scheduler; the drain is a THREADED DPC), and
+ * the guard is cheap enough to keep -- a future non-threaded caller would
+ * otherwise allocate at DISPATCH_LEVEL. */
+static uint32_t pressure_create_channels(uint32_t attempt)
+{
+    uint32_t pending = 0;
+
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        /* Leave the mask exactly as it was: this attempt did not happen, so it
+         * must neither clear a pending bit nor invent one. */
+        return __atomic_load_n(&g_channels_pending, __ATOMIC_ACQUIRE);
+    }
+
+    for (uint32_t i = 0; i < QUOTA_PRESSURE_CHANNEL_COUNT; i++) {
+        const pressure_channel_t *ch = &g_channel[i];
+        KNF_STATE *state = pressure_channel_get(ch->slot);
+        NTSTATUS   st;
+
+        if ((attempt & (1u << i)) == 0) {
+            /* Not ours to attempt. A channel excluded because it failed
+             * permanently must NOT be re-marked pending either -- that would
+             * resurrect it into the next retry and rebuild the rescan this
+             * parameter exists to prevent. */
+            continue;
+        }
+        if (state)
+            continue;                       /* already published */
+
+        st = knf_create_state_ex(QUOTA_PRESSURE_KNF_CATEGORY, ch->name,
+                                 KNF_LIFETIME_PERMANENT, KNF_SCOPE_SYSTEM,
+                                 (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE,
+                                 &state);
+        if (st != STATUS_SUCCESS || !state) {
+            if (quota_pressure_retry_status_retryable(st)) {
+                /* TRANSIENT: say so, and say that it will be retried, so a log
+                 * reader does not conclude the channel is dead. */
+                pending |= (1u << i);
+                klog(LOG_WARN, "quota",
+                     "pressure: '%s' creation deferred (0x%x); retrying from the drain",
+                     ch->name, (uint64_t)st);
+            } else {
+                klog(LOG_ERROR, "quota",
+                     "pressure: '%s' creation failed (0x%x); %s",
+                     ch->name, (uint64_t)st, ch->degraded);
+            }
+            continue;
+        }
+
+        /* Pre-size the retention buffer BEFORE publishing the pointer. A
+         * publisher that saw the state first would find the buffer unsized and
+         * have to grow it, which knf_publish refuses above PASSIVE_LEVEL -- so
+         * the reservation is part of construction, not a follow-up step. A
+         * failure here is not fatal: the channel works, its publishes may drop. */
+        if (knf_reserve_payload(state, ch->payload_bytes) != STATUS_SUCCESS)
+            klog(LOG_WARN, "quota",
+                 "pressure: could not pre-size '%s'; publishes may drop", ch->name);
+
+        __atomic_store_n(ch->slot, state, __ATOMIC_RELEASE);
+    }
+
+    /* Fold this attempt into the schedule, once per pass, so every trigger
+     * inherits the same bounded cadence rather than inventing its own. */
+    {
+        int warn = 0;
+
+        quota_pressure_retry_advance(&g_channels_retry, pending, uptime_ns(), &warn);
+        if (warn)
+            klog(LOG_ERROR, "quota",
+                 "pressure: channel mask 0x%x still uncreated after %u attempts; "
+                 "retrying every %llu ms (those notifications log only meanwhile)",
+                 (uint64_t)pending, (uint64_t)g_channels_retry.tries,
+                 QUOTA_PRESSURE_RETRY_MAX_NS / (1000ull * 1000ull));
+    }
+
+    __atomic_store_n(&g_channels_pending, pending, __ATOMIC_RELEASE);
+    return pending;
+}
+
+/* Is a retry DUE? Asks the shared policy, so both triggers below use one answer
+ * and neither can turn a pending channel into a busy loop: the drain re-arms
+ * itself for queued records, and without this gate every re-arm would carry
+ * another creation attempt with it. */
+static int pressure_retry_due(void)
+{
+    return quota_pressure_retry_due(&g_channels_retry,
+                                    __atomic_load_n(&g_channels_pending,
+                                                    __ATOMIC_ACQUIRE),
+                                    uptime_ns());
+}
+
 static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg2)
 {
     pressure_ring_entry_t entry;
     uint32_t published;
 
     (void)dpc; (void)context; (void)arg1; (void)arg2;
+
+    /* Retry any channel whose creation was DEFERRED, BEFORE publishing: this is
+     * the only context that recurs, runs at PASSIVE_LEVEL, and can afford to
+     * wait. Only the pending bits are attempted, so a permanently-failed channel
+     * is not re-attempted here. Costs one relaxed load when nothing is pending,
+     * which is the normal case for the whole life of the system. */
+    if (pressure_retry_due()) {
+        uint32_t pending = __atomic_load_n(&g_channels_pending, __ATOMIC_ACQUIRE);
+
+        if (pending != 0)
+            (void)pressure_create_channels(pending);
+    }
 
 #ifdef KERNEL_TESTS
     /* A drain queued before the hold was taken can still be dispatched after
@@ -818,6 +1067,21 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * deadline check forty times out of forty-one. A second ktimer for a 2 s
      * period would cost a timer slot and another DPC to save nothing. */
     quota_stall_aggregate();
+
+    /* THE INDEPENDENT RETRY TRIGGER for a deferred notification channel. The
+     * drain is where the retry actually happens (it is the threaded, PASSIVE
+     * context that may allocate), but the drain only re-arms for QUEUED RECORDS
+     * -- so on an idle system a channel deferred during init would never be
+     * retried at all, and a transient race at boot would cost the channel for
+     * the life of the system. This tick recurs unconditionally, so arming from
+     * here gives the retry a schedule of its own.
+     *
+     * Arming, not creating: this callback is a plain DPC at DISPATCH_LEVEL, where
+     * allocation is illegal. drain_arm is idempotent (a single exchange on
+     * g_drain_armed), so a pending channel across many ticks queues one drain at
+     * a time rather than a flood. */
+    if (pressure_retry_due())
+        drain_arm();
 }
 
 /* NOT a production path, and deliberately left without source arbitration.
@@ -1037,9 +1301,19 @@ quota_pressure_level_t quota_pressure_system_level(void)
          * the answer, and it cannot raise it either. */
         if (!valid)
             continue;
-        if ((quota_pressure_level_t)level > worst)
+        /* FIRST measurement wins outright, later ones only if worse. The two
+         * cases cannot be collapsed into the comparison alone: `worst` may be
+         * UNKNOWN (the stall lane had nothing either), and UNKNOWN sorts ABOVE
+         * every real level, so a bare `level > worst` would discard the first
+         * genuine measurement and keep reporting "unmeasured" forever. */
+        if (!quota_pressure_level_measured(worst) ||
+            (quota_pressure_level_t)level > worst)
             worst = (quota_pressure_level_t)level;
     }
+
+    /* Still UNKNOWN means neither lane has a single valid domain: no budget
+     * instrument has sampled and no stall seam is wired. Report that rather than
+     * NORMAL -- see the contract in quota_pressure.h. */
     return worst;
 }
 
@@ -1189,58 +1463,20 @@ void quota_pressure_init(void)
      * report a fraction of an interval nobody observed. */
     quota_stall_init();
 
-    /* Pre-size both retention buffers at PASSIVE_LEVEL. Without this a publish
-     * from the drain would have to grow the buffer, and knf_publish refuses to
-     * allocate once the caller is at DISPATCH_LEVEL -- the drain runs at
-     * PASSIVE today, but the reservation costs one call and removes the
-     * dependency on that staying true. */
-    g_state_pressure = knf_create_state(QUOTA_PRESSURE_KNF_CATEGORY,
-                                        QUOTA_PRESSURE_KNF_STATE,
-                                        KNF_LIFETIME_PERMANENT,
-                                        KNF_SCOPE_SYSTEM,
-                                        (const KNF_TYPE_ID *)0,
-                                        KNF_KERNEL_MODE);
-    if (g_state_pressure) {
-        if (knf_reserve_payload(g_state_pressure,
-                                (uint32_t)sizeof(QUOTA_PRESSURE_RECORD)) != STATUS_SUCCESS)
-            klog(LOG_WARN, "quota",
-                 "pressure: could not pre-size the transition payload; publishes may drop");
-    } else {
-        klog(LOG_ERROR, "quota",
-             "pressure: transition state creation failed; transitions log only");
-    }
-
-    g_state_failure = knf_create_state(QUOTA_PRESSURE_KNF_CATEGORY,
-                                       QUOTA_FAILURE_KNF_STATE,
-                                       KNF_LIFETIME_PERMANENT,
-                                       KNF_SCOPE_SYSTEM,
-                                       (const KNF_TYPE_ID *)0,
-                                       KNF_KERNEL_MODE);
-    if (g_state_failure) {
-        if (knf_reserve_payload(g_state_failure,
-                                (uint32_t)sizeof(QUOTA_FAILURE_RECORD)) != STATUS_SUCCESS)
-            klog(LOG_WARN, "quota",
-                 "pressure: could not pre-size the failure payload; publishes may drop");
-    } else {
-        klog(LOG_ERROR, "quota",
-             "pressure: failure state creation failed; refusals log only");
-    }
-
-    g_state_nomination = knf_create_state(QUOTA_PRESSURE_KNF_CATEGORY,
-                                          QUOTA_NOMINATION_KNF_STATE,
-                                          KNF_LIFETIME_PERMANENT,
-                                          KNF_SCOPE_SYSTEM,
-                                          (const KNF_TYPE_ID *)0,
-                                          KNF_KERNEL_MODE);
-    if (g_state_nomination) {
-        if (knf_reserve_payload(g_state_nomination,
-                                (uint32_t)sizeof(QUOTA_NOMINATION_RECORD)) != STATUS_SUCCESS)
-            klog(LOG_WARN, "quota",
-                 "pressure: could not pre-size the nomination payload; publishes may drop");
-    } else {
-        klog(LOG_ERROR, "quota",
-             "pressure: nomination state creation failed; escalation logs only");
-    }
+    /* Create all three channels and pre-size their retention buffers here, at
+     * PASSIVE_LEVEL. Without the reservation a publish from the drain would have
+     * to grow the buffer, and knf_publish refuses to allocate above PASSIVE --
+     * the drain runs at PASSIVE today, but the reservation costs one call and
+     * removes the dependency on that staying true.
+     *
+     * A channel refused for a TRANSIENT reason is left PENDING rather than
+     * written off: the drain retries it later. This is the one-shot-caller defect
+     * section 16 names -- a charge gate briefly closed by a job-membership
+     * transition used to disable a notification channel permanently, because a
+     * pointer-returning creation could not tell "not yet" from "no". */
+    if (pressure_create_channels((1u << QUOTA_PRESSURE_CHANNEL_COUNT) - 1u) != 0)
+        klog(LOG_WARN, "quota",
+             "pressure: some channels deferred; the periodic sampler will retry them");
 
     /* Arm the periodic sampler. Without it a debounce could never complete for
      * pressure that is steady rather than churning: rising takes three samples

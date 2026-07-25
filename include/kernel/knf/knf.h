@@ -231,10 +231,51 @@ void knf_init(void);
  * Returns a referenced KNF_STATE body on success (caller drops its ref via
  * ObDereferenceObject once the namespace / a handle hold their own refs), or
  * NULL on failure (bad args, privilege denied, name collision, OOM).
+ *
+ * LOSSY BY CONSTRUCTION: a pointer can say "no" but not "not yet". Prefer
+ * knf_create_state_ex, whose status distinguishes a quota REFUSAL from the
+ * transient STATUS_RETRY a job-membership transition produces; this form remains
+ * for callers with nothing useful to do with the difference.
  */
 KNF_STATE *knf_create_state(const char *category, const char *name,
                             KNF_LIFETIME lifetime, KNF_DATA_SCOPE scope,
                             const KNF_TYPE_ID *type_id, uint32_t access_mode);
+
+/*
+ * knf_create_state_ex -- knf_create_state with the failure reason preserved.
+ *
+ * Same arguments and same success semantics (`*out_state` receives the same
+ * referenced body knf_create_state would have returned), plus a status that
+ * names WHY a creation failed. `out_state` is mandatory and is emptied before
+ * anything else, so a caller may branch on the status alone.
+ *
+ * WHY THIS EXISTS. The charge gate on the creating task closes for the whole
+ * duration of a job-membership transition, and a charge attempted inside that
+ * window is refused with STATUS_RETRY -- which quota.h is explicit is TRANSIENT
+ * and must not be read as a quota refusal. Collapsed into NULL it becomes
+ * indistinguishable from "this user is over quota", so a one-shot caller
+ * permanently disables a channel because it briefly raced an assignment. This
+ * mirrors knf_subscribe, which already propagates the charge status verbatim for
+ * exactly the same reason.
+ *
+ * Returns STATUS_SUCCESS, STATUS_INVALID_PARAMETER (missing argument, undefined
+ * lifetime, malformed category or leaf name), STATUS_PRIVILEGE_NOT_HELD
+ * (non-temporary lifetime from user mode without SeCreatePermanentPrivilege),
+ * STATUS_OBJECT_PATH_NOT_FOUND (no such category), STATUS_INSUFFICIENT_RESOURCES
+ * (object allocation), STATUS_OBJECT_NAME_COLLISION (that name already exists),
+ * or whatever the charge gate returned -- including STATUS_QUOTA_EXCEEDED,
+ * STATUS_PROCESS_IS_TERMINATING, and STATUS_RETRY.
+ *
+ * A STATUS_RETRY caller must NOT spin: the gate stays shut across the whole
+ * transition, so an immediate loop burns a locked read-modify-write per probe
+ * and normally exhausts while the condition still holds. Retry from a context
+ * that can afford to wait (see quota_pressure.c, which retries pending channels
+ * from its threaded DPC).
+ */
+NTSTATUS knf_create_state_ex(const char *category, const char *name,
+                             KNF_LIFETIME lifetime, KNF_DATA_SCOPE scope,
+                             const KNF_TYPE_ID *type_id, uint32_t access_mode,
+                             KNF_STATE **out_state);
 
 /*
  * knf_lookup_state -- resolve \Notifications\<category>\<name> to a KNF_STATE.
