@@ -57,7 +57,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   |  15   | Charge-path cost reduction                    | §6, §7, §14             |  [/]   |
 | ⭐   |  16   | Charge attribution and status fidelity        | §9, §11, T16 §2         |  [x]   |
 | ⭐   |  17   | Infra-gated charge bounding and stall lanes   | §10, §12, D03T07 §3     |  [/]   |
-| ⭐   |  18   | Ledger attribution + lockless job membership  | §14, §15, §16           |  [ ]   |
+| ⭐   |  18   | Obligation ceiling + charge-source pass-through| §14, §16                |  [ ]   |
+| ⭐   |  19   | Lockless job membership + pressure-retry seam | §10, §15                |  [ ]   |
 
 ## 1. Resource Type Registry
 
@@ -503,7 +504,7 @@ Split out of the original §14 by its complexity verdict (20 items, ABI impact).
 > - **Scope boundary** -- §14 owns the deferral mechanism, teardown ordering AND the consumer conversion; §15 raised the slot ceiling; §18 owns the obligation ceiling that gates it; §13 owns the charge points.
 
 > **Verified:** 2026-07-25 | commit `7297e651` + review fixes | 3/4 items | build OK | tests 24605/24605 PASS | smoke PASS (KVM 2.720s)
-> **Deferred:** [H] the ALPC and KNF embedded-receipt consumers still cannot be converted. §15 raised the ceiling 1544 -> 2184, but the blocker was misdiagnosed as "below KNF's 4096": that 4096 bounds ONE state's subscriber list, so a task subscribing across many states has no aggregate bound at all and NO finite ledger ceiling is consumer-proof. Converting would still impose one and turn a quota refusal into `STATUS_INSUFFICIENT_RESOURCES` (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 602)
+> **Deferred:** [H] the ALPC and KNF embedded-receipt consumers still cannot be converted. §15 raised the ceiling 1544 -> 2184, but the blocker was misdiagnosed as "below KNF's 4096": that 4096 bounds ONE state's subscriber list, so a task subscribing across many states has no aggregate bound at all and NO finite ledger ceiling is consumer-proof. Converting would still impose one and turn a quota refusal into `STATUS_INSUFFICIENT_RESOURCES` (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 603)
 > **Deferred:** [M] a return colliding with a persistently BUSY owner is abandoned after a bounded retry budget rather than handed off losslessly; the lossless protocol needs the owner to consume a pending return, which needs cross-CPU contention to validate (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Pending-return handoff so a return colliding with a BUSY owner is never abandoned" at line 578)
 > **Quality reviewed:** 2026-07-25 | Codex 19x (design, adversarial x3, test-coverage, consistency x2, perf x2, re-adversarial x10) + kernel-quality-auditor + concurrency-evidence-mapper x2 + kernel-explorer | 2Critical+16H+14M+8L fixed, 2 deferred-XREF | scope: kernel-code-quality
 
@@ -532,7 +533,7 @@ Split out of the original §14. Every item here is a COST defect against an alre
 > - **Scope boundary** -- §15 owns charge-path COST; §16 owns fidelity; §17 owns infra-gated bounding and the membership generation; the advanced-allocator TODO owns the SMP-safe PMM.
 
 > **Verified:** 2026-07-25 | commit `c8799a19` + review fixes | 3/5 items | build OK | tests 24640 passed, 0 failed, 0 leaked, 0 quota-leaked | smoke PASS (KVM 2.690s)
-> **Deferred:** [M] the ledger ceiling cannot be raised to cover a consumer with no aggregate bound of its own: page-backing needs an SMP-safe PMM bitmap, and a consumer-proof ceiling needs a per-task TOTAL-obligation policy (KNF's 4096 bounds ONE state's list, so no derived ceiling suffices) (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 602)
+> **Deferred:** [M] the ledger ceiling cannot be raised to cover a consumer with no aggregate bound of its own: page-backing needs an SMP-safe PMM bitmap, and a consumer-proof ceiling needs a per-task TOTAL-obligation policy (KNF's 4096 bounds ONE state's list, so no derived ceiling suffices) (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 603)
 > **Deferred:** [H] the `ob_job_collect_accounting` lock-hold cut was IMPLEMENTED then REVERTED: correctness needs each snapshotted member re-validated under its own `t->job_lock`, which adds 32 lock pairs and new contention with assign/detach/fork, so perf review found it raises TOTAL cost while cutting only the longest single hold. The lockless form needs a membership generation that does not exist (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Membership generation under `job_lock`")
 > **Quality reviewed:** 2026-07-25 | Codex 8x (design, adversarial x2, re-adversarial x2, consistency x2, perf) + kernel-quality-auditor + concurrency-evidence-mapper x2 + test-coverage-mapper | 2H+1M design/adversarial fixed; 1H perf caused the lock-hold revert; 6M consistency fixed; 3M+5L auditor fixed; 1 rejected with evidence | scope: kernel-code-quality
 
@@ -591,21 +592,32 @@ Two items are ALSO open design questions, recorded rather than decided unattende
 
 **Test checkpoint:** victim nomination enumerates tasks under a reference that survives a concurrent exit; a return colliding with a BUSY owner is consumed by that owner rather than abandoned, and the leak sweep still reports zero; `quota_charge_adjust` and both charge-gate CAS loops complete within an asserted retry bound under two-CPU contention; a stall-lane transition published through the §9 ring carries its stall domain and does not perturb the budget lane's debounce.
 
-> **Deferred:** [H] all 12 items, as a unit -- every prerequisite was re-checked against the tree on 2026-07-25 and none is met: `TODO-07 §3` is wholly unimplemented, `TODO-03 §1`'s PMM bitmap lock is `[ ]`, the `quota_stall` producer API has no non-test caller, and §14's conversion is `[/]`. The four items that proved NOT to be gated moved to §18 instead (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 602)
+> **Deferred:** [H] all 12 items, as a unit -- every prerequisite was re-checked against the tree on 2026-07-25 and none is met: `TODO-07 §3` is wholly unimplemented, `TODO-03 §1`'s PMM bitmap lock is `[ ]`, the `quota_stall` producer API has no non-test caller, and §14's conversion is `[/]`. The four items that proved NOT to be gated moved to §18 and §19 instead (reason: infra) -> XREF: `02-kernel-core/TODO-25 §18` (item: "Per-task TOTAL-obligation limit with a defined status" at line 603)
 
 ---
 
-## 18. Ledger Attribution Pass-Through and Lockless Job Membership
+## 18. Ledger Obligation Ceiling and Charge-Source Pass-Through
 
-Split out of §17 on 2026-07-25: the four follow-ups whose stated prerequisite did not survive a check against the tree. Each is self-contained to code this TODO already owns, and each is exercisable by the existing single-CPU suites, so none of §17's "would ship an unexercisable path" rationale applies. The obligation ceiling runs FIRST of the four: §14's `[/]` embedded-receipt conversion is blocked on it by name, and that conversion is in turn what §17's per-task attribution rollup waits for.
+Split out of §17 on 2026-07-25 as two of the four follow-ups whose stated prerequisite did not survive a check against the tree, then narrowed to these two when the design review grew the real scope (the split waiver's own re-check clause). Both live in `quota_ledger.c`/`.h` and reserve against the same charge function, so they are one edit surface; §19 took the job/pressure pair. This runs FIRST: §14's `[/]` embedded-receipt conversion is blocked on the obligation ceiling by name, and §17's per-task attribution rollup waits on that conversion in turn.
 
 - [ ] Per-task TOTAL-obligation limit with a defined status, bounding a task's aggregate outstanding obligations across resource types under the existing 2184-slot ledger ceiling, so one class cannot starve another's. -> XREF: `§14`
 - [ ] Thread the charge source through the ledger: `quota_ledger_charge`/`_charge_current` hardcode 0 flags, so a converted consumer loses the attribution §16 gave it. Mirror `quota_charge_current_from`. -> XREF: `§16`
-- [ ] Membership generation under `job->lock`, so `ob_job_collect_accounting` validates a member LOCKLESSLY and computes deltas outside the lock, without the per-member lock pair that got the earlier attempt reverted. -> XREF: `§15`
-- [ ] Pressure-channel LIVE-path retry seam: `pressure_create_channels` calls `knf_create_state_ex` and raw `uptime_ns()` directly, so only the policy helper is provable today. Needs a test clock plus a creator hook. -> XREF: `§10`
-- [ ] Commit: quota: ledger attribution pass-through, obligation ceiling, lockless job membership.
+- [ ] Commit: quota: per-task obligation ceiling and ledger charge-source pass-through.
 
-**Test checkpoint:** a task's aggregate outstanding obligations are refused with the defined status at the per-task total, while a second resource type still charges up to its own class limit below that total; a ledger charge naming a source lands that source on `receipt.source` and an unnamed one still reads UNKNOWN; `ob_job_collect_accounting` returns the same totals as the fully-locked walk while a member detaches mid-walk, retrying on the generation mismatch rather than reporting a torn sum; and the LIVE channel-create path's backoff schedule is asserted end-to-end through an injected clock and a failing creator, without a real wait.
+**Test checkpoint:** a task's aggregate outstanding obligations are refused with `STATUS_QUOTA_EXCEEDED` at the per-task total while the hard 2184-slot ceiling still reports `STATUS_INSUFFICIENT_RESOURCES`, so a policy refusal stays distinguishable from heap exhaustion; a type capped at its own class limit still leaves a second type able to charge below the total; the count is restored on every failure path (claim failure, chain failure, zero token) and decremented exactly once across an inline return, a raised-IRQL deferred return completed by the drain, and an orphan reclaim; and a ledger charge naming a source lands that source on `receipt.source` while an unnamed one still reads UNKNOWN.
+
+---
+
+## 19. Lockless Job Membership and the Live Pressure-Retry Seam
+
+Split out of §18 on 2026-07-25 when the design review grew both halves past one edit surface. These are the two follow-ups that do NOT touch the ledger: a job-scoped membership generation in `ob_job.c` and a test seam on the live channel-create path in `quota_pressure.c`. Independent of §18 and of each other; neither blocks another section.
+
+- [ ] Membership generation under `job->lock`, so `ob_job_collect_accounting` snapshots membership, computes deltas outside the lock, and re-checks, without the per-member lock pair that got the earlier attempt reverted. -> XREF: `§15`
+- [ ] Bounded-retry fallback to the fully-locked walk, so membership churn cannot make the void-returning collector publish a torn sum. -> XREF: `§15`
+- [ ] Pressure-channel LIVE-path retry seam: `pressure_create_channels` calls `knf_create_state_ex` and raw `uptime_ns()` directly, so only the policy helper is provable today. Needs a test clock plus a creator hook. -> XREF: `§10`
+- [ ] Commit: quota: lockless job membership validation and live pressure-retry test seam.
+
+**Test checkpoint:** `ob_job_collect_accounting` returns the same totals as the fully-locked walk while a member detaches mid-walk, retrying on the generation mismatch rather than reporting a torn sum, and falls back to the locked walk rather than looping when churn outlasts the retry bound; the generation bumps on assign and on detach but not on a pure accounting update; and the LIVE channel-create path's backoff schedule is asserted end-to-end through an injected clock and a failing creator, without a real wait and without racing the live drain.
 
 ---
 
