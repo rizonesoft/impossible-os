@@ -284,13 +284,23 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
  * call twice (the second is a no-op), and safe after the charging task has died
  * and its slot has been recycled -- which is the whole point.
  *
- * Returns 1 when the charge was credited back and the handle emptied, 0 when it
- * was NOT. A return fails to complete for exactly one reason: colliding with an
- * in-progress quota_charge_adjust on this same charge, for longer than
+THREE outcomes, and the handle is emptied in all of them:
+ *
+ *   QUOTA_LEDGER_RETURN_CREDITED -- the charge was credited back by this call.
+ *   QUOTA_LEDGER_RETURN_DEFERRED -- the caller was above PASSIVE_LEVEL, so the
+ *       completion was handed to the drain worker. The credit is PENDING, not
+ *       done; treating the result as a boolean would read this as credited.
+ *   QUOTA_LEDGER_RETURN_NONE     -- nothing was owed (an empty or stale handle),
+ *       or the charge was ABANDONED.
+ *
+ * A synchronous return fails to complete for exactly one reason: colliding with
+ * an in-progress quota_charge_adjust on this same charge, for longer than
  * QUOTA_LEDGER_RETURN_TRIES attempts. In that case the handle is emptied and its
  * reference dropped WITHOUT the charge being credited -- the obligation is
  * ABANDONED to the ledger, whose own drain reclaims the charge and counts it as a
- * leak at the task release or at destruction.
+ * leak at the task release or at destruction. A DEFERRED return meets the same
+ * collision on the worker instead, where it is retried across a bounded number of
+ * drain visits before being abandoned the same way.
  *
  * Abandoning rather than retaining the handle is deliberate, and it is what makes
  * that backstop real: a retained reference would hold the ledger's refcount above
@@ -363,12 +373,15 @@ int quota_ledger_return(quota_obligation_t *ob);
  * exhausted with no safe fallback left. The caller's ledger reference transfers
  * to the pending slot, so the storage cannot go away underneath the drain.
  *
- * The drain is a THREADED DPC (PASSIVE_LEVEL), pinned to the service CPU. Pinning
- * is not a preference: dpc.h documents that only the BSP has a guaranteed drain
- * trigger, so a callback queued from an idle AP can strand -- and because the
- * single-ownership arming flag is cleared only by the callback, a stranded one
- * would wedge every later producer out of the queue for the rest of the boot.
- * quota_pressure.c pins its publisher for exactly this reason.
+ * The drain is a THREADED DPC (PASSIVE_LEVEL) queued onto a fixed CPU's threaded
+ * list. That fixed target is QUEUE OWNERSHIP, not affinity, and the distinction
+ * is worth stating because the obvious rationale is wrong here: dpc.h records
+ * that a threaded DPC has no CPU-affinity guarantee -- one all-CPU worker drains
+ * every threaded list and runs the callback wherever the scheduler puts it -- so
+ * the idle-AP stranding hazard that justifies pinning a NORMAL DPC does not
+ * apply. A fixed list is chosen so every producer contends on one queue in a
+ * predictable order, and the drain routine must therefore never read per-CPU
+ * state. The single-drainer property comes from the drain claim, not affinity.
  *
  * BEFORE THE WORKER EXISTS (quota_ledger_init has not run, which is possible for
  * a window after SUBSYS_SCHED comes up) there is nothing to defer to, so a
@@ -382,9 +395,9 @@ int quota_ledger_return(quota_obligation_t *ob);
  * in place. */
 void quota_ledger_init(void);
 
-/* Obligations awaiting the drain worker; raised-IRQL returns that had to complete
- * in place for want of a worker; obligations the drain has completed. Diagnostics
- * and tests. */
+/* Obligations awaiting the drain worker; raised-IRQL COMPLETIONS (a return, or a
+ * last-reference destroy) that had to run in place for want of a worker;
+ * obligations the drain has completed. Diagnostics and tests. */
 uint32_t quota_ledger_deferrals_pending(void);
 uint64_t quota_ledger_deferrals_forced(void);
 uint64_t quota_ledger_deferrals_completed(void);
@@ -414,12 +427,22 @@ void quota_ledger_test_hold(int hold);
  * reporting STATUS_SUCCESS during the exempt window -- an empty obligation that
  * quota_ledger_return correctly treats as owing nothing.
  *
- * PASSIVE_LEVEL, and it says so with a status rather than a comment: the ledger
- * may allocate, so a raised-IRQL caller is refused with STATUS_UNSUCCESSFUL --
- * the same refusal knf_subscribe already gives a raised-IRQL caller for the same
- * reason -- instead of being allowed into an allocation path it cannot be in.
- * That is the one behavioural difference from
- * quota_charge_current, which needs no such guard because it never allocates. */
+ * TWO differences from quota_charge_current, both unavoidable and both here
+ * rather than buried:
+ *
+ *   1. PASSIVE_LEVEL, said with a status rather than a comment. The ledger may
+ *      allocate, so a raised-IRQL caller is refused with STATUS_UNSUCCESSFUL --
+ *      the same refusal knf_subscribe gives such a caller, for the same reason --
+ *      instead of being admitted to an allocation path it cannot be in.
+ *   2. A nonzero charge can additionally fail for LEDGER STORAGE reasons:
+ *      STATUS_INSUFFICIENT_RESOURCES when no slot is free and none can be
+ *      allocated. quota_charge_current has no storage to run out of.
+ *
+ * Everything else matches: type validation precedes the boot exemption, both
+ * milestones gate identically, a NULL current task is
+ * STATUS_PROCESS_IS_TERMINATING, an out-of-range amount is
+ * STATUS_INVALID_PARAMETER before any storage is touched, and a zero amount is
+ * delegated to quota_charge_chain so its liveness check still applies. */
 NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount,
                                      quota_obligation_t *out);
 
@@ -524,9 +547,17 @@ uint32_t quota_ledger_unmigrate_from_job(struct task *task,
  * Idempotent; no-op for a task that never allocated a ledger. */
 void quota_ledger_task_release(struct task *task);
 
-/* Total orphaned obligations reclaimed since boot. Counted rather than logged on
- * the reap path, which is reachable at elevated IRQL; the boot leak sweep and
- * the quota dashboard read this. */
+/* Total orphaned obligations reclaimed since boot. Counted rather than logged
+ * unconditionally, because the klog on that path is IRQL-gated; the boot leak
+ * sweep and the quota dashboard read this.
+ *
+ * NOTE, so a future change does not read the gate as permission: the reclaim
+ * itself is NOT bounded work -- quota_ledger_task_release drains orphans inline,
+ * and each one releases the receipt's block references. Its only caller today is
+ * task_cleanup, which runs in thread context at PASSIVE_LEVEL, so that is fine.
+ * Driving a reap from a DPC would reintroduce exactly the unbounded raised-IRQL
+ * teardown the deferral contract above removes from the return path, and would
+ * need the same treatment. */
 uint64_t quota_ledger_leak_count(void);
 
 /* Obligations ABANDONED by a return that could not complete (see

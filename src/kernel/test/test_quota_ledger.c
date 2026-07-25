@@ -1170,6 +1170,12 @@ static void test_quota_ledger_return_at_raised_irql_defers(void)
      * lives to reap, so leaving it behind would read as a heap leak. Every
      * obligation above is completed by now, so the release drains nothing. */
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1211,6 +1217,12 @@ static void test_quota_ledger_deferred_drain_credits_once(void)
      * lives to reap, so leaving it behind would read as a heap leak. Every
      * obligation above is completed by now, so the release drains nothing. */
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1270,6 +1282,12 @@ static void test_quota_ledger_double_return_at_raised_irql(void)
                    "the charge is credited exactly once across both returns");
 
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1323,6 +1341,12 @@ static void test_quota_ledger_deferred_survives_task_release(void)
                    "credited in full");
     TEST_ASSERT_EQ(quota_ledger_leak_count(), leaks_before,
                    "and never counted as a leak");
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1370,6 +1394,12 @@ static void test_quota_ledger_destroy_at_raised_irql_defers(void)
     (void)quota_ledger_drain_now();
     TEST_ASSERT_EQ(quota_ledger_deferrals_destroyed(), destroyed_before + 1,
                    "the drain performed exactly one deferred destruction");
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1429,6 +1459,12 @@ static void test_quota_ledger_deferrals_past_the_slot_budget_complete(void)
                    "and every charge is credited back");
 
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1452,7 +1488,67 @@ static void test_quota_ledger_charge_current_refuses_raised_irql(void)
     TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&ob),
                    (uint64_t)QUOTA_LEDGER_RETURN_NONE,
                    "returning the empty obligation owes nothing");
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
+}
+
+/* quota_ledger_charge_current must answer a ZERO charge the way
+ * quota_charge_current does -- success, owing nothing -- and must do it WITHOUT
+ * touching ledger storage. Answering it inside quota_ledger_charge instead would
+ * acquire a ledger and claim a slot first, so under allocation pressure or at the
+ * slot ceiling a zero-cost operation would be refused for exhaustion. */
+static void test_quota_ledger_charge_current_zero_owes_nothing(void)
+{
+    struct task       *t = task_current();
+    quota_obligation_t ob = { 0 };
+    uint64_t           before;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+
+    before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    /* Start from a task with NO ledger, so "no ledger was allocated" is an
+     * observable fact rather than an inference. Without this the assertions
+     * below all hold even for an implementation that acquires a ledger, claims a
+     * slot and releases it again -- which is exactly the behaviour the zero
+     * short-circuit exists to avoid. */
+    quota_ledger_task_release(t);
+    TEST_ASSERT_NULL((void *)t->quota_ledger,
+                     "the task starts this check with no ledger");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE,
+                                                         0, &ob),
+                   (uint64_t)STATUS_SUCCESS, "a zero charge succeeds");
+    TEST_ASSERT_NULL((void *)t->quota_ledger,
+                     "and allocated NO ledger: the shortcut ran before the storage");
+    TEST_ASSERT_NULL((void *)ob.ledger, "so it produced no obligation");
+    TEST_ASSERT_EQ(ob.token, 0ULL, "the empty obligation carries no token");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
+                   "and moves no usage");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&ob),
+                   (uint64_t)QUOTA_LEDGER_RETURN_NONE,
+                   "returning it owes nothing");
+
+    /* An out-of-range type is refused for EITHER amount -- including zero, so an
+     * implementation that short-circuited the zero amount ahead of the type
+     * check would be caught here rather than passing. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(
+                       (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT, 1, &ob),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an out-of-range resource type is refused");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current(
+                       (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT, 0, &ob),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "and is refused at amount zero too, before the shortcut");
+    TEST_ASSERT_NULL((void *)ob.ledger, "and leaves the obligation empty");
 }
 
 /* The drain is only legal at PASSIVE_LEVEL, and says so by doing nothing rather
@@ -1496,6 +1592,12 @@ static void test_quota_ledger_drain_now_refuses_raised_irql(void)
      * lives to reap, so leaving it behind would read as a heap leak. Every
      * obligation above is completed by now, so the release drains nothing. */
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1547,6 +1649,12 @@ static void test_quota_ledger_deferred_batch_completes(void)
      * lives to reap, so leaving it behind would read as a heap leak. Every
      * obligation above is completed by now, so the release drains nothing. */
     quota_ledger_task_release(t);
+    /* Flush anything the drain deferred to a LATER callback -- a destroy that
+     * did not fit the callback budget is requeued rather than run, and while the
+     * hold is set no worker will come back for it. Draining to quiescence here
+     * is what keeps that correct behaviour from reading as a heap leak. */
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
     quota_ledger_test_hold(0);
 }
 
@@ -1566,6 +1674,8 @@ void test_register_quota_ledger(void)
                             test_quota_ledger_deferrals_past_the_slot_budget_complete, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota ledger: a raised-IRQL charge is refused, not attempted",
                             test_quota_ledger_charge_current_refuses_raised_irql, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota ledger: a zero charge owes nothing and needs no ledger",
+                            test_quota_ledger_charge_current_zero_owes_nothing, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota ledger: the drain refuses to run above PASSIVE_LEVEL",
                             test_quota_ledger_drain_now_refuses_raised_irql, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota ledger: a batch of deferrals completes in one pass",
