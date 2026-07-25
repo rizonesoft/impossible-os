@@ -516,6 +516,26 @@ struct task {
     struct quota_block *quota;
     struct quota_block *quota_user;
     spinlock_t quota_lock;
+    /* Charge gate: {state, in-flight charger count} packed in one word, read and
+     * written ONLY through the quota_gate_* helpers in kernel/quota/quota_ledger.h
+     * (see the state machine documented there). Every chain charge enters it, so
+     * a job-membership transition can drain chargers and publish membership
+     * atomically with respect to charging. Zero-init decodes as OPEN with nothing
+     * in flight, which is exactly what a fresh slot must mean; task death
+     * publishes SEALED and a reused slot is re-zeroed like every other field.
+     *
+     * It is deliberately NOT inside the ledger below: a gate reachable only
+     * through a ledger would be bypassed by every charger that keeps its receipt
+     * in its own structure, and it would force the charge path to allocate. */
+    atomic64_t quota_gate;
+    /* Outstanding-obligation ledger, or NULL until something charges through it.
+     * Guarded by quota_lock like the block pair above, with ONE deliberate
+     * difference: it is cleared at REAP (quota_ledger_task_release), not at death,
+     * because obligations for resources that outlive the task must stay
+     * returnable after quota_task_teardown has released the blocks. The ledger is
+     * refcounted, so an obligation outliving even the reap keeps its own storage
+     * alive. */
+    struct quota_ledger *quota_ledger;
     /* --- User-mode ABI --- */
     uint64_t kernel_gs_base;             /* MSR 0xC0000102 value; 0 for kernel tasks */
     void *peb;                           /* PEB * in user address space (NULL for kernel tasks) */

@@ -25,7 +25,8 @@
  * ============================================================================ */
 
 #include "kernel/ob/ob_job.h"
-#include "kernel/quota/quota.h"   /* per-job aggregate accounting block */
+#include "kernel/quota/quota.h"         /* per-job aggregate accounting block */
+#include "kernel/quota/quota_ledger.h"  /* charge gate + obligation migration */
 #include "kernel/sched/irql.h"    /* KeGetCurrentIrql for the detach diag gate */
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
@@ -275,6 +276,28 @@ void ob_job_detach_task(struct task *t)
  * Takes the membership reference under the lock (bare atomic). Returns an
  * NTSTATUS so the syscall layer can distinguish the failure modes.
  * ----------------------------------------------------------------------- */
+/* Undo everything the pre-lock quota preparation did, in reverse order, and end
+ * the quiesce. Called on EVERY path that refuses the assignment after the absorb
+ * has run -- five of them, which is why it is a helper and not five copies.
+ *
+ * Order matters and is the reverse of preparation: the obligations that adopted
+ * part of the absorb record must give it back BEFORE the record is withdrawn,
+ * or unabsorb would return only the un-adopted remainder and leave the job
+ * billed for a process that never joined. The gate reopens last, so no charger
+ * can observe a half-unwound state.
+ *
+ * A job with no quota block was never prepared and never quiesced, so there is
+ * nothing to unwind and -- critically -- no close to reopen. */
+static void ob_job_assign_unwind(JOB_OBJECT *job, struct task *t,
+                                 quota_absorb_record_t *absorbed)
+{
+    if (!job->quota)
+        return;
+    (void)quota_ledger_unmigrate_from_job(t, job->quota, absorbed);
+    quota_job_unabsorb(job->quota, absorbed);
+    quota_gate_reopen(t);
+}
+
 NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
 {
     uint64_t tflags, jflags;
@@ -321,16 +344,40 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
         if (!may_join)
             return pre;
 
+        /* QUIESCE the joiner's chargers for the whole absorb-to-publish window.
+         * Without this the window is real: a charge landing between the absorb
+         * and the membership publication misses the job entirely, and the older
+         * idea of revalidating a membership generation AFTER charging makes it
+         * worse rather than better -- the absorb has already folded that charge
+         * in, so the retry bills the job a second time. Draining first is the
+         * only ordering that is right in both directions.
+         *
+         * A refusal here is not fatal to correctness, only to this attempt: the
+         * assignment is refused and nothing has been folded in yet. */
+        NTSTATUS qz = quota_gate_quiesce(t);
+        if (qz != STATUS_SUCCESS)
+            return qz;
+
         NTSTATUS qst = quota_job_absorb_task(job->quota, t, &absorbed);
-        if (qst != STATUS_SUCCESS)
+        if (qst != STATUS_SUCCESS) {
+            quota_gate_reopen(t);
             return qst;
+        }
+
+        /* ADOPT the joiner's outstanding obligations into the job rather than
+         * charging it twice: the absorb above already billed the job for the
+         * joiner's whole current usage, which includes what these obligations
+         * hold, so the migration moves only WHO must give it back. Runs inside
+         * the quiesce so no charger can add an obligation while the set is being
+         * walked. */
+        (void)quota_ledger_migrate_to_job(t, job->quota, &absorbed);
     }
 
     spin_lock_irqsave(&t->job_lock, &tflags);
 
     if (t->state == TASK_DEAD) {
         spin_unlock_irqrestore(&t->job_lock, tflags);
-        quota_job_unabsorb(job->quota, &absorbed);
+        ob_job_assign_unwind(job, t, &absorbed);
         return STATUS_PROCESS_IS_TERMINATING;
     }
     if (t->job != NULL) {
@@ -341,7 +388,7 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
         /* Undo in BOTH cases: on rejection nothing joined, and on the
          * idempotent re-assign the usage is already folded in from the first
          * assignment, so keeping this second fold would double-count it. */
-        quota_job_unabsorb(job->quota, &absorbed);
+        ob_job_assign_unwind(job, t, &absorbed);
         return r;
     }
 
@@ -349,20 +396,20 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
     if (job->terminated) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
-        quota_job_unabsorb(job->quota, &absorbed);
+        ob_job_assign_unwind(job, t, &absorbed);
         return STATUS_INVALID_PARAMETER;   /* job is dead: no new members */
     }
     if ((job->limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) &&
         job->num_members >= job->active_process_limit) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
-        quota_job_unabsorb(job->quota, &absorbed);
+        ob_job_assign_unwind(job, t, &absorbed);
         return STATUS_QUOTA_EXCEEDED;
     }
     if (job->num_members >= JOB_MAX_MEMBERS) {
         spin_unlock_irqrestore(&job->lock, jflags);
         spin_unlock_irqrestore(&t->job_lock, tflags);
-        quota_job_unabsorb(job->quota, &absorbed);
+        ob_job_assign_unwind(job, t, &absorbed);
         return STATUS_QUOTA_EXCEEDED;
     }
 
@@ -381,6 +428,14 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
     t->job = job;
     spin_unlock_irqrestore(&job->lock, jflags);
     spin_unlock_irqrestore(&t->job_lock, tflags);
+
+    /* End the quiesce only now that the membership is PUBLISHED. That ordering is
+     * the contract: charges were drained, the absorb folded the joiner's usage
+     * in, its outstanding obligations were adopted, membership became visible,
+     * and only then is charging reopened -- so no charge can be admitted against
+     * a chain that is mid-transition. */
+    if (job->quota)
+        quota_gate_reopen(t);
 
     return STATUS_SUCCESS;
 }

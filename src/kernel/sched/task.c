@@ -37,6 +37,7 @@
 #include "kernel/nt/pledge.h"       /* pledge_unveil_inherit / _teardown */
 #include "kernel/ob/ob_job.h"       /* ob_job_fork_inherit / _detach_task */
 #include "kernel/quota/quota.h"     /* quota_task_init / quota_task_teardown */
+#include "kernel/quota/quota_ledger.h" /* charge gate seal + ledger release */
 #include "kernel/msr.h"
 #include "kernel/ob/peb.h"
 #include "kernel/ob/teb.h"
@@ -683,6 +684,16 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    /* Re-open the charge gate and drop the stale ledger POINTER. Both are
+     * load-bearing on a reused slot, in opposite directions: the previous tenant
+     * left the gate SEALED at its death, so a slot that inherited it would refuse
+     * every charge this new process ever makes; and the ledger pointer was
+     * cleared at that tenant's reap, but clearing it again here is what keeps the
+     * invariant true for any path that reaches a slot without a reap (the pointer
+     * is not ours to release -- the reap already dropped the task's reference,
+     * and any surviving obligation holds its own). */
+    atomic64_set(&tasks[pid].quota_gate, QUOTA_GATE_PACK(QUOTA_GATE_OPEN, 0));
+    tasks[pid].quota_ledger = NULL;
     tasks[pid].quota_policy_lock.flag = 0;   /* same reason: never inherit a held lock word */
     /* Windows quota limits are per-process and NOT inherited (Windows seeds a
      * new process from the system defaults). Reset rather than copy, so a
@@ -900,6 +911,16 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].quota = NULL;
     tasks[pid].quota_user = NULL;
     tasks[pid].quota_lock.flag = 0;
+    /* Re-open the charge gate and drop the stale ledger POINTER. Both are
+     * load-bearing on a reused slot, in opposite directions: the previous tenant
+     * left the gate SEALED at its death, so a slot that inherited it would refuse
+     * every charge this new process ever makes; and the ledger pointer was
+     * cleared at that tenant's reap, but clearing it again here is what keeps the
+     * invariant true for any path that reaches a slot without a reap (the pointer
+     * is not ours to release -- the reap already dropped the task's reference,
+     * and any surviving obligation holds its own). */
+    atomic64_set(&tasks[pid].quota_gate, QUOTA_GATE_PACK(QUOTA_GATE_OPEN, 0));
+    tasks[pid].quota_ledger = NULL;
     tasks[pid].quota_policy_lock.flag = 0;   /* same reason: never inherit a held lock word */
     quota_policy_reset(&tasks[pid]);   /* see task_create: per-process, never inherited */
     if (ob_job_fork_inherit(&tasks[pid], &tasks[current_task]) != 0) {
@@ -3257,6 +3278,14 @@ void task_death_teardown(struct task *t)
     syscall_filter_task_dead(t);
     /* Mark the OB process object dead so it becomes reclaimable. */
     ob_process_mark_dead(t->pid);
+    /* SEAL the charge gate first: from here no new charge can be admitted
+     * against this task, so the detach and the block release below cannot race a
+     * charger that would bill blocks being torn down. Sealing does NOT wait for
+     * an operation already in flight (one CAS, log-free, safe at elevated IRQL);
+     * the reap-time ledger release is what waits. Returns stay legal after the
+     * seal -- an obligation for a resource that outlives this task must still be
+     * returnable, or everything it charged for would leak. */
+    quota_gate_seal(t);
     /* Leave any Job Object cleanly: removes the pid, decrements the active
      * count, drops the membership Ob reference. No-op when unassigned. */
     ob_job_detach_task(t);
@@ -3439,6 +3468,14 @@ void task_cleanup(uint32_t pid)
         klog(LOG_DEBUG, "task", "PID %u reap cleanup: %u handles closed",
              (uint64_t)pid, (uint64_t)handles_closed);
     }
+
+    /* Release the task's claim on its charge ledger, AFTER the handle sweep --
+     * that ordering is the whole point. The sweep is what returns the charges the
+     * task itself owned, so anything still outstanding afterwards is either held
+     * by a resource that legitimately outlives the task (left alone) or orphaned
+     * with no holder able to return it (reclaimed and counted as a leak).
+     * Deciding that before the sweep would report every open handle as a leak. */
+    quota_ledger_task_release(&tasks[pid]);
 
     /* Free kernel stack (task-level, thread 0).
      *

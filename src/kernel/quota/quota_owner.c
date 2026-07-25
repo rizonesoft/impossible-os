@@ -29,6 +29,7 @@
  * ========================================================================== */
 
 #include "kernel/quota/quota.h"
+#include "kernel/quota/quota_ledger.h"  /* the per-task charge gate */
 #include "kernel/sched/task.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_job.h"
@@ -461,6 +462,28 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
         return STATUS_PROCESS_IS_TERMINATING;
     }
 
+    /* ENTER THE TASK'S CHARGE GATE. This is the single funnel every chain charge
+     * passes through -- including the ones whose receipt lives in the caller's
+     * own structure rather than in a ledger -- so gating HERE is what makes the
+     * membership barrier complete for charges. A gate hosted anywhere else would
+     * be routed around by exactly those callers.
+     *
+     * Placed after the zero-amount path on purpose: a zero charge moves no
+     * counter, so a membership transition has nothing to serialize against, and
+     * making it wait would add a refusal to a call that cannot affect anything.
+     *
+     * Costs no lock section (two atomic RMWs on one word), which is why the
+     * charge-path cost contract in quota.h is unchanged by it. */
+    uint32_t gate_state = QUOTA_GATE_OPEN;
+    if (!quota_gate_enter(task, &gate_state)) {
+        atomic64_set(&receipt->tag, idle_tag);
+        /* A transient close is a RETRY the caller may repeat; a seal means the
+         * task is dying and no retry will ever succeed. Reporting them as the
+         * same status would make a caller spin against a dead process. */
+        return (gate_state == QUOTA_GATE_SEALED) ? STATUS_PROCESS_IS_TERMINATING
+                                                 : STATUS_RETRY;
+    }
+
     /* Snapshot the whole chain FIRST, holding a reference on every block, and
      * take no owner lock past this point. Charging while holding job_lock or a
      * job's lock would violate the no-nested-call contract in quota.h and put
@@ -480,6 +503,7 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
     if (chain != 1) {
         quota_chain_release(receipt);
         atomic64_set(&receipt->tag, idle_tag);
+        quota_gate_exit(task);
         if (chain < 0) {
             /* No process block: the task is dead (teardown cleared it) or not
              * yet fully built. Admitting an empty chain here would report
@@ -510,6 +534,7 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
                 (void)quota_return(receipt->blocks[j], type, amount);
             quota_chain_release(receipt);
             atomic64_set(&receipt->tag, idle_tag);
+            quota_gate_exit(task);
             return st;
         }
     }
@@ -523,6 +548,10 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
     gen++;
     *out_token = gen;
     atomic64_set(&receipt->tag, QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_ACTIVE));
+    /* Leave the gate only after the charge is PUBLISHED. Exiting earlier would
+     * let a quiesce observe an empty gate while this charge was still being made
+     * visible, which is the precise window the gate exists to close. */
+    quota_gate_exit(task);
     return STATUS_SUCCESS;
 }
 
@@ -553,8 +582,39 @@ void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
     const int64_t active_tag = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_ACTIVE);
     const int64_t busy_tag   = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_BUSY);
 
-    if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag) != active_tag)
-        return;
+    /* RETRY on BUSY AT OUR OWN GENERATION rather than give up. Since
+     * quota_charge_adjust exists, a live charge can be briefly BUSY while its
+     * amount is resized -- and this returner is the only agent that will ever
+     * return it, so treating that as a no-op would silently leak the charge.
+     *
+     * The retry is safe against the case it must not break: a returner whose
+     * charge is already gone sees a MOVED generation, so its {token, ACTIVE} CAS
+     * can never match again and the loop stops at the bound rather than waiting
+     * for something that will not happen. It is bounded for the same reason the
+     * rate-limit reader is: this path is reachable with interrupts disabled,
+     * where an unbounded retry is a hang rather than a slowdown. An adjust holds
+     * the claim across a bounded, non-blocking block-lock transaction, so the
+     * bound is generous by orders of magnitude. */
+    int64_t observed = atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag);
+    if (observed != active_tag) {
+        int won = 0;
+        for (uint32_t spin = 0; spin < QUOTA_RETURN_BUSY_TRIES; spin++) {
+            int64_t now = atomic64_read(&receipt->tag);
+            /* Only a BUSY at this exact generation is worth waiting for.
+             * Anything else -- IDLE, or any other generation -- means this
+             * token names no live charge. */
+            if (QUOTA_RECEIPT_TAG_GEN(now) != token ||
+                QUOTA_RECEIPT_TAG_STATE(now) != QUOTA_RECEIPT_BUSY)
+                break;
+            if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag)
+                    == active_tag) {
+                won = 1;
+                break;
+            }
+        }
+        if (!won)
+            return;
+    }
 
     for (uint32_t i = 0; i < receipt->count; i++)
         (void)quota_return(receipt->blocks[i], receipt->type, receipt->amount);

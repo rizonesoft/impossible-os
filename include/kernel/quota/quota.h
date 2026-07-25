@@ -690,6 +690,14 @@ typedef struct quota_charge_receipt {
  * but the charge path still fails closed at the ceiling rather than wrapping a
  * token back onto a live one (a wrapped generation is the same stale-token
  * identity the tag exists to prevent). */
+/* Bound on how long a return waits for an in-progress adjust on the SAME charge
+ * to republish. Bounded rather than unbounded because this path is reachable
+ * with interrupts disabled, where an unbounded retry is a hang and not merely a
+ * slowdown -- the same reasoning the rate-limit reader's retry bound uses. An
+ * adjust holds its claim only across a bounded, non-blocking multi-block
+ * transaction, so this is generous by orders of magnitude. */
+#define QUOTA_RETURN_BUSY_TRIES   64u
+
 #define QUOTA_RECEIPT_STATE_BITS  2u
 #define QUOTA_RECEIPT_STATE_MASK  ((1u << QUOTA_RECEIPT_STATE_BITS) - 1u)
 #define QUOTA_RECEIPT_GEN_MAX     (0xFFFFFFFFFFFFFFFFull >> QUOTA_RECEIPT_STATE_BITS)
@@ -807,6 +815,14 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
  * stands. There is no correct alternative -- crediting back a charge that has
  * not finished would corrupt the counters. Complete the charge first.
  *
+ * ONE EXCEPTION, and it is a RETRY rather than a give-up: a receipt found BUSY
+ * at the caller's OWN generation is a charge being resized by quota_charge_adjust
+ * on another CPU, not a charge still being built. Treating that as a no-op would
+ * silently discard the only return this charge will ever get, so the return
+ * spins (bounded, and only while the generation still matches) until the adjust
+ * republishes. A generation that has MOVED means the charge is already gone, and
+ * the return correctly stops.
+ *
  * SCOPE OF THAT GUARANTEE: `token` is what extends it from "the same charge"
  * to "the same charge in reused storage". Only the exact token handed out by
  * the quota_charge_chain that filled this receipt returns that charge; a stale
@@ -826,6 +842,50 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
  * it tracks, or keep the receipt and token alive until every path that could
  * return that charge has run. */
 void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token);
+
+/* Change an outstanding charge's amount across EVERY block that holds it, all
+ * or nothing.
+ *
+ * WHY THIS IS NOT A RETURN FOLLOWED BY A CHARGE, nor a charge-the-delta with a
+ * prefix unwind. Both of those leave observable damage behind on refusal:
+ * committing a charge lifts the block's PEAK, and no return lowers a peak
+ * again, so a per-block walk that gets three blocks in and is then refused has
+ * permanently inflated three peaks for a transaction that never happened. The
+ * decrease direction is no safer in the other order -- a return can itself be
+ * refused when the counter does not hold what the caller thinks it does, and by
+ * then an already-returned prefix cannot be safely recharged, because the
+ * recharge is exactly the thing that can be refused.
+ *
+ * So this takes EVERY block's lock at once, in the same ascending-address order
+ * quota_try_transfer uses (so two adjusts over overlapping chains cannot
+ * deadlock), PREVALIDATES the whole delta under those locks, and only then
+ * commits every counter and the receipt's own amount. On refusal not one usage
+ * value, peak, or receipt field has moved: the failure telemetry of the block
+ * that came up short is the only thing that changes, which is deliberate and
+ * matches every other refusal in this module.
+ *
+ * `token` must be the exact token that the charge was issued with -- the same
+ * proof-of-ownership quota_return_chain requires, for the same reason: without
+ * it, a stale holder could resize a charge that reused the storage.
+ *
+ * The receipt is BUSY for the duration, which is a state a token-holding
+ * returner can now legitimately encounter (before this existed, an ACTIVE
+ * charge was never briefly BUSY). quota_return_chain therefore RETRIES on a
+ * BUSY tag at its own generation instead of treating it as a no-op -- see its
+ * contract above. Callers need do nothing about this.
+ *
+ * A new amount equal to the current one is a success that touches nothing. A
+ * new amount of 0 is NOT a return: the obligation survives holding zero, and
+ * quota_return_chain remains the only way to end it.
+ *
+ * Returns STATUS_INVALID_PARAMETER (bad argument, a non-canonical token, or a
+ * token that does not name a live charge on this receipt), the refusing block's
+ * status (STATUS_QUOTA_EXCEEDED, STATUS_INTEGER_OVERFLOW) on an increase that
+ * does not fit, or STATUS_INTEGER_OVERFLOW on a decrease larger than what a
+ * block actually holds (an accounting-integrity failure, not a routine
+ * refusal). */
+NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
+                             uint64_t new_amount);
 
 /* THE charge entry point for a charging subsystem: bill the CURRENT task's
  * chain, or take the boot exemption. Consumers call this and NEVER inspect
@@ -899,22 +959,35 @@ typedef struct quota_absorb_record {
  * after the charge turns the under-count into a DOUBLE count, because the
  * absorb has already folded the in-flight charge in and the retry then charges
  * the job again. It needs a transition protocol that drains in-flight chargers
- * before absorbing and publishes membership before reopening charging. Owned by
- * the object and handle charge-integration section. Returns STATUS_SUCCESS when
- * there is nothing to absorb.
+ * before absorbing and publishes membership before reopening charging.
  *
- * KNOWN LIMITATION -- absorbed usage is billed to the job until the member
- * DEPARTS, not until the underlying resource is freed. The receipts for
- * pre-join resources name only the process and user blocks, so returning one
- * while still a member reduces those two and leaves the job's copy standing;
- * the absorb record only unwinds at detach. A long-lived member can therefore
- * hold job headroom for resources it has already released. Fixing this needs
- * outstanding receipts to be MIGRATED into the job at assignment, which needs a
- * refcounted ledger of live receipts that outlives the task slot -- and the
- * migration must ADOPT this absorb record rather than charge alongside it, or
- * the same usage is counted twice. There is no charging subsystem yet to hold a
- * pre-join receipt at all, so nothing is mis-billed today. Owned by the object
- * and handle charge-integration section. */
+ * THAT PROTOCOL NOW EXISTS: quota_gate_quiesce in quota_ledger.h, which
+ * ob_job_assign holds across the absorb and the publication. Every chain charge
+ * enters the gate, so no charge can land in this window at all -- the window is
+ * closed for charges rather than merely bounded. A RETURN still may land here
+ * (it is handed a receipt and a token and never learns whose task they are), and
+ * that remains benign for the reason the KNOWN LIMITATION below describes:
+ * conservation holds, the job merely over-holds headroom until detach.
+ *
+ * Returns STATUS_SUCCESS when there is nothing to absorb.
+ *
+ * REMAINING LIMITATION, now narrowed to receipts the ledger cannot see.
+ * Absorbed usage is billed to the job until the member DEPARTS rather than until
+ * the underlying resource is freed, because a pre-join receipt names only the
+ * process and user blocks: returning one while still a member reduces those two
+ * and leaves the job's copy standing, and the absorb record only unwinds at
+ * detach.
+ *
+ * quota_ledger_migrate_to_job closes that for every obligation held in a LEDGER:
+ * it appends the job block to the outstanding receipt and subtracts the same
+ * amount from this record, so the return reaches the job and the record no longer
+ * owes it. What it cannot reach is a receipt embedded in its caller's own
+ * structure (an ALPC message, a notification state), because those are not
+ * enumerable from the task. Those amounts stay with the absorb record and unwind
+ * at detach exactly as described above -- conservation holds either way, and the
+ * cost is bounded over-held job headroom, never a lost or duplicated charge.
+ * Converting the embedded-receipt consumers to ledger obligations is owned as
+ * concrete follow-up work by the charge-path cost and lifetime section. */
 NTSTATUS quota_job_absorb_task(struct quota_block *job_block, struct task *task,
                                quota_absorb_record_t *rec);
 
@@ -993,6 +1066,22 @@ void quota_job_unabsorb(struct quota_block *job_block, quota_absorb_record_t *re
  * silently succeeding. It is therefore NOT a zero-lock operation, unlike the
  * single-block no-ops and the stale-token return. */
 #define QUOTA_BUDGET_CHAIN_ZERO_OWNER_LOCKS  1u
+
+/* An adjust enters one block critical section per block the receipt names -- but
+ * unlike a chain charge it holds them ALL AT ONCE (ascending address order),
+ * because prevalidate-then-commit across several blocks is only atomic if none
+ * of them can move in between. The COUNT is what this contract measures, so it
+ * is the same per-block 1; the simultaneous hold is a lock-ORDER fact, recorded
+ * in the quota_charge_adjust contract rather than here. */
+#define QUOTA_BUDGET_ADJUST_LOCKS_PER_BLOCK  1u
+
+/* The per-task charge gate costs ZERO block critical sections: it is two atomic
+ * read-modify-writes on one word in the task (enter, exit), with no lock and no
+ * allocation. That is why every chain charge can afford to pass through it, and
+ * why adding it did not change any constant above. Stated here because a future
+ * reader comparing the measured section count against this contract needs to
+ * know the gate is deliberately outside it, not accidentally missing from it. */
+#define QUOTA_BUDGET_GATE_LOCKS  0u
 
 /* ========================================================================== *
  * Rate-limit policy records

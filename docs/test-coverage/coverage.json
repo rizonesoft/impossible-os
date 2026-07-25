@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-25T01:22:19+02:00",
-  "total_suites": 2446,
-  "total_assertions": 9534,
+  "timestamp": "2026-07-25T02:14:23+02:00",
+  "total_suites": 2469,
+  "total_assertions": 9684,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -71,6 +71,7 @@
     {"file": "test_quota.c", "suites": 69, "assertions": 455},
     {"file": "test_quota_config.c", "suites": 20, "assertions": 96},
     {"file": "test_quota_dashboard.c", "suites": 19, "assertions": 117},
+    {"file": "test_quota_ledger.c", "suites": 23, "assertions": 150},
     {"file": "test_quota_owner.c", "suites": 3, "assertions": 20},
     {"file": "test_quota_perf.c", "suites": 7, "assertions": 59},
     {"file": "test_quota_pressure.c", "suites": 42, "assertions": 205},

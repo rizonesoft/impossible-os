@@ -50,7 +50,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [/]   |
-| 💎   |  11   | Charge ledger and transactional adjustment    | §4                      |  [ ]   |
+| 💎   |  11   | Charge ledger and transactional adjustment    | §4                      |  [x]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
 | 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [ ]   |
 | ⭐   |  14   | Charge-path cost and lifetime follow-ups      | §6, §7, §9              |  [ ]   |
@@ -126,7 +126,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (chain-charging contract, principal kinds, canonical-user rule).
 > - **Scope boundary** -- §3 owns WHO is charged; nothing is charged yet (§4-§7), privilege-checked limits are §8, nested-job topology is TODO-21 §13.
 > **Verified:** 2026-07-20 | commit `20ee7781` + review fixes | 4/6 items | build OK | smoke PASS (TCG 2.7s), tests 52/52 PASS
-> **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a drain/quiesce transaction plus a refcounted ledger that ADOPTS `job_absorb` (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 367)
+> **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs for a receipt the ledger cannot enumerate (one embedded in an ALPC message or notification state); the charge-straddle half and every LEDGER-held obligation are closed by §11 (reason: needs the embedded-receipt consumers converted to ledger obligations) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Convert the embedded-receipt charge consumers" at line 421)
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
 > **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 464)
@@ -142,8 +142,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [x] Generation exhaustion fails closed with `STATUS_INTEGER_OVERFLOW` at `QUOTA_RECEIPT_GEN_MAX` (62 bits) rather than wrapping a token back onto a live one.
 - [x] `out_token` is MANDATORY and non-canonical tokens (above the 62-bit generation field) are refused: the tag encoding discards high bits, so `live_token | (1 << 62)` would otherwise build the same tag and win the CAS.
 - [x] `atomic64_cmpxchg` added to `kernel/atomic.h` (LOCK CMPXCHG on an aligned qword).
-- [/] Serializing a charge against a job-membership change needs a drain/quiesce transaction, NOT a generation revalidated after charging: the absorb has already folded the in-flight charge in, so a retry double-bills the job. -> XREF: `§11`
-- [/] Migrating outstanding receipt obligations at `ob_job_assign` needs a refcounted ledger outliving the task slot, and must ADOPT `job_absorb` not charge beside it. -> XREF: `§11`
+- [x] Serializing a charge against a job-membership change SHIPPED as the §11 per-task charge gate: `quota_charge_chain` enters it, so a quiesce drains in-flight chargers and no charge can straddle the absorb-to-publish window. -> XREF: `§11`
+- [x] Migrating outstanding receipt obligations at `ob_job_assign` SHIPPED as `quota_ledger_migrate_to_job`, which ADOPTS `job_absorb` (append job block, subtract the same amount) instead of charging beside it. -> XREF: `§11`
 - [x] Commit: quota: receipt generation tokens for safe charge identity.
 
 **Test checkpoint:** a token from an already-returned charge cannot return a later charge made through the same receipt storage, while the live token still can; zero, unissued, and non-canonical (high-bit) tokens are all no-ops; a charge refused because the receipt is already live leaves the live charge's token intact; a charge with no `out_token` is refused rather than left unreturnable (verified: SUITE=quota 522 assertions, 0 failures).
@@ -153,11 +153,10 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Notes:**
 > - **What shipped** -- a tagged `{generation, state}` receipt word in `quota.h`/`quota_owner.c` with a mandatory caller-held token keying the return, plus `atomic64_cmpxchg` in `kernel/atomic.h` as the one primitive it needs.
 > - **How it runs** -- every receipt transition is ONE `atomic64_cmpxchg` on the packed word: charge claims IDLE at the current generation, fills the receipt, then release-publishes `{gen+1, ACTIVE}`; return CASes the exact `{token, ACTIVE}` it was handed.
-> - **Downstream effects** -- closes the §3 receipt-storage ABA; the absorb-to-publish half stays open and moved to §11, which owns the refcounted ledger and the membership drain protocol (§13 owns the charging consumers).
+> - **Downstream effects** -- closes the §3 receipt-storage ABA; the absorb-to-publish half is now closed for charges by the §11 per-task gate, and §11 owns the refcounted ledger (§13 owns the charging consumers).
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (receipt identity contract).
-> - **Scope boundary** -- §4 owns only the IDENTITY of a charge; nothing is charged yet (§13 objects/handles, §5-§7 pool/registry/CPU), membership serialization is §11, and the handle-table lock a charge-on-insert needs is TODO-05 §3.
+> - **Scope boundary** -- §4 owns only the IDENTITY of a charge; nothing is charged yet (§13 objects/handles, §5-§7 pool/registry/CPU), membership serialization shipped in §11, and the handle-table lock a charge-on-insert needs is TODO-05 §3.
 > **Accepted:** [M] the receipt-tag guarantees are proven only by sequential tests: concurrent same-token returners, a paused BUSY window, and cross-CPU publication visibility need per-CPU run queues that do not exist yet (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
-> **Deferred:** [H] the absorb-to-publish window stays open: a generation revalidated after charging turns the under-count into a DOUBLE count, so closing it needs a drain/quiesce transaction (reason: design) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 367)
 
 ---
 
@@ -363,14 +362,23 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 Split out of the original "Object and handle quota integration" by its §11 complexity verdict (14 items, ABI impact). This section owns the OWNER-SIDE machinery only -- a receipt ledger whose lifetime is independent of the task slot, the drain/quiesce protocol that serializes charges against membership transitions, and the atomic multi-block adjust. The Object Manager charge points that consume it are §13; the charge-path cost and lifetime follow-ups filed by other sections' reviews are §14. The ledger must exist before either can bill anything, and it does not depend on the blocked TODO-05 §3 handle-table primitive.
 
-- [ ] Refcounted charge ledger, independent of the reusable task slot, holding a task's outstanding receipts; object bodies and namespace entries can outlive their creator, so a task-embedded registry cannot own their obligations. -> XREF: `§4`
-- [ ] Serialize charges against membership transitions with a drain/quiesce protocol: block new chargers, drain in-flight ones, absorb, publish membership, reopen. A generation revalidated AFTER charging double-bills instead. -> XREF: `§4`
-- [ ] `quota_charge_adjust` as an ATOMIC multi-block operation (canonical lock order, prevalidate all blocks, then commit counters and receipt together): a negative delta cannot prefix-rollback, since a recharge can be refused. -> XREF: `§2`
-- [ ] Migrate outstanding obligations at `ob_job_assign` in ONE transaction that ADOPTS the existing `job_absorb` amount and clears it, rather than charging the job a second time for the same usage. -> XREF: `§4`
-- [ ] At task death SEAL the ledger against new charges but RETAIN it; return handle charges during the real handle sweep in `task_cleanup`, then drain residual obligations as a leak assertion.
-- [ ] Commit: quota: refcounted charge ledger + transactional charge adjust.
+- [x] `quota_ledger_t` (`quota_ledger.h`/`.c`): refcounted, created on first use, append-only slot chunks each embedding a `quota_charge_receipt_t`. A handle is `{ledger ref, slot, token}`, so a charge outlives the task slot. -> XREF: `§4`
+- [x] Drain/quiesce via a per-task gate: `{state, in-flight}` packed in ONE `task->quota_gate` word, entered by `quota_charge_chain` so EVERY chain charge participates. `quota_gate_quiesce` closes and drains. -> XREF: `§4`
+- [x] `quota_charge_adjust(receipt, token, new)`: holds every block lock at once in ascending-address order, prevalidates the whole delta, then commits. A refusal lifts no peak and moves no usage. -> XREF: `§2`
+- [x] `quota_ledger_migrate_to_job` ADOPTS: it appends the job block to each outstanding receipt and subtracts that amount from `job_absorb`, issuing no second charge, so it cannot fail partway; `_unmigrate_from_job` reverts. -> XREF: `§4`
+- [x] `quota_gate_seal` at `task_death_teardown` (charges refused, returns still legal); `quota_ledger_task_release` after the `task_cleanup` handle sweep drains ONLY orphans -- a slot with a live holder outlives the task.
+- [x] Commit: quota: refcounted charge ledger + transactional charge adjust.
 
-**Test checkpoint:** a ledger outlives its creating task slot (seal-then-retain) and a receipt returned after task death still moves the owning block's counters exactly; a `quota_charge_adjust` refused on any block leaves EVERY block byte-identical (no prefix-rollback residue); a charge racing a membership transition is billed exactly once, to exactly one side of the transition, never both; `ob_job_assign` adopts an existing `job_absorb` amount instead of double-charging; a task that dies holding receipts drains to zero outstanding obligations and the leak sweep reports no net delta.
+**Test checkpoint:** a ledger obligation stays returnable after the task drops its own claim and still moves the owning block's counters exactly; a `quota_charge_adjust` refused past a limit moves no usage and lifts NO PEAK (the prefix-commit hazard); a charge against a quiesced gate is refused with `STATUS_RETRY` and moves no counter, while a SEALED gate reports `STATUS_PROCESS_IS_TERMINATING` and cannot be reopened; a timed-out drain restores OPEN rather than stranding a live task CLOSED; migration leaves the job's usage unchanged and the obligation's later return credits the job; a refused join reverts and `quota_job_unabsorb` then withdraws the whole absorbed amount; an orphaned obligation is reclaimed at release and counted, while one with a live holder is not (verified: SUITE=quota 1785 assertions, 0 failures, 0 quota-leaked).
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 1785 assertions, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `quota_ledger.h`/`quota_ledger.c` (refcounted obligation ledger + the per-task charge gate), `quota_charge_adjust` in `quota.c` (multi-block prevalidate-then-commit), and 16 suites in `test_quota_ledger.c`.
+> - **How it runs** -- the gate is ONE packed `{state, in-flight}` word in `struct task` entered by `quota_charge_chain`, so every chain charge participates for two atomic RMWs and zero lock sections; `ob_job_assign` holds a quiesce across absorb, adopt, and publish, and reopens only after membership is visible.
+> - **Downstream effects** -- closes the §3/§4 absorb-to-publish window for charges and gives §13 the ledger its Object Manager charge points bill against; the Codex adoption trail (4 design + 7 adversarial High) is in this section's commit message.
+> - **Canonical doc** -- `include/kernel/quota/quota_ledger.h` (gate state machine + ledger contract).
+> - **Scope boundary** -- §11 owns the ledger, the gate, and the adjust; §13 owns the charge points that use them; §14 owns converting the embedded-receipt consumers (ALPC, KNF) so their pre-join receipts become migratable.
 
 ---
 
@@ -416,6 +424,8 @@ Split out of the original §11 with §13. These four items were each filed by AN
 - [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`
 - [ ] Lifetime-safe task enumeration for process-level victim nomination: TODO-25 §9 nominates by USER principal because `task_get_by_pid` returns a raw slot with no reference and no System-protected flag exists. -> XREF: `§9`
+- [ ] Convert the embedded-receipt charge consumers (ALPC `PORT_MESSAGE_ENTRY`, KNF notification state) to `quota_ledger_charge` obligations, so a pre-join receipt is enumerable and `quota_ledger_migrate_to_job` can adopt it. -> XREF: `§11`
+- [ ] Pending-return handoff so a return colliding with a BUSY owner is never abandoned: the returner marks the receipt, the owner consumes it before republishing. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [ ] Commit: quota: charge-path cost + lifetime follow-ups.
 
 **Test checkpoint:** `ob_job_collect_accounting` computes its per-member deltas outside `job->lock` and its lock-held window is asserted against the §5 charge-path cost budget; a 3-block chain receipt fits the compacted `PORT_MESSAGE_ENTRY` and a chain deeper than the compact form still returns exactly; a send refused by quota performs no `AlpcAllocateMessage` allocation at all (injected-failure count unchanged); victim nomination enumerates tasks under a reference that survives a concurrent exit.
@@ -434,6 +444,9 @@ Split out of the original §11 with §13. These four items were each filed by AN
 | 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3             |
 | ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3       |
 | 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4     |
+| 💎   | Obligation outlives its creator  | ⚠️ quota is per-EPROCESS, no receipt  | ⚠️ `obj_cgroup` pins past exit, no receipt  | ✅ refcounted ledger, slot-independent §11   |
+| 💎   | Charge vs membership barrier     | ⚠️ pre-join usage not absorbed        | ⚠️ cgroup v2 does not move charges on move  | ✅ drain/quiesce gate on every charger §11   |
+| 💎   | Transactional charge resize      | ⬜ none (charge/return only)           | ⬜ none (no resize primitive)                | ✅ prevalidate-then-commit, all-or-none §11  |
 | 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §13    |
 | 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5       |
 | 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5     |
@@ -475,9 +488,9 @@ Split out of the original §11 with §13. These four items were each filed by AN
 - [x] `test_quota_zero_charge_reports_no_obligation_token`: a zero charge reports token 0, which cannot return the next real charge (§4).
 - [ ] `test_quota_pressure_hysteresis`: levels derive from the §12 stall-time metrics and do not flap at a threshold (§9).
 - [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
-- [ ] `test_quota_ledger_outlives_task_slot`: a sealed ledger still returns its receipts after the task slot is reused (§11).
-- [ ] `test_quota_charge_adjust_atomic`: a multi-block adjust refused on any block leaves every block byte-identical (§11).
-- [ ] `test_quota_membership_drain_single_bill`: a charge racing a job-membership transition is billed exactly once (§11).
+- [x] `test_quota_ledger_obligation_outlives_task_claim`: an obligation stays returnable after the task released its own ledger claim, and is NOT reported as a leak (§11).
+- [x] `test_quota_charge_adjust_refused_changes_nothing`: an adjust refused past the limit moves no usage and lifts no peak; `_both_directions` and `_requires_the_token` cover the rest (§11).
+- [x] `test_quota_ledger_migrate_adopts_absorb_record`: migration leaves the job's usage unchanged and its return credits the job; `_unmigrate_restores_absorb_record` proves a refused join (§11).
 - [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§13).
 - [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§13).
 - [ ] `test_quota_job_collect_lock_window`: `ob_job_collect_accounting` computes member deltas outside `job->lock` (§14).

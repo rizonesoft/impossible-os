@@ -546,6 +546,14 @@ static inline void quota_writers_exit_pair(void)
     quota_writers_exit();
     quota_writers_exit();
 }
+
+/* Same completion record for the N-lock adjust path, which holds every block a
+ * receipt names and can therefore be deeper than a pair. */
+static inline void quota_writers_exit_n(uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++)
+        quota_writers_exit();
+}
 #endif
 
 /* ==========================================================================
@@ -1847,6 +1855,215 @@ NTSTATUS quota_try_transfer(quota_block_t *src, quota_block_t *dst,
                              to_dst ? dst_usage : src_usage,
                              to_dst ? dst_limit : src_limit, status);
     }
+
+    quota_pressure_note_activity(type);
+    return status;
+}
+
+/* --- Transactional multi-block adjust (see the contract in quota.h) ------- */
+
+/* Collect the receipt's blocks into `sorted`, deduplicated and in ascending
+ * address order. Returns the count.
+ *
+ * The ORDER is what prevents two adjusts over overlapping chains from
+ * deadlocking, and is established on uintptr_t values rather than on the
+ * pointers, because a relational comparison of pointers into two separate
+ * objects is undefined behavior in C -- the same reasoning quota_try_transfer
+ * records for its pair.
+ *
+ * The DEDUPLICATION is not defensive tidiness: acquiring the same non-recursive
+ * spinlock twice is an instant self-deadlock, and it would also apply the delta
+ * to that block twice. Nothing constructs such a receipt today; a receipt that
+ * ever names one block twice must not be able to hang the CPU that adjusts it. */
+static uint32_t quota_adjust_sort_blocks(const quota_charge_receipt_t *receipt,
+                                         quota_block_t **sorted)
+{
+    uint32_t n = 0;
+
+    for (uint32_t i = 0; i < receipt->count && i < QUOTA_CHAIN_MAX; i++) {
+        quota_block_t *b = receipt->blocks[i];
+        if (!b)
+            continue;
+
+        /* Insertion sort with a duplicate check: the array is at most
+         * QUOTA_CHAIN_MAX entries, so this is cheaper than anything cleverer and
+         * has no allocation. */
+        uint32_t pos = 0;
+        int      dup = 0;
+        while (pos < n) {
+            if (sorted[pos] == b) {
+                dup = 1;
+                break;
+            }
+            if ((uintptr_t)sorted[pos] > (uintptr_t)b)
+                break;
+            pos++;
+        }
+        if (dup)
+            continue;
+
+        for (uint32_t j = n; j > pos; j--)
+            sorted[j] = sorted[j - 1];
+        sorted[pos] = b;
+        n++;
+    }
+    return n;
+}
+
+NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
+                             uint64_t new_amount)
+{
+    /* Reject a non-canonical token for the same reason quota_return_chain does:
+     * QUOTA_RECEIPT_TAG shifts it past the state bits, so a fabricated token
+     * with bits above the generation width would build the SAME tag as the live
+     * one and win the claim. */
+    if (!receipt || token == 0 || token > QUOTA_RECEIPT_GEN_MAX)
+        return STATUS_INVALID_PARAMETER;
+    if (new_amount > (uint64_t)QUOTA_AMOUNT_MAX)
+        return STATUS_INVALID_PARAMETER;
+
+    const int64_t active_tag = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_ACTIVE);
+    const int64_t busy_tag   = QUOTA_RECEIPT_TAG(token, QUOTA_RECEIPT_BUSY);
+
+    /* MASK INTERRUPTS ACROSS THE WHOLE BUSY WINDOW, from the claim below to the
+     * republish at the end. Not for mutual exclusion -- the tag CAS and the block
+     * locks provide that -- but to make the window invisible to this CPU's own
+     * interrupt handlers.
+     *
+     * Without it the window is preemptible on its own CPU, and a returner running
+     * in that interrupt would find the receipt BUSY at its own generation with no
+     * way to make progress: the adjust it is waiting for cannot resume until the
+     * interrupt returns. That is the one starvation this design cannot recover
+     * from, because it deadlocks a single CPU against itself rather than merely
+     * waiting on another. Masking removes it outright, leaving only cross-CPU
+     * collisions, where the adjust is provably progressing under the block locks.
+     *
+     * The cost is honest and bounded: the window adds the block-pointer sort and
+     * the tag CAS to an IRQ-off region that already spans every block critical
+     * section this transaction enters. */
+    uint64_t adjust_irq = local_irq_save();
+
+    /* Claim the charge exclusively. Losing this means the token names no live
+     * charge on this receipt (wrong token, already returned, or another operation
+     * owns it), and there is nothing to resize. */
+    if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag) != active_tag) {
+        local_irq_restore(adjust_irq);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    quota_resource_type_t type = receipt->type;
+    uint64_t              old  = receipt->amount;
+
+    if (!quota_type_valid(type)) {
+        /* A live receipt should never carry an invalid type; refuse rather than
+         * index the counter array with it. */
+        atomic64_set(&receipt->tag, active_tag);
+        local_irq_restore(adjust_irq);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (new_amount == old) {
+        atomic64_set(&receipt->tag, active_tag);
+        local_irq_restore(adjust_irq);
+        return STATUS_SUCCESS;
+    }
+
+    quota_block_t *sorted[QUOTA_CHAIN_MAX];
+    uint32_t       n = quota_adjust_sort_blocks(receipt, sorted);
+
+    if (n == 0) {
+        /* Nothing is charged anywhere, so the amount is bookkeeping only. */
+        receipt->amount = new_amount;
+        atomic64_set(&receipt->tag, active_tag);
+        local_irq_restore(adjust_irq);
+        return STATUS_SUCCESS;
+    }
+
+    const int increase = (new_amount > old);
+    const int64_t delta = increase ? (int64_t)(new_amount - old)
+                                   : (int64_t)(old - new_amount);
+
+    int64_t        totals[QUOTA_CHAIN_MAX];
+    uint64_t       lock_flags[QUOTA_CHAIN_MAX];
+    NTSTATUS       status  = STATUS_SUCCESS;
+    quota_block_t *refused = (quota_block_t *)0;
+    quota_diag_t   diag    = QUOTA_DIAG_NONE;
+    uint64_t       refused_usage = 0, refused_limit = 0;
+
+    /* Every block, held simultaneously, ascending address order. */
+    for (uint32_t i = 0; i < n; i++)
+        quota_block_lock(sorted[i], &lock_flags[i]);
+
+    /* PREVALIDATE the whole transaction before committing any part of it. This
+     * is the entire difference from a per-block walk: no usage moves and no peak
+     * lifts until every block has agreed. */
+    for (uint32_t i = 0; i < n; i++) {
+        if (increase) {
+            status = quota_check_locked(sorted[i], type, delta, &totals[i], &diag);
+            if (status != STATUS_SUCCESS) {
+                refused = sorted[i];
+                break;
+            }
+        } else {
+            int64_t cur = atomic64_read(&sorted[i]->counter[type].usage);
+            if (cur < 0) {
+                diag    = QUOTA_DIAG_NEGATIVE_USAGE;
+                status  = STATUS_INTEGER_OVERFLOW;
+                refused = sorted[i];
+                break;
+            }
+            if (cur < delta) {
+                /* The block does not hold what this receipt claims it charged:
+                 * an accounting-integrity failure, not a routine refusal. Fail
+                 * closed -- reducing to a clamped value would silently erase
+                 * some other live charge's usage. */
+                diag    = QUOTA_DIAG_RETURN_UNDERFLOW;
+                status  = STATUS_INTEGER_OVERFLOW;
+                refused = sorted[i];
+                break;
+            }
+            totals[i] = cur - delta;
+        }
+    }
+
+    if (status == STATUS_SUCCESS) {
+        /* COMMIT. quota_commit_locked stores the usage and lifts the peak only
+         * when the new total exceeds it, so it is correct for both directions:
+         * a decrease cannot lift a peak. */
+        for (uint32_t i = 0; i < n; i++)
+            quota_commit_locked(sorted[i], type, totals[i]);
+        receipt->amount = new_amount;
+    } else if (refused) {
+        /* Counted like every other refusal in this module, so per-type failure
+         * telemetry sees a refused resize. This is the ONLY state a refused
+         * adjust changes -- usage, peak, and the receipt are untouched. */
+        quota_bump_failures(&refused->counter[type].failures);
+        quota_snapshot_locked(refused, type, &refused_usage, &refused_limit);
+    }
+
+    for (uint32_t i = n; i > 0; i--)
+        quota_block_unlock_quiet(sorted[i - 1], lock_flags[i - 1]);
+#ifdef KERNEL_TESTS
+    /* Recorded once every lock is genuinely released and interrupts restored,
+     * for the same reason the transfer path defers its pair. */
+    quota_writers_exit_n(n);
+    for (uint32_t i = 0; i < n; i++)
+        quota_test_count_lock_section();
+#endif
+
+    /* Republish at the SAME generation: the holder's token must keep naming this
+     * charge, whether the resize was applied or refused. Interrupts are restored
+     * only AFTER the republish, which is what closes the same-CPU starvation
+     * window described at the claim above. */
+    atomic64_set(&receipt->tag, active_tag);
+    local_irq_restore(adjust_irq);
+
+    if (diag != QUOTA_DIAG_NONE)
+        quota_emit_diag(diag, type);        /* outside every lock */
+    if (refused)
+        quota_report_refusal(refused, type,
+                             increase ? new_amount : (uint64_t)delta,
+                             refused_usage, refused_limit, status);
 
     quota_pressure_note_activity(type);
     return status;

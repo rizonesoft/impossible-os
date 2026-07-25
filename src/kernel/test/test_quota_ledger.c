@@ -1,0 +1,1119 @@
+/* ============================================================================
+ * test_quota_ledger.c -- charge gate, obligation ledger, transactional adjust
+ *
+ * Covers quota_ledger.c and the quota_charge_adjust transaction in quota.c: the
+ * packed gate state machine that serializes chargers against a membership
+ * transition, the refcounted ledger whose obligations outlive the task slot, the
+ * orphan-versus-legitimate classification the reap-time release depends on, the
+ * all-or-nothing multi-block adjust, and the adopt/revert migration that moves an
+ * obligation into a job without charging it twice.
+ *
+ * Split from test_quota_owner.c (receipt identity) so the test file matches the
+ * translation unit under test.
+ *
+ * GATE STATE IS GLOBAL to the running task, so every test that shuts the gate
+ * SAVES the gate word and RESTORES it before returning. Leaving a CLOSED or
+ * SEALED gate behind would refuse every later charge in the boot, including the
+ * ones the rest of this suite makes.
+ *
+ * XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md Unit Tests
+ * ============================================================================ */
+
+#ifdef KERNEL_TESTS
+
+#include "kernel/test/test.h"
+#include "kernel/quota/quota.h"
+#include "kernel/quota/quota_ledger.h"
+#include "kernel/sched/task.h"
+#include "kernel/ob/ob_job.h"       /* real JOB_OBJECT fixture for the unwind test */
+#include "kernel/ob/handle_table.h"  /* ObpLookupHandle / ObpFreeHandle */
+#include "kernel/mm/heap.h"          /* kmalloc_fail_next injection */
+
+/* The resource type these tests charge. SECTION is used by the sibling receipt
+ * tests for the same reason: nothing in a test boot charges it, so a delta
+ * observed here was caused by this test and not by background activity. */
+#define LEDGER_TEST_TYPE   QUOTA_RES_SECTION
+
+/* --- Gate ---------------------------------------------------------------- */
+
+/* Entry and exit are the only things that move the in-flight count, and they
+ * must leave the STATE untouched. */
+static void test_quota_gate_enter_exit_balances(void)
+{
+    struct task *t = task_current();
+    if (!t)
+        return;
+
+    uint32_t state_before = quota_gate_state_of(t);
+    uint64_t in_before    = quota_gate_inflight(t);
+
+    TEST_ASSERT_EQ((uint64_t)state_before, (uint64_t)QUOTA_GATE_OPEN,
+                   "a live task's gate is OPEN");
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_enter(t, NULL), 1,
+                   "an OPEN gate admits a charger");
+    TEST_ASSERT_EQ(quota_gate_inflight(t), in_before + 1,
+                   "entry increments the in-flight count by exactly one");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "entry does not disturb the gate state");
+
+    quota_gate_exit(t);
+    TEST_ASSERT_EQ(quota_gate_inflight(t), in_before,
+                   "exit restores the in-flight count exactly");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "exit does not disturb the gate state");
+}
+
+/* A quiesced gate must refuse a CHARGE with STATUS_RETRY and move no counter --
+ * that refusal is the whole mechanism that makes absorb-then-publish atomic. */
+static void test_quota_gate_closed_refuses_charge(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    int64_t  saved = atomic64_read(&t->quota_gate);
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "an idle OPEN gate quiesces");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_CLOSED,
+                   "a successful quiesce leaves the gate CLOSED");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, LEDGER_TEST_TYPE, 11, 0, &r, &tok),
+                   (uint64_t)STATUS_RETRY,
+                   "a charge against a CLOSED gate is refused with STATUS_RETRY");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "a gate-refused charge moves no usage");
+    TEST_ASSERT_EQ(tok, 0, "a gate-refused charge issues no token");
+
+    /* A second quiesce must not be able to steal a close someone else owns. */
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_RETRY,
+                   "a second quiesce is refused while the first owns the gate");
+
+    quota_gate_reopen(t);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "reopen restores OPEN");
+
+    /* And charging works again afterwards, so the quiesce is transient. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, LEDGER_TEST_TYPE, 11, 0, &r, &tok),
+                   (uint64_t)STATUS_SUCCESS, "a reopened gate admits charges");
+    quota_return_chain(&r, tok);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the post-reopen charge returns exactly");
+
+    atomic64_set(&t->quota_gate, saved);
+}
+
+/* SEALED outranks CLOSED: a reopen must never resurrect a dead task's gate, and
+ * a charge against a sealed gate is refused permanently rather than transiently
+ * -- a caller must be able to tell "retry" from "never". */
+static void test_quota_gate_seal_outranks_closed(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    int64_t  saved  = atomic64_read(&t->quota_gate);
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 0;
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "gate quiesces before the seal");
+    quota_gate_seal(t);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_SEALED,
+                   "a seal overrides a CLOSED gate");
+
+    quota_gate_reopen(t);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_SEALED,
+                   "reopen cannot resurrect a SEALED gate");
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, LEDGER_TEST_TYPE, 13, 0, &r, &tok),
+                   (uint64_t)STATUS_PROCESS_IS_TERMINATING,
+                   "a charge against a SEALED gate reports termination, not retry");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "a seal-refused charge moves no usage");
+
+    /* Sealing twice is idempotent (a doubled death path must not misbehave). */
+    quota_gate_seal(t);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_SEALED,
+                   "sealing an already-sealed gate is idempotent");
+
+    atomic64_set(&t->quota_gate, saved);
+}
+
+/* A charger still in flight must make the quiesce FAIL rather than proceed, and
+ * the failure must restore OPEN -- turning transient contention into a
+ * permanently refusing gate would be far worse than refusing one transition. */
+static void test_quota_gate_drain_timeout_restores_open(void)
+{
+    struct task *t = task_current();
+    if (!t)
+        return;
+
+    int64_t  saved     = atomic64_read(&t->quota_gate);
+    uint64_t timeouts0 = quota_gate_drain_timeout_count();
+
+    /* Simulate a charger that is in flight for the whole drain window. */
+    TEST_ASSERT_EQ((uint64_t)quota_gate_enter(t, NULL), 1, "charger enters");
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_RETRY,
+                   "a quiesce that cannot drain refuses with STATUS_RETRY");
+    TEST_ASSERT_EQ(quota_gate_drain_timeout_count(), timeouts0 + 1,
+                   "the refused drain is counted exactly once");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "a timed-out quiesce restores OPEN rather than stranding CLOSED");
+
+    quota_gate_exit(t);
+    atomic64_set(&t->quota_gate, saved);
+}
+
+/* --- Ledger -------------------------------------------------------------- */
+
+/* The basic obligation lifetime: a ledger charge moves the same counters a chain
+ * charge does, is counted as outstanding while live, and returns exactly. */
+static void test_quota_ledger_charge_return_roundtrip(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 64, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge admitted");
+    TEST_ASSERT_NOT_NULL((void *)ob.ledger, "a live obligation names its ledger");
+    TEST_ASSERT(ob.token != 0, "a live obligation carries a nonzero token");
+    TEST_ASSERT(quota_ledger_id(ob.ledger) != 0, "a ledger has a nonzero identity");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 64,
+                   "the ledger charge moved the process block by exactly 64");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(ob.ledger), 1,
+                   "one obligation is outstanding");
+
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "returning the obligation restores usage exactly");
+    TEST_ASSERT_NULL((void *)ob.ledger, "a returned handle is emptied");
+    TEST_ASSERT_EQ(ob.token, 0, "a returned handle carries no token");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* A doubled cleanup must not credit the amount twice. The second return sees an
+ * emptied handle and does nothing at all. */
+static void test_quota_ledger_double_return_is_noop(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 32, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge admitted");
+    quota_ledger_return(&ob);
+    quota_ledger_return(&ob);      /* must be inert */
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "a doubled return credits the amount exactly once");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* THE reuse hazard: a stale handle kept past its return must not return the
+ * NEXT charge that lands in the same recycled slot. */
+static void test_quota_ledger_stale_handle_cannot_return_later_charge(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t first = { 0 }, second = { 0 }, stale;
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 16, &first),
+                   (uint64_t)STATUS_SUCCESS, "first ledger charge admitted");
+    /* Copy the handle BEFORE returning it, and take the reference the copy
+     * implies, so the stale copy stays usable exactly as a buggy caller's would. */
+    stale = first;
+    quota_ledger_ref(stale.ledger);
+    quota_ledger_return(&first);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 48, &second),
+                   (uint64_t)STATUS_SUCCESS, "second ledger charge admitted");
+    TEST_ASSERT_EQ(second.slot, stale.slot,
+                   "the second charge reuses the freed slot (the hazard's premise)");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 48,
+                   "only the second charge is outstanding");
+
+    /* The stale handle's token names a charge that is already gone. */
+    quota_ledger_return(&stale);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 48,
+                   "a stale handle cannot return the charge that reused its slot");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(second.ledger), 1,
+                   "the live obligation is untouched by the stale return");
+
+    quota_ledger_return(&second);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the live obligation still returns exactly");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* A zero-amount charge succeeds owing nothing, so it must hand back an EMPTY
+ * handle -- a handle naming a slot it does not own would later return whatever
+ * charge reused that slot. */
+static void test_quota_ledger_zero_charge_holds_nothing(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 0, &ob),
+                   (uint64_t)STATUS_SUCCESS, "a zero-amount ledger charge succeeds");
+    TEST_ASSERT_NULL((void *)ob.ledger, "a zero charge yields an empty handle");
+    TEST_ASSERT_EQ(ob.token, 0, "a zero charge yields no token");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "a zero charge moves no usage");
+    quota_ledger_return(&ob);     /* inert on an empty handle */
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* Storage grows past the inline run when demanded, and a returned slot is
+ * REUSED rather than growing the ledger again. */
+static void test_quota_ledger_capacity_grows_then_reuses(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    /* One more than the inline run, so at least one overflow chunk is required.
+     * The inline count is an implementation constant, so the test derives the
+     * target from the reported capacity instead of hard-coding it. */
+    quota_obligation_t obs[12];
+    uint64_t before   = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint32_t base_cap = 0;
+    uint32_t held     = 0;
+
+    for (uint32_t i = 0; i < 12; i++) {
+        obs[i].ledger = (quota_ledger_t *)0;
+        obs[i].slot   = 0;
+        obs[i].token  = 0;
+        if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[i]) != STATUS_SUCCESS)
+            break;
+        if (i == 0)
+            base_cap = quota_ledger_capacity(obs[0].ledger);
+        held++;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)held, 12, "twelve obligations were admitted");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + (12 * 4),
+                   "every obligation charged its amount");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(obs[0].ledger), 12,
+                   "all twelve are outstanding at once");
+    TEST_ASSERT(quota_ledger_capacity(obs[0].ledger) > base_cap,
+                "storage grew past the inline run to hold twelve obligations");
+
+    uint32_t grown_cap = quota_ledger_capacity(obs[0].ledger);
+    quota_ledger_t *ledger = obs[0].ledger;
+    quota_ledger_ref(ledger);      /* keep it alive across the returns */
+
+    for (uint32_t i = 0; i < 12; i++)
+        quota_ledger_return(&obs[i]);
+
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "returning all twelve restores usage exactly");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(ledger), 0,
+                   "no obligation is outstanding after the returns");
+
+    quota_obligation_t again = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &again),
+                   (uint64_t)STATUS_SUCCESS, "a further charge is admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_capacity(ledger), (uint64_t)grown_cap,
+                   "a freed slot is reused rather than growing the ledger again");
+    quota_ledger_return(&again);
+    quota_ledger_deref(ledger);
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* THE point of refcounting the ledger: an obligation stays returnable after the
+ * task has released its own claim, which is what a reaped task slot looks like to
+ * a resource that outlived its creator. And because a holder still exists, the
+ * release must NOT report the obligation as a leak. */
+static void test_quota_ledger_obligation_outlives_task_claim(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t leaks0 = quota_ledger_leak_count();
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 24, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge admitted");
+
+    /* Drop the TASK's claim, exactly as the reap path does. The obligation's own
+     * reference is what must keep the storage alive. */
+    quota_ledger_task_release(t);
+    TEST_ASSERT_EQ(quota_ledger_leak_count(), leaks0,
+                   "an obligation with a live holder is NOT reported as a leak");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(ob.ledger), 1,
+                   "the obligation survives the task's release");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 24,
+                   "its charge is still standing");
+
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the obligation still returns exactly after the task released");
+}
+
+/* The other half of that classification: an obligation whose holder vanished
+ * WITHOUT returning it is unreturnable by anyone, so the release must reclaim it
+ * and count it as a leak rather than strand the usage for the rest of the boot. */
+static void test_quota_ledger_orphan_reclaimed_and_counted(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t leaks0 = quota_ledger_leak_count();
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 40, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge admitted");
+
+    /* Simulate a holder that was freed without returning its obligation: drop
+     * the handle's reference and forget the handle, leaving the slot live with
+     * only the task's own claim behind it. */
+    quota_ledger_deref(ob.ledger);
+    ob.ledger = (quota_ledger_t *)0;
+    ob.token  = 0;
+
+    quota_ledger_task_release(t);
+    TEST_ASSERT_EQ(quota_ledger_leak_count(), leaks0 + 1,
+                   "an orphaned obligation is counted as exactly one leak");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the orphaned charge is reclaimed rather than stranded");
+}
+
+/* --- Transactional adjust ------------------------------------------------ */
+
+/* An adjust moves every block the obligation names, in both directions, and the
+ * obligation stays returnable at its NEW amount. */
+static void test_quota_charge_adjust_both_directions(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 100, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge of 100 admitted");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 100,
+                   "usage reflects the original amount");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 250), (uint64_t)STATUS_SUCCESS,
+                   "an increase to 250 is admitted");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 250,
+                   "an increase moves usage by exactly the delta");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 30), (uint64_t)STATUS_SUCCESS,
+                   "a decrease to 30 is admitted");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 30,
+                   "a decrease moves usage by exactly the delta");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 30), (uint64_t)STATUS_SUCCESS,
+                   "adjusting to the current amount is a success that changes nothing");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 30,
+                   "a no-op adjust moves no usage");
+
+    /* The return must credit back the ADJUSTED amount, not the original. */
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the return credits the adjusted amount exactly");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* THE all-or-nothing property. A refused increase must leave usage AND PEAK
+ * byte-identical: committing part of the walk would inflate a peak that no
+ * return can ever lower again. */
+static void test_quota_charge_adjust_refused_changes_nothing(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t usage0 = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t limit0 = quota_limit(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 10, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge of 10 admitted");
+
+    /* Cap the process block just above what is already charged, so an increase
+     * cannot fit. Saved and restored: this is the live task's own block. */
+    uint64_t usage_now = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t peak_now;
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(t->quota, LEDGER_TEST_TYPE, usage_now + 1),
+                   (uint64_t)STATUS_SUCCESS, "a tight limit is installed");
+    peak_now = quota_peak(t->quota, LEDGER_TEST_TYPE);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 10 + 4096),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "an increase past the limit is refused");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), usage_now,
+                   "a refused adjust moves no usage");
+    TEST_ASSERT_EQ(quota_peak(t->quota, LEDGER_TEST_TYPE), peak_now,
+                   "a refused adjust lifts no peak (the prefix-commit hazard)");
+
+    /* Still a live, unmodified obligation: the refusal must not have consumed it. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 5), (uint64_t)STATUS_SUCCESS,
+                   "the obligation is still adjustable after a refusal");
+
+    (void)quota_set_limit(t->quota, LEDGER_TEST_TYPE, limit0);
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), usage0,
+                   "the obligation returns exactly after a refused adjust");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* The token is proof of ownership for a resize exactly as it is for a return: a
+ * caller without it must not be able to resize someone else's charge. */
+static void test_quota_charge_adjust_requires_the_token(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 20, &ob),
+                   (uint64_t)STATUS_SUCCESS, "ledger charge admitted");
+
+    quota_obligation_t wrong = ob;
+    wrong.token = ob.token + 1;
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&wrong, 500),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a wrong token cannot resize a charge");
+
+    quota_obligation_t zero = ob;
+    zero.token = 0;
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&zero, 500),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "the no-obligation token cannot resize a charge");
+
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 20,
+                   "a token-refused resize moves no usage");
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the obligation returns exactly");
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* --- Migration ----------------------------------------------------------- */
+
+/* ADOPTION, not a second charge. The absorb has already billed the job for the
+ * joiner's usage, so migrating an obligation must move only the OBLIGATION to
+ * return it: the job's total is unchanged at migration time, and the eventual
+ * return is what credits the job back. */
+static void test_quota_ledger_migrate_adopts_absorb_record(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_block_t *job_block = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job_block)
+        return;
+
+    int64_t  saved  = atomic64_read(&t->quota_gate);
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t    ob  = { 0 };
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 70, &ob),
+                   (uint64_t)STATUS_SUCCESS, "pre-join obligation charged");
+
+    /* Stand in for quota_job_absorb_task: the job is charged the joiner's
+     * current usage, and the record remembers exactly what it folded in. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(job_block, LEDGER_TEST_TYPE, 70),
+                   (uint64_t)STATUS_SUCCESS, "the absorb charges the job block");
+    rec.taken[LEDGER_TEST_TYPE] = 70;
+    rec.active = 1;
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "the joiner's gate quiesces for the transition");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_migrate_to_job(t, job_block, &rec), 1,
+                   "the outstanding obligation is migrated");
+    quota_gate_reopen(t);
+
+    TEST_ASSERT_EQ(rec.taken[LEDGER_TEST_TYPE], 0,
+                   "the adopted amount is removed from the absorb record");
+    TEST_ASSERT_EQ((uint64_t)rec.active, 0,
+                   "a fully adopted record is marked inactive");
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 70,
+                   "migration does not change the job's usage by a single byte");
+
+    /* The proof: the return now reaches the JOB too, which is exactly what the
+     * absorb-until-detach limitation could not do. */
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 0,
+                   "returning the migrated obligation credits the job");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "and still credits the process block exactly");
+
+    atomic64_set(&t->quota_gate, saved);
+    quota_block_deref(job_block);
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* A refused assignment must leave the job billed for nothing. Reverting the
+ * migration restores the absorb record so the caller's unabsorb withdraws the
+ * whole amount -- otherwise the job stays charged for a process that never
+ * joined it. */
+static void test_quota_ledger_unmigrate_restores_absorb_record(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_block_t *job_block = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job_block)
+        return;
+
+    int64_t  saved  = atomic64_read(&t->quota_gate);
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t    ob  = { 0 };
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 55, &ob),
+                   (uint64_t)STATUS_SUCCESS, "pre-join obligation charged");
+    TEST_ASSERT_EQ((uint64_t)quota_charge(job_block, LEDGER_TEST_TYPE, 55),
+                   (uint64_t)STATUS_SUCCESS, "the absorb charges the job block");
+    rec.taken[LEDGER_TEST_TYPE] = 55;
+    rec.active = 1;
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "the joiner's gate quiesces");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_migrate_to_job(t, job_block, &rec), 1,
+                   "the obligation is migrated");
+    TEST_ASSERT_EQ(rec.taken[LEDGER_TEST_TYPE], 0, "the record was adopted from");
+
+    /* The assignment is then refused, so everything unwinds. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_unmigrate_from_job(t, job_block, &rec), 1,
+                   "the migration is reverted");
+    quota_gate_reopen(t);
+
+    TEST_ASSERT_EQ(rec.taken[LEDGER_TEST_TYPE], 55,
+                   "the reverted amount is restored to the absorb record");
+    TEST_ASSERT_EQ((uint64_t)rec.active, 1, "the restored record is active again");
+
+    /* The obligation no longer names the job, so its return leaves the job's
+     * absorbed copy standing for unabsorb to withdraw. */
+    quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 55,
+                   "a reverted obligation does not credit the job on return");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the process block is still credited exactly");
+
+    /* Which is exactly what the caller's unabsorb then gives back. */
+    quota_job_unabsorb(job_block, &rec);
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 0,
+                   "unabsorb withdraws the whole absorbed amount after a revert");
+
+    atomic64_set(&t->quota_gate, saved);
+    quota_block_deref(job_block);
+    /* Drop the task's own claim so this test's ledger allocation is freed
+     * inside the test, exactly as the reap path frees it. Without this the
+     * harness's per-test heap accounting reports the lazily-created ledger
+     * as a leak -- and it would be right to: nothing else releases it while
+     * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* --- Negative and boundary cases (from the Codex coverage pass) ----------- */
+
+/* The all-or-nothing guarantee must be proven across MORE THAN ONE block, with
+ * the refusing block sorted AFTER one that already passed validation. A test that
+ * watches only one block would stay green even if an earlier block had been
+ * committed before a later one refused -- which is the exact defect the
+ * prevalidate-then-commit structure exists to prevent. */
+static void test_quota_charge_adjust_refusal_spans_every_block(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_block_t *job_block = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job_block)
+        return;
+
+    int64_t  saved = atomic64_read(&t->quota_gate);
+    quota_obligation_t    ob  = { 0 };
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+
+    if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 60, &ob) != STATUS_SUCCESS) {
+        quota_block_deref(job_block);
+        return;
+    }
+
+    /* Migrate so the receipt names the process block AND this job block. */
+    (void)quota_charge(job_block, LEDGER_TEST_TYPE, 60);
+    rec.taken[LEDGER_TEST_TYPE] = 60;
+    rec.active = 1;
+    if (quota_gate_quiesce(t) == STATUS_SUCCESS) {
+        (void)quota_ledger_migrate_to_job(t, job_block, &rec);
+        quota_gate_reopen(t);
+    }
+
+    /* Tighten the HIGHEST-ADDRESS participating block, so the refusal happens
+     * after at least one lower-address block has already prevalidated. The
+     * adjust orders its locks by block address, so this is deterministic. */
+    quota_block_t *high = ((uintptr_t)job_block > (uintptr_t)t->quota)
+                              ? job_block : t->quota;
+    quota_block_t *low  = (high == job_block) ? t->quota : job_block;
+
+    uint64_t high_limit0 = quota_limit(high, LEDGER_TEST_TYPE);
+    uint64_t high_usage0 = quota_usage(high, LEDGER_TEST_TYPE);
+    uint64_t low_usage0  = quota_usage(low,  LEDGER_TEST_TYPE);
+    uint64_t high_peak0, low_peak0;
+
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(high, LEDGER_TEST_TYPE, high_usage0 + 1),
+                   (uint64_t)STATUS_SUCCESS, "a tight limit is installed on the high block");
+    high_peak0 = quota_peak(high, LEDGER_TEST_TYPE);
+    low_peak0  = quota_peak(low,  LEDGER_TEST_TYPE);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 60 + 4096),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "an increase past the high block's limit is refused");
+
+    /* THE assertion: the block that never got to refuse must be untouched too. */
+    TEST_ASSERT_EQ(quota_usage(low, LEDGER_TEST_TYPE), low_usage0,
+                   "the lower-address block's usage is unchanged by the refusal");
+    TEST_ASSERT_EQ(quota_peak(low, LEDGER_TEST_TYPE), low_peak0,
+                   "the lower-address block's peak is unchanged by the refusal");
+    TEST_ASSERT_EQ(quota_usage(high, LEDGER_TEST_TYPE), high_usage0,
+                   "the refusing block's usage is unchanged");
+    TEST_ASSERT_EQ(quota_peak(high, LEDGER_TEST_TYPE), high_peak0,
+                   "the refusing block's peak is unchanged");
+
+    (void)quota_set_limit(high, LEDGER_TEST_TYPE, high_limit0);
+    (void)quota_ledger_return(&ob);
+    quota_job_unabsorb(job_block, &rec);
+    atomic64_set(&t->quota_gate, saved);
+    quota_ledger_task_release(t);
+    quota_block_deref(job_block);
+}
+
+/* An adjust RAISES charged usage, so it must be refused during a membership
+ * transition exactly as a charge is -- otherwise an obligation could grow between
+ * the absorb and the publication and the job would be under-charged by the
+ * difference. */
+static void test_quota_ledger_adjust_refused_during_quiesce(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    int64_t  saved  = atomic64_read(&t->quota_gate);
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 50, &ob),
+                   (uint64_t)STATUS_SUCCESS, "obligation charged");
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "the owner's gate quiesces");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 500), (uint64_t)STATUS_RETRY,
+                   "an adjust during a quiesce is refused with STATUS_RETRY");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 50,
+                   "the refused adjust moved no usage");
+    quota_gate_reopen(t);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 500), (uint64_t)STATUS_SUCCESS,
+                   "the same adjust succeeds once the gate reopens");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 500,
+                   "and then moves usage by the full delta");
+
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "the obligation returns exactly");
+    atomic64_set(&t->quota_gate, saved);
+    quota_ledger_task_release(t);
+}
+
+/* The in-flight ceiling exists so an increment can never carry into the packed
+ * state bits and silently reinterpret a busy OPEN gate as some other state. */
+static void test_quota_gate_inflight_ceiling_refuses(void)
+{
+    struct task *t = task_current();
+    if (!t)
+        return;
+
+    int64_t  saved    = atomic64_read(&t->quota_gate);
+    uint64_t retries0 = quota_gate_retry_count();
+    uint32_t cause    = QUOTA_GATE_OPEN;
+
+    atomic64_set(&t->quota_gate,
+                 QUOTA_GATE_PACK(QUOTA_GATE_OPEN, QUOTA_GATE_COUNT_MAX));
+
+    TEST_ASSERT_EQ((uint64_t)quota_gate_enter(t, &cause), 0,
+                   "entry at the in-flight ceiling is refused");
+    TEST_ASSERT_EQ((uint64_t)cause, (uint64_t)QUOTA_GATE_CLOSED,
+                   "the ceiling refusal is reported as a transient cause");
+    TEST_ASSERT_EQ((uint64_t)atomic64_read(&t->quota_gate),
+                   (uint64_t)QUOTA_GATE_PACK(QUOTA_GATE_OPEN, QUOTA_GATE_COUNT_MAX),
+                   "a refused entry leaves the packed word byte-identical");
+    TEST_ASSERT_EQ(quota_gate_retry_count(), retries0 + 1,
+                   "the ceiling refusal is counted exactly once");
+
+    atomic64_set(&t->quota_gate, saved);
+}
+
+/* Migration must SKIP rather than underflow when the absorb record does not cover
+ * an obligation, and must not append the same job twice on a repeated call. Either
+ * defect would make the job's usage credited twice on return. */
+static void test_quota_ledger_migrate_skips_and_is_idempotent(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_block_t *job_block = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job_block)
+        return;
+
+    int64_t  saved = atomic64_read(&t->quota_gate);
+    quota_obligation_t    ob  = { 0 };
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+
+    if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 90, &ob) != STATUS_SUCCESS) {
+        quota_block_deref(job_block);
+        return;
+    }
+
+    /* CASE 1: the record covers less than the obligation holds, so adopting it
+     * would underflow the record. Migration must decline. */
+    rec.taken[LEDGER_TEST_TYPE] = 10;      /* < 90 */
+    rec.active = 1;
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "gate quiesces for the under-covered attempt");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_migrate_to_job(t, job_block, &rec), 0,
+                   "an obligation the record cannot cover is NOT migrated");
+    quota_gate_reopen(t);
+    TEST_ASSERT_EQ(rec.taken[LEDGER_TEST_TYPE], 10,
+                   "the under-covered record is left exactly as it was");
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 0,
+                   "and the job's usage is untouched");
+
+    /* CASE 2: now cover it properly, migrate once, then migrate AGAIN with
+     * residual credit still in the record. The second call must decline. */
+    rec.taken[LEDGER_TEST_TYPE] = 90 + 25;         /* 25 of residual credit */
+    (void)quota_charge(job_block, LEDGER_TEST_TYPE, 90 + 25);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_quiesce(t), (uint64_t)STATUS_SUCCESS,
+                   "gate quiesces for the covered attempt");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_migrate_to_job(t, job_block, &rec), 1,
+                   "a covered obligation is migrated once");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_migrate_to_job(t, job_block, &rec), 0,
+                   "a repeated migration does not adopt the same obligation twice");
+    quota_gate_reopen(t);
+    TEST_ASSERT_EQ(rec.taken[LEDGER_TEST_TYPE], 25,
+                   "exactly one adoption was subtracted from the record");
+
+    /* And the job's books balance exactly once through both routes. */
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 25,
+                   "the return credits the job exactly once");
+    quota_job_unabsorb(job_block, &rec);
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 0,
+                   "unabsorb withdraws the residual credit exactly once");
+
+    atomic64_set(&t->quota_gate, saved);
+    quota_ledger_task_release(t);
+    quota_block_deref(job_block);
+}
+
+/* A decrease larger than a block actually holds is an accounting-integrity
+ * failure, not a routine refusal: it must fail CLOSED rather than clamp, because
+ * clamping would erase some other live obligation's usage. */
+static void test_quota_charge_adjust_decrease_underflow_fails_closed(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_block_t *job_block = quota_block_create(QUOTA_PRINCIPAL_JOB, NULL, 0);
+    if (!job_block)
+        return;
+
+    int64_t  saved = atomic64_read(&t->quota_gate);
+    quota_obligation_t    ob  = { 0 };
+    quota_absorb_record_t rec = { .taken = { 0 }, .active = 0 };
+
+    if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 80, &ob) != STATUS_SUCCESS) {
+        quota_block_deref(job_block);
+        return;
+    }
+
+    (void)quota_charge(job_block, LEDGER_TEST_TYPE, 80);
+    rec.taken[LEDGER_TEST_TYPE] = 80;
+    rec.active = 1;
+    if (quota_gate_quiesce(t) == STATUS_SUCCESS) {
+        (void)quota_ledger_migrate_to_job(t, job_block, &rec);
+        quota_gate_reopen(t);
+    }
+
+    uint64_t proc_usage0 = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t proc_peak0  = quota_peak(t->quota, LEDGER_TEST_TYPE);
+
+    /* Corrupt ONLY the isolated job block, so it holds less than the receipt
+     * claims. A decrease must then refuse rather than partially apply. */
+    quota_test_poke_usage(job_block, LEDGER_TEST_TYPE, 1);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_adjust(&ob, 5),
+                   (uint64_t)STATUS_INTEGER_OVERFLOW,
+                   "a decrease larger than a block holds fails closed");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), proc_usage0,
+                   "the healthy block's usage is untouched by the refusal");
+    TEST_ASSERT_EQ(quota_peak(t->quota, LEDGER_TEST_TYPE), proc_peak0,
+                   "the healthy block's peak is untouched by the refusal");
+    TEST_ASSERT_EQ(quota_usage(job_block, LEDGER_TEST_TYPE), 1,
+                   "the corrupt block is left exactly as it was found");
+
+    /* Restore the corrupted counter so the return balances, then unwind. */
+    quota_test_poke_usage(job_block, LEDGER_TEST_TYPE, 80);
+    (void)quota_ledger_return(&ob);
+    atomic64_set(&t->quota_gate, saved);
+    quota_ledger_task_release(t);
+    quota_block_deref(job_block);
+}
+
+/* A first-ledger allocation failure must be reported, not papered over, and must
+ * leave the obligation empty and nothing charged. */
+static void test_quota_ledger_charge_handles_allocation_failure(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    /* Start from a task with no ledger, so the very next charge must allocate. */
+    quota_ledger_task_release(t);
+
+    uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    quota_obligation_t ob = { 0 };
+
+    kmalloc_fail_next();
+    NTSTATUS st = quota_ledger_charge(t, LEDGER_TEST_TYPE, 12, &ob);
+    kmalloc_fail_countdown_set(0);      /* disarm regardless of the outcome */
+
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "a ledger charge whose allocation fails reports it");
+    TEST_ASSERT_NULL((void *)ob.ledger, "the obligation is left empty");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "nothing is charged when the ledger cannot be allocated");
+
+    /* And the failure strands nothing: the next charge works normally. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 12, &ob),
+                   (uint64_t)STATUS_SUCCESS,
+                   "a charge after the injected failure succeeds");
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
+                   "and returns exactly");
+    quota_ledger_task_release(t);
+}
+
+/* THE rollback branches that matter in production: ob_job_assign refusing AFTER
+ * the absorb and the migration have run. A regression in the unwind would leave a
+ * job permanently billed for a process that never joined it.
+ *
+ * The fixture is a REAL Object-Manager-allocated job, not a stack JOB_OBJECT, and
+ * that is a safety requirement rather than a preference: JOB_OBJECT is only the
+ * BODY of an Ob allocation, so ObReferenceObject computes an OBJECT_HEADER
+ * immediately BEFORE it. On a stack body that write lands in unrelated stack
+ * memory -- and it would happen precisely when a refusal branch REGRESSED into
+ * success, which is the failure this test exists to catch. A test that corrupts
+ * the kernel when it fails is worse than no test. (`ob_job_create(ht, NULL)`
+ * allocates a real body with its own quota block and registers no name, so it
+ * leaves nothing behind in the namespace.)
+ *
+ * Only refusal branches are exercised, so the live task never joins anything --
+ * and the teardown detaches defensively anyway, because assertions record failure
+ * and CONTINUE, so a regression must not leave this task a member. */
+static void test_ob_job_assign_refusal_unwinds_completely(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota || t->job)
+        return;
+
+    HANDLE h = ob_job_create(&t->handle_table, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+
+    HANDLE_TABLE_ENTRY *ent = ObpLookupHandle(&t->handle_table, h);
+    if (!ent || !ent->object) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        return;
+    }
+    JOB_OBJECT *job = (JOB_OBJECT *)ent->object;
+    quota_block_t *jb = (quota_block_t *)job->quota;
+    if (!jb) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        return;
+    }
+
+    quota_obligation_t ob = { 0 };
+    if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 45, &ob) != STATUS_SUCCESS) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        return;
+    }
+    uint64_t proc_before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t job_before  = quota_usage(jb, LEDGER_TEST_TYPE);
+
+    /* Branch 1: a terminated job refuses AFTER the absorb and the migration. */
+    job->terminated = 1;
+    TEST_ASSERT_EQ((uint64_t)ob_job_assign(job, t),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "assignment to a terminated job is refused");
+    TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before,
+                   "a refused assignment leaves the job billed for nothing");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "the unwind reopens the charge gate");
+    TEST_ASSERT_NULL((void *)t->job, "no membership was published");
+    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), proc_before,
+                   "the process block is unchanged by the refused assignment");
+
+    /* Branch 2: the active-process limit, the other post-absorb refusal. */
+    job->terminated = 0;
+    job->limit_flags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    job->active_process_limit = 0;       /* any join exceeds it */
+
+    TEST_ASSERT_EQ((uint64_t)ob_job_assign(job, t),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "assignment past the active-process limit is refused");
+    TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before,
+                   "that refusal also leaves the job billed for nothing");
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_OPEN,
+                   "and reopens the charge gate");
+    TEST_ASSERT_NULL((void *)t->job, "still no membership");
+
+    /* The obligation must no longer name the job, so its return credits only the
+     * process and user blocks -- otherwise the job's usage would go negative. */
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before,
+                   "returning the reverted obligation does not touch the job");
+
+    /* DEFENSIVE teardown: assertions continue after failure, so if either refusal
+     * regressed into success this task is now a member of a job that is about to
+     * be freed. Detach before dropping the handle. */
+    if (t->job == job)
+        ob_job_detach_task(t);
+    quota_ledger_task_release(t);
+    (void)ObpFreeHandle(&t->handle_table, h);
+}
+
+void test_register_quota_ledger(void)
+{
+    test_suite_register_cat("Quota: gate entry and exit balance the in-flight count",
+                            test_quota_gate_enter_exit_balances, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a CLOSED gate refuses a charge with STATUS_RETRY",
+                            test_quota_gate_closed_refuses_charge, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a seal outranks a close and cannot be reopened",
+                            test_quota_gate_seal_outranks_closed, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a drain timeout restores OPEN rather than stranding CLOSED",
+                            test_quota_gate_drain_timeout_restores_open, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: ledger charge and return round-trip exactly",
+                            test_quota_ledger_charge_return_roundtrip, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a doubled ledger return credits once",
+                            test_quota_ledger_double_return_is_noop, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a stale handle cannot return a recycled slot's charge",
+                            test_quota_ledger_stale_handle_cannot_return_later_charge,
+                            TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a zero-amount ledger charge holds nothing",
+                            test_quota_ledger_zero_charge_holds_nothing, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: ledger storage grows then reuses freed slots",
+                            test_quota_ledger_capacity_grows_then_reuses, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: an obligation outlives the task's own claim",
+                            test_quota_ledger_obligation_outlives_task_claim, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: an orphaned obligation is reclaimed and counted",
+                            test_quota_ledger_orphan_reclaimed_and_counted, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a charge adjust moves usage in both directions",
+                            test_quota_charge_adjust_both_directions, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a refused adjust changes no usage and no peak",
+                            test_quota_charge_adjust_refused_changes_nothing, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a charge adjust requires the exact token",
+                            test_quota_charge_adjust_requires_the_token, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: migration adopts the absorb record, never recharges",
+                            test_quota_ledger_migrate_adopts_absorb_record, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: unmigrate restores the absorb record for a refused join",
+                            test_quota_ledger_unmigrate_restores_absorb_record, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a refused adjust changes NO participating block",
+                            test_quota_charge_adjust_refusal_spans_every_block, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: an adjust during a quiesce is refused",
+                            test_quota_ledger_adjust_refused_during_quiesce, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: gate entry at the in-flight ceiling is refused",
+                            test_quota_gate_inflight_ceiling_refuses, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: migration skips an uncovered obligation and is idempotent",
+                            test_quota_ledger_migrate_skips_and_is_idempotent, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a decrease past what a block holds fails closed",
+                            test_quota_charge_adjust_decrease_underflow_fails_closed, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a ledger allocation failure is reported and strands nothing",
+                            test_quota_ledger_charge_handles_allocation_failure, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a refused ob_job_assign unwinds absorb, migration, and gate",
+                            test_ob_job_assign_refusal_unwinds_completely, TEST_CAT_QUOTA);
+}
+
+#endif /* KERNEL_TESTS */
