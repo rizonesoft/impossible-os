@@ -1710,7 +1710,7 @@ static void test_quota_job_collect_member_accounting(void)
     }
 
     /* The live member is now reachable from member_pids[] AND satisfies
-     * t->job == job, so the out-of-lock walk must count it. */
+     * t->job == job, so the collector must count it. */
     ob_job_collect_accounting(job, &acct, &io);
     TEST_ASSERT_EQ((uint64_t)acct.ActiveProcesses, 1,
                    "the assigned task is counted as an active member");
@@ -1725,7 +1725,7 @@ static void test_quota_job_collect_member_accounting(void)
     ob_job_collect_accounting(job, &acct, &io);
     TEST_ASSERT(io.OtherTransferCount >= 4096,
                 "a live member's post-join I/O reaches the job aggregate "
-                "through the out-of-lock delta walk");
+                "while the membership stands");
     uint64_t joined_other = io.OtherTransferCount;
 
     /* Detach, which folds the member's delta into job->acc_* and clears
@@ -1860,12 +1860,14 @@ static void test_quota_chain_fits_compacted_receipt(void)
                    "the deepest reachable chain is still admitted after the "
                    "receipt was narrowed to QUOTA_CHAIN_MAX slots");
     if (st == STATUS_SUCCESS) {
-        TEST_ASSERT(r.count >= 2 && r.count <= QUOTA_CHAIN_MAX,
-                    "a job member's chain names process, user and job blocks "
-                    "and fits the compacted receipt");
-        TEST_ASSERT(r.count < QUOTA_CHAIN_MAX,
-                    "the reachable chain leaves a spare slot, so the ceiling "
-                    "is not being hit by ordinary charges");
+        /* Asserted against the REACHABLE depth (process + user + one job = 3),
+         * not against the ceiling: a relative bound would silently disagree with
+         * the floor assert in quota.h, which admits a ceiling of 3. */
+        TEST_ASSERT(r.count >= 2 && r.count <= 3,
+                    "a job member's chain names process, user and job blocks, "
+                    "which is the deepest chain any path builds today");
+        TEST_ASSERT(r.count <= QUOTA_CHAIN_MAX,
+                    "the reachable chain fits the compacted receipt");
         TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before + 7,
                        "the job block in the chain was charged");
         quota_return_chain(&r, token);

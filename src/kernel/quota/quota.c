@@ -2154,7 +2154,23 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
      * The epoch advances by n and the in-flight marker taken before the mask is
      * released, which reproduces exactly what n enter/exit pairs recorded -- the
      * difference is only WHERE the RMWs happen, never how many mutations the gate
-     * and the section budget observe. */
+     * and the section budget observe.
+     *
+     * THE ORDER OF THESE TWO CALLS IS LOAD-BEARING, not stylistic. The counters
+     * were committed above and interrupts are already restored, so `active` is the
+     * only thing still telling a concurrent quota_leak_snapshot that this window is
+     * untrustworthy. Advancing the epoch FIRST and dropping the marker second means
+     * no instant exists in which the mutations are visible, the epoch is stale, and
+     * `writers_active` reads zero -- which is exactly the combination that would let
+     * the sweep certify a total predating this adjust. Do not swap them.
+     *
+     * Consequence worth knowing: because the marker is now taken before the mask
+     * and dropped after the restore, this thread may MIGRATE between the two and
+     * decrement a different CPU's slot. That is benign by construction -- both
+     * readers SUM every slot and the sum is correct under unsigned wrap (see the
+     * migration note on quota_test_mutation_epoch). The early-return paths also
+     * hold the marker briefly while mutating nothing, so a snapshot racing them
+     * reports "incoherent" rather than a wrong total: the safe direction. */
     quota_writers_epoch_add(n);
     quota_writers_exit_active();
     for (uint32_t i = 0; i < n; i++)

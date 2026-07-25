@@ -1439,9 +1439,11 @@ NTSTATUS AlpcDisconnectPort(HANDLE_TABLE *ht, HANDLE port_handle)
  * pending records charge under the owning port's Lock, then kmalloc
  * outside the lock. ChargedSize is stored in the entry/record so the
  * free path uncharges the SAME amount regardless of whether
- * Header.DataLength has been mutated. AlpcFreeMessage uncharges; on
- * port destruction the queue_drain in on_delete simply kfree's without
- * uncharging (the port is going away).
+ * Header.DataLength has been mutated. AlpcFreeMessage uncharges; on port
+ * destruction the queue_drain in on_delete routes every entry through
+ * alpc_destroy_message, which still RETURNS the sender's central quota charge
+ * and skips only the per-port byte accounting (that port is going away, the
+ * sender is not).
  * ======================================================================= */
 
 /* ---- AlpcAllocateMessage / AlpcFreeMessage ---------------------------- */

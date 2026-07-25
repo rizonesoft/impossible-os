@@ -106,7 +106,9 @@ typedef struct port_message_entry {
  * here, at the definition, instead of showing up as unexplained heap pressure. */
 _Static_assert(sizeof(PORT_MESSAGE_ENTRY) ==
                    sizeof(struct port_message_entry *) + sizeof(PORT_MESSAGE)
-                   + 8u + sizeof(quota_charge_receipt_t) + 8u,
+                   + (sizeof(uint32_t) * 2u)          /* ChargedSize + _pad */
+                   + sizeof(quota_charge_receipt_t)
+                   + sizeof(uint64_t),                /* QuotaToken */
                "PORT_MESSAGE_ENTRY gained padding or a field: this overhead is "
                "paid per queued message on every port -- re-justify the growth");
 

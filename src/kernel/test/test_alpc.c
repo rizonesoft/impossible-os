@@ -1652,6 +1652,56 @@ static void test_alpc_quota_refused_send_allocates_nothing(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
+/* The rollback branch the charge-before-allocate reorder CREATED: the quota
+ * charge is live before the entry is allocated, so an allocation failure must
+ * RETURN that chain. If it ever stops doing so, one QUOTA_RES_ALPC_MESSAGE unit
+ * is stranded in every block of the sender's chain, permanently and with no log
+ * line -- a silent leak, which is exactly why it needs an assertion rather than
+ * only a code comment.
+ *
+ * The datagram send path's FIRST kmalloc is the entry allocation itself, so a
+ * single-shot injection lands precisely on the branch under test. */
+static void test_alpc_quota_returned_when_entry_alloc_fails(void)
+{
+    struct task *t = task_current();
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+    client_h = alpc_setup_pair("QuotaAllocFail", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE) {
+        TEST_SKIP("could not establish an ALPC port pair");
+        return;
+    }
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    uint64_t usage_before = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    /* Force the entry allocation to fail AFTER the charge has been placed. */
+    kmalloc_fail_next();
+    NTSTATUS st = AlpcSendWaitReceivePort(&t->handle_table, client_h, 0, msg,
+                                         (PORT_MESSAGE *)0, 0, 0);
+    kmalloc_fail_countdown_clear();
+
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "an entry allocation failure reports insufficient resources, "
+                   "not quota");
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), usage_before,
+                   "the charge placed before the failed allocation is RETURNED, "
+                   "stranding nothing in the sender's chain");
+
+    alpc_teardown_pair(client_h, server_comm);
+}
+
 /* The changed allocator contract: NULL arguments and an over-length request
  * are argument errors, and out_entry must be untouched on every failure. */
 static void test_alpc_allocate_message_bad_args(void)
@@ -3299,6 +3349,9 @@ void test_register_alpc(void)
                             test_alpc_message_quota_refusal_status, TEST_CAT_IPC);
     test_suite_register_cat("ALPC: a quota-refused send allocates nothing",
                             test_alpc_quota_refused_send_allocates_nothing,
+                            TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: a failed entry allocation returns the charge",
+                            test_alpc_quota_returned_when_entry_alloc_fails,
                             TEST_CAT_IPC);
     test_suite_register_cat("ALPC: AlpcAllocateMessage bad args",
                             test_alpc_allocate_message_bad_args, TEST_CAT_IPC);

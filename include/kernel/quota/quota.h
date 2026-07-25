@@ -659,6 +659,23 @@ NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
  * The receipt is opaque in practice (callers only pass it back), but its
  * storage is public so it can live on the caller's stack or be embedded next
  * to the resource it accounts for -- charge paths must not have to allocate.
+ *
+ * RELOCATABLE BY VALUE WHILE UNPUBLISHED, and this is a CONTRACT rather than an
+ * accident of the current implementation: a caller may charge into a receipt on
+ * its stack and then move it (plain struct assignment) into the storage that will
+ * own it, which is what lets a charge be refused BEFORE its final storage is even
+ * allocated. It holds because a receipt owns block POINTERS plus one reference
+ * each and NOTHING in this subsystem retains a pointer to receipt storage: the
+ * charge writes only into the caller's struct, and the token identifies the charge
+ * by generation rather than by address. The copy transfers those references, so
+ * the source must simply be abandoned, never released.
+ *
+ * WHAT WOULD BREAK IT: registering a `quota_charge_receipt_t *` anywhere (an
+ * in-flight list, a watchdog, a debug registry) would leave every relocating
+ * caller holding a dangling registration, with no build or test failure. If such
+ * a registry is ever added, it must key on something other than the receipt
+ * address, or this contract must be withdrawn and its consumers fixed
+ * (src/kernel/ipc/alpc_port.c AlpcAllocateMessage relies on it today).
  * ========================================================================== */
 
 /* Chain depth ceiling: process + user + the job chain. A chain that would exceed
@@ -736,10 +753,26 @@ typedef struct quota_charge_receipt {
  * silently inflates every one of those consumers; the ledger's own chunk assert
  * would then fail far from the cause. Update the expected size DELIBERATELY, with
  * the consumer cost in hand. */
-_Static_assert(sizeof(quota_charge_receipt_t) == (QUOTA_CHAIN_MAX * sizeof(void *)) + 24u,
+_Static_assert(sizeof(quota_charge_receipt_t) ==
+                   (QUOTA_CHAIN_MAX * sizeof(quota_block_t *))
+                   + sizeof(uint32_t) + sizeof(quota_resource_type_t)
+                   + sizeof(uint64_t) + sizeof(atomic64_t),
                "receipt layout drifted: blocks[] + count/type + amount + tag. A "
                "wider receipt multiplies across every ALPC message and ledger "
                "slot -- re-measure those consumers before changing this");
+
+/* PIN THE CEILING ITSELF. The size assert above is PARAMETERIZED on
+ * QUOTA_CHAIN_MAX, so widening the chain back to 8 keeps it true and would add 32
+ * bytes to every queued ALPC message and every ledger slot with a clean build and
+ * a green suite -- precisely the silent inflation the narrowing removed. Only an
+ * assert on the constant makes a widening the deliberate, visible decision the
+ * comment above promises. Raising the chain depth therefore means editing THIS
+ * line, which is the intended conversation: re-measure the embedded consumers
+ * first. */
+_Static_assert(QUOTA_CHAIN_MAX == 4u,
+               "QUOTA_CHAIN_MAX changed: this constant is multiplied into every "
+               "embedded receipt (per queued ALPC message, per ledger slot). "
+               "Re-measure those consumers, then update this assert");
 
 /* Receipt states. IDLE is 0 so a zero-initialized receipt is valid (generation
  * 0, IDLE), which is exactly the "empty receipt returns nothing" contract. */
