@@ -273,8 +273,12 @@ void quota_ledger_deref(quota_ledger_t *ledger);
  * success `*out` holds the obligation (and one ledger reference); on failure it
  * is left empty and nothing is charged.
  *
- * Returns whatever quota_charge_chain returns, plus STATUS_RETRY (a membership
- * transition is in progress -- the caller may retry),
+ * Returns whatever quota_charge_chain returns, plus STATUS_RETRY (either a
+ * membership transition is in progress OR the obligation-ceiling reservation
+ * lost its bounded retry to contention on this task's counter for this type --
+ * both transient, both worth repeating, and a caller must not read either as a
+ * quota decision; a diagnostic that assumed only the first would misattribute
+ * counter contention to job-membership churn),
  * STATUS_PROCESS_IS_TERMINATING (the task is dying), STATUS_QUOTA_EXCEEDED (this
  * task is at an obligation ceiling -- see the ceiling contract below), or
  * STATUS_INSUFFICIENT_RESOURCES (no free slot and no memory to grow).
@@ -605,6 +609,25 @@ uint64_t quota_ledger_ceiling_refusal_count(void);
  * is when an operator starts looking. It does NOT identify the principal --
  * that needs a durable per-principal record, filed rather than approximated. */
 uint64_t quota_ledger_ceiling_refusals_of(quota_resource_type_t type);
+
+/* Charges refused because an obligation counter was observed OUTSIDE [0, cap] --
+ * negative or above the cap, neither of which a reachable path produces (the
+ * reservation only ever increments from a value it observed strictly below the
+ * cap, so it can no more overshoot than underflow). Kept apart from the refusal counters above because it
+ * is a different KIND of event: those mean the policy is working, this means the
+ * accounting is broken, and folding them together would send an operator to
+ * raise a cap that is not the problem. Nonzero here is always a bug. */
+uint64_t quota_ledger_integrity_refusal_count(void);
+
+#ifdef KERNEL_TESTS
+/* Force this task's obligation counter for `type` to `value`, returning what it
+ * held. TESTS ONLY, and it exists because the fail-closed net above guards a
+ * state no reachable path can produce -- the only way to prove the net actually
+ * fires (rather than merely being written down) is to manufacture the state. */
+int32_t quota_ledger_test_set_obligations(struct task *task,
+                                          quota_resource_type_t type,
+                                          int32_t value);
+#endif
 
 /* The cap enforced for `type`, or 0 for a type the taxonomy does not define.
  * The admission rule reads the same table, so a caller and the ceiling can never
