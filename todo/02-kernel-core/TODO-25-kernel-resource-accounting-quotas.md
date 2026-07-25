@@ -52,7 +52,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [/]   |
 | 💎   |  11   | Charge ledger and transactional adjustment    | §4                      |  [x]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §2    |  [/]   |
-| 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [ ]   |
+| 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [/]   |
 | ⭐   |  14   | Charge-path cost and lifetime follow-ups      | §6, §7, §9              |  [ ]   |
 
 ## 1. Resource Type Registry
@@ -442,16 +442,33 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 
 Split out of the original §11 with §14. The §11 ledger is the owner-side machinery; this section is the CONSUMER side -- the concrete charge/return points inside the Object Manager. Two of its four items are hard-blocked on the TODO-05 §3 reservation/commit primitive (see the NOTE below); the object-body/name-entry charge does not need the handle-table lock and can land on the §11 ledger first.
 
-- [ ] Charge handle-table entries on insert, return on close, billing the table OWNER; blocked on the TODO-05 §3 reservation/commit primitive returning NTSTATUS. -> XREF: `02-kernel-core/TODO-05 §3`
-- [ ] Charge object body and name entry on creation, returning at `ob_free_object` / `ObpRemoveFromDirectory` via the ledger, not a task lookup (the creator may already be gone). -> XREF: `§11`
-- [ ] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
-- [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
-- [ ] Commit: quota: object/handle charge integration in Object Manager.
+- [/] Charge handle-table entries on insert, return on close, billing the table OWNER; blocked on the TODO-05 §3 reservation/commit primitive returning NTSTATUS. -> XREF: `02-kernel-core/TODO-05 §3`
+- [/] Charge object body and name entry on creation, returning via the ledger at `ob_free_object` / `ObpRemoveFromDirectory`, not a task lookup. Design-reviewed 2026-07-25: FOUR prerequisites, see the NOTE. -> XREF: `§14`
+- [/] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
+- [x] `OBJECT_TYPE` counters are the per-type-total authority and quota is NOT a second source: the boundary is pinned at `total_objects` in `ob_type.h`, reciprocally at `QUOTA_RES_OBJECT_BODY`. Settled, not pending work.
+- [x] Commit: quota: object/handle charge integration in Object Manager.
 
-**Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; an object body whose creator already died is still returned at `ob_free_object` through the ledger; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta.
+**Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; an object body whose creator already died is still returned at `ob_free_object` through the ledger; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta. Shipped now (item 4): repeated body charges accumulate into ONE per-principal `QUOTA_RES_OBJECT_BODY` row that does not alias the name-entry row, while creating an object of one type lifts only that type's live count, each type returns to its own baseline on destruction, and the per-type peak retains its high-water mark. Cross-type folding stays unobservable until the charge points exist, since `quota_charge` takes no type identity (verified: SUITE=quota, 0 failures, 0 quota-leaked).
+
+> **Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 2 §13 suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- the counter-authority contract only: a boundary block at `OBJECT_TYPE.total_objects` (`ob_type.h`), a reciprocal pointer at `QUOTA_RES_OBJECT_BODY`, and 2 suites in `test_quota.c` pinning both halves.
+> - **How it runs** -- the per-type test registers its OWN throwaway types (pattern at `test_ob.c:376`), because "the other type did not move" is only race-free for a type no other code can allocate; borrowing `Directory` would race per-process namespace directories.
+> - **Downstream effects** -- items 1-3 stay `[/]`: the design review turned one known blocker into five, all owner-side (TODO-05 §3/§4, §14). Codex design adoptions in this section's commit message.
+> - **Canonical doc** -- the counter-authority contract at `include/kernel/ob/ob_type.h`.
+> - **Scope boundary** -- §13 owns the charge POINTS; §11 the ledger; §14 the ISR-safe return and teardown ordering; TODO-05 §3 the handle-table transaction and §4 namespace teardown plus insert status.
 
 > [!NOTE]
-> **Blocked on the handle-table lock (TODO-05 §3).** `HANDLE_TABLE` has no lock and no owning-task back-pointer, and `ObpAllocateHandle` collapses every failure into `INVALID_HANDLE_VALUE`, so a charge added today would admit quota for an entry a concurrent insert can overwrite, bill `task_current()` on the inherit and cross-process duplicate paths, and be unable to report `STATUS_QUOTA_EXCEEDED` distinctly. The charge must join the reservation/commit transaction, not sit beside it.
+> **Blocked on the handle-table lock (TODO-05 §3)** -- items 1 and 3. `HANDLE_TABLE` has no lock and no owning-task back-pointer, and `ObpAllocateHandle` collapses every failure into `INVALID_HANDLE_VALUE`, so a charge added today would admit quota for an entry a concurrent insert can overwrite, bill `task_current()` on the inherit and cross-process duplicate paths, and be unable to report `STATUS_QUOTA_EXCEEDED` distinctly. The charge must join the reservation/commit transaction, not sit beside it.
+>
+> **Blocked on four owner-side prerequisites (design review 2026-07-25)** -- item 2. This section is the CONSUMER side; every blocker below is owned elsewhere, so a half-built charge point would ship a known-wrong accounting path rather than an incomplete one:
+> 1. **ISR-reachable object free.** `nt_timer_tick` drops the last `TIMER_OBJECT` reference inside the LAPIC timer ISR (`src/kernel/nt/nt_timer.c:165`, from `lapic.c:1180`), so `ob_free_object` runs at ISR. A `quota_ledger_return` there can take the last ledger reference and reach `quota_ledger_destroy` -> `kfree` of up to 64 chunks; skipping the return at elevated IRQL leaks the charge instead. -> XREF: `§14`
+> 2. **Teardown ordering.** `quota_ledger_task_release` (`src/kernel/sched/task.c:3489`) runs BEFORE the `ACCESS_TOKEN` derefs at `task.c:3596`/`:3609`, and token bodies are `ob_alloc_object` allocations -- so a body obligation would be reclaimed-as-orphan and counted a leak on EVERY process exit, breaking the green `0 quota-leaked` sweep. -> XREF: `§14`
+> 3. **No Directory `on_delete`.** `ObpDirectoryType` is registered bare (`src/kernel/ob/ob.c:809`), so a non-empty directory teardown walks no entries -- it already leaks entry nodes and child references today, and would leak every name-entry charge. -> XREF: `02-kernel-core/TODO-05 §4`
+> 4. **No NTSTATUS channel on insert.** `ObInsertObject` returns 0/-1 (`include/kernel/ob/ob_ns.h:65`), conflating name collision, capacity, allocation failure, and a quota refusal -- so the required `STATUS_QUOTA_EXCEEDED` is unreportable for the name-entry charge. -> XREF: `02-kernel-core/TODO-05 §4`
+>
+> **Implementation constraint for whoever unblocks item 2:** the obligation tail-packs into the object block past the optional creator SD, so its offset needs an overflow-checked `ALIGN_UP` to `_Alignof(quota_obligation_t)` and the PMM free-size reconstruction in `ob_free_object` must include that padding (`ob.c:145-156`, `:272`). Attribution also still rides the global `task_current()` cursor.
 
 ---
 
@@ -477,6 +494,8 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [ ] Producer clock seam: `quota_stall` producers call `uptime_ns()` on every transition, touching a global monotonic floor; needs a per-CPU or caller-supplied timestamp BEFORE any stall seam is wired. -> XREF: `§12`
 - [ ] `quota_pressure_system_level()` has no UNKNOWN value: it returns NORMAL when every domain is invalid, so "unmeasured" and "calm" are indistinguishable at the system level. -> XREF: `§9`
 - [ ] Two-CPU boundary-race regression for the stall fold (a producer advances a slot between the fold timestamp and the walk); needs the SMP test harness. -> XREF: `§10`
+- [ ] ISR-safe ledger return with a deferred destroy: `ob_free_object` runs at ISR via `nt_timer.c:165`, where the last-reference return reaches `quota_ledger_destroy` -> `kfree` of up to 64 chunks. -> XREF: `§13`
+- [ ] Order `quota_ledger_task_release` (`task.c:3489`) AFTER the `ACCESS_TOKEN` derefs (`task.c:3596`, `:3609`): token bodies are `ob_alloc_object` allocations, so a body charge would false-leak on every exit. -> XREF: `§13`
 - [ ] Commit: quota: charge-path cost + lifetime follow-ups.
 
 **Test checkpoint:** `ob_job_collect_accounting` computes its per-member deltas outside `job->lock` and its lock-held window is asserted against the §5 charge-path cost budget; a 3-block chain receipt fits the compacted `PORT_MESSAGE_ENTRY` and a chain deeper than the compact form still returns exactly; a send refused by quota performs no `AlpcAllocateMessage` allocation at all (injected-failure count unchanged); victim nomination enumerates tasks under a reference that survives a concurrent exit.
@@ -498,7 +517,7 @@ Split out of the original §11 with §13. The first four items were each filed b
 | 💎   | Obligation outlives its creator  | ⚠️ quota is per-EPROCESS, no receipt  | ⚠️ `obj_cgroup` pins past exit, no receipt  | ✅ refcounted ledger, slot-independent §11   |
 | 💎   | Charge vs membership barrier     | ⚠️ pre-join usage not absorbed        | ⚠️ cgroup v2 does not move charges on move  | ✅ drain/quiesce gate on every charger §11   |
 | 💎   | Transactional charge resize      | ⬜ none (charge/return only)           | ⬜ none (no resize primitive)                | ✅ prevalidate-then-commit, all-or-none §11  |
-| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §13    |
+| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | ⚠️ Partial: dimensions + boundary §13; charge points blocked |
 | 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5       |
 | 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5     |
 | 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6 |
@@ -524,7 +543,7 @@ Split out of the original §11 with §13. The first four items were each filed b
 
 ## Unit Tests
 
-> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, `test_quota_syscall.c` (§8), `test_quota_pressure.c` (§9), and `test_quota_dashboard.c` (§10 dashboards, leak sweep, charge-path bulletproofing), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
+> Test file: `src/kernel/test/test_quota.c`, registered via `test_register_quota()` in `test_runner_init()`. Sibling files split by surface: `test_quota_owner.c`, `test_quota_perf.c`, `test_quota_config.c`, `test_quota_syscall.c` (§8), `test_quota_pressure.c` (§9), `test_quota_dashboard.c` (§10 dashboards, leak sweep, charge-path bulletproofing), `test_quota_ledger.c` (§11 ledger, gate, adjust, migration), and `test_quota_stall.c` (§12 stall telemetry), each with its own `test_register_*` call. All quota assertions land under the dedicated `TEST_CAT_QUOTA` category (run via `SUITE=quota`). Use `TEST_PENDING` for assertions gated on a not-yet-shipped section.
 
 - [x] `test_quota_charge_return_roundtrip`: charge then return leaves usage 0 and peak recorded (§2).
 - [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
@@ -543,8 +562,11 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [x] `test_quota_ledger_obligation_outlives_task_claim`: an obligation stays returnable after the task released its own ledger claim, and is NOT reported as a leak (§11).
 - [x] `test_quota_charge_adjust_refused_changes_nothing`: an adjust refused past the limit moves no usage and lifts no peak; `_both_directions` and `_requires_the_token` cover the rest (§11).
 - [x] `test_quota_ledger_migrate_adopts_absorb_record`: migration leaves the job's usage unchanged and its return credits the job; `_unmigrate_restores_absorb_record` proves a refused join (§11).
-- [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§13).
-- [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§13).
+- [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§13). Blocked with its item on TODO-05 §3.
+- [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§13). Blocked with its item on TODO-05 §3.
+- [x] `test_quota_object_rows_aggregate_without_aliasing`: repeated body charges accumulate into one per-principal row that does not alias the name-entry row (§13).
+- [ ] Cross-type folding: bodies of DIFFERENT `OBJECT_TYPE`s land in the one `QUOTA_RES_OBJECT_BODY` row. Unobservable until the charge points exist -- `quota_charge` takes no type identity (§13).
+- [x] `test_ob_type_counters_are_per_type_authoritative`: creating a `Directory` lifts only its own live count; each type returns to its baseline on destruction (§13).
 - [ ] `test_quota_job_collect_lock_window`: `ob_job_collect_accounting` computes member deltas outside `job->lock` (§14).
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
 - [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).

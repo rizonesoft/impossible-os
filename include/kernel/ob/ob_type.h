@@ -27,7 +27,31 @@ typedef struct object_type {
     /* Namespace parse -- walk remaining path through this object */
     int (*on_parse)(void *body, const char *remaining, void **result);
 
-    /* Per-type statistics -- SMP-safe via atomics */
+    /* Per-type statistics -- SMP-safe via atomics.
+     *
+     * THESE COUNTERS ARE THE AUTHORITY FOR SYSTEM-WIDE PER-TYPE TOTALS, and the
+     * quota subsystem is deliberately NOT a second source for the same fact.
+     * The two measure different things, and neither is derivable from the other:
+     *
+     *   here   -- how many Event / Timer / Section objects are live system-wide,
+     *             summed across every principal. There is no owner dimension: an
+     *             object is counted once, whoever created it.
+     *   quota  -- how much a PRINCIPAL (process / user / job) is charged for.
+     *             QUOTA_RES_OBJECT_BODY and QUOTA_RES_NAMESPACE_ENTRY are ONE
+     *             scalar each per principal, covering bodies of every type,
+     *             because the resource-type enum IS the accounting identity and
+     *             it carries no OBJECT_TYPE dimension.
+     *
+     * So a per-type total cannot be read out of quota (it folds all types into
+     * one counter per principal), and a per-principal charge cannot be read out
+     * of here (there is no owner column). Unifying them would need a global
+     * type-keyed-per-principal dimension -- up to OB_MAX_TYPES rows for every
+     * live principal -- which nothing in the system provides and no caller has
+     * asked for. The Object Manager charge-point section of the resource-
+     * accounting roadmap records that as a SETTLED BOUNDARY, not pending work.
+     *
+     * Read per-type totals through NtQueryObject(ObjectTypesInformation) or
+     * ob_get_types(); read per-principal charges through the quota API. */
     atomic_t    total_objects;   /* current live objects of this type */
     atomic_t    total_handles;   /* current open handles to objects of this type */
     uint32_t    peak_objects;    /* high-water mark for total_objects */

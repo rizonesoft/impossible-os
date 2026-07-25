@@ -2427,6 +2427,137 @@ static void test_quota_rate_separate_from_usage(void)
     quota_block_deref(b);
 }
 
+/* --- Counter-authority boundary (Object Manager charge points) ------------ *
+ *
+ * The settled boundary: per-TYPE totals are owned by OBJECT_TYPE, per-PRINCIPAL
+ * charges are owned by quota, and neither can answer the other's question. The
+ * two tests below pin each half from behavior rather than restating a #define,
+ * so they stay valid once the charge points themselves are wired.
+ *
+ * The per-type half registers its own throwaway types (the established pattern
+ * at test_ob.c:376-389) rather than borrowing a built-in one. That is not
+ * incidental: the assertion "the OTHER type's live count did not move" is only
+ * race-free for a type no other code can allocate. Borrowing `Directory` would
+ * race the per-process `\KernelObjects\Process<PID>` directories that task
+ * creation makes. A throwaway type has exactly one allocator -- this test. */
+
+/* The object-body row is ONE accumulating scalar per principal, and it does not
+ * alias the namespace-entry row.
+ *
+ * SCOPE, stated precisely, because the honest claim is narrower than the
+ * boundary it supports: this proves ROW behavior -- repeated charges accumulate
+ * into a single counter, and the two Object Manager rows are independent. It
+ * does NOT prove that bodies of different OBJECT_TYPEs land in this row, and
+ * nothing can yet: quota_charge takes no type identity, so there is no per-type
+ * behavior to observe until the Object Manager charge points exist. That
+ * cross-type integration assertion is tracked as a blocked test row beside the
+ * charge-point items. Adversarial review 2026-07-25 caught the first version of
+ * this test advertising the cross-type claim it could not demonstrate. */
+static void test_quota_object_rows_aggregate_without_aliasing(void)
+{
+    quota_block_t *b = quota_block_create(QUOTA_PRINCIPAL_PROCESS,
+                                          (const SID *)0, 0);
+    TEST_ASSERT(b != (quota_block_t *)0, "block created for dimension test");
+    if (!b)
+        return;
+
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_OBJECT_BODY, 1ull),
+                   (uint64_t)STATUS_SUCCESS, "first object body charged");
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_OBJECT_BODY, 1ull),
+                   (uint64_t)STATUS_SUCCESS, "second object body charged");
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_OBJECT_BODY, 1ull),
+                   (uint64_t)STATUS_SUCCESS, "third object body charged");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_OBJECT_BODY), 3ull,
+                   "repeated body charges accumulate into ONE per-principal row");
+
+    /* The name-entry row is its own counter, not a slice of the body one. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge(b, QUOTA_RES_NAMESPACE_ENTRY, 1ull),
+                   (uint64_t)STATUS_SUCCESS, "namespace entry charged");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_NAMESPACE_ENTRY), 1ull,
+                   "namespace-entry usage is 1");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_OBJECT_BODY), 3ull,
+                   "a name-entry charge does not alias the body counter");
+
+    /* Both are discrete-count dimensions, not byte-denominated. */
+    TEST_ASSERT_EQ((uint64_t)quota_resource_desc(QUOTA_RES_OBJECT_BODY)->unit,
+                   (uint64_t)QUOTA_UNIT_COUNT, "object bodies count discretely");
+    TEST_ASSERT_EQ((uint64_t)quota_resource_desc(QUOTA_RES_NAMESPACE_ENTRY)->unit,
+                   (uint64_t)QUOTA_UNIT_COUNT, "name entries count discretely");
+
+    TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_OBJECT_BODY, 3ull),
+                   (uint64_t)STATUS_SUCCESS, "bodies returned");
+    TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_NAMESPACE_ENTRY, 1ull),
+                   (uint64_t)STATUS_SUCCESS, "name entry returned");
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_OBJECT_BODY), 0ull,
+                   "body usage back to 0");
+    quota_block_deref(b);
+}
+
+/* The other half: OBJECT_TYPE counters ARE per-type authoritative. Creating a
+ * body of one type moves that type's live count and leaves every other type's
+ * count alone -- the distinction quota's single scalar cannot express. */
+static void test_ob_type_counters_are_per_type_authoritative(void)
+{
+    static const OBJECT_TYPE type_a_tmpl = {
+        .name = "QuotaBoundaryA", .body_size = 32,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    static const OBJECT_TYPE type_b_tmpl = {
+        .name = "QuotaBoundaryB", .body_size = 32,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *type_a = ob_create_type(&type_a_tmpl);
+    const OBJECT_TYPE *type_b = ob_create_type(&type_b_tmpl);
+    void *body_a, *body_b;
+
+    TEST_ASSERT(type_a != (const OBJECT_TYPE *)0, "boundary type A registered");
+    TEST_ASSERT(type_b != (const OBJECT_TYPE *)0, "boundary type B registered");
+    if (!type_a || !type_b)
+        return;
+
+    /* A freshly registered type has never been allocated from, so both
+     * baselines are exactly 0 -- no snapshot arithmetic and nothing to race. */
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_a->total_objects), 0ull,
+                   "type A starts with no live objects");
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_b->total_objects), 0ull,
+                   "type B starts with no live objects");
+
+    body_a = ob_alloc_object(type_a);
+    TEST_ASSERT_NOT_NULL(body_a, "type A body allocated");
+    if (!body_a)
+        return;
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_a->total_objects), 1ull,
+                   "creating an A lifts A's live count to 1");
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_b->total_objects), 0ull,
+                   "and leaves B's live count at 0");
+
+    body_b = ob_alloc_object(type_b);
+    TEST_ASSERT_NOT_NULL(body_b, "type B body allocated");
+    if (!body_b) {
+        ObDereferenceObject(body_a);
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_b->total_objects), 1ull,
+                   "creating a B lifts only B's live count");
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_a->total_objects), 1ull,
+                   "A's count did not move for a B -- the per-type dimension "
+                   "quota's single scalar cannot express");
+
+    /* Destruction is symmetric: each type returns to its own baseline. */
+    ObDereferenceObject(body_b);
+    ObDereferenceObject(body_a);
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_a->total_objects), 0ull,
+                   "A's live count returns to 0");
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&type_b->total_objects), 0ull,
+                   "B's live count returns to 0");
+    /* Peaks are never decremented, so they retain the high-water mark -- the
+     * per-type peak is likewise unavailable from any quota counter. */
+    TEST_ASSERT_EQ((uint64_t)type_a->peak_objects, 1ull,
+                   "A's peak retains its high-water mark of 1");
+}
+
 void test_register_quota(void)
 {
     test_suite_register_cat("Quota: registry ready at boot",
@@ -2573,6 +2704,14 @@ void test_register_quota(void)
                             test_quota_rate_unset_reports_no_policy, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: rate policy separate from usage",
                             test_quota_rate_separate_from_usage, TEST_CAT_QUOTA);
+
+    /* Object Manager charge points: the counter-authority boundary */
+    test_suite_register_cat("Quota: object rows aggregate without aliasing",
+                            test_quota_object_rows_aggregate_without_aliasing,
+                            TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: OBJECT_TYPE counters are per-type authority",
+                            test_ob_type_counters_are_per_type_authoritative,
+                            TEST_CAT_QUOTA);
 }
 
 #endif /* KERNEL_TESTS */

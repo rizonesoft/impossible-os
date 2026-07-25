@@ -43,6 +43,12 @@ struct access_token;
  * enum value). */
 typedef enum {
     QUOTA_RES_HANDLE = 0,        /* open handle-table entries        */
+    /* One scalar per principal covering bodies of EVERY object type: the enum
+     * value is the accounting identity, so this space has no OBJECT_TYPE
+     * dimension and cannot answer "how many Events are live". That question is
+     * owned by OBJECT_TYPE.total_objects (include/kernel/ob/ob_type.h), which
+     * carries no owner dimension in return. Both halves of that boundary are
+     * deliberate; see the counter-authority contract in ob_type.h. */
     QUOTA_RES_OBJECT_BODY,       /* Object Manager object bodies     */
     QUOTA_RES_NAMESPACE_ENTRY,   /* named object-directory entries   */
     QUOTA_RES_PAGED_POOL,        /* paged pool bytes                 */
