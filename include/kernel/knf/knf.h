@@ -389,6 +389,20 @@ NTSTATUS knf_publish(KNF_STATE *st, const KNF_TYPE_ID *type_id,
  * ONE state's list, while the quota bounds how many subscriptions a single
  * user holds across every state, and a caller that cannot tell them apart
  * would retry forever against a budget that is not going to move.
+ *
+ * It can ALSO return the charge path's two lifecycle statuses verbatim, and both
+ * are distinct from the quota refusal above:
+ *   STATUS_RETRY -- TRANSIENT. A job-membership transition briefly holds the
+ *     caller's charge gate closed (see quota_gate_quiesce in quota_ledger.h).
+ *     Nothing was charged and nothing is over budget; retry. Flattening this into
+ *     STATUS_QUOTA_EXCEEDED, which this function used to do, told user mode a
+ *     process was out of quota when it had merely raced a job assignment.
+ *   STATUS_PROCESS_IS_TERMINATING -- the calling process is dying; do not retry.
+ *   STATUS_INTEGER_OVERFLOW -- an accounting-integrity or identity-domain
+ *     failure inside the charge path (a receipt's generation space exhausted,
+ *     or a counter found in an impossible state). NOT a quota refusal and NOT
+ *     retryable: retrying re-derives the same result, and treating it as
+ *     'over budget' would hide a real accounting fault.
  * Call at PASSIVE_LEVEL (allocates).
  */
 NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub);

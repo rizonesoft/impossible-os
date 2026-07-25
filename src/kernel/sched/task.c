@@ -2060,6 +2060,17 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].quota = NULL;
     tasks[child_pid].quota_user = NULL;
     tasks[child_pid].quota_lock.flag = 0;
+    /* Same reset the other two constructors perform, and this path needs it MOST.
+     * The job inherit immediately below reaches ob_job_assign, which quiesces the
+     * child's charge gate; a recycled slot that inherited the previous tenant's
+     * SEALED gate would fail that quiesce, and ob_job_fork_inherit maps any
+     * failure to -1 -- so EVERY fork by a job member into such a slot would be
+     * refused outright. The stale ledger pointer is cleared for the same
+     * slot-reuse reason, and is not ours to release (the previous tenant's reap
+     * already dropped the task's reference). */
+    atomic64_set(&tasks[child_pid].quota_gate,
+                 QUOTA_GATE_PACK(QUOTA_GATE_OPEN, 0));
+    tasks[child_pid].quota_ledger = NULL;
     tasks[child_pid].quota_policy_lock.flag = 0;
     quota_policy_reset(&tasks[child_pid]);  /* per-process, never inherited (see task_create) */
 

@@ -2043,13 +2043,6 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
 
     for (uint32_t i = n; i > 0; i--)
         quota_block_unlock_quiet(sorted[i - 1], lock_flags[i - 1]);
-#ifdef KERNEL_TESTS
-    /* Recorded once every lock is genuinely released and interrupts restored,
-     * for the same reason the transfer path defers its pair. */
-    quota_writers_exit_n(n);
-    for (uint32_t i = 0; i < n; i++)
-        quota_test_count_lock_section();
-#endif
 
     /* Republish at the SAME generation: the holder's token must keep naming this
      * charge, whether the resize was applied or refused. Interrupts are restored
@@ -2057,6 +2050,18 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
      * window described at the claim above. */
     atomic64_set(&receipt->tag, active_tag);
     local_irq_restore(adjust_irq);
+
+#ifdef KERNEL_TESTS
+    /* Recorded once every lock is genuinely released AND interrupts are
+     * genuinely restored -- which is why this sits below the restore rather than
+     * beside the unlocks. The transfer path defers its pair for exactly this
+     * reason: instrumentation must never run inside a quota critical section or
+     * an IRQ-off window, because KERNEL_TESTS is on in the image that boots real
+     * hardware and these are locked per-CPU RMWs. */
+    quota_writers_exit_n(n);
+    for (uint32_t i = 0; i < n; i++)
+        quota_test_count_lock_section();
+#endif
 
     if (diag != QUOTA_DIAG_NONE)
         quota_emit_diag(diag, type);        /* outside every lock */

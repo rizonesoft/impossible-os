@@ -475,6 +475,19 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * Costs no lock section (two atomic RMWs on one word), which is why the
      * charge-path cost contract in quota.h is unchanged by it. */
     uint32_t gate_state = QUOTA_GATE_OPEN;
+
+    /* ONE attempt, and the refusal is propagated rather than retried. An earlier
+     * version probed the gate several times to hide a transient close from
+     * callers, and that was wrong twice over: the gate stays closed across the
+     * whole absorb-and-migrate transition, so back-to-back probes cannot span it
+     * anyway, and each failed probe costs a locked read-modify-write on a global
+     * counter -- turning one refusal into several, on the hot charge path, at
+     * exactly the moment concurrent charging is already stressing that cache
+     * line, and inflating the refusal telemetry by the same factor.
+     *
+     * The right fix was the one already applied at the other end: STATUS_RETRY is
+     * documented as transient in quota.h and its consumers propagate it instead
+     * of flattening it into a permanent quota refusal. */
     if (!quota_gate_enter(task, &gate_state)) {
         atomic64_set(&receipt->tag, idle_tag);
         /* A transient close is a RETRY the caller may repeat; a seal means the
@@ -599,13 +612,23 @@ void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
     if (observed != active_tag) {
         int won = 0;
         for (uint32_t spin = 0; spin < QUOTA_RETURN_BUSY_TRIES; spin++) {
-            int64_t now = atomic64_read(&receipt->tag);
-            /* Only a BUSY at this exact generation is worth waiting for.
-             * Anything else -- IDLE, or any other generation -- means this
-             * token names no live charge. */
-            if (QUOTA_RECEIPT_TAG_GEN(now) != token ||
-                QUOTA_RECEIPT_TAG_STATE(now) != QUOTA_RECEIPT_BUSY)
+            int64_t  now   = atomic64_read(&receipt->tag);
+            uint64_t gen   = QUOTA_RECEIPT_TAG_GEN(now);
+            uint32_t state = QUOTA_RECEIPT_TAG_STATE(now);
+
+            /* A MOVED generation is the only thing that proves this token names
+             * no live charge. Stop only for that, or for IDLE at our own
+             * generation (already returned -- nothing left to do). */
+            if (gen != token || state == QUOTA_RECEIPT_IDLE)
                 break;
+
+            /* Our generation, not IDLE: the charge is LIVE. It is either ACTIVE
+             * again because the adjust republished it -- in which case the CAS
+             * below wins immediately -- or still BUSY, in which case we spin.
+             * Breaking out on ACTIVE (as this loop first did) abandoned a live
+             * charge the instant an adjust finished at the wrong moment, and for
+             * a direct caller of this function there is no ledger backstop to
+             * reclaim it. */
             if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag)
                     == active_tag) {
                 won = 1;

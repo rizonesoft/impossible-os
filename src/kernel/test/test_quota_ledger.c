@@ -233,7 +233,16 @@ static void test_quota_ledger_double_return_is_noop(void)
 }
 
 /* THE reuse hazard: a stale handle kept past its return must not return the
- * NEXT charge that lands in the same recycled slot. */
+ * NEXT charge that lands in the same recycled slot.
+ *
+ * The premise -- that some later charge really does reuse the freed slot -- is
+ * ESTABLISHED here rather than assumed. An earlier version simply asserted that
+ * the very next charge landed on the same slot, which was an assumption about
+ * allocation ORDER, not about the safety property; it broke the moment the claim
+ * scan gained a start hint, even though nothing unsafe had changed. Charging until
+ * a claim actually lands on the freed slot is robust to any allocation policy: the
+ * scan wraps within one pass over the capacity, so the freed slot is reached in a
+ * bounded number of charges. */
 static void test_quota_ledger_stale_handle_cannot_return_later_charge(void)
 {
     struct task *t = task_current();
@@ -241,7 +250,7 @@ static void test_quota_ledger_stale_handle_cannot_return_later_charge(void)
         return;
 
     uint64_t before = quota_usage(t->quota, LEDGER_TEST_TYPE);
-    quota_obligation_t first = { 0 }, second = { 0 }, stale;
+    quota_obligation_t first = { 0 }, stale;
 
     TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 16, &first),
                    (uint64_t)STATUS_SUCCESS, "first ledger charge admitted");
@@ -249,30 +258,56 @@ static void test_quota_ledger_stale_handle_cannot_return_later_charge(void)
      * implies, so the stale copy stays usable exactly as a buggy caller's would. */
     stale = first;
     quota_ledger_ref(stale.ledger);
-    quota_ledger_return(&first);
+    (void)quota_ledger_return(&first);
 
-    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_TEST_TYPE, 48, &second),
-                   (uint64_t)STATUS_SUCCESS, "second ledger charge admitted");
-    TEST_ASSERT_EQ(second.slot, stale.slot,
-                   "the second charge reuses the freed slot (the hazard's premise)");
-    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 48,
-                   "only the second charge is outstanding");
+    /* Charge until one lands on the freed slot, holding every obligation so none
+     * of them can be recycled underneath the search. */
+    enum { REUSE_MAX = 48 };
+    quota_obligation_t held[REUSE_MAX];
+    uint32_t n = 0, reuse_at = REUSE_MAX;
 
-    /* The stale handle's token names a charge that is already gone. */
-    quota_ledger_return(&stale);
-    TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before + 48,
-                   "a stale handle cannot return the charge that reused its slot");
-    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(second.ledger), 1,
-                   "the live obligation is untouched by the stale return");
+    for (n = 0; n < REUSE_MAX; n++) {
+        held[n].ledger = (quota_ledger_t *)0;
+        held[n].slot   = 0;
+        held[n].token  = 0;
+        held[n].epoch  = 0;
+        if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 48, &held[n]) != STATUS_SUCCESS)
+            break;
+        if (held[n].slot == stale.slot) {
+            reuse_at = n;
+            n++;                 /* count this one as held */
+            break;
+        }
+    }
 
-    quota_ledger_return(&second);
+    TEST_ASSERT(reuse_at < REUSE_MAX,
+                "a later charge reused the freed slot (the hazard's premise)");
+
+    if (reuse_at < REUSE_MAX) {
+        uint64_t live_before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+        uint32_t out_before  = quota_ledger_outstanding(held[reuse_at].ledger);
+
+        /* The stale handle's token names a charge that is already gone, and its
+         * epoch names an allocation that has already been superseded. */
+        TEST_ASSERT_EQ((uint64_t)quota_ledger_return(&stale), 0,
+                       "a stale handle reports that it returned nothing");
+        TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), live_before,
+                       "a stale handle cannot return the charge that reused its slot");
+        TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(held[reuse_at].ledger),
+                       (uint64_t)out_before,
+                       "and cannot free the live obligation's slot");
+    } else {
+        /* Premise not reached: still drop the stale handle's reference so the
+         * test leaks nothing. */
+        (void)quota_ledger_return(&stale);
+    }
+
+    for (uint32_t i = 0; i < n; i++)
+        (void)quota_ledger_return(&held[i]);
     TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), before,
-                   "the live obligation still returns exactly");
+                   "every live obligation still returns exactly");
     /* Drop the task's own claim so this test's ledger allocation is freed
-     * inside the test, exactly as the reap path frees it. Without this the
-     * harness's per-test heap accounting reports the lazily-created ledger
-     * as a leak -- and it would be right to: nothing else releases it while
-     * the charging task is still alive. */
+     * inside the test, exactly as the reap path frees it. */
     quota_ledger_task_release(t);
 }
 
@@ -999,6 +1034,13 @@ static void test_ob_job_assign_refusal_unwinds_completely(void)
     if (!t || !t->quota || t->job)
         return;
 
+    /* Save/restore the gate word like every other gate-touching test here. This
+     * one drives quiesce and reopen on the LIVE task through ob_job_assign, and
+     * assertions RECORD failure and continue -- so if an unwind ever regressed and
+     * left the gate CLOSED, every remaining quota charge in the boot would be
+     * refused. The restore is the net for that. */
+    int64_t saved_gate = atomic64_read(&t->quota_gate);
+
     HANDLE h = ob_job_create(&t->handle_table, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return;
@@ -1063,6 +1105,7 @@ static void test_ob_job_assign_refusal_unwinds_completely(void)
         ob_job_detach_task(t);
     quota_ledger_task_release(t);
     (void)ObpFreeHandle(&t->handle_table, h);
+    atomic64_set(&t->quota_gate, saved_gate);
 }
 
 void test_register_quota_ledger(void)

@@ -119,8 +119,47 @@ struct quota_block;
  * quota_charge_chain, which enters a fixed number of block critical sections and
  * never blocks. The bound exists for the pathological case (a charger preempted
  * by higher-IRQL work), where giving up and refusing the transition is strictly
- * better than spinning on a CPU the charger needs to make progress. */
-#define QUOTA_GATE_DRAIN_SPINS  (1u << 20)
+ * better than spinning on a CPU the charger needs to make progress.
+ *
+ * CALIBRATED FOR THE SLOWEST GATE-ADMITTED OPERATION, WHICH IS NOT A PLAIN
+ * CHARGE. The tempting justification -- "an admitted charger never blocks" -- is
+ * FALSE now that quota_ledger_adjust is gate-admitted too: it waits while
+ * acquiring up to QUOTA_CHAIN_MAX block spinlocks, so under cross-CPU contention
+ * an in-flight operation can legitimately outlast a tight bound. Sizing for the
+ * charge alone would make live job assignment fail with STATUS_RETRY whenever
+ * quota traffic is heavy, which is a functional regression, not a slow path.
+ *
+ * So this sits deliberately between the two failure modes. An earlier
+ * 1-million-iteration bound was pure CPU burn (a fraction of a millisecond at
+ * best, many milliseconds with the gate word bouncing between caches or under
+ * emulation, spent only to give up); 16K was too tight for a lock-contended
+ * adjust. 128K dependent loads is tens of microseconds on real silicon.
+ *
+ * WHAT THIS BUDGET IS NOT: a bound on the operation it waits for. It cannot be.
+ * quota_charge_adjust acquires its block locks through spin_lock_irqsave, which
+ * has no deadline, so a lock holder descheduled by a hypervisor makes the
+ * admitted operation arbitrarily long and NO polling budget can cover it. Raising
+ * this constant moves a probability, it does not establish a guarantee, and the
+ * comment should not pretend otherwise.
+ *
+ * The consequence when the budget does expire is deliberately the mild one: the
+ * quiesce restores OPEN and reports STATUS_RETRY, so a live job assignment fails
+ * transiently and retryably rather than proceeding over a chain it did not
+ * actually drain. Nothing is mis-charged and nothing leaks.
+ *
+ * A real bound needs the admitted operation itself bounded -- ordered try-lock
+ * with backoff instead of IRQ-off blocking acquisition -- and validating either
+ * needs cross-CPU contention the scheduler cannot express yet. Both are owned by
+ * the concrete follow-up item that carries this exact scope; see the
+ * charge-path-cost section of the resource-accounting roadmap. */
+#define QUOTA_GATE_DRAIN_SPINS  (1u << 17)
+
+/* Attempts to publish CLOSED before giving up. Separate from the drain bound
+ * because it counts something completely different: this CAS only loses when
+ * another CPU changed the in-flight count in the same instant, so a handful of
+ * attempts is plenty and a large bound would be a million locked read-modify-
+ * writes on a contended line. */
+#define QUOTA_GATE_CLAIM_TRIES  64u
 
 _Static_assert(QUOTA_GATE_SEALED <= QUOTA_GATE_STATE_MASK,
                "gate state values must fit under QUOTA_GATE_STATE_MASK, or a "
@@ -384,6 +423,14 @@ void quota_ledger_task_release(struct task *task);
  * the reap path, which is reachable at elevated IRQL; the boot leak sweep and
  * the quota dashboard read this. */
 uint64_t quota_ledger_leak_count(void);
+
+/* Obligations ABANDONED by a return that could not complete (see
+ * quota_ledger_return). The contract above claims this needs a cross-CPU
+ * collision with a BUSY owner queued behind a contended block lock, which makes
+ * it rare -- this counter is what makes that claim checkable instead of merely
+ * asserted. A nonzero value paired with a rising leak count is the signature
+ * worth investigating. */
+uint64_t quota_ledger_abandon_count(void);
 
 /* Gate refusals observed by chargers since boot, split by cause. Diagnostics: a
  * nonzero retry count means membership transitions are contending with

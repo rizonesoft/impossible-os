@@ -796,9 +796,23 @@ _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
  * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
  * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
  * STATUS_NOT_SUPPORTED (QUOTA_CHARGE_CLIENT -- see the flag),
- * STATUS_PROCESS_IS_TERMINATING (no process block), STATUS_INTEGER_OVERFLOW
- * (this receipt's generation space is exhausted), or whatever the refusing
- * block returned. */
+ * STATUS_PROCESS_IS_TERMINATING (no process block, or the task's charge gate is
+ * SEALED because it is dying), STATUS_INTEGER_OVERFLOW (this receipt's
+ * generation space is exhausted), STATUS_RETRY, or whatever the refusing block
+ * returned.
+ *
+ * STATUS_RETRY IS TRANSIENT AND MUST NOT BE TREATED AS A QUOTA REFUSAL. It means
+ * a job-membership transition currently holds this task's charge gate closed (see
+ * quota_gate_quiesce in quota_ledger.h). The charge was not attempted, nothing
+ * was charged, and the same call will succeed once the transition completes.
+ *
+ * It is reported on the FIRST refusal rather than retried internally, and
+ * deliberately so: the gate stays closed for the whole absorb-and-migrate
+ * transition, so immediate re-probing cannot span it, and each probe costs a
+ * locked read-modify-write on a shared counter on the hot charge path. A caller
+ * that maps this to STATUS_QUOTA_EXCEEDED tells user mode a process is out of
+ * quota when it merely raced an assignment; retry it at a point where waiting is
+ * acceptable, or propagate it to a layer that can. */
 NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
                             uint64_t amount, uint32_t flags,
                             quota_charge_receipt_t *receipt,

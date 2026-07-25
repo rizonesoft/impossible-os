@@ -233,7 +233,12 @@ KNF_STATE *knf_create_state(const char *category, const char *name,
         quota_charge_current(QUOTA_RES_NOTIFICATION_BYTES, KNF_MAX_PAYLOAD,
                              &st->quota_bytes, &st->quota_bytes_token)
             != STATUS_SUCCESS) {
-        klog(LOG_WARN, "knf", "create: quota refused '%s\\%s'", category, name);
+        /* "not charged" rather than "refused": the charge can also fail
+         * transiently when a job-membership transition holds the task's charge
+         * gate closed, and this function returns a pointer so it cannot carry
+         * that distinction to its caller. Do not assert a refusal it may not
+         * have been. */
+        klog(LOG_WARN, "knf", "create: quota not charged '%s\\%s'", category, name);
         ObDereferenceObject(st);
         ObDereferenceObject(dir);
         return NULL;
@@ -716,10 +721,19 @@ NTSTATUS knf_subscribe(KNF_STATE *st, struct knf_subscriber **out_sub)
      * KNF_MAX_SUBSCRIBERS_PER_STATE -- that cap bounds ONE state's list, while
      * this bounds how many a single user can hold across every state. The
      * memset above left the receipt IDLE, which is the valid empty state. */
-    if (quota_charge_current(QUOTA_RES_NOTIFICATION_SUB, 1,
-                             &sub->quota, &sub->quota_token) != STATUS_SUCCESS) {
-        kfree(sub);
-        return STATUS_QUOTA_EXCEEDED;
+    {
+        /* PROPAGATE the charge status rather than flattening it to
+         * STATUS_QUOTA_EXCEEDED. The charge path can now report STATUS_RETRY --
+         * a job-membership transition briefly holding the task's charge gate
+         * closed -- and telling a caller "you are out of quota" for a charge that
+         * merely raced a job assignment is a lie it cannot recover from. Only a
+         * genuine refusal keeps the quota status it came with. */
+        NTSTATUS qst = quota_charge_current(QUOTA_RES_NOTIFICATION_SUB, 1,
+                                            &sub->quota, &sub->quota_token);
+        if (qst != STATUS_SUCCESS) {
+            kfree(sub);
+            return qst;
+        }
     }
 
     /* Pin the state so it cannot be torn down while this subscription is live

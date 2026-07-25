@@ -23,6 +23,7 @@ static uint64_t g_gate_retry_refusals;
 static uint64_t g_gate_sealed_refusals;
 static uint64_t g_gate_drain_timeouts;
 static uint64_t g_ledger_leaks;
+static uint64_t g_ledger_abandons;
 
 uint64_t quota_gate_retry_count(void)
 {
@@ -42,6 +43,11 @@ uint64_t quota_gate_drain_timeout_count(void)
 uint64_t quota_ledger_leak_count(void)
 {
     return __atomic_load_n(&g_ledger_leaks, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_abandon_count(void)
+{
+    return __atomic_load_n(&g_ledger_abandons, __ATOMIC_RELAXED);
 }
 
 /* ========================================================================== *
@@ -196,7 +202,7 @@ NTSTATUS quota_gate_quiesce(struct task *task)
     /* Claim the close. The CAS preserves the in-flight count, so a charger
      * entering or leaving merely costs a retry rather than a lost transition. */
     int claimed = 0;
-    for (uint32_t spin = 0; spin < QUOTA_GATE_DRAIN_SPINS && !claimed; spin++) {
+    for (uint32_t spin = 0; spin < QUOTA_GATE_CLAIM_TRIES && !claimed; spin++) {
         int64_t  word  = atomic64_read(&task->quota_gate);
         uint32_t state = QUOTA_GATE_STATE(word);
 
@@ -273,6 +279,25 @@ NTSTATUS quota_gate_quiesce(struct task *task)
  * first, twice" and then gives up with a real status. */
 #define QUOTA_LEDGER_GROW_ATTEMPTS  3u
 
+/* HARD CEILING on chunks per ledger, and it is a memory-safety bound rather than
+ * a policy preference. The kernel heap is a fixed 2 MiB (src/kernel/mm/heap.c),
+ * and a slot embeds a whole QUOTA_CHAIN_MAX-wide receipt, so an unbounded ledger
+ * scales badly against it: one obligation per handle at the default handle
+ * ceiling would need hundreds of chunks and consume the MAJORITY of the global
+ * heap for a SINGLE process. That is a denial of service on every other
+ * subsystem, reached without exceeding any quota the process was actually given.
+ *
+ * Capping turns that into a bounded, attributable refusal
+ * (STATUS_INSUFFICIENT_RESOURCES for the charge) instead of global exhaustion --
+ * fail-closed, with the failure landing on the process responsible.
+ *
+ * 64 chunks is ~1544 slots and ~151 KiB, so a maxed ledger takes single-digit
+ * percent of the heap. It is deliberately a placeholder: the real answer is
+ * page-backed storage or a compact common-depth receipt, and choosing between
+ * them needs to know what the Object Manager charge points actually charge --
+ * per handle or per table. Tracked as concrete follow-up work. */
+#define QUOTA_LEDGER_MAX_CHUNKS     64u
+
 typedef struct quota_ledger_slot {
     quota_charge_receipt_t receipt;
     atomic64_t             owner;   /* 0 = free, else this allocation's epoch */
@@ -292,6 +317,14 @@ _Static_assert(sizeof(quota_ledger_chunk_t) <= 4096,
 
 struct quota_ledger {
     atomic_t              refcount;   /* task's own claim + one per obligation */
+    /* Where the next claim scan STARTS. Without it every charge rescans from slot
+     * zero, so filling N slots costs O(N squared) owner reads -- on the order of
+     * 10^8 by the time a ledger holds thousands of obligations. The hint makes
+     * sequential filling linear; a scan that finds nothing from the hint wraps and
+     * checks the front, so correctness never depends on its value. Advisory, hence
+     * a plain relaxed atomic: a stale hint costs a few extra reads, never a missed
+     * or double-claimed slot (the claim itself is still a CAS). */
+    uint32_t              claim_hint;
     uint64_t              id;         /* never reused; diagnostics only        */
     /* The task this ledger was created for, so an adjust can find the gate it
      * must enter. Safe to hold raw and unreferenced for exactly one reason:
@@ -360,11 +393,86 @@ static quota_ledger_slot_t *quota_ledger_slot_at(quota_ledger_t *ledger,
     return (quota_ledger_slot_t *)0;
 }
 
+/* Single-pass slot iterator.
+ *
+ * WHY THIS EXISTS rather than a `for (i = 0; i < capacity; i++) slot_at(i)` loop:
+ * quota_ledger_slot_at resolves an index by walking the chunk chain from the
+ * HEAD, so indexing every slot in turn re-walks the whole chain every time and
+ * turns any full walk into O(capacity squared). That is invisible at a handful of
+ * obligations and brutal at realistic ones -- a table near the default handle
+ * ceiling spans hundreds of chunks, so one walk would perform millions of link
+ * loads, and the job-assign path performs it with charging quiesced.
+ *
+ * The iterator holds its position instead, so a full walk is O(capacity). Index
+ * resolution (slot_at) stays for the handle path, where it happens once per
+ * return and the caller has a specific index rather than a sweep. */
+typedef struct quota_ledger_iter {
+    quota_ledger_t       *ledger;
+    quota_ledger_chunk_t *chunk;    /* NULL while still in the inline run */
+    uint32_t              within;   /* position inside the current run   */
+    uint32_t              index;    /* global slot index of the NEXT slot */
+    int                   inline_done;
+} quota_ledger_iter_t;
+
+static void quota_ledger_iter_init(quota_ledger_iter_t *it, quota_ledger_t *ledger)
+{
+    it->ledger      = ledger;
+    it->chunk       = (quota_ledger_chunk_t *)0;
+    it->within      = 0;
+    it->index       = 0;
+    it->inline_done = 0;
+}
+
+/* Next allocated-or-free slot, or NULL at the end. `out_index` receives the
+ * slot's global index (the value an obligation handle carries). */
+static quota_ledger_slot_t *quota_ledger_iter_next(quota_ledger_iter_t *it,
+                                                   uint32_t *out_index)
+{
+    if (!it->inline_done) {
+        if (it->within < QUOTA_LEDGER_INLINE_SLOTS) {
+            quota_ledger_slot_t *slot = &it->ledger->inline_slots[it->within];
+            if (out_index)
+                *out_index = it->index;
+            it->within++;
+            it->index++;
+            return slot;
+        }
+        /* Inline run exhausted: step onto the first chunk. ACQUIRE so the
+         * chunk's zeroed slots are visible before the pointer that reaches
+         * them, matching the release-publish in quota_ledger_grow. */
+        it->inline_done = 1;
+        it->chunk  = __atomic_load_n(&it->ledger->chunks, __ATOMIC_ACQUIRE);
+        it->within = 0;
+    }
+
+    while (it->chunk) {
+        if (it->within < QUOTA_LEDGER_CHUNK_SLOTS) {
+            quota_ledger_slot_t *slot = &it->chunk->slots[it->within];
+            if (out_index)
+                *out_index = it->index;
+            it->within++;
+            it->index++;
+            return slot;
+        }
+        it->chunk  = __atomic_load_n(&it->chunk->next, __ATOMIC_ACQUIRE);
+        it->within = 0;
+    }
+    return (quota_ledger_slot_t *)0;
+}
+
 /* Append one chunk. Allocation happens OUTSIDE the lock (kmalloc under an
  * irqsave spinlock is exactly the pattern the handle-table lock contract warns
  * against), and the link + capacity publication happen under it. */
 static int quota_ledger_grow(quota_ledger_t *ledger)
 {
+    /* Refuse at the ceiling BEFORE allocating: see QUOTA_LEDGER_MAX_CHUNKS. This
+     * is what stops one process's obligations from consuming the majority of a
+     * fixed 2 MiB kernel heap. */
+    const uint32_t cap_max = QUOTA_LEDGER_INLINE_SLOTS
+                             + (QUOTA_LEDGER_MAX_CHUNKS * QUOTA_LEDGER_CHUNK_SLOTS);
+    if (__atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE) >= cap_max)
+        return 0;
+
     quota_ledger_chunk_t *chunk =
         (quota_ledger_chunk_t *)kmalloc_zeroed(sizeof(quota_ledger_chunk_t));
     if (!chunk)
@@ -372,6 +480,14 @@ static int quota_ledger_grow(quota_ledger_t *ledger)
 
     uint64_t flags;
     spin_lock_irqsave(&ledger->lock, &flags);
+
+    /* Re-check under the lock so concurrent growers cannot stampede past the
+     * ceiling: each read the pre-lock check separately and both could pass. */
+    if (ledger->capacity >= cap_max) {
+        spin_unlock_irqrestore(&ledger->lock, flags);
+        kfree(chunk);
+        return 0;
+    }
 
     quota_ledger_chunk_t **tail = &ledger->chunks;
     while (*tail)
@@ -394,30 +510,62 @@ static int32_t quota_ledger_claim_slot(quota_ledger_t *ledger,
                                       uint64_t *out_epoch)
 {
     *out_epoch = 0;
-    for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_GROW_ATTEMPTS; attempt++) {
-        uint32_t cap = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
 
-        for (uint32_t i = 0; i < cap; i++) {
-            quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, i);
-            if (!slot)
-                break;
+    /* Scan, and only THEN decide whether to grow -- and always scan AGAIN after a
+     * successful growth. The earlier shape grew on its final attempt and returned
+     * failure without ever looking at the slots it had just added, reporting
+     * STATUS_INSUFFICIENT_RESOURCES while the ledger had free space and had been
+     * enlarged for nothing. */
+    for (uint32_t attempt = 0; ; attempt++) {
+        uint32_t hint = __atomic_load_n(&ledger->claim_hint, __ATOMIC_RELAXED);
+        uint32_t cap  = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
 
-            if (atomic64_read(&slot->owner) != 0)
+        if (hint > cap)
+            hint = 0;
+
+        /* Two passes: hint..end, then front..hint. A filling ledger claims the
+         * very next slot on its first probe instead of rescanning everything it
+         * has already handed out; a ledger with holes near the front still finds
+         * them on the wrap. */
+        for (uint32_t pass = 0; pass < 2; pass++) {
+            uint32_t from = (pass == 0) ? hint : 0;
+            uint32_t upto = (pass == 0) ? cap  : hint;
+
+            if (from >= upto)
                 continue;
-            /* The CAS is the claim. A plain "if free then take" would hand the
-             * same slot to two chargers on two CPUs. */
-            uint64_t epoch =
-                __atomic_add_fetch(&g_slot_epoch_next, 1, __ATOMIC_RELAXED);
-            if (atomic64_cmpxchg(&slot->owner, 0, (int64_t)epoch) == 0) {
-                *out_epoch = epoch;
-                return (int32_t)i;
+
+            quota_ledger_iter_t  it;
+            quota_ledger_slot_t *slot;
+            uint32_t             i = 0;
+
+            quota_ledger_iter_init(&it, ledger);
+            while ((slot = quota_ledger_iter_next(&it, &i))
+                       != (quota_ledger_slot_t *)0) {
+                if (i < from)
+                    continue;          /* still walking up to the start point */
+                if (i >= upto)
+                    break;
+                if (atomic64_read(&slot->owner) != 0)
+                    continue;
+
+                /* The CAS is the claim. A plain "if free then take" would hand
+                 * the same slot to two chargers on two CPUs. */
+                uint64_t epoch =
+                    __atomic_add_fetch(&g_slot_epoch_next, 1, __ATOMIC_RELAXED);
+                if (atomic64_cmpxchg(&slot->owner, 0, (int64_t)epoch) == 0) {
+                    __atomic_store_n(&ledger->claim_hint, i + 1,
+                                     __ATOMIC_RELAXED);
+                    *out_epoch = epoch;
+                    return (int32_t)i;
+                }
             }
         }
 
+        if (attempt >= QUOTA_LEDGER_GROW_ATTEMPTS)
+            return -1;
         if (!quota_ledger_grow(ledger))
             return -1;
     }
-    return -1;
 }
 
 void quota_ledger_ref(quota_ledger_t *ledger)
@@ -427,19 +575,46 @@ void quota_ledger_ref(quota_ledger_t *ledger)
     atomic_inc(&ledger->refcount);
 }
 
+/* Reference a ledger that may already be committed to teardown. Returns 0 when
+ * the count has reached zero, exactly like quota_block_try_ref: lifting a dead
+ * count back to one would hand out a reference to storage the destroy path is
+ * about to free.
+ *
+ * SCOPE OF THE PROTECTION, stated honestly because it is partial: this closes the
+ * window where the count has hit zero but the memory is not yet freed. It cannot
+ * make a FREED pointer safe -- nothing can, since the load itself would fault --
+ * so it does not remove the caller's obligation to own a reference before
+ * handing a ledger pointer to another agent (see quota_obligation_t in
+ * quota_ledger.h). It is the same defence, and the same limit, as the block-level
+ * try-ref this mirrors. */
+static int quota_ledger_try_ref(quota_ledger_t *ledger)
+{
+    if (!ledger)
+        return 0;
+    for (;;) {
+        int32_t cur = atomic_read(&ledger->refcount);
+        if (cur <= 0)
+            return 0;
+        if (atomic_cmpxchg(&ledger->refcount, cur, cur + 1) == cur)
+            return 1;
+    }
+}
+
 /* Return every still-live obligation in a ledger nobody can reach any more, and
  * report how many there were. An ACTIVE slot at this point is unreturnable by
  * anyone else -- no holder exists to present its token -- so leaving it charged
  * would strand that usage on the blocks for the rest of the boot. */
-static uint32_t quota_ledger_drain_orphans(quota_ledger_t *ledger)
+static uint32_t quota_ledger_drain_orphans(quota_ledger_t *ledger,
+                                           uint32_t *out_skipped)
 {
-    uint32_t reclaimed = 0;
-    uint32_t cap = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
+    if (out_skipped)
+        *out_skipped = 0;
+    uint32_t             reclaimed = 0;
+    quota_ledger_iter_t  it;
+    quota_ledger_slot_t *slot;
 
-    for (uint32_t i = 0; i < cap; i++) {
-        quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, i);
-        if (!slot)
-            break;
+    quota_ledger_iter_init(&it, ledger);
+    while ((slot = quota_ledger_iter_next(&it, (uint32_t *)0)) != (quota_ledger_slot_t *)0) {
         if (atomic64_read(&slot->owner) == 0)
             continue;
 
@@ -449,7 +624,14 @@ static uint32_t quota_ledger_drain_orphans(quota_ledger_t *ledger)
              * adjust, or a migration). Leave it entirely alone: releasing the slot
              * or returning the charge here would race that operation's writes to
              * the very receipt it is mutating. Its own completion, or a later
-             * drain, deals with it. */
+             * drain, deals with it.
+             *
+             * REPORTED FROM THIS OBSERVATION, not from a second scan afterwards: a
+             * later re-read could find the owner had republished ACTIVE and would
+             * then neither reclaim nor count the slot, which is precisely the
+             * silent loss the count exists to prevent. */
+            if (out_skipped)
+                (*out_skipped)++;
             continue;
         }
         if (QUOTA_RECEIPT_TAG_STATE(tag) != QUOTA_RECEIPT_ACTIVE) {
@@ -473,9 +655,19 @@ static void quota_ledger_destroy(quota_ledger_t *ledger)
     /* Refcount is zero: no other agent can reach this ledger, so a live
      * obligation here is one whose holder went away without returning it. That
      * is a genuine leak by that holder -- reclaim it and count it. */
-    uint32_t orphans = quota_ledger_drain_orphans(ledger);
-    if (orphans)
-        __atomic_fetch_add(&g_ledger_leaks, (uint64_t)orphans, __ATOMIC_RELAXED);
+    /* The drain deliberately SKIPS a BUSY slot, because releasing one an operation
+     * is still writing would race it. That is right for the task-release caller,
+     * whose ledger survives -- but here the storage is about to be freed, so a
+     * skipped slot is a charge nobody will ever return, and a silent skip would be
+     * one the leak counter never shows. Both outcomes are therefore counted from
+     * the drain's own observation. (Reaching zero references while an operation
+     * still owns a slot should be impossible now that every walker pins the
+     * ledger; this counts it rather than trusting that.) */
+    uint32_t skipped = 0;
+    uint32_t orphans = quota_ledger_drain_orphans(ledger, &skipped);
+    if (orphans || skipped)
+        __atomic_fetch_add(&g_ledger_leaks, (uint64_t)orphans + (uint64_t)skipped,
+                           __ATOMIC_RELAXED);
 
     quota_ledger_chunk_t *chunk = ledger->chunks;
     while (chunk) {
@@ -566,13 +758,12 @@ uint32_t quota_ledger_outstanding(quota_ledger_t *ledger)
      * corrupts both the leak assertion and the tests that read it. The walk is
      * bounded by the ledger's own capacity and is only used for diagnostics,
      * tests, and the reap decision. */
-    uint32_t live = 0;
-    uint32_t cap  = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
+    uint32_t             live = 0;
+    quota_ledger_iter_t  it;
+    quota_ledger_slot_t *slot;
 
-    for (uint32_t i = 0; i < cap; i++) {
-        quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, i);
-        if (!slot)
-            break;
+    quota_ledger_iter_init(&it, ledger);
+    while ((slot = quota_ledger_iter_next(&it, (uint32_t *)0)) != (quota_ledger_slot_t *)0) {
         if (atomic64_read(&slot->owner) == 0)
             continue;
         if (QUOTA_RECEIPT_TAG_STATE(atomic64_read(&slot->receipt.tag))
@@ -591,6 +782,10 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
     out->ledger = (quota_ledger_t *)0;
     out->slot   = 0;
     out->token  = 0;
+    out->epoch  = 0;      /* zeroed WITH the others: the epoch is the field the
+                           * stale-duplicate defence rests on, so it must never
+                           * be left holding a caller's garbage on a failure or
+                           * zero-amount path. */
 
     if (!task)
         return STATUS_INVALID_PARAMETER;
@@ -719,7 +914,14 @@ int quota_ledger_return(quota_obligation_t *ob)
              * task release, or at destruction) reclaims the charge and counts it.
              *
              * The adjust that owns the slot holds its own obligation reference, so
-             * this deref can never destroy the ledger underneath it. */
+             * this deref can never destroy the ledger underneath it.
+             *
+             * COUNTED, because the contract in quota_ledger.h claims this is rare
+             * (it needs a cross-CPU collision with an owner queued behind a
+             * contended block lock) and a claim like that should be measurable
+             * rather than merely asserted. A nonzero count here with a matching
+             * rise in the leak count is the signature to investigate. */
+            __atomic_fetch_add(&g_ledger_abandons, 1, __ATOMIC_RELAXED);
             ob->ledger = (quota_ledger_t *)0;
             ob->slot   = 0;
             ob->token  = 0;
@@ -762,9 +964,23 @@ NTSTATUS quota_ledger_adjust(quota_obligation_t *ob, uint64_t new_amount)
     if (!ob || !ob->ledger || ob->token == 0)
         return STATUS_INVALID_PARAMETER;
 
-    quota_ledger_slot_t *slot = quota_ledger_slot_at(ob->ledger, ob->slot);
-    if (!slot)
+    /* PIN THE LEDGER for the whole transaction. This is not defensive tidiness:
+     * a concurrent quota_ledger_return on the same obligation that exhausts its
+     * retries ABANDONS -- it drops the handle's reference -- and if that was the
+     * last reference the ledger is destroyed and its chunks freed while this
+     * adjust is still writing receipt->amount and republishing the tag. Both
+     * sibling walkers (migrate, unmigrate) already pin via quota_ledger_peek;
+     * this one relied on the caller's handle reference, which the abandon path is
+     * explicitly designed to drop out from under it. */
+    quota_ledger_t *ledger = ob->ledger;
+    if (!quota_ledger_try_ref(ledger))
+        return STATUS_INVALID_PARAMETER;   /* already committed to teardown */
+
+    quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, ob->slot);
+    if (!slot) {
+        quota_ledger_deref(ledger);
         return STATUS_INVALID_PARAMETER;
+    }
 
     /* An adjust RAISES charged usage, so it must be serialized against a
      * membership transition exactly as a charge is. Without this an obligation
@@ -779,23 +995,39 @@ NTSTATUS quota_ledger_adjust(quota_obligation_t *ob, uint64_t new_amount)
      * pointer. When the owner is gone the adjust proceeds ungated, which is
      * correct rather than a gap: a task that no longer owns this ledger cannot be
      * joining a job with it, so there is no transition to serialize against. */
-    struct task *owner = ob->ledger->owner;
+    struct task *owner = ledger->owner;
     int          gated = 0;
 
     if (owner) {
         uint64_t flags;
         int      still_owner;
         spin_lock_irqsave(&owner->quota_lock, &flags);
-        still_owner = (owner->quota_ledger == ob->ledger);
+        still_owner = (owner->quota_ledger == ledger);
         spin_unlock_irqrestore(&owner->quota_lock, flags);
 
         if (still_owner) {
             uint32_t gate_state = QUOTA_GATE_OPEN;
-            if (!quota_gate_enter(owner, &gate_state))
+            if (!quota_gate_enter(owner, &gate_state)) {
+                quota_ledger_deref(ledger);
                 return (gate_state == QUOTA_GATE_SEALED)
                            ? STATUS_PROCESS_IS_TERMINATING
                            : STATUS_RETRY;
-            gated = 1;
+            }
+            /* RE-CHECK ownership now that we are inside the gate. The check above
+             * released quota_lock before entering, so a reap could have cleared
+             * the pointer in between and this would be gating a task that no
+             * longer owns this ledger. Re-reading under the gate closes that
+             * window; if it moved, drop the gate and proceed ungated, which is
+             * the correct answer for an orphaned ledger (no task can be joining a
+             * job with it, so there is no transition to serialize against). */
+            spin_lock_irqsave(&owner->quota_lock, &flags);
+            still_owner = (owner->quota_ledger == ledger);
+            spin_unlock_irqrestore(&owner->quota_lock, flags);
+            if (still_owner) {
+                gated = 1;
+            } else {
+                quota_gate_exit(owner);
+            }
         }
     }
 
@@ -803,6 +1035,7 @@ NTSTATUS quota_ledger_adjust(quota_obligation_t *ob, uint64_t new_amount)
 
     if (gated)
         quota_gate_exit(owner);
+    quota_ledger_deref(ledger);
     return status;
 }
 
@@ -820,13 +1053,12 @@ uint32_t quota_ledger_migrate_to_job(struct task *task,
     if (!ledger)
         return 0;
 
-    uint32_t migrated = 0;
-    uint32_t cap = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
+    uint32_t             migrated = 0;
+    quota_ledger_iter_t  it;
+    quota_ledger_slot_t *slot;
 
-    for (uint32_t i = 0; i < cap; i++) {
-        quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, i);
-        if (!slot)
-            break;
+    quota_ledger_iter_init(&it, ledger);
+    while ((slot = quota_ledger_iter_next(&it, (uint32_t *)0)) != (quota_ledger_slot_t *)0) {
         if (atomic64_read(&slot->owner) == 0)
             continue;
 
@@ -925,8 +1157,10 @@ static quota_ledger_t *quota_ledger_peek(struct task *task)
 
     spin_lock_irqsave(&task->quota_lock, &flags);
     ledger = task->quota_ledger;
-    if (ledger)
-        quota_ledger_ref(ledger);
+    /* try-ref, not ref: the pointer is published and cleared under this lock, but
+     * the COUNT can still be racing a final deref from an obligation holder. */
+    if (ledger && !quota_ledger_try_ref(ledger))
+        ledger = (quota_ledger_t *)0;
     spin_unlock_irqrestore(&task->quota_lock, flags);
     return ledger;
 }
@@ -942,13 +1176,12 @@ uint32_t quota_ledger_unmigrate_from_job(struct task *task,
     if (!ledger)
         return 0;
 
-    uint32_t reverted = 0;
-    uint32_t cap = __atomic_load_n(&ledger->capacity, __ATOMIC_ACQUIRE);
+    uint32_t             reverted = 0;
+    quota_ledger_iter_t  it;
+    quota_ledger_slot_t *slot;
 
-    for (uint32_t i = 0; i < cap; i++) {
-        quota_ledger_slot_t *slot = quota_ledger_slot_at(ledger, i);
-        if (!slot)
-            break;
+    quota_ledger_iter_init(&it, ledger);
+    while ((slot = quota_ledger_iter_next(&it, (uint32_t *)0)) != (quota_ledger_slot_t *)0) {
         if (atomic64_read(&slot->owner) == 0)
             continue;
 
@@ -1037,7 +1270,7 @@ void quota_ledger_task_release(struct task *task)
      * entire reason the ledger is refcounted and not task-embedded. Reporting
      * that as a leak would make the sweep cry wolf on correct behavior. */
     if (atomic_read(&ledger->refcount) == 1) {
-        uint32_t orphans = quota_ledger_drain_orphans(ledger);
+        uint32_t orphans = quota_ledger_drain_orphans(ledger, (uint32_t *)0);
         if (orphans) {
             __atomic_fetch_add(&g_ledger_leaks, (uint64_t)orphans,
                                __ATOMIC_RELAXED);
