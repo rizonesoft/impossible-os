@@ -363,12 +363,22 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * up front, before the receipt is claimed, so a NULL argument cannot even
      * disturb a receipt someone else is using.
      *
-     * `*out_token` is then written ONLY on success, deliberately. Clearing it
-     * on failure would destroy a live token when the caller reuses one variable
-     * across charges: refusing a charge into an already-live receipt leaves
-     * that earlier charge owned by the caller, and zeroing its token would
-     * strand the usage with nothing able to return it. A stale token left in
-     * the variable is harmless -- it matches no live charge. */
+     * `*out_token` is left UNTOUCHED by every refusal raised BEFORE the receipt
+     * is claimed, and CLEARED by every one raised after. That split is what
+     * makes the header's "an unconditional quota_return_chain on the error path
+     * is safe" promise true without destroying a live token:
+     *
+     *   - Before the claim, the receipt may be holding the caller's own live
+     *     charge (that is exactly why the claim fails), so zeroing the token
+     *     would strand that charge with nothing able to return it.
+     *   - After a successful claim the receipt provably holds nothing: it was
+     *     IDLE and this call owns it, so whatever the caller's variable holds is
+     *     stale by definition. Leaving it is NOT harmless. A stale value equal
+     *     to gen+1 is precisely the token the NEXT charge on this receipt
+     *     publishes, so an error-path return made exactly as the header
+     *     documents would win that charge's {token, ACTIVE} CAS and credit back
+     *     a charge it never made. This is the same identity hole the zero-amount
+     *     path closes below, closed here for the same reason. */
     if (!receipt || !task || !out_token || (flags & ~QUOTA_CHARGE_CLIENT) != 0)
         return STATUS_INVALID_PARAMETER;
 
@@ -411,6 +421,14 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
      * and no token issued. */
     const int64_t idle_tag = QUOTA_RECEIPT_TAG(gen, QUOTA_RECEIPT_IDLE);
 
+    /* Retire the caller's stale token NOW, under the claim, so every failure
+     * path below leaves 0 -- the one value quota_return_chain always refuses.
+     * Done here rather than per-path because the claim is exactly the point at
+     * which the receipt is proven to hold nothing, and a path that forgot the
+     * clear would reopen the aliasing hole silently. The success paths overwrite
+     * it with the real token before releasing the claim. */
+    *out_token = 0;
+
     receipt->count  = 0;
     receipt->type   = type;
     receipt->amount = amount;
@@ -446,6 +464,21 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
         live = (task->quota != NULL);
         quota_owner_unlock(&task->quota_lock, qflags);
 
+        /* A dying task is refused here exactly as the non-zero path refuses it,
+         * and BOTH conditions are load-bearing: task_death_teardown SEALS the
+         * charge gate before it clears task->quota, so between those two steps a
+         * block is still attached to a task that can no longer be charged.
+         * Testing only the block would report success in that window, and the
+         * documented contract for a SEALED task is STATUS_PROCESS_IS_TERMINATING
+         * -- a caller probing chargeability with a zero charge would otherwise
+         * conclude a terminating task is still live. The non-zero path gets this
+         * from quota_gate_enter; the zero path skips the gate, so it asks
+         * directly. */
+        if (!live || quota_gate_state_of(task) == QUOTA_GATE_SEALED) {
+            atomic64_set(&receipt->tag, idle_tag);
+            return STATUS_PROCESS_IS_TERMINATING;
+        }
+
         /* Order matters: the token is written while the receipt is still BUSY,
          * and releasing to IDLE is the LAST thing this path does. Releasing
          * first would end this operation's exclusivity early -- another CPU
@@ -453,13 +486,9 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
          * generation to the same token slot, which this CPU would then
          * overwrite with 0. The receipt would stay ACTIVE with its only key
          * destroyed, stranding the usage and every block reference it holds. */
-        if (live) {
-            *out_token = 0;
-            atomic64_set(&receipt->tag, idle_tag);
-            return STATUS_SUCCESS;
-        }
+        *out_token = 0;
         atomic64_set(&receipt->tag, idle_tag);
-        return STATUS_PROCESS_IS_TERMINATING;
+        return STATUS_SUCCESS;
     }
 
     /* ENTER THE TASK'S CHARGE GATE. This is the single funnel every chain charge
@@ -618,25 +647,64 @@ void quota_return_chain(quota_charge_receipt_t *receipt, uint64_t token)
 
             /* A MOVED generation is the only thing that proves this token names
              * no live charge. Stop only for that, or for IDLE at our own
-             * generation (already returned -- nothing left to do). */
+             * generation (already returned -- nothing left to do). Both are
+             * documented no-ops that leak nothing -- a stale token, or the loser
+             * of a duplicate return -- so they leave WITHOUT counting an
+             * abandonment. Counting them would make the leak metric fire on the
+             * idempotence this function promises. */
             if (gen != token || state == QUOTA_RECEIPT_IDLE)
-                break;
+                return;
 
-            /* Our generation, not IDLE: the charge is LIVE. It is either ACTIVE
-             * again because the adjust republished it -- in which case the CAS
-             * below wins immediately -- or still BUSY, in which case we spin.
-             * Breaking out on ACTIVE (as this loop first did) abandoned a live
-             * charge the instant an adjust finished at the wrong moment, and for
-             * a direct caller of this function there is no ledger backstop to
-             * reclaim it. */
-            if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag)
-                    == active_tag) {
+            /* Our generation, not IDLE: the charge is LIVE. Either it is ACTIVE
+             * again because the adjust republished it -- claim it -- or it is
+             * still BUSY, in which case re-read rather than CAS. CASing against
+             * a state the load just proved to be BUSY costs a bus-locked RMW
+             * that is guaranteed to fail, and it drags the tag's cache line
+             * Exclusive away from the CPU trying to finish that very adjust,
+             * lengthening the window this loop is waiting out. Breaking out on
+             * ACTIVE (as this loop first did) abandoned a live charge the
+             * instant an adjust finished at the wrong moment, and for a direct
+             * caller of this function there is no ledger backstop to reclaim
+             * it. */
+            if (state == QUOTA_RECEIPT_ACTIVE
+                && atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag)
+                       == active_tag) {
                 won = 1;
                 break;
             }
         }
-        if (!won)
-            return;
+        /* ONE unconditional attempt before giving up. The loop skips the CAS on a
+         * snapshot that read BUSY, which is right for every iteration but the
+         * last: on the last one the owner can republish ACTIVE immediately after
+         * that read, and leaving without trying would abandon a charge the
+         * older unconditional-CAS loop would have claimed. This costs a single
+         * locked RMW on the give-up path -- not the 64 the guard removed -- so
+         * it closes the boundary race without restoring the contention cost. */
+        if (!won) {
+            int64_t final = atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag);
+            if (final != active_tag) {
+                /* CLASSIFY what that final attempt saw rather than counting
+                 * every non-win. A MOVED generation or IDLE means the charge is
+                 * already gone -- the winner of a duplicate return finished it
+                 * between our last read and this CAS -- and nothing was
+                 * stranded. Only a receipt still BUSY at OUR generation is a
+                 * wait that ran out with the charge unreturned. */
+                if (QUOTA_RECEIPT_TAG_GEN(final) == token
+                    && QUOTA_RECEIPT_TAG_STATE(final) == QUOTA_RECEIPT_BUSY) {
+                    /* A direct caller has no backstop, so this is a leak; a
+                     * ledger return wraps this call in its own retry and may
+                     * still recover, which is why the counter names the event
+                     * and not the conclusion. One ambiguity remains: the tag
+                     * cannot say whether that BUSY owner is an adjust (the wait
+                     * really did run out) or the winner of a duplicate return
+                     * still crediting (nothing stranded). Telling them apart
+                     * needs owner metadata in the tag, which belongs with the
+                     * pending-return handoff. */
+                    quota_note_return_wait_exhausted();
+                }
+                return;
+            }
+        }
     }
 
     for (uint32_t i = 0; i < receipt->count; i++)
@@ -676,6 +744,19 @@ NTSTATUS quota_charge_current(quota_resource_type_t type, uint64_t amount,
     struct task *task;
 
     if (!receipt || !out_token)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Validate the TYPE before the boot exemption, for the same reason
+     * quota_charge_chain validates it before its zero-amount shortcut: an
+     * exempted charge that skipped this would report SUCCESS for an
+     * out-of-range type, and a subsystem wired up with the wrong
+     * quota_resource_type_t charges during Phase 1/2 -- so the taxonomy mistake
+     * would survive unnoticed until the first call made after SUBSYS_SCHED is
+     * ready, which is exactly the boot-first, discovered-late shape the
+     * in-function validation exists to prevent. This is a pure range check
+     * against the static taxonomy table, so it is valid before the registry is
+     * populated. */
+    if (!quota_resource_desc(type))
         return STATUS_INVALID_PARAMETER;
 
     /* Boot exemption. Both conditions are milestones, not per-caller state:

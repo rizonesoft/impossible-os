@@ -936,6 +936,22 @@ uint64_t quota_unabsorb_refused_count(void)
     return __atomic_load_n(&g_quota_unabsorb_refused, __ATOMIC_RELAXED);
 }
 
+/* Returns that exhausted their bounded wait on a receipt still BUSY at the
+ * returner's OWN generation (quota_owner.c). Counted, not logged, because the
+ * retry runs with interrupts masked. Stale and duplicate returns are NOT counted
+ * -- those are documented no-ops that leak nothing. */
+static uint64_t g_quota_return_wait_exhausted;
+
+void quota_note_return_wait_exhausted(void)
+{
+    __atomic_fetch_add(&g_quota_return_wait_exhausted, 1ull, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_return_wait_exhausted_count(void)
+{
+    return __atomic_load_n(&g_quota_return_wait_exhausted, __ATOMIC_RELAXED);
+}
+
 /* Emit a recorded diagnostic. MUST be called with no quota lock held.
  *
  * Gated on PASSIVE_LEVEL: klog's live-debug path appends and FLUSHES through

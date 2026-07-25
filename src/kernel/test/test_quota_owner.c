@@ -17,6 +17,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/quota/quota.h"
+#include "kernel/quota/quota_ledger.h"   /* the per-task charge gate */
 #include "kernel/sched/task.h"           /* task_current, task->quota */
 
 /* The token, not merely the state, is what identifies a charge. A returner
@@ -28,12 +29,15 @@ static void test_quota_receipt_token_blocks_stale_return(void)
 {
     struct task *t = task_current();
     quota_charge_receipt_t r = { 0 };
-    uint64_t stale_tok = 0, live_tok = 0, before;
+    uint64_t stale_tok = 0, live_tok = 0, before, exhausted_before;
 
-    if (!t || !t->quota)
+    if (!t || !t->quota) {
+        TEST_SKIP("no quota block on the current task");
         return;
+    }
 
-    before = quota_usage(t->quota, QUOTA_RES_SECTION);
+    before           = quota_usage(t->quota, QUOTA_RES_SECTION);
+    exhausted_before = quota_return_wait_exhausted_count();
 
     /* First charge, returned normally: stale_tok is now spent. */
     TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_SECTION, 7, 0, &r, &stale_tok),
@@ -74,6 +78,15 @@ static void test_quota_receipt_token_blocks_stale_return(void)
     quota_return_chain(&r, live_tok);
     TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_SECTION), before,
                    "the live token still returns its own charge");
+
+    /* None of the above is a leak: a stale, zero, unissued, or non-canonical
+     * token is a documented no-op, and the duplicate return below loses
+     * idempotently. The wait-exhausted counter means a charge may have been
+     * stranded, so counting ordinary idempotence there would make it fire
+     * constantly and be useless as a leak signal. */
+    quota_return_chain(&r, live_tok);
+    TEST_ASSERT_EQ(quota_return_wait_exhausted_count(), exhausted_before,
+                   "stale and duplicate returns are not counted as stranded charges");
 }
 
 /* A zero-amount charge owes nothing, so the token it reports must be the
@@ -87,8 +100,10 @@ static void test_quota_zero_charge_reports_no_obligation_token(void)
     quota_charge_receipt_t r = { 0 };
     uint64_t tok, live_tok = 0, before;
 
-    if (!t || !t->quota)
+    if (!t || !t->quota) {
+        TEST_SKIP("no quota block on the current task");
         return;
+    }
 
     before = quota_usage(t->quota, QUOTA_RES_OBJECT_BODY);
 
@@ -125,8 +140,10 @@ static void test_quota_receipt_generation_exhaustion(void)
     quota_charge_receipt_t r = { 0 };
     uint64_t tok = 0, before;
 
-    if (!t || !t->quota)
+    if (!t || !t->quota) {
+        TEST_SKIP("no quota block on the current task");
         return;
+    }
 
     before = quota_usage(t->quota, QUOTA_RES_PROCESS);
 
@@ -157,6 +174,90 @@ static void test_quota_receipt_generation_exhaustion(void)
 }
 
 
+/* A token the caller still holds must NOT survive a refusal raised after the
+ * receipt was claimed. The claim proves the receipt held nothing, so whatever
+ * sits in the caller's variable is stale -- and a stale value equal to the
+ * generation the NEXT charge publishes would let the error-path return that the
+ * header documents as safe take a charge it never made. */
+static void test_quota_failed_charge_clears_predicted_token(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok, live_tok = 0, before;
+
+    if (!t || !t->quota) {
+        TEST_SKIP("no quota block on the current task");
+        return;
+    }
+
+    before = quota_usage(t->quota, QUOTA_RES_SECTION);
+
+    /* Seed EXACTLY the token the next successful charge on this receipt will
+     * publish, then force a POST-CLAIM refusal. The type is validated after the
+     * receipt is claimed, so an out-of-range type takes the claimed-then-
+     * released path rather than failing at the door. */
+    tok = QUOTA_RECEIPT_TAG_GEN(atomic64_read(&r.tag)) + 1u;
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(
+                       t, (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT,
+                       5, 0, &r, &tok),
+                   (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an out-of-range type is refused after the receipt is claimed");
+    TEST_ASSERT_EQ(tok, 0ULL,
+                   "a post-claim refusal retires the caller's stale token");
+
+    /* The real charge that follows publishes the generation the stale value had
+     * predicted -- so before the fix, that value would have returned it. */
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_SECTION, 5, 0, &r, &live_tok),
+                   (uint64_t)STATUS_SUCCESS, "the following real charge is admitted");
+    quota_return_chain(&r, tok);
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_SECTION), before + 5,
+                   "the retired token cannot return the live charge");
+
+    quota_return_chain(&r, live_tok);
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_SECTION), before,
+                   "the live token still returns its own charge");
+}
+
+/* A zero-amount charge is still a charge against a specific task, so a SEALED
+ * task must refuse it. task_death_teardown seals the gate BEFORE it clears the
+ * quota block, leaving a window where a block is still attached to a task that
+ * can no longer be charged; the zero path skips the gate, so it has to ask the
+ * gate directly or it reports a dying task as chargeable. */
+static void test_quota_zero_charge_refused_on_sealed_gate(void)
+{
+    struct task *t = task_current();
+    quota_charge_receipt_t r = { 0 };
+    uint64_t tok = 7;
+    int64_t  saved;
+
+    if (!t || !t->quota) {
+        TEST_SKIP("no quota block on the current task");
+        return;
+    }
+
+    saved = atomic64_read(&t->quota_gate);
+
+    quota_gate_seal(t);
+    TEST_ASSERT_EQ((uint64_t)quota_gate_state_of(t), (uint64_t)QUOTA_GATE_SEALED,
+                   "the gate is sealed for the probe");
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_OBJECT_BODY, 0, 0, &r, &tok),
+                   (uint64_t)STATUS_PROCESS_IS_TERMINATING,
+                   "a zero-amount charge on a SEALED task reports termination");
+    TEST_ASSERT_EQ(tok, 0ULL, "the refused zero charge issues no token");
+    TEST_ASSERT_EQ((uint64_t)QUOTA_RECEIPT_TAG_STATE(atomic64_read(&r.tag)),
+                   (uint64_t)QUOTA_RECEIPT_IDLE,
+                   "the refused zero charge leaves the receipt reusable");
+
+    atomic64_set(&t->quota_gate, saved);
+
+    tok = 7;
+    TEST_ASSERT_EQ((uint64_t)quota_charge_chain(t, QUOTA_RES_OBJECT_BODY, 0, 0, &r, &tok),
+                   (uint64_t)STATUS_SUCCESS,
+                   "the same zero charge succeeds once the gate is restored");
+    TEST_ASSERT_EQ(tok, 0ULL,
+                   "a live zero-amount charge reports the no-obligation token");
+}
+
 void test_register_quota_owner(void)
 {
     test_suite_register_cat("Quota: stale receipt token cannot return a later charge",
@@ -165,6 +266,12 @@ void test_register_quota_owner(void)
                             test_quota_zero_charge_reports_no_obligation_token, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: receipt generation exhaustion fails closed",
                             test_quota_receipt_generation_exhaustion, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a post-claim refusal retires the stale token",
+                            test_quota_failed_charge_clears_predicted_token,
+                            TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: zero charge on a sealed gate reports termination",
+                            test_quota_zero_charge_refused_on_sealed_gate,
+                            TEST_CAT_QUOTA);
 }
 
 #endif /* KERNEL_TESTS */

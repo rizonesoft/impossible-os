@@ -589,6 +589,18 @@ uint64_t quota_diag_deferred_count(void);
 void     quota_note_unabsorb_refused(void);
 uint64_t quota_unabsorb_refused_count(void);
 
+/* Count of quota_return_chain calls that EXHAUSTED their bounded wait on a
+ * receipt still BUSY at their own generation. The event, not the conclusion: for
+ * a direct caller it is a leaked charge (the usage is still counted, the chain's
+ * block references are still held, and that caller held the only token able to
+ * return them), while a ledger return wraps this call in its own retry and may
+ * still recover -- correlate with the ledger's own abandon counter before
+ * calling it a leak. Stale and duplicate returns are documented no-ops and are
+ * NOT counted. Counted rather than logged because the path runs with interrupts
+ * masked. */
+void     quota_note_return_wait_exhausted(void);
+uint64_t quota_return_wait_exhausted_count(void);
+
 uint64_t quota_usage(const quota_block_t *block, quota_resource_type_t type);
 uint64_t quota_peak(const quota_block_t *block, quota_resource_type_t type);
 uint64_t quota_failures(const quota_block_t *block, quota_resource_type_t type);
@@ -659,8 +671,15 @@ NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
  * stalls after its charge was already returned, and resumes after the same
  * storage was charged again, finds ACTIVE and returns the SECOND charge -- an
  * ABA on the state word. So the state does not stand alone: it is packed with a
- * monotonic GENERATION into one 64-bit word, and every transition is a single
- * atomic64_cmpxchg on the pair. A caller receives its generation as a token
+ * monotonic GENERATION into one 64-bit word, mutated only as a PAIR. Every
+ * transition that must not race another agent -- claiming an IDLE receipt to
+ * charge it, and claiming an ACTIVE one to return or adjust it -- is a single
+ * atomic64_cmpxchg on the whole word. The transitions made by the agent that
+ * already holds the receipt BUSY, namely publishing ACTIVE and releasing back
+ * to IDLE, are release stores (atomic64_set): the BUSY claim is what makes them
+ * exclusive, so there is no other writer for a CAS to guard against, and the
+ * release order is what publishes the receipt's fields with the tag. A caller
+ * receives its generation as a token
  * from quota_charge_chain and must present it to quota_return_chain, which
  * CASes the exact {generation, ACTIVE} it was handed. A stale returner presents
  * a superseded generation, matches nothing, and is a no-op.
@@ -710,6 +729,20 @@ typedef struct quota_charge_receipt {
  * the generation field and two different tags would compare equal. */
 _Static_assert(QUOTA_RECEIPT_BUSY <= QUOTA_RECEIPT_STATE_MASK,
                "receipt state values must fit in QUOTA_RECEIPT_STATE_BITS");
+/* The encode/decode round trip must hold at the CEILING, not just near zero.
+ * QUOTA_RECEIPT_TAG casts into int64_t, and at QUOTA_RECEIPT_GEN_MAX the shifted
+ * value exceeds INT64_MAX, so the conversion is the one place in this encoding
+ * where signedness is load-bearing. Pinning both halves of the round trip here
+ * makes a toolchain that does not wrap two's-complement a BUILD failure rather
+ * than a token that silently decodes to the wrong charge. */
+_Static_assert(QUOTA_RECEIPT_TAG_GEN(QUOTA_RECEIPT_TAG(QUOTA_RECEIPT_GEN_MAX,
+                                                       QUOTA_RECEIPT_ACTIVE))
+                   == QUOTA_RECEIPT_GEN_MAX,
+               "receipt generation must survive encode/decode at the ceiling");
+_Static_assert(QUOTA_RECEIPT_TAG_STATE(QUOTA_RECEIPT_TAG(QUOTA_RECEIPT_GEN_MAX,
+                                                         QUOTA_RECEIPT_ACTIVE))
+                   == QUOTA_RECEIPT_ACTIVE,
+               "receipt state must survive encode/decode at the ceiling");
 _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
                "a zero-initialized receipt must decode as generation 0 / IDLE");
 
@@ -787,11 +820,16 @@ _Static_assert(QUOTA_RECEIPT_TAG(0, QUOTA_RECEIPT_IDLE) == 0,
  * could otherwise collide with the token of the NEXT real charge on the same
  * receipt.
  *
- * `*out_token` is written ONLY on success. A caller that reuses one token
- * variable across charges therefore keeps its live token when a charge is
- * refused -- clearing it would strand that earlier charge with no key able to
- * return it. A token left over from an already-returned charge is harmless: it
- * matches no live charge and returns nothing.
+ * `*out_token` is written on success, and CLEARED to 0 by any failure raised
+ * after the receipt has been claimed. Only the refusals raised BEFORE the claim
+ * leave it untouched -- a bad argument, QUOTA_CHARGE_CLIENT, an exhausted
+ * generation, or a receipt that already holds a live charge. That last one is
+ * the case the exemption exists for: the earlier charge is still owned by
+ * whoever made it, and clearing its token would strand the usage with no key
+ * able to return it. Everywhere else the caller's variable is stale by
+ * definition (the claim proved the receipt held nothing), and leaving a stale
+ * value is NOT harmless: one equal to the next generation this receipt will
+ * publish would let an error-path return take a charge it never made.
  *
  * Returns STATUS_INVALID_PARAMETER (bad argument, a chain deeper than
  * QUOTA_CHAIN_MAX, or a receipt that already holds a live charge),
@@ -822,6 +860,12 @@ NTSTATUS quota_charge_chain(struct task *task, quota_resource_type_t type,
  * references. Exactly one caller performs the return even if several race; the
  * losers are no-ops, so a double return cannot erase a newer live charge. Safe
  * on an empty or zero-initialized receipt.
+ *
+ * ALL-OR-NOTHING: this returns the whole charge and ends it. There is no
+ * partial-return form of this call; to give back part of a charge and KEEP the
+ * rest (the charge-then-trim-the-remainder pattern), call quota_charge_adjust
+ * with the smaller amount -- it lowers every block in the chain and leaves the
+ * charge ACTIVE under the same token.
  *
  * Returning a receipt while the charge that fills it is still in flight on
  * another CPU is a CALLER ORDERING ERROR, not a race this can resolve: the
