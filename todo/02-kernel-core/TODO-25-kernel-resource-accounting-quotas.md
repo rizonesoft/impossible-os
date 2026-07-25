@@ -544,7 +544,7 @@ Split out of the original §14. These three items are about what the charge path
 - [x] Per-charge attribution: `quota_charge_source_t` rides bits 8..15 of the `quota_charge_chain` flags and lands on `receipt.source`; totals live in a system-wide `[source][type]` table (per-block rejected: OOM amplifier). -> XREF: `§10`
 - [x] Status-bearing KNF creation: `knf_create_state_ex` returns `NTSTATUS` with a `KNF_STATE **` out-param and propagates the charge status, so `STATUS_RETRY` no longer flattens to NULL. -> XREF: `02-kernel-core/TODO-16 §2`
 - [x] `QUOTA_PRESSURE_UNKNOWN` (0xFF) added outside the ordered band and `LEVEL_COUNT`, returned by both system-level composites when nothing is measured; the syscall keeps 0..3 behind a validity flag. -> XREF: `§9`
-- [x] `ObInsertObjectEx` reports the exact insert status (collision vs capacity vs allocation) under the directory lock, so a low-memory insert is not misread as a permanent collision. -> XREF: `§13`
+- [x] `ObInsertObjectEx` reports the insert status from under the directory lock -- a duplicate name distinctly from the resource conditions (full directory, failed entry allocation) a caller retries alike. -> XREF: `§13`
 - [x] Commit: quota: charge attribution tags, status-bearing KNF creation, UNKNOWN pressure level.
 
 **Test checkpoint:** two charges of the same resource type from different subsystems are reported under distinct attribution tags and their per-source deltas sum to that type's row delta, proved over a 4-source by 2-type matrix including the taxonomy boundaries; an undefined source is REFUSED rather than aliased, through `0x100`, `0x01000000` and `0xFFFFFFFF`; the honesty counter fires on an unmatched credit, and a cell clamps at 0 and saturates at `QUOTA_AMOUNT_MAX` without overflowing the dashboard; `knf_create_state_ex` reports `STATUS_RETRY` distinctly while the charge gate is quiesced and the same call succeeds once it reopens; `quota_pressure_system_level()` returns UNKNOWN when every domain is invalid, a single NORMAL measurement replaces UNKNOWN outright, and no published `QUOTA_PRESSURE_RECORD` level field can carry the sentinel.
@@ -553,10 +553,15 @@ Split out of the original §14. These three items are about what the charge path
 
 > **Notes:**
 > - **What shipped** -- charge attribution (taxonomy, receipt field, 2 KiB system-wide `[source][type]` table, `quota_source_*` queries) wired for IPC and NOTIFY, plus `knf_create_state_ex`, `ObInsertObjectEx` and `QUOTA_PRESSURE_UNKNOWN`.
-> - **How it runs** -- a charger names itself via `QUOTA_CHARGE_SOURCE(...)` or `quota_charge_current_from`; the table moves once per OBLIGATION inside the receipt's exclusive window, so charge, resize and return cannot interleave.
+> - **How it runs** -- attribution is OPT-IN: a charger names itself via `QUOTA_CHARGE_SOURCE(...)` or `quota_charge_current_from` and is measured once per OBLIGATION inside the receipt's exclusive window; an unattributed charge touches no shared cell.
 > - **Downstream effects** -- per-block attribution rejected on heap arithmetic; a per-TASK breakdown needs the embedded-receipt consumers ledgered (filed in §17). Codex 4x adoptions (16 findings fixed) in the commit messages.
 > - **Canonical doc** -- the attribution contract under "Charge attribution" in `include/kernel/quota/quota.h`.
 > - **Scope boundary** -- §16 owns what the charge path REPORTS; §15 owned its cost; §17 owns the per-task rollup, the ledger source pass-through and the retry test seam; §9 owns the pressure record.
+
+> **Verified:** 2026-07-25 | commit `1948a368` + review fixes | 5/5 items | build OK | tests 25163/25163 PASS | smoke PASS (KVM 2.430s)
+> **Accepted:** [H] a pre-join embedded ALPC/KNF charge released while the task is still a job member credits its own blocks but leaves the absorbed job copy until detach, so the breakdown reads zero while the job still enforces it; pre-existing and deliberate (covered by `test_quota_prejoin_release_holds_job_until_detach`), and only the embedded-receipt conversion changes it (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Per-TASK charge-attribution rollup" at line 585)
+> **Deferred:** [H] a HOT attributed source still serializes on one shared cell; once-per-obligation plus line alignment plus the opt-in skip bound it, but removing it needs per-CPU accumulators that do not exist (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Per-CPU sharded attribution counters" at line 588)
+> **Quality reviewed:** 2026-07-25 | Codex 18x (design, adversarial x7, re-adversarial x4, consistency x3, perf x2, test-coverage x3) + kernel-quality-auditor + concurrency-evidence-mapper + test-coverage-mapper | 5H+16M+8L fixed, 2 accepted-XREF, 2 rejected with evidence | scope: kernel-code-quality
 
 ---
 
@@ -580,6 +585,7 @@ Split out of the original §14 as the items whose PREREQUISITE is owned elsewher
 - [ ] Per-TASK charge-attribution rollup: a `quota_ledger_source_breakdown(task, out)` walk over that task's ledger slots keyed by `receipt.source`. Needs the ALPC/KNF embedded-receipt conversion first. -> XREF: `§14`
 - [ ] Thread the charge source through the ledger: `quota_ledger_charge`/`_charge_current` pass 0 flags, so a converted consumer would lose the attribution §16 gave it. -> XREF: `§14`
 - [ ] Pressure-channel retry test seam: injectable clock plus create hook so §16's backoff (100 ms doubling to 30 s) and recovery after N failures can be asserted without real waits. -> XREF: `§10`
+- [ ] Per-CPU sharded attribution counters so a HOT attributed source (ALPC messages) does not serialize on one shared cell; needs the per-CPU infrastructure `quota.h` cites. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [ ] Commit: quota: infrastructure-gated charge-path bounding and stall lanes.
 
 **Test checkpoint:** victim nomination enumerates tasks under a reference that survives a concurrent exit; a return colliding with a BUSY owner is consumed by that owner rather than abandoned, and the leak sweep still reports zero; `quota_charge_adjust` and both charge-gate CAS loops complete within an asserted retry bound under two-CPU contention; a stall-lane transition published through the §9 ring carries its stall domain and does not perturb the budget lane's debounce.

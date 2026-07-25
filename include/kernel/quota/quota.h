@@ -747,7 +747,7 @@ _Static_assert(QUOTA_CHAIN_MAX >= 3u,
  * by section 17. */
 typedef enum quota_charge_source {
     QUOTA_SOURCE_UNKNOWN  = 0,  /* unattributed; DERIVED, never stored      */
-    QUOTA_SOURCE_OBJECT   = 1,  /* Object Manager bodies, names, handles    */
+    QUOTA_SOURCE_OBJECT   = 1,  /* OB bodies/names/handles (no producer yet) */
     QUOTA_SOURCE_IPC      = 2,  /* ALPC ports and queued messages           */
     QUOTA_SOURCE_NOTIFY   = 3,  /* KNF notification states and payloads     */
     QUOTA_SOURCE_REGISTRY = 4,  /* registry keys/values/data (no producer yet) */
@@ -795,12 +795,20 @@ static inline int quota_source_valid(quota_charge_source_t source)
  * as approximate instruments -- which is all a diagnostic needs. */
 
 /* Live amount of `type` currently attributed to `source`, or 0 for an
- * out-of-range argument. Never negative (see the mismatch counter). */
+ * out-of-range argument. Never negative (see the mismatch counter).
+ *
+ * ATTRIBUTION IS OPT-IN, so QUOTA_SOURCE_UNKNOWN always reads 0: a charge that
+ * named no source is deliberately not recorded, because UNKNOWN is the source of
+ * every legacy and internal charge and recording it would put a globally
+ * contended cache line on the hot path to populate the one row that identifies
+ * nobody. "Unattributed" is therefore visible on the RECEIPT, not in this table,
+ * and these totals describe only what subsystems claimed. */
 int64_t quota_source_usage(quota_charge_source_t source, quota_resource_type_t type);
 
 /* Charges `source` has made against `type` since boot, saturating. Cumulative,
  * so it keeps counting after the charge is returned -- the NT !poolused "Allocs"
- * column, which answers "who is busy here" even when nothing is held now. */
+ * column, which answers "who is busy here" even when nothing is held now. Opt-in
+ * on the same terms as quota_source_usage: UNKNOWN always reads 0. */
 int64_t quota_source_charges(quota_charge_source_t source, quota_resource_type_t type);
 
 /* Attribution arithmetic that could NOT be applied exactly, saturating. This is
@@ -817,6 +825,9 @@ uint64_t quota_source_mismatch(void);
  * where taking a lock is forbidden), so it is one generation per cell rather
  * than one generation overall -- strictly better than N scalar queries, and the
  * contract above is what bounds the difference. No-op on a NULL argument. */
+/* NOTE THE SIZE: this writes QUOTA_SOURCE_COUNT x QUOTA_RESOURCE_TYPE_COUNT
+ * int64_t, 1 KiB today. That does not belong on a kernel stack -- give it static
+ * or heap storage. */
 void quota_source_snapshot(int64_t out[QUOTA_SOURCE_COUNT][QUOTA_RESOURCE_TYPE_COUNT]);
 
 /* INTERNAL. Move the live amount `source` holds of `type` by `delta` -- positive

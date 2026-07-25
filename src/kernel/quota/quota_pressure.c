@@ -111,7 +111,11 @@ static pressure_domain_t g_domain[QUOTA_PRESSURE_DOMAIN_COUNT]
  * is unused (there is no threshold to enter NORMAL from below, and none to
  * leave it from above); it is present so the arrays index directly by level
  * with no offset arithmetic at every use. */
-static const char *const g_level_name[QUOTA_PRESSURE_LEVEL_COUNT] = {
+/* Unbounded for the same reason g_source_name is: with the bound written out, a
+ * grown level enum zero-fills the new row and the coverage assert below compares
+ * the declared bound with itself, so quota_pressure_level_name would return NULL
+ * into a %s. Letting the initializer set the length makes the assert real. */
+static const char *const g_level_name[] = {
     "normal", "watch", "warning", "critical"
 };
 
@@ -652,11 +656,20 @@ static uint32_t pressure_create_channels(uint32_t attempt)
         if (st != STATUS_SUCCESS || !state) {
             if (quota_pressure_retry_status_retryable(st)) {
                 /* TRANSIENT: say so, and say that it will be retried, so a log
-                 * reader does not conclude the channel is dead. */
+                 * reader does not conclude the channel is dead.
+                 *
+                 * ONCE. The backoff bounds how often the retry RUNS; without
+                 * this it would not bound how often the retry TALKS, and a
+                 * channel stuck on resource exhaustion -- precisely the
+                 * condition this subsystem exists to report -- would emit a
+                 * warning per channel every 30 s for the life of the system,
+                 * drowning the pressure reporting it is meant to enable. The
+                 * threshold ERROR below still fires later, also once. */
                 pending |= (1u << i);
-                klog(LOG_WARN, "quota",
-                     "pressure: '%s' creation deferred (0x%x); retrying from the drain",
-                     ch->name, (uint64_t)st);
+                if (g_channels_retry.tries == 0)
+                    klog(LOG_WARN, "quota",
+                         "pressure: '%s' creation deferred (0x%x); retrying with backoff",
+                         ch->name, (uint64_t)st);
             } else {
                 klog(LOG_ERROR, "quota",
                      "pressure: '%s' creation failed (0x%x); %s",
@@ -832,6 +845,10 @@ static int domain_step_locked(pressure_domain_t *d, quota_resource_type_t type,
          * unrelated excursions minutes apart add up to a transition. */
         d->rise_count = 0;
         d->fall_count = 0;
+        /* Cleared with the rest: a leftover run from an earlier test can push the
+         * NEXT test's first UNKNOWN sample past the reset threshold and fabricate
+         * a transition record it never provoked. */
+        d->invalid_run = 0;
     }
 
     if (next == level)

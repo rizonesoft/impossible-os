@@ -2507,7 +2507,16 @@ static void test_ob_insert_ex_capacity_is_transient(void)
 
     d = (OBJECT_DIRECTORY *)testdir;
     TEST_ASSERT_EQ((uint64_t)d->count, 0ull, "the fixture starts empty");
-    d->count = OB_DIR_MAX_ENTRIES;      /* declare it full */
+    /* Under the directory's own lock, like every other mutator of this field.
+     * The object is published in the namespace, so even a throwaway fixture must
+     * not do an unsynchronized read-modify-write on it in the image that boots
+     * real hardware. */
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&d->lock, &irqf);
+        d->count = OB_DIR_MAX_ENTRIES;      /* declare it full */
+        spin_unlock_irqrestore(&d->lock, irqf);
+    }
 
     TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(victim, "ObInsExCapVictim", testdir),
                    (uint64_t)STATUS_INSUFFICIENT_RESOURCES,
@@ -2517,12 +2526,22 @@ static void test_ob_insert_ex_capacity_is_transient(void)
 
     /* One entry of room, and the same call now succeeds -- so the status above was
      * genuinely about capacity and not about the object or the name. */
-    d->count = OB_DIR_MAX_ENTRIES - 1u;
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&d->lock, &irqf);
+        d->count = OB_DIR_MAX_ENTRIES - 1u;
+        spin_unlock_irqrestore(&d->lock, irqf);
+    }
     TEST_ASSERT_EQ((uint64_t)ObInsertObjectEx(victim, "ObInsExCapVictim", testdir),
                    (uint64_t)STATUS_SUCCESS, "one slot of room admits the insert");
 
     ObpRemoveFromDirectory(testdir, victim);
-    d->count = 0;                       /* undo the fabricated count before teardown */
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&d->lock, &irqf);
+        d->count = 0;                   /* undo the fabricated count before teardown */
+        spin_unlock_irqrestore(&d->lock, irqf);
+    }
     ObDereferenceObject(victim);
     ObpRemoveFromDirectory(ko_dir, testdir);
     ObMakeTemporaryObject(testdir);

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-25T14:03:50+02:00",
+  "timestamp": "2026-07-25T17:15:49+02:00",
   "total_suites": 2535,
-  "total_assertions": 10150,
+  "total_assertions": 10151,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -68,7 +68,7 @@
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 93},
     {"file": "test_pmm.c", "suites": 16, "assertions": 58},
     {"file": "test_proc_ext.c", "suites": 76, "assertions": 160},
-    {"file": "test_quota.c", "suites": 80, "assertions": 565},
+    {"file": "test_quota.c", "suites": 80, "assertions": 566},
     {"file": "test_quota_config.c", "suites": 20, "assertions": 96},
     {"file": "test_quota_dashboard.c", "suites": 19, "assertions": 117},
     {"file": "test_quota_ledger.c", "suites": 36, "assertions": 241},

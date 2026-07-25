@@ -2650,6 +2650,15 @@ static void test_quota_attribution_splits_by_source(void)
                 "a returned charge still counts toward its source's charge count");
 
     /* Nothing above could not be applied exactly, so the sum contract holds. */
+    /* EXACT equality, deliberately. The counter is monotonic outside the
+     * test-only withdrawal, so a `>=` comparison against the baseline is true no
+     * matter how badly the operations above misbehaved -- it would assert
+     * nothing. Equality is the only form that actually claims what this test
+     * means: these operations reconciled exactly. It is deterministic today
+     * because nothing else charges quota while a test runs; if a genuinely
+     * concurrent SMP test harness ever lands, this needs an operation-scoped
+     * exactness seam rather than a weaker comparison (owned by the SMP
+     * test-harness work in the quota roadmap). */
     TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
                    "an exactly-matched charge and return record no mismatch");
 }
@@ -2691,6 +2700,15 @@ static void test_quota_attribution_follows_adjust(void)
     TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_DIAG,
                                                 QUOTA_RES_CRASH_BUFFER) - before),
                    0ull, "the return credits back the RESIZED amount, not the original");
+    /* EXACT equality, deliberately. The counter is monotonic outside the
+     * test-only withdrawal, so a `>=` comparison against the baseline is true no
+     * matter how badly the operations above misbehaved -- it would assert
+     * nothing. Equality is the only form that actually claims what this test
+     * means: these operations reconciled exactly. It is deterministic today
+     * because nothing else charges quota while a test runs; if a genuinely
+     * concurrent SMP test harness ever lands, this needs an operation-scoped
+     * exactness seam rather than a weaker comparison (owned by the SMP
+     * test-harness work in the quota roadmap). */
     TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
                    "a resized charge still reconciles exactly");
 }
@@ -2715,15 +2733,23 @@ static void test_quota_attribution_unattributed_is_visible(void)
                                                &r, &tok),
                    (uint64_t)STATUS_SUCCESS, "an unattributed charge is still admitted");
     TEST_ASSERT_EQ((uint64_t)r.source, (uint64_t)QUOTA_SOURCE_UNKNOWN,
-                   "flags 0 records the charge as unattributed");
+                   "flags 0 records the charge as unattributed on the receipt");
+    /* ATTRIBUTION IS OPT-IN, so the charge costs the shared table nothing. This is
+     * the property that keeps the taxonomy off the hot path: UNKNOWN is the source
+     * of every legacy and internal charge, so recording it would serialize most of
+     * the system's charges on one cache line to populate the one row that answers
+     * nothing. The receipt still carries the label; only the totals opt in. */
     TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_UNKNOWN,
                                                 QUOTA_RES_CRASH_BUFFER) - before),
-                   7ull, "unattributed usage is MEASURED, not discarded");
+                   0ull, "an unattributed charge touches no shared attribution cell");
+    TEST_ASSERT_EQ((uint64_t)quota_source_charges(QUOTA_SOURCE_UNKNOWN,
+                                                 QUOTA_RES_CRASH_BUFFER),
+                   0ull, "and is never counted, so the hot path pays nothing");
 
     quota_return_chain(&r, tok);
     TEST_ASSERT_EQ((uint64_t)(quota_source_usage(QUOTA_SOURCE_UNKNOWN,
                                                 QUOTA_RES_CRASH_BUFFER) - before),
-                   0ull, "the unattributed row returns to its baseline");
+                   0ull, "and its return likewise touches nothing");
 }
 
 /* A source the taxonomy does not define is REFUSED, not folded to UNKNOWN: it
@@ -2908,8 +2934,10 @@ static void test_quota_attribution_matrix_sums_per_type(void)
 {
     struct task *t = task_current();
     /* Boundary sources first and last, plus two interior ones. */
+    /* Deliberately NOT QUOTA_SOURCE_UNKNOWN: attribution is opt-in, so that row
+     * is never recorded. Spans the first and last ATTRIBUTABLE ids instead. */
     static const quota_charge_source_t srcs[] = {
-        QUOTA_SOURCE_UNKNOWN, QUOTA_SOURCE_OBJECT, QUOTA_SOURCE_IPC,
+        QUOTA_SOURCE_OBJECT, QUOTA_SOURCE_IPC, QUOTA_SOURCE_NOTIFY,
         (quota_charge_source_t)(QUOTA_SOURCE_COUNT - 1)
     };
     const uint32_t nsrc = (uint32_t)(sizeof(srcs) / sizeof(srcs[0]));
@@ -2986,6 +3014,15 @@ static void test_quota_attribution_matrix_sums_per_type(void)
         TEST_ASSERT_EQ(quota_usage(t->quota, types[ty]), row_before[ty],
                        "and so does every row");
     }
+    /* EXACT equality, deliberately. The counter is monotonic outside the
+     * test-only withdrawal, so a `>=` comparison against the baseline is true no
+     * matter how badly the operations above misbehaved -- it would assert
+     * nothing. Equality is the only form that actually claims what this test
+     * means: these operations reconciled exactly. It is deterministic today
+     * because nothing else charges quota while a test runs; if a genuinely
+     * concurrent SMP test harness ever lands, this needs an operation-scoped
+     * exactness seam rather than a weaker comparison (owned by the SMP
+     * test-harness work in the quota roadmap). */
     TEST_ASSERT_EQ(quota_source_mismatch(), mismatch_before,
                    "a fully matched matrix records no mismatch");
 }

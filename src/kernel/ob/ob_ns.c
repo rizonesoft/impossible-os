@@ -183,13 +183,15 @@ NTSTATUS ObInsertObjectEx(void *object, const char *name, void *directory)
     /* Re-check duplicate + capacity under the lock so a concurrent
      * insert of the same name cannot slip through.
      *
-     * REPORTED SEPARATELY, from under the lock that established them, because a
-     * caller must act differently on each: a duplicate name will never succeed
-     * however long the caller waits, a full directory is a capacity ceiling, and a
-     * failed entry allocation is transient. Recovering the distinction AFTERWARDS
-     * by looking the name up cannot work -- the namespace may have moved on, and a
-     * lookup that resolves symlinks is not answering the question the insert
-     * asked. */
+     * SPLIT BY WHAT A CALLER MUST DO, from under the lock that established it. A
+     * duplicate name will never succeed however long the caller waits, so it gets
+     * its own status; a full directory and a failed entry allocation are both
+     * resource conditions that MAY clear, so they deliberately share
+     * STATUS_INSUFFICIENT_RESOURCES -- a caller retries both identically, and a
+     * third status it cannot act on differently would be noise. Recovering even
+     * this much AFTERWARDS by looking the name up cannot work: the namespace may
+     * have moved on, and a lookup that resolves symlinks is not answering the
+     * question the insert asked. */
     if (dir_find(dir, name, name_len)) {
         spin_unlock_irqrestore(&dir->lock, irqf);
         kfree(entry);
