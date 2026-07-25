@@ -49,9 +49,15 @@
 typedef struct _SYSTEM_RESOURCE_PRESSURE_DOMAIN {
     uint32_t Domain;        /* 0 = cpu, 1 = mem, 2 = io                       */
     uint32_t Flags;         /* SYSTEM_RESOURCE_PRESSURE_FLAG_* row bits       */
-    uint64_t SomeTotalNs;   /* cumulative time with at least one task stalled */
-    uint64_t FullTotalNs;   /* cumulative time with everything stalled; 0 for
-                             * a row carrying FULL_UNDEFINED                  */
+    /* Cumulative CPU-nanoseconds, NOT wall-nanoseconds: the sum over CPUs of
+     * each CPU's stalled time. Two cores stalled for one second adds two
+     * seconds. The AVERAGES below are the wall-clock-comparable view; the
+     * totals are a conserved counter, and the two answer different questions on
+     * purpose -- a per-window weighted mean cannot be accumulated without the
+     * running total depending on where the sampler happened to tick. */
+    uint64_t SomeTotalNs;   /* cumulative CPU-ns with at least one task stalled */
+    uint64_t FullTotalNs;   /* cumulative CPU-ns fully stalled; 0 when
+                             * the row carries FULL_UNDEFINED                  */
     uint16_t SomeAvg10;     /* permille, 0..1000                              */
     uint16_t SomeAvg60;
     uint16_t SomeAvg300;

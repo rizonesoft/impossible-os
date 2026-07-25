@@ -424,9 +424,17 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 > - Canonical doc: the `include/kernel/quota/quota_stall.h` header contract.
 > - Scope boundary: §12 owns accumulators, averaging and the query ABI; §9 owns budget-sourced levels; TODO-07 §3, TODO-03 §2 and TODO-01 §8 own the seams.
 
-> **Deferred:** [M] the three stall SEAMS (cpu / mem / io) stay unwired, so every domain reports VALID clear: each needs a wait site owned by another TODO (reason: infra) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3` (item: "Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`" at line 119)
-> **Deferred:** [L] KNF publication of stall-lane level transitions: no producer can fire one until a seam lands, so the wire record would ship unexercisable (reason: no producer) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Publish stall-lane level transitions through the §9 ring")
-> **Accepted:** [M] the 16-type budget space still carries ONE debounce shared by both sources, so `quota_pressure_submit_stall` has no safe production use and the stall lane deliberately does not touch it (reason: needs per-source lanes) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Per-source lanes in the 16-type budget space")
+> **Verified:** 2026-07-25 | commit `bb1cbd25` | 5/8 items | build OK | tests 24511/24511 PASS | smoke PASS (KVM 2.820s)
+> **Accepted:** [H] previous-mode is not CPU-local, so a user caller can race `ProbeForWriteIfUser` into being skipped -- pre-existing across every system-info extension class (0x1000-0x1002 predate this section), not introduced here (reason: scope) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Previous-mode is not CPU-local" at line 476)
+> **Accepted:** [H] every producer transition reads `uptime_ns()`, which touches a global monotonic floor -- must be replaced before any seam is wired (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Producer clock seam" at line 477)
+> **Accepted:** [M] `quota_pressure_system_level()` has no UNKNOWN value, so "unmeasured" and "calm" are indistinguishable at system level (reason: §9 contract) -> XREF: `02-kernel-core/TODO-25 §14` (item: "`quota_pressure_system_level()` has no UNKNOWN value" at line 478)
+> **Accepted:** [M] the 16-type budget space carries ONE debounce shared by both sources, so `quota_pressure_submit_stall` has no safe production use and the stall lane deliberately does not touch it (reason: needs per-source lanes) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Per-source lanes in the 16-type budget space" at line 474)
+> **Deferred:** [M] the CPU stall seam is unwired: attributing a tick needs a per-CPU current-thread cursor (reason: infra) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3` (item: "Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`" at line 119)
+> **Deferred:** [M] the MEM stall seam is unwired: it needs an allocation path that WAITS on reclaim (reason: infra) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §2` (item: "Blocking allocation path (wait for reclaim instead of returning NULL)" at line 130)
+> **Deferred:** [M] the IO stall seam is unwired: it needs a block-layer completion-wait site (reason: infra) -> XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §8` (item: "Wrap the submission delay and any completion wait" at line 183)
+> **Deferred:** [M] two-CPU boundary-race regression for the fold (a producer advances a slot between the fold timestamp and the walk) needs the SMP harness (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Two-CPU boundary-race regression for the stall fold" at line 479)
+> **Deferred:** [L] KNF publication of stall-lane level transitions: no producer can fire one until a seam lands, so the wire record would ship unexercisable (reason: no producer) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Publish stall-lane level transitions through the §9 ring" at line 475)
+> **Quality reviewed:** 2026-07-25 | Codex 16x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x10) + kernel-quality-auditor + concurrency-evidence-mapper | 16H+20M+5L fixed, 1H rejected, 4 accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -465,6 +473,10 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [ ] Per-charge attribution on `quota_charge_receipt_t`: it carries only type and amount, so a task near a limit cannot be broken down by charging subsystem the way NT pool tags allow. -> XREF: `§10`
 - [ ] Per-source lanes in the 16-type budget space so `quota_pressure_submit_stall` becomes usable: today one shared debounce means whichever source samples more often owns the level. -> XREF: `§12`
 - [ ] Publish stall-lane level transitions through the §9 ring: needs a stall-domain-keyed record, and no producer can fire one until a §12 seam lands. -> XREF: `§12`
+- [ ] Previous-mode is not CPU-local, so a user caller can race `ProbeForWriteIfUser` into being skipped; affects EVERY system-info extension class (0x1000-0x1003), not just §12. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [ ] Producer clock seam: `quota_stall` producers call `uptime_ns()` on every transition, touching a global monotonic floor; needs a per-CPU or caller-supplied timestamp BEFORE any stall seam is wired. -> XREF: `§12`
+- [ ] `quota_pressure_system_level()` has no UNKNOWN value: it returns NORMAL when every domain is invalid, so "unmeasured" and "calm" are indistinguishable at the system level. -> XREF: `§9`
+- [ ] Two-CPU boundary-race regression for the stall fold (a producer advances a slot between the fold timestamp and the walk); needs the SMP test harness. -> XREF: `§10`
 - [ ] Commit: quota: charge-path cost + lifetime follow-ups.
 
 **Test checkpoint:** `ob_job_collect_accounting` computes its per-member deltas outside `job->lock` and its lock-held window is asserted against the §5 charge-path cost budget; a 3-block chain receipt fits the compacted `PORT_MESSAGE_ENTRY` and a chain deeper than the compact form still returns exactly; a send refused by quota performs no `AlpcAllocateMessage` allocation at all (injected-failure count unchanged); victim nomination enumerates tasks under a reference that survives a concurrent exit.

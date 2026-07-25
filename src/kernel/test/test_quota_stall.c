@@ -350,11 +350,15 @@ static void test_stall_validity_needs_a_closed_window(void)
 static void test_stall_cpu_full_is_undefined(void)
 {
     quota_stall_snapshot_t cpu, mem;
-    quota_stall_token_t tcpu, tmem;
+    quota_stall_token_t tcpu, tmem, run;
 
     stall_begin();
     quota_stall_declare_instrumented(QUOTA_STALL_CPU);
     quota_stall_declare_instrumented(QUOTA_STALL_MEM);
+    /* Make runnable tracking live so `full` is derivable at all; cpu.full must
+     * STILL be undefined, which is the point of this test. */
+    run = quota_stall_runnable_begin();
+    quota_stall_runnable_end(&run);
 
     /* Both domains stalled with nothing runnable: the condition under which
      * `full` accrues for any domain that defines it. */
@@ -389,16 +393,24 @@ static void test_stall_cpu_full_is_undefined(void)
 static void test_stall_full_requires_nothing_runnable(void)
 {
     quota_stall_snapshot_t before, after;
-    quota_stall_token_t tok;
+    quota_stall_token_t tok, run;
 
     stall_begin();
     quota_stall_declare_instrumented(QUOTA_STALL_IO);
+    /* Bring runnable tracking up first: without it `full` is undefined by
+     * contract, because nr_running pinned at zero would make full mirror some.
+     * The activation is performed by the next fold and CONSUMES that window (it
+     * is the boundary the line is drawn at), so step one window to let it land
+     * before measuring. */
+    run = quota_stall_runnable_begin();
+    quota_stall_runnable_end(&run);
+    (void)stall_step_window();          /* publishes the tracking flag */
     tok = quota_stall_task_stalled(QUOTA_STALL_IO);
     (void)stall_step_window();
     stall_snap(QUOTA_STALL_IO, &before);
     TEST_ASSERT(before.full_total_ns > 0, "full accrues with nothing runnable");
 
-    quota_stall_runnable_delta(1);
+    run = quota_stall_runnable_begin();
     (void)stall_step_window();
     stall_snap(QUOTA_STALL_IO, &after);
 
@@ -406,7 +418,7 @@ static void test_stall_full_requires_nothing_runnable(void)
                    "full stops accruing once something is runnable");
     TEST_ASSERT(after.some_total_ns > before.some_total_ns,
                 "some keeps accruing while a task is still blocked");
-    quota_stall_runnable_delta(-1);
+    quota_stall_runnable_end(&run);
     quota_stall_task_unstalled(&tok);
 }
 
@@ -507,11 +519,12 @@ static void test_stall_missed_periods_decay(void)
                 "the 60 s window also decays across the gap");
 }
 
-/* Past the catch-up bound the period count is CLAMPED, not the measurement
- * discarded. An earlier revision cleared every average and threw away the growth
- * it had just collected, so a first fully-stalled interval longer than the bound
- * published zeroes while the cumulative totals climbed: pressure measured and
- * then deleted. The stall must survive the gap that delayed it. */
+/* A long gap is folded in CLOSED FORM, not clamped and not discarded. An earlier
+ * revision stepped the decay a bounded number of times and threw away the rest,
+ * so a fully-stalled interval longer than the bound published zeroes while the
+ * cumulative totals climbed: pressure measured and then deleted. The stall must
+ * survive the gap that delayed it. (The separate 12-hour interval CEILING, which
+ * does discard, is covered by test_stall_absurd_interval_is_discarded.) */
 static void test_stall_over_long_stalled_gap_keeps_its_measurement(void)
 {
     quota_stall_snapshot_t s;
@@ -574,6 +587,102 @@ static void test_stall_over_long_quiet_gap_decays(void)
                 "the long window decays rather than holding its old value");
     TEST_ASSERT_EQ((uint32_t)after.some_total_ns, (uint32_t)before.some_total_ns,
                    "a quiet gap adds no stall time to the cumulative total");
+}
+
+/* Past the interval ceiling the window IS discarded -- an interval that long is
+ * a broken clock, not a delayed sample -- and the aggregator re-anchors so the
+ * next window is measured normally rather than against a fabricated baseline.
+ * The bound is twelve hours, four orders of magnitude past the long-gap test
+ * above, so it needs its own case. */
+static void test_stall_absurd_interval_is_discarded(void)
+{
+    quota_stall_snapshot_t before, after;
+    quota_stall_token_t tok;
+    uint64_t windows_before;
+
+    stall_begin();
+    quota_stall_declare_instrumented(QUOTA_STALL_MEM);
+    stall_step_windows(4);
+    windows_before = quota_stall_windows_closed();
+    stall_snap(QUOTA_STALL_MEM, &before);
+
+    tok = quota_stall_task_stalled(QUOTA_STALL_MEM);
+    stall_advance(QUOTA_STALL_MAX_INTERVAL_NS + STALL_WINDOW_NS);
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 0,
+                   "an interval past the ceiling closes no window");
+    TEST_ASSERT_EQ((uint32_t)quota_stall_windows_closed(),
+                   (uint32_t)windows_before,
+                   "and does not advance the window count");
+    stall_snap(QUOTA_STALL_MEM, &after);
+    TEST_ASSERT_EQ((uint32_t)after.some_total_ns, (uint32_t)before.some_total_ns,
+                   "and publishes no stall time from the unmeasurable interval");
+
+    /* Re-anchored: the very next normal window measures correctly. */
+    (void)stall_step_window();
+    stall_snap(QUOTA_STALL_MEM, &after);
+    TEST_ASSERT_EQ((uint32_t)after.some_total_ns,
+                   (uint32_t)(before.some_total_ns + STALL_WINDOW_NS),
+                   "the window after the discard is measured normally");
+    quota_stall_task_unstalled(&tok);
+}
+
+/* The dump path renders a snapshot to the serial log; exercising it proves the
+ * format string and the snapshot-outside-the-lock ordering are reachable. */
+static void test_stall_dump_runs_clean(void)
+{
+    stall_begin();
+    quota_stall_declare_instrumented(QUOTA_STALL_IO);
+    stall_step_windows(2);
+    quota_stall_dump();
+    TEST_ASSERT_EQ((uint32_t)quota_stall_windows_closed(), 2u,
+                   "dumping does not disturb the telemetry it reports");
+}
+
+/* Turning runnable tracking on must not retroactively publish `full` for the
+ * interval that preceded it. A CPU sitting in a stall from before the seam
+ * existed would otherwise have its whole untracked wait integrated as full the
+ * moment the flag flips -- a fabricated first window at exactly the seam that is
+ * supposed to make full trustworthy. */
+static void test_stall_runnable_tracking_does_not_backfill_full(void)
+{
+    quota_stall_snapshot_t s;
+    quota_stall_token_t tok, run;
+
+    stall_begin();
+    quota_stall_declare_instrumented(QUOTA_STALL_MEM);
+
+    /* Stall for a full window with tracking OFF. */
+    tok = quota_stall_task_stalled(QUOTA_STALL_MEM);
+    (void)stall_step_window();
+    stall_snap(QUOTA_STALL_MEM, &s);
+    TEST_ASSERT_EQ((uint32_t)s.full_undefined, 1u,
+                   "full is undefined while nothing tracks the runnable count");
+    TEST_ASSERT_EQ((uint32_t)s.full_total_ns, 0u,
+                   "and no full time is accrued");
+
+    /* Tracking comes up mid-stall. The re-baseline must draw the line here. */
+    run = quota_stall_runnable_begin();
+    quota_stall_runnable_end(&run);
+    (void)stall_step_window();
+
+    stall_snap(QUOTA_STALL_MEM, &s);
+    TEST_ASSERT_EQ((uint32_t)s.full_undefined, 0u,
+                   "full becomes defined once the runnable count is tracked");
+    TEST_ASSERT_EQ((uint32_t)s.full_total_ns, 0u,
+                   "and the pre-tracking interval is NOT backfilled as full");
+    /* The activation must not eat the `some` it happened to overlap: an earlier
+     * revision re-baselined every counter at the transition and silently deleted
+     * a whole window of valid stall time. */
+    TEST_ASSERT_EQ((uint32_t)s.some_total_ns,
+                   (uint32_t)(2ull * STALL_WINDOW_NS),
+                   "and every some window across the transition is preserved");
+
+    /* From here on full is real. */
+    (void)stall_step_window();
+    stall_snap(QUOTA_STALL_MEM, &s);
+    TEST_ASSERT(s.full_total_ns > 0,
+                "full accrues normally in the windows after activation");
+    quota_stall_task_unstalled(&tok);
 }
 
 /* A clock that did not advance must close no window and change nothing. The 50 ms
@@ -683,11 +792,22 @@ static void test_stall_rejects_bad_arguments(void)
                        (quota_stall_domain_t)QUOTA_STALL_DOMAIN_COUNT)[0], (uint32_t)'?',
                    "an out-of-range domain renders as unknown");
 
-    /* A runnable delta at the extreme of its signed range must clamp, not
-     * negate into undefined behavior or wrap the unsigned count. */
-    quota_stall_runnable_delta((int32_t)0x80000000);   /* INT32_MIN */
-    quota_stall_runnable_delta(1);
-    quota_stall_runnable_delta(-1);
+    /* A runnable token consumed twice must be a no-op on the second call, and
+     * an unmatched end must not underflow the count. */
+    {
+        quota_stall_token_t run = quota_stall_runnable_begin();
+        quota_stall_runnable_end(&run);
+        quota_stall_runnable_end(&run);
+        quota_stall_runnable_end(&run);
+    }
+    {
+        /* A stall token must not be consumable as a runnable token. */
+        quota_stall_token_t tok2 = quota_stall_task_stalled(QUOTA_STALL_IO);
+        quota_stall_runnable_end(&tok2);
+        TEST_ASSERT_EQ(tok2.domain, (uint32_t)QUOTA_STALL_IO,
+                       "runnable_end does not consume a stall token");
+        quota_stall_task_unstalled(&tok2);
+    }
 }
 
 /* ==========================================================================
@@ -848,6 +968,35 @@ static void test_stall_info_class_roundtrip(void)
                    (uint32_t)mem.some_avg[QUOTA_STALL_AVG300],
                    "the row's avg300 matches the kernel snapshot");
 
+    /* Every remaining published field, so a same-width reorder cannot pass. */
+    TEST_ASSERT_EQ((uint32_t)info.LastUpdateNs,
+                   (uint32_t)quota_stall_last_update_ns(),
+                   "LastUpdateNs matches the kernel's closed-window timestamp");
+    TEST_ASSERT_EQ(info.SystemLevel, (uint32_t)quota_stall_system_level(),
+                   "SystemLevel matches the kernel's composite level");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].Level,
+                   (uint32_t)mem.level, "the row's level matches the snapshot");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].FullTotalNs,
+                   (uint32_t)mem.full_total_ns,
+                   "the row's full total matches the snapshot");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].SomeAvg60,
+                   (uint32_t)mem.some_avg[QUOTA_STALL_AVG60],
+                   "the row's avg60 matches the snapshot");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].FullAvg60,
+                   (uint32_t)mem.full_avg[QUOTA_STALL_AVG60],
+                   "the row's full avg60 matches the snapshot");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].FullAvg300,
+                   (uint32_t)mem.full_avg[QUOTA_STALL_AVG300],
+                   "the row's full avg300 matches the snapshot");
+    TEST_ASSERT_EQ((uint32_t)info.Reserved0, 0u, "class Reserved0 is zeroed");
+    TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].Reserved0, 0u,
+                   "row Reserved0 is zeroed");
+    for (uint32_t r = 0; r < 4u; r++)
+        TEST_ASSERT_EQ((uint32_t)info.Reserved[r], 0u, "class Reserved[] is zeroed");
+    for (uint32_t r = 0; r < 2u; r++)
+        TEST_ASSERT_EQ((uint32_t)info.Domains[QUOTA_STALL_MEM].Reserved[r], 0u,
+                       "row Reserved[] is zeroed");
+
     /* The uninstrumented rows carry the honest answer, not a calm-looking one. */
     TEST_ASSERT_EQ(info.Domains[QUOTA_STALL_IO].Flags &
                    SYSTEM_RESOURCE_PRESSURE_FLAG_VALID, 0u,
@@ -927,6 +1076,12 @@ void test_register_quota_stall(void)
                             test_stall_over_long_stalled_gap_keeps_its_measurement, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: over-long quiet stall gap decays",
                             test_stall_over_long_quiet_gap_decays, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: runnable tracking does not backfill full",
+                            test_stall_runnable_tracking_does_not_backfill_full, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: absurd interval is discarded and re-anchors",
+                            test_stall_absurd_interval_is_discarded, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: stall dump runs clean",
+                            test_stall_dump_runs_clean, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: non-advancing clock closes no stall window",
                             test_stall_non_advancing_clock_closes_no_window, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: backwards clock re-anchors stall telemetry",

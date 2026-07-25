@@ -129,6 +129,34 @@ _Static_assert(QUOTA_PRESSURE_FALL_WATCH_PERMILLE < QUOTA_PRESSURE_FALL_WARNING_
                QUOTA_PRESSURE_FALL_WARNING_PERMILLE < QUOTA_PRESSURE_FALL_CRITICAL_PERMILLE,
                "fall thresholds must be strictly increasing with level");
 
+/* The bands, as accessors rather than as a table each lane copies.
+ *
+ * The stall lane (quota_stall.c) crosses the SAME bands as the budget lane, and
+ * an earlier revision gave each its own `g_rise_permille` / `g_fall_permille`
+ * array built from these macros. Same values, two definitions -- so an edit to
+ * one table silently changed only one lane's thresholds while the other kept the
+ * old behavior, with nothing in the build to notice. Indexed by the level being
+ * ENTERED (rise) or LEFT (fall); NORMAL has no threshold in either direction. */
+static inline uint16_t quota_pressure_rise_threshold(uint32_t level)
+{
+    switch (level) {
+    case QUOTA_PRESSURE_WATCH:    return QUOTA_PRESSURE_RISE_WATCH_PERMILLE;
+    case QUOTA_PRESSURE_WARNING:  return QUOTA_PRESSURE_RISE_WARNING_PERMILLE;
+    case QUOTA_PRESSURE_CRITICAL: return QUOTA_PRESSURE_RISE_CRITICAL_PERMILLE;
+    default:                      return 0;
+    }
+}
+
+static inline uint16_t quota_pressure_fall_threshold(uint32_t level)
+{
+    switch (level) {
+    case QUOTA_PRESSURE_WATCH:    return QUOTA_PRESSURE_FALL_WATCH_PERMILLE;
+    case QUOTA_PRESSURE_WARNING:  return QUOTA_PRESSURE_FALL_WARNING_PERMILLE;
+    case QUOTA_PRESSURE_CRITICAL: return QUOTA_PRESSURE_FALL_CRITICAL_PERMILLE;
+    default:                      return 0;
+    }
+}
+
 /* Consecutive qualifying samples required to move one level. Rising is faster
  * than falling, matching the block-telemetry mode machine's shape. */
 #define QUOTA_PRESSURE_RISE_SAMPLES   3u

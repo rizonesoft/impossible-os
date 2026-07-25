@@ -71,18 +71,21 @@ typedef struct stall_cpu {
     uint64_t   full_ns[QUOTA_STALL_DOMAIN_COUNT];   /* cumulative, saturating */
     /* Time this CPU had ANY measurable activity -- something stalled or
      * something runnable. It is the denominator the ratios are taken against;
-     * see weighted_ratio_q16 for how it is used and why the naive denominator
+     * see weighted_ns for how it is used and why the naive denominator
      * is wrong. */
     uint64_t   nonidle_ns;
-    /* Pad the ELEMENT to a whole cache line. Aligning only the array base
-     * aligns element 0 and nothing else: at 88 bytes of payload, CPU 1's lock
-     * would share a line with CPU 0's counters and every stall transition on one
-     * core would invalidate the other's line -- the exact false sharing the
-     * per-CPU split exists to avoid. */
-    uint8_t    _pad[(2u * QUOTA_STALL_CPU_ALIGN) -
-                    (sizeof(spinlock_t) + 2u * sizeof(uint64_t) +
-                     (QUOTA_STALL_DOMAIN_COUNT + 1u) * sizeof(uint32_t) +
-                     2u * QUOTA_STALL_DOMAIN_COUNT * sizeof(uint64_t))];
+    /* The ELEMENT is cache-line aligned, which also rounds its SIZE up to a
+     * multiple of the alignment -- so element N+1 starts on its own line without
+     * a hand-written pad. Aligning only the ARRAY would align element 0 and
+     * nothing else, and CPU 1's lock would share a line with CPU 0's counters.
+     *
+     * An earlier revision added an explicit pad sized by summing the field
+     * widths, which silently missed the 4-byte hole between the 4-byte spinlock
+     * and the 8-aligned last_ns: the payload is 88 bytes, not 84, so the pad
+     * pushed sizeof to 192 (three lines, 3 KiB of BSS) instead of 128. The
+     * asserts below could not catch it because 192 is also a clean multiple of
+     * 64. Letting the compiler do the rounding removes the arithmetic that was
+     * wrong in the first place; the size assert now pins the real answer. */
 } __attribute__((aligned(QUOTA_STALL_CPU_ALIGN))) stall_cpu_t;
 
 /* Named g_stall_cpu, not g_cpu: cpuid.h publishes a global `g_cpu` feature
@@ -91,12 +94,15 @@ static stall_cpu_t g_stall_cpu[MAX_CPUS];
 
 /* Both halves of the isolation claim, asserted rather than asserted-in-prose:
  * the element must START on a cache line and must OCCUPY whole cache lines. */
-_Static_assert(__builtin_offsetof(stall_cpu_t, _pad) < sizeof(stall_cpu_t),
-    "per-CPU stall padding must not overflow the element");
 _Static_assert(sizeof(stall_cpu_t) % QUOTA_STALL_CPU_ALIGN == 0,
     "per-CPU stall state must occupy whole cache lines (no false sharing)");
 _Static_assert(_Alignof(stall_cpu_t) >= QUOTA_STALL_CPU_ALIGN,
     "per-CPU stall state must start on a cache line");
+/* Pin the ACTUAL size, not just its divisibility: a future field that pushed the
+ * element from two lines to three would otherwise pass every assert above while
+ * quietly costing 50% more BSS and an extra line per CPU. */
+_Static_assert(sizeof(stall_cpu_t) == 2u * QUOTA_STALL_CPU_ALIGN,
+    "per-CPU stall state is expected to be exactly two cache lines");
 
 /* ==========================================================================
  * Aggregated state
@@ -118,6 +124,7 @@ typedef struct stall_domain {
 } stall_domain_t;
 
 static spinlock_t     g_agg_lock = SPINLOCK_INIT;
+/* Guarded by g_agg_lock. */
 static stall_domain_t g_domain[QUOTA_STALL_DOMAIN_COUNT];
 /* PRIVATE aggregation anchor: where the current window started. Set at init and
  * moved on every fold, including the ones that close no window. */
@@ -127,30 +134,52 @@ static uint64_t       g_anchor_ns;
  * publishing the anchor would report a non-zero time from init onward -- so a
  * consumer could not tell "not started" from "started and quiet". */
 static uint64_t       g_last_closed_ns;
+/* Guarded by g_agg_lock (g_anchor_ns is also read locklessly, atomically). */
 static uint64_t       g_windows_closed;
+/* Non-zero while a fold is in progress. The anchor alone cannot serialize a
+ * fold: advancing it up front only keeps a second caller out until the NEXT
+ * deadline, so a folder delayed past one window could resume and overwrite a
+ * newer aggregate with stale data. This flag is held from claim to publish, and
+ * the anchor moves only on a successful publish -- so a fold that never
+ * completes leaves the window open for the next caller instead of losing it. */
+static uint32_t       g_fold_busy;
+
+/* Set once a producer declares it maintains the runnable count. Until then
+ * `full` is NOT derivable: it means "stalled with nothing else to run", and with
+ * nr_running pinned at zero every stalled interval would trivially satisfy that
+ * and report full == some. Reporting a fabricated full is exactly the failure
+ * the VALID flag exists to prevent, so full stays zero-and-undefined until the
+ * scheduler seam says otherwise. Atomic: read by the aggregator, set by a
+ * producer, never under a common lock. */
+static uint32_t       g_runnable_tracked;
+
+/* A producer asking for runnable tracking to be turned on. The producer CANNOT
+ * perform the transition itself: enabling `full` requires re-anchoring every
+ * per-CPU slot and re-baselining the aggregator's private g_prev_* counters, and
+ * those belong to the fold. A producer that grabbed them would race a fold in
+ * progress -- and it cannot WAIT for one either, because it may be running in
+ * interrupt context on the very CPU the fold is on. So the producer only raises
+ * this request; the next fold performs the transition inside its own
+ * exclusivity, which is also the only honest place to draw the line: a window
+ * boundary. */
+static uint32_t       g_runnable_request;
+
+/* Aggregator-private: the previous reading of each CPU's cumulative counters, so
+ * a window measures GROWTH. Kept PER CPU rather than summed because the windows
+ * are combined with a per-CPU weight, so a slot's stall has to stay associated
+ * with that same slot's activity. Written only by the fold (serialized by
+ * g_fold_busy) and by the re-baseline helper. */
+static uint64_t g_prev_some_ns[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
+static uint64_t g_prev_full_ns[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
+static uint64_t g_prev_nonidle_ns[MAX_CPUS];
+/* The timestamp each slot's previous snapshot corresponded to. */
+static uint64_t g_prev_stamp_ns[MAX_CPUS];
 
 /* Decay coefficient per averaging window, indexed by quota_stall_window_t. */
 static const uint64_t g_decay[QUOTA_STALL_WINDOW_COUNT] = {
     QUOTA_STALL_EXP_10S,
     QUOTA_STALL_EXP_60S,
     QUOTA_STALL_EXP_300S
-};
-
-/* Rise / fall thresholds indexed by the level being entered / left, mirroring
- * quota_pressure.c so the two lanes cross the same bands. Index 0 is unused
- * (there is no threshold to enter NORMAL from below) and present only so the
- * arrays index directly by level. */
-static const uint16_t g_rise_permille[QUOTA_PRESSURE_LEVEL_COUNT] = {
-    0,
-    QUOTA_PRESSURE_RISE_WATCH_PERMILLE,
-    QUOTA_PRESSURE_RISE_WARNING_PERMILLE,
-    QUOTA_PRESSURE_RISE_CRITICAL_PERMILLE
-};
-static const uint16_t g_fall_permille[QUOTA_PRESSURE_LEVEL_COUNT] = {
-    0,
-    QUOTA_PRESSURE_FALL_WATCH_PERMILLE,
-    QUOTA_PRESSURE_FALL_WARNING_PERMILLE,
-    QUOTA_PRESSURE_FALL_CRITICAL_PERMILLE
 };
 
 static const char *const g_domain_name[QUOTA_STALL_DOMAIN_COUNT] = {
@@ -162,9 +191,7 @@ _Static_assert(sizeof(g_decay) / sizeof(g_decay[0]) == QUOTA_STALL_WINDOW_COUNT,
     "decay table must cover every averaging window");
 _Static_assert(sizeof(g_domain_name) / sizeof(g_domain_name[0]) == QUOTA_STALL_DOMAIN_COUNT,
     "domain name table must cover every stall domain");
-_Static_assert(sizeof(g_rise_permille) / sizeof(g_rise_permille[0]) == QUOTA_PRESSURE_LEVEL_COUNT &&
-               sizeof(g_fall_permille) / sizeof(g_fall_permille[0]) == QUOTA_PRESSURE_LEVEL_COUNT,
-    "stall threshold tables must cover every pressure level");
+
 
 /* ==========================================================================
  * Helpers
@@ -182,7 +209,13 @@ static int domain_valid(quota_stall_domain_t domain)
  * instead would be a fabrication a consumer could act on. */
 static int domain_full_defined(quota_stall_domain_t domain)
 {
-    return domain != QUOTA_STALL_CPU;
+    if (domain == QUOTA_STALL_CPU)
+        return 0;
+    /* `full` also needs someone maintaining the runnable count. Without it
+     * nr_running is permanently zero, so every stalled interval would qualify as
+     * "nothing else to run" and full would simply mirror some -- a fabricated
+     * number that looks like a measurement. */
+    return __atomic_load_n(&g_runnable_tracked, __ATOMIC_ACQUIRE) != 0;
 }
 
 static uint64_t sat_add_u64(uint64_t a, uint64_t b)
@@ -250,13 +283,21 @@ static void stall_cpu_integrate_locked(stall_cpu_t *c, uint64_t now)
     uint64_t delta;
     int      counted_nonidle = 0;
 
-    /* Unseeded, or a clock that did not advance (a test clock reset, or two
-     * reads inside the same timer granule). Re-anchor and charge nothing: the
-     * interval before the first observation is not a measurement. */
-    if (c->last_ns == 0 || now <= c->last_ns) {
+    /* Unseeded: anchor here and charge nothing -- the interval before the first
+     * observation is not a measurement. */
+    if (c->last_ns == 0) {
         c->last_ns = now;
         return;
     }
+    /* NEVER move a slot's integration point backwards. The fold captures one
+     * `now` before walking the CPUs, so a producer on another CPU can integrate
+     * that slot at a LATER timestamp before the walk reaches it; assigning the
+     * fold's older stamp here would rewind the slot and let the overlapping
+     * interval be charged a second time by the next producer. Returning without
+     * touching last_ns costs at most the sub-microsecond sliver between the two
+     * timestamps, which the next integration picks up anyway. */
+    if (now <= c->last_ns)
+        return;
     delta = now - c->last_ns;
     c->last_ns = now;
 
@@ -368,14 +409,14 @@ static void stall_level_step(stall_domain_t *sd, uint16_t permille)
     sd->last_permille = permille;
 
     if (level < (uint8_t)QUOTA_PRESSURE_CRITICAL &&
-        permille >= g_rise_permille[level + 1]) {
+        permille >= quota_pressure_rise_threshold((uint32_t)level + 1u)) {
         sd->fall_count = 0;
         if (++sd->rise_count >= (uint16_t)QUOTA_PRESSURE_RISE_SAMPLES) {
             sd->rise_count = 0;
             sd->level = (uint8_t)(level + 1);
         }
     } else if (level > (uint8_t)QUOTA_PRESSURE_NORMAL &&
-               permille < g_fall_permille[level]) {
+               permille < quota_pressure_fall_threshold((uint32_t)level)) {
         sd->rise_count = 0;
         if (++sd->fall_count >= (uint16_t)QUOTA_PRESSURE_FALL_SAMPLES) {
             sd->fall_count = 0;
@@ -394,13 +435,59 @@ static void stall_level_step(stall_domain_t *sd, uint16_t permille)
  * Lifecycle
  * ========================================================================== */
 
+/* Re-anchor every per-CPU integration point at `now` AND baseline the
+ * aggregator's previous-counter snapshots to whatever those slots hold.
+ *
+ * CALLER MUST OWN THE FOLD (g_fold_busy), or run before any fold is possible:
+ * it writes g_prev_*, which the fold reads and writes, and those are plain
+ * fields with no lock of their own.
+ *
+ * Both halves are needed to draw a line under everything that came before.
+ * Moving last_ns alone stops the elapsed TIME from being re-integrated, but the
+ * cumulative counters still carry their old growth, and the next window would
+ * difference them against zero -- publishing a full second of pre-line stall as
+ * a 500-permille window that never happened. */
+static void stall_rebaseline_all(uint64_t now)
+{
+    for (uint32_t i = 0; i < (uint32_t)MAX_CPUS; i++) {
+        stall_cpu_t *c = &g_stall_cpu[i];
+        uint64_t     cflags;
+
+        spin_lock_irqsave(&c->lock, &cflags);
+        /* Monotonic, for the same reason the integrator is: a producer may have
+         * moved this slot past the caller's `now` already. */
+        if (now > c->last_ns)
+            c->last_ns = now;
+        for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
+            g_prev_some_ns[i][d] = c->some_ns[d];
+            g_prev_full_ns[i][d] = c->full_ns[d];
+        }
+        g_prev_nonidle_ns[i] = c->nonidle_ns;
+        g_prev_stamp_ns[i]   = c->last_ns;
+        spin_unlock_irqrestore(&c->lock, cflags);
+    }
+}
+
 void quota_stall_init(void)
 {
     uint64_t flags;
     uint64_t now = stall_now_ns();
 
+    /* The state machine is live from the first producer call; only publication
+     * waits for init. Anything a producer recorded before this point belongs to
+     * an interval nobody was measuring, so draw the line here.
+     *
+     * Safe without claiming the fold: this runs in Phase 3 before the periodic
+     * sampler's timer is armed, so no fold can be in progress. The claim is
+     * taken anyway rather than asserted, so a future caller that moves this
+     * cannot silently start racing the baselines. */
+    if (__atomic_exchange_n(&g_fold_busy, 1u, __ATOMIC_ACQ_REL) == 0u) {
+        stall_rebaseline_all(now);
+        __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
+    }
+
     spin_lock_irqsave(&g_agg_lock, &flags);
-    g_anchor_ns = now;
+    __atomic_store_n(&g_anchor_ns, now, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_agg_lock, flags);
 
     klog(LOG_INFO, "quota",
@@ -461,21 +548,39 @@ void quota_stall_task_unstalled(quota_stall_token_t *token)
     if (!token)
         return;
 
-    /* An unrecorded enter hands back an invalid token; consuming it must be a
-     * no-op so a producer can call leave unconditionally on its exit path. */
-    if (token->domain >= (uint32_t)QUOTA_STALL_DOMAIN_COUNT ||
-        token->cpu >= (uint32_t)MAX_CPUS)
+    /* Validate only the SLOT with an ordinary read: `cpu` is written once when
+     * the token is issued and never mutated afterwards. The claim word is a
+     * different matter -- every access to token->domain goes through an atomic
+     * below, because mixing a plain read with another CPU's atomic write to the
+     * same word is a data race the compiler is free to break even where the
+     * hardware would not. */
+    if (token->cpu >= (uint32_t)MAX_CPUS)
         return;
 
-    cpu    = token->cpu;
-    domain = token->domain;
+    cpu = token->cpu;
 
-    /* CONSUME the token before touching the counter. The count carries no
-     * per-token identity, so a token consumed twice would decrement a second,
-     * still-blocked task's stall -- and the zero-clamp would not catch it,
-     * because with two waiters the count never reaches zero. Invalidating the
-     * caller's copy is what makes the documented idempotence real. */
-    token->domain = (uint32_t)QUOTA_STALL_DOMAIN_COUNT;
+    /* CLAIM the token ATOMICALLY, before touching the counter.
+     *
+     * A plain check-then-store loses the race that matters: a timeout path and a
+     * completion path can both cancel the same wait. Both read the token as
+     * valid, both store the invalid marker, and both decrement -- driving the
+     * count to zero while a SECOND waiter is still blocked, so the domain
+     * reports quiet during a real stall. The zero-clamp cannot catch it, because
+     * with two waiters the count never reaches zero. One exchange makes exactly
+     * one caller the consumer. */
+    domain = __atomic_load_n(&token->domain, __ATOMIC_ACQUIRE);
+    for (;;) {
+        /* Not a live STALL token: already consumed, never issued, or a runnable
+         * token. Return WITHOUT writing -- a bare exchange would invalidate a
+         * token this function has no claim on. */
+        if (domain >= (uint32_t)QUOTA_STALL_DOMAIN_COUNT)
+            return;
+        if (__atomic_compare_exchange_n(&token->domain, &domain,
+                                        (uint32_t)QUOTA_STALL_DOMAIN_COUNT, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            break;   /* claimed it; `domain` still holds the value we won */
+        /* Lost the race; `domain` now holds what the winner left. */
+    }
 
     /* Not necessarily the CURRENT CPU: this is the cross-CPU case the token
      * exists for. The per-CPU lock makes it safe -- it is a normal irqsave
@@ -493,39 +598,61 @@ void quota_stall_task_unstalled(quota_stall_token_t *token)
     spin_unlock_irqrestore(&c->lock, flags);
 }
 
-/* No ownership token here, and none is needed: a runnable count is a property of
- * a CPU's run queue rather than of a task, so the producer that changes it is by
- * definition reporting about the CPU it is running on. */
-void quota_stall_runnable_delta(int32_t delta)
+quota_stall_token_t quota_stall_runnable_begin(void)
 {
-    stall_cpu_t *c;
-    uint64_t     irq_flags;
-    uint64_t     flags;
-    uint32_t     slot;
+    quota_stall_token_t token = quota_stall_token_none();
+    stall_cpu_t        *c;
+    uint64_t            irq_flags;
+    uint64_t            flags;
+    uint32_t            slot;
 
-    if (delta == 0)
-        return;
-    /* Pinned for the same reason the stall enter is: the runnable count is half
-     * of the pair the aggregator weights, and splitting it from the stall it
-     * qualifies changes the measurement rather than just relabelling it. */
     c = stall_pin_this_cpu(&irq_flags, &slot);
     if (!c)
-        return;
+        return token;
 
     spin_lock_irqsave(&c->lock, &flags);
     stall_cpu_integrate_locked(c, stall_now_ns());
-    if (delta > 0) {
-        uint32_t room = QUOTA_STALL_COUNT_MAX - c->nr_running;
-        c->nr_running += ((uint32_t)delta < room) ? (uint32_t)delta : room;
-    } else {
-        /* -delta computed in a wider signed type first: negating INT32_MIN in
-         * int32_t is undefined, and the count is unsigned anyway. */
-        uint64_t drop = (uint64_t)(-(int64_t)delta);
-        c->nr_running = (drop < (uint64_t)c->nr_running)
-                      ? (uint32_t)(c->nr_running - drop) : 0u;
-    }
+    if (c->nr_running < QUOTA_STALL_COUNT_MAX)
+        c->nr_running++;
     spin_unlock_irqrestore(&c->lock, flags);
     local_irq_restore(irq_flags);
+
+    /* REQUEST runnable tracking; the next fold enables it. A producer that
+     * maintains the count has demonstrated it by calling this, but it must not
+     * perform the transition here -- see g_runnable_request. */
+    if (__atomic_load_n(&g_runnable_tracked, __ATOMIC_ACQUIRE) == 0u)
+        __atomic_store_n(&g_runnable_request, 1u, __ATOMIC_RELEASE);
+
+    token.cpu    = slot;
+    token.domain = QUOTA_STALL_RUNNABLE_TOKEN;
+    return token;
+}
+
+void quota_stall_runnable_end(quota_stall_token_t *token)
+{
+    stall_cpu_t *c;
+    uint64_t     flags;
+    uint32_t     claimed;
+    uint32_t     cpu;
+
+    if (!token || token->cpu >= (uint32_t)MAX_CPUS)
+        return;
+
+    /* Claim ONLY a runnable token, and only once. A bare exchange would
+     * invalidate a stall token handed to the wrong consumer. */
+    claimed = QUOTA_STALL_RUNNABLE_TOKEN;
+    if (!__atomic_compare_exchange_n(&token->domain, &claimed,
+                                     (uint32_t)QUOTA_STALL_DOMAIN_COUNT, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+        return;
+
+    cpu = token->cpu;
+    c = &g_stall_cpu[cpu];
+    spin_lock_irqsave(&c->lock, &flags);
+    stall_cpu_integrate_locked(c, stall_now_ns());
+    if (c->nr_running > 0)
+        c->nr_running--;
+    spin_unlock_irqrestore(&c->lock, flags);
 }
 
 /* ==========================================================================
@@ -545,13 +672,16 @@ typedef struct stall_window {
     uint64_t some[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
     uint64_t full[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
     uint64_t nonidle[MAX_CPUS];
+    /* The interval each slot's deltas actually cover, which is NOT the fold's
+     * elapsed. The fold captures one timestamp and then walks the CPUs; a
+     * producer can advance a slot past that timestamp before the walk reaches
+     * it, so the slot's counters include time the fold's interval does not. An
+     * earlier revision divided every slot by the fold's elapsed and advanced the
+     * baselines to the newer counters anyway -- permanently deleting the
+     * difference. Dividing each slot by its OWN span conserves it exactly. */
+    uint64_t span[MAX_CPUS];
 } stall_window_t;
 
-/* Aggregator-private: the previous reading of each CPU's cumulative counters, so
- * a window measures GROWTH. Per CPU rather than summed, for the reason above. */
-static uint64_t g_prev_some_ns[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
-static uint64_t g_prev_full_ns[MAX_CPUS][QUOTA_STALL_DOMAIN_COUNT];
-static uint64_t g_prev_nonidle_ns[MAX_CPUS];
 
 static uint64_t growth_of(uint64_t now_val, uint64_t *prev)
 {
@@ -562,7 +692,7 @@ static uint64_t growth_of(uint64_t now_val, uint64_t *prev)
     return g;
 }
 
-static void collect_percpu(uint64_t now, stall_window_t *win)
+static void collect_percpu(uint64_t now, uint64_t anchor, stall_window_t *win)
 {
     /* Walk EVERY slot, not just the currently-online count. A CPU that went
      * offline still holds the stall time it accumulated while it was up, and
@@ -574,6 +704,7 @@ static void collect_percpu(uint64_t now, stall_window_t *win)
         uint64_t     cur_some[QUOTA_STALL_DOMAIN_COUNT];
         uint64_t     cur_full[QUOTA_STALL_DOMAIN_COUNT];
         uint64_t     cur_nonidle;
+        uint64_t     cur_stamp;
 
         spin_lock_irqsave(&c->lock, &flags);
         stall_cpu_integrate_locked(c, now);
@@ -582,6 +713,9 @@ static void collect_percpu(uint64_t now, stall_window_t *win)
             cur_full[d] = c->full_ns[d];
         }
         cur_nonidle = c->nonidle_ns;
+        /* Read the slot's OWN integration point under its lock: that, not the
+         * fold's `now`, is the instant these counters describe. */
+        cur_stamp = c->last_ns;
         spin_unlock_irqrestore(&c->lock, flags);
 
         /* Differencing happens OUTSIDE the per-CPU lock: it touches only
@@ -592,25 +726,18 @@ static void collect_percpu(uint64_t now, stall_window_t *win)
             win->full[i][d] = growth_of(cur_full[d], &g_prev_full_ns[i][d]);
         }
         win->nonidle[i] = growth_of(cur_nonidle, &g_prev_nonidle_ns[i]);
+        {
+            /* An unseeded slot has no previous stamp; its span starts at the
+             * window ANCHOR, not at zero. Measuring from zero would divide the
+             * slot's stall by all of uptime and report a fraction of nothing. */
+            uint64_t prev = g_prev_stamp_ns[i] ? g_prev_stamp_ns[i] : anchor;
+
+            win->span[i] = (cur_stamp > prev) ? (cur_stamp - prev) : 0u;
+            g_prev_stamp_ns[i] = cur_stamp;
+        }
     }
 }
 
-/* Combine one domain's per-CPU stall times into a single time comparable to the
- * wall interval, weighting each CPU by how busy it was:
- *
- *     stall = sum(stall_i * nonidle_i) / sum(nonidle_i)
- *
- * This is Linux PSI's formula, and the weighting is the whole point. The naive
- * alternative, sum(stall_i) / sum(nonidle_i), silently answers a different
- * question. Two CPUs over a 2 s window, CPU 0 non-idle and stalled for 1 s,
- * CPU 1 running the full 2 s: the naive form reports 333 permille, the weighted
- * form 167. The naive number is not a fraction of anything a reader can name --
- * it divides one CPU's stall by two CPUs' activity.
- *
- * Overflow safety: weights are normalized against the busiest CPU into 0..4096,
- * and each CPU's stall is converted to a 0..1000-permille ratio (in 2^-16 fixed
- * point) BEFORE weighting. Every product is therefore bounded by 1000 * 65536 *
- * 4096 * MAX_CPUS, about 2^42, no matter how long the interval was. */
 /* One CPU's stall as a fraction of the interval, in permille scaled by 2^16.
  *
  * The multiply MUST come before the divide. Computing (stall << 16) / elapsed
@@ -643,147 +770,152 @@ static uint64_t stall_ratio_q16(uint64_t stall, uint64_t elapsed)
            ((rem << QUOTA_STALL_AVG_SHIFT) / elapsed);
 }
 
-/* Combine one domain's per-CPU stall ratios into a single figure, weighting each
- * CPU by how busy it was:
+/* Combine per-CPU values into one figure, weighting each CPU by how busy it was:
  *
- *     stall = sum(stall_i * nonidle_i) / sum(nonidle_i)
+ *     value = sum(value_i * nonidle_i) / sum(nonidle_i)
  *
- * This is Linux PSI's formula, and the weighting is the whole point. The naive
- * alternative, sum(stall_i) / sum(nonidle_i), silently answers a different
- * question. Two CPUs over a 2 s window, CPU 0 non-idle and stalled for 1 s,
- * CPU 1 running the full 2 s: the naive form reports 333 permille, the weighted
- * form 167. The naive number is not a fraction of anything a reader can name --
- * it divides one CPU's stall by two CPUs' activity.
+ * Linux PSI's weighting, and the reason the collector keeps per-CPU deltas
+ * instead of summing them. The naive alternative, sum(stall_i) / sum(nonidle_i),
+ * silently answers a different question: two CPUs over a 2 s window, CPU 0
+ * non-idle and stalled for 1 s, CPU 1 running the full 2 s, gives 333 permille
+ * naively and 167 weighted. The naive number is not a fraction of anything a
+ * reader can name -- it divides one CPU's stall by two CPUs' activity.
  *
- * Returns permille in 2^-16 fixed point, NOT a whole permille: the caller feeds
- * it to the EWMA and to the cumulative total, and rounding to a whole permille
- * here would erase every sub-permille window before either of them saw it.
+ * Everything the fold publishes comes through here in NANOSECONDS: the stall
+ * times AND the interval they are measured over. That is what keeps them
+ * coherent. An earlier revision computed a per-slot RATIO here and rebuilt a
+ * time from it using the fold-wide elapsed -- two different intervals -- so a
+ * slot a producer advanced past the fold timestamp had its excess either deleted
+ * or double-counted depending on which side of the boundary the stall fell.
+ * Weighting the times and the spans identically removes the mismatch rather than
+ * reconciling it afterwards.
  *
- * Overflow: ratios are bounded by 1000 << 16 (about 6.6e7) and weights by 4096,
- * so the accumulator is bounded by 6.6e7 * 4096 * MAX_CPUS, about 4.3e12,
- * regardless of how long the interval was. */
-static uint64_t weighted_ratio_q16(const uint64_t *stall_per_cpu, uint32_t stride,
-                                   const uint64_t *weight, uint64_t sum_weight,
-                                   uint64_t elapsed)
+ * Overflow: each value is bounded by QUOTA_STALL_MAX_INTERVAL_NS (4.32e13) and
+ * each weight by QUOTA_STALL_WEIGHT_ONE (4096), so the accumulator stays under
+ * 2^62 across MAX_CPUS. */
+static uint64_t weighted_ns(const uint64_t *per_cpu, uint32_t stride,
+                            const uint64_t *weight, uint64_t sum_weight)
 {
     uint64_t acc = 0;
 
-    if (sum_weight == 0 || elapsed == 0)
+    if (sum_weight == 0)
         return 0;
 
     for (uint32_t i = 0; i < (uint32_t)MAX_CPUS; i++) {
-        uint64_t s = stall_per_cpu[(uint64_t)i * stride];
+        uint64_t v = per_cpu[(uint64_t)i * stride];
 
-        if (weight[i] == 0 || s == 0)
+        if (weight[i] == 0 || v == 0)
             continue;
-        acc += stall_ratio_q16(s, elapsed) * weight[i];
+        acc += v * weight[i];
     }
-    acc /= sum_weight;
-    return (acc > QUOTA_STALL_AVG_MAX) ? QUOTA_STALL_AVG_MAX : acc;
-}
-
-/* Convert a Q16 permille ratio over `elapsed` back into nanoseconds.
- *
- * Split into whole and fractional permille so the product cannot overflow for
- * any interval the ceiling admits: (ratio >> 16) <= 1000 times (elapsed / 1000)
- * <= 4.32e10 is 4.32e13, and the fractional term is bounded by 65535 times the
- * same figure before its own shift. */
-static uint64_t ratio_q16_to_ns(uint64_t ratio_q16, uint64_t elapsed)
-{
-    uint64_t per_permille = elapsed / (uint64_t)QUOTA_STALL_PERMILLE_MAX;
-    uint64_t whole = ratio_q16 >> QUOTA_STALL_AVG_SHIFT;
-    uint64_t frac  = ratio_q16 & (QUOTA_STALL_AVG_ONE - 1u);
-
-    return whole * per_permille +
-           ((frac * per_permille) >> QUOTA_STALL_AVG_SHIFT);
-}
-
-/* Fold one interval's measurement into a domain's averages.
- *
- * `periods` is how many aggregation periods the interval covered, and the sample
- * is applied ONCE PER PERIOD rather than once in total. The difference is not
- * cosmetic: an earlier revision decayed for the missed periods and then applied
- * the interval's ratio a single time, so forty seconds of continuous full-scale
- * stall arriving as one delayed aggregation moved avg10 from 0 to about 83
- * permille instead of about 825, and handed the hysteresis one qualifying rise
- * instead of twenty. A sampler that fell behind would therefore under-report
- * exactly the sustained pressure it exists to catch.
- *
- * The ratio is the interval AVERAGE, so attributing it uniformly to every period
- * it covers is the honest reconstruction: the distribution inside the gap is not
- * recoverable, and assuming it was uniform neither invents pressure nor hides
- * it. */
-static void apply_window(stall_domain_t *sd, uint64_t some_fp,
-                         uint64_t full_fp, uint64_t periods, int step_level)
-{
-    for (uint32_t w = 0; w < (uint32_t)QUOTA_STALL_WINDOW_COUNT; w++) {
-        sd->some_avg[w] = ewma_apply(sd->some_avg[w], some_fp, g_decay[w], periods);
-        sd->full_avg[w] = ewma_apply(sd->full_avg[w], full_fp, g_decay[w], periods);
-    }
-
-    /* The hysteresis advances ONCE per aggregation, however many periods the
-     * interval spanned. A delayed aggregation produces one number -- the
-     * interval AVERAGE -- and the per-CPU counters retain no record of how the
-     * stall was distributed inside it. Feeding that one number to the debounce
-     * N times would fabricate N consecutive observations that were never made,
-     * and the debounce exists precisely to require consecutiveness: an interval
-     * averaging 800 permille might have been sixteen saturated periods followed
-     * by four quiet ones, and pretending it was twenty identical ones can move
-     * the level in either direction on evidence that does not exist.
-     *
-     * The consequence is honest and deliberate: after a sampler outage the level
-     * takes its normal debounce to catch up, because one observation is all that
-     * was actually made. The AVERAGES do catch up in full (they are a function
-     * of elapsed time, not of observation count), so nothing is lost from the
-     * metric itself. */
-    if (step_level)
-        stall_level_step(sd, avg_to_permille(sd->some_avg[QUOTA_STALL_AVG10]));
+    return acc / sum_weight;
 }
 
 int quota_stall_aggregate(void)
 {
     stall_window_t win;
     uint64_t weight[MAX_CPUS];
+    uint64_t some_fp[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t full_fp[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t some_ns[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t full_ns[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t total_some[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t total_full[QUOTA_STALL_DOMAIN_COUNT];
+    uint64_t raw_some;
+    uint64_t raw_full;
+    uint64_t span_ns;
+    uint64_t carry_some[QUOTA_STALL_DOMAIN_COUNT][QUOTA_STALL_WINDOW_COUNT];
+    uint64_t carry_full[QUOTA_STALL_DOMAIN_COUNT][QUOTA_STALL_WINDOW_COUNT];
     uint64_t sum_weight = 0;
     uint64_t max_nonidle = 0;
     uint64_t flags;
     uint64_t now = stall_now_ns();
+    uint64_t anchor;
     uint64_t elapsed;
     uint64_t periods;
 
-    spin_lock_irqsave(&g_agg_lock, &flags);
+    /* STAGE 1 -- lockless deadline check.
+     *
+     * The 50 ms pressure tick calls this forty times per window, so forty of
+     * every forty-one calls do nothing. Taking an IRQ-disabling global spinlock
+     * to discover that was pure cost on the timer service CPU; a relaxed load of
+     * the anchor answers it with no lock and no interrupt masking at all. */
+    anchor = __atomic_load_n(&g_anchor_ns, __ATOMIC_ACQUIRE);
 
-    /* Unseeded, or a clock that moved backwards (only a test clock can do
-     * that). Re-anchor and discard the interval rather than dividing by it. */
-    if (g_anchor_ns == 0 || now < g_anchor_ns) {
-        g_anchor_ns = now;
-        spin_unlock_irqrestore(&g_agg_lock, flags);
+    if (anchor == 0 || now < anchor) {
+        /* Unseeded, or a clock that moved backwards (only a test clock can do
+         * that). Baseline the SLOTS as well as the anchor: quota_stall_init is
+         * documented as optional, so a producer may have accrued time before
+         * anything anchored the window. Leaving g_prev_* at zero would let the
+         * next fold difference those cumulative counters against zero and
+         * publish pre-anchor history as if it had happened inside the first
+         * measured window. Needs fold ownership because it writes the private
+         * baselines; losing the claim means a fold is already running, which
+         * means an anchor already exists and this path is moot. */
+        if (__atomic_exchange_n(&g_fold_busy, 1u, __ATOMIC_ACQ_REL) == 0u) {
+            stall_rebaseline_all(now);
+            __atomic_store_n(&g_anchor_ns, now, __ATOMIC_RELEASE);
+            __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
+        }
         return 0;
     }
+    if (now - anchor < QUOTA_STALL_UPDATE_NS)
+        return 0;
 
-    elapsed = now - g_anchor_ns;
-    if (elapsed < QUOTA_STALL_UPDATE_NS) {
-        spin_unlock_irqrestore(&g_agg_lock, flags);
-        return 0;   /* the 50 ms sampler calls this 40 times per window */
+    /* STAGE 2 -- CLAIM the fold, for its whole duration. Exactly one caller wins
+     * the flag; it is released only after publication, so a delayed folder
+     * cannot be lapped by a second one and later overwrite the newer result. The
+     * anchor is deliberately NOT advanced here -- see the release path. */
+    if (__atomic_exchange_n(&g_fold_busy, 1u, __ATOMIC_ACQ_REL) != 0u)
+        return 0;
+
+    /* Re-read under exclusivity: the deadline check above was lockless, so the
+     * window may have been folded between that read and this claim. */
+    anchor = __atomic_load_n(&g_anchor_ns, __ATOMIC_ACQUIRE);
+    if (anchor == 0 || now < anchor ||
+        now - anchor < QUOTA_STALL_UPDATE_NS) {
+        __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
+        return 0;
     }
+    elapsed = now - anchor;
+
+    /* STAGE 3 -- collect. Each per-CPU lock is taken and released on its own,
+     * for just long enough to integrate and copy that slot's counters. No
+     * global lock is held across the walk, so a producer on another CPU never
+     * waits on the aggregator's arithmetic. */
+    collect_percpu(now, anchor, &win);
+
+    /* Pending runnable-tracking activation, published AFTER this window was
+     * collected and BEFORE the next one opens.
+     *
+     * The ordering is the whole fix. `full` cannot have accrued before tracking
+     * -- the integrator gates full accrual on domain_full_defined(), which is
+     * false until this flag is set -- so there is nothing to discard and no
+     * baseline to reset. An earlier revision re-baselined everything here, which
+     * did suppress pre-tracking full but ALSO advanced the `some` and non-idle
+     * baselines, silently deleting a whole window of perfectly valid stall time.
+     * Setting the flag after collection suppresses the untracked full without
+     * touching anything else: this window publishes its real `some`, and the
+     * next window is the first that describes `full`. */
+    if (__atomic_load_n(&g_runnable_request, __ATOMIC_ACQUIRE) != 0u)
+        __atomic_store_n(&g_runnable_tracked, 1u, __ATOMIC_RELEASE);
 
     /* An interval this long is not a delayed sample, it is a broken clock. The
-     * arithmetic below would still be defined, but the "measurement" would not
-     * describe anything, so re-anchor and take the counters as the new baseline
-     * instead of publishing a fiction. */
+     * counters have already been re-baselined by collect_percpu, so discarding
+     * here leaves consistent state for the next window. */
     if (elapsed > QUOTA_STALL_MAX_INTERVAL_NS) {
-        collect_percpu(now, &win);   /* re-baselines g_prev_* as a side effect */
-        g_anchor_ns = now;
-        spin_unlock_irqrestore(&g_agg_lock, flags);
+        __atomic_store_n(&g_anchor_ns, now, __ATOMIC_RELEASE);
+        __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
         return 0;
     }
 
-    collect_percpu(now, &win);
-
-    /* Normalize each CPU's non-idle time against the busiest CPU, so the weights
-     * are a bounded 0..QUOTA_STALL_WEIGHT_ONE regardless of interval length.
-     * A CPU that was idle throughout weighs nothing: it neither dilutes another
-     * core's stall nor contributes one. */
+    /* STAGE 4 -- compute, still with interrupts ENABLED and no lock held. This
+     * is the expensive part: 16 weight normalizations, up to 6 weighted-ratio
+     * passes over 16 slots, and 18 closed-form decays each costing a bounded
+     * binary exponentiation. Doing it under an IRQ-disabling global spinlock (as
+     * the first revision did) put roughly 270 exponentiation iterations plus a
+     * 16-slot walk inside one interrupt-masked region on the timer service CPU,
+     * against a repo contract that spinlock sections stay far below that. */
     for (uint32_t i = 0; i < (uint32_t)MAX_CPUS; i++) {
         if (win.nonidle[i] > max_nonidle)
             max_nonidle = win.nonidle[i];
@@ -795,50 +927,119 @@ int quota_stall_aggregate(void)
         sum_weight += weight[i];
     }
 
-    periods = elapsed / QUOTA_STALL_UPDATE_NS;
+    /* The interval the published numbers actually represent, weighted exactly
+     * like the stall times themselves. This -- not the fold's wall-clock elapsed
+     * -- is the ratio denominator and the period divisor, so every published
+     * quantity refers to one and the same interval. */
+    span_ns = weighted_ns(win.span, 1u, weight, sum_weight);
+    if (span_ns == 0) {
+        /* Nothing was non-idle anywhere, so there is no weighted interval to
+         * speak of -- but wall time still passed, and the averages must still
+         * decay across it. Fall back to the fold's elapsed: every stall time is
+         * zero in this case, so the fold contributes pure decay, which is
+         * exactly right for an idle system. Without this a long quiet gap
+         * advanced the EWMA by a single period and the averages never bled off.
+         */
+        span_ns = elapsed;
+    }
+
+    /* Periods over the REPRESENTED interval, so the EWMA advances by exactly the
+     * history the sample describes. */
+    periods = span_ns / QUOTA_STALL_UPDATE_NS;
     if (periods == 0)
         periods = 1;
 
     for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
-        stall_domain_t *sd = &g_domain[d];
-        uint64_t some_fp;
-        uint64_t full_fp;
+        some_ns[d] = weighted_ns(&win.some[0][d], QUOTA_STALL_DOMAIN_COUNT,
+                                 weight, sum_weight);
+        full_ns[d] = domain_full_defined((quota_stall_domain_t)d)
+                   ? weighted_ns(&win.full[0][d], QUOTA_STALL_DOMAIN_COUNT,
+                                 weight, sum_weight)
+                   : 0u;
+        if (some_ns[d] > span_ns)
+            some_ns[d] = span_ns;      /* cannot stall longer than the interval */
+        if (full_ns[d] > some_ns[d])
+            full_ns[d] = some_ns[d];   /* full implies some */
+        some_fp[d] = stall_ratio_q16(some_ns[d], span_ns);
+        full_fp[d] = stall_ratio_q16(full_ns[d], span_ns);
 
-        some_fp = weighted_ratio_q16(&win.some[0][d],
-                                     QUOTA_STALL_DOMAIN_COUNT,
-                                     weight, sum_weight, elapsed);
-        full_fp = domain_full_defined((quota_stall_domain_t)d)
-                ? weighted_ratio_q16(&win.full[0][d],
-                                     QUOTA_STALL_DOMAIN_COUNT,
-                                     weight, sum_weight, elapsed)
-                : 0u;
-
-        /* The cumulative total is the WEIGHTED time too, not the raw sum of
-         * per-CPU stalls. Publishing the raw sum beside a weighted average would
-         * mean the two numbers answered different questions, and a reader
-         * dividing the total by uptime would get a figure the averages never
-         * agree with. Ordered to avoid overflow: elapsed/1000 first. */
-        sd->some_total_ns = sat_add_u64(sd->some_total_ns,
-                                        ratio_q16_to_ns(some_fp, elapsed));
-        sd->full_total_ns = sat_add_u64(sd->full_total_ns,
-                                        ratio_q16_to_ns(full_fp, elapsed));
-
-        /* An uninstrumented domain still accumulates (it accumulates zero), but
-         * it never becomes VALID and therefore never steps a level: reporting
-         * "calm" for a resource nobody measures is the specific dishonesty the
-         * VALID flag exists to prevent. */
-        apply_window(sd, some_fp, full_fp, periods, sd->instrumented);
-        if (sd->instrumented)
-            sd->valid = 1;
+        /* The CUMULATIVE totals come from the RAW per-CPU deltas, not from the
+         * weighted mean above.
+         *
+         * A weighted mean is the right answer for a WINDOW -- it is a fraction
+         * of real time, comparable across machines with different core counts.
+         * It is the wrong thing to accumulate: the weights are recomputed per
+         * fold, so the same physical stall split across two folds at a different
+         * boundary sums to a different total. (Two non-idle CPUs, one stalled:
+         * folding at 2 s and 4 s adds 2.0 s, but folding at 3 s and 4 s adds
+         * about 2.13 s -- no CPU time was created, the nonlinear weights simply
+         * do not distribute over a partition.) A running total that depends on
+         * where the sampler happened to tick is not a counter.
+         *
+         * The raw sum IS additive and exactly conserved, at the cost of being
+         * CPU-nanoseconds rather than wall-nanoseconds -- which is what the ABI
+         * documents it as. Ratios stay weighted; totals stay conserved. */
+        raw_some = 0;
+        raw_full = 0;
+        for (uint32_t i = 0; i < (uint32_t)MAX_CPUS; i++) {
+            raw_some = sat_add_u64(raw_some, win.some[i][d]);
+            if (domain_full_defined((quota_stall_domain_t)d))
+                raw_full = sat_add_u64(raw_full, win.full[i][d]);
+        }
+        total_some[d] = raw_some;
+        total_full[d] = raw_full;
     }
 
-    g_anchor_ns      = now;
+    /* Snapshot the carried averages, advance them outside the lock, publish the
+     * results. Safe because stage 2 made this fold the only writer. */
+    spin_lock_irqsave(&g_agg_lock, &flags);
+    for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
+        for (uint32_t w = 0; w < (uint32_t)QUOTA_STALL_WINDOW_COUNT; w++) {
+            carry_some[d][w] = g_domain[d].some_avg[w];
+            carry_full[d][w] = g_domain[d].full_avg[w];
+        }
+    }
+    spin_unlock_irqrestore(&g_agg_lock, flags);
+
+    for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
+        for (uint32_t w = 0; w < (uint32_t)QUOTA_STALL_WINDOW_COUNT; w++) {
+            carry_some[d][w] = ewma_apply(carry_some[d][w],
+                                          some_fp[d], g_decay[w], periods);
+            carry_full[d][w] = ewma_apply(carry_full[d][w],
+                                          full_fp[d], g_decay[w], periods);
+        }
+    }
+
+    /* STAGE 5 -- publish. Short, bounded, no division and no exponentiation. */
+    spin_lock_irqsave(&g_agg_lock, &flags);
+    for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
+        stall_domain_t *sd = &g_domain[d];
+
+        for (uint32_t w = 0; w < (uint32_t)QUOTA_STALL_WINDOW_COUNT; w++) {
+            sd->some_avg[w] = carry_some[d][w];
+            sd->full_avg[w] = carry_full[d][w];
+        }
+        sd->some_total_ns = sat_add_u64(sd->some_total_ns, total_some[d]);
+        sd->full_total_ns = sat_add_u64(sd->full_total_ns, total_full[d]);
+
+        /* An uninstrumented domain still folds (it folds zero), but it never
+         * becomes VALID and therefore never steps a level: reporting "calm" for
+         * a resource nobody measures is the specific dishonesty the VALID flag
+         * exists to prevent. */
+        if (!sd->instrumented)
+            continue;
+        sd->valid = 1;
+        stall_level_step(sd, avg_to_permille(sd->some_avg[QUOTA_STALL_AVG10]));
+    }
     g_last_closed_ns = now;
-    /* Every period the interval actually crossed, not one per call. A consumer
-     * uses this to tell how much history the averages represent; reporting one
-     * closed window for a forty-second gap would understate that by twenty. */
     g_windows_closed = sat_add_u64(g_windows_closed, periods);
     spin_unlock_irqrestore(&g_agg_lock, flags);
+
+    /* Anchor advances ONLY here, after the result is published, and the fold is
+     * released after it. Ordering matters: a caller that observes the new anchor
+     * must also be able to observe everything this fold published. */
+    __atomic_store_n(&g_anchor_ns, now, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
     return 1;
 }
 
@@ -1000,6 +1201,27 @@ void quota_stall_test_reset(void)
 {
     uint64_t flags;
 
+    /* ACQUIRE the fold rather than clearing its flag. g_agg_lock does not
+     * exclude a fold in its lock-free compute stage, and holding the sampler
+     * only stops FUTURE timer passes -- it does not join a DPC already running.
+     * Clearing the flag instead of taking it would let an in-flight fold keep
+     * writing the baselines this function is resetting. Bounded spin: this is a
+     * test-only path at PASSIVE_LEVEL and a fold is microseconds long. */
+    int owned = 0;
+
+    for (uint32_t spin = 0; spin < 1000000u; spin++) {
+        if (__atomic_exchange_n(&g_fold_busy, 1u, __ATOMIC_ACQ_REL) == 0u) {
+            owned = 1;
+            break;
+        }
+    }
+    /* If the claim never succeeded, do NOTHING. Resetting anyway would race the
+     * fold that still owns the baselines, and clearing the flag on the way out
+     * would hand a second fold a half-reset structure -- strictly worse than a
+     * test that observes stale state and fails loudly. */
+    if (!owned)
+        return;
+
     for (uint32_t i = 0; i < (uint32_t)MAX_CPUS; i++) {
         stall_cpu_t *c = &g_stall_cpu[i];
         uint64_t     cflags;
@@ -1018,12 +1240,18 @@ void quota_stall_test_reset(void)
 
     spin_lock_irqsave(&g_agg_lock, &flags);
     memset(g_domain, 0, sizeof(g_domain));
+    __atomic_store_n(&g_runnable_tracked, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_runnable_request, 0u, __ATOMIC_RELEASE);
     memset(g_prev_some_ns, 0, sizeof(g_prev_some_ns));
     memset(g_prev_full_ns, 0, sizeof(g_prev_full_ns));
     memset(g_prev_nonidle_ns, 0, sizeof(g_prev_nonidle_ns));
-    g_anchor_ns      = 0;
+    memset(g_prev_stamp_ns, 0, sizeof(g_prev_stamp_ns));
+    __atomic_store_n(&g_anchor_ns, 0ull, __ATOMIC_RELEASE);
     g_last_closed_ns = 0;
     g_windows_closed = 0;
     spin_unlock_irqrestore(&g_agg_lock, flags);
+
+    /* Release the fold LAST, so nothing can start one against half-reset state. */
+    __atomic_store_n(&g_fold_busy, 0u, __ATOMIC_RELEASE);
 }
 #endif

@@ -110,28 +110,13 @@ static pressure_domain_t g_domain[QUOTA_PRESSURE_DOMAIN_COUNT]
  * is unused (there is no threshold to enter NORMAL from below, and none to
  * leave it from above); it is present so the arrays index directly by level
  * with no offset arithmetic at every use. */
-static const uint16_t g_rise_permille[QUOTA_PRESSURE_LEVEL_COUNT] = {
-    0,
-    QUOTA_PRESSURE_RISE_WATCH_PERMILLE,
-    QUOTA_PRESSURE_RISE_WARNING_PERMILLE,
-    QUOTA_PRESSURE_RISE_CRITICAL_PERMILLE
-};
-static const uint16_t g_fall_permille[QUOTA_PRESSURE_LEVEL_COUNT] = {
-    0,
-    QUOTA_PRESSURE_FALL_WATCH_PERMILLE,
-    QUOTA_PRESSURE_FALL_WARNING_PERMILLE,
-    QUOTA_PRESSURE_FALL_CRITICAL_PERMILLE
-};
-
 static const char *const g_level_name[QUOTA_PRESSURE_LEVEL_COUNT] = {
     "normal", "watch", "warning", "critical"
 };
 
 /* An enum that grows must grow every array indexed by it. */
-_Static_assert(sizeof(g_rise_permille) / sizeof(g_rise_permille[0]) == QUOTA_PRESSURE_LEVEL_COUNT &&
-               sizeof(g_fall_permille) / sizeof(g_fall_permille[0]) == QUOTA_PRESSURE_LEVEL_COUNT &&
-               sizeof(g_level_name) / sizeof(g_level_name[0]) == QUOTA_PRESSURE_LEVEL_COUNT,
-               "threshold and name tables must cover every pressure level");
+_Static_assert(sizeof(g_level_name) / sizeof(g_level_name[0]) == QUOTA_PRESSURE_LEVEL_COUNT,
+               "the level name table must cover every pressure level");
 
 /* ==========================================================================
  * Deferred-publish ring
@@ -579,14 +564,14 @@ static int domain_step_locked(pressure_domain_t *d, quota_resource_type_t type,
     d->window_ms     = window_ms;
 
     if (level < (uint8_t)QUOTA_PRESSURE_CRITICAL &&
-        permille >= g_rise_permille[level + 1]) {
+        permille >= quota_pressure_rise_threshold((uint32_t)level + 1u)) {
         d->fall_count = 0;
         if (++d->rise_count >= (uint16_t)QUOTA_PRESSURE_RISE_SAMPLES) {
             d->rise_count = 0;
             next = (uint8_t)(level + 1);
         }
     } else if (level > (uint8_t)QUOTA_PRESSURE_NORMAL &&
-               permille < g_fall_permille[level]) {
+               permille < quota_pressure_fall_threshold((uint32_t)level)) {
         d->rise_count = 0;
         if (++d->fall_count >= (uint16_t)QUOTA_PRESSURE_FALL_SAMPLES) {
             d->fall_count = 0;
@@ -1114,6 +1099,10 @@ void quota_pressure_dump(void)
     klog(LOG_INFO, "quota", "  drops: %llu rate-limited, %llu ring, %llu transport",
          quota_pressure_dropped_ratelimit(), quota_pressure_dropped_ring(),
          quota_pressure_dropped_transport());
+    /* The stall lane is the other half of the pressure picture; a dump that
+     * showed only budget-sourced levels would read as "no pressure" for a
+     * system stalling on I/O. */
+    quota_stall_dump();
 }
 
 /* ==========================================================================

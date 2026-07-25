@@ -121,6 +121,15 @@ _Static_assert(QUOTA_STALL_EXP_10S < QUOTA_STALL_EXP_60S &&
     "stall decay coefficients must be ordered and strictly below unity");
 _Static_assert(QUOTA_STALL_UPDATE_MS == 2000u,
     "decay coefficients are derived for a 2 s period; recompute them if it moves");
+/* Pin the VALUES too. The period assert alone catches a changed cadence but not
+ * an edited coefficient, and a wrong coefficient is invisible at runtime -- it
+ * just makes a window mean a different number of seconds than its name. These
+ * three literals are exp(-2/W) * 2^32 for W = 10, 60, 300; changing one has to
+ * be a deliberate edit here, not a drive-by. */
+_Static_assert(QUOTA_STALL_EXP_10S  == 3516421809ull &&
+               QUOTA_STALL_EXP_60S  == 4154161520ull &&
+               QUOTA_STALL_EXP_300S == 4266429413ull,
+    "decay coefficients are exp(-2/W)*2^32 for W = 10/60/300 s -- recompute, do not tweak");
 
 /* --- Per-CPU weighting ---------------------------------------------------- *
  * A CPU contributes to a window in proportion to how much of it that CPU was
@@ -161,15 +170,23 @@ _Static_assert(QUOTA_STALL_AVG_MAX <= (0xFFFFFFFFFFFFFFFFull / QUOTA_STALL_FP_ON
  * meaningless. Past this the interval is discarded and the aggregator
  * re-anchors. Twelve hours is far beyond any real sampler outage and still
  * leaves every intermediate product decades from overflow. */
-#define QUOTA_STALL_MAX_INTERVAL_NS  (43200ull * 1000000000ull)
+#define QUOTA_STALL_NSEC_PER_SEC     1000000000ull
+#define QUOTA_STALL_MAX_INTERVAL_SEC 43200ull      /* twelve hours */
+#define QUOTA_STALL_MAX_INTERVAL_NS \
+    (QUOTA_STALL_MAX_INTERVAL_SEC * QUOTA_STALL_NSEC_PER_SEC)
 
-_Static_assert(QUOTA_STALL_MAX_INTERVAL_NS > 300ull * 1000000000ull,
+_Static_assert(QUOTA_STALL_MAX_INTERVAL_NS > 300ull * QUOTA_STALL_NSEC_PER_SEC,
     "the interval ceiling must comfortably exceed the widest averaging window");
 
 /* --- Snapshot (the query shape) ------------------------------------------- */
 typedef struct quota_stall_snapshot {
-    uint64_t some_total_ns;   /* cumulative, saturating                       */
-    uint64_t full_total_ns;   /* cumulative, saturating; always 0 for CPU     */
+    /* Cumulative CPU-nanoseconds (sum over CPUs), saturating -- an ADDITIVE
+     * conserved counter. Deliberately not the weighted mean the averages use:
+     * that is a per-window fraction of real time and does not distribute over a
+     * partition, so accumulating it would make the running total depend on the
+     * sampler's tick alignment. */
+    uint64_t some_total_ns;
+    uint64_t full_total_ns;   /* always 0 for CPU, and until runnable tracking */
     uint16_t some_avg[QUOTA_STALL_WINDOW_COUNT];  /* permille, 0..1000        */
     uint16_t full_avg[QUOTA_STALL_WINDOW_COUNT];  /* permille, 0..1000        */
     uint8_t  level;           /* quota_pressure_level_t of this domain's lane */
@@ -186,9 +203,15 @@ typedef struct quota_stall_snapshot {
 void quota_stall_init(void);
 
 /* --- Producer seam (nothing calls these yet) ------------------------------ *
- * All four are callable at any IRQL, including interrupt context: each takes
- * only the CALLING CPU's own lock, so there is no cross-CPU bouncing on the
- * scheduler / allocator / I/O paths that will eventually own them.
+ * All are callable at any IRQL, including interrupt context. The hot paths --
+ * the ENTER side and the runnable count -- take only the CALLING CPU's own lock,
+ * pinned across the update, so the scheduler / allocator / I/O paths that will
+ * own them never bounce a line between cores. The LEAVE side takes the lock of
+ * the slot its token names, which is a different CPU exactly when the task
+ * migrated mid-wait; that is the case the token exists to get right, and it
+ * costs one uncontended remote lock per migrated wait. quota_stall_declare_
+ * instrumented takes the global aggregate lock, but it runs once per seam at
+ * init, not on any hot path.
  *
  * A domain reports VALID only once a seam has declared itself AND at least one
  * aggregation window has closed, so an uninstrumented domain reads "unknown"
@@ -204,10 +227,18 @@ void quota_stall_declare_instrumented(quota_stall_domain_t domain);
  * domain to critical over a workload that had finished. The token carries the
  * originating slot so a LEAVE always decrements the counter its ENTER
  * incremented, whatever CPU it runs on. */
+/* `domain` doubles as the claim word: it is exchanged to
+ * QUOTA_STALL_DOMAIN_COUNT when the token is consumed, so exactly one caller can
+ * ever consume it even if a timeout path and a completion path race. */
+#define QUOTA_STALL_RUNNABLE_TOKEN  0xFFFFFFFFu   /* a runnable, not a stall */
+
 typedef struct quota_stall_token {
     uint32_t cpu;      /* originating per-CPU slot          */
     uint32_t domain;   /* QUOTA_STALL_DOMAIN_COUNT = invalid */
 } quota_stall_token_t;
+
+_Static_assert(QUOTA_STALL_RUNNABLE_TOKEN > (uint32_t)QUOTA_STALL_DOMAIN_COUNT,
+    "the runnable-token marker must not collide with a real stall domain");
 
 /* One more task stalled on `domain`, charged to the calling CPU. The returned
  * token MUST be passed to quota_stall_task_unstalled; a token whose `domain` is
@@ -244,13 +275,27 @@ static inline quota_stall_token_t quota_stall_token_none(void)
     return t;
 }
 
-/* Adjust THIS CPU's count of tasks that could otherwise be making progress.
- * Two things depend on it: `full` accrues only while a domain has stalled tasks
- * and this count is zero (without it, `full` cannot be distinguished from
- * `some`), and a CPU counts as NON-IDLE while it is non-zero. Non-idle time is
- * the denominator every ratio is taken against, so a core with nothing to run
- * neither dilutes another core's stall nor contributes one of its own. */
-void quota_stall_runnable_delta(int32_t delta);
+/* One task became runnable on this CPU / stopped being runnable.
+ *
+ * Token-based for the SAME reason the stall pair is, and the reason is not
+ * hypothetical here: this kernel has a single global run queue (`current_task`
+ * in src/kernel/sched/task.c), so a task made runnable while one CPU runs the
+ * scheduler and dequeued while another does would otherwise leave the first
+ * slot's count permanently high and clamp the second at zero. That is worse than
+ * a mis-labelled interval: a slot with nr_running stuck non-zero can never
+ * report `full` and always carries maximum weight, while a slot stuck at zero
+ * reads idle and drops out of the denominator entirely.
+ *
+ * Two things depend on this count: `full` accrues only while a domain has
+ * stalled tasks and this count is zero, and a CPU counts as NON-IDLE while it is
+ * non-zero. Non-idle time is the denominator every ratio is taken against, so a
+ * core with nothing to run neither dilutes another core's stall nor contributes
+ * one of its own.
+ *
+ * Until something calls these, `full` is reported as zero-and-undefined for
+ * EVERY domain, not just cpu -- see quota_stall_snapshot_t.full_undefined. */
+quota_stall_token_t quota_stall_runnable_begin(void);
+void quota_stall_runnable_end(quota_stall_token_t *token);
 
 /* --- Aggregation ---------------------------------------------------------- */
 
