@@ -24,11 +24,59 @@ static uint64_t g_gate_retry_refusals;
 static uint64_t g_gate_sealed_refusals;
 static uint64_t g_gate_drain_timeouts;
 static uint64_t g_ledger_leaks;
+
+/* Charges refused by the per-task obligation ceiling, saturating.
+ *
+ * THE CEILING NEEDS ITS OWN INSTRUMENT because it refuses BEFORE
+ * quota_charge_chain runs, so none of the existing quota telemetry can see it:
+ * no block declined this charge, no block failure counter moves, and no quota
+ * failure event is emitted. Once a consumer is converted, a task could sit at
+ * its cap failing every request while every existing dashboard showed a clean
+ * subsystem -- an actionable-looking status with nothing to act on.
+ *
+ * Bumping a BLOCK's failure counter instead would be the wrong repair and not
+ * merely a lazy one: those counters mean "this principal's limit for this
+ * resource was reached", and this refusal is about ledger obligations, not
+ * about any block's limit. A separate counter tells the truth; a borrowed one
+ * would corrupt the meaning of an existing instrument. The per-task, per-type
+ * counts remain queryable through quota_ledger_task_obligations_of, so this
+ * answers "is the ceiling biting at all" and that answers "where". */
+static uint64_t g_ceiling_refusals;
+
+/* The same refusals, split by resource type, so the counter says WHICH class is
+ * being refused rather than only that something was.
+ *
+ * SYSTEM-WIDE RATHER THAN PER-LEDGER, for the reason the attribution table in
+ * quota.h gives for its own totals: a per-ledger array would be paid for by
+ * every task that ever takes one obligation, and it would DIE WITH THE LEDGER --
+ * the evidence disappearing exactly when the offending task exits, which is
+ * when an operator starts looking. Sixteen global saturating cells have no
+ * lifetime at all.
+ *
+ * WHAT THIS STILL DOES NOT ANSWER is which PRINCIPAL was refused. That needs a
+ * durable per-principal record, which means either the failure-event ring or
+ * the lifetime-safe task enumeration this roadmap has not built yet; it is
+ * filed rather than approximated, because a per-task counter that vanishes at
+ * reap would look like attribution while providing none. */
+static uint64_t g_ceiling_refusals_by_type[QUOTA_RESOURCE_TYPE_COUNT];
 static uint64_t g_ledger_abandons;
 
 uint64_t quota_gate_retry_count(void)
 {
     return __atomic_load_n(&g_gate_retry_refusals, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_ceiling_refusal_count(void)
+{
+    return __atomic_load_n(&g_ceiling_refusals, __ATOMIC_RELAXED);
+}
+
+uint64_t quota_ledger_ceiling_refusals_of(quota_resource_type_t type)
+{
+    if ((uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return 0;
+    return __atomic_load_n(&g_ceiling_refusals_by_type[(uint32_t)type],
+                           __ATOMIC_RELAXED);
 }
 
 uint64_t quota_gate_sealed_refusal_count(void)
@@ -274,16 +322,22 @@ NTSTATUS quota_gate_quiesce(struct task *task)
 
 #define QUOTA_LEDGER_INLINE_SLOTS   8u
 
-/* Slots per chunk, chosen so a chunk holds as many slots as the narrower receipt
- * allows without growing its allocator footprint. A slot is one receipt plus two
- * words, so when the chain ceiling dropped from 8 to 4 the slot went from 104 to
- * 72 bytes and the old count of 24 left most of the chunk unused. 34 slots is
- * 2456 bytes against the previous 2504 (2512 vs 2560 including allocator
- * metadata), so the per-task ceiling below buys 41 percent more obligations for
- * slightly LESS heap. Note this heap is exact-size first-fit, NOT size-classed,
- * so "same size class" is not the property being preserved -- the footprint
- * simply does not grow. Keep this in step with the receipt width; the chunk
- * assert below is the backstop. */
+/* Slots per chunk. A slot is one receipt plus three words: when the chain ceiling
+ * dropped from 8 to 4 the receipt narrowed and the slot fell from 104 to 72
+ * bytes, leaving the old count of 24 using most of a chunk on nothing, and 34
+ * was chosen then to spend the same chunk on more slots. The obligation-ceiling
+ * word added since takes a slot to 80 bytes, so 34 slots is now 2728 bytes per
+ * chunk rather than the 2456 that count was originally sized against.
+ *
+ * THE FOOTPRINT DID GROW, and pretending otherwise is how the next change gets
+ * made blind: a fully grown ledger is ~175 KiB rather than ~150 KiB. That is
+ * still single-digit percent of the fixed 2 MiB heap and still far below the
+ * hundreds of chunks an unbounded ledger would need, which is what the ceiling
+ * exists to prevent -- but it is a real cost, paid deliberately for an
+ * attribution word the completion path can read without racing the receipt. This
+ * heap is exact-size first-fit, NOT size-classed, so no size-class boundary is
+ * being preserved either. Keep this in step with the receipt width and the slot
+ * layout; the EXACT size asserts below are the backstop. */
 #define QUOTA_LEDGER_CHUNK_SLOTS    34u
 
 /* Bounded growth attempts per charge, so a pathological allocator cannot turn
@@ -303,11 +357,15 @@ NTSTATUS quota_gate_quiesce(struct task *task)
  * (STATUS_INSUFFICIENT_RESOURCES for the charge) instead of global exhaustion --
  * fail-closed, with the failure landing on the process responsible.
  *
- * 64 chunks is 2184 slots and ~150 KiB, so a maxed ledger takes single-digit
- * percent of the heap. The slot count rose from 1544 without touching this number
- * or the heap footprint: the compact receipt (QUOTA_CHAIN_MAX sized to the
- * reachable chain depth) made each slot 72 bytes instead of 104, and
- * QUOTA_LEDGER_CHUNK_SLOTS was raised to spend the same chunk on more slots.
+ * 64 chunks is 2184 slots and ~175 KiB, so a maxed ledger takes single-digit
+ * percent of the heap. The slot count rose from 1544 without touching this number:
+ * the compact receipt (QUOTA_CHAIN_MAX sized to the reachable chain depth) cut
+ * each slot from 104 bytes to 72, and QUOTA_LEDGER_CHUNK_SLOTS was raised to
+ * spend the same chunk on more slots. The per-slot obligation-type word added
+ * with the ceiling then took a slot back to 80 bytes (2728 per chunk), which is
+ * where the ~150 KiB figure this comment used to quote became ~175 KiB -- both
+ * sizes are now pinned by exact asserts beside the chunk declaration so the next
+ * such change is deliberate.
  *
  * IT IS STILL A CEILING, and a deliberate one. Raising it far enough to cover a
  * consumer with no finite per-task bound of its own is NOT a matter of picking a
@@ -325,6 +383,18 @@ NTSTATUS quota_gate_quiesce(struct task *task)
  * converting a consumer that has no aggregate bound of its own would impose this
  * ceiling on it. */
 #define QUOTA_LEDGER_MAX_CHUNKS     64u
+
+/* Attempts the obligation-ceiling reservation makes before reporting contention
+ * rather than exhaustion. Sized like QUOTA_GATE_CLAIM_TRIES and for the same
+ * reason: every failed attempt means another CPU committed a reservation on
+ * this exact counter, so reaching the bound needs sixty-four consecutive losses
+ * on one resource type of one task. */
+#define QUOTA_LEDGER_RESERVE_TRIES  64u
+
+/* Where the refusal counters stop instead of wrapping. Named rather than
+ * spelled inline because the saturation is a published contract, not an
+ * implementation detail of one increment. */
+#define QUOTA_LEDGER_REFUSALS_MAX   ((uint64_t)~(uint64_t)0)
 
 /* Set in a slot's `owner` word to mark the slot DEFERRED: its charge is owed to
  * the drain and the slot may not be reclaimed until the drain has completed it.
@@ -357,9 +427,85 @@ NTSTATUS quota_gate_quiesce(struct task *task)
 _Static_assert((QUOTA_SLOT_EPOCH_MAX & (uint64_t)QUOTA_SLOT_DEFERRED) == 0,
                "the deferred mark must not overlap any storable slot epoch");
 
+/* THE POLICY CEILING MUST STAY BELOW THE STORAGE CEILING, or the two statuses it
+ * exists to separate collapse: a task would reach the last slot before it
+ * reached its policy limit and be told STATUS_INSUFFICIENT_RESOURCES for what is
+ * really a policy decision. Strictly below, not equal -- at equality the last
+ * admitted obligation races the last free slot and the reported status depends
+ * on which check ran first. */
+_Static_assert(QUOTA_LEDGER_TASK_MAX
+                   < (QUOTA_LEDGER_INLINE_SLOTS
+                      + (QUOTA_LEDGER_MAX_CHUNKS * QUOTA_LEDGER_CHUNK_SLOTS)),
+               "the per-task obligation ceiling must sit strictly below the "
+               "ledger's storage ceiling, or a policy refusal is reported as "
+               "heap exhaustion");
+
+/* THE caps, one row per resource type, in taxonomy order. The admission rule
+ * reads this table and quota_ledger_type_cap publishes it, so a caller and the
+ * ceiling cannot disagree about what the limit is.
+ *
+ * Indexed by quota_resource_type_t, so it is a parallel array over an enum that
+ * is also a storage index -- the assert below is what makes appending a
+ * seventeenth resource type a build failure here rather than a read past the
+ * end on that type's first charge. */
+static const uint32_t s_type_obligation_cap[] = {
+    [QUOTA_RES_HANDLE]              = QUOTA_LEDGER_CAP_HANDLE,
+    [QUOTA_RES_OBJECT_BODY]         = QUOTA_LEDGER_CAP_OBJECT_BODY,
+    [QUOTA_RES_NAMESPACE_ENTRY]     = QUOTA_LEDGER_CAP_NAMESPACE_ENTRY,
+    [QUOTA_RES_PAGED_POOL]          = QUOTA_LEDGER_CAP_PAGED_POOL,
+    [QUOTA_RES_NONPAGED_POOL]       = QUOTA_LEDGER_CAP_NONPAGED_POOL,
+    [QUOTA_RES_REGISTRY_BYTES]      = QUOTA_LEDGER_CAP_REGISTRY_BYTES,
+    [QUOTA_RES_ALPC_MESSAGE]        = QUOTA_LEDGER_CAP_ALPC_MESSAGE,
+    [QUOTA_RES_NOTIFICATION_STATE]  = QUOTA_LEDGER_CAP_NOTIFICATION_STATE,
+    [QUOTA_RES_TIMER]               = QUOTA_LEDGER_CAP_TIMER,
+    [QUOTA_RES_THREAD]              = QUOTA_LEDGER_CAP_THREAD,
+    [QUOTA_RES_PROCESS]             = QUOTA_LEDGER_CAP_PROCESS,
+    [QUOTA_RES_SECTION]             = QUOTA_LEDGER_CAP_SECTION,
+    [QUOTA_RES_MAPPED_VIEW]         = QUOTA_LEDGER_CAP_MAPPED_VIEW,
+    [QUOTA_RES_CRASH_BUFFER]        = QUOTA_LEDGER_CAP_CRASH_BUFFER,
+    [QUOTA_RES_NOTIFICATION_SUB]    = QUOTA_LEDGER_CAP_NOTIFICATION_SUB,
+    [QUOTA_RES_NOTIFICATION_BYTES]  = QUOTA_LEDGER_CAP_NOTIFICATION_BYTES,
+};
+
+/* UNSIZED ON PURPOSE, so this assert has something to say. Declaring the array
+ * with an explicit [QUOTA_RESOURCE_TYPE_COUNT] bound would make the comparison
+ * below trivially true and the guard worthless: a resource type appended to the
+ * taxonomy without a cap row here would compile clean and silently get a cap of
+ * zero, refusing every charge of a perfectly valid type with
+ * STATUS_QUOTA_EXCEEDED. Letting the initializer list decide the size means the
+ * count only reaches the taxonomy when a row was actually written -- and the
+ * enum's own rule is that new types append at the END, which is exactly the
+ * case this catches. A zero left in a MIDDLE row is caught by the unit test
+ * that walks every type's cap. */
+_Static_assert((sizeof(s_type_obligation_cap)
+                / sizeof(s_type_obligation_cap[0])) == QUOTA_RESOURCE_TYPE_COUNT,
+               "one obligation cap per resource type; appending a type without "
+               "a cap row would give it a silent cap of zero");
+
+uint32_t quota_ledger_type_cap(quota_resource_type_t type)
+{
+    if ((uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return 0;
+    return s_type_obligation_cap[(uint32_t)type];
+}
+
 typedef struct quota_ledger_slot {
     quota_charge_receipt_t receipt;
     atomic64_t             owner;   /* 0 = free, else this allocation's epoch */
+    /* The resource type this slot's obligation was reserved against, published
+     * by the charger that claimed the slot and read by whoever completes it.
+     *
+     * DUPLICATED FROM THE RECEIPT ON PURPOSE, and atomically. The completion
+     * needs the type to release the ceiling budget, and it must read it BEFORE
+     * validating its epoch -- after the release CAS the slot is free and a new
+     * charger may already be filling it. Reading receipt.type there is a plain
+     * load that a stale duplicate can perform while a new owner is writing that
+     * same field under its BUSY claim: the VALUE is never used (only an epoch
+     * -winning caller releases, and a won CAS proves the slot was continuously
+     * ours, epochs being monotonic and never reused), but the race itself is
+     * undefined behaviour and the compiler is entitled to act on it. An atomic
+     * word costs four bytes per slot and removes the question. */
+    atomic_t               rtype;
     /* Nonzero when a raised-IRQL return handed this slot to the drain worker,
      * and it holds the token that return must present. This is the ENTIRE
      * deferral record, which is why the deferral path allocates nothing: the
@@ -377,6 +523,19 @@ typedef struct quota_ledger_chunk {
 /* kmalloc is documented for allocations up to 4 KB (CLAUDE.md); anything larger
  * must use pmm_alloc_contiguous. Asserting the chunk size here is what keeps a
  * future slot-count or receipt-width change from silently crossing that line. */
+/* PIN BOTH SIZES EXACTLY. The <= 4096 assert below only protects the kmalloc
+ * ceiling; it says nothing about the fixed 2 MiB heap budget this ledger is
+ * sized against, and a field added between two aligned members can grow every
+ * slot through padding without tripping it. Adding the per-slot `rtype` word did
+ * exactly that -- 72 bytes to 80, and the chunk from 2456 to 2728 -- so the cost
+ * is recorded here rather than discovered later. A change that moves either
+ * number must confront it and update the arithmetic in the ceiling commentary
+ * above, not merely stay under 4096. */
+_Static_assert(sizeof(quota_ledger_slot_t) == 80,
+               "ledger slot size is a system-wide memory multiplier; update the "
+               "heap arithmetic deliberately, with the cost in hand");
+_Static_assert(sizeof(quota_ledger_chunk_t) == 2728,
+               "ledger chunk size follows the slot size; update it deliberately");
 _Static_assert(sizeof(quota_ledger_chunk_t) <= 4096,
                "a ledger chunk must stay within the kmalloc ceiling; reduce "
                "QUOTA_LEDGER_CHUNK_SLOTS or switch to pmm_alloc_contiguous");
@@ -409,6 +568,35 @@ struct quota_ledger {
      * it with the chunk-append lock would put an allocation-adjacent lock in
      * that path. `defer_destroy` records that the final reference was dropped at
      * raised IRQL, so the drain must destroy rather than dereference. */
+    /* --- The per-task obligation ceiling (quota_ledger.h) ------------------ *
+     *
+     * Counted here rather than on the task because the LEDGER is what an
+     * obligation can still reach: three of the four completion paths (the inline
+     * return, the drain's credit, the destroy-time orphan reclaim) resolve only
+     * a ledger and a slot, and the ledger's `owner` back-pointer is explicitly
+     * not trustworthy without the quota_lock-guarded liveness re-check. A
+     * counter on the task would be unreachable from exactly the paths that must
+     * decrement it. One ledger belongs to one task for its whole life, so
+     * per-ledger IS per-task.
+     *
+     * The count tracks SLOT OCCUPANCY, not handle possession, and the two
+     * genuinely differ: a return whose retries are exhausted ABANDONS -- it
+     * empties the caller's handle but leaves the charge live and the slot
+     * claimed until an orphan drain reclaims it. That charge is still
+     * outstanding against the block chain, so it must still be counted; keying
+     * on the handle would let an abandoning task charge past its ceiling with
+     * unreturned obligations still standing. Occupancy also makes the accounting
+     * structural rather than remembered: `owner` moves 0 -> epoch in exactly one
+     * place and epoch -> 0 in exactly three, so every transition is paired.
+     *
+     * ONE COUNTER PER TYPE, and that is what makes the accounting safe without a
+     * lock: a charge moves exactly one atomic, so there is no pair that could be
+     * observed half-updated and no release that has to work out which of two
+     * pools its unit came from. Relaxed is enough -- the counter is its own
+     * admission decision and is ordered against nothing else, since the slot
+     * claim that follows is its own CAS and the receipt publication is ordered
+     * by the tag. */
+    atomic_t              obligations[QUOTA_RESOURCE_TYPE_COUNT];
     struct quota_ledger  *defer_next;
     uint8_t               defer_queued;
     /* Written under g_defer_lock at push time, but read and cleared by the drain
@@ -441,6 +629,111 @@ struct quota_ledger {
 
 _Static_assert(sizeof(struct quota_ledger) <= 4096,
                "a ledger must stay within the kmalloc ceiling");
+
+/* The per-type counters are a PARALLEL ARRAY over the resource taxonomy: a type
+ * appended to the enum without widening this array would index past its end on
+ * the very first charge of the new type. */
+_Static_assert((sizeof(((struct quota_ledger *)0)->obligations)
+                / sizeof(((struct quota_ledger *)0)->obligations[0]))
+                   == QUOTA_RESOURCE_TYPE_COUNT,
+               "one obligation counter per resource type, or a charge indexes "
+               "off the end of the array");
+
+/* Bump a refusal counter, SATURATING at the ceiling rather than wrapping.
+ *
+ * The header promises saturating values, and a plain fetch_add does not deliver
+ * that: at the ceiling it wraps to zero, so a counter whose entire job is to be
+ * durable evidence would erase itself and then read as though the refusals had
+ * never happened -- a monotonic instrument that goes DOWN is worse than no
+ * instrument, because it is believed.
+ *
+ * Bounded, like every other retry on a path the charge can reach: each failed
+ * exchange means another CPU counted a refusal on the same cell, and dropping a
+ * count under contention that severe is strictly better than spinning there.
+ * The dropped count is a diagnostic imprecision; a wrap is a lie. */
+static void quota_ledger_count_refusal(uint64_t *cell)
+{
+    for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_RESERVE_TRIES; attempt++) {
+        uint64_t cur = __atomic_load_n(cell, __ATOMIC_RELAXED);
+
+        if (cur == QUOTA_LEDGER_REFUSALS_MAX)
+            return;
+
+        if (__atomic_compare_exchange_n(cell, &cur, cur + 1, 1,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            return;
+    }
+}
+
+/* Take one unit of `type`'s obligation budget, or refuse.
+ *
+ * LINEARIZABLE, AND BOUNDED. The counter is only ever incremented from a value
+ * this caller observed to be below the cap, so it never exceeds the cap even
+ * transiently -- which matters because the alternative is not merely untidy.
+ * An unconditional add-then-roll-back overshoots to cap+1 while it is in
+ * flight, and a CONCURRENT charger reading that inflated value is refused with
+ * STATUS_QUOTA_EXCEEDED: a permanent, administrator-actionable status handed
+ * out for a transient race, at a moment when the budget genuinely had room. A
+ * ceiling that fails closed is right; a ceiling that fails PERMANENTLY closed
+ * on contention is a bug that looks like policy.
+ *
+ * The retry bound is what keeps this off the forbidden shape: an unbounded
+ * for(;;) on a path reachable with interrupts masked is the defect class the
+ * charge-gate loops are already tracked for. Exhausting the bound means real
+ * contention, not exhaustion, so it reports STATUS_RETRY -- the status that
+ * says "ask again", which is exactly what a caller should do. Every CAS failure
+ * means another CPU made progress, so the bound is generous rather than tight. */
+static NTSTATUS quota_ledger_reserve_obligation(quota_ledger_t *ledger,
+                                                quota_resource_type_t type)
+{
+    atomic_t     *counter = &ledger->obligations[(uint32_t)type];
+    const int32_t cap     = (int32_t)s_type_obligation_cap[(uint32_t)type];
+
+    /* A RESERVATION IS COUNTED FROM THE MOMENT IT IS TAKEN, including the brief
+     * window before its charge commits, and a charge that then fails rolls it
+     * back. So a charger arriving exactly at the cap during another charger's
+     * in-flight reservation is refused for an obligation that may never commit.
+     * That is deliberate, and it is the same bargain the layer below already
+     * makes: quota_charge_chain charges each block in turn and returns the
+     * prefix if a later one refuses (quota.h), so a concurrent reader of those
+     * counters likewise sees usage that is transiently high and can be refused
+     * on it. Splitting committed from provisional here would make this policy
+     * counter STRICTER than the authoritative charge it sits on top of, and it
+     * would need two counters moved per charge with the outcome recomputed at
+     * release -- precisely the cross-counter protocol whose drift made it
+     * possible to admit PAST the ceiling, which is the worse failure by far.
+     * A ceiling that is momentarily pessimistic under contention is a bargain
+     * worth keeping; one that is momentarily permissive is not. */
+    for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_RESERVE_TRIES; attempt++) {
+        int32_t cur = atomic_read(counter);
+
+        if (cur >= cap)
+            return STATUS_QUOTA_EXCEEDED;   /* a TRUE observation, not an
+                                             * in-flight overshoot. NOT counted
+                                             * here: the caller may still turn
+                                             * this into a gate refusal, and the
+                                             * counter must record what the
+                                             * CALLER was actually told. */
+
+        if (atomic_cmpxchg(counter, cur, cur + 1) == cur)
+            return STATUS_SUCCESS;
+    }
+
+    return STATUS_RETRY;
+}
+
+/* Give one unit of `type`'s obligation budget back. Callers must invoke this
+ * once per successful reserve and never otherwise -- every call site is paired
+ * with a slot-occupancy transition, so "once" is a property of the transition
+ * rather than of caller discipline. */
+static void quota_ledger_release_obligation(quota_ledger_t *ledger,
+                                            quota_resource_type_t type)
+{
+    if ((uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return;     /* never reserved: a charge with this type was refused */
+
+    (void)atomic_sub_fetch_relaxed(&ledger->obligations[(uint32_t)type], 1);
+}
 
 /* Source of the never-reused ledger identity. Mutated with a relaxed atomic:
  * uniqueness needs atomicity, not ordering. */
@@ -1007,10 +1300,31 @@ static uint32_t quota_ledger_drain_orphans(quota_ledger_t *ledger,
                 (*out_skipped)++;
             continue;
         }
+        /* Captured before either release below, for the same reason the inline
+         * completion captures it: the ceiling release is keyed by resource type,
+         * and a credited receipt is no longer a reliable place to read it.
+         *
+         * THE CEILING RELEASES HERE ARE FOR SYMMETRY, and saying so is more
+         * honest than implying they are load-bearing. Both callers of this walk
+         * are tearing the ledger down -- quota_ledger_destroy runs at refcount
+         * zero, and quota_ledger_task_release drains only when the task's own
+         * claim is the last reference and then drops it -- so the counters this
+         * releases are freed within a few instructions and no admission
+         * decision can ever observe them. They are kept because the pairing is
+         * what makes the accounting structural: EVERY owner transition from an
+         * epoch back to zero releases, so a future path that drains orphans
+         * WITHOUT destroying is correct by construction rather than by having
+         * remembered this exception. For the same reason no test asserts the
+         * decrement here -- a seam existing only to observe state that is about
+         * to be freed would test the seam, not the property. */
+        const quota_resource_type_t type =
+            (quota_resource_type_t)atomic_read(&slot->rtype);
+
         if (QUOTA_RECEIPT_TAG_STATE(tag) != QUOTA_RECEIPT_ACTIVE) {
             /* Allocated but holding nothing: a charge that failed after the claim.
              * Just release the slot. */
             atomic64_set(&slot->owner, 0);
+            quota_ledger_release_obligation(ledger, type);
             continue;
         }
 
@@ -1018,6 +1332,7 @@ static uint32_t quota_ledger_drain_orphans(quota_ledger_t *ledger,
          * generation is the token. */
         quota_return_chain(&slot->receipt, QUOTA_RECEIPT_TAG_GEN(tag));
         atomic64_set(&slot->owner, 0);
+        quota_ledger_release_obligation(ledger, type);
         reclaimed++;
     }
     return reclaimed;
@@ -1171,6 +1486,65 @@ quota_ledger_t *quota_ledger_acquire(struct task *task)
     return existing;
 }
 
+/* Both queries below go through quota_ledger_peek, which resolves the task's
+ * ledger under quota_lock AND takes a reference before releasing it -- never a
+ * bare read of task->quota_ledger.
+ *
+ * The bare read is a use-after-free, not a style preference: a reap on another
+ * CPU can clear the pointer and drop the task's last reference the instant the
+ * lock is released, so a query that returned the raw pointer would then read
+ * counters out of freed storage. It does not even need a live obligation to
+ * happen -- a ledger holding nothing but the task's own claim is enough. The
+ * migrate and unmigrate walkers already pin the same way, for the same reason.
+ *
+ * A task with no ledger holds no obligations, so NULL is the honest answer
+ * rather than a reason to create one: these are diagnostics, and a diagnostic
+ * that allocates is a diagnostic that changes what it measures. */
+
+uint32_t quota_ledger_task_obligations(struct task *task)
+{
+    /* NULL is answered, not dereferenced: quota_ledger_peek takes
+     * task->quota_lock unconditionally, so passing NULL through would fault
+     * inside a DIAGNOSTIC -- the one class of call that must never be able to
+     * take the machine down. Every neighbouring public quota query treats a
+     * NULL principal as "holds nothing". */
+    if (!task)
+        return 0;
+
+    quota_ledger_t *ledger = quota_ledger_peek(task);
+    if (!ledger)
+        return 0;
+
+    /* Summed over the per-type counters rather than kept as a third counter the
+     * charge path would also have to move: the total is a diagnostic, and one
+     * more contended cache line on the hot path to save sixteen relaxed reads
+     * off it is the wrong trade. The sum is not a snapshot -- concurrent charges
+     * of different types land at different moments -- which is all a diagnostic
+     * needs, and matches what quota_source_usage already promises. */
+    int32_t total = 0;
+    for (uint32_t t = 0; t < (uint32_t)QUOTA_RESOURCE_TYPE_COUNT; t++)
+        total += atomic_read(&ledger->obligations[t]);
+
+    quota_ledger_deref(ledger);
+    return (total > 0) ? (uint32_t)total : 0u;
+}
+
+uint32_t quota_ledger_task_obligations_of(struct task *task,
+                                          quota_resource_type_t type)
+{
+    if (!task || (uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return 0;
+
+    quota_ledger_t *ledger = quota_ledger_peek(task);
+    if (!ledger)
+        return 0;
+
+    int32_t held = atomic_read(&ledger->obligations[(uint32_t)type]);
+
+    quota_ledger_deref(ledger);
+    return (held > 0) ? (uint32_t)held : 0u;
+}
+
 uint32_t quota_ledger_outstanding(quota_ledger_t *ledger)
 {
     if (!ledger)
@@ -1200,6 +1574,14 @@ uint32_t quota_ledger_outstanding(quota_ledger_t *ledger)
 NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
                              uint64_t amount, quota_obligation_t *out)
 {
+    return quota_ledger_charge_from(task, type, amount, QUOTA_SOURCE_UNKNOWN,
+                                    out);
+}
+
+NTSTATUS quota_ledger_charge_from(struct task *task, quota_resource_type_t type,
+                                  uint64_t amount, quota_charge_source_t source,
+                                  quota_obligation_t *out)
+{
     if (!out)
         return STATUS_INVALID_PARAMETER;
 
@@ -1211,8 +1593,39 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
                            * be left holding a caller's garbage on a failure or
                            * zero-amount path. */
 
-    if (!task)
+    if (!task || !quota_source_valid(source))
         return STATUS_INVALID_PARAMETER;
+
+    /* RANGE BEFORE STORAGE, and here it is also range before STATE: `type`
+     * indexes the per-type obligation counters, so an out-of-range value would
+     * read and write past the end of that array before quota_charge_chain ever
+     * saw it. The chain validates the type too; this validation exists because
+     * the ceiling now touches the type FIRST. */
+    if ((uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return STATUS_INVALID_PARAMETER;
+
+    /* AMOUNT SEMANTICS BEFORE THE CEILING, because the ceiling is not entitled
+     * to an opinion about a charge that takes no obligation. Both of these were
+     * previously handled only in the current-task wrapper, which meant the two
+     * public entry points disagreed the moment a type sat at its cap: the same
+     * malformed amount reported STATUS_INVALID_PARAMETER through one and
+     * STATUS_QUOTA_EXCEEDED through the other, and a zero charge -- which
+     * quota.h defines as a SUCCESS owing nothing -- was refused outright. Which
+     * wrapper a caller happened to use is not allowed to change what a charge
+     * means. */
+    if (amount > (uint64_t)QUOTA_AMOUNT_MAX)
+        return STATUS_INVALID_PARAMETER;
+
+    /* ZERO OWES NOTHING, but it is NOT simply STATUS_SUCCESS: quota_charge_chain
+     * still checks liveness on a zero charge, so a sealed task must still be
+     * told it is terminating. Delegating reproduces that contract exactly while
+     * touching no ledger storage and reserving no budget. */
+    if (amount == 0) {
+        quota_charge_receipt_t scratch = { 0 };
+        uint64_t               scratch_token = 0;
+        return quota_charge_chain(task, type, 0, QUOTA_CHARGE_SOURCE(source),
+                                  &scratch, &scratch_token);
+    }
 
     quota_ledger_t *ledger = quota_ledger_acquire(task);
     if (!ledger) {
@@ -1223,9 +1636,69 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
                    : STATUS_INSUFFICIENT_RESOURCES;
     }
 
+    /* RESERVE BEFORE CLAIMING A SLOT. A task at its ceiling must not reach
+     * quota_ledger_grow at all: the claim path allocates a chunk when the
+     * existing slots are full, so checking afterwards would let a refused charge
+     * still grow the heap footprint the ceiling exists to bound.
+     *
+     * A REFUSAL IS DISAMBIGUATED AGAINST THE GATE, because the authoritative
+     * liveness answer lives inside quota_charge_chain and this check now runs
+     * before it. Without this, a task that was sealed or is mid-quiesce would be
+     * told STATUS_QUOTA_EXCEEDED -- a permanent, actionable-looking refusal --
+     * for what is really "you are dying" or "retry in a moment". The mapping is
+     * quota_charge_chain's own (SEALED -> terminating, CLOSED -> retry), so the
+     * status a caller sees does not depend on which check happened to run
+     * first. */
+    NTSTATUS reserved = quota_ledger_reserve_obligation(ledger, type);
+    if (reserved != STATUS_SUCCESS) {
+        /* ASK THE GATE, do not imitate it. Reading quota_gate_state_of and
+         * mapping the answer by hand reproduced the classification ALMOST
+         * exactly, and "almost" is the bug: the gate also refuses an OPEN gate
+         * whose in-flight count is at its ceiling, calling that CLOSED and
+         * reporting STATUS_RETRY, and it keeps the refusal telemetry every other
+         * refusal lands in. A hand-rolled copy silently answered
+         * STATUS_QUOTA_EXCEEDED for that case and recorded nothing.
+         *
+         * Entering and immediately leaving costs one CAS pair on the REFUSAL
+         * path only, and it does not move the gate off its funnel: the charge
+         * itself still enters inside quota_charge_chain. This asks the
+         * authority a question; it does not take over the authority's job. */
+        uint32_t gate_state = QUOTA_GATE_OPEN;
+
+        if (!quota_gate_enter(task, &gate_state)) {
+            quota_ledger_deref(ledger);
+            return (gate_state == QUOTA_GATE_SEALED)
+                       ? STATUS_PROCESS_IS_TERMINATING
+                       : STATUS_RETRY;
+        }
+        quota_gate_exit(task);
+
+        /* COUNTED HERE, not where the budget was found full, because only now is
+         * STATUS_QUOTA_EXCEEDED what the caller actually receives. The gate
+         * outranks the ceiling, so a charge arriving at a full cap on a CLOSED
+         * or SEALED task is told RETRY or TERMINATING and is a gate refusal --
+         * counting it above would let a teardown storm or a burst of membership
+         * transitions read as a quota-policy problem on the dashboards, which is
+         * precisely the misattribution this counter exists to prevent.
+         *
+         * And ONLY for the policy status. The reservation can also give up with
+         * STATUS_RETRY after exhausting its CAS bound, which is contention, not
+         * a budget decision -- counting that would make a contended boundary
+         * look like an administrative quota problem, the same misreading in a
+         * different disguise. */
+        if (reserved == STATUS_QUOTA_EXCEEDED) {
+            quota_ledger_count_refusal(&g_ceiling_refusals);
+            quota_ledger_count_refusal(&g_ceiling_refusals_by_type[(uint32_t)type]);
+        }
+
+        quota_ledger_deref(ledger);
+        return reserved;
+    }
+
     uint64_t epoch = 0;
     int32_t  index = quota_ledger_claim_slot(ledger, &epoch);
     if (index < 0) {
+        quota_ledger_release_obligation(ledger, type);
         quota_ledger_deref(ledger);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -1234,18 +1707,26 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
     if (!slot) {
         /* Cannot happen: the index came from a resolved slot. Handled anyway so
          * the claim is never stranded if it ever does. */
+        quota_ledger_release_obligation(ledger, type);
         quota_ledger_deref(ledger);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
+
+    /* Publish the reserved type while this slot is exclusively ours -- the claim
+     * above is what makes that true -- so every completion path can read it
+     * without touching the receipt. */
+    atomic_set(&slot->rtype, (int32_t)type);
 
     uint64_t token = 0;
     /* The gate is entered INSIDE quota_charge_chain, not here: that is the one
      * funnel every chain charge passes through, so gating there covers the
      * charges whose receipts live in their caller's own storage too. */
-    NTSTATUS status = quota_charge_chain(task, type, amount, 0,
-                                        &slot->receipt, &token);
+    NTSTATUS status = quota_charge_chain(task, type, amount,
+                                         QUOTA_CHARGE_SOURCE(source),
+                                         &slot->receipt, &token);
     if (status != STATUS_SUCCESS) {
         atomic64_set(&slot->owner, 0);
+        quota_ledger_release_obligation(ledger, type);
         quota_ledger_deref(ledger);
         return status;
     }
@@ -1256,6 +1737,7 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
          * so release the slot and hand back an EMPTY handle -- returning it
          * later must be a no-op, not a return of whatever reuses this slot. */
         atomic64_set(&slot->owner, 0);
+        quota_ledger_release_obligation(ledger, type);
         quota_ledger_deref(ledger);
         return STATUS_SUCCESS;
     }
@@ -1293,9 +1775,16 @@ NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
 #define QUOTA_COMPLETE_CREDITED  1
 #define QUOTA_COMPLETE_RETRY    (-1)
 
-static int quota_ledger_complete_return(quota_ledger_slot_t *slot,
+static int quota_ledger_complete_return(quota_ledger_t *ledger,
+                                        quota_ledger_slot_t *slot,
                                         uint64_t token, uint64_t epoch)
 {
+    /* Read the reserved type from the slot's own atomic word, not from the
+     * receipt: this read necessarily happens before the epoch is validated, so a
+     * stale duplicate performs it while a new owner may be writing the receipt. */
+    const quota_resource_type_t type =
+        (quota_resource_type_t)atomic_read(&slot->rtype);
+
     /* Retry the WHOLE return, not merely the tag CAS inside it. A return can fail
      * to land for exactly one reason -- colliding with an in-progress adjust on
      * this same charge -- and that collision clears the moment the adjust
@@ -1362,8 +1851,19 @@ static int quota_ledger_complete_return(quota_ledger_slot_t *slot,
     /* Release the slot against the EXACT epoch that claimed it. A stale duplicate
      * of this handle reaches this line with a superseded epoch, matches nothing,
      * and therefore cannot free a slot another charger has since claimed and is
-     * about to fill -- which a bare "clear the flag" would do. */
-    (void)atomic64_cmpxchg(&slot->owner, (int64_t)epoch, 0);
+     * about to fill -- which a bare "clear the flag" would do.
+     *
+     * THE CEILING RELEASE IS CONDITIONAL ON WINNING THAT CAS, and the CAS result
+     * is the only proof available. "IDLE at my own generation" is true both for
+     * the returner that just completed AND for a properly referenced DUPLICATE of
+     * the same handle arriving afterwards -- the comment above says exactly that
+     * -- so both reach this line reporting CREDITED. Releasing on the report
+     * would decrement twice for one obligation, drive the counter below the
+     * obligations that exist, and admit charges past the ceiling. Only the caller
+     * whose epoch matched actually freed the slot, so only it gives the budget
+     * back. */
+    if (atomic64_cmpxchg(&slot->owner, (int64_t)epoch, 0) == (int64_t)epoch)
+        quota_ledger_release_obligation(ledger, type);
     return QUOTA_COMPLETE_CREDITED;
 }
 
@@ -1471,7 +1971,7 @@ int quota_ledger_return(quota_obligation_t *ob)
         __atomic_fetch_add(&g_defer_forced, 1, __ATOMIC_RELAXED);
     }
 
-    int outcome = quota_ledger_complete_return(slot, ob->token, ob->epoch);
+    int outcome = quota_ledger_complete_return(ledger, slot, ob->token, ob->epoch);
 
     /* TERMINAL: this handle is emptied and its reference dropped below whatever
      * the outcome, so a RETRY here really is an abandonment. */
@@ -1595,7 +2095,8 @@ static uint32_t quota_ledger_drain_ledger(quota_ledger_t *ledger, uint32_t *budg
          * reuse. Nobody can have changed it: the mark is what makes the slot
          * unclaimable, and this pass owns the mark. */
         int64_t owner   = atomic64_read(&slot->owner);
-        int     outcome = quota_ledger_complete_return(slot, (uint64_t)token,
+        int     outcome = quota_ledger_complete_return(ledger, slot,
+                                                       (uint64_t)token,
                                                        (uint64_t)owner);
 
         if (outcome == QUOTA_COMPLETE_RETRY &&
@@ -1904,15 +2405,34 @@ uint64_t quota_ledger_deferrals_destroyed(void)
 NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount,
                                      quota_obligation_t *out)
 {
+    return quota_ledger_charge_current_from(type, amount, QUOTA_SOURCE_UNKNOWN,
+                                            out);
+}
+
+NTSTATUS quota_ledger_charge_current_from(quota_resource_type_t type,
+                                          uint64_t amount,
+                                          quota_charge_source_t source,
+                                          quota_obligation_t *out)
+{
     struct task *task;
 
     if (!out)
         return STATUS_INVALID_PARAMETER;
 
+    /* EMPTY THE HANDLE BEFORE ANY OTHER REFUSAL, source validation included.
+     * Every failure of this API leaves an empty obligation -- that is what lets
+     * a caller run one unconditional cleanup path instead of branching on the
+     * status -- and returning early on a bad source would hand back whatever the
+     * caller's storage happened to contain, which a cleanup then treats as a
+     * live handle. The explicit-task form clears first for the same reason, and
+     * the two entry points must not differ on it. */
     out->ledger = (quota_ledger_t *)0;
     out->slot   = 0;
     out->token  = 0;
     out->epoch  = 0;
+
+    if (!quota_source_valid(source))
+        return STATUS_INVALID_PARAMETER;
 
     /* Validate the TYPE before the boot exemption, for the same reason
      * quota_charge_current does: an exempted charge that skipped this would
@@ -1949,28 +2469,11 @@ NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount
         return STATUS_PROCESS_IS_TERMINATING;
     }
 
-    /* RANGE BEFORE STORAGE. quota_charge_chain rejects an out-of-range amount
-     * with STATUS_INVALID_PARAMETER, but quota_ledger_charge only reaches it
-     * AFTER acquiring a ledger and claiming a slot -- so under allocation
-     * pressure or at the slot ceiling the caller would get
-     * STATUS_INSUFFICIENT_RESOURCES for what is really a malformed request. */
-    if (amount > (uint64_t)QUOTA_AMOUNT_MAX)
-        return STATUS_INVALID_PARAMETER;
-
-    /* ZERO OWES NOTHING -- but it is NOT simply STATUS_SUCCESS. quota_charge_chain
-     * still checks liveness on a zero charge (a sealed task, or one that has lost
-     * its quota block, gets STATUS_PROCESS_IS_TERMINATING), and answering SUCCESS
-     * here would report that a dying task may proceed. Delegating the zero case
-     * to quota_charge_chain with a scratch receipt reproduces the contract
-     * exactly, and still touches no ledger storage: a zero charge takes no
-     * obligation, so `out` stays empty and there is nothing to return later. */
-    if (amount == 0) {
-        quota_charge_receipt_t scratch = { 0 };
-        uint64_t               scratch_token = 0;
-        return quota_charge_chain(task, type, 0, 0, &scratch, &scratch_token);
-    }
-
-    return quota_ledger_charge(task, type, amount, out);
+    /* RANGE AND ZERO ARE HANDLED BY quota_ledger_charge_from, not duplicated
+     * here. They used to live in this wrapper alone, which is exactly how the
+     * two entry points came to disagree at a full ceiling; one implementation
+     * cannot drift from itself. */
+    return quota_ledger_charge_from(task, type, amount, source, out);
 }
 
 NTSTATUS quota_ledger_adjust(quota_obligation_t *ob, uint64_t new_amount)

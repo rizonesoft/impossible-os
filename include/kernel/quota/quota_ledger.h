@@ -275,10 +275,35 @@ void quota_ledger_deref(quota_ledger_t *ledger);
  *
  * Returns whatever quota_charge_chain returns, plus STATUS_RETRY (a membership
  * transition is in progress -- the caller may retry),
- * STATUS_PROCESS_IS_TERMINATING (the task is dying), or
- * STATUS_INSUFFICIENT_RESOURCES (no free slot and no memory to grow). */
+ * STATUS_PROCESS_IS_TERMINATING (the task is dying), STATUS_QUOTA_EXCEEDED (this
+ * task is at an obligation ceiling -- see the ceiling contract below), or
+ * STATUS_INSUFFICIENT_RESOURCES (no free slot and no memory to grow).
+ *
+ * This form leaves the charge UNATTRIBUTED, exactly as quota_charge_current
+ * does. A charging subsystem should call quota_ledger_charge_from and name
+ * itself. */
 NTSTATUS quota_ledger_charge(struct task *task, quota_resource_type_t type,
                              uint64_t amount, quota_obligation_t *out);
+
+/* quota_ledger_charge, attributed to `source`.
+ *
+ * The ledger charged with flags 0 until this existed, so every obligation it
+ * held read back as QUOTA_SOURCE_UNKNOWN: a consumer converted from an embedded
+ * receipt to a ledger obligation LOST the attribution it had. This threads the
+ * source to the same place quota_charge_current_from puts it -- the receipt,
+ * whose `source` field the return path reads back to credit the system-wide
+ * attribution table.
+ *
+ * `source` is validated EAGERLY, before the ledger is acquired or any ceiling is
+ * consulted, so an undefined source reports STATUS_INVALID_PARAMETER rather than
+ * whichever refusal the task happened to be sitting on. That mirrors
+ * quota_charge_current_from, which validates before its own boot exemption for
+ * the same reason. The poison encoding remains as downstream defence: a source
+ * that somehow reached the flags word is refused again by quota_charge_chain's
+ * mask check. */
+NTSTATUS quota_ledger_charge_from(struct task *task, quota_resource_type_t type,
+                                  uint64_t amount, quota_charge_source_t source,
+                                  quota_obligation_t *out);
 
 /* Return an obligation and empty the handle. Safe on an empty handle, safe to
  * call twice (the second is a no-op), and safe after the charging task has died
@@ -445,6 +470,154 @@ void quota_ledger_test_hold(int hold);
  * delegated to quota_charge_chain so its liveness check still applies. */
 NTSTATUS quota_ledger_charge_current(quota_resource_type_t type, uint64_t amount,
                                      quota_obligation_t *out);
+
+/* quota_ledger_charge_current, attributed to `source`. Identical in every other
+ * respect, including both boot milestones and every status it can return, plus
+ * STATUS_INVALID_PARAMETER for a source the taxonomy does not define -- checked
+ * BEFORE the boot exemption, so an undefined source cannot be laundered into a
+ * STATUS_SUCCESS by charging early. */
+NTSTATUS quota_ledger_charge_current_from(quota_resource_type_t type,
+                                          uint64_t amount,
+                                          quota_charge_source_t source,
+                                          quota_obligation_t *out);
+
+/* --- The per-task obligation ceiling -------------------------------------- *
+ *
+ * The hard ceiling above (QUOTA_LEDGER_MAX_CHUNKS worth of slots) is a STORAGE
+ * bound: it exists so one process cannot eat the fixed kernel heap, and it
+ * reports STATUS_INSUFFICIENT_RESOURCES because that is what running out of
+ * storage is. It is not a policy, and it cannot answer the question the
+ * embedded-receipt consumers actually pose -- a task subscribing across many
+ * notification states, or queueing across many ALPC ports, has NO aggregate
+ * bound of its own (KNF's 4096 bounds ONE state's subscriber list), so
+ * converting such a consumer to the ledger would turn a quota decision into a
+ * heap-exhaustion report.
+ *
+ * So a POLICY ceiling sits strictly below the storage one, and the two statuses
+ * stay distinguishable on purpose: STATUS_QUOTA_EXCEEDED means "this task has
+ * been given as many outstanding obligations as policy allows" (a decision about
+ * the principal, actionable by an administrator), STATUS_INSUFFICIENT_RESOURCES
+ * still means "the kernel has no storage" (a condition of the machine). A caller
+ * that cannot tell them apart cannot tell a limit from an outage.
+ *
+ * NON-STARVATION IS STRUCTURAL, NOT CONFIGURED. A single aggregate total would
+ * bound the task and nothing else: one resource class could hold every unit of
+ * it and leave a second class unable to charge at all, which is precisely the
+ * cross-class starvation this ceiling is supposed to prevent. Proving otherwise
+ * by configuring one class's own quota limit proves only that configuration.
+ *
+ * So the budget is PER RESOURCE TYPE and nothing is shared: each type may hold
+ * its own QUOTA_LEDGER_CAP_<TYPE> obligations (published by
+ * quota_ledger_type_cap) and nobody else's, and QUOTA_LEDGER_TASK_MAX is what
+ * those caps sum to. Every type is therefore guaranteed its whole cap no
+ * matter what every other type does -- an absolute guarantee, not a floor
+ * defended against a contended pool.
+ *
+ * A SHARED POOL WAS TRIED AND REMOVED, and the reason is worth keeping. Giving
+ * each type a small reserved floor plus a large pool to draw on lets a hot type
+ * grow much further, but it needs TWO counters moved per charge -- the type's
+ * and the pool's -- and whether a unit came from the floor or from the pool has
+ * to be recomputed at release time from the counter's own value. That
+ * classification is not stable while another charge on the same type is in
+ * flight: a release can observe a count inflated by an uncommitted reservation,
+ * credit the pool for a unit that never took one, and leave the pool
+ * undercounting real occupancy -- which admits obligations PAST the ceiling, the
+ * one outcome this must not produce. Making the pair atomic needs a lock on the
+ * charge path. One counter per type needs no transaction at all: admission is a
+ * single wait-free atomic, and the drift is not merely unlikely but
+ * unrepresentable.
+ *
+ * EVERY TYPE HAS ITS OWN CAP MACRO, all currently equal, and that is not the
+ * same thing as one shared number. Raising a single consumer's budget has to be
+ * a one-line edit that leaves every other class exactly where it was; a lone
+ * uniform constant would force all sixteen classes up together and multiply the
+ * worst-case footprint by sixteen to give one consumer headroom. The caps are
+ * listed individually so the knob is real, and the total is SUMMED from them so
+ * it cannot drift away from what the admission rule enforces.
+ *
+ * WHAT THE KNOB CANNOT DO, said plainly because section 14's conversion depends
+ * on it. Every cap is spent against the same 2184-slot storage ceiling, so the
+ * headroom for raises is only what the assert leaves over -- room to give one
+ * class a few hundred more, not thousands. A consumer whose own limit is far
+ * larger (KNF admits 4096 subscribers to a SINGLE state, with no task-wide
+ * bound) cannot be covered by raising a cap at all; it needs the ledger's
+ * storage to stop being a fixed slice of the kernel heap, which is the
+ * page-backed-chunks work owned elsewhere. This ceiling makes such a consumer's
+ * refusal a BOUNDED and attributable policy decision instead of heap
+ * exhaustion; it does not by itself make the consumer unbounded.
+ *
+ * The values are uniform today because no consumer has been converted yet, and
+ * per-type numbers chosen before a real caller exists would be guesses. */
+
+/* Starting cap, shared by every type until a converted consumer justifies
+ * moving one of them. */
+#define QUOTA_LEDGER_CAP_DEFAULT   128u
+
+#define QUOTA_LEDGER_CAP_HANDLE              QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_OBJECT_BODY         QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_NAMESPACE_ENTRY     QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_PAGED_POOL          QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_NONPAGED_POOL       QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_REGISTRY_BYTES      QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_ALPC_MESSAGE        QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_NOTIFICATION_STATE  QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_TIMER               QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_THREAD              QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_PROCESS             QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_SECTION             QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_MAPPED_VIEW         QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_CRASH_BUFFER        QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_NOTIFICATION_SUB    QUOTA_LEDGER_CAP_DEFAULT
+#define QUOTA_LEDGER_CAP_NOTIFICATION_BYTES  QUOTA_LEDGER_CAP_DEFAULT
+
+/* Most outstanding obligations one task may hold across every resource type.
+ * SUMMED from the caps rather than declared beside them: a total that could
+ * disagree with the caps is a total the admission rule does not enforce. */
+#define QUOTA_LEDGER_TASK_MAX                     \
+    (QUOTA_LEDGER_CAP_HANDLE                      \
+     + QUOTA_LEDGER_CAP_OBJECT_BODY               \
+     + QUOTA_LEDGER_CAP_NAMESPACE_ENTRY           \
+     + QUOTA_LEDGER_CAP_PAGED_POOL                \
+     + QUOTA_LEDGER_CAP_NONPAGED_POOL             \
+     + QUOTA_LEDGER_CAP_REGISTRY_BYTES            \
+     + QUOTA_LEDGER_CAP_ALPC_MESSAGE              \
+     + QUOTA_LEDGER_CAP_NOTIFICATION_STATE        \
+     + QUOTA_LEDGER_CAP_TIMER                     \
+     + QUOTA_LEDGER_CAP_THREAD                    \
+     + QUOTA_LEDGER_CAP_PROCESS                   \
+     + QUOTA_LEDGER_CAP_SECTION                   \
+     + QUOTA_LEDGER_CAP_MAPPED_VIEW               \
+     + QUOTA_LEDGER_CAP_CRASH_BUFFER              \
+     + QUOTA_LEDGER_CAP_NOTIFICATION_SUB          \
+     + QUOTA_LEDGER_CAP_NOTIFICATION_BYTES)
+
+/* Charges refused by the obligation ceiling since boot, saturating.
+ *
+ * The ceiling refuses BEFORE quota_charge_chain, so no block failure counter
+ * moves and no quota failure event is emitted for these -- this is the only
+ * instrument that sees them. Pair it with quota_ledger_task_obligations_of to
+ * turn "the ceiling is biting" into "this task, this resource type". */
+uint64_t quota_ledger_ceiling_refusal_count(void);
+
+/* The same refusals for ONE resource type, so the instrument names the class
+ * that is being refused, not merely that something was. System-wide and
+ * saturating: unlike a per-ledger counter it does not die with the task, which
+ * is when an operator starts looking. It does NOT identify the principal --
+ * that needs a durable per-principal record, filed rather than approximated. */
+uint64_t quota_ledger_ceiling_refusals_of(quota_resource_type_t type);
+
+/* The cap enforced for `type`, or 0 for a type the taxonomy does not define.
+ * The admission rule reads the same table, so a caller and the ceiling can never
+ * disagree about what the limit is. */
+uint32_t quota_ledger_type_cap(quota_resource_type_t type);
+
+/* Outstanding obligations `task` holds, and the obligations it holds of one
+ * resource type. Zero for a task with no ledger. Diagnostics and tests -- the
+ * ceiling itself is enforced inside the charge path, never by a caller reading
+ * these and deciding for itself. */
+uint32_t quota_ledger_task_obligations(struct task *task);
+uint32_t quota_ledger_task_obligations_of(struct task *task,
+                                          quota_resource_type_t type);
 
 /* Attempts quota_ledger_return makes internally before reporting non-completion.
  * Each attempt re-enters the bounded same-generation BUSY retry, with the tag

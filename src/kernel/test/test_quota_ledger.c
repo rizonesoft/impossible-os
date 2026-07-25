@@ -29,6 +29,7 @@
 #include "kernel/ob/handle_table.h"  /* ObpLookupHandle / ObpFreeHandle */
 #include "kernel/mm/heap.h"          /* kmalloc_fail_next injection */
 #include "kernel/sched/irql.h"        /* KeRaiseIrql/KeLowerIrql for the deferral tests */
+#include "kernel/test/scratch.h"      /* TEST_SCRATCH_KBUF for the ceiling walk */
 
 /* The resource type these tests charge. SECTION is used by the sibling receipt
  * tests for the same reason: nothing in a test boot charges it, so a delta
@@ -1029,6 +1030,775 @@ static void test_quota_ledger_charge_handles_allocation_failure(void)
  * Only refusal branches are exercised, so the live task never joins anything --
  * and the teardown detaches defensively anyway, because assertions record failure
  * and CONTINUE, so a regression must not leave this task a member. */
+/* --- The per-task obligation ceiling (section 18) ------------------------- */
+
+/* A second resource type, distinct from LEDGER_TEST_TYPE, so the non-starvation
+ * assertion is about two genuinely different classes competing for one task's
+ * obligation budget rather than one class competing with itself. */
+#define LEDGER_CEILING_TYPE   QUOTA_RES_CRASH_BUFFER
+#define LEDGER_OTHER_TYPE     QUOTA_RES_MAPPED_VIEW
+
+/* Give back an obligation a NEGATIVE probe was never supposed to receive.
+ *
+ * Every refusal asserted below is asserted with a recording assertion, which
+ * does NOT return -- so when the behaviour under test regresses into success,
+ * the test keeps running while holding a live charge and a ledger reference.
+ * That strands the ledger (task release cannot orphan-drain one whose refcount
+ * is still held), leaves quota usage on the process block, and contaminates
+ * every suite that runs afterwards. Reclaiming immediately turns a regression
+ * into a clean single failure instead of a cascade.
+ *
+ * Keyed on the HANDLE, not on the status: a zero-amount charge legitimately
+ * reports success with an empty handle, and this must be a no-op for it. */
+static void ledger_probe_reclaim(quota_obligation_t *probe)
+{
+    if (probe && probe->ledger)
+        (void)quota_ledger_return(probe);
+}
+
+/* Obligations a type can hold before its budget is gone, read from the SAME
+ * table the admission rule uses. Not a constant copied beside the header: caps
+ * are per type and independently raisable, so a test that hardcoded one number
+ * would start failing the moment a consumer's cap moved -- and would be
+ * asserting its own copy rather than the policy in force. */
+#define LEDGER_CEILING_CAP   quota_ledger_type_cap(LEDGER_CEILING_TYPE)
+#define LEDGER_OTHER_CAP     quota_ledger_type_cap(LEDGER_OTHER_TYPE)
+
+/* Charging one type until it is refused must report a POLICY refusal, and must
+ * leave every other type its reserved floor.
+ *
+ * The two halves are one test because the second only means anything against a
+ * budget the first has actually exhausted: asserting that a fresh type can
+ * charge proves nothing unless the pool it would otherwise draw on is empty.
+ *
+ * STATUS_QUOTA_EXCEEDED, not STATUS_INSUFFICIENT_RESOURCES, is the whole point.
+ * The refusal arrives while the ledger still has hundreds of free slots and
+ * could still grow, so a caller can tell "this principal has been given all the
+ * obligations policy allows" from "the kernel is out of storage". */
+static void test_quota_ledger_ceiling_refuses_and_reserves_per_type(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    /* Start from a task with no ledger so the counts below start at zero. */
+    quota_ledger_task_release(t);
+
+    /* Room for the WHOLE task budget: this walk fills every resource type to its
+     * cap, not just the two the non-starvation half needs. */
+    TEST_SCRATCH_KBUF(raw, QUOTA_LEDGER_TASK_MAX * sizeof(quota_obligation_t));
+    quota_obligation_t *obs = (quota_obligation_t *)raw;
+
+    uint32_t held   = 0;
+    NTSTATUS refuse = STATUS_SUCCESS;
+
+    /* Walk one type up to its budget, writing EXACTLY cap entries. The
+     * over-limit probe is a separate handle rather than one more slot in this
+     * array, because the array is sized to the task ceiling: if the cap ever
+     * regressed by one, an in-array probe would make the aggregate fill below
+     * write one past the end and corrupt memory before any assertion could
+     * report the defect. A test must fail loudly on a regression, not scribble. */
+    for (uint32_t i = 0; i < LEDGER_CEILING_CAP; i++) {
+        if (quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1, &obs[held])
+                != STATUS_SUCCESS)
+            break;
+        held++;
+    }
+
+    quota_obligation_t probe = { 0 };
+    uint64_t refusals_before   = quota_ledger_ceiling_refusal_count();
+    uint64_t by_type_before    = quota_ledger_ceiling_refusals_of(LEDGER_CEILING_TYPE);
+    uint64_t other_type_before = quota_ledger_ceiling_refusals_of(LEDGER_OTHER_TYPE);
+    refuse = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1, &probe);
+    ledger_probe_reclaim(&probe);
+
+    /* The refusal must be VISIBLE. It happens before quota_charge_chain, so no
+     * block failure counter and no quota failure event records it -- without a
+     * counter of its own a converted consumer could fail every request at the
+     * cap while every existing instrument showed a clean subsystem. */
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusal_count(), refusals_before + 1,
+                   "a ceiling refusal is counted exactly once");
+    /* And the per-type instrument names the class that was refused, so an
+     * operator learns WHICH resource is saturating rather than only that
+     * something did. A second type must not have moved. */
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusals_of(LEDGER_CEILING_TYPE),
+                   by_type_before + 1,
+                   "and is attributed to the resource type that was refused");
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusals_of(LEDGER_OTHER_TYPE),
+                   other_type_before,
+                   "while an unrelated type's refusal count is untouched");
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusals_of(
+                       (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT), 0,
+                   "an undefined type reports no refusals");
+
+    TEST_ASSERT_EQ((uint64_t)refuse, (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "the obligation ceiling refuses with a POLICY status, not "
+                   "with heap exhaustion");
+    TEST_ASSERT_EQ((uint64_t)held, (uint64_t)LEDGER_CEILING_CAP,
+                   "one type may hold exactly its own cap, and not one more");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of(t,
+                                                             LEDGER_CEILING_TYPE),
+                   (uint64_t)LEDGER_CEILING_CAP,
+                   "the per-type count matches the obligations admitted");
+
+    /* The refusal is a policy decision taken with storage still available: the
+     * ledger never reached the slot ceiling that reports the other status. */
+    TEST_ASSERT(quota_ledger_task_obligations(t) < QUOTA_LEDGER_TASK_MAX,
+                "the exhausted type has NOT consumed the whole task budget");
+
+    /* NON-STARVATION. Every unit the first type could take is taken, and a
+     * second type must still get its WHOLE cap -- that is the property a single
+     * aggregate total cannot provide, and the reason the ALPC and KNF
+     * conversions can be bounded at all. */
+    uint32_t other = 0;
+    while (other < LEDGER_OTHER_CAP
+           && (held + other) < QUOTA_LEDGER_TASK_MAX) {
+        if (quota_ledger_charge(t, LEDGER_OTHER_TYPE, 1,
+                                &obs[held + other]) != STATUS_SUCCESS)
+            break;
+        other++;
+    }
+    TEST_ASSERT_EQ((uint64_t)other, (uint64_t)LEDGER_OTHER_CAP,
+                   "a second type still reaches its FULL cap after another type "
+                   "exhausted its own -- the budgets do not compete");
+
+    /* THE AGGREGATE. Two types at their caps is not the task total, so fill
+     * every remaining type as well and assert the summed budget IS
+     * QUOTA_LEDGER_TASK_MAX -- the derivation the header claims and the static
+     * assert pins, now demonstrated against the running admission rule rather
+     * than against arithmetic. */
+    uint32_t total_held = held + other;
+    for (uint32_t ty = 0; ty < (uint32_t)QUOTA_RESOURCE_TYPE_COUNT; ty++) {
+        quota_resource_type_t rt = (quota_resource_type_t)ty;
+        if (rt == LEDGER_CEILING_TYPE || rt == LEDGER_OTHER_TYPE)
+            continue;
+        uint32_t of_type = 0;
+        /* EVERY write is bounded by the array, not merely by the cap the code
+         * is supposed to enforce -- the whole point of this test is that the
+         * cap might not hold. */
+        while (of_type < quota_ledger_type_cap(rt)
+               && total_held < QUOTA_LEDGER_TASK_MAX) {
+            if (quota_ledger_charge(t, rt, 1, &obs[total_held]) != STATUS_SUCCESS)
+                break;
+            total_held++;
+            of_type++;
+        }
+    }
+
+    TEST_ASSERT_EQ((uint64_t)total_held, (uint64_t)QUOTA_LEDGER_TASK_MAX,
+                   "every type reaches its cap at the same time, and the sum IS "
+                   "the task ceiling");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t),
+                   (uint64_t)QUOTA_LEDGER_TASK_MAX,
+                   "the task-wide count agrees with the obligations admitted");
+
+    /* At the aggregate ceiling EVERY type is refused, and still by policy. */
+    quota_obligation_t over = { 0 };
+    NTSTATUS over_st = quota_ledger_charge(t, LEDGER_OTHER_TYPE, 1, &over);
+    ledger_probe_reclaim(&over);
+    TEST_ASSERT_EQ((uint64_t)over_st, (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "a task at its aggregate ceiling is refused by policy");
+
+    for (uint32_t i = 0; i < total_held; i++)
+        (void)quota_ledger_return(&obs[i]);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 0,
+                   "returning every obligation restores the whole budget");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1,
+                                                 &obs[0]),
+                   (uint64_t)STATUS_SUCCESS,
+                   "the ceiling admits again once the budget is given back");
+    (void)quota_ledger_return(&obs[0]);
+    quota_ledger_task_release(t);
+}
+
+/* Every path that fails AFTER the budget is reserved must give it back, or a
+ * task would be charged for obligations it never received. */
+static void test_quota_ledger_ceiling_restored_on_failure_paths(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_ledger_task_release(t);
+
+    /* THE SCRATCH BUFFER IS TAKEN FIRST, before any obligation exists.
+     * TEST_SCRATCH_KBUF returns outright when the allocation or its cleanup
+     * registration fails, so acquiring an obligation ahead of it would strand
+     * that obligation on exactly the memory-pressure path where cleanup matters
+     * most. Nothing is owed yet at this point, so that early return is free.
+     *
+     * The inline slot count is private to quota_ledger.c, so the fill below is
+     * driven by the PUBLIC capacity query and bounded by the per-type cap -- the
+     * most obligations of this type that could ever be admitted. */
+    TEST_SCRATCH_KBUF(fill_raw, LEDGER_CEILING_CAP
+                                * sizeof(quota_obligation_t));
+    quota_obligation_t *fill = (quota_obligation_t *)fill_raw;
+
+    quota_obligation_t ob = { 0 };
+
+    /* Take one real obligation so the ledger exists and the counter has a
+     * nonzero baseline that a mis-restore would visibly disturb. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 8, &ob),
+                   (uint64_t)STATUS_SUCCESS, "baseline obligation admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "the baseline obligation is counted");
+
+    /* ZERO TOKEN: the charge succeeds owing nothing, so the slot AND the budget
+     * are released and the handle comes back empty. */
+    quota_obligation_t zero = { 0 };
+    NTSTATUS zero_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 0, &zero);
+    int zero_empty = (zero.ledger == (quota_ledger_t *)0);
+    ledger_probe_reclaim(&zero);
+    TEST_ASSERT_EQ((uint64_t)zero_st, (uint64_t)STATUS_SUCCESS,
+                   "a zero charge is admitted");
+    TEST_ASSERT(zero_empty, "a zero charge holds no obligation");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "a zero charge gives its reserved budget back");
+
+    /* CHAIN FAILURE, and it must fail INSIDE the chain -- after the budget was
+     * reserved AND the slot claimed -- or it does not test the rollback it
+     * claims to. An out-of-range amount no longer qualifies: it is rejected up
+     * front, before the ledger is even acquired, so it would exercise nothing
+     * and the unchanged-count assertion would hold even if the post-reservation
+     * cleanup had stopped releasing anything.
+     *
+     * Closing the gate is a genuine one. The type is far below its cap, so the
+     * reservation succeeds and the slot is claimed; quota_charge_chain then
+     * enters the gate, finds it CLOSED, and refuses -- landing exactly on the
+     * branch that must give back both the slot and the budget. */
+    quota_obligation_t bad = { 0 };
+    uint32_t cap_before = quota_ledger_capacity(ob.ledger);
+
+    /* THE QUIESCE IS CHECKED BEFORE ANYTHING IS DONE WITH IT. A recording
+     * assertion does not return, so an unconditional reopen after a FAILED
+     * quiesce would either reopen a close this test never owned, or -- if the
+     * task had been sealed -- do nothing while leaving it sealed for every test
+     * that follows. Only a confirmed close is reopened. */
+    NTSTATUS quiesced = quota_gate_quiesce(t);
+    TEST_ASSERT_EQ((uint64_t)quiesced, (uint64_t)STATUS_SUCCESS,
+                   "the gate closes so the chain refuses mid-charge");
+    if (quiesced == STATUS_SUCCESS) {
+        /* Enough forced failures that a LEAKED slot could not hide. Asserting
+         * on quota_ledger_outstanding would not do it: that counts only slots
+         * whose receipt reached ACTIVE, and this refusal lands before the charge
+         * publishes, so a claimed-but-never-cleared slot is invisible to it. A
+         * leak would instead consume real capacity, so drive more failures than
+         * the ledger has slots and assert it never had to GROW -- which it would
+         * have to if each attempt kept its slot. */
+        for (uint32_t i = 0; i < cap_before + 2u; i++) {
+            NTSTATUS st_i = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 8, &bad);
+            ledger_probe_reclaim(&bad);
+            TEST_ASSERT_EQ((uint64_t)st_i, (uint64_t)STATUS_RETRY,
+                           "a charge refused inside the chain reports the "
+                           "chain's status");
+        }
+        quota_gate_reopen(t);
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "a charge refused INSIDE the chain gives its reserved budget "
+                   "back, every time");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_capacity(ob.ledger),
+                   (uint64_t)cap_before,
+                   "and releases the slot it had already claimed -- the ledger "
+                   "never had to grow to serve the retries");
+
+    /* The up-front rejection is still worth asserting -- just as what it now is:
+     * a malformed request refused before any state is touched. */
+    quota_obligation_t huge = { 0 };
+    NTSTATUS huge_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE,
+                                           (uint64_t)QUOTA_AMOUNT_MAX + 1u,
+                                           &huge);
+    ledger_probe_reclaim(&huge);
+    TEST_ASSERT_EQ((uint64_t)huge_st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an out-of-range amount is a malformed request");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "and reserves nothing at all");
+
+    /* CLAIM FAILURE, and it must ACTUALLY fail. Injecting an allocation failure
+     * while free slots remain proves nothing: the claim takes an inline slot and
+     * never allocates, so the injection is never consulted and the assertion
+     * below would pass over a rollback that leaks budget. Fill every slot the
+     * ledger currently has first, so the next claim is forced to GROW and the
+     * injected failure is the thing it hits. */
+    uint32_t filled = 0;
+    while (filled < LEDGER_CEILING_CAP - 1u
+           && quota_ledger_outstanding(ob.ledger) < quota_ledger_capacity(ob.ledger)) {
+        if (quota_ledger_charge(t, LEDGER_CEILING_TYPE, 8,
+                                &fill[filled]) != STATUS_SUCCESS)
+            break;
+        filled++;
+    }
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_outstanding(ob.ledger),
+                   (uint64_t)quota_ledger_capacity(ob.ledger),
+                   "every slot the ledger has is occupied, so the next claim "
+                   "must grow");
+
+    uint32_t counted_before = quota_ledger_task_obligations(t);
+    quota_obligation_t starved = { 0 };
+    kmalloc_fail_next();
+    NTSTATUS st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 8, &starved);
+    kmalloc_fail_countdown_set(0);
+
+    int starved_empty = (starved.ledger == (quota_ledger_t *)0);
+    ledger_probe_reclaim(&starved);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_INSUFFICIENT_RESOURCES,
+                   "a charge whose slot claim cannot grow reports storage "
+                   "exhaustion, NOT a policy refusal");
+    TEST_ASSERT(starved_empty, "the failed claim leaves the obligation empty");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t),
+                   (uint64_t)counted_before,
+                   "a charge whose slot claim fails gives its budget back");
+
+    for (uint32_t i = 0; i < filled; i++)
+        (void)quota_ledger_return(&fill[i]);
+
+    /* AN UNDEFINED TYPE never reserves at all: it is refused before the counter
+     * array is indexed, which is also what keeps it from being indexed out of
+     * bounds. */
+    quota_obligation_t off = { 0 };
+    NTSTATUS off_st = quota_ledger_charge(t,
+                          (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT, 8,
+                          &off);
+    ledger_probe_reclaim(&off);
+    TEST_ASSERT_EQ((uint64_t)off_st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an undefined resource type is refused before it is indexed");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "a refused type moves no counter");
+
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 0,
+                   "the baseline obligation is given back exactly once");
+    quota_ledger_task_release(t);
+}
+
+/* A DUPLICATE handle of an already-returned obligation reports the same
+ * "credited" outcome as the handle that really completed it -- the receipt reads
+ * IDLE at that generation for both. Only the caller whose epoch matched actually
+ * freed the slot, so only that one may give the budget back. A decrement keyed
+ * on the outcome instead would run twice for one obligation and drive the count
+ * below the obligations that exist, which is a ceiling BYPASS: the task would be
+ * admitted past its limit for as long as the deficit lasted.
+ *
+ * The duplicate takes its OWN reference, exactly as the raised-IRQL duplicate
+ * test does; a bare struct copy would be two handles over one reference, which
+ * is a lifetime error rather than a case this contract covers. */
+static void test_quota_ledger_ceiling_survives_duplicate_return(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_ledger_task_release(t);
+
+    quota_obligation_t ob = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 16, &ob),
+                   (uint64_t)STATUS_SUCCESS, "obligation admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "one obligation is counted against the ceiling");
+
+    quota_obligation_t dup = ob;
+    quota_ledger_ref(dup.ledger);
+
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 0,
+                   "the returning handle gives the budget back");
+
+    (void)quota_ledger_return(&dup);
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 0,
+                   "the duplicate does not give the same budget back twice");
+
+    /* The count is not merely reported as zero -- it is actually zero, so the
+     * full budget is still available. A double decrement would have left a
+     * deficit that admits one charge too many. */
+    quota_obligation_t after = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 16,
+                                                 &after),
+                   (uint64_t)STATUS_SUCCESS, "the budget is intact afterwards");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 1,
+                   "and it counts exactly one obligation again");
+    (void)quota_ledger_return(&after);
+    quota_ledger_task_release(t);
+}
+
+/* A return above PASSIVE_LEVEL is completed later by the drain, and the budget
+ * must come back when the obligation is actually settled -- not when the handle
+ * was emptied. The completion is shared verbatim with the inline path, which is
+ * exactly why this must be asserted rather than assumed. */
+static void test_quota_ledger_ceiling_released_by_deferred_drain(void)
+{
+    quota_ledger_test_hold(1);
+    struct task       *t  = task_current();
+    quota_obligation_t ob = { 0 };
+    KIRQL              old;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        quota_ledger_test_hold(0);
+        return;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 4, &ob),
+                   (uint64_t)STATUS_SUCCESS, "obligation admitted");
+    uint32_t counted = quota_ledger_task_obligations_of(t, LEDGER_CEILING_TYPE);
+
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    (void)quota_ledger_return(&ob);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of(t,
+                                                             LEDGER_CEILING_TYPE),
+                   (uint64_t)counted,
+                   "a deferred return still holds its budget: the obligation is "
+                   "owed to the drain, not settled");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_drain_now(), 1u,
+                   "the drain completes the deferred obligation");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of(t,
+                                                             LEDGER_CEILING_TYPE),
+                   (uint64_t)(counted - 1u),
+                   "and the drain is what gives the budget back");
+
+    /* ZERO IS NOT PROOF OF EXACTLY-ONCE. The query clamps a negative raw counter
+     * to zero, so a deferred completion that released the same budget twice
+     * would read as zero here and satisfy the assertion above while leaving the
+     * task one obligation richer than its cap allows. Charging again and
+     * demanding EXACTLY one is what distinguishes a true zero from a masked
+     * deficit: against a counter sitting at -1 this reads zero, not one. */
+    quota_obligation_t after = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 4,
+                                                 &after),
+                   (uint64_t)STATUS_SUCCESS, "a further charge is admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of(t,
+                                                             LEDGER_CEILING_TYPE),
+                   (uint64_t)counted,
+                   "the counter is a TRUE zero, not a negative one clamped by "
+                   "the query: a doubled release would read one short here");
+    (void)quota_ledger_return(&after);
+
+    quota_ledger_task_release(t);
+    for (uint32_t flush = 0; flush < 4u; flush++)
+        (void)quota_ledger_drain_now();
+    quota_ledger_test_hold(0);
+}
+
+/* At the ceiling, the GATE still outranks the policy. A task that is dying or
+ * mid-membership-transition must not be told STATUS_QUOTA_EXCEEDED just because
+ * its budget happens to be full: that is a permanent, administrator-actionable
+ * refusal standing in for "you are dying" or "retry in a moment". The ceiling is
+ * checked before quota_charge_chain -- which is where the authoritative liveness
+ * answer lives -- so the precedence has to be reproduced explicitly, and that
+ * makes it exactly the kind of thing a later refactor drops silently.
+ *
+ * The gate word is saved and restored: a seal is deliberately terminal (reopen
+ * refuses to resurrect one), so leaving the current task sealed would break
+ * every quota test that runs after this one. */
+static void test_quota_ledger_ceiling_yields_to_the_gate(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_ledger_task_release(t);
+
+    TEST_SCRATCH_KBUF(raw, LEDGER_CEILING_CAP * sizeof(quota_obligation_t));
+    quota_obligation_t *obs = (quota_obligation_t *)raw;
+
+    uint32_t held = 0;
+    while (held < LEDGER_CEILING_CAP) {
+        if (quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1, &obs[held])
+                != STATUS_SUCCESS)
+            break;
+        held++;
+    }
+    TEST_ASSERT_EQ((uint64_t)held, (uint64_t)LEDGER_CEILING_CAP,
+                   "the type is at its cap, so the next charge is at the ceiling");
+
+    /* A SEPARATE HANDLE PER PROBE, each reclaimed immediately if the charge is
+     * wrongly admitted. Reusing one handle across the three probes is a leak
+     * waiting for the first regression: quota_ledger_charge_from empties its
+     * output before it decides anything, so an unexpectedly admitted obligation
+     * would be erased by the NEXT probe, stranding a live charge and a ledger
+     * reference that task release then cannot orphan-drain -- contaminating
+     * every test that runs after this one. A failing assertion records and
+     * continues, so "it cannot happen" is not a cleanup strategy. */
+    quota_obligation_t open_probe = { 0 };
+    uint64_t refusals = quota_ledger_ceiling_refusal_count();
+    NTSTATUS open_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1, &open_probe);
+    ledger_probe_reclaim(&open_probe);
+    TEST_ASSERT_EQ((uint64_t)open_st, (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "with the gate OPEN the ceiling reports a policy refusal");
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusal_count(), refusals + 1,
+                   "and THAT is what the ceiling counter records -- one policy "
+                   "refusal, one count, and nothing counted for a status the "
+                   "caller never received");
+    refusals = quota_ledger_ceiling_refusal_count();
+
+    int64_t saved = atomic64_read(&t->quota_gate);
+
+    /* CLOSED: a membership transition is in progress, so the honest answer is
+     * "retry", not "you are over quota". */
+    quota_obligation_t closed_probe = { 0 };
+    NTSTATUS closed_quiesce = quota_gate_quiesce(t);
+    TEST_ASSERT_EQ((uint64_t)closed_quiesce, (uint64_t)STATUS_SUCCESS,
+                   "the gate closes for the transition");
+    /* PROBE AND REOPEN ONLY ON A CLOSE THIS TEST ACTUALLY OWNS. The assertion
+     * above records and continues, so a quiesce refused because another
+     * transition holds CLOSED would otherwise be followed by a reopen of THAT
+     * transition's gate -- and a refusal because the task is sealed would leave
+     * it sealed while the reopen quietly did nothing. */
+    if (closed_quiesce == STATUS_SUCCESS) {
+        NTSTATUS closed_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1,
+                                                 &closed_probe);
+        ledger_probe_reclaim(&closed_probe);
+        quota_gate_reopen(t);
+        TEST_ASSERT_EQ((uint64_t)closed_st, (uint64_t)STATUS_RETRY,
+                       "a CLOSED gate outranks the ceiling: retry, not "
+                       "over-quota");
+        /* A gate refusal is NOT a policy refusal, and the counter must not say
+         * it was: a burst of membership transitions against a task sitting at
+         * its cap would otherwise read as a quota problem. */
+        TEST_ASSERT_EQ(quota_ledger_ceiling_refusal_count(), refusals,
+                       "a CLOSED-gate refusal does not count as a ceiling "
+                       "refusal");
+    }
+
+    /* SEALED: the task is dying, and no amount of returning obligations would
+     * make this charge succeed -- so it must not look like a quota problem. The
+     * gate word is restored BEFORE the assertion, because a seal is terminal and
+     * an early return here would leave the task permanently unchargeable. */
+    quota_obligation_t sealed_probe = { 0 };
+    NTSTATUS sealed_st;
+    quota_gate_seal(t);
+    sealed_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 1, &sealed_probe);
+    atomic64_set(&t->quota_gate, saved);
+    ledger_probe_reclaim(&sealed_probe);
+    TEST_ASSERT_EQ((uint64_t)sealed_st, (uint64_t)STATUS_PROCESS_IS_TERMINATING,
+                   "a SEALED gate outranks the ceiling: terminating, not "
+                   "over-quota");
+    TEST_ASSERT_EQ(quota_ledger_ceiling_refusal_count(), refusals,
+                   "and a teardown refusal does not count as a ceiling refusal "
+                   "either");
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of(t,
+                                                             LEDGER_CEILING_TYPE),
+                   (uint64_t)LEDGER_CEILING_CAP,
+                   "none of the three refusals consumed or leaked budget");
+
+    /* AMOUNT SEMANTICS ALSO OUTRANK THE CEILING, and the two public entry points
+     * must agree about it. A zero charge owes nothing, so a full cap is none of
+     * its business; a malformed amount is a malformed request, not a quota
+     * problem. Both are asserted through BOTH wrappers, because the defect this
+     * guards against was precisely that they disagreed once a type filled up. */
+    quota_obligation_t zero_at_cap = { 0 };
+    NTSTATUS zero_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE, 0,
+                                           &zero_at_cap);
+    ledger_probe_reclaim(&zero_at_cap);
+    TEST_ASSERT_EQ((uint64_t)zero_st, (uint64_t)STATUS_SUCCESS,
+                   "a zero charge succeeds even with the type at its cap");
+
+    quota_obligation_t zero_cur = { 0 };
+    NTSTATUS zero_cur_st = quota_ledger_charge_current(LEDGER_CEILING_TYPE, 0,
+                                                       &zero_cur);
+    ledger_probe_reclaim(&zero_cur);
+    TEST_ASSERT_EQ((uint64_t)zero_cur_st, (uint64_t)zero_st,
+                   "and the current-task form answers a zero charge identically");
+
+    quota_obligation_t huge = { 0 };
+    NTSTATUS huge_st = quota_ledger_charge(t, LEDGER_CEILING_TYPE,
+                                           (uint64_t)QUOTA_AMOUNT_MAX + 1u,
+                                           &huge);
+    ledger_probe_reclaim(&huge);
+    TEST_ASSERT_EQ((uint64_t)huge_st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "a malformed amount at the cap is a malformed request, not "
+                   "a quota refusal");
+
+    quota_obligation_t huge_cur = { 0 };
+    NTSTATUS huge_cur_st = quota_ledger_charge_current(LEDGER_CEILING_TYPE,
+                               (uint64_t)QUOTA_AMOUNT_MAX + 1u, &huge_cur);
+    ledger_probe_reclaim(&huge_cur);
+    TEST_ASSERT_EQ((uint64_t)huge_cur_st, (uint64_t)huge_st,
+                   "and both entry points agree on it");
+
+    /* NULL is a diagnostic answer, never a fault. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations((struct task *)0), 0,
+                   "the task-wide query answers NULL rather than faulting");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations_of((struct task *)0,
+                                                              LEDGER_CEILING_TYPE),
+                   0, "and so does the per-type query");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_type_cap(
+                       (quota_resource_type_t)QUOTA_RESOURCE_TYPE_COUNT), 0,
+                   "an undefined type has no cap");
+
+    /* EVERY DEFINED type must have a NONZERO cap. The compile-time guard catches
+     * a type appended without a cap row, because the taxonomy appends at the
+     * end; it cannot catch a zero left in a middle row, and a zero cap would
+     * refuse every charge of a perfectly valid resource type with
+     * STATUS_QUOTA_EXCEEDED -- a whole subsystem silently unable to charge. */
+    uint32_t cap_sum = 0;
+    for (uint32_t ty = 0; ty < (uint32_t)QUOTA_RESOURCE_TYPE_COUNT; ty++) {
+        uint32_t cap = quota_ledger_type_cap((quota_resource_type_t)ty);
+        TEST_ASSERT(cap > 0, "every defined resource type has a nonzero "
+                             "obligation cap");
+        cap_sum += cap;
+    }
+    TEST_ASSERT_EQ((uint64_t)cap_sum, (uint64_t)QUOTA_LEDGER_TASK_MAX,
+                   "the task ceiling is exactly the per-type caps summed");
+
+    for (uint32_t i = 0; i < held; i++)
+        (void)quota_ledger_return(&obs[i]);
+    quota_ledger_task_release(t);
+}
+
+/* --- Charge-source pass-through (section 18) ------------------------------ */
+
+/* A ledger charge that names its subsystem must land that source in the
+ * system-wide attribution table, exactly as quota_charge_current_from does. The
+ * ledger charged with flags 0 before this existed, so a consumer converted from
+ * an embedded receipt to a ledger obligation lost its attribution entirely. */
+static void test_quota_ledger_charge_from_attributes_the_source(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_ledger_task_release(t);
+
+    int64_t before_usage = quota_source_usage(QUOTA_SOURCE_DIAG,
+                                              LEDGER_CEILING_TYPE);
+    int64_t before_count = quota_source_charges(QUOTA_SOURCE_DIAG,
+                                                LEDGER_CEILING_TYPE);
+
+    quota_obligation_t ob = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_from(t, LEDGER_CEILING_TYPE, 24,
+                                                      QUOTA_SOURCE_DIAG, &ob),
+                   (uint64_t)STATUS_SUCCESS, "an attributed ledger charge is admitted");
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_DIAG,
+                                                LEDGER_CEILING_TYPE),
+                   (uint64_t)(before_usage + 24),
+                   "the named source holds the ledger charge");
+    TEST_ASSERT_EQ((uint64_t)quota_source_charges(QUOTA_SOURCE_DIAG,
+                                                  LEDGER_CEILING_TYPE),
+                   (uint64_t)(before_count + 1),
+                   "and the charge is counted against that source");
+
+    (void)quota_ledger_return(&ob);
+    TEST_ASSERT_EQ((uint64_t)quota_source_usage(QUOTA_SOURCE_DIAG,
+                                                LEDGER_CEILING_TYPE),
+                   (uint64_t)before_usage,
+                   "returning the obligation credits the source back");
+
+    /* An UNATTRIBUTED charge stays unattributed: quota_ledger_charge is the
+     * unnamed form, and UNKNOWN is deliberately never recorded in the table. */
+    int64_t rows_before[QUOTA_SOURCE_COUNT];
+    for (uint32_t src = 0; src < (uint32_t)QUOTA_SOURCE_COUNT; src++)
+        rows_before[src] = quota_source_usage((quota_charge_source_t)src,
+                                              LEDGER_CEILING_TYPE);
+
+    quota_obligation_t plain = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, LEDGER_CEILING_TYPE, 24,
+                                                 &plain),
+                   (uint64_t)STATUS_SUCCESS, "an unnamed ledger charge is admitted");
+    /* EVERY row, not just DIAG. Checking one source cannot tell "attributed to
+     * nobody" from "attributed to the wrong subsystem": a charge that encoded
+     * IPC instead of nothing would leave DIAG untouched and UNKNOWN at zero, and
+     * both assertions would pass while the receipt carried a wrong label. */
+    for (uint32_t src = 0; src < (uint32_t)QUOTA_SOURCE_COUNT; src++)
+        TEST_ASSERT_EQ((uint64_t)quota_source_usage((quota_charge_source_t)src,
+                                                    LEDGER_CEILING_TYPE),
+                       (uint64_t)rows_before[src],
+                       "an unnamed charge moves no source row at all");
+    (void)quota_ledger_return(&plain);
+
+    /* THE CURRENT-TASK WRAPPER CARRIES A VALID SOURCE TOO. Proving only that it
+     * REFUSES an undefined source leaves its actual pass-through contract
+     * unproved: a regression that kept the validation but passed
+     * QUOTA_SOURCE_UNKNOWN downstream would still refuse the bad source here,
+     * while every consumer converted through this entry point silently lost its
+     * attribution -- which is the exact defect this section exists to fix. */
+    /* EVERY valid source, not one. A single probe naming DIAG and expecting DIAG
+     * cannot tell pass-through from a hardcoded value: a wrapper that ignored
+     * its `source` argument and always forwarded DIAG would satisfy it exactly,
+     * while every caller naming IPC or MEMORY was silently misattributed.
+     * Walking the whole taxonomy makes the assertion about the PARAMETER.
+     *
+     * UNKNOWN is skipped because it is deliberately never recorded (quota.h):
+     * "unattributed" lives on the receipt, not in this table, and the unnamed
+     * charge above already proves that direction. */
+    for (uint32_t named = 1; named < (uint32_t)QUOTA_SOURCE_COUNT; named++) {
+        quota_charge_source_t src_id = (quota_charge_source_t)named;
+        int64_t cur_rows[QUOTA_SOURCE_COUNT];
+        for (uint32_t src = 0; src < (uint32_t)QUOTA_SOURCE_COUNT; src++)
+            cur_rows[src] = quota_source_usage((quota_charge_source_t)src,
+                                               LEDGER_CEILING_TYPE);
+        int64_t cur_charges = quota_source_charges(src_id, LEDGER_CEILING_TYPE);
+
+        quota_obligation_t cur = { 0 };
+        TEST_ASSERT_EQ((uint64_t)quota_ledger_charge_current_from(
+                           LEDGER_CEILING_TYPE, 32, src_id, &cur),
+                       (uint64_t)STATUS_SUCCESS,
+                       "the current-task form admits an attributed charge");
+        for (uint32_t src = 0; src < (uint32_t)QUOTA_SOURCE_COUNT; src++) {
+            int64_t want = cur_rows[src] + ((src == named) ? 32 : 0);
+            TEST_ASSERT_EQ((uint64_t)quota_source_usage(
+                               (quota_charge_source_t)src, LEDGER_CEILING_TYPE),
+                           (uint64_t)want,
+                           "the current-task form moves ONLY the row of the "
+                           "source it was GIVEN");
+        }
+        TEST_ASSERT_EQ((uint64_t)quota_source_charges(src_id,
+                                                      LEDGER_CEILING_TYPE),
+                       (uint64_t)(cur_charges + 1),
+                       "and counts one charge against that same source");
+
+        (void)quota_ledger_return(&cur);
+        TEST_ASSERT_EQ((uint64_t)quota_source_usage(src_id, LEDGER_CEILING_TYPE),
+                       (uint64_t)cur_rows[named],
+                       "returning it credits that source back");
+    }
+
+    /* A source the taxonomy does not define is refused OUTRIGHT, and before any
+     * ledger state is touched -- never encoded into flags and never laundered
+     * into a success by an early return. */
+    quota_obligation_t bogus = { 0 };
+    NTSTATUS bogus_st = quota_ledger_charge_from(t, LEDGER_CEILING_TYPE, 24,
+                            (quota_charge_source_t)QUOTA_SOURCE_COUNT, &bogus);
+    int bogus_empty = (bogus.ledger == (quota_ledger_t *)0);
+    ledger_probe_reclaim(&bogus);
+    TEST_ASSERT_EQ((uint64_t)bogus_st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "an undefined charge source is refused");
+    TEST_ASSERT(bogus_empty, "a refused source leaves the obligation empty");
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_task_obligations(t), 0,
+                   "and reserves no budget");
+
+    /* Its OWN handle: sharing one with the probe above would let a regressed
+     * first probe's live obligation be erased by this call's output clear. */
+    /* SENTINEL-FILLED, because "the handle is emptied on every failure" is what
+     * lets a caller run one unconditional cleanup path instead of branching on
+     * the status. A refusal that returned before clearing would hand back these
+     * sentinels, and that cleanup would treat them as a live obligation. */
+    quota_obligation_t bogus_cur = {
+        .ledger = (quota_ledger_t *)~(uintptr_t)0,
+        .slot   = 0xDEADBEEFu,
+        .token  = 0xFEEDFACEULL,
+        .epoch  = 0xC0FFEEULL,
+    };
+    NTSTATUS bogus_cur_st = quota_ledger_charge_current_from(LEDGER_CEILING_TYPE,
+                                24, (quota_charge_source_t)QUOTA_SOURCE_COUNT,
+                                &bogus_cur);
+    TEST_ASSERT_EQ((uint64_t)bogus_cur_st, (uint64_t)STATUS_INVALID_PARAMETER,
+                   "the current-task form refuses it too");
+    TEST_ASSERT_NULL((void *)bogus_cur.ledger,
+                     "and empties the handle rather than returning early over "
+                     "the caller's storage");
+    TEST_ASSERT_EQ((uint64_t)bogus_cur.token, 0, "no token survives a refusal");
+    TEST_ASSERT_EQ((uint64_t)bogus_cur.epoch, 0, "no epoch survives a refusal");
+    TEST_ASSERT_EQ((uint64_t)bogus_cur.slot, 0, "no slot survives a refusal");
+
+    quota_ledger_task_release(t);
+}
+
 static void test_ob_job_assign_refusal_unwinds_completely(void)
 {
     struct task *t = task_current();
@@ -1407,14 +2177,27 @@ static void test_quota_ledger_destroy_at_raised_irql_defers(void)
  * Without a saved cursor every pass rescans the first QUOTA_LEDGER_DRAIN_SLOTS
  * slots, finds them already done, and requeues forever -- the obligation past
  * the budget is never examined and the worker spins. 513 is the smallest count
- * that crosses the 512-slot bound. */
+ * that crosses the 512-slot bound.
+ *
+ * SPREAD ACROSS RESOURCE TYPES, because the per-task obligation ceiling caps
+ * each type at its own cap and 513 of any single type is refused by
+ * policy. The type is incidental to what this test proves -- the drain's cursor
+ * across one LEDGER's slots -- so rotating types keeps all 513 obligations in
+ * the same ledger, still past the slot budget and still past one chunk, without
+ * weakening the assertion. */
 static void test_quota_ledger_deferrals_past_the_slot_budget_complete(void)
 {
     quota_ledger_test_hold(1);
     enum { N = 513 };
+    static const quota_resource_type_t kinds[] = {
+        QUOTA_RES_ALPC_MESSAGE, QUOTA_RES_TIMER, QUOTA_RES_SECTION,
+        QUOTA_RES_MAPPED_VIEW, QUOTA_RES_CRASH_BUFFER,
+    };
+    enum { KINDS = (int)(sizeof(kinds) / sizeof(kinds[0])) };
     struct task       *t = task_current();
     static quota_obligation_t obs[N];   /* static: too large for a kernel stack */
-    uint64_t           before, pending_before;
+    uint64_t           before[KINDS];
+    uint64_t           pending_before;
     KIRQL              old;
     uint32_t           i, charged = 0;
 
@@ -1424,12 +2207,13 @@ static void test_quota_ledger_deferrals_past_the_slot_budget_complete(void)
         return;
     }
 
-    before         = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    for (i = 0; i < (uint32_t)KINDS; i++)
+        before[i] = quota_usage(t->quota, kinds[i]);
     pending_before = quota_ledger_deferrals_pending();
 
     for (i = 0; i < (uint32_t)N; i++) {
         obs[i] = (quota_obligation_t){ 0 };
-        if (quota_ledger_charge_current(QUOTA_RES_ALPC_MESSAGE, 1,
+        if (quota_ledger_charge_current(kinds[i % (uint32_t)KINDS], 1,
                                         &obs[i]) != STATUS_SUCCESS)
             break;
         charged++;
@@ -1455,8 +2239,9 @@ static void test_quota_ledger_deferrals_past_the_slot_budget_complete(void)
                    "every deferral past the slot budget is completed, not rescanned forever");
     TEST_ASSERT_EQ(quota_ledger_deferrals_pending(), pending_before,
                    "nothing left pending");
-    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), before,
-                   "and every charge is credited back");
+    for (i = 0; i < (uint32_t)KINDS; i++)
+        TEST_ASSERT_EQ(quota_usage(t->quota, kinds[i]), before[i],
+                       "and every charge is credited back");
 
     quota_ledger_task_release(t);
     /* Flush anything the drain deferred to a LATER callback -- a destroy that
@@ -1959,6 +2744,18 @@ void test_register_quota_ledger(void)
                             test_quota_charge_adjust_decrease_underflow_fails_closed, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: a ledger allocation failure is reported and strands nothing",
                             test_quota_ledger_charge_handles_allocation_failure, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: the obligation ceiling refuses by policy and reserves per type",
+                            test_quota_ledger_ceiling_refuses_and_reserves_per_type, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: every failed charge gives its reserved obligation budget back",
+                            test_quota_ledger_ceiling_restored_on_failure_paths, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a duplicate return cannot give the same budget back twice",
+                            test_quota_ledger_ceiling_survives_duplicate_return, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a deferred return releases its budget at drain, not at handoff",
+                            test_quota_ledger_ceiling_released_by_deferred_drain, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: the charge gate outranks the obligation ceiling",
+                            test_quota_ledger_ceiling_yields_to_the_gate, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a ledger charge carries its named source into the attribution table",
+                            test_quota_ledger_charge_from_attributes_the_source, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: a refused ob_job_assign unwinds absorb, migration, and gate",
                             test_ob_job_assign_refusal_unwinds_completely, TEST_CAT_QUOTA);
 }
