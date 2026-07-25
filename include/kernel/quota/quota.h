@@ -43,12 +43,19 @@ struct access_token;
  * enum value). */
 typedef enum {
     QUOTA_RES_HANDLE = 0,        /* open handle-table entries        */
-    /* One scalar per principal covering bodies of EVERY object type: the enum
-     * value is the accounting identity, so this space has no OBJECT_TYPE
-     * dimension and cannot answer "how many Events are live". That question is
-     * owned by OBJECT_TYPE.total_objects (include/kernel/ob/ob_type.h), which
-     * carries no owner dimension in return. Both halves of that boundary are
-     * deliberate; see the counter-authority contract in ob_type.h. */
+    /* The GENERIC per-principal row for object bodies: it covers every registered
+     * type that has no dedicated BODY-CLASS row of its own (_TIMER, _THREAD,
+     * _PROCESS, _SECTION and _NOTIFICATION_STATE have one). A body creation
+     * charges exactly ONE body-class row -- dedicated if the type has one, else
+     * this one, never both -- while orthogonal rows (_NAMESPACE_ENTRY, _HANDLE,
+     * _MAPPED_VIEW at map time, _ALPC_MESSAGE, _NOTIFICATION_BYTES, pool,
+     * registry) are charged independently on their own events.
+     * This taxonomy is not keyed by OBJECT_TYPE and is frozen at 16 rows, so it
+     * cannot answer "how many Events are live" for an arbitrary type, and it
+     * never carries a system-wide total. Those belong to
+     * OBJECT_TYPE.total_objects (include/kernel/ob/ob_type.h), which carries no
+     * owner dimension in return. Full contract: the counter-authority block in
+     * ob_type.h. */
     QUOTA_RES_OBJECT_BODY,       /* Object Manager object bodies     */
     QUOTA_RES_NAMESPACE_ENTRY,   /* named object-directory entries   */
     QUOTA_RES_PAGED_POOL,        /* paged pool bytes                 */

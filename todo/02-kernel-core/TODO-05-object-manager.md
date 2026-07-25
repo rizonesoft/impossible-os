@@ -95,6 +95,7 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 - [x] Add `OB_HEADER_FROM_BODY(ptr)` macro -- subtracts header size from a body pointer
 - [x] Register built-in type singletons at ObInit time: `ObpFileType`, `ObpProcessType`, `ObpThreadType`, `ObpDirectoryType`, `ObpSymlinkType`, `ObpEventType`, `ObpMutexType`, `ObpSemaphoreType`, `ObpSectionType`, `ObpTimerType`
 - [x] Commit: `"kernel: ob -- OBJECT_HEADER and OBJECT_TYPE infrastructure"`
+- [ ] **Budget the `g_ob_types` table.** 64 slots, append-only, no release path; ~37/64 in one boot with test throwaways, and it tipped 32/32 once. -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §13`
 
 > **Notes:**
 > - `OBJECT_HEADER` (`ob.h`) + `OBJECT_TYPE` (`ob_type.h`) are the typed-header substrate: `ob_create_type` registers type singletons, `ob_alloc_object` combined-allocates header+body, `OB_HEADER_FROM_BODY`/`OB_BODY_FROM_HEADER` convert.

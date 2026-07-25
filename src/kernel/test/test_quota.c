@@ -2488,6 +2488,10 @@ static void test_quota_object_rows_aggregate_without_aliasing(void)
                    (uint64_t)STATUS_SUCCESS, "bodies returned");
     TEST_ASSERT_EQ((uint64_t)quota_return(b, QUOTA_RES_NAMESPACE_ENTRY, 1ull),
                    (uint64_t)STATUS_SUCCESS, "name entry returned");
+    /* Independence holds on the RETURN direction too, so assert BOTH rows reach
+     * zero -- asserting only the body row would leave half the thesis implicit. */
+    TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_NAMESPACE_ENTRY), 0ull,
+                   "name-entry usage back to 0");
     TEST_ASSERT_EQ(quota_usage(b, QUOTA_RES_OBJECT_BODY), 0ull,
                    "body usage back to 0");
     quota_block_deref(b);
@@ -2517,8 +2521,13 @@ static void test_ob_type_counters_are_per_type_authoritative(void)
     if (!type_a || !type_b)
         return;
 
-    /* A freshly registered type has never been allocated from, so both
-     * baselines are exactly 0 -- no snapshot arithmetic and nothing to race. */
+    /* A freshly registered type has never been allocated from, so both baselines
+     * are exactly 0 -- no snapshot arithmetic and nothing to race. That rests on
+     * a premise worth naming, because a future slot-recycling or type-unregister
+     * path would break it silently HERE rather than at the change site:
+     * ob_create_type copies only name/body_size/callbacks and never touches the
+     * stats fields, g_ob_types is BSS-zero, the type count only increases, and
+     * no slot is ever reused. */
     TEST_ASSERT_EQ((uint64_t)atomic_read(&type_a->total_objects), 0ull,
                    "type A starts with no live objects");
     TEST_ASSERT_EQ((uint64_t)atomic_read(&type_b->total_objects), 0ull,

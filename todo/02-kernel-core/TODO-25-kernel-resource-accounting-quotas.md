@@ -445,7 +445,7 @@ Split out of the original §11 with §14. The §11 ledger is the owner-side mach
 - [/] Charge handle-table entries on insert, return on close, billing the table OWNER; blocked on the TODO-05 §3 reservation/commit primitive returning NTSTATUS. -> XREF: `02-kernel-core/TODO-05 §3`
 - [/] Charge object body and name entry on creation, returning via the ledger at `ob_free_object` / `ObpRemoveFromDirectory`, not a task lookup. Design-reviewed 2026-07-25: FOUR prerequisites, see the NOTE. -> XREF: `§14`
 - [/] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
-- [x] `OBJECT_TYPE` counters are the per-type-total authority and quota is NOT a second source: the boundary is pinned at `total_objects` in `ob_type.h`, reciprocally at `QUOTA_RES_OBJECT_BODY`. Settled, not pending work.
+- [x] Counter-authority boundary pinned in `ob_type.h` + `quota.h`: `OBJECT_TYPE` owns system-wide per-type totals; quota is per-principal over a frozen 16-row taxonomy, charging ONE body-class row per body (orthogonal rows bill separately).
 - [x] Commit: quota: object/handle charge integration in Object Manager.
 
 **Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; an object body whose creator already died is still returned at `ob_free_object` through the ledger; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta. Shipped now (item 4): repeated body charges accumulate into ONE per-principal `QUOTA_RES_OBJECT_BODY` row that does not alias the name-entry row, while creating an object of one type lifts only that type's live count, each type returns to its own baseline on destruction, and the per-type peak retains its high-water mark. Cross-type folding stays unobservable until the charge points exist, since `quota_charge` takes no type identity (verified: SUITE=quota, 0 failures, 0 quota-leaked).
@@ -459,6 +459,17 @@ Split out of the original §11 with §14. The §11 ledger is the owner-side mach
 > - **Canonical doc** -- the counter-authority contract at `include/kernel/ob/ob_type.h`.
 > - **Scope boundary** -- §13 owns the charge POINTS; §11 the ledger; §14 the ISR-safe return and teardown ordering; TODO-05 §3 the handle-table transaction and §4 namespace teardown plus insert status.
 
+> **Verified:** 2026-07-25 | commit `fc809dac` + review fixes | 1/4 items | build OK | tests 24538/24538 PASS, 0 quota-leaked
+> **Deferred:** [H] handle-table entry charging and the `NtDuplicateObject` target-owner charge need a reservation/commit transaction that can report `STATUS_QUOTA_EXCEEDED` (reason: infra) -> XREF: `02-kernel-core/TODO-05 §3` (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
+> **Deferred:** [H] the object-body charge needs an ISR-safe ledger return: `ob_free_object` runs in the LAPIC timer ISR via `nt_timer.c:165`, where the last-reference return reaches `kfree` (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "ISR-safe ledger return with a deferred destroy" at line 499)
+> **Deferred:** [H] the object-body charge needs `quota_ledger_task_release` ordered after the `ACCESS_TOKEN` derefs, or a token body false-leaks on every process exit (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Order `quota_ledger_task_release`" at line 500)
+> **Accepted:** [H] a non-empty directory teardown drains no entries, leaking entry nodes and child references today and every name-entry charge later (reason: scope) -> XREF: `02-kernel-core/TODO-05 §4` (item: "Give `Directory` an `on_delete` draining its entry list" at line 185)
+> **Accepted:** [H] `ObInsertObject` returns 0/-1, so a name-entry quota refusal cannot be reported as `STATUS_QUOTA_EXCEEDED` (reason: scope) -> XREF: `02-kernel-core/TODO-05 §4` (item: "Status-bearing insertion primitive" at line 186)
+> **Accepted:** [H] implicit `task_current()` billing is not SMP-safe; pre-existing class already charged this way by ALPC and KNF, not introduced here (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Bill `quota_charge_current` off a per-CPU task cursor" at line 489)
+> **Accepted:** [H] `quota_ledger_return` abandons an obligation after 4 BUSY collisions, which a destructive free cannot retry (reason: needs cross-CPU validation) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Pending-return handoff so a return colliding with a BUSY owner is never abandoned" at line 486)
+> **Accepted:** [L] the 64-slot `g_ob_types` table is append-only with no release path, ~37/64 in a full-suite boot (reason: scope) -> XREF: `02-kernel-core/TODO-05 §1` (item: "Budget the `g_ob_types` table" at line 98)
+> **Quality reviewed:** 2026-07-25 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 3M+4L fixed, 5H+1M+1L accepted-XREF | scope: kernel-code-quality
+
 > [!NOTE]
 > **Blocked on the handle-table lock (TODO-05 §3)** -- items 1 and 3. `HANDLE_TABLE` has no lock and no owning-task back-pointer, and `ObpAllocateHandle` collapses every failure into `INVALID_HANDLE_VALUE`, so a charge added today would admit quota for an entry a concurrent insert can overwrite, bill `task_current()` on the inherit and cross-process duplicate paths, and be unable to report `STATUS_QUOTA_EXCEEDED` distinctly. The charge must join the reservation/commit transaction, not sit beside it.
 >
@@ -468,7 +479,9 @@ Split out of the original §11 with §14. The §11 ledger is the owner-side mach
 > 3. **No Directory `on_delete`.** `ObpDirectoryType` is registered bare (`src/kernel/ob/ob.c:809`), so a non-empty directory teardown walks no entries -- it already leaks entry nodes and child references today, and would leak every name-entry charge. -> XREF: `02-kernel-core/TODO-05 §4`
 > 4. **No NTSTATUS channel on insert.** `ObInsertObject` returns 0/-1 (`include/kernel/ob/ob_ns.h:65`), conflating name collision, capacity, allocation failure, and a quota refusal -- so the required `STATUS_QUOTA_EXCEEDED` is unreportable for the name-entry charge. -> XREF: `02-kernel-core/TODO-05 §4`
 >
-> **Implementation constraint for whoever unblocks item 2:** the obligation tail-packs into the object block past the optional creator SD, so its offset needs an overflow-checked `ALIGN_UP` to `_Alignof(quota_obligation_t)` and the PMM free-size reconstruction in `ob_free_object` must include that padding (`ob.c:145-156`, `:272`). Attribution also still rides the global `task_current()` cursor.
+> **Implementation constraints for whoever unblocks item 2:**
+> - **Charge exactly ONE BODY-CLASS row per body creation** -- the dedicated row where one exists (Timer, Thread, Process, Section, and NotificationState, which KNF already charges), otherwise `QUOTA_RES_OBJECT_BODY`; never both. Orthogonal rows are charged INDEPENDENTLY on their own events (`QUOTA_RES_NAMESPACE_ENTRY` per named entry, `_HANDLE` per table entry, `_MAPPED_VIEW` at map time on a `SECTION_VIEW` -- there is no MappedView object type, `_NOTIFICATION_BYTES` for retention), so one creation may charge a body row AND orthogonal rows. Pinned in the `ob_type.h` counter-authority block; consistency review caught the rule being left implicit and the re-adversarial round corrected a first draft that said "exactly one row" and both misclassified `_MAPPED_VIEW` and omitted NotificationState.
+> - The obligation tail-packs into the object block past the optional creator SD, so its offset needs an overflow-checked `ALIGN_UP` to `_Alignof(quota_obligation_t)` and the PMM free-size reconstruction in `ob_free_object` must include that padding (`ob.c:145-156`, `:272`). Attribution also still rides the global `task_current()` cursor.
 
 ---
 
@@ -504,40 +517,40 @@ Split out of the original §11 with §13. The first four items were each filed b
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                             |
-| --- | -------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------- |
-| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 16-type registry §1                   |
-| 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2            |
-| 💎   | Atomic quota transfer            | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2      |
-| 💎   | Per-type peak + failure counts   | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2    |
-| 💎   | Per-token quota block            | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | ✅ token+process+job blocks §3               |
-| 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3             |
-| ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3       |
-| 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4     |
-| 💎   | Obligation outlives its creator  | ⚠️ quota is per-EPROCESS, no receipt  | ⚠️ `obj_cgroup` pins past exit, no receipt  | ✅ refcounted ledger, slot-independent §11   |
-| 💎   | Charge vs membership barrier     | ⚠️ pre-join usage not absorbed        | ⚠️ cgroup v2 does not move charges on move  | ✅ drain/quiesce gate on every charger §11   |
-| 💎   | Transactional charge resize      | ⬜ none (charge/return only)           | ⬜ none (no resize primitive)                | ✅ prevalidate-then-commit, all-or-none §11  |
+| ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                                              |
+| --- | -------------------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| 💎   | Unified resource-type registry   | ⚠️ scattered across subsystems        | ⚠️ split rlimit/cgroup/quotactl             | ✅ one 16-type registry §1                                    |
+| 💎   | Central quota/charge API         | ✅ `PsChargeProcessQuota` per pool     | ⚠️ split: rlimits + cgroups, no unified API | ✅ one `quota_charge`/`return` §2                             |
+| 💎   | Atomic quota transfer            | ⬜ none (charge/return only)           | ⬜ none (no cross-principal move)            | ✅ all-or-nothing two-block transfer §2                       |
+| 💎   | Per-type peak + failure counts   | ⚠️ peak only, no per-type failures    | ⚠️ `memory.events` per-cgroup, not per-type | ✅ peak + saturating failures per type §2                     |
+| 💎   | Per-token quota block            | ✅ `EPROCESS`/token `QUOTA_BLOCK`      | ⬜ none (uid/cgroup based)                   | ✅ token+process+job blocks §3                                |
+| 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3                              |
+| ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3                        |
+| 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4                      |
+| 💎   | Obligation outlives its creator  | ⚠️ quota is per-EPROCESS, no receipt  | ⚠️ `obj_cgroup` pins past exit, no receipt  | ✅ refcounted ledger, slot-independent §11                    |
+| 💎   | Charge vs membership barrier     | ⚠️ pre-join usage not absorbed        | ⚠️ cgroup v2 does not move charges on move  | ✅ drain/quiesce gate on every charger §11                    |
+| 💎   | Transactional charge resize      | ⬜ none (charge/return only)           | ⬜ none (no resize primitive)                | ✅ prevalidate-then-commit, all-or-none §11                   |
 | 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | ⚠️ Partial: dimensions + boundary §13; charge points blocked |
-| 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5       |
-| 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5     |
-| 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6 |
-| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC charged §6; registry blocked T14    |
-| 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ⚠️ live re-limit works; no setter yet §6    |
-| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | ✅ per-proc/job CPU+IO+wakeup+timer §7       |
-| ⭐   | Job aggregate accounting window  | ⚠️ member lifetime totals folded in   | ✅ cgroup counts only while a member         | ✅ membership-interval deltas, baselined §7  |
-| 💎   | Control ("Other") I/O counters   | ✅ `IO_COUNTERS.Other*` populated      | ⚠️ no ioctl split in `/proc/PID/io`         | ⚠️ counters+ABI wired; event source T05 §14 |
-| ⭐   | Rate-limit policy record         | ⚠️ per-Job CPU rate cap only          | ⚠️ per-controller, no shared record shape   | ✅ versioned typed record, seqlock §7        |
-| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | ✅ `ProcessQuotaLimits` query/set §8         |
-| 💎   | Quota set as one transaction     | ⚠️ per-field, no documented atomicity | ⚠️ one resource per `prlimit64` call        | ✅ prevalidate-then-commit, all-or-none §8   |
-| ⭐   | Job aggregate limit query        | ⚠️ memory fields only, no per-type    | ✅ per-controller cgroup files               | ✅ per-resource usage/peak/limit class §8    |
-| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | ⚠️ 4-level hysteresis, budget-sourced §9    |
-| ⭐   | Pressure source honesty          | ⬜ single opaque low-memory signal     | ⚠️ PSI has no per-source validity flag      | ✅ source kind + VALID, unknown != calm §9   |
-| 💎   | Structured quota-failure event   | ⚠️ ETW pool events, no per-charge rec | ⬜ none (errno only, no event)               | ✅ versioned record + rate limit + drops §9  |
-| ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | ⚠️ PSI-shaped + VALID §12; seams unwired    |
-| 💎   | Stall metric honesty flag        | ⬜ none (no PSI-style metric)          | ⬜ zero and unmeasured are indistinguishable | ✅ per-domain VALID + FULL_UNDEFINED §12     |
-| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | ⚠️ cooperative nomination only, no kill §9  |
-| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | ✅ per-category delta sweep, CI-gated §10    |
-| ⭐   | Crash-time quota dashboard       | ⚠️ `!poolused` needs a live debugger  | ⬜ none (no quota state in a kernel oops)    | ✅ non-blocking panic-path dump §10          |
+| 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5                        |
+| 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5                      |
+| 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6                  |
+| 💎   | Registry/IPC quota               | ✅ registry + ALPC quotas              | ⚠️ no registry; IPC via `RLIMIT_MSGQUEUE`   | ⚠️ ALPC charged §6; registry blocked T14                     |
+| 💎   | Admin-configurable per-user caps | ⚠️ registry-set, no live re-limit     | ✅ cgroup limits apply to live cgroups       | ⚠️ live re-limit works; no setter yet §6                     |
+| ⭐   | CPU/IO/wakeup accounting         | ✅ Job Objects + power throttling      | ✅ cgroup cpu/io/pids controllers            | ✅ per-proc/job CPU+IO+wakeup+timer §7                        |
+| ⭐   | Job aggregate accounting window  | ⚠️ member lifetime totals folded in   | ✅ cgroup counts only while a member         | ✅ membership-interval deltas, baselined §7                   |
+| 💎   | Control ("Other") I/O counters   | ✅ `IO_COUNTERS.Other*` populated      | ⚠️ no ioctl split in `/proc/PID/io`         | ⚠️ counters+ABI wired; event source T05 §14                  |
+| ⭐   | Rate-limit policy record         | ⚠️ per-Job CPU rate cap only          | ⚠️ per-controller, no shared record shape   | ✅ versioned typed record, seqlock §7                         |
+| 💎   | Native query/set quota syscalls  | ✅ `NtQueryInformationProcess` classes | ✅ `getrlimit`/`prlimit64`                   | ✅ `ProcessQuotaLimits` query/set §8                          |
+| 💎   | Quota set as one transaction     | ⚠️ per-field, no documented atomicity | ⚠️ one resource per `prlimit64` call        | ✅ prevalidate-then-commit, all-or-none §8                    |
+| ⭐   | Job aggregate limit query        | ⚠️ memory fields only, no per-type    | ✅ per-controller cgroup files               | ✅ per-resource usage/peak/limit class §8                     |
+| ⭐   | Resource pressure events         | ✅ low-memory notifications            | ✅ PSI (`/proc/pressure/*`)                  | ⚠️ 4-level hysteresis, budget-sourced §9                     |
+| ⭐   | Pressure source honesty          | ⬜ single opaque low-memory signal     | ⚠️ PSI has no per-source validity flag      | ✅ source kind + VALID, unknown != calm §9                    |
+| 💎   | Structured quota-failure event   | ⚠️ ETW pool events, no per-charge rec | ⬜ none (errno only, no event)               | ✅ versioned record + rate limit + drops §9                   |
+| ⭐   | Per-resource stall telemetry     | ⚠️ no PSI equivalent surfaced         | ✅ some/full avg10/60/300 per resource       | ⚠️ PSI-shaped + VALID §12; seams unwired                     |
+| 💎   | Stall metric honesty flag        | ⬜ none (no PSI-style metric)          | ⬜ zero and unmeasured are indistinguishable | ✅ per-domain VALID + FULL_UNDEFINED §12                      |
+| ⭐   | Last-resort OOM recovery         | ⬜ none (cooperative trim only)        | ✅ cgroup `memory.oom.group`                 | ⚠️ cooperative nomination only, no kill §9                   |
+| ⭐   | Unified leak sweep + quota_dump  | ⚠️ pool-tag tracking, no boot sweep   | ⚠️ slabinfo, no per-boot delta sweep        | ✅ per-category delta sweep, CI-gated §10                     |
+| ⭐   | Crash-time quota dashboard       | ⚠️ `!poolused` needs a live debugger  | ⬜ none (no quota state in a kernel oops)    | ✅ non-blocking panic-path dump §10                           |
 
 ---
 
@@ -566,7 +579,7 @@ Split out of the original §11 with §13. The first four items were each filed b
 - [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§13). Blocked with its item on TODO-05 §3.
 - [x] `test_quota_object_rows_aggregate_without_aliasing`: repeated body charges accumulate into one per-principal row that does not alias the name-entry row (§13).
 - [ ] Cross-type folding: bodies of DIFFERENT `OBJECT_TYPE`s land in the one `QUOTA_RES_OBJECT_BODY` row. Unobservable until the charge points exist -- `quota_charge` takes no type identity (§13).
-- [x] `test_ob_type_counters_are_per_type_authoritative`: creating a `Directory` lifts only its own live count; each type returns to its baseline on destruction (§13).
+- [x] `test_ob_type_counters_are_per_type_authoritative`: two PRIVATE throwaway types (no built-in type touched); each one's live count moves independently, returns to baseline, and keeps its peak (§13).
 - [ ] `test_quota_job_collect_lock_window`: `ob_job_collect_accounting` computes member deltas outside `job->lock` (§14).
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
 - [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).
