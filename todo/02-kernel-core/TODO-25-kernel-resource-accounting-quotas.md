@@ -49,7 +49,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   |   7   | CPU, I/O, and wakeup accounting               | T08 §6, T21 §9          |  [x]   |
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
-| 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [x]   |
+| 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [/]   |
 | 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
 
@@ -167,6 +167,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Charge nonpaged/paged pool through allocator provider hooks. BLOCKED: no pool-class allocator exists to hook -- one unified arena, no paged/nonpaged split, no provider seam. -> XREF: `03-memory-concurrency/TODO-03 §7`
 - [/] Ensure kernel-internal early boot allocations are charged to System. BLOCKED with the hook: `kmalloc` is live from Phase 0, the registry validates at Phase 2, System exists at Phase 3. -> XREF: `03-memory-concurrency/TODO-03 §7`
 - [/] Refuse user-triggered unbounded allocation paths without quota owner. BLOCKED with the hook: the refusal belongs at a pool entry point that does not exist yet. -> XREF: `03-memory-concurrency/TODO-03 §7`
+- [ ] Separate leak-sweep instrumentation from `KERNEL_TESTS`: the per-CPU writer/epoch RMWs are unconditional, so the default image cannot measure a clean charge path and has no instrumentation-off baseline. -> XREF: `§10` (leak sweep)
 - [x] Commit: quota: charge-path cost budget + per-type counter records.
 
 **Test checkpoint:** an admitted charge, a refused charge, an over-return, and a return each enter exactly one critical section, a transfer exactly two (refused included), `set_limit` one, and every SINGLE-BLOCK argument rejection or no-op zero; a chain charge costs the 3 owner-snapshot sections plus one per charged layer while its return costs only the per-layer ones, a mid-chain refusal adds exactly one rollback section, and a zero-amount chain charge still costs one owner section (it is not free -- it validates the task); a counter record is 32 bytes at a pinned block offset and never spans more than two cache lines at the block's real runtime address; advisory TSC suites report rather than assert, and label a sample whose CPU tag cannot be verified (verified: SUITE=quota 62 suites / 593 assertions, 0 failures; measured on TCG: depth-2 chain = 5 sections to charge + 2 to return = the 7-section lifetime, 148 cycles per charge+return pair, 892 per chain pair).
@@ -175,7 +176,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 > **Notes:**
 > - **What shipped** -- `test_quota_perf.c` (7 suites) plus the `QUOTA_BUDGET_*` charge-cost contract in `quota.h` and a `quota_counters_t` record-per-type layout in `quota.c` replacing four parallel counter arrays.
-> - **How it runs** -- block and owner locks funnel through one counting helper, armed by `quota_test_lock_count_begin` and CPU-scoped, and counted on the UNLOCK side so no instrumentation runs inside an IRQ-disabled window.
+> - **How it runs** -- block and owner locks funnel through one counting helper, armed by `quota_test_lock_count_begin` and scoped to the arming THREAD at PASSIVE, and counted on the UNLOCK side so no instrumentation runs inside an IRQ-disabled window.
 > - **Downstream effects** -- closes the counter-layout question §2 and §3 deferred here; the four pool-charging items are BLOCKED and now carry reciprocal items in TODO-03 §6/§7.
 > - **Canonical doc** -- `include/kernel/quota/quota.h` ("Charge-path cost contract").
 > - **Scope boundary** -- §5 owns the cost budget and counter layout ONLY; the pool allocator, its tag API, and the provider seam are TODO-03 §6/§7, and CONTENDED latency needs cross-CPU run queues (§10).
@@ -331,6 +332,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag (same-token returners, a paused BUSY window, publication visibility): needs per-CPU run queues. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Bounded worker join + CPU-pinned `kmalloc_fail_next`: `thread_join` has no timeout, and the injection countdown lives in the armed CPU's per-CPU data so a migrating task never trips it. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Invocation-scoped lock accounting: attributes to the ARMING THREAD at `PASSIVE_LEVEL`, so migration no longer drops a section. NOT SMP-sound: `thread_current()` reads global cursors. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
+- [/] Bound `quota_dump()` whole-invocation OUTPUT, not just its block count: 32 blocks x 16 types can exceed 64 KiB of serial and evict most of the klog ring. Needs pagination or an async drain. -> XREF: `TODO-27-crash-dump-generation.md §7`
 - [x] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
 **Test checkpoint:** the quota category passes (charge/return, rollback, concurrent charges; ALPC quota via `TEST_CAT_IPC`); the boot leak sweep reports zero net quota delta across every category and the summary carries a `quota-leaked` field the test driver folds into FAILED; every sweep verdict branch (clean, count-only, leaked, indeterminate) is asserted from synthetic snapshots; `quota_dump()` renders a named per-type usage row without mutating the registry, `quota_dump_crash()` takes its header-only fallback and RETURNS when the registry lock is held, and a snapshot spanning two pin batches sums exactly.
@@ -344,6 +346,14 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - Only USER blocks are enumerable (PROCESS needs a lifetime-safe task iterator, JOB a job registry); chain charges roll up into the USER block, so a leaked process or job charge still surfaces.
 > - Canonical doc: the "Dashboards and the leak sweep" contract block in `include/kernel/quota/quota.h`.
 > - Scope boundary: §10 owns the dashboards, the sweep, and bulletproofing; §11 owns process-block enumeration, TODO-27 §7 the panic-safe emitter, TODO-07 §3 the per-CPU run queues.
+
+> **Verified:** 2026-07-25 | commit `b18c881d` + review fixes | 3/8 items | build OK | tests 23766/23766 PASS, 0 quota-leaked | smoke PASS (KVM 3.120s)
+> **Accepted:** [M] the contention test holds the registry lock across a klog that busy-waits the UART, so proving the try-lock fallback costs a bounded IRQ-off window (reason: needs a non-blocking emitter) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
+> **Accepted:** [H] `quota_dump_crash` still emits through `klog`, which takes the blocking `s_klog_lock` and can also flush to disk; pre-existing and repo-wide on this panic path (reason: scope) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
+> **Deferred:** [M] the dashboard suite asserts exact equalities over global registry state, which becomes flaky the moment threads run on more than one CPU (reason: infra) -> XREF: 02-kernel-core/TODO-25 §10 (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 332)
+> **Deferred:** [M] `quota_dump()` bounds blocks but not total OUTPUT, so a large registry can exceed 64 KiB of serial and evict most of the klog ring (reason: in-scope, needs pagination) -> XREF: 02-kernel-core/TODO-25 §10 (item: "Bound `quota_dump()` whole-invocation OUTPUT" at line 335)
+> **Accepted:** [M] the per-CPU writer/epoch RMWs are unconditional under `KERNEL_TESTS`, so the default image's charge timing includes instrumentation and has no off-baseline (reason: needs a build flavor) -> XREF: 02-kernel-core/TODO-25 §5 (item: "Separate leak-sweep instrumentation from `KERNEL_TESTS`" at line 170)
+> **Quality reviewed:** 2026-07-25 | Codex 7x (adversarial x3, consistency x2, perf x2, re-adversarial) + kernel-quality-auditor + concurrency-evidence-mapper + parity-research-analyst | 3H+13M+3L fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
 

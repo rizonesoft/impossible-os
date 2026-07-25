@@ -196,11 +196,15 @@ void quota_dump(void);
  * crash report, which is the one thing this function exists to produce.
  *
  * WHAT IT DOES NOT GUARANTEE, precisely. Output goes through klog, and
- * klog_emit takes the blocking s_klog_lock (src/kernel/klog.c). So this is
+ * klog_emit takes the blocking s_klog_lock (src/kernel/klog.c), rasterizes to
+ * the framebuffer when the level passes the screen filter, and appends AND
+ * FLUSHES to disk when live disk logging is on -- blocking storage I/O from a
+ * panicking CPU whose storage stack may be exactly what died. So this is
  * non-blocking with respect to QUOTA state, not with respect to the logger: a
  * panic that interrupted logging can still stall here, exactly as
  * kernel_subsystem_dump and transition_ring_dump_to_serial already can on the
- * same path. That hazard is repo-wide and predates this function; the
+ * same path. It emits up to one header plus a row per charged type per
+ * reported block, all before the BSOD is painted. That hazard is repo-wide and predates this function; the
  * panic-safe raw emitter that fixes it for every panic-path dumper is owned by
  * TODO-27 crash-dump-generation section 7 ("dump_emit_raw"). Do NOT read this
  * contract as "safe to call with the logger lock held." */
@@ -211,6 +215,12 @@ void quota_dump_crash(void);
  * is the whole reason the function exists, and a test cannot otherwise tell a
  * successful dump from a skipped one -- both simply return. */
 uint64_t quota_test_crash_fallbacks(void);
+
+/* The dump/leak pin-batch bound. Exposed so a boundary test DERIVES its
+ * fixture count from the implementation instead of hardcoding it: a test that
+ * hardcodes "batch is 8, so use 9 blocks" stays green while silently no longer
+ * crossing a boundary if the bound ever grows. */
+uint32_t quota_test_dump_batch(void);
 
 /* Hold / release the registry lock, so a single-CPU test can make the lock
  * genuinely unavailable to quota_dump_crash instead of asserting against an
@@ -257,11 +267,14 @@ uint32_t quota_test_writers_active(void);
  *      IN PROGRESS is what rejects that total, which never existed.
  *   4. TWO independent walks must agree exactly.
  *
- * The epoch is KERNEL_TESTS-only and reads as a constant elsewhere, because
- * the sweep it serves is test infrastructure and a shared RMW on the
- * production charge path is too high a price for a diagnostic. On a build
- * without it, checks 1 and 3 still apply and this contract is correspondingly
- * weaker -- nothing in the production tree consumes this API.
+ * Checks 2 AND 3 are BOTH KERNEL_TESTS-only and BOTH read as constants
+ * elsewhere, because the accounting behind them is test instrumentation and
+ * the sweep it serves is test infrastructure. On a KERNEL_TESTS-off build only
+ * checks 1 and 4 apply, so `coherent` there means "membership did not move and
+ * two walks agreed" and NOT quiescence -- a transfer parked between its two
+ * stores can be certified. Nothing in the production tree consumes this API;
+ * do not add a consumer without first making the writer accounting real for
+ * that build.
  *
  * `coherent` is also 0 when the aggregate would overflow the counter domain
  * (each block may legally hold up to QUOTA_AMOUNT_MAX == INT64_MAX, so two
@@ -1229,8 +1242,8 @@ void quota_test_poke_rate_seq(quota_block_t *block, quota_rate_class_t cls, int 
  *
  * WHAT it costs: disarmed, a block unlock adds an inlined relaxed load of the
  * enable byte plus a not-taken branch; an owner unlock additionally pays an
- * out-of-line call, because the helper lives in quota.c. Armed, it adds
- * smp_cpu_id() and a locked read-modify-write. Counting is explicitly gated
+ * out-of-line call, because the helper lives in quota.c. Armed, it adds an
+ * IRQL read, a thread-cursor read, and a relaxed read-modify-write. Counting is explicitly gated
  * rather than always-on precisely so the advisory TSC loops time the
  * production path instead of the instrument -- arming it measurably moved the
  * numbers when it was always-on.

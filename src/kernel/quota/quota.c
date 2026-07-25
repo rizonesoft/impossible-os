@@ -370,9 +370,9 @@ static struct thread *g_lock_count_thread;
  * cost it correctness.
  *
  * KERNEL_TESTS only. The sweep it serves is test infrastructure, and putting a
- * shared relaxed RMW on the production charge path to serve a diagnostic is
- * exactly the trade this module refuses elsewhere. */
-static uint64_t      g_mutation_epoch;
+ * shared RMW on the production charge path to serve a diagnostic is exactly
+ * the trade this module refuses elsewhere -- which is why the storage below is
+ * PER-CPU rather than a pair of globals. */
 
 /* Writers currently INSIDE a block critical section. The epoch alone is not
  * enough, because it advances on COMPLETION: quota_try_transfer credits the
@@ -381,31 +381,75 @@ static uint64_t      g_mutation_epoch;
  * either side of the walk. Two agreeing walks then certify a total that never
  * existed. Requiring this count to be zero before AND after the walks is what
  * rejects a mutation that is in progress rather than merely finished. */
-static uint32_t      g_writers_active;
+/* PER-CPU, cache-line isolated. A single global pair would put three locked
+ * RMWs on ONE shared line in every quota critical section -- and KERNEL_TESTS
+ * is ON in the shipped image, so charges to completely unrelated blocks would
+ * contend globally even though their block locks are independent. That is a
+ * production hot-path tax for a test-time diagnostic, which is precisely the
+ * trade this module refuses. Per-CPU slots keep every RMW in the issuing CPU's
+ * own line; the sweep pays the aggregation instead, once per sample.
+ *
+ * Padded to a full line so two CPUs never share one, and so these never share
+ * a line with the arm-gate byte the lock-section counter reads. */
+typedef struct {
+    uint64_t epoch;
+    uint32_t active;
+    uint8_t  pad[QUOTA_COUNTER_LINE_BYTES - sizeof(uint64_t) - sizeof(uint32_t)];
+} quota_writer_slot_t;
 
-/* Entered BEFORE the lock and exited AFTER it, deliberately: these are relaxed
- * atomics on a shared line, and running them inside the critical section would
- * lengthen an IRQ-off quota hold in the default (KERNEL_TESTS on) image --
- * exactly what moving the section count to the unlock side already avoids. */
+_Static_assert(sizeof(quota_writer_slot_t) == QUOTA_COUNTER_LINE_BYTES,
+    "quota writer slots must be exactly one cache line, or CPUs false-share");
+
+static quota_writer_slot_t g_writer_slot[MAX_CPUS]
+    __attribute__((aligned(QUOTA_COUNTER_LINE_BYTES)));
+
+/* Size alone is NOT isolation. A 64-byte stride still lets one slot's `active`
+ * share a line with the next slot's `epoch` if the ARRAY BASE is not itself
+ * line-aligned -- which the natural alignment of the type does not guarantee,
+ * and which a harmless BSS or linker-layout change could silently introduce.
+ * Both facts are asserted so neither can drift. */
+_Static_assert(__alignof__(g_writer_slot) >= QUOTA_COUNTER_LINE_BYTES,
+    "g_writer_slot must be cache-line ALIGNED, not merely cache-line sized: "
+    "without the aligned attribute one slot's active shares a line with the "
+    "next slot's epoch and adjacent CPUs false-share on every charge");
+
+/* Entered BEFORE the lock and exited AFTER it, deliberately: running them
+ * inside the critical section would lengthen an IRQ-off quota hold. */
 static inline void quota_writers_enter(void)
 {
-    __atomic_fetch_add(&g_writers_active, 1, __ATOMIC_ACQ_REL);
+    uint32_t cpu = smp_cpu_id();
+    if (cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_add(&g_writer_slot[cpu].active, 1, __ATOMIC_ACQ_REL);
 }
 
 static inline void quota_writers_exit(void)
 {
-    __atomic_fetch_add(&g_mutation_epoch, 1, __ATOMIC_RELAXED);
-    __atomic_fetch_sub(&g_writers_active, 1, __ATOMIC_ACQ_REL);
+    uint32_t cpu = smp_cpu_id();
+    if (cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_add(&g_writer_slot[cpu].epoch, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&g_writer_slot[cpu].active, 1, __ATOMIC_ACQ_REL);
 }
 
+/* Summed across CPUs. A writer that MIGRATES between its enter and its exit
+ * would decrement a different slot than it incremented, so an individual slot
+ * can go momentarily negative-as-unsigned -- the SUM is still correct, which is
+ * all the gate needs, because it only ever asks "is anything in flight". */
 uint64_t quota_test_mutation_epoch(void)
 {
-    return __atomic_load_n(&g_mutation_epoch, __ATOMIC_RELAXED);
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < MAX_CPUS; i++)
+        sum += __atomic_load_n(&g_writer_slot[i].epoch, __ATOMIC_RELAXED);
+    return sum;
 }
 
 uint32_t quota_test_writers_active(void)
 {
-    return __atomic_load_n(&g_writers_active, __ATOMIC_ACQUIRE);
+    uint32_t sum = 0;
+    for (uint32_t i = 0; i < MAX_CPUS; i++)
+        sum += __atomic_load_n(&g_writer_slot[i].active, __ATOMIC_ACQUIRE);
+    return sum;
 }
 
 /* Shared with quota_owner.c so owner-side sections land in the same total.
@@ -428,10 +472,18 @@ void quota_test_count_lock_section(void)
 }
 #endif
 
-/* THE one place a block's lock is taken. Every mutation path goes through this
- * pair, which is what lets the test-only cost instrumentation stay honest: a
- * future lock site either uses this helper and is counted, or takes the lock
- * itself and is visible as an obvious deviation in review.
+/* The one place a block's lock is taken FOR A COUNTER MUTATION. Every charge,
+ * return, transfer, and set-limit path goes through this pair, which is what
+ * lets the test-only instrumentation stay honest: a future lock site either
+ * uses this helper and is counted, or takes the lock itself and is visible as
+ * an obvious deviation in review.
+ *
+ * ONE deliberate exception exists today: quota_rate_limit_set takes the lock
+ * directly, because it publishes block->rate[] policy under a sequence counter
+ * and touches no counter[] field. It is therefore invisible to both the writer
+ * count and the section budget, which is correct -- the leak snapshot reads
+ * only counter[].usage, so a rate publication cannot perturb it. A future
+ * direct-lock site that DOES touch counter[] would break that reasoning.
  *
  * The count is bumped on the UNLOCK side, after the lock is released, so it
  * counts sections COMPLETED and no instrumentation runs inside a quota
@@ -449,7 +501,12 @@ void quota_test_count_lock_section(void)
 static inline void quota_block_lock(quota_block_t *block, uint64_t *flags)
 {
 #ifdef KERNEL_TESTS
-    quota_writers_enter();      /* BEFORE the lock: never inside IRQ-off */
+    /* Before the lock, so the common single-lock path never pays this inside
+     * an IRQ-off window. The nested transfer path is the exception: its SECOND
+     * acquire necessarily runs with the first block's lock already held, so
+     * that one enter does land inside IRQ-off. Bounded and per-CPU, so it is a
+     * couple of uncontended cycles on a line this CPU already owns. */
+    quota_writers_enter();
 #endif
     spin_lock_irqsave(&block->lock, flags);
 }
@@ -2045,9 +2102,13 @@ typedef struct {
     int64_t  limit[QUOTA_RESOURCE_TYPE_COUNT];
 } quota_crash_row_t;
 
-/* Written ONLY by quota_dump_crash, which runs on the panic-owner CPU after
- * every other CPU has parked (panic.c). Single-writer by construction, so no
- * lock guards it; it is BSS rather than stack for the reason above. */
+/* Written ONLY by quota_dump_crash, which has exactly one call site and runs
+ * only after panic_try_claim_owner() succeeded (panic.c) -- that claim, not any
+ * broadcast parking of healthy CPUs, is what makes this single-writer. panic.c
+ * has no halt-IPI or NMI broadcast; a second CPU that panics parks itself.
+ * Do NOT add unsynchronized panic-path state beside this on the strength of
+ * 'every other CPU has parked' -- that is not what the code does.
+ * BSS rather than stack for the reason above. */
 static quota_crash_row_t g_crash_rows[QUOTA_DUMP_CRASH_ROWS];
 
 /* Times the try-lock failed and the dump took its header-only fallback. Both
@@ -2187,6 +2248,8 @@ void quota_dump_crash(void)
 {
     uint32_t rows = 0;
     uint32_t seen = 0;
+    uint32_t omitted = 0;       /* USER rows the row budget could not hold   */
+    int      tail_unknown = 0;  /* visit budget stopped the walk early       */
     uint64_t flags;
     int      locked;
 
@@ -2214,13 +2277,15 @@ void quota_dump_crash(void)
 
     /* Copy, do not print, under the lock. The rows are a fixed-size snapshot
      * so the locked window is bounded arithmetic with no output in it. */
-    for (quota_block_t *b = g_registry_head;
-         b && seen < QUOTA_DUMP_VISIT_MAX; b = b->reg_next) {
+    quota_block_t *b = g_registry_head;
+    for (; b && seen < QUOTA_DUMP_VISIT_MAX; b = b->reg_next) {
         seen++;
         if (b->principal != (uint8_t)QUOTA_PRINCIPAL_USER)
             continue;
-        if (rows >= QUOTA_DUMP_CRASH_ROWS)
-            continue;               /* keep counting; report the truncation */
+        if (rows >= QUOTA_DUMP_CRASH_ROWS) {
+            omitted++;              /* exact: a USER row we chose not to store */
+            continue;
+        }
 
         quota_crash_row_t *r = &g_crash_rows[rows++];
         r->id        = b->id;
@@ -2232,6 +2297,12 @@ void quota_dump_crash(void)
         }
     }
 
+    /* A non-NULL cursor means the visit budget stopped the walk with an
+     * arbitrarily long tail unexamined. That is a LOWER BOUND, not a count --
+     * folding it into `omitted` would let the warning state an exact number of
+     * unwalked nodes it cannot possibly know. */
+    tail_unknown = (b != (quota_block_t *)0);
+
     spin_tryunlock(&g_registry_lock);
     local_irq_restore(flags);
 
@@ -2240,21 +2311,56 @@ void quota_dump_crash(void)
 
     for (uint32_t i = 0; i < rows; i++) {
         const quota_crash_row_t *r = &g_crash_rows[i];
-        klog_unrated(LOG_INFO, "quota", "  block #%llu  rid %u  sid %llx",
-             r->id, (uint64_t)r->owner_rid, r->owner_hash);
+        if (r->has_owner)
+            klog_unrated(LOG_INFO, "quota", "  block #%llu  rid %u  sid %llx",
+                 r->id, (uint64_t)r->owner_rid, r->owner_hash);
+        else
+            /* Distinct from a real owner whose RID and hash are both 0 --
+             * quota_owner_digest returns exactly that for an ownerless block,
+             * so printing the digest unconditionally would conflate them. */
+            klog_unrated(LOG_INFO, "quota", "  block #%llu  (no owner SID)",
+                 r->id);
         for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
-            if (r->usage[t] == 0)
+            /* Corruption is checked BEFORE the idle fast path, exactly as the
+             * live dashboard does. A type with zero usage but a corrupted
+             * NEGATIVE limit is still corrupt, and skipping it as "idle" would
+             * hide it from the one report written when something already went
+             * wrong. Casting it to uint64_t would be worse still: it would
+             * print 18446744073709551615, and rendering the unlimited sentinel
+             * as "limit 0" would invert its meaning on a post-mortem read. */
+            if (r->usage[t] < 0 || r->limit[t] < 0) {
+                klog_unrated(LOG_ERROR, "quota",
+                     "    %s CORRUPT (negative counter)",
+                     quota_resource_type_name((quota_resource_type_t)t));
                 continue;
-            klog_unrated(LOG_INFO, "quota", "    %s usage %llu  limit %llu",
-                 quota_resource_type_name((quota_resource_type_t)t),
-                 (uint64_t)r->usage[t], (uint64_t)r->limit[t]);
+            }
+            if (r->usage[t] == 0)
+                continue;               /* idle and sane: no row worth a line */
+            if (r->limit[t] == (int64_t)QUOTA_LIMIT_UNLIMITED)
+                klog_unrated(LOG_INFO, "quota", "    %s usage %llu  limit -",
+                     quota_resource_type_name((quota_resource_type_t)t),
+                     (uint64_t)r->usage[t]);
+            else
+                klog_unrated(LOG_INFO, "quota", "    %s usage %llu  limit %llu",
+                     quota_resource_type_name((quota_resource_type_t)t),
+                     (uint64_t)r->usage[t], (uint64_t)r->limit[t]);
         }
     }
 
-    if (seen >= QUOTA_DUMP_VISIT_MAX || rows == QUOTA_DUMP_CRASH_ROWS)
+    /* Report each fact separately and only when true. A registry holding
+     * exactly QUOTA_DUMP_CRASH_ROWS blocks, or exactly QUOTA_DUMP_VISIT_MAX
+     * nodes, is reported in FULL -- claiming truncation there sends an operator
+     * hunting for data that is not missing, in the one output that has to be
+     * trustworthy. And the unwalked tail is unbounded, so it is never given a
+     * number. */
+    if (omitted)
         klog_unrated(LOG_WARN, "quota",
-             "crash dump truncated at %u rows / %u nodes visited",
-             (uint64_t)rows, (uint64_t)seen);
+             "crash dump: %u row(s) shown, %u USER block(s) omitted by the row budget",
+             (uint64_t)rows, (uint64_t)omitted);
+    if (tail_unknown)
+        klog_unrated(LOG_WARN, "quota",
+             "crash dump: visit budget reached after %u nodes; tail not walked",
+             (uint64_t)seen);
 }
 
 /* The counter-mutation epoch and the in-progress writer count, or constants
@@ -2331,7 +2437,18 @@ static int quota_leak_walk(uint32_t *out_blocks, int64_t *out_usage)
             (*out_blocks)++;
             for (uint32_t t = 0; t < QUOTA_RESOURCE_TYPE_COUNT; t++) {
                 int64_t u = atomic64_read(&batch[i]->counter[t].usage);
-                if (u <= 0)
+                /* NEGATIVE is corruption, not idleness. The documented domain
+                 * is 0..QUOTA_AMOUNT_MAX, so a value below zero means a torn
+                 * mutation or a return-underflow got through. Skipping it the
+                 * way we skip an idle zero would let both walks agree on a
+                 * total that omits it and report the category CLEAN -- the
+                 * opposite of the fail-closed handling the overflow path and
+                 * the dashboard's CORRUPT row already use. */
+                if (u < 0) {
+                    ok = 0;
+                    continue;
+                }
+                if (u == 0)
                     continue;
                 if (out_usage[t] > QUOTA_AMOUNT_MAX - u) {
                     ok = 0;     /* checked BEFORE the add: never wraps */
@@ -2437,6 +2554,11 @@ indeterminate:
 uint64_t quota_test_crash_fallbacks(void)
 {
     return __atomic_load_n(&g_crash_fallbacks, __ATOMIC_RELAXED);
+}
+
+uint32_t quota_test_dump_batch(void)
+{
+    return QUOTA_DUMP_BATCH;
 }
 
 /* The registry lock is file-private, so making it genuinely unavailable to

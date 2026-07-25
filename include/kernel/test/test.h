@@ -116,6 +116,7 @@ extern test_state_t g_test_state;
  * deliberately planted in production code, so without this seam an inverted
  * comparison or a missing increment would pass the whole suite and leave the
  * host parser reading a plausible zero. */
+#ifdef KERNEL_TESTS
 typedef enum {
     QUOTA_SWEEP_INDETERMINATE = 0, /* either snapshot was incoherent      */
     QUOTA_SWEEP_CLEAN,             /* same blocks, no positive delta      */
@@ -128,6 +129,9 @@ typedef enum {
 quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
                                            const quota_leak_snapshot_t *close,
                                            uint32_t *leaked_types);
+#endif /* KERNEL_TESTS -- defined in test_runner.c, which the release flavor
+        * prunes entirely; declaring it unconditionally left a prototype with
+        * no possible definition in that build. */
 
 /* ---- API ---- */
 

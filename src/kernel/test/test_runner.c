@@ -682,16 +682,15 @@ quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
  * running), so a couple of retries almost always settle. */
 #define QUOTA_SWEEP_RETRIES 3u
 
+/* `close_snap` is the boundary reading, taken ONCE by the caller and shared
+ * with the next category's opening baseline -- see the call site for why two
+ * separate readings would open a leak-hiding window. */
 static void quota_sweep_close(const quota_leak_snapshot_t *open,
-                              const char *cat_name)
+                              const char *cat_name,
+                              const quota_leak_snapshot_t *close_snap)
 {
-    quota_leak_snapshot_t now;
+    const quota_leak_snapshot_t now = *close_snap;
     uint32_t leaked_types = 0;
-
-    /* Retry a transient incoherence rather than accepting it. */
-    for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
-        if (quota_leak_snapshot(&now))
-            break;
 
     switch (quota_sweep_classify(open, &now, &leaked_types)) {
     case QUOTA_SWEEP_INDETERMINATE:
@@ -792,22 +791,27 @@ void test_runner_run(void)
 
         /* Print category header on first suite in each category */
         if (s->cat < TEST_CAT_COUNT && s->cat != current_cat) {
-            /* Close the OUTGOING category's quota sweep before announcing the
-             * incoming one, so a QLEAK line is attributed to the category that
-             * actually leaked rather than the one about to start. */
+            /* ONE snapshot both closes the outgoing category and opens the
+             * incoming one. Taking two separate readings leaves a window
+             * between them, and any charge landing in that window is folded
+             * into the NEW baseline: it then produces no positive delta at any
+             * later boundary, so a genuine cross-category leak could end the
+             * run reporting "0 quota-leaked". A shared boundary sample has no
+             * such window by construction. */
+            quota_leak_snapshot_t boundary;
+            for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
+                if (quota_leak_snapshot(&boundary))
+                    break;
+
             if (cat_snap_valid)
-                quota_sweep_close(&cat_snap_open, cat_names[current_cat]);
+                quota_sweep_close(&cat_snap_open, cat_names[current_cat],
+                                  &boundary);
 
             current_cat = s->cat;
             klog(LOG_INFO, test_tag(), "--- [%s] %s ---",
                  cat_names[current_cat], cat_labels[current_cat]);
 
-            /* Retry the OPENING snapshot too. Its return value is not ignored:
-             * an incoherent opening propagates into an INDETERMINATE verdict
-             * at close, which now fails closed. */
-            for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
-                if (quota_leak_snapshot(&cat_snap_open))
-                    break;
+            cat_snap_open  = boundary;
             cat_snap_valid = 1;
         }
 
@@ -932,9 +936,15 @@ void test_runner_run(void)
     }
 
     /* Close the LAST category: the loop's boundary check only fires on a
-     * transition, so without this the final category is never swept. */
-    if (cat_snap_valid)
-        quota_sweep_close(&cat_snap_open, cat_names[current_cat]);
+     * transition, so without this the final category is never swept. Nothing
+     * follows, so this closing reading is not shared with anything. */
+    if (cat_snap_valid) {
+        quota_leak_snapshot_t final_snap;
+        for (uint32_t try = 0; try < QUOTA_SWEEP_RETRIES; try++)
+            if (quota_leak_snapshot(&final_snap))
+                break;
+        quota_sweep_close(&cat_snap_open, cat_names[current_cat], &final_snap);
+    }
 
     /* Restore default tag so the final summary renders in the kernel
      * test color even after the last-run suite was a desktop suite. */

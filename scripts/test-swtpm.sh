@@ -186,6 +186,19 @@ for _ in $(seq 1 "$TIMEOUT_SEC"); do
             if echo "$SUM" | grep -qE "[1-9][0-9]* leaked"; then
                 echo -e "${RED}SWTPM TEST FAILED: resource leak reported${NC}"; echo "$SUM"; exit 1
             fi
+            # Quota leak gate, fail-closed exactly like the heap gate above.
+            # This driver applies the same gates as the main test driver, so it
+            # must reject a nonzero quota-leaked too -- the kernel picks its
+            # success-form summary from `failed` alone, so "0 failed, 0 leaked,
+            # 2 quota-leaked" would otherwise pass every check here. Note the
+            # heap regex above cannot match inside "quota-leaked" (it requires a
+            # space before "leaked"), which is why this needs its own check.
+            if ! echo "$SUM" | grep -qE "[0-9]+ quota-leaked"; then
+                echo -e "${RED}SWTPM TEST FAILED: malformed summary (no quota-leaked counter)${NC}"; echo "$SUM"; exit 1
+            fi
+            if echo "$SUM" | grep -qE "[1-9][0-9]* quota-leaked"; then
+                echo -e "${RED}SWTPM TEST FAILED: quota leak reported${NC}"; echo "$SUM"; exit 1
+            fi
             if echo "$UT" | grep -qE ", [1-9][0-9]* failed"; then
                 echo -e "${RED}SWTPM TEST FAILED: user-mode tests reported failures${NC}"; echo "$UT"; exit 1
             fi

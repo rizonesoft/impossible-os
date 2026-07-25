@@ -367,18 +367,34 @@ static void test_quota_dump_renders_usage_row(void)
 /* The batched pin-walk resumes across a QUOTA_DUMP_BATCH boundary via a pinned
  * cursor. With a single fixture block every test stays inside the first batch,
  * so a skipped or double-counted block at the boundary would never show. Nine
- * distinct principals force at least two batches (the batch is 8). */
+ * distinct principals force at least two batches, derived from the accessor. */
 static void test_quota_snapshot_crosses_batch_boundary(void)
 {
-    enum { FIXTURES = 9 };
-    quota_block_t *blocks[FIXTURES];
+    /* DERIVED from the implementation bound, never hardcoded: a fixture count
+     * frozen to a literal would stay green while silently no longer crossing a
+     * boundary if the batch ever grew. */
+    const uint32_t batch = quota_test_dump_batch();
+    const uint32_t fixtures = batch + 1;
+    enum { FIXTURES_MAX = 33 };
+    quota_block_t *blocks[FIXTURES_MAX];
     uint8_t buf[SID_MAX_SIZE];
     quota_leak_snapshot_t before, after;
     uint32_t created = 0;
+    uint64_t expect_sum = 0;
+
+    TEST_ASSERT(batch >= 1, "the implementation reports a usable batch bound");
+    /* RETURN, do not merely assert. TEST_ASSERT records a failure and CONTINUES,
+     * so a batch grown past the fixture array would run on and write past
+     * blocks[] -- a buffer overrun in the test harness itself. */
+    if (fixtures > FIXTURES_MAX) {
+        TEST_ASSERT(fixtures <= FIXTURES_MAX,
+                    "fixture array covers batch+1 (widen FIXTURES_MAX)");
+        return;
+    }
 
     TEST_ASSERT(quota_leak_snapshot(&before) != 0, "baseline coherent");
 
-    for (uint32_t i = 0; i < FIXTURES; i++) {
+    for (uint32_t i = 0; i < fixtures; i++) {
         SID *sid = dash_make_sid(buf, 7400 + i);
         blocks[i] = quota_user_block_acquire(sid, RtlLengthSid(sid));
         if (!blocks[i])
@@ -388,19 +404,21 @@ static void test_quota_snapshot_crosses_batch_boundary(void)
          * which an all-ones fixture set could hide. */
         TEST_ASSERT_EQ(quota_charge(blocks[i], QUOTA_RES_TIMER, i + 1),
                        STATUS_SUCCESS, "per-block timer charge accepted");
+        expect_sum += (uint64_t)(i + 1);
     }
 
-    TEST_ASSERT_EQ((uint64_t)created, (uint64_t)FIXTURES,
-                   "all nine USER blocks created, spanning two pin batches");
+    TEST_ASSERT_EQ((uint64_t)created, (uint64_t)fixtures,
+                   "batch+1 USER blocks created, spanning two pin batches");
+    if (created != fixtures)
+        return;                 /* a short fixture set proves nothing here */
 
     TEST_ASSERT(quota_leak_snapshot(&after) != 0,
                 "multi-batch snapshot is coherent");
     TEST_ASSERT_EQ((uint64_t)(after.user_blocks - before.user_blocks),
-                   (uint64_t)FIXTURES,
+                   (uint64_t)fixtures,
                    "every block across the batch boundary counted exactly once");
-    /* 1+2+...+9 == 45 */
     TEST_ASSERT_EQ((uint64_t)(after.usage[QUOTA_RES_TIMER] -
-                              before.usage[QUOTA_RES_TIMER]), 45,
+                              before.usage[QUOTA_RES_TIMER]), expect_sum,
                    "usage summed exactly across the batch boundary");
 
     for (uint32_t i = 0; i < created; i++) {
