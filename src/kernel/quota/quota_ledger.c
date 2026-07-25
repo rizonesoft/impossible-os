@@ -273,7 +273,18 @@ NTSTATUS quota_gate_quiesce(struct task *task)
  * ========================================================================== */
 
 #define QUOTA_LEDGER_INLINE_SLOTS   8u
-#define QUOTA_LEDGER_CHUNK_SLOTS    24u
+
+/* Slots per chunk, chosen so a chunk holds as many slots as the narrower receipt
+ * allows without growing its allocator footprint. A slot is one receipt plus two
+ * words, so when the chain ceiling dropped from 8 to 4 the slot went from 104 to
+ * 72 bytes and the old count of 24 left most of the chunk unused. 34 slots is
+ * 2456 bytes against the previous 2504 (2512 vs 2560 including allocator
+ * metadata), so the per-task ceiling below buys 41 percent more obligations for
+ * slightly LESS heap. Note this heap is exact-size first-fit, NOT size-classed,
+ * so "same size class" is not the property being preserved -- the footprint
+ * simply does not grow. Keep this in step with the receipt width; the chunk
+ * assert below is the backstop. */
+#define QUOTA_LEDGER_CHUNK_SLOTS    34u
 
 /* Bounded growth attempts per charge, so a pathological allocator cannot turn
  * one charge into an unbounded loop. Three attempts covers "another CPU grew it
@@ -292,11 +303,27 @@ NTSTATUS quota_gate_quiesce(struct task *task)
  * (STATUS_INSUFFICIENT_RESOURCES for the charge) instead of global exhaustion --
  * fail-closed, with the failure landing on the process responsible.
  *
- * 64 chunks is ~1544 slots and ~151 KiB, so a maxed ledger takes single-digit
- * percent of the heap. It is deliberately a placeholder: the real answer is
- * page-backed storage or a compact common-depth receipt, and choosing between
- * them needs to know what the Object Manager charge points actually charge --
- * per handle or per table. Tracked as concrete follow-up work. */
+ * 64 chunks is 2184 slots and ~150 KiB, so a maxed ledger takes single-digit
+ * percent of the heap. The slot count rose from 1544 without touching this number
+ * or the heap footprint: the compact receipt (QUOTA_CHAIN_MAX sized to the
+ * reachable chain depth) made each slot 72 bytes instead of 104, and
+ * QUOTA_LEDGER_CHUNK_SLOTS was raised to spend the same chunk on more slots.
+ *
+ * IT IS STILL A CEILING, and a deliberate one. Raising it far enough to cover a
+ * consumer with no finite per-task bound of its own is NOT a matter of picking a
+ * bigger number, and two specific things block it:
+ *   - Page-backed storage would take this off the fixed 2 MiB heap, but the PMM
+ *     bitmap is not SMP-locked and pmm.h forbids lazy allocation on a live call
+ *     path outright, which is exactly what ledger growth is. Owned by the PMM
+ *     bitmap SMP-locking work in the advanced-allocator roadmap.
+ *   - A per-task TOTAL-obligation policy has to exist first. KNF's 4096 bounds ONE
+ *     state's subscriber list, not a task's aggregate, so no finite ceiling here
+ *     can be derived from it; a task subscribing across many states needs an
+ *     explicit total limit with a defined status and defined cross-resource
+ *     semantics, so that one resource class cannot starve another's obligations.
+ * Both are tracked in the charge-path cost-reduction work; until they land,
+ * converting a consumer that has no aggregate bound of its own would impose this
+ * ceiling on it. */
 #define QUOTA_LEDGER_MAX_CHUNKS     64u
 
 /* Set in a slot's `owner` word to mark the slot DEFERRED: its charge is owed to
@@ -1478,10 +1505,11 @@ int quota_ledger_return(quota_obligation_t *ob)
  * instead of returning every skipped slot.
  *
  * The drain resumes from a saved cursor, and initialising at zero and discarding
- * the prefix made every visit re-walk it: at the 1544-slot ceiling with a
- * 512-slot budget, covering the array cost roughly 4600 iterator returns instead
- * of 1544, and a lone deferral at the last slot paid that on every visit. Chunk
- * arithmetic turns the skip into at most QUOTA_LEDGER_MAX_CHUNKS pointer hops. */
+ * the prefix made every visit re-walk it: at the per-task slot ceiling with a
+ * 512-slot budget, covering the array cost several times more iterator returns
+ * than there are slots, and a lone deferral at the last slot paid that on every
+ * visit. Chunk arithmetic turns the skip into at most QUOTA_LEDGER_MAX_CHUNKS
+ * pointer hops, which is why raising the ceiling does not reintroduce the cost. */
 static void quota_ledger_iter_init_at(quota_ledger_iter_t *it,
                                       quota_ledger_t *ledger, uint32_t start)
 {

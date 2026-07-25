@@ -1567,6 +1567,91 @@ static void test_alpc_message_quota_refusal_status(void)
     alpc_teardown_pair(client_h, server_comm);
 }
 
+/* Charge-path cost reduction: a send refused by the message quota must perform NO
+ * allocation at all.
+ *
+ * AlpcAllocateMessage used to kmalloc the entry (up to the maximum message
+ * length) and only then consult the quota, freeing the allocation again on
+ * refusal. A sender parked at its limit could therefore drive an unbounded
+ * allocate/free cycle through a limit that was supposed to stop exactly that. The
+ * charge now happens first, so the refusal costs no allocation.
+ *
+ * Proving a NEGATIVE uses the single-shot kmalloc injection as a tripwire rather
+ * than as a fault: arm it, perform the over-cap send, and confirm the injection
+ * is STILL ARMED afterwards. If any kmalloc had run inside the refused send it
+ * would have consumed the countdown. A plain "did it return an error" assertion
+ * cannot distinguish the old order from the new one. */
+static void test_alpc_quota_refused_send_allocates_nothing(void)
+{
+    struct task *t = task_current();
+    HANDLE server_comm = INVALID_HANDLE_VALUE;
+    HANDLE client_h;
+    uint64_t restore, usage_now;
+
+    if (!t || !t->quota) {
+        TEST_ASSERT(0, "current task has a process quota block");
+        return;
+    }
+    client_h = alpc_setup_pair("QuotaNoAlloc", &server_comm);
+    if (client_h == INVALID_HANDLE_VALUE) {
+        TEST_SKIP("could not establish an ALPC port pair");
+        return;
+    }
+
+    restore   = quota_limit(t->quota, QUOTA_RES_ALPC_MESSAGE);
+    usage_now = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    /* Cap AT the current usage +1 so the first send fits and the second cannot,
+     * matching the sibling refusal test (a limit of 0 means unlimited). */
+    TEST_ASSERT_EQ((uint64_t)quota_set_limit(t->quota, QUOTA_RES_ALPC_MESSAGE,
+                                             usage_now + 1),
+                   (uint64_t)STATUS_SUCCESS, "message budget capped");
+
+    uint8_t buf[sizeof(PORT_MESSAGE) + 16];
+    PORT_MESSAGE *msg = (PORT_MESSAGE *)buf;
+    for (uint32_t i = 0; i < sizeof(buf); i++) buf[i] = 0;
+    msg->TotalLength = sizeof(PORT_MESSAGE) + 16;
+    msg->DataLength  = 16;
+    msg->Type        = ALPC_MSG_TYPE_DATAGRAM;
+
+    TEST_ASSERT_EQ((uint32_t)AlpcSendWaitReceivePort(&t->handle_table, client_h,
+                                                     0, msg, (PORT_MESSAGE *)0,
+                                                     0, 0),
+                   (uint32_t)STATUS_SUCCESS, "the message that fits is queued");
+
+    uint64_t injections_before = kmalloc_fail_injections_triggered();
+    uint64_t usage_before      = quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE);
+
+    /* Arm the tripwire, then make the over-cap send. */
+    kmalloc_fail_next();
+    NTSTATUS st = AlpcSendWaitReceivePort(&t->handle_table, client_h, 0, msg,
+                                          (PORT_MESSAGE *)0, 0, 0);
+    uint64_t injections_after = kmalloc_fail_injections_triggered();
+
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_QUOTA_EXCEEDED,
+                   "the over-cap send is refused by quota, and the armed "
+                   "allocation failure is NOT what refused it");
+    TEST_ASSERT_EQ(injections_after, injections_before,
+                   "a quota-refused send consumed no allocation: the armed "
+                   "kmalloc injection never fired");
+
+    /* The countdown must still be live. Spend it deliberately so the arming
+     * cannot leak into a later test, and confirm it was there to spend. */
+    void *probe = kmalloc(16);
+    TEST_ASSERT_NULL(probe,
+                     "the injection was still armed after the refused send, "
+                     "proving the refusal happened before any allocation");
+    if (probe)
+        kfree(probe);
+    kmalloc_fail_countdown_clear();
+
+    TEST_ASSERT_EQ(quota_usage(t->quota, QUOTA_RES_ALPC_MESSAGE), usage_before,
+                   "and the refused send charged nothing");
+
+    (void)quota_set_limit(t->quota, QUOTA_RES_ALPC_MESSAGE, restore);
+    alpc_teardown_pair(client_h, server_comm);
+}
+
 /* The changed allocator contract: NULL arguments and an over-length request
  * are argument errors, and out_entry must be untouched on every failure. */
 static void test_alpc_allocate_message_bad_args(void)
@@ -3212,6 +3297,9 @@ void test_register_alpc(void)
                             test_alpc_message_quota_returned_on_teardown, TEST_CAT_IPC);
     test_suite_register_cat("ALPC: message quota refusal status",
                             test_alpc_message_quota_refusal_status, TEST_CAT_IPC);
+    test_suite_register_cat("ALPC: a quota-refused send allocates nothing",
+                            test_alpc_quota_refused_send_allocates_nothing,
+                            TEST_CAT_IPC);
     test_suite_register_cat("ALPC: AlpcAllocateMessage bad args",
                             test_alpc_allocate_message_bad_args, TEST_CAT_IPC);
     test_suite_register_cat("alpc: remote disconnect-then-send => DISCONNECTED",

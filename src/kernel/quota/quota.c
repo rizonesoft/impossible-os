@@ -432,6 +432,53 @@ static inline void quota_writers_exit(void)
     __atomic_fetch_sub(&g_writer_slot[cpu].active, 1, __ATOMIC_ACQ_REL);
 }
 
+/* --- Split enter/exit, for a path that must mark itself in-flight BEFORE it
+ * masks interrupts ---------------------------------------------------------
+ *
+ * The N-lock adjust path cannot use the pair above. It masks interrupts around
+ * its entire claim-to-republish window, and the number of locks it will take is
+ * not known until after the mask is in place, so entering once per lock inside
+ * the loop puts every one of those atomic RMWs inside the IRQ-off window -- the
+ * cost the enter-before-lock ordering exists to avoid, reintroduced by a path
+ * that acquires N locks instead of one.
+ *
+ * The split lets that path mark itself in-flight with ONE RMW before masking, and
+ * settle the epoch and section accounting after unmasking. The RECORDED TOTALS ARE
+ * IDENTICAL to entering N times (epoch advances N, active nets to zero); the only
+ * observable difference is that peak `active` reads 1 instead of N, which the gate
+ * cannot distinguish because it only ever asks whether anything is in flight (see
+ * quota_test_writers_active). Marking in-flight EARLIER is strictly safer: the
+ * window now covers the tag claim as well as the block sections. */
+static inline void quota_writers_enter_active(void)
+{
+    uint32_t cpu = smp_cpu_id();
+    if (cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_add(&g_writer_slot[cpu].active, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline void quota_writers_exit_active(void)
+{
+    uint32_t cpu = smp_cpu_id();
+    if (cpu >= MAX_CPUS)
+        return;
+    __atomic_fetch_sub(&g_writer_slot[cpu].active, 1, __ATOMIC_ACQ_REL);
+}
+
+/* Advance the mutation epoch by the number of block sections a transaction
+ * completed, without touching the in-flight count. One RMW rather than n: the
+ * epoch is a monotonic total that only ever gets summed and differenced, so
+ * adding n at once is indistinguishable from n increments. */
+static inline void quota_writers_epoch_add(uint32_t n)
+{
+    uint32_t cpu = smp_cpu_id();
+    if (cpu >= MAX_CPUS)
+        return;
+    if (n == 0)
+        return;
+    __atomic_fetch_add(&g_writer_slot[cpu].epoch, (uint64_t)n, __ATOMIC_RELAXED);
+}
+
 /* Summed across CPUs. A writer that MIGRATES between its enter and its exit
  * would decrement a different slot than it incremented, so an individual slot
  * can go momentarily negative-as-unsigned -- the SUM is still correct, which is
@@ -511,6 +558,29 @@ static inline void quota_block_lock(quota_block_t *block, uint64_t *flags)
     spin_lock_irqsave(&block->lock, flags);
 }
 
+/* Acquire WITHOUT the writer-count enter, for the N-lock adjust path.
+ *
+ * That path has already marked itself in-flight with a single
+ * quota_writers_enter_active() before masking interrupts, so entering here would
+ * both double-count the in-flight marker and put N atomic RMWs back inside the
+ * IRQ-off window. It pairs with quota_block_unlock_quiet plus the epoch/section
+ * settlement below the mask restore. */
+static inline void quota_block_lock_quiet(quota_block_t *block, uint64_t *flags)
+{
+    spin_lock_irqsave(&block->lock, flags);
+}
+
+/* Release the adjust path's in-flight marker on a return that completed NO block
+ * section. Deliberately does not advance the epoch: an adjust that never took a
+ * lock never counted a mutation before this change either, and the totals must
+ * stay identical. Expands to nothing without KERNEL_TESTS so the early-return
+ * paths carry no #ifdef clutter. */
+#ifdef KERNEL_TESTS
+#define QUOTA_ADJUST_WRITERS_ABANDON()  quota_writers_exit_active()
+#else
+#define QUOTA_ADJUST_WRITERS_ABANDON()  ((void)0)
+#endif
+
 static inline void quota_block_unlock(quota_block_t *block, uint64_t flags)
 {
     spin_unlock_irqrestore(&block->lock, flags);
@@ -545,14 +615,6 @@ static inline void quota_writers_exit_pair(void)
 {
     quota_writers_exit();
     quota_writers_exit();
-}
-
-/* Same completion record for the N-lock adjust path, which holds every block a
- * receipt names and can therefore be deeper than a pair. */
-static inline void quota_writers_exit_n(uint32_t n)
-{
-    for (uint32_t i = 0; i < n; i++)
-        quota_writers_exit();
 }
 #endif
 
@@ -1957,6 +2019,14 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
      * The cost is honest and bounded: the window adds the block-pointer sort and
      * the tag CAS to an IRQ-off region that already spans every block critical
      * section this transaction enters. */
+#ifdef KERNEL_TESTS
+    /* Mark this CPU in-flight BEFORE the mask, so no instrumentation RMW lands
+     * inside the window at all. The lock loop below therefore uses the quiet
+     * acquire, and the epoch and section counts are settled after the restore.
+     * Every early return between here and there pays the matching active exit --
+     * that is the whole cost of moving the marker out. */
+    quota_writers_enter_active();
+#endif
     uint64_t adjust_irq = local_irq_save();
 
     /* Claim the charge exclusively. Losing this means the token names no live
@@ -1964,6 +2034,7 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
      * owns it), and there is nothing to resize. */
     if (atomic64_cmpxchg(&receipt->tag, active_tag, busy_tag) != active_tag) {
         local_irq_restore(adjust_irq);
+        QUOTA_ADJUST_WRITERS_ABANDON();
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -1975,12 +2046,14 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
          * index the counter array with it. */
         atomic64_set(&receipt->tag, active_tag);
         local_irq_restore(adjust_irq);
+        QUOTA_ADJUST_WRITERS_ABANDON();
         return STATUS_INVALID_PARAMETER;
     }
 
     if (new_amount == old) {
         atomic64_set(&receipt->tag, active_tag);
         local_irq_restore(adjust_irq);
+        QUOTA_ADJUST_WRITERS_ABANDON();
         return STATUS_SUCCESS;
     }
 
@@ -1992,6 +2065,7 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
         receipt->amount = new_amount;
         atomic64_set(&receipt->tag, active_tag);
         local_irq_restore(adjust_irq);
+        QUOTA_ADJUST_WRITERS_ABANDON();
         return STATUS_SUCCESS;
     }
 
@@ -2006,9 +2080,11 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
     quota_diag_t   diag    = QUOTA_DIAG_NONE;
     uint64_t       refused_usage = 0, refused_limit = 0;
 
-    /* Every block, held simultaneously, ascending address order. */
+    /* Every block, held simultaneously, ascending address order. Quiet acquires:
+     * this path marked itself in-flight once before masking interrupts, so no
+     * instrumentation RMW belongs inside the window. */
     for (uint32_t i = 0; i < n; i++)
-        quota_block_lock(sorted[i], &lock_flags[i]);
+        quota_block_lock_quiet(sorted[i], &lock_flags[i]);
 
     /* PREVALIDATE the whole transaction before committing any part of it. This
      * is the entire difference from a per-block walk: no usage moves and no peak
@@ -2073,8 +2149,14 @@ NTSTATUS quota_charge_adjust(quota_charge_receipt_t *receipt, uint64_t token,
      * beside the unlocks. The transfer path defers its pair for exactly this
      * reason: instrumentation must never run inside a quota critical section or
      * an IRQ-off window, because KERNEL_TESTS is on in the image that boots real
-     * hardware and these are locked per-CPU RMWs. */
-    quota_writers_exit_n(n);
+     * hardware and these are locked per-CPU RMWs.
+     *
+     * The epoch advances by n and the in-flight marker taken before the mask is
+     * released, which reproduces exactly what n enter/exit pairs recorded -- the
+     * difference is only WHERE the RMWs happen, never how many mutations the gate
+     * and the section budget observe. */
+    quota_writers_epoch_add(n);
+    quota_writers_exit_active();
     for (uint32_t i = 0; i < n; i++)
         quota_test_count_lock_section();
 #endif

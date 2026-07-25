@@ -1476,6 +1476,12 @@ NTSTATUS AlpcAllocateMessage(ALPC_PORT *charge_port, uint32_t data_length,
     uint64_t irqf;
     PORT_MESSAGE_ENTRY *entry;
     NTSTATUS status;
+    /* The charge lands here FIRST and is moved into the entry once the entry
+     * exists. Stack storage is explicitly sanctioned by quota.h ("its storage is
+     * public so it can live on the caller's stack") and is what lets the refusal
+     * happen before any allocation. */
+    quota_charge_receipt_t receipt = {0};
+    uint64_t               token   = 0;
 
     if (!charge_port || !out_entry)
         return STATUS_INVALID_PARAMETER;
@@ -1501,15 +1507,46 @@ NTSTATUS AlpcAllocateMessage(ALPC_PORT *charge_port, uint32_t data_length,
     charge_port->PoolUsageBytes += alloc_size;
     spin_unlock_irqrestore(&charge_port->Lock, irqf);
 
+    /* Charge the SENDER BEFORE allocating, with no port lock held.
+     *
+     * ORDER IS THE POINT: a message quota exists to stop a sender from consuming
+     * kernel memory, so performing the allocation first and freeing it on refusal
+     * means a sender parked at its limit still drives an allocate/free cycle of up
+     * to ALPC_MAX_ALLOWED_MESSAGE_LENGTH per rejected send. That turns an enforced
+     * limit into an unmetered heap workout: exactly the pressure the quota is
+     * supposed to prevent, applied at whatever rate the sender can call -- and the
+     * refused path is the one an adversary controls. Charging first makes a refused
+     * send cost two cheap counter updates and no allocation at all.
+     *
+     * The trade is stated honestly rather than as a blanket win: an ACCEPTED send
+     * now initializes a receipt on the stack and copies it into the entry below,
+     * and an allocation FAILURE must return a chain the old order never charged.
+     * Both are small and bounded (a 56-byte copy; a rollback on an already-failing
+     * path), and neither is attacker-driven, which is why they are the right side
+     * of this trade. No net cycle claim is made -- there is no SMP benchmark
+     * harness to support one.
+     *
+     * The port-bytes reservation above stays first because it is the cheaper of
+     * the two checks and is already unwound on every path below. */
+    status = quota_charge_current(QUOTA_RES_ALPC_MESSAGE, 1, &receipt, &token);
+    if (status != STATUS_SUCCESS) {
+        alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
+        return status;
+    }
+
     entry = (PORT_MESSAGE_ENTRY *)kmalloc(alloc_size);
     if (!entry) {
+        /* The charge is live now, so it must be RETURNED and not merely dropped:
+         * abandoning the receipt would strand the amount in every block of the
+         * chain for the life of the system. */
+        quota_return_chain(&receipt, token);
         alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     /* Zero header + bookkeeping. Body bytes are caller-filled. This also
      * leaves the embedded receipt IDLE at generation 0, the valid empty
-     * state that must exist before anything charges into it. */
+     * state that must exist before the charge is moved into it. */
     {
         uint8_t *zp = (uint8_t *)entry;
         for (uint32_t i = 0; i < sizeof(PORT_MESSAGE_ENTRY); i++)
@@ -1517,16 +1554,16 @@ NTSTATUS AlpcAllocateMessage(ALPC_PORT *charge_port, uint32_t data_length,
     }
     entry->ChargedSize = alloc_size;
 
-    /* Charge the SENDER, with no port lock held. Done last so the two cheap
-     * reservations are already known good; on refusal both are unwound and the
-     * caller learns it was quota, not memory, that failed. */
-    status = quota_charge_current(QUOTA_RES_ALPC_MESSAGE, 1,
-                                  &entry->Quota, &entry->QuotaToken);
-    if (status != STATUS_SUCCESS) {
-        kfree(entry);   /* nothing charged into the receipt: nothing to return */
-        alpc_uncharge_port_bytes_raw(charge_port, alloc_size);
-        return status;
-    }
+    /* MOVE the charge into the entry, which is the storage that outlives this
+     * call. A receipt is relocatable by value while it is unpublished: it owns
+     * block POINTERS and one reference on each, and nothing anywhere retains a
+     * pointer to the receipt's own storage (quota_charge_chain writes only into
+     * the caller's struct). The tag travels with the value, so the token handed
+     * back above keeps naming this charge through the copy. Ordering: the copy
+     * completes before the entry is published to the caller, so no other agent can
+     * observe the receipt mid-move. */
+    entry->Quota      = receipt;
+    entry->QuotaToken = token;
 
     *out_entry = entry;
     return STATUS_SUCCESS;

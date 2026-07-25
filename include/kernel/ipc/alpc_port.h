@@ -97,6 +97,19 @@ typedef struct port_message_entry {
      * struct already has well-defined size; payload is laid out by hand) */
 } PORT_MESSAGE_ENTRY;
 
+/* PIN THE HEADER OVERHEAD. Every queued message pays this struct on top of its
+ * payload, so a field added here is multiplied by the queue depth of every port
+ * in the system -- and the embedded receipt made that overhead grow silently once
+ * already (the 8-wide chain reserved 32 bytes per message for nested jobs that do
+ * not exist; QUOTA_CHAIN_MAX is now sized to the reachable depth). The assert is
+ * written against the members rather than a literal so a padding change fails
+ * here, at the definition, instead of showing up as unexplained heap pressure. */
+_Static_assert(sizeof(PORT_MESSAGE_ENTRY) ==
+                   sizeof(struct port_message_entry *) + sizeof(PORT_MESSAGE)
+                   + 8u + sizeof(quota_charge_receipt_t) + 8u,
+               "PORT_MESSAGE_ENTRY gained padding or a field: this overhead is "
+               "paid per queued message on every port -- re-justify the growth");
+
 /* ---- ALPC_PENDING_REPLY ----------------------------------------------- */
 /*
  * Sender-owned synchronous-request wait record. Created when the sender

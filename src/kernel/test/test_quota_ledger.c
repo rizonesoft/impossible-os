@@ -1658,8 +1658,240 @@ static void test_quota_ledger_deferred_batch_completes(void)
     quota_ledger_test_hold(0);
 }
 
+/* --- Charge-path cost reduction ----------------------------------------- */
+
+/* ob_job_collect_accounting's LIVE-MEMBER walk, which nothing else covers: the
+ * existing accounting test passes out-of-range pids, so every member resolves to
+ * NULL and the loop body never runs.
+ *
+ * What is asserted is the membership-interval contract -- a member's usage is
+ * counted exactly once while it belongs to the job, and a task that has left
+ * contributes nothing further -- so this holds regardless of how the collector
+ * arranges its locking internally. A REAL Ob-allocated job is required because
+ * ob_job_assign takes an Ob reference, which writes an OBJECT_HEADER immediately
+ * before the body; a stack JOB_OBJECT would corrupt adjacent stack memory. */
+static void test_quota_job_collect_member_accounting(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota || t->job) {
+        TEST_SKIP("needs a jobless live task with a quota block");
+        return;
+    }
+
+    int64_t saved_gate = atomic64_read(&t->quota_gate);
+
+    HANDLE h = ob_job_create(&t->handle_table, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        TEST_SKIP("could not allocate a real job object");
+        return;
+    }
+    HANDLE_TABLE_ENTRY *ent = ObpLookupHandle(&t->handle_table, h);
+    if (!ent || !ent->object) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        TEST_SKIP("job handle did not resolve to a body");
+        return;
+    }
+    JOB_OBJECT *job = (JOB_OBJECT *)ent->object;
+
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS                            io;
+
+    /* No members yet: the walk runs zero times and reports only the persistent
+     * departed-member totals. */
+    ob_job_collect_accounting(job, &acct, &io);
+    TEST_ASSERT_EQ((uint64_t)acct.ActiveProcesses, 0,
+                   "a job with no members reports no active processes");
+
+    if (ob_job_assign(job, t) != STATUS_SUCCESS) {
+        atomic64_set(&t->quota_gate, saved_gate);
+        (void)ObpFreeHandle(&t->handle_table, h);
+        TEST_SKIP("could not assign the live task as a job member");
+        return;
+    }
+
+    /* The live member is now reachable from member_pids[] AND satisfies
+     * t->job == job, so the out-of-lock walk must count it. */
+    ob_job_collect_accounting(job, &acct, &io);
+    TEST_ASSERT_EQ((uint64_t)acct.ActiveProcesses, 1,
+                   "the assigned task is counted as an active member");
+    TEST_ASSERT_EQ((uint64_t)acct.TotalProcesses, 1,
+                   "the assigned task is counted as ever-associated");
+
+    /* Burn a little accountable I/O so the member has a nonzero delta to
+     * contribute, then confirm the delta is reported rather than dropped by the
+     * relaxed window. task_acct_note_control_io is a pure relaxed-atomic
+     * counter bump (task.c), safe to call from a test. */
+    task_acct_note_control_io(t, 4096);
+    ob_job_collect_accounting(job, &acct, &io);
+    TEST_ASSERT(io.OtherTransferCount >= 4096,
+                "a live member's post-join I/O reaches the job aggregate "
+                "through the out-of-lock delta walk");
+    uint64_t joined_other = io.OtherTransferCount;
+
+    /* Detach, which folds the member's delta into job->acc_* and clears
+     * t->job. The next collection must count that usage exactly ONCE: from the
+     * persistent totals now, never again from the live walk (t->job == job is
+     * false, so the predicate excludes it). */
+    ob_job_detach_task(t);
+    ob_job_collect_accounting(job, &acct, &io);
+    TEST_ASSERT_EQ((uint64_t)acct.ActiveProcesses, 0,
+                   "a detached task is no longer an active member");
+    /* Bounded rather than exact: this task's control-I/O counter is shared with
+     * any real device activity the boot happens to attribute to it between the
+     * two collections, so exact equality would be a flake. The band still
+     * catches both regressions -- losing the fold drops BELOW the floor, and
+     * counting the member twice adds its whole delta again, landing at or above
+     * the ceiling. */
+    TEST_ASSERT(io.OtherTransferCount >= joined_other,
+                "a detached member's usage survives in the persistent totals "
+                "rather than being lost with the membership");
+    TEST_ASSERT(io.OtherTransferCount < joined_other + 4096,
+                "and is folded in exactly once, not counted again by the "
+                "membership predicate after the detach");
+
+    /* POST-MEMBERSHIP ACTIVITY MUST NOT REACH THIS JOB: the detach has already
+     * removed the pid, so the collector no longer resolves this task at all and
+     * its later activity belongs to nobody's job. */
+    uint64_t after_detach_base = io.OtherTransferCount;
+    task_acct_note_control_io(t, 65536);
+    ob_job_collect_accounting(job, &acct, &io);
+    TEST_ASSERT(io.OtherTransferCount < after_detach_base + 65536,
+                "activity accrued AFTER the membership ended is not billed to "
+                "the job the task used to belong to");
+
+    atomic64_set(&t->quota_gate, saved_gate);
+    (void)ObpFreeHandle(&t->handle_table, h);
+}
+
+/* quota_charge_adjust used to run one writer-instrumentation RMW per block lock
+ * INSIDE its IRQ-off window. It now marks itself in-flight once before masking
+ * and settles the epoch and section counts after unmasking. The contract is that
+ * the RECORDED TOTALS did not change -- only where the RMWs happen -- so that is
+ * exactly what is asserted: the epoch advances by the block count, the lock
+ * section budget is met per block, and the in-flight count is balanced. */
+static void test_quota_adjust_writer_totals_unchanged(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_charge_receipt_t r     = { 0 };
+    uint64_t               token = 0;
+    if (quota_charge_current(LEDGER_TEST_TYPE, 8, &r, &token) != STATUS_SUCCESS) {
+        TEST_SKIP("could not place a chain charge to adjust");
+        return;
+    }
+    if (r.count == 0 || token == 0) {
+        quota_return_chain(&r, token);
+        TEST_SKIP("chain charge produced no returnable obligation");
+        return;
+    }
+    uint32_t n = r.count;
+
+    TEST_ASSERT_EQ((uint64_t)quota_test_writers_active(), 0,
+                   "no writer is in flight before the adjust");
+
+    uint64_t epoch_before = quota_test_mutation_epoch();
+    quota_test_lock_count_begin();
+    NTSTATUS st = quota_charge_adjust(&r, token, 9);
+    uint64_t sections = quota_test_lock_count_end();
+    uint64_t epoch_after = quota_test_mutation_epoch();
+
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                   "the adjust itself still succeeds");
+    TEST_ASSERT_EQ(epoch_after - epoch_before, (uint64_t)n,
+                   "the mutation epoch still advances once per block, settled "
+                   "after the mask restore instead of inside the window");
+    TEST_ASSERT_EQ(sections,
+                   (uint64_t)n * (uint64_t)QUOTA_BUDGET_ADJUST_LOCKS_PER_BLOCK,
+                   "the adjust still records its budgeted lock sections");
+    TEST_ASSERT_EQ((uint64_t)quota_test_writers_active(), 0,
+                   "the in-flight marker taken before the mask is released "
+                   "after it, leaving the count balanced");
+
+    quota_return_chain(&r, token);
+}
+
+/* QUOTA_CHAIN_MAX was narrowed from 8 to 4, which is the compaction that shrank
+ * every embedded receipt. The risk of narrowing is that a chain a limit would
+ * have admitted now gets REFUSED for want of a slot, so this asserts the
+ * deepest chain any live path builds (process + user + job) still charges and
+ * returns exactly, and that it fits with a slot to spare. A chain deeper than
+ * the ceiling cannot be constructed through any public path today -- nested jobs
+ * do not exist -- so the refuse-rather-than-truncate branch stays covered by the
+ * ceiling check in quota_owner.c rather than by a fabricated receipt. */
+static void test_quota_chain_fits_compacted_receipt(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota || t->job) {
+        TEST_SKIP("needs a jobless live task with a quota block");
+        return;
+    }
+
+    int64_t saved_gate = atomic64_read(&t->quota_gate);
+
+    HANDLE h = ob_job_create(&t->handle_table, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        TEST_SKIP("could not allocate a real job object");
+        return;
+    }
+    HANDLE_TABLE_ENTRY *ent = ObpLookupHandle(&t->handle_table, h);
+    if (!ent || !ent->object) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        TEST_SKIP("job handle did not resolve to a body");
+        return;
+    }
+    JOB_OBJECT *job = (JOB_OBJECT *)ent->object;
+    quota_block_t *jb = (quota_block_t *)job->quota;
+    if (!jb || ob_job_assign(job, t) != STATUS_SUCCESS) {
+        atomic64_set(&t->quota_gate, saved_gate);
+        (void)ObpFreeHandle(&t->handle_table, h);
+        TEST_SKIP("could not make the live task a job member");
+        return;
+    }
+
+    uint64_t proc_before = quota_usage(t->quota, LEDGER_TEST_TYPE);
+    uint64_t job_before  = quota_usage(jb, LEDGER_TEST_TYPE);
+
+    quota_charge_receipt_t r     = { 0 };
+    uint64_t               token = 0;
+    NTSTATUS st = quota_charge_current(LEDGER_TEST_TYPE, 7, &r, &token);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                   "the deepest reachable chain is still admitted after the "
+                   "receipt was narrowed to QUOTA_CHAIN_MAX slots");
+    if (st == STATUS_SUCCESS) {
+        TEST_ASSERT(r.count >= 2 && r.count <= QUOTA_CHAIN_MAX,
+                    "a job member's chain names process, user and job blocks "
+                    "and fits the compacted receipt");
+        TEST_ASSERT(r.count < QUOTA_CHAIN_MAX,
+                    "the reachable chain leaves a spare slot, so the ceiling "
+                    "is not being hit by ordinary charges");
+        TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before + 7,
+                       "the job block in the chain was charged");
+        quota_return_chain(&r, token);
+        TEST_ASSERT_EQ(quota_usage(jb, LEDGER_TEST_TYPE), job_before,
+                       "the whole chain returns exactly through the compacted "
+                       "receipt, stranding nothing in the job block");
+        TEST_ASSERT_EQ(quota_usage(t->quota, LEDGER_TEST_TYPE), proc_before,
+                       "and nothing is stranded in the process block");
+    }
+
+    ob_job_detach_task(t);
+    atomic64_set(&t->quota_gate, saved_gate);
+    (void)ObpFreeHandle(&t->handle_table, h);
+}
+
 void test_register_quota_ledger(void)
 {
+    test_suite_register_cat("Quota: job accounting counts a live member for its "
+                            "membership interval only",
+                            test_quota_job_collect_member_accounting, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: an adjust records the same writer totals "
+                            "with no RMW inside its IRQ-off window",
+                            test_quota_adjust_writer_totals_unchanged, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: the deepest reachable chain fits the "
+                            "compacted receipt and returns exactly",
+                            test_quota_chain_fits_compacted_receipt, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota ledger: a raised-IRQL return defers instead of crediting",
                             test_quota_ledger_return_at_raised_irql_defers, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota ledger: a deferred obligation is credited exactly once",

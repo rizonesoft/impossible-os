@@ -661,11 +661,30 @@ NTSTATUS quota_rollup_by_sid(const SID *owner, uint32_t owner_len,
  * to the resource it accounts for -- charge paths must not have to allocate.
  * ========================================================================== */
 
-/* Chain depth ceiling: process + user + the job chain. Sized with headroom for
- * nested jobs, which are not implemented yet (see quota_charge_chain). A chain
- * that would exceed this is refused rather than silently truncated -- an
- * untracked link means an unenforced limit. */
-#define QUOTA_CHAIN_MAX  8u
+/* Chain depth ceiling: process + user + the job chain. A chain that would exceed
+ * this is refused rather than silently truncated -- an untracked link means an
+ * unenforced limit (quota_owner.c refuses with STATUS_INVALID_PARAMETER).
+ *
+ * SIZED TO THE REACHABLE DEPTH PLUS ONE, not to a speculative ceiling. The
+ * deepest chain any path builds today is 3: the process block and the user block
+ * (quota_chain_add_task_blocks) plus exactly one job block
+ * (quota_chain_add_job_blocks). This width is NOT free -- the receipt embeds the
+ * whole blocks[] array by value, and receipts are embedded next to the resources
+ * they account for, so every unused slot is paid in EVERY ALPC message entry and
+ * EVERY ledger slot for the life of the system. The former ceiling of 8 spent 32
+ * bytes per receipt reserving room for nested jobs that do not exist.
+ *
+ * RAISE THIS when nested jobs land: the ancestor walk is a change in
+ * quota_chain_add_job_blocks and nowhere else, and it must raise this ceiling by
+ * the maximum nesting depth it admits. The size asserts below are what make that
+ * a compile-time conversation instead of a silent refusal at runtime. */
+#define QUOTA_CHAIN_MAX  4u
+
+/* The reachable depth documented above. Asserted so a future chain step cannot be
+ * added without confronting the ceiling it needs. */
+_Static_assert(QUOTA_CHAIN_MAX >= 3u,
+               "the chain must hold process + user + one job block; a smaller "
+               "ceiling would refuse charges that every limit admits");
 
 /* Proof of a completed chain charge. Treat every field as private: build it
  * only with quota_charge_chain, consume it only with quota_return_chain.
@@ -709,6 +728,18 @@ typedef struct quota_charge_receipt {
     uint64_t              amount;                  /* how much, per block       */
     atomic64_t            tag;                     /* {generation, state}       */
 } quota_charge_receipt_t;
+
+/* PIN THE WIDTH. This type is embedded by value in per-resource storage that the
+ * system allocates in bulk -- one per queued ALPC message (PORT_MESSAGE_ENTRY)
+ * and one per ledger slot -- so its size is a system-wide memory multiplier, not
+ * a local detail. Without this assert, widening QUOTA_CHAIN_MAX or adding a field
+ * silently inflates every one of those consumers; the ledger's own chunk assert
+ * would then fail far from the cause. Update the expected size DELIBERATELY, with
+ * the consumer cost in hand. */
+_Static_assert(sizeof(quota_charge_receipt_t) == (QUOTA_CHAIN_MAX * sizeof(void *)) + 24u,
+               "receipt layout drifted: blocks[] + count/type + amount + tag. A "
+               "wider receipt multiplies across every ALPC message and ledger "
+               "slot -- re-measure those consumers before changing this");
 
 /* Receipt states. IDLE is 0 so a zero-initialized receipt is valid (generation
  * 0, IDLE), which is exactly the "empty receipt returns nothing" contract. */
