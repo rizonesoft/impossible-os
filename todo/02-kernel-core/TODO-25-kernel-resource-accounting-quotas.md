@@ -50,8 +50,10 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | 💎   |   8   | Native query/set quota syscalls               | T12 §10                 |  [x]   |
 | ⭐   |   9   | Resource pressure events and recovery hooks   | T16 §2, T30 §6          |  [/]   |
 | 💎   |  10   | Tests, leak sweeps, and dashboards            | §1..§9                  |  [/]   |
-| 💎   |  11   | Object and handle quota integration           | §4, T05 §3, T05 §14     |  [ ]   |
+| 💎   |  11   | Charge ledger and transactional adjustment    | §4                      |  [ ]   |
 | ⭐   |  12   | Resource pressure stall telemetry             | D03T07 §3, D03T03 §6    |  [ ]   |
+| 💎   |  13   | Object Manager charge points                  | §11, T05 §3, T05 §14    |  [ ]   |
+| ⭐   |  14   | Charge-path cost and lifetime follow-ups      | §6, §7, §9              |  [ ]   |
 
 ## 1. Resource Type Registry
 
@@ -124,7 +126,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (chain-charging contract, principal kinds, canonical-user rule).
 > - **Scope boundary** -- §3 owns WHO is charged; nothing is charged yet (§4-§7), privilege-checked limits are §8, nested-job topology is TODO-21 §13.
 > **Verified:** 2026-07-20 | commit `20ee7781` + review fixes | 4/6 items | build OK | smoke PASS (TCG 2.7s), tests 52/52 PASS
-> **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a drain/quiesce transaction plus a refcounted ledger that ADOPTS `job_absorb` (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 244)
+> **Accepted:** [H] absorbed pre-join usage stays billed to the job until the member departs, and a charge can straddle the absorb-to-publish window; both need a drain/quiesce transaction plus a refcounted ledger that ADOPTS `job_absorb` (reason: not-functional-today) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 367)
 > **Accepted:** [M] `ACCESS_TOKEN.UserSid` has no recorded extent, so the bounded-capture `owner_len` is caller-derived and cannot detect a truncated SID (reason: scope) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Record a VALIDATED `UserSid` length in `ACCESS_TOKEN`" at line 334)
 > **Deferred:** [M] `QUOTA_CHARGE_CLIENT` fails closed with `STATUS_NOT_SUPPORTED`: billing an impersonated client needs a stable per-CPU current-thread cursor and a teardown-safe token-slot pin (reason: infra) -> XREF: `02-kernel-core/TODO-15 §4` (item: "Teardown-safe primary-token READ pin" at line 333)
 > **Accepted:** [M] `ob_job_create` inserts a named job into the object namespace before allocating its handle, so a handle-alloc failure leaks the directory entry, the body, and now its quota block (reason: scope, pre-existing Job-Object lifecycle) -> XREF: `02-kernel-core/TODO-21 §14` (item: "`ob_job_create` inserts a named job into `\BaseNamedObjects`" at line 464)
@@ -151,11 +153,11 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Notes:**
 > - **What shipped** -- a tagged `{generation, state}` receipt word in `quota.h`/`quota_owner.c` with a mandatory caller-held token keying the return, plus `atomic64_cmpxchg` in `kernel/atomic.h` as the one primitive it needs.
 > - **How it runs** -- every receipt transition is ONE `atomic64_cmpxchg` on the packed word: charge claims IDLE at the current generation, fills the receipt, then release-publishes `{gen+1, ACTIVE}`; return CASes the exact `{token, ACTIVE}` it was handed.
-> - **Downstream effects** -- closes the §3 receipt-storage ABA; the absorb-to-publish half stays open and moved to §11, which now owns the charging consumers, the refcounted ledger, and the membership drain protocol.
+> - **Downstream effects** -- closes the §3 receipt-storage ABA; the absorb-to-publish half stays open and moved to §11, which owns the refcounted ledger and the membership drain protocol (§13 owns the charging consumers).
 > - **Canonical doc** -- `include/kernel/quota/quota.h` (receipt identity contract).
-> - **Scope boundary** -- §4 owns only the IDENTITY of a charge; nothing is charged yet (§11 objects/handles, §5-§7 pool/registry/CPU), membership serialization is §11, and the handle-table lock a charge-on-insert needs is TODO-05 §3.
+> - **Scope boundary** -- §4 owns only the IDENTITY of a charge; nothing is charged yet (§13 objects/handles, §5-§7 pool/registry/CPU), membership serialization is §11, and the handle-table lock a charge-on-insert needs is TODO-05 §3.
 > **Accepted:** [M] the receipt-tag guarantees are proven only by sequential tests: concurrent same-token returners, a paused BUSY window, and cross-CPU publication visibility need per-CPU run queues that do not exist yet (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 251)
-> **Deferred:** [H] the absorb-to-publish window stays open: a generation revalidated after charging turns the under-count into a DOUBLE count, so closing it needs a drain/quiesce transaction (reason: design) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 244)
+> **Deferred:** [H] the absorb-to-publish window stays open: a generation revalidated after charging turns the under-count into a DOUBLE count, so closing it needs a drain/quiesce transaction (reason: design) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Serialize charges against membership transitions" at line 367)
 
 ---
 
@@ -214,8 +216,8 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Deferred:** [H] no production `kernel_tunable_set` caller exists and every taxonomy default is unlimited, so the charge points ACCOUNT but enforce no finite cap; the mechanism and its privilege flag ship, the policy source does not (reason: infra) -> XREF: `02-kernel-core/TODO-02 §6` (item: "Privileged production write path for tunables" at line 198)
 > **Deferred:** [H] registry name/data-byte and watcher charging: value slots are a monotonic tombstone pool with no reuse and `hive_parse_value` bypasses the charge point, so returning logical bytes would let slot exhaustion escape the cap (reason: infra) -> XREF: `02-kernel-core/TODO-14 §15` (item: "Charge registry names/data bytes and watchers via `quota_charge_current`" at line 685)
 > **Deferred:** [M] ALPC port sections and completion-list entries have no allocation site to charge yet (reason: scope) -> XREF: `02-kernel-core/TODO-24 §6` (item: "Charge port sections and completion-list entries to the creating task" at line 292)
-> **Accepted:** [H] the 8-slot receipt embedded per message grows `PORT_MESSAGE_ENTRY` 56 -> 152 bytes for a 3-block chain; a compact chain receipt needs the charge-API rework (reason: infra) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Compact per-chain charge receipt" at line 291)
-> **Accepted:** [H] a quota-refused send allocates and zeroes the message before refusing, since a receipt cannot be built before its storage exists; needs a reserve-then-commit charge (reason: infra) -> XREF: `02-kernel-core/TODO-25 §11` (item: "Reserve-then-commit charge so a refused send does not first allocate" at line 292)
+> **Accepted:** [H] the 8-slot receipt embedded per message grows `PORT_MESSAGE_ENTRY` 56 -> 152 bytes for a 3-block chain; a compact chain receipt needs the charge-API rework (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Compact per-chain charge receipt" at line 416)
+> **Accepted:** [H] a quota-refused send allocates and zeroes the message before refusing, since a receipt cannot be built before its storage exists; needs a reserve-then-commit charge (reason: infra) -> XREF: `02-kernel-core/TODO-25 §14` (item: "Reserve-then-commit charge so a refused send does not first allocate" at line 417)
 > **Accepted:** [H] same-SID processes serialize on one USER block, so ALPC/KNF charge paths contend; sharded or per-CPU credit needs cross-CPU proof (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 271)
 > **Quality reviewed:** 2026-07-20 | Codex 7x (design, adversarial x2, test-coverage, re-adversarial, consistency, perf) | 2H+7M+1L fixed, 3H accepted-XREF | scope: kernel-code-quality
 
@@ -249,7 +251,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] wait paths publish a waiter before setting THREAD_BLOCKED and the wake claim tests only the state, not the wait instance (reason: pre-existing, needs a wait-lock transaction) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Give each wait a generation token the wake must match" at line 291)
 > **Accepted:** [M] the tick charges `tasks[current_task]`, one global cursor, so a tick can bill the wrong process once APs schedule (reason: needs per-CPU scheduler state) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Resolve the interrupted task through PER-CPU scheduler state" at line 293)
 > **Accepted:** [M] `thread->state` is CASed by the wake seam but plain-stored by ~16 other writers (reason: scheduler-wide change) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Make `thread->state` uniformly atomic" at line 292)
-> **Accepted:** [M] `ob_job_collect_accounting` holds `job->lock` with IRQs off across up to 32 members of delta math (reason: snapshot-then-compute refactor) -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §11` (item: "Cut the `ob_job_collect_accounting` lock hold" at line 310)
+> **Accepted:** [M] `ob_job_collect_accounting` holds `job->lock` with IRQs off across up to 32 members of delta math (reason: snapshot-then-compute refactor) -> XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §14` (item: "Cut the `ob_job_collect_accounting` lock hold" at line 415)
 > **Accepted:** [L] the tick quantum is the nominal rate, so a one-shot/tickless arm would mis-charge (reason: not-functional-today, no production one-shot caller) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Derive the tick quantum from the ACTUAL elapsed monotonic delta" at line 294)
 > **Accepted:** [H] `SYS_READFILE` is uninstrumented and hands its ring-3 `buf` to `vfs_read` for kernel-mode writing (reason: scope, the primitive is slated for retirement and must not be instrumented) -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §5` (item: "Closing `SYS_READFILE` must close its hazards" at line 152)
 > **Deferred:** [M] control-I/O counters are wired and projected but read zero until a device-control op completes -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §14` (item: "task_acct_note_control_io" at line 313)
@@ -299,7 +301,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Critical pressure publishes a nomination on `Kernel\QuotaNomination` as the interim carrier; a direct orchestrator call needs a hook that does not exist. -> XREF: `02-kernel-core/TODO-30-system-health-recovery-orchestrator.md §6`
 - [x] Quota-failure event contract defined HERE: `QUOTA_FAILURE_RECORD` (packed, versioned, offset-asserted) carrying block id, principal, SID digest, requested/current/limit, status, pid/tid; per-resource token bucket. -> XREF: `TODO-16 §6`
 - [/] Targeted cleanup has no seam: no cache-drain, log-trim, or refuse-new-handles entry point exists and working-set Min/Max is unenforced, so each is filed to its owner. -> XREF: `TODO-21-process-model-extensions.md §9`, `TODO-30 §6`
-- [/] ARCHITECTURE DECISION: COOPERATIVE-ONLY (Win-style). `quota_pressure_nominate` picks the most-saturated USER principal at or above the watch threshold; the drain publishes it on a critical transition, never terminating it. -> XREF: `§11`
+- [/] ARCHITECTURE DECISION: COOPERATIVE-ONLY (Win-style). `quota_pressure_nominate` picks the most-saturated USER principal at or above the watch threshold; the drain publishes it on a critical transition, never terminating it. -> XREF: `§14`
 - [x] Commit: quota: pressure levels (hysteresis), quota-failure events, recovery hooks.
 
 **Test checkpoint:** samples across the thresholds walk normal->watch->warning->critical one level per debounce and hold for an arbitrarily long run inside a band (zero transitions recorded); exactly-at-rise enters and exactly-at-fall holds; returning charges walk the level back down while an unlimited cap reads INVALID and never de-escalates; the domain sample tracks the WORST live principal, so an idle user cannot mask a saturated one; a refused charge emits the event carrying usage and limit as they stood at the refusal, and an overflow refusal reports its own status; the token bucket admits a full burst then counts throttled events separately from ring overflow, with the sequence still advancing across a drop; a transition survives a ring already filled by a failure burst; a saturated principal reaching critical is nominated with an expiry and retracted once it returns the charge.
@@ -317,15 +319,15 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] recovery actions (cache drain, log trim, refuse-new-handles) have no seam to call and no orchestrator to dispatch them -> XREF: 02-kernel-core/TODO-30 §6 (item: "Provide the cleanup entry points TODO-25 §9 has no seam for today" at line 89)
 > **Accepted:** [H] critical pressure cannot notify an orchestrator directly; the KNF nomination state is the interim carrier -> XREF: 02-kernel-core/TODO-30 §6 (item: "Accept a resource-exhaustion pressure source from TODO-25 §9" at line 88)
 > **Accepted:** [M] working-set Min/Max is stored but unenforced, so pressure recovery cannot trim an offending process -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §9 (item: "Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process" at line 301)
-> **Accepted:** [M] nomination ranks USER principals only; process-level ranking needs a lifetime-safe task iterator and a System-protected flag, neither of which exists -> XREF: 02-kernel-core/TODO-25 §11 (item: "Lifetime-safe task enumeration for process-level victim nomination" at line 355)
-> **Deferred:** [H] the four levels derive from budget saturation, not the stall-time metric the section names; the stall source is tagged and seamed but unwired -> XREF: 02-kernel-core/TODO-25 §12 (item: "Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall`" at line 320)
+> **Accepted:** [M] nomination ranks USER principals only; process-level ranking needs a lifetime-safe task iterator and a System-protected flag, neither of which exists -> XREF: 02-kernel-core/TODO-25 §14 (item: "Lifetime-safe task enumeration for process-level victim nomination" at line 418)
+> **Deferred:** [H] the four levels derive from budget saturation, not the stall-time metric the section names; the stall source is tagged and seamed but unwired -> XREF: 02-kernel-core/TODO-25 §12 (item: "Feed the accumulators into the §9 pressure machine via `quota_pressure_submit_stall`" at line 323)
 > **Quality reviewed:** 2026-07-24 | Codex 6x (design, adversarial, consistency, perf, test-coverage, re-adversarial) | 11H+13M+1L fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
 
 ## 10. Tests, Leak Sweeps, and Dashboards
 
-- [/] Unit tests: charge/return, rollback, concurrent charges ship in `test_quota.c`; ALPC quota under `TEST_CAT_IPC`. Duplicate-handle and registry quota have no charge point yet. -> XREF: `§11`, `§6`
+- [/] Unit tests: charge/return, rollback, concurrent charges ship in `test_quota.c`; ALPC quota under `TEST_CAT_IPC`. Duplicate-handle and registry quota have no charge point yet. -> XREF: `§13`, `§6`
 - [x] Boot leak sweep compares outstanding USER-block quota across every test CATEGORY (`quota_sweep_close`), gated on positive per-type usage deltas through a `quota_leaked` counter the test driver folds into FAILED.
 - [x] `quota_dump()` renders live USER blocks (id, SID digest, per-type usage/peak/limit/failures) on serial; `quota_dump_crash()` is the panic form (try-lock, preallocated rows, header-only fallback), wired into `panic.c`.
 - [x] Bulletproofing: a charge naming no owning block or no valid resource type is refused with `STATUS_INVALID_PARAMETER` and moves no counter; the taxonomy half stays in `test_quota.c`.
@@ -345,7 +347,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - A snapshot is coherent only when registry generation, counter-mutation epoch, ACTIVE-WRITER count zero, and two agreeing walks ALL hold; a transfer parked between its two stores defeats any of them alone.
 > - Only USER blocks are enumerable (PROCESS needs a lifetime-safe task iterator, JOB a job registry); chain charges roll up into the USER block, so a leaked process or job charge still surfaces.
 > - Canonical doc: the "Dashboards and the leak sweep" contract block in `include/kernel/quota/quota.h`.
-> - Scope boundary: §10 owns the dashboards, the sweep, and bulletproofing; §11 owns process-block enumeration, TODO-27 §7 the panic-safe emitter, TODO-07 §3 the per-CPU run queues.
+> - Scope boundary: §10 owns the dashboards, the sweep, and bulletproofing; §14 owns lifetime-safe task enumeration, TODO-27 §7 the panic-safe emitter, TODO-07 §3 the per-CPU run queues.
 
 > **Verified:** 2026-07-25 | commit `b18c881d` + review fixes | 3/8 items | build OK | tests 23766/23766 PASS, 0 quota-leaked | smoke PASS (KVM 3.120s)
 > **Accepted:** [M] the contention test holds the registry lock across a klog that busy-waits the UART, so proving the try-lock fallback costs a bounded IRQ-off window (reason: needs a non-blocking emitter) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
@@ -357,27 +359,18 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ---
 
-## 11. Object and Handle Quota Integration
+## 11. Charge Ledger and Transactional Adjustment
+
+Split out of the original "Object and handle quota integration" by its §11 complexity verdict (14 items, ABI impact). This section owns the OWNER-SIDE machinery only -- a receipt ledger whose lifetime is independent of the task slot, the drain/quiesce protocol that serializes charges against membership transitions, and the atomic multi-block adjust. The Object Manager charge points that consume it are §13; the charge-path cost and lifetime follow-ups filed by other sections' reviews are §14. The ledger must exist before either can bill anything, and it does not depend on the blocked TODO-05 §3 handle-table primitive.
 
 - [ ] Refcounted charge ledger, independent of the reusable task slot, holding a task's outstanding receipts; object bodies and namespace entries can outlive their creator, so a task-embedded registry cannot own their obligations. -> XREF: `§4`
 - [ ] Serialize charges against membership transitions with a drain/quiesce protocol: block new chargers, drain in-flight ones, absorb, publish membership, reopen. A generation revalidated AFTER charging double-bills instead. -> XREF: `§4`
 - [ ] `quota_charge_adjust` as an ATOMIC multi-block operation (canonical lock order, prevalidate all blocks, then commit counters and receipt together): a negative delta cannot prefix-rollback, since a recharge can be refused. -> XREF: `§2`
 - [ ] Migrate outstanding obligations at `ob_job_assign` in ONE transaction that ADOPTS the existing `job_absorb` amount and clears it, rather than charging the job a second time for the same usage. -> XREF: `§4`
-- [ ] Charge handle-table entries on insert, return on close, billing the table OWNER; blocked on the TODO-05 §3 reservation/commit primitive returning NTSTATUS. -> XREF: `02-kernel-core/TODO-05 §3`
-- [ ] Charge object body and name entry on creation, returning at `ob_free_object` / `ObpRemoveFromDirectory` via the ledger, not a task lookup (the creator may already be gone).
-- [ ] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
 - [ ] At task death SEAL the ledger against new charges but RETAIN it; return handle charges during the real handle sweep in `task_cleanup`, then drain residual obligations as a leak assertion.
-- [ ] Cut the `ob_job_collect_accounting` lock hold: it scans up to 32 members with per-member delta math while holding `job->lock` with IRQs off. Snapshot under the lock, compute outside. -> XREF: `02-kernel-core/TODO-25 §7`
-- [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
-- [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
-- [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`
-- [ ] Lifetime-safe task enumeration for process-level victim nomination: TODO-25 §9 nominates by USER principal because `task_get_by_pid` returns a raw slot with no reference and no System-protected flag exists. -> XREF: `§9`
-- [ ] Commit: quota: object/handle charge integration in Object Manager.
+- [ ] Commit: quota: refcounted charge ledger + transactional charge adjust.
 
-**Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta.
-
-> [!NOTE]
-> **Blocked on the handle-table lock (TODO-05 §3).** `HANDLE_TABLE` has no lock and no owning-task back-pointer, and `ObpAllocateHandle` collapses every failure into `INVALID_HANDLE_VALUE`, so a charge added today would admit quota for an entry a concurrent insert can overwrite, bill `task_current()` on the inherit and cross-process duplicate paths, and be unable to report `STATUS_QUOTA_EXCEEDED` distinctly. The charge must join the reservation/commit transaction, not sit beside it.
+**Test checkpoint:** a ledger outlives its creating task slot (seal-then-retain) and a receipt returned after task death still moves the owning block's counters exactly; a `quota_charge_adjust` refused on any block leaves EVERY block byte-identical (no prefix-rollback residue); a charge racing a membership transition is billed exactly once, to exactly one side of the transition, never both; `ob_job_assign` adopts an existing `job_absorb` amount instead of double-charging; a task that dies holding receipts drains to zero outstanding obligations and the leak sweep reports no net delta.
 
 ---
 
@@ -398,6 +391,37 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 
 ---
 
+## 13. Object Manager Charge Points
+
+Split out of the original §11 with §14. The §11 ledger is the owner-side machinery; this section is the CONSUMER side -- the concrete charge/return points inside the Object Manager. Two of its four items are hard-blocked on the TODO-05 §3 reservation/commit primitive (see the NOTE below); the object-body/name-entry charge does not need the handle-table lock and can land on the §11 ledger first.
+
+- [ ] Charge handle-table entries on insert, return on close, billing the table OWNER; blocked on the TODO-05 §3 reservation/commit primitive returning NTSTATUS. -> XREF: `02-kernel-core/TODO-05 §3`
+- [ ] Charge object body and name entry on creation, returning at `ob_free_object` / `ObpRemoveFromDirectory` via the ledger, not a task lookup (the creator may already be gone). -> XREF: `§11`
+- [ ] `NtDuplicateObject` charges the TARGET owner as part of the insert transaction, not a separate precheck (a standalone check is TOCTOU), returning `STATUS_QUOTA_EXCEEDED`. -> XREF: `02-kernel-core/TODO-05 §3`
+- [ ] Keep `OBJECT_TYPE` counters authoritative for system-wide per-type totals; quota reports per-principal aggregates only. Unifying needs a global Object-Manager-type-keyed dimension that does not exist.
+- [ ] Commit: quota: object/handle charge integration in Object Manager.
+
+**Test checkpoint:** inserting a handle increments the owner's handle usage and closing it returns the charge exactly; a handle inserted into another process's table bills THAT process, not the caller; `NtDuplicateObject` into a target at its cap fails with `STATUS_QUOTA_EXCEEDED` and inserts no handle; an object body whose creator already died is still returned at `ob_free_object` through the ledger; a task that dies with open handles reaches zero outstanding obligations after `task_cleanup`, and the leak sweep reports no net delta.
+
+> [!NOTE]
+> **Blocked on the handle-table lock (TODO-05 §3).** `HANDLE_TABLE` has no lock and no owning-task back-pointer, and `ObpAllocateHandle` collapses every failure into `INVALID_HANDLE_VALUE`, so a charge added today would admit quota for an entry a concurrent insert can overwrite, bill `task_current()` on the inherit and cross-process duplicate paths, and be unable to report `STATUS_QUOTA_EXCEEDED` distinctly. The charge must join the reservation/commit transaction, not sit beside it.
+
+---
+
+## 14. Charge-Path Cost and Lifetime Follow-ups
+
+Split out of the original §11 with §13. These four items were each filed by ANOTHER section's review (§6 ALPC, §7 job accounting, §9 victim nomination) as in-scope-but-not-now cost/ABI/lifetime work against an already-shipped charge path. They share no code with the §11 ledger or the §13 charge points, so they are tracked as their own deliverable rather than gating either.
+
+- [ ] Cut the `ob_job_collect_accounting` lock hold: it scans up to 32 members with per-member delta math while holding `job->lock` with IRQs off. Snapshot under the lock, compute outside. -> XREF: `02-kernel-core/TODO-25 §7`
+- [ ] Compact per-chain charge receipt: the 8-slot `quota_charge_receipt_t` embedded in every `PORT_MESSAGE_ENTRY` grows it 56 -> 152 bytes for a 3-block chain. -> XREF: `02-kernel-core/TODO-25 §6`
+- [ ] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` kmallocs up to 64 KiB before the quota refusal. -> XREF: `02-kernel-core/TODO-25 §6`
+- [ ] Lifetime-safe task enumeration for process-level victim nomination: TODO-25 §9 nominates by USER principal because `task_get_by_pid` returns a raw slot with no reference and no System-protected flag exists. -> XREF: `§9`
+- [ ] Commit: quota: charge-path cost + lifetime follow-ups.
+
+**Test checkpoint:** `ob_job_collect_accounting` computes its per-member deltas outside `job->lock` and its lock-held window is asserted against the §5 charge-path cost budget; a 3-block chain receipt fits the compacted `PORT_MESSAGE_ENTRY` and a chain deeper than the compact form still returns exactly; a send refused by quota performs no `AlpcAllocateMessage` allocation at all (injected-failure count unchanged); victim nomination enumerates tasks under a reference that survives a concurrent exit.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature                          | 🪟 Win11                               | 🐧 Linux                                     | 🚀 Impossible OS                             |
@@ -410,7 +434,7 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 | 💎   | All-or-nothing chain charge      | ⚠️ per-block, no cross-layer rollback | ⚠️ per-cgroup, no receipt for the return    | ✅ receipt-bound chain charge §3             |
 | ⭐   | Per-user aggregate rollup        | ⚠️ per-process/job, no per-SID view   | ⚠️ per-cgroup, not per-uid across cgroups   | ✅ canonical per-SID block + rollup §3       |
 | 💎   | Receipt identity (ABA-proof)     | ⬜ none (no receipt abstraction)       | ⬜ none (no receipt abstraction)             | ✅ tagged generation token per charge §4     |
-| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §11    |
+| 💎   | Handle/object quota              | ✅ per-process handle quota            | ⚠️ `RLIMIT_NOFILE` fd-only                  | 🚀 Planned: handle+object body charge §13    |
 | 💎   | Paged/nonpaged pool quota        | ✅ pool quota per process              | ⚠️ slab accounting via memcg, not per-proc  | 🚀 Planned: allocator-hook charging §5       |
 | 💎   | Enforced charge-path cost budget | ⬜ none (no published charge cost)     | ⬜ none (cost is per-controller, unstated)   | ✅ exact lock-section budget asserted §5     |
 | 💎   | Notification-state quota         | ⚠️ WNF has no per-user state cap      | ⬜ none (inotify caps are per-fd, not user)  | ⚠️ state/sub/retention charged, uncapped §6 |
@@ -451,8 +475,12 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 - [x] `test_quota_zero_charge_reports_no_obligation_token`: a zero charge reports token 0, which cannot return the next real charge (§4).
 - [ ] `test_quota_pressure_hysteresis`: levels derive from the §12 stall-time metrics and do not flap at a threshold (§9).
 - [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
-- [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§11).
-- [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§11).
+- [ ] `test_quota_ledger_outlives_task_slot`: a sealed ledger still returns its receipts after the task slot is reused (§11).
+- [ ] `test_quota_charge_adjust_atomic`: a multi-block adjust refused on any block leaves every block byte-identical (§11).
+- [ ] `test_quota_membership_drain_single_bill`: a charge racing a job-membership transition is billed exactly once (§11).
+- [ ] `test_quota_handle_insert_close`: handle insert/close increments/decrements the OWNER's handle usage (§13).
+- [ ] `test_quota_duplicate_handle_target_cap`: DuplicateHandle into a capped target fails (§13).
+- [ ] `test_quota_job_collect_lock_window`: `ob_job_collect_accounting` computes member deltas outside `job->lock` (§14).
 - [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
 - [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).
 - [x] `test_quota_sweep_classification` + the runner's per-category sweep: every verdict branch (clean / count-only / leaked / indeterminate) asserted from synthetic snapshots, and a real run reports `0 quota-leaked` (§10).
@@ -488,7 +516,7 @@ Split out of §8 by its design review: §8's other items are syscall marshalling
 - [x] `test_quota_rate_boundary_matrix`: exact-MAX and equal-bound acceptance, both reserved fields, bytes-envelope rules, and per-class isolation (§7).
 - [/] Two-CPU concurrent wakers must count ONE wakeup for one BLOCKED->READY claim; the CAS is in place but a real cross-CPU race needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
 - [/] A reader racing a rate publisher must see either the whole old or whole new record, never a mix; needs the same SMP harness. -> XREF: `§10` (test infrastructure).
-- [/] A named timer whose handle allocation fails is still published and counted; proving it needs an exhausted handle table. -> XREF: `§11` (handle quota integration).
+- [/] A named timer whose handle allocation fails is still published and counted; proving it needs an exhausted handle table. -> XREF: `§13` (handle quota integration).
 
 **Test checkpoint:** all `test_quota_*` cases pass under the kernel runner; pending assertions render `[STUB]` via `TEST_PENDING` until their owning section ships; the boot leak sweep prints a zero-delta line for the quota category.
 
