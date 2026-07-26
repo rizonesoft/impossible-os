@@ -443,6 +443,14 @@ uint32_t quota_ledger_drain_now(void);
 /* Stop the threaded-DPC worker from draining while a test owns the queue, so an
  * assertion about what a drain completed is not racing the live worker. */
 void quota_ledger_test_hold(int hold);
+
+/* Slots the slot-claim scan has EXAMINED since boot, saturating in practice at
+ * 64 bits. A claim resumes at the ledger's hint, so a run of sequential claims
+ * costs a bounded number of probes rather than re-walking the prefix it has
+ * already handed out. The claimed slot is identical either way, so this counter
+ * is the only thing that can hold that cost property: tests read it around a
+ * fill and assert the magnitude. */
+uint64_t quota_ledger_claim_probe_count(void);
 #endif
 
 /* quota_ledger_charge for the CURRENT task, preserving the entry-point contract

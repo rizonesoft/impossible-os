@@ -892,6 +892,53 @@ static quota_ledger_slot_t *quota_ledger_iter_next(quota_ledger_iter_t *it,
     return (quota_ledger_slot_t *)0;
 }
 
+/* quota_ledger_iter_init positioned at `start`, advancing by whole CHUNKS
+ * instead of returning every skipped slot.
+ *
+ * Both sweeps that resume from a saved position need this. The deferred drain
+ * resumes from its cursor, and the claim path resumes from its hint; each one
+ * initialising at zero and discarding the prefix made every visit re-walk it.
+ * For the drain, at the per-task slot ceiling with a 512-slot budget, covering
+ * the array cost several times more iterator returns than there are slots, and
+ * a lone deferral at the last slot paid that on every visit. For the claim, a
+ * sequential fill re-walked everything it had already handed out, so filling N
+ * slots cost O(N squared) iterator returns -- material at the 2048-obligation
+ * ceiling. Chunk arithmetic turns the skip into at most QUOTA_LEDGER_MAX_CHUNKS
+ * pointer hops, which is why raising the ceiling does not reintroduce the cost.
+ *
+ * A `start` past the published chain leaves the iterator exhausted (the walk
+ * runs off the end and `chunk` stays NULL), so the first quota_ledger_iter_next
+ * reports the end rather than resolving a slot the caller never reserved. */
+static void quota_ledger_iter_init_at(quota_ledger_iter_t *it,
+                                      quota_ledger_t *ledger, uint32_t start)
+{
+    quota_ledger_iter_init(it, ledger);
+    if (start == 0)
+        return;
+
+    if (start < QUOTA_LEDGER_INLINE_SLOTS) {
+        it->within = start;
+        it->index  = start;
+        return;
+    }
+
+    /* Past the inline run: step onto the chunk that holds `start`. The ACQUIRE
+     * matches quota_ledger_grow's release-publish, exactly as iter_next does. */
+    it->inline_done = 1;
+    it->chunk  = __atomic_load_n(&ledger->chunks, __ATOMIC_ACQUIRE);
+    it->index  = QUOTA_LEDGER_INLINE_SLOTS;
+    it->within = 0;
+
+    while (it->chunk && (start - it->index) >= QUOTA_LEDGER_CHUNK_SLOTS) {
+        it->index += QUOTA_LEDGER_CHUNK_SLOTS;
+        it->chunk  = __atomic_load_n(&it->chunk->next, __ATOMIC_ACQUIRE);
+    }
+    if (it->chunk) {
+        it->within = start - it->index;
+        it->index  = start;
+    }
+}
+
 /* Append one chunk. Allocation happens OUTSIDE the lock (kmalloc under an
  * irqsave spinlock is exactly the pattern the handle-table lock contract warns
  * against), and the link + capacity publication happen under it. */
@@ -936,6 +983,27 @@ static int quota_ledger_grow(quota_ledger_t *ledger)
     return 1;
 }
 
+#ifdef KERNEL_TESTS
+/* Slots EXAMINED by quota_ledger_claim_slot since boot. This is the only
+ * observable difference between resuming at the hint and the earlier shape that
+ * initialised the iterator at zero and threw the prefix away: both claim the
+ * same slot, so nothing about the RESULT can tell them apart, and only a probe
+ * count keeps the O(N squared) fill from creeping back in unnoticed. RELAXED
+ * because the assertion is a magnitude -- one probe per sequential claim rather
+ * than N -- never a cross-CPU ordering claim. */
+static uint64_t g_claim_probes = 0;
+
+uint64_t quota_ledger_claim_probe_count(void)
+{
+    return __atomic_load_n(&g_claim_probes, __ATOMIC_RELAXED);
+}
+
+#define QUOTA_LEDGER_COUNT_PROBE()  \
+    ((void)__atomic_fetch_add(&g_claim_probes, 1, __ATOMIC_RELAXED))
+#else
+#define QUOTA_LEDGER_COUNT_PROBE()  ((void)0)
+#endif
+
 /* Claim a free slot, growing if every existing slot is taken. Returns the index,
  * or -1 when no slot could be obtained. */
 static int32_t quota_ledger_claim_slot(quota_ledger_t *ledger,
@@ -958,7 +1026,13 @@ static int32_t quota_ledger_claim_slot(quota_ledger_t *ledger,
         /* Two passes: hint..end, then front..hint. A filling ledger claims the
          * very next slot on its first probe instead of rescanning everything it
          * has already handed out; a ledger with holes near the front still finds
-         * them on the wrap. */
+         * them on the wrap.
+         *
+         * The iterator is POSITIONED at `from` rather than initialised at zero
+         * and skipped forward: the skipped prefix used to be returned slot by
+         * slot and discarded, so a sequential fill paid an O(N squared) walk
+         * that Section 18's 2048-obligation ceiling made material. Positioning
+         * costs at most QUOTA_LEDGER_MAX_CHUNKS pointer hops. */
         for (uint32_t pass = 0; pass < 2; pass++) {
             uint32_t from = (pass == 0) ? hint : 0;
             uint32_t upto = (pass == 0) ? cap  : hint;
@@ -970,11 +1044,14 @@ static int32_t quota_ledger_claim_slot(quota_ledger_t *ledger,
             quota_ledger_slot_t *slot;
             uint32_t             i = 0;
 
-            quota_ledger_iter_init(&it, ledger);
+            quota_ledger_iter_init_at(&it, ledger, from);
             while ((slot = quota_ledger_iter_next(&it, &i))
                        != (quota_ledger_slot_t *)0) {
-                if (i < from)
-                    continue;          /* still walking up to the start point */
+                /* Counted BEFORE any skip, so a slot the scan merely walks past
+                 * costs exactly as much here as one it inspects. Counting after
+                 * a skip would let a reintroduced prefix walk hide from the
+                 * cost assertion that guards this loop. */
+                QUOTA_LEDGER_COUNT_PROBE();
                 if (i >= upto)
                     break;
                 if (atomic64_read(&slot->owner) != 0)
@@ -2070,45 +2147,6 @@ int quota_ledger_return(quota_obligation_t *ob)
  * That is what lets this function drop the obligations' transferred references
  * SAFELY -- they are dropped after the iteration is finished, never inside it,
  * because the last of them can destroy the ledger. */
-/* quota_ledger_iter_init positioned at `start`, advancing by whole CHUNKS
- * instead of returning every skipped slot.
- *
- * The drain resumes from a saved cursor, and initialising at zero and discarding
- * the prefix made every visit re-walk it: at the per-task slot ceiling with a
- * 512-slot budget, covering the array cost several times more iterator returns
- * than there are slots, and a lone deferral at the last slot paid that on every
- * visit. Chunk arithmetic turns the skip into at most QUOTA_LEDGER_MAX_CHUNKS
- * pointer hops, which is why raising the ceiling does not reintroduce the cost. */
-static void quota_ledger_iter_init_at(quota_ledger_iter_t *it,
-                                      quota_ledger_t *ledger, uint32_t start)
-{
-    quota_ledger_iter_init(it, ledger);
-    if (start == 0)
-        return;
-
-    if (start < QUOTA_LEDGER_INLINE_SLOTS) {
-        it->within = start;
-        it->index  = start;
-        return;
-    }
-
-    /* Past the inline run: step onto the chunk that holds `start`. The ACQUIRE
-     * matches quota_ledger_grow's release-publish, exactly as iter_next does. */
-    it->inline_done = 1;
-    it->chunk  = __atomic_load_n(&ledger->chunks, __ATOMIC_ACQUIRE);
-    it->index  = QUOTA_LEDGER_INLINE_SLOTS;
-    it->within = 0;
-
-    while (it->chunk && (start - it->index) >= QUOTA_LEDGER_CHUNK_SLOTS) {
-        it->index += QUOTA_LEDGER_CHUNK_SLOTS;
-        it->chunk  = __atomic_load_n(&it->chunk->next, __ATOMIC_ACQUIRE);
-    }
-    if (it->chunk) {
-        it->within = start - it->index;
-        it->index  = start;
-    }
-}
-
 static uint32_t quota_ledger_drain_ledger(quota_ledger_t *ledger, uint32_t *budget,
                                           int *out_more, uint32_t *out_credited)
 {

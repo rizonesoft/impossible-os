@@ -36,6 +36,10 @@
  * observed here was caused by this test and not by background activity. */
 #define LEDGER_TEST_TYPE   QUOTA_RES_SECTION
 
+/* Not in the freestanding kernel headers; the house convention is a local
+ * declaration beside the test that formats a per-iteration assertion message. */
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
+
 /* --- Gate ---------------------------------------------------------------- */
 
 /* Entry and exit are the only things that move the in-flight count, and they
@@ -399,6 +403,119 @@ static void test_quota_ledger_capacity_grows_then_reuses(void)
      * harness's per-test heap accounting reports the lazily-created ledger
      * as a leak -- and it would be right to: nothing else releases it while
      * the charging task is still alive. */
+    quota_ledger_task_release(t);
+}
+
+/* The claim path resumes AT its hint instead of walking the prefix it has
+ * already handed out. Positioning the iterator has three distinct branches --
+ * inside the inline run, exactly at the inline boundary, and inside a chunk --
+ * and behind them sits a wrap pass that must still find a hole in front of the
+ * hint. All four are asserted here against a FRESH ledger, where slot indices
+ * are predictable.
+ *
+ * The task's own claim is released first so the ledger is recreated at its
+ * inline capacity; a sibling test that already grew this task's ledger would
+ * otherwise make the fill below unbounded. */
+static void test_quota_ledger_claim_resumes_at_its_hint(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_ledger_task_release(t);
+
+    quota_obligation_t obs[16] = { 0 };
+    uint32_t           held    = 0;
+    char               msg[64];
+
+    NTSTATUS st = quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[0]);
+    TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                   "the first charge against a fresh ledger is admitted");
+    if (st != STATUS_SUCCESS)
+        return;
+    held = 1;
+
+    quota_ledger_t *ledger     = obs[0].ledger;
+    uint32_t        inline_cap = quota_ledger_capacity(ledger);
+
+    TEST_ASSERT_EQ((uint64_t)obs[0].slot, 0ULL,
+                   "the first claim on a fresh ledger takes slot 0");
+    /* Loud rather than silent: growing the inline run past this array is a
+     * legitimate change, and it must come with an update to this test. */
+    TEST_ASSERT(inline_cap >= 2 && inline_cap + 2 <= 16,
+                "the fresh inline run fits this test's obligation array");
+
+    if (inline_cap >= 2 && inline_cap + 2 <= 16) {
+        /* Branch 1 -- resume INSIDE the inline run: each claim takes the very
+         * next slot rather than re-probing the ones already handed out. */
+        uint64_t probes_before = quota_ledger_claim_probe_count();
+
+        for (uint32_t i = 1; i < inline_cap; i++) {
+            if (quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[i]) != STATUS_SUCCESS)
+                break;
+            held++;
+            snprintf(msg, sizeof(msg), "claim %u resumes at the hint, taking slot %u",
+                     (uint64_t)i, (uint64_t)i);
+            TEST_ASSERT_EQ((uint64_t)obs[i].slot, (uint64_t)i, msg);
+        }
+        TEST_ASSERT_EQ((uint64_t)held, (uint64_t)inline_cap,
+                       "the whole inline run is claimed");
+
+        /* THE cost property, and the only assertion here that can tell the two
+         * implementations apart: filling the rest of the run resumes at the
+         * hint, so each claim examines its own slot and nothing else. Walking
+         * the prefix instead would cost 1 + 2 + ... + (inline_cap - 1) probes,
+         * which is already over this bound at the smallest legal inline run. */
+        uint64_t probes = quota_ledger_claim_probe_count() - probes_before;
+        snprintf(msg, sizeof(msg), "filling %u slots cost %u probes, not a prefix walk",
+                 (uint64_t)(inline_cap - 1), (uint64_t)probes);
+        TEST_ASSERT(probes <= (uint64_t)inline_cap, msg);
+
+        /* The wrap pass -- free the FRONT slot with the hint parked at the end.
+         * The hint-to-end pass has nothing left, so the claim must fall back to
+         * front-to-hint and reuse slot 0 instead of growing the ledger. */
+        if (held == inline_cap) {
+            quota_ledger_return(&obs[0]);
+            st = quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[0]);
+            TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                           "a charge is admitted from the freed front slot");
+            TEST_ASSERT_EQ((uint64_t)obs[0].slot, 0ULL,
+                           "the wrap pass reuses the freed front slot");
+            TEST_ASSERT_EQ((uint64_t)quota_ledger_capacity(ledger),
+                           (uint64_t)inline_cap,
+                           "the wrap pass reuses rather than growing the ledger");
+
+            /* Branch 2 -- resume EXACTLY at the inline boundary. Every slot is
+             * taken now, so this claim grows the ledger and then resumes at a
+             * hint equal to the inline count: the first slot of the new chunk. */
+            st = quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[inline_cap]);
+            TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                           "a charge past a full inline run is admitted");
+            if (st == STATUS_SUCCESS) {
+                held++;
+                TEST_ASSERT_EQ((uint64_t)obs[inline_cap].slot, (uint64_t)inline_cap,
+                               "the claim at the inline boundary takes the first chunk slot");
+                TEST_ASSERT(quota_ledger_capacity(ledger) > inline_cap,
+                            "storage grew to hold the claim past the inline run");
+
+                /* Branch 3 -- resume INSIDE a chunk. */
+                st = quota_ledger_charge(t, LEDGER_TEST_TYPE, 4, &obs[inline_cap + 1]);
+                TEST_ASSERT_EQ((uint64_t)st, (uint64_t)STATUS_SUCCESS,
+                               "a further chunk-backed charge is admitted");
+                if (st == STATUS_SUCCESS) {
+                    held++;
+                    TEST_ASSERT_EQ((uint64_t)obs[inline_cap + 1].slot,
+                                   (uint64_t)(inline_cap + 1),
+                                   "the claim inside a chunk takes the next chunk slot");
+                }
+            }
+        }
+    }
+
+    for (uint32_t i = 0; i < 16; i++)
+        quota_ledger_return(&obs[i]);
+    /* Drop the task's lazily-created ledger so the harness's per-test heap
+     * accounting does not see it as a leak, exactly as the sibling tests do. */
     quota_ledger_task_release(t);
 }
 
@@ -2852,6 +2969,8 @@ void test_register_quota_ledger(void)
                             test_quota_ledger_zero_charge_holds_nothing, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: ledger storage grows then reuses freed slots",
                             test_quota_ledger_capacity_grows_then_reuses, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a slot claim resumes at its hint and wraps for a hole",
+                            test_quota_ledger_claim_resumes_at_its_hint, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: an obligation outlives the task's own claim",
                             test_quota_ledger_obligation_outlives_task_claim, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: an orphaned obligation is reclaimed and counted",
