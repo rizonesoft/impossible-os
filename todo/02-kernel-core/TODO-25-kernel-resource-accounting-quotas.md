@@ -719,16 +719,17 @@ Split out of §18 on 2026-07-25 when the design review grew both halves past one
 - [x] `test_quota_over_limit_rejected`: over-limit charge returns `STATUS_QUOTA_EXCEEDED`, usage unchanged (§2).
 - [/] `test_quota_concurrent_charges_atomic`: N INTERLEAVED multi-thread charges sum exactly, no lost update (§2). True cross-CPU contention needs per-CPU run queues. -> XREF: `§10` (test infrastructure).
 - [x] `test_quota_rollback_on_partial_failure`: a refused transfer leaves both blocks byte-identical; a refused charge leaves usage unchanged (§2).
-- [ ] `test_quota_type_registry`: all resource types registered with name/unit/limit (§1).
+- [x] Every resource type carries a name, unit, limit and privilege (§1) -- reconciled: shipped as five per-attribute cases in `test_quota.c`, not one combined `test_quota_type_registry`.
 - [x] `test_quota_chain_all_or_nothing`: a charge admitted by the process block but refused later in the chain rolls the prefix back, stranding no usage (§3).
-- [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3).
-- [ ] `test_quota_inherit_on_create`: child auto-joins parent job chain unless breakaway; jobless child charges own block (§3).
+- [ ] `test_quota_job_chain_rollback`: charge exceeding an ancestor job rolls back across the whole chain (§3). Blocked with its item on TODO-21 §13: no nested-job topology, so no ancestor exists to exceed.
+- [ ] `test_quota_inherit_on_create`: child auto-joins parent job chain unless breakaway; jobless child charges own block (§3). Blocked with its item on TODO-21 §13: breakaway is unimplemented.
 - [x] `test_quota_rollup_counts_user_layer_once`: the per-SID query aggregates the USER layer only, so a chain charge is counted once rather than per layer (§3).
 - [x] `test_quota_receipt_token_blocks_stale_return`: a spent token cannot return a later charge in recycled receipt storage (§4).
 - [x] `test_quota_receipt_generation_exhaustion`: the last generation still charges and the ceiling fails closed instead of wrapping (§4).
 - [x] `test_quota_zero_charge_reports_no_obligation_token`: a zero charge reports token 0, which cannot return the next real charge (§4).
-- [ ] `test_quota_pressure_hysteresis`: levels derive from the §12 stall-time metrics and do not flap at a threshold (§9).
-- [ ] `test_quota_failure_event_fields`: a quota failure emits the diagnostic event with all contract fields, rate-limited (§9).
+- [x] Levels do not flap at a threshold (§9) -- reconciled: shipped as `_no_flap_inside_band`, `_rise_needs_debounce`, `_falls_with_debounce`, `_debounce_is_asymmetric`; the input is BUDGET saturation, not §12 stall.
+- [x] A quota failure emits the diagnostic event with all contract fields, rate-limited (§9) -- reconciled: shipped as `test_pressure_failure_record_contract` plus `_charge_refusal_emits_event` and the drop case.
+- [x] An obligation-ceiling refusal emits a record naming the refusing task's process block, and a refusal from a ledger the task no longer owns emits nothing at all (§9).
 - [x] `test_quota_ledger_obligation_outlives_task_claim`: an obligation stays returnable after the task released its own ledger claim, and is NOT reported as a leak (§11).
 - [x] `test_quota_charge_adjust_refused_changes_nothing`: an adjust refused past the limit moves no usage and lifts no peak; `_both_directions` and `_requires_the_token` cover the rest (§11).
 - [x] `test_quota_ledger_migrate_adopts_absorb_record`: migration leaves the job's usage unchanged and its return credits the job; `_unmigrate_restores_absorb_record` proves a refused join (§11).
@@ -750,8 +751,8 @@ Split out of §18 on 2026-07-25 when the design review grew both halves past one
 - [x] `test_quota_ledger_charge_current_refuses_raised_irql` + `_drain_now_refuses_raised_irql`: both refuse rather than run at raised IRQL (§14).
 - [x] `test_quota_ledger_charge_current_zero_owes_nothing`: a zero charge succeeds, allocates no ledger, and an out-of-range type is refused at either amount (§14).
 - [x] `test_quota_ledger_deferred_batch_completes`: four deferrals queue the ledger once and complete in one pass (§14).
-- [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5).
-- [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6).
+- [ ] `test_quota_pool_owner_charged`: tagged pool alloc charges its quota owner; free returns it (§5). Blocked with its item on 03-memory-concurrency/TODO-03 §7: no pool-class allocator exists to hook.
+- [ ] `test_quota_registry_data_cap`: registry value over data-byte cap rejected (§6). Blocked with its item on TODO-14 §15: `hive_parse_value` bypasses the charge point.
 - [x] `test_quota_sweep_classification` + the runner's per-category sweep: every verdict branch (clean / count-only / leaked / indeterminate) asserted from synthetic snapshots, and a real run reports `0 quota-leaked` (§10).
 - [x] `test_quota_cpu_split_monotonic`: user/kernel CPU time and the sample timestamp never walk backwards (§7).
 - [x] `test_quota_io_split_by_op`: a control op moves only the control counters, leaving read/write untouched (§7).
@@ -807,10 +808,10 @@ Split out of §18 on 2026-07-25 when the design review grew both halves past one
 
 ## Verification
 
-- [ ] `bash scripts/build.sh` -> `=== BUILD OK ===`.
-- [ ] `bash scripts/test.sh SUITE=quota QUIET=1` -> quota suites pass, 0 failures.
-- [ ] `grep -R "quota_charge" src/kernel` shows every charge path names a resource type and owner.
-- [ ] `quota_dump()` output appears in the boot serial log and in a forced crash dump.
-- [ ] Verify on bare metal -- VM behavior differs for pool/working-set counters.
+- [x] `bash scripts/build.sh` -> `=== BUILD OK ===` (2026-07-26).
+- [x] `bash scripts/test.sh SUITE=quota QUIET=1` -> 3313 passed, 0 failed, 0 quota-leaked; full suite 25500 passed, 0 failed (2026-07-26; the full-suite total is timing-dependent under TCG, the quota total is not).
+- [x] `grep -R "quota_charge" src/kernel` shows every charge names a type and owner: the only sites outside `quota/` are `knf.c` x3 and `alpc_port.c`, each passing a `QUOTA_RES_*` through `quota_charge_current_from`.
+- [ ] `quota_dump()` in the boot serial log AND a forced crash dump: the crash half ships (`panic.c:1310`); the boot half waits on the dump bounding its output. -> XREF: `§10` (item: "Bound `quota_dump()` whole-invocation OUTPUT")
+- [ ] Verify on bare metal -- VM behavior differs for pool/working-set counters (manual -- run on bare metal).
 
-**Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 9 suites, 0 failures
+**Test runner:** `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 3313 passed, 0 failed, 0 quota-leaked (2026-07-26)

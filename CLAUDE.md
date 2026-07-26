@@ -32,9 +32,10 @@ make test-boot                    # Boot init + klog suites
 make test-abi                     # PEB/TEB, Registry, env vars/process-ABI suites
 make test-storage                 # AHCI, VirtIO suites
 make test-exec                    # Binary system suites (exec, EIF, modules)
+make test-quota                   # Resource accounting + quota suites
 ```
 
-Categories: `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`. Configured via `test_suite=` and `test_quiet=` in `boot.conf`. Windows: `scripts/debug/kernel/run-mm-tests.bat` etc.
+Categories: `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `boot`, `abi`, `storage`, `exec`, `x86`, `desktop`, `ex`, `nls`, `knf`, `except`, `quota` -- the enum in [`include/kernel/test/test.h`](include/kernel/test/test.h) is the source of truth, and every one has a matching `make test-<cat>` target. Configured via `test_suite=` and `test_quiet=` in `boot.conf`. Windows: `scripts/debug/kernel/run-mm-tests.bat` etc.
 
 Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use `TEST_ASSERT_EQ(a, b, msg)` for value comparisons and `TEST_SKIP(msg)` for hardware-dependent tests.
 

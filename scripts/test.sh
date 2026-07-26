@@ -51,7 +51,8 @@ Usage:
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
-  mm, fs, sched, ob, security, ipc, boot, abi, storage, exec, x86, desktop, ex, nls
+  mm, fs, sched, ob, security, ipc, boot, abi, storage, exec, x86, desktop, ex, nls,
+  knf, except, quota
 
 Outputs:
   build/test.log           full QEMU serial output

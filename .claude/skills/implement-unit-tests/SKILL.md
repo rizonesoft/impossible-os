@@ -44,10 +44,19 @@ typedef enum {
     TEST_CAT_ABI,       // ABI Compatibility (registry, PEB/TEB)
     TEST_CAT_STORAGE,   // Storage Drivers
     TEST_CAT_EXEC,      // Binary System (exec, EIF, PE, modules)
+    TEST_CAT_X86,       // x86 architecture (CPU features, MSRs)
+    TEST_CAT_DESKTOP,   // Desktop compositor / UI
+    TEST_CAT_EX,        // Executive support (ex* primitives)
+    TEST_CAT_NLS,       // National language support
+    TEST_CAT_KNF,       // Kernel notification facility
+    TEST_CAT_EXCEPT,    // Exception dispatch / SEH
+    TEST_CAT_QUOTA,     // Resource accounting & quotas
     TEST_CAT_COUNT,
     TEST_CAT_ALL = 0xFF, // Runs under any filter
 } test_category_t;
 ```
+
+> This block is a convenience copy. `include/kernel/test/test.h` is the source of truth -- read it before adding a category, and update this block in the same commit that grows the enum.
 
 The `cat_names[]` and `cat_labels[]` arrays in `test_runner.c` must stay aligned with this enum. If adding a new category, update all three locations plus the `bootx64.c` parser.
 

@@ -610,7 +610,7 @@ Test categories (`TEST_CAT_*`): `mm`, `fs`, `sched`, `ob`, `security`, `ipc`, `b
 
 ### Core Subsystem Tests
 
-28 test files in `src/kernel/test/` covering 11 categories; ~1,400 `TEST_ASSERT*` calls total (growing). Test files are named `test_<subsystem>.c` and register their suites via `test_suite_register_cat()`. For the up-to-date suite breakdown and coverage map, see the auto-generated report at [`docs/test-coverage/coverage.md`](../test-coverage/coverage.md).
+Test files live in `src/kernel/test/`, are named `test_<subsystem>.c`, and register their suites via `test_suite_register_cat()` against one of the categories in [`include/kernel/test/test.h`](../../include/kernel/test/test.h). File, suite, and assertion counts are deliberately NOT repeated here -- they moved on every section ship and the copy in this paragraph went stale by a factor of four before anyone noticed. The live numbers and the per-file coverage map are in the auto-generated report at [`docs/test-coverage/coverage.md`](../test-coverage/coverage.md).
 
 **Safety rules** (see CLAUDE.md "Test Code -- No Live Boot Infrastructure Calls"): test files must never call `boot_progress`, `vpd_stage_*`, `panic`, `_init()`, or any live boot-path function. A pre-commit hook enforces this. Use pure helpers + readiness oracles.
 
