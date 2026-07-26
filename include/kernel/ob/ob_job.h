@@ -91,12 +91,29 @@ _Static_assert(JOB_COLLECT_MAX_RETRIES >= 1U,
 
 /* Members whose join-time baselines are copied per lock acquisition. The baseline
  * MUST be copied under job->lock (plain multi-word memory), but a full
- * JOB_MAX_MEMBERS array of them is 2560 bytes against an 8 KiB kernel task stack,
- * so the collector copies them in batches: bounded stack, and each IRQ-off hold
- * bounded to a constant instead of scaling with member count. */
+ * JOB_MAX_MEMBERS array of them would be JOB_MAX_MEMBERS * sizeof(struct
+ * task_acct_base) against an 8 KiB kernel task stack (TASK_STACK_SIZE), so the
+ * collector copies them in batches: bounded stack, and each BASELINE hold bounded
+ * to a constant. Note what that does and does not claim -- the initial snapshot
+ * hold still walks the whole member array, so the maximum hold is still O(n); what
+ * left it is the per-member work that dominated (ten atomic counter loads plus the
+ * subtractions and accumulation), leaving only a bounds-checked slot lookup. Total
+ * cost across the call is UNMEASURED on real hardware. */
 #define JOB_COLLECT_BATCH   8U
+
+/* Stack budget for ONE batch of baselines plus its parallel task-pointer array.
+ * The whole reason JOB_COLLECT_BATCH exists is a byte budget, so the byte budget
+ * is what has to be machine-checked -- a bound on the batch COUNT alone would
+ * permit JOB_MAX_MEMBERS and silently reinstate the full-array frame the batching
+ * exists to avoid, and adding an accounting field to task_acct_base would grow the
+ * frame with nothing failing. */
+#define JOB_COLLECT_BATCH_MAX_BYTES   1024U
 _Static_assert(JOB_COLLECT_BATCH >= 1U && JOB_COLLECT_BATCH <= JOB_MAX_MEMBERS,
     "the baseline batch must be non-empty and no larger than the member cap");
+_Static_assert(JOB_COLLECT_BATCH *
+               (sizeof(struct task_acct_base) + sizeof(struct task *))
+               <= JOB_COLLECT_BATCH_MAX_BYTES,
+    "one baseline batch must stay inside its kernel-stack byte budget");
 
 /* --- Windows accounting / limit ABI structures --------------------------- */
 /* Times are 100ns units (Windows LARGE_INTEGER convention); sizes are bytes. */

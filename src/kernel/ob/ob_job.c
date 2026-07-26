@@ -573,9 +573,16 @@ uint64_t ob_job_member_gen(JOB_OBJECT *job)
 }
 
 #ifdef KERNEL_TESTS
-/* Remaining injected churn events; see ob_job_test_inject_gen_churn. Only ever
- * touched under job->lock (consumer) or between test phases (setter), so the
- * plain accesses below are serialized by the same lock as member_gen itself. */
+/* Remaining injected churn events; see ob_job_test_inject_gen_churn.
+ *
+ * Deliberately NOT presented as fully synchronized, because it is not: the
+ * consumer below is a load-then-store, not an atomic RMW, and it runs under
+ * whichever job's lock the collector holds -- so two CPUs collecting on DIFFERENT
+ * jobs could each consume the same budgeted event, and the counter is global
+ * rather than per-job, so a concurrent query on an unrelated job would spend a
+ * test's budget. Both are acceptable ONLY because this is a KERNEL_TESTS knob
+ * driven by a single-CPU boot-time harness that resets it to 0 immediately after
+ * each use. It must not grow a production caller. */
 static uint32_t g_job_gen_churn_inject;
 
 void ob_job_test_inject_gen_churn(uint32_t attempts)
@@ -658,40 +665,54 @@ static void job_sums_add(struct job_acct_sums *s, const struct task_acct_base *b
  * tasks[] array) and the arithmetic.
  *
  * Baselines are copied in BATCHES rather than all at once because a full
- * JOB_MAX_MEMBERS array of them is 2560 bytes against an 8 KiB kernel task stack.
- * A batch bounds both the stack cost and each IRQ-off hold to a constant, which is
- * the property the cost work wanted -- a hold that does not scale with member
- * count -- at the price of ceil(n / JOB_COLLECT_BATCH) short acquisitions instead
+ * JOB_MAX_MEMBERS array of them would not fit the stack budget (see
+ * JOB_COLLECT_BATCH). A batch bounds the stack cost and bounds THIS hold to a
+ * constant, at the price of ceil(n / JOB_COLLECT_BATCH) short acquisitions instead
  * of one long one. Membership moving between batches bumps member_gen, so the
- * caller's re-check discards the whole attempt. */
+ * caller's re-check discards the whole attempt.
+ *
+ * HONEST ACCOUNTING of what this buys, since the section exists for cost: the
+ * dominant per-member work (ten atomic counter loads plus subtraction and
+ * accumulation) is now outside every critical section, but the collector's initial
+ * snapshot still walks the member array under the lock, so the MAXIMUM hold remains
+ * O(n) with a much smaller constant. Acquisition COUNT rises (2 + ceil(n/8) per
+ * attempt instead of 1), which for a small job is a net add. None of this is
+ * measured on real hardware; the tuning of JOB_COLLECT_BATCH and the retry bound is
+ * reasoned, not benchmarked. */
 static void job_sum_members_batched(JOB_OBJECT *job, const uint32_t *pids,
                                     uint32_t first, uint32_t count,
                                     struct job_acct_sums *sums)
 {
-    /* Zeroed at declaration so an entry whose slot did not resolve is never a
-     * stale read; the second loop skips those members anyway, which makes this
-     * belt-and-braces rather than load-bearing. */
-    struct task_acct_base base[JOB_COLLECT_BATCH] = { { 0 } };
+    struct task_acct_base base[JOB_COLLECT_BATCH];
+    /* Resolved alongside the baseline, so the unlocked pass does not repeat the
+     * lookup -- and so `base[i]` is only ever read for an entry this pass filled,
+     * which is what makes the array safe to leave uninitialized. */
+    struct task *member[JOB_COLLECT_BATCH];
     uint64_t flags;
     uint32_t i;
 
+    /* Defensive clamp. The sole caller already bounds `count`, but the parameter
+     * carries a caller-side-only invariant whose violation would smash 640 bytes
+     * of frame rather than return a wrong number -- cheap second layer for an
+     * asymmetric consequence. */
+    if (count > JOB_COLLECT_BATCH)
+        count = JOB_COLLECT_BATCH;
+
     spin_lock_irqsave(&job->lock, &flags);
     for (i = 0; i < count; i++) {
-        struct task *t = task_get_by_pid(pids[first + i]);
-
-        if (t)
-            base[i] = t->job_acct_base;
+        member[i] = task_get_by_pid(pids[first + i]);
+        if (member[i])
+            base[i] = member[i]->job_acct_base;
     }
     spin_unlock_irqrestore(&job->lock, flags);
 
     /* Lock released: live reads and arithmetic only. */
     for (i = 0; i < count; i++) {
-        struct task *t = task_get_by_pid(pids[first + i]);
         struct task_acct_base delta;
 
-        if (!t)
+        if (!member[i])
             continue;
-        task_acct_delta_since(t, &base[i], &delta);
+        task_acct_delta_since(member[i], &base[i], &delta);
         job_sums_add(sums, &delta);
     }
 }
@@ -770,6 +791,17 @@ void ob_job_collect_accounting(JOB_OBJECT *job,
     if (!job)
         return;
 
+    /* LIFETIME: the caller must keep this body alive across the whole call, and
+     * that is a stronger requirement than it used to be. The walk is no longer one
+     * critical section -- it releases job->lock (restoring IF and PASSIVE_LEVEL, so
+     * it is fully preemptible) between the snapshot, each baseline batch, and the
+     * re-check -- so a body freed mid-walk means the next spin_lock_irqsave writes
+     * into freed heap, a corruption rather than a wrong number.
+     *
+     * The pin is taken by the SYSCALL layer (nt_job.c job_lookup), not here: this
+     * function is a pure reader over a body and is exercised by stack-allocated
+     * JOB_OBJECT fixtures that have no OBJECT_HEADER, so referencing the body from
+     * inside it would read (and on release, write) unrelated stack memory. */
     job_sums_zero(&delta);
     job_sums_zero(&persistent);
 

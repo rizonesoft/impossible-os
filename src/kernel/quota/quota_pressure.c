@@ -1755,6 +1755,12 @@ void quota_pressure_test_quiesce(void)
      * before its body finishes -- so a seam installed on the strength of it could
      * be observed half-way by a callback still in flight. */
     __atomic_store_n(&g_test_hold, 1u, __ATOMIC_RELEASE);
+    /* NOTE on the flush contract: dpc.h asks a teardown to stop its producers
+     * first, and this does NOT cancel the 50 ms periodic sampler timer -- it only
+     * hold-gates what that timer's DPC does. That is deliberate (the suite wants
+     * the timer intact afterwards) and safe because the tick's duty cycle is
+     * microseconds and the flush breaks on the first quiet sample; it is a hold,
+     * not a subsystem teardown. */
     KeFlushQueuedDpcs();
 }
 
@@ -1811,13 +1817,18 @@ int quota_pressure_test_channel_isolate(uint32_t index,
     save->state   = (void *)__atomic_load_n(ch->slot, __ATOMIC_ACQUIRE);
     save->pending = __atomic_load_n(&g_channels_pending, __ATOMIC_ACQUIRE);
     save->retry   = g_channels_retry;
+    /* at_ns is the ONE field of the schedule that crosses CPUs, and its contract
+     * (see quota_pressure_retry_due) is that it is only ever touched atomically --
+     * a whole-struct copy would read it plainly. Re-read it properly rather than
+     * resting on the quiesce, which is a comment, not a barrier. */
+    save->retry.at_ns = __atomic_load_n(&g_channels_retry.at_ns, __ATOMIC_RELAXED);
 
     /* Clear ONLY this slot, and seed ONLY this bit: the create loop attempts the
      * intersection of the attempt mask and the empty slots, so both halves are
      * needed to make exactly one channel reachable. */
     __atomic_store_n(ch->slot, (KNF_STATE *)0, __ATOMIC_RELEASE);
     __atomic_store_n(&g_channels_pending, 1u << index, __ATOMIC_RELEASE);
-    g_channels_retry.at_ns  = 0;
+    __atomic_store_n(&g_channels_retry.at_ns, 0ull, __ATOMIC_RELAXED);
     g_channels_retry.gap_ns = 0;
     g_channels_retry.tries  = 0;
     g_channels_retry.warned = 0;
@@ -1837,6 +1848,7 @@ void quota_pressure_test_channel_restore(const quota_pressure_channel_save_t *sa
      * channel is missing or owing a backoff it never earned. */
     __atomic_store_n(ch->slot, (KNF_STATE *)save->state, __ATOMIC_RELEASE);
     g_channels_retry = save->retry;
+    __atomic_store_n(&g_channels_retry.at_ns, save->retry.at_ns, __ATOMIC_RELAXED);
     __atomic_store_n(&g_channels_pending, save->pending, __ATOMIC_RELEASE);
 }
 

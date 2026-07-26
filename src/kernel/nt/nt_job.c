@@ -215,11 +215,30 @@ static NTSTATUS NtQueryInformationJobObject_handler(uint64_t a1, uint64_t a2,
         return STATUS_INVALID_PARAMETER;
 
     switch (info_class) {
+    /* The two accounting classes PIN the body across the collector call; every
+     * other class below does not, and does not need to.
+     *
+     * ob_job_collect_accounting is the only reader here that releases and retakes
+     * job->lock (a snapshot, then a lock acquisition per baseline batch, then a
+     * re-check), so it is the only one preemptible mid-read. A sibling thread
+     * closing the last handle in one of those gaps would run job_on_delete and free
+     * the body, and the collector's next spin_lock_irqsave would write into freed
+     * heap. The single-critical-section readers (limits, pid list, quota) cannot be
+     * interrupted that way, so their exposure is only the pre-existing lookup
+     * instant that the handle-table reference primitive owns.
+     *
+     * SAFE-ref, because an open handle in THIS task's table is not proof of
+     * liveness: handle tables are per-task, so a sibling thread's NtClose can
+     * already have driven the count to zero. A dead body reports STATUS_INVALID_
+     * HANDLE, which is what the caller would have seen a moment earlier anyway. */
     case JobObjectBasicAccountingInformation: {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
         if (length < sizeof(acct))
             return STATUS_BUFFER_TOO_SMALL;
+        if (ObReferenceObjectSafe(job) != 0)
+            return STATUS_INVALID_HANDLE;
         ob_job_collect_accounting(job, &acct, (IO_COUNTERS *)0);
+        ObDereferenceObject(job);
         job_memcpy(buffer, &acct, sizeof(acct));
         if (ret_len) *ret_len = sizeof(acct);
         return STATUS_SUCCESS;
@@ -228,7 +247,10 @@ static NTSTATUS NtQueryInformationJobObject_handler(uint64_t a1, uint64_t a2,
         JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION both;
         if (length < sizeof(both))
             return STATUS_BUFFER_TOO_SMALL;
+        if (ObReferenceObjectSafe(job) != 0)
+            return STATUS_INVALID_HANDLE;
         ob_job_collect_accounting(job, &both.BasicInfo, &both.IoInfo);
+        ObDereferenceObject(job);
         job_memcpy(buffer, &both, sizeof(both));
         if (ret_len) *ret_len = sizeof(both);
         return STATUS_SUCCESS;
