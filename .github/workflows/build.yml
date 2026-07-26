@@ -40,7 +40,10 @@ jobs:
   build:
     name: Build Impossible OS
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 30 not 15: the TCG unit-test step alone is budgeted at 1200s
+    # (see the measurement in the 'Run unit tests' step below); the old
+    # 15-minute cap would kill the job before that inner timeout fired.
+    timeout-minutes: 30
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -166,11 +169,32 @@ jobs:
       # the default 60s TIMEOUT is too tight once the suite crosses ~400
       # registered cases (the desktop UI frame-timing oracle work on
       # 2026-04-22 landed the 587th suite and pushed the TCG run past
-      # the 60s wall). Bump to 300s; the job-level `timeout-minutes: 15`
-      # still caps runaway runs. Serial output goes to build/test.log,
+      # the 60s wall). Raised again to 1200s on 2026-07-27 -- measured, not
+      # guessed:
+      #
+      #   full suite needs        7.570s guest time (local TCG, completes)
+      #   CI reached in 300s wall 3.180s guest time  -> ~0.0106 guest-s/wall-s
+      #   wall time actually req. ~714s
+      #
+      # The run that forced this was NOT a hang: guest time advanced steadily
+      # to the cutoff (3.070 -> 3.180) and CI emitted 2428 of the 2658 serial
+      # lines a completed run produces, so it died roughly 91% through with no
+      # fault or panic. The cause is suite growth (20644 -> 25474 tests, +23%)
+      # against a budget last sized in April, on a branch whose CI had not run
+      # since 2026-07-13.
+      #
+      # The job-level cap has to move with it: at 1200s the test step alone can
+      # outlast the old `timeout-minutes: 15`, which would kill the job before
+      # the inner timeout ever fired. Serial output goes to build/test.log,
       # uploaded on failure below.
+      #
+      # Open question worth its own investigation, NOT solved here: CI TCG runs
+      # ~60x slower than local TCG (0.0106 vs ~0.63 guest-s per wall-s), which
+      # is more than "shared runner" comfortably explains. `-smp 2` under TCG on
+      # a 2-vCPU runner is the leading suspect. If that is fixed the budget can
+      # come back down.
       - name: Run unit tests
-        run: TIMEOUT=300 bash scripts/test.sh QUIET=1
+        run: TIMEOUT=1200 bash scripts/test.sh QUIET=1
 
       # LSP-MCP bridge harness (TODO-07 in 00-infrastructure). Host-side
       # Python tests; do NOT depend on the kernel build but DO need the
