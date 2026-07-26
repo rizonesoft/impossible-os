@@ -40,6 +40,7 @@
 #include "kernel/timer.h"                /* uptime_ns */
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/dpc.h"
+#include "kernel/sched/dpc_config.h"     /* DPC_WATCHDOG_SINGLE_DPC_US */
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/irql.h"           /* the PASSIVE_LEVEL guard on creation */
 
@@ -1150,13 +1151,29 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
         return;
 #endif
 
+    /* PHASE TIMING. This DPC was measured overrunning the 100 us single-DPC
+     * watchdog budget continuously, with outliers to 138 ms, which starves
+     * everything below DISPATCH_LEVEL on the timer service CPU. The watchdog
+     * names the DPC but not WHICH of the three phases below spends the time,
+     * and it is blind entirely when the invariant TSC frequency is
+     * uncalibrated (it reports "no TSC -- timing off", which is the case under
+     * TCG) -- so the phase attribution has to come from here, on the
+     * arch-neutral uptime_ns clock that works either way.
+     *
+     * Cost when nothing is wrong: three uptime_ns reads, no lock, no output.
+     * The report is emitted ONLY on an overrun, so a healthy tick stays
+     * silent and the logging can never itself be the thing being measured. */
+    const uint64_t t_start = uptime_ns();
+
     quota_pressure_sample_all();
+    const uint64_t t_sample = uptime_ns();
 
     /* The stall lane rides this timer rather than owning one: it aggregates
      * every two seconds and this tick is every 50 ms, so the call is a cheap
      * deadline check forty times out of forty-one. A second ktimer for a 2 s
      * period would cost a timer slot and another DPC to save nothing. */
     quota_stall_aggregate();
+    const uint64_t t_stall = uptime_ns();
 
     /* THE INDEPENDENT RETRY TRIGGER for a deferred notification channel. The
      * drain is where the retry actually happens (it is the threaded, PASSIVE
@@ -1172,6 +1189,26 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * a time rather than a flood. */
     if (pressure_retry_due())
         drain_arm();
+
+    const uint64_t t_end = uptime_ns();
+
+    /* Attribute the overrun to a phase. Same 100 us budget the DPC watchdog
+     * uses, so a tick that trips this trips that one too and the two reports
+     * correlate by timestamp. uptime_ns is monotonic, but guard the deltas
+     * anyway: a clock that ever went backwards would otherwise print a
+     * garbage 18-quintillion microsecond phase and send the reader chasing
+     * the wrong thing. */
+    if (t_end >= t_start &&
+        (t_end - t_start) > (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US * 1000ull) {
+        const uint64_t sample_ns = (t_sample >= t_start) ? (t_sample - t_start) : 0ull;
+        const uint64_t stall_ns  = (t_stall  >= t_sample) ? (t_stall - t_sample) : 0ull;
+        const uint64_t drain_ns  = (t_end    >= t_stall)  ? (t_end - t_stall)  : 0ull;
+
+        klog_unrated(LOG_WARN, "quota",
+             "pressure tick overran: total %llu us (sample %llu, stall %llu, drain %llu)",
+             (t_end - t_start) / 1000ull, sample_ns / 1000ull,
+             stall_ns / 1000ull, drain_ns / 1000ull);
+    }
 }
 
 /* NOT a production path, and deliberately left without source arbitration.
