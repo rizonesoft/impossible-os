@@ -21,8 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from worktree_hash import content_hashes  # noqa: E402  (sibling helper)
-
-SECTION_RE = re.compile(r"^## (\d+)\.\s*(.*)")
+from section_slice import SECTION_RE, section_block  # noqa: E402  (sibling helper)
 ITEM_RE = re.compile(r"^- \[([ x/])\]\s*(.*)")
 XREF_RE = re.compile(r"XREF:\s*`?([^`\n]+)`?")
 FILE_RE = re.compile(
@@ -45,20 +44,14 @@ def _git(root, *args):
         return ""
 
 
-def section_block(text: str, n: int) -> str:
-    lines = text.splitlines()
-    start = end = None
-    for i, ln in enumerate(lines):
-        m = SECTION_RE.match(ln)
-        if m:
-            if int(m.group(1)) == n and start is None:
-                start = i
-            elif start is not None:
-                end = i
-                break
-    if start is None:
-        return ""
-    return "\n".join(lines[start:end])
+# section_block now lives in section_slice.py so this file and
+# section-pack.py cannot drift into an oracle split-brain. The private copy
+# terminated only on the next NUMBERED heading, so the LAST `## N.` section
+# of every file sliced to EOF and swallowed the file-level OS Comparison /
+# Unit Tests / Verification / History blocks -- inflating open_items and
+# emitting false SPLIT-RECOMMENDED verdicts (bare-metal-hardening's terminal
+# section reported 21 items against a real 4; kernel-resource-accounting-
+# quotas' terminal section reported 95 against a real 5).
 
 
 _WAIVER_FIELDS = {

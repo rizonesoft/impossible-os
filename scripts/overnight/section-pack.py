@@ -41,8 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from worktree_hash import content_hashes, worktree_key  # noqa: E402
-
-SECTION_RE = re.compile(r"^## (\d+)\.\s*(.*)")
+from section_slice import SECTION_RE, section_block  # noqa: E402  (sibling helper)
 # Backticked identifiers + bare C-ish identifiers worth resolving.
 IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
 BARE_IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{4,})\b")
@@ -67,18 +66,9 @@ def _sh(cmd, cwd, timeout=60):
         return None
 
 
-def section_block(text: str, n: int) -> str:
-    lines = text.splitlines()
-    start = end = None
-    for i, ln in enumerate(lines):
-        m = SECTION_RE.match(ln)
-        if m:
-            if int(m.group(1)) == n and start is None:
-                start = i
-            elif start is not None:
-                end = i
-                break
-    return "\n".join(lines[start:end]) if start is not None else ""
+# section_block is imported from section_slice.py -- see the note there.
+# Keeping a private copy here is what allowed the manifest and the pack to
+# disagree about what a section contains.
 
 
 def candidate_symbols(block: str) -> list:

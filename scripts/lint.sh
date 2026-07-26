@@ -602,11 +602,15 @@ IO_ROW_RE = re.compile(
 SEC_HDR_RE = re.compile(r"^##\s+(\d+)\.\s+(.+?)$", re.MULTILINE)
 
 # Body end-sentinels: stop scanning a section body at any of these.
-BODY_END_RE = re.compile(
-    r"^##\s+(?:\d+\.|Format Quick Reference|OS Comparison|Unit Tests|"
-    r"Verification|History)\b",
-    re.MULTILINE,
-)
+# A section body ends at the NEXT level-2 heading of ANY kind. This used to
+# be an allowlist of the five known trailing heading names, which silently
+# over-captured on the 4 TODO files whose trailing heading was not one of
+# them (Bare Metal Testing Plan / Shadow SSDT slot registry / Codex
+# Adversarial Review / Completed (Reference)). Sections use `### ` for their
+# own sub-headings, so a bare `## ` boundary needs no allowlist and cannot
+# go stale as new trailing blocks are added. Same defect class as the
+# section_block over-capture fixed in scripts/overnight/section_slice.py.
+BODY_END_RE = re.compile(r"^##\s+\S", re.MULTILINE)
 
 # Verified date extraction.
 VERIFIED_DATE_RE = re.compile(
