@@ -20,6 +20,9 @@
 #include "kernel/nt/mitigation_policy.h"
 #include "kernel/nt/pledge.h"
 #include "kernel/ob/ob_job.h"
+#include "kernel/ob/handle_table.h"   /* real-job fixture for the generation test */
+#include "kernel/quota/quota.h"       /* charge-gate save/restore around assign */
+#include "kernel/quota/quota_ledger.h" /* QUOTA_GATE_* pack/unpack for that restore */
 #include "kernel/ipc/pgroup.h"
 #include "kernel/errno.h"
 #include "kernel/sched/syscall.h"
@@ -790,6 +793,349 @@ static void test_job_accounting_counts(void)
     TEST_ASSERT_EQ((uint32_t)io.ReadOperationCount, 7u, "departed I/O persists");
 }
 
+/* --- Membership generation + the mostly-unlocked collector (TODO-25 s19) ---
+ *
+ * The collector no longer holds job->lock across the per-member live-counter
+ * reads: it snapshots membership plus the join-time baselines under the lock,
+ * sums the live counters with the lock released, then re-reads member_gen and
+ * retries if it moved. These tests prove the three things that makes safe --
+ * that churn is DETECTED, that detection is BOUNDED, and that neither outcome
+ * changes the published totals.
+ *
+ * Churn is injected rather than raced. ob_job_test_inject_gen_churn bumps the
+ * generation from inside the collector's re-check window, which is exactly where
+ * a concurrent join or departure would land; a genuine two-CPU race needs the
+ * per-CPU run queues the SMP phase-2 roadmap owns. The injector is the only way to
+ * reach the retry and fallback branches deterministically on this harness.
+ * ----------------------------------------------------------------------- */
+
+/* Restore the charge gate's STATE without clobbering its in-flight count. A blind
+ * write-back is a lost update: the word packs {state, in-flight charger count},
+ * so restoring a snapshot would erase an increment another agent made inside the
+ * window and its later gate_exit would decrement a count it no longer owns. Same
+ * helper (and same reasoning) as the one guarding the assign-unwind test in
+ * test_quota_ledger.c. */
+static void proc_ext_gate_restore_state(struct task *t, int64_t saved)
+{
+    uint32_t want = QUOTA_GATE_STATE(saved);
+
+    for (;;) {
+        int64_t now = atomic64_read(&t->quota_gate);
+
+        if (QUOTA_GATE_STATE(now) == want)
+            return;
+        if (atomic64_cmpxchg(&t->quota_gate, now,
+                             QUOTA_GATE_PACK(want, QUOTA_GATE_COUNT(now))) == now)
+            return;
+    }
+}
+
+/* Injected churn must be consumed by the RETRY path, not the fallback, while it
+ * stays inside the bound -- and the totals must be identical to the unchurned
+ * answer. Out-of-range pids keep the live sum provably zero, so the expected
+ * totals are exactly the persistent (departed-member) sums and nothing in the
+ * fixture can drift between the two collections. */
+static void test_job_collect_retries_within_bound(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint64_t retries_before  = ob_job_collect_retry_count();
+    uint64_t fallback_before = ob_job_collect_fallback_count();
+    uint32_t churn = JOB_COLLECT_MAX_RETRIES - 1U;   /* one short of the bound */
+
+    job.member_pids[0] = TASK_MAX + 100;
+    job.num_members     = 1;
+    job.total_processes = 3;
+    job.acc_user_ns     = 250 * 100;
+    job.acc_read_ops    = 11;
+
+    ob_job_test_inject_gen_churn(churn);
+    ob_job_collect_accounting(&job, &acct, &io);
+    ob_job_test_inject_gen_churn(0);
+
+    TEST_ASSERT_EQ((uint32_t)(ob_job_collect_retry_count() - retries_before),
+                   churn, "one retry per churn event, no more");
+    TEST_ASSERT_EQ((uint32_t)(ob_job_collect_fallback_count() - fallback_before),
+                   0u, "churn inside the bound never reaches the fallback");
+    /* The published answer is the point: a detected mismatch discards the
+     * attempt, it does not degrade the result. */
+    TEST_ASSERT_EQ((uint32_t)acct.TotalUserTime, 250u,
+                   "retried collection still reports exact CPU total");
+    TEST_ASSERT_EQ((uint32_t)io.ReadOperationCount, 11u,
+                   "retried collection still reports exact I/O total");
+    TEST_ASSERT_EQ(acct.TotalProcesses, 3u, "counts survive the retry");
+}
+
+/* Churn that outlasts the bound must take the fully-locked walk -- ONCE -- and
+ * still publish the same totals. This is the anti-livelock assertion: the
+ * collector returns void, so "give up and report a torn sum" is not an option it
+ * has, and "keep retrying" would hang the caller. */
+static void test_job_collect_falls_back_past_bound(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint64_t retries_before  = ob_job_collect_retry_count();
+    uint64_t fallback_before = ob_job_collect_fallback_count();
+
+    job.member_pids[0] = TASK_MAX + 101;
+    job.num_members      = 1;
+    job.total_processes  = 4;
+    job.total_terminated = 1;
+    job.acc_kernel_ns    = 700 * 100;
+    job.acc_write_bytes  = 4096;
+
+    /* Every attempt invalidated, including the last one. */
+    ob_job_test_inject_gen_churn(JOB_COLLECT_MAX_RETRIES);
+    ob_job_collect_accounting(&job, &acct, &io);
+    ob_job_test_inject_gen_churn(0);
+
+    TEST_ASSERT_EQ((uint32_t)(ob_job_collect_retry_count() - retries_before),
+                   JOB_COLLECT_MAX_RETRIES,
+                   "every attempt inside the bound was retried");
+    TEST_ASSERT_EQ((uint32_t)(ob_job_collect_fallback_count() - fallback_before),
+                   1u, "exactly one locked-walk fallback, not a loop");
+    TEST_ASSERT_EQ((uint32_t)acct.TotalKernelTime, 700u,
+                   "fallback reports the same CPU total as the fast path");
+    TEST_ASSERT_EQ((uint32_t)io.WriteTransferCount, 4096u,
+                   "fallback reports the same I/O total as the fast path");
+    TEST_ASSERT_EQ(acct.TotalTerminatedProcesses, 1u, "counts survive the fallback");
+}
+
+/* An accounting READ must not move the generation. If it did, two collections in
+ * a row would each invalidate the other and the fast path would be dead code that
+ * always degraded to the fallback. */
+static void test_job_gen_still_across_accounting_read(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint64_t gen_before;
+    uint64_t fallback_before = ob_job_collect_fallback_count();
+
+    job.member_pids[0] = TASK_MAX + 102;
+    job.num_members    = 1;
+    gen_before = ob_job_member_gen(&job);
+
+    ob_job_collect_accounting(&job, &acct, &io);
+    ob_job_collect_accounting(&job, &acct, &io);
+
+    TEST_ASSERT_EQ(ob_job_member_gen(&job), gen_before,
+                   "a pure accounting read leaves the generation alone");
+    TEST_ASSERT_EQ((uint32_t)(ob_job_collect_fallback_count() - fallback_before),
+                   0u, "back-to-back reads both take the fast path");
+    /* A limit write is not a membership event either. */
+    {
+        JOBOBJECT_BASIC_LIMIT_INFORMATION lim = {0};
+
+        lim.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        TEST_ASSERT_EQ(ob_job_set_basic_limits(&job, &lim), STATUS_SUCCESS,
+                       "limit write accepted");
+        TEST_ASSERT_EQ(ob_job_member_gen(&job), gen_before,
+                       "a limit write is not a membership event");
+    }
+}
+
+/* One live member's membership-interval CONTROL-I/O delta, computed the same way
+ * the collector computes it. The control ("Other") columns are the only ones that
+ * cannot drift underneath an assertion: CPU time advances on every scheduler tick
+ * and read/write counters move whenever anything touches the VFS, but
+ * task_acct_note_control_io fires only on a device-control operation, which nothing
+ * in this suite performs. Asserting on a column that cannot move is what makes the
+ * expected value exact rather than approximately right. */
+static uint64_t proc_ext_member_other_ops(struct task *t)
+{
+    struct task_acct_base live;
+
+    task_acct_delta_since(t, &t->job_acct_base, &live);
+    return live.io_other_count;
+}
+
+/* A MIXED member list must contribute the resolvable member exactly ONCE and the
+ * unresolvable ones not at all, while ActiveProcesses still reports every entry the
+ * body holds. The resolvable pid deliberately sits at a NON-ZERO index, surrounded
+ * by unresolvable ones: a compaction that mis-indexed would then either drop it or
+ * duplicate it, and the exact-once total is what distinguishes those from correct
+ * behaviour. (All-invalid fixtures cannot: both walks skip a NULL member anyway.) */
+static void test_job_collect_mixed_membership_compaction(void)
+{
+    struct task *t = task_current();
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint64_t one_member;
+    uint64_t retries_before, fallback_before;
+
+    if (!t) {
+        TEST_SKIP("needs a current task as the resolvable member");
+        return;
+    }
+    one_member = proc_ext_member_other_ops(t);
+    retries_before  = ob_job_collect_retry_count();
+    fallback_before = ob_job_collect_fallback_count();
+
+    job.member_pids[0] = TASK_MAX + 200;   /* unresolvable */
+    job.member_pids[1] = t->pid;           /* resolvable, at a non-zero index */
+    job.member_pids[2] = TASK_MAX + 201;   /* unresolvable */
+    job.num_members     = 3;
+    job.total_processes = 3;
+    job.acc_other_ops   = 5;               /* departed-member control I/O persists */
+
+    ob_job_collect_accounting(&job, &acct, &io);
+    TEST_ASSERT_EQ(acct.ActiveProcesses, 3u,
+                   "ActiveProcesses reports every body entry, resolvable or not");
+    TEST_ASSERT_EQ(io.OtherOperationCount, 5ull + one_member,
+                   "the resolvable member contributes exactly once, the others not at all");
+
+    /* The attempt is validated by the task PUBLICATION SEQUENCE as well as the
+     * generation, so a member that is unresolvable throughout must not read as
+     * churn. If it did, every job holding one would retry to exhaustion and take
+     * the locked fallback on every single query -- the publication check silently
+     * undoing the whole point of the unlocked walk. */
+    TEST_ASSERT_EQ(ob_job_collect_retry_count(), retries_before,
+                   "a stably-unresolvable member is not churn: no retry");
+    TEST_ASSERT_EQ(ob_job_collect_fallback_count(), fallback_before,
+                   "and no fallback");
+}
+
+/* The EXACT JOB_MAX_MEMBERS boundary. The collector fills a JOB_MAX_MEMBERS stack
+ * array, so a last-slot omission or an off-by-one in the snapshot, the retry or the
+ * fallback walk would otherwise be invisible. The same resolvable pid fills every
+ * slot -- the collector places no distinctness requirement on member_pids, and
+ * N copies of a known delta is precisely what makes the expected total exact. */
+static void test_job_collect_at_member_cap(void)
+{
+    struct task *t = task_current();
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint64_t one_member;
+    uint32_t i;
+
+    if (!t) {
+        TEST_SKIP("needs a current task as the resolvable member");
+        return;
+    }
+    one_member = proc_ext_member_other_ops(t);
+
+    for (i = 0; i < JOB_MAX_MEMBERS; i++)
+        job.member_pids[i] = t->pid;
+    job.num_members = JOB_MAX_MEMBERS;
+
+    ob_job_collect_accounting(&job, &acct, &io);
+    TEST_ASSERT_EQ(acct.ActiveProcesses, (uint32_t)JOB_MAX_MEMBERS,
+                   "a full job reports every member");
+    TEST_ASSERT_EQ(io.OtherOperationCount,
+                   one_member * (uint64_t)JOB_MAX_MEMBERS,
+                   "every slot including the last contributes to the aggregate");
+
+    /* The fallback walk must agree with the fast path at the same boundary. */
+    ob_job_test_inject_gen_churn(JOB_COLLECT_MAX_RETRIES);
+    ob_job_collect_accounting(&job, &acct, &io);
+    ob_job_test_inject_gen_churn(0);
+    TEST_ASSERT_EQ(io.OtherOperationCount,
+                   one_member * (uint64_t)JOB_MAX_MEMBERS,
+                   "the locked fallback agrees with the fast path at the cap");
+}
+
+/* Nullable inputs. A NULL job must leave the caller's buffers fully zeroed rather
+ * than faulting or leaking stack, and `io` is optional -- an unconditional write
+ * through it would be a NULL dereference on the accounting-only query path. */
+static void test_job_collect_null_inputs(void)
+{
+    JOB_OBJECT job = {0};
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION acct;
+    IO_COUNTERS io;
+    uint32_t i;
+
+    /* Poison both, so "zeroed" is a real observation and not the initial state. */
+    for (i = 0; i < sizeof(acct); i++)
+        ((uint8_t *)&acct)[i] = 0xA5;
+    for (i = 0; i < sizeof(io); i++)
+        ((uint8_t *)&io)[i] = 0xA5;
+
+    ob_job_collect_accounting((JOB_OBJECT *)0, &acct, &io);
+    TEST_ASSERT_EQ(acct.TotalProcesses, 0u, "a NULL job zeroes the accounting block");
+    TEST_ASSERT_EQ((uint64_t)acct.TotalUserTime, 0ull, "including the CPU columns");
+    TEST_ASSERT_EQ(io.OtherOperationCount, 0ull, "and the I/O block");
+    TEST_ASSERT_EQ(io.ReadTransferCount, 0ull, "every I/O column");
+
+    /* Optional io: a zero-member job with no I/O buffer must still answer. */
+    job.total_processes = 2;
+    job.num_members     = 0;
+    ob_job_collect_accounting(&job, &acct, (IO_COUNTERS *)0);
+    TEST_ASSERT_EQ(acct.TotalProcesses, 2u,
+                   "a NULL io pointer is optional, not a fault");
+    TEST_ASSERT_EQ(acct.ActiveProcesses, 0u, "a zero-member job reports no members");
+
+    TEST_ASSERT_EQ(ob_job_member_gen((JOB_OBJECT *)0), 0ull,
+                   "the generation of a NULL job is zero, not a fault");
+}
+
+/* The generation MOVES on a real join and on a real departure.
+ *
+ * A REAL Object-Manager-allocated job, never a stack JOB_OBJECT: ob_job_assign
+ * calls ObReferenceObject, which writes to the OBJECT_HEADER immediately BEFORE
+ * the body, so a stack fixture would corrupt unrelated stack memory. Same
+ * reasoning and same fixture shape as the ob_job_assign unwind test in
+ * test_quota_ledger.c.
+ *
+ * Assign/detach run against the LIVE current task, so the teardown restores the
+ * charge-gate state and detaches defensively -- assertions record failure and
+ * CONTINUE, so a regression must not leave this task a member or its gate shut
+ * for the rest of the boot. */
+static void test_job_gen_moves_on_assign_and_detach(void)
+{
+    struct task *t = task_current();
+    HANDLE h;
+    HANDLE_TABLE_ENTRY *ent;
+    JOB_OBJECT *job;
+    int64_t saved_gate;
+    uint64_t gen_created, gen_assigned;
+
+    /* Skip LOUDLY rather than returning silently: an unavailable fixture must not
+     * look like a passing assertion. The only legitimate skip is a task already in
+     * a job -- assign would then report ACCESS_DENIED for a reason that has nothing
+     * to do with the generation. */
+    if (!t || t->job) {
+        TEST_SKIP("needs a jobless current task to assign");
+        return;
+    }
+    saved_gate = atomic64_read(&t->quota_gate);
+
+    h = ob_job_create(&t->handle_table, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        TEST_SKIP("job object could not be allocated");
+        return;
+    }
+    ent = ObpLookupHandle(&t->handle_table, h);
+    if (!ent || !ent->object) {
+        (void)ObpFreeHandle(&t->handle_table, h);
+        TEST_SKIP("job handle did not resolve to a body");
+        return;
+    }
+    job = (JOB_OBJECT *)ent->object;
+
+    gen_created = ob_job_member_gen(job);
+    /* ASSERTED, not branched on: a refused assign here means every assertion below
+     * would silently not run, and the test would report success having proved
+     * nothing about the generation at all. */
+    TEST_ASSERT_EQ(ob_job_assign(job, t), STATUS_SUCCESS,
+                   "the live task joins a fresh job");
+    gen_assigned = ob_job_member_gen(job);
+    TEST_ASSERT_EQ((uint32_t)(gen_assigned - gen_created), 1u,
+                   "a join bumps the membership generation exactly once");
+
+    ob_job_detach_task(t);
+    TEST_ASSERT_EQ((uint32_t)(ob_job_member_gen(job) - gen_assigned), 1u,
+                   "a departure bumps it exactly once more");
+
+    ob_job_detach_task(t);              /* defensive: idempotent, never stay a member */
+    proc_ext_gate_restore_state(t, saved_gate);
+    (void)ObpFreeHandle(&t->handle_table, h);
+}
+
 /* --- Process groups + sessions: pure POSIX decision cores --- */
 
 /* Convenience: caller sid=1, target is the caller (own group) -> allow. */
@@ -1054,6 +1400,20 @@ void test_register_proc_ext(void)
                             test_job_pid_list_partial, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: job accounting counts",
                             test_job_accounting_counts, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job collect retries within bound",
+                            test_job_collect_retries_within_bound, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job collect falls back past bound",
+                            test_job_collect_falls_back_past_bound, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job generation still across accounting read",
+                            test_job_gen_still_across_accounting_read, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job generation moves on assign and detach",
+                            test_job_gen_moves_on_assign_and_detach, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job collect mixed membership compaction",
+                            test_job_collect_mixed_membership_compaction, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job collect at member cap",
+                            test_job_collect_at_member_cap, TEST_CAT_SCHED);
+    test_suite_register_cat("ProcExt: job collect null inputs",
+                            test_job_collect_null_inputs, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: setpgid self own-group ok",
                             test_pgrp_setpgid_self_own_group, TEST_CAT_SCHED);
     test_suite_register_cat("ProcExt: setpgid child join same-session ok",

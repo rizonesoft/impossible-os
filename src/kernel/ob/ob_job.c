@@ -42,6 +42,17 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 /* The single registered Job Object type. */
 const OBJECT_TYPE *ObpJobType = NULL;
 
+/* Invalidate every in-flight accounting snapshot. MUST be called with job->lock
+ * held, in the SAME critical section as the mutation it describes -- bumping
+ * separately would open a window in which a collector sees the new membership
+ * with the old generation and publishes a sum that mixes both. A plain increment
+ * is correct because the spinlock supplies the ordering for the collector's two
+ * reads, which are taken under the same lock. See member_gen in ob_job.h. */
+static void job_member_gen_bump(JOB_OBJECT *job)
+{
+    job->member_gen++;
+}
+
 /* --- Internal: bulk kill of every member (terminate / kill-on-close) -------
  * Marks the job terminated and snapshots the live pids under the lock, then --
  * with the lock RELEASED -- routes each member through task_terminate_remote,
@@ -66,6 +77,11 @@ static void job_kill_all_members(JOB_OBJECT *job, int32_t exit_code)
         return;
     }
     job->terminated = 1;                   /* no further joins; detach counts as termination */
+    /* A terminate is a membership event, not an accounting one: it forecloses
+     * joins and reclassifies every later departure as a termination, so a
+     * collector that straddles it would report counts from two different
+     * regimes. */
+    job_member_gen_bump(job);
     n = job->num_members;
     for (i = 0; i < n; i++)
         snapshot[i] = job->member_pids[i];
@@ -232,6 +248,11 @@ void ob_job_detach_task(struct task *t)
             break;
         }
     }
+    /* One bump for the whole departure, in the critical section that performed
+     * it. UNCONDITIONAL, including the !found mismatch path: the fold above
+     * already moved acc_*, so a collector's persistent-sum snapshot is stale
+     * whether or not the pid was still in the array. */
+    job_member_gen_bump(job);
     spin_unlock_irqrestore(&job->lock, jflags);
     t->job = NULL;
     spin_unlock_irqrestore(&t->job_lock, tflags);
@@ -421,6 +442,11 @@ NTSTATUS ob_job_assign(JOB_OBJECT *job, struct task *t)
     task_acct_capture_base(t, &t->job_acct_base);
     job->member_pids[job->num_members++] = t->pid;
     job->total_processes++;
+    /* Same critical section as the baseline capture and the pid publication, so a
+     * collector can never pair this member's pid with a generation that predates
+     * its baseline. ob_job_fork_inherit routes through here, so this one bump
+     * covers both ways a member can join. */
+    job_member_gen_bump(job);
     /* Publish the absorb record WITH the membership, under the same lock that
      * the detach consumes it under: only this recorded amount is owned by the
      * membership, and exactly one detacher may withdraw it. */
@@ -510,21 +536,229 @@ int ob_job_is_member(JOB_OBJECT *job, uint32_t pid)
 }
 
 /* --- Accounting collection (into a caller-owned kernel-local struct) ------
- * Sums per-member CPU time (ns -> 100ns units) and I/O counters under the lock,
- * plus the process counts. The lock is NEVER held across a user-memory access:
- * the syscall layer copies this kernel-local result to the (validated) user
- * buffer after this returns.
+ * The IRQ-off hold used to scale with member count: every member's live counters
+ * were read INSIDE job->lock. The generation counter splits that walk in two --
+ * the part that must be locked (the membership list and the join-time baselines,
+ * both plain memory written under this lock) and the part that must not be (the
+ * live counter reads, which are the expensive half) -- and validates the join
+ * with member_gen. Contract and both paths: ob_job.h.
  * ----------------------------------------------------------------------- */
+
+/* Diagnostics for the two non-ideal outcomes. RELAXED: they are evidence, never
+ * control flow, and the collector runs from a syscall path where a per-event
+ * klog would be a flood. */
+static uint64_t g_job_collect_retries;
+static uint64_t g_job_collect_fallbacks;
+
+uint64_t ob_job_collect_retry_count(void)
+{
+    return __atomic_load_n(&g_job_collect_retries, __ATOMIC_RELAXED);
+}
+
+uint64_t ob_job_collect_fallback_count(void)
+{
+    return __atomic_load_n(&g_job_collect_fallbacks, __ATOMIC_RELAXED);
+}
+
+uint64_t ob_job_member_gen(JOB_OBJECT *job)
+{
+    uint64_t flags, gen;
+
+    if (!job)
+        return 0;
+    spin_lock_irqsave(&job->lock, &flags);
+    gen = job->member_gen;
+    spin_unlock_irqrestore(&job->lock, flags);
+    return gen;
+}
+
+#ifdef KERNEL_TESTS
+/* Remaining injected churn events; see ob_job_test_inject_gen_churn. Only ever
+ * touched under job->lock (consumer) or between test phases (setter), so the
+ * plain accesses below are serialized by the same lock as member_gen itself. */
+static uint32_t g_job_gen_churn_inject;
+
+void ob_job_test_inject_gen_churn(uint32_t attempts)
+{
+    __atomic_store_n(&g_job_gen_churn_inject, attempts, __ATOMIC_RELEASE);
+}
+
+/* Consume one injected churn event, if any. Called with job->lock held, in the
+ * re-check window -- the same place a real concurrent join or departure would
+ * have bumped the generation. */
+static void job_gen_churn_maybe(JOB_OBJECT *job)
+{
+    uint32_t left = __atomic_load_n(&g_job_gen_churn_inject, __ATOMIC_ACQUIRE);
+
+    if (!left)
+        return;
+    __atomic_store_n(&g_job_gen_churn_inject, left - 1u, __ATOMIC_RELEASE);
+    job->member_gen++;
+}
+#endif
+
+/* The eight aggregate columns a job reports. A named struct rather than eight
+ * locals so the fast path and the locked fallback share ONE accumulation routine
+ * and cannot drift into two subtly different formulas. */
+struct job_acct_sums {
+    uint64_t user_ns;
+    uint64_t kernel_ns;
+    uint64_t read_ops;
+    uint64_t write_ops;
+    uint64_t read_bytes;
+    uint64_t write_bytes;
+    uint64_t other_ops;
+    uint64_t other_bytes;
+};
+
+static void job_sums_zero(struct job_acct_sums *s)
+{
+    s->user_ns    = 0; s->kernel_ns   = 0;
+    s->read_ops   = 0; s->write_ops   = 0;
+    s->read_bytes = 0; s->write_bytes = 0;
+    s->other_ops  = 0; s->other_bytes = 0;
+}
+
+static void job_sums_add(struct job_acct_sums *s, const struct task_acct_base *b)
+{
+    s->user_ns    += b->user_time_ns;
+    s->kernel_ns  += b->kernel_time_ns;
+    s->read_ops   += b->io_read_count;
+    s->write_ops  += b->io_write_count;
+    s->read_bytes += b->io_read_bytes;
+    s->write_bytes += b->io_write_bytes;
+    s->other_ops  += b->io_other_count;
+    s->other_bytes += b->io_other_bytes;
+}
+
+/* Accumulate the membership-interval delta of pids[first, first+count) with the
+ * lock taken only for the BASELINE COPY.
+ *
+ * Two constraints shape this, and only a per-member delta satisfies both:
+ *
+ *  1. The baseline cannot be read unlocked. task.job_acct_base is a plain
+ *     ten-word struct whose only writer (ob_job_assign) stores into it under
+ *     job->lock, so an unlocked read is a data race -- and re-checking a
+ *     generation afterwards cannot repair that; it only discards the value the
+ *     race produced.
+ *  2. The subtraction must SATURATE PER MEMBER. task_acct_sub_sat exists because
+ *     an inversion means a counter was reset under a live baseline, and its own
+ *     contract states the consequence of the alternative: "wrapping would add
+ *     ~2^64 to a job's aggregate and make every derived rate meaningless." A
+ *     reset does not bump member_gen, so the generation cannot stand in for that
+ *     defence. Summing the two sides and subtracting ONCE at the aggregate is
+ *     therefore wrong, however tempting the arithmetic: it turns one member's
+ *     reset into a near-UINT64_MAX total exposed through
+ *     NtQueryInformationJobObject.
+ *
+ * So each member's delta is computed individually, through the SAME
+ * task_acct_delta_since the fully-locked walk used -- saturation included, and
+ * independently tested there. What moves outside the lock is the expensive half:
+ * the live counter reads (RELAXED atomic loads over the static never-freed
+ * tasks[] array) and the arithmetic.
+ *
+ * Baselines are copied in BATCHES rather than all at once because a full
+ * JOB_MAX_MEMBERS array of them is 2560 bytes against an 8 KiB kernel task stack.
+ * A batch bounds both the stack cost and each IRQ-off hold to a constant, which is
+ * the property the cost work wanted -- a hold that does not scale with member
+ * count -- at the price of ceil(n / JOB_COLLECT_BATCH) short acquisitions instead
+ * of one long one. Membership moving between batches bumps member_gen, so the
+ * caller's re-check discards the whole attempt. */
+static void job_sum_members_batched(JOB_OBJECT *job, const uint32_t *pids,
+                                    uint32_t first, uint32_t count,
+                                    struct job_acct_sums *sums)
+{
+    /* Zeroed at declaration so an entry whose slot did not resolve is never a
+     * stale read; the second loop skips those members anyway, which makes this
+     * belt-and-braces rather than load-bearing. */
+    struct task_acct_base base[JOB_COLLECT_BATCH] = { { 0 } };
+    uint64_t flags;
+    uint32_t i;
+
+    spin_lock_irqsave(&job->lock, &flags);
+    for (i = 0; i < count; i++) {
+        struct task *t = task_get_by_pid(pids[first + i]);
+
+        if (t)
+            base[i] = t->job_acct_base;
+    }
+    spin_unlock_irqrestore(&job->lock, flags);
+
+    /* Lock released: live reads and arithmetic only. */
+    for (i = 0; i < count; i++) {
+        struct task *t = task_get_by_pid(pids[first + i]);
+        struct task_acct_base delta;
+
+        if (!t)
+            continue;
+        task_acct_delta_since(t, &base[i], &delta);
+        job_sums_add(sums, &delta);
+    }
+}
+
+/* The same accumulation with job->lock ALREADY HELD -- the fallback walk. Reads
+ * each baseline in place, since nothing can move underneath it. */
+static void job_sum_members_locked(const uint32_t *pids, uint32_t n,
+                                   struct job_acct_sums *sums)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) {
+        struct task *t = task_get_by_pid(pids[i]);
+        struct task_acct_base delta;
+
+        if (!t)
+            continue;
+        task_acct_delta_since(t, &t->job_acct_base, &delta);
+        job_sums_add(sums, &delta);
+    }
+}
+
+/* Snapshot the membership list plus everything else the report needs from the
+ * body. Call with job->lock held. `pids` is COMPACTED to members whose task slot
+ * resolves, so the baseline walk and the later live walk cover exactly the same
+ * set by construction -- if they could disagree on membership the difference
+ * between them would be meaningless. ActiveProcesses still reports the body's
+ * own num_members, unchanged, so a member with an unresolvable slot is visible as
+ * a count rather than silently dropped from both. */
+static void job_snapshot_locked(JOB_OBJECT *job, uint32_t *pids, uint32_t *n_out,
+                                struct job_acct_sums *persistent,
+                                uint32_t *total_processes, uint32_t *active,
+                                uint32_t *total_terminated)
+{
+    uint32_t i, n = 0;
+
+    for (i = 0; i < job->num_members; i++) {
+        if (task_get_by_pid(job->member_pids[i]))
+            pids[n++] = job->member_pids[i];
+    }
+    *n_out = n;
+
+    persistent->user_ns     = job->acc_user_ns;
+    persistent->kernel_ns   = job->acc_kernel_ns;
+    persistent->read_ops    = job->acc_read_ops;
+    persistent->write_ops   = job->acc_write_ops;
+    persistent->read_bytes  = job->acc_read_bytes;
+    persistent->write_bytes = job->acc_write_bytes;
+    persistent->other_ops   = job->acc_other_ops;
+    persistent->other_bytes = job->acc_other_bytes;
+
+    *total_processes  = job->total_processes;   /* ever associated (monotonic) */
+    *active           = job->num_members;      /* currently live */
+    *total_terminated = job->total_terminated;
+}
+
 void ob_job_collect_accounting(JOB_OBJECT *job,
                                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION *acct,
                                IO_COUNTERS *io)
 {
     uint64_t flags;
-    uint32_t i;
-    uint64_t user_ns, kernel_ns;
-    uint64_t rd_ops, wr_ops, rd_bytes, wr_bytes;
-    uint64_t oth_ops, oth_bytes;
-    struct task_acct_base live;
+    uint32_t i, attempt;
+    uint32_t pids[JOB_MAX_MEMBERS];
+    uint32_t n = 0;
+    uint32_t total_processes = 0, active = 0, total_terminated = 0;
+    struct job_acct_sums persistent, delta;
+    int settled = 0;
 
     /* Zero first so partial fills never leak stack. */
     for (i = 0; i < sizeof(*acct); i++)
@@ -533,56 +767,135 @@ void ob_job_collect_accounting(JOB_OBJECT *job,
         for (i = 0; i < sizeof(*io); i++)
             ((uint8_t *)io)[i] = 0;
 
-    spin_lock_irqsave(&job->lock, &flags);
-    /* Departed-member usage (persistent) + live-member usage (summed now). */
-    user_ns   = job->acc_user_ns;
-    kernel_ns = job->acc_kernel_ns;
-    rd_ops    = job->acc_read_ops;
-    wr_ops    = job->acc_write_ops;
-    rd_bytes  = job->acc_read_bytes;
-    wr_bytes  = job->acc_write_bytes;
-    oth_ops   = job->acc_other_ops;
-    oth_bytes = job->acc_other_bytes;
-    for (i = 0; i < job->num_members; i++) {
-        struct task *t = task_get_by_pid(job->member_pids[i]);
-        if (!t)
-            continue;
-        /* A live member contributes exactly what a departing one folds in: its
-         * usage since it joined. Both halves of the membership lifetime use the
-         * same baseline, so a member's contribution does not jump when it exits.
-         * The baseline was published under THIS lock alongside the pid, so it is
-         * necessarily set for any member reachable from member_pids[]. */
-        task_acct_delta_since(t, &t->job_acct_base, &live);
-        user_ns   += live.user_time_ns;
-        kernel_ns += live.kernel_time_ns;
-        rd_ops    += live.io_read_count;
-        wr_ops    += live.io_write_count;
-        rd_bytes  += live.io_read_bytes;
-        wr_bytes  += live.io_write_bytes;
-        oth_ops   += live.io_other_count;
-        oth_bytes += live.io_other_bytes;
+    if (!job)
+        return;
+
+    job_sums_zero(&delta);
+    job_sums_zero(&persistent);
+
+    for (attempt = 0; attempt < JOB_COLLECT_MAX_RETRIES; attempt++) {
+        uint64_t gen0, gen1;
+        uint32_t off, pub0, pub1;
+
+        spin_lock_irqsave(&job->lock, &flags);
+        gen0 = job->member_gen;
+        /* Publication sequence, sampled inside the same critical section as the
+         * snapshot so it cannot be reordered against the compaction below. */
+        pub0 = task_count();
+        job_snapshot_locked(job, pids, &n, &persistent,
+                            &total_processes, &active, &total_terminated);
+        spin_unlock_irqrestore(&job->lock, flags);
+
+        /* THE UNLOCKED HALF. Each batch takes the lock only long enough to copy
+         * that batch's baselines; every live counter read and every subtraction
+         * happens with the lock free and interrupts enabled. */
+        job_sums_zero(&delta);
+        for (off = 0; off < n; off += JOB_COLLECT_BATCH) {
+            uint32_t count = n - off;
+
+            if (count > JOB_COLLECT_BATCH)
+                count = JOB_COLLECT_BATCH;
+            job_sum_members_batched(job, pids, off, count, &delta);
+        }
+
+        spin_lock_irqsave(&job->lock, &flags);
+#ifdef KERNEL_TESTS
+        job_gen_churn_maybe(job);
+#endif
+        gen1 = job->member_gen;
+        pub1 = task_count();
+        spin_unlock_irqrestore(&job->lock, flags);
+
+        /* TWO conditions, because they catch different events.
+         *
+         * An equal GENERATION means no join, departure or terminate intervened.
+         *
+         * An equal PUBLICATION SEQUENCE means no task became resolvable during the
+         * window, and that is a separate hazard the generation cannot see:
+         * ob_job_fork_inherit adds a child to member_pids[] BEFORE task publication
+         * makes its slot resolvable, and publication happens outside job->lock and
+         * bumps no generation. Without this the collector could compact the
+         * unpublished child out, the child could then be published and accrue real
+         * usage while the walk ran, and the generation would still match -- yielding
+         * a total that sampled every other member at the END of the interval while
+         * excluding that one. ("An unpublished child contributes zero" is true only
+         * at the snapshot, not across the window.)
+         *
+         * task_count() is the right shape of check and a per-member resolvability
+         * re-walk is NOT: a walk has a cursor, so a publication landing behind it
+         * leaves the count unchanged while the child runs. num_tasks only ever
+         * increments, on exactly the event that matters, and is bounded by TASK_MAX
+         * so it cannot wrap. The cost is that an unrelated task creation also forces
+         * a retry; task creation is rare and off every hot path, and the failure
+         * direction is conservative (retry, then the locked fallback).
+         *
+         * HOW STRONG THIS IS, precisely: it NARROWS the window, it does not prove it
+         * shut. num_tasks is a plain uint32_t incremented outside job->lock, so these
+         * samples establish no happens-before against the publisher -- equal samples
+         * are strong evidence, not a formal guarantee -- and the fully-locked
+         * fallback below does not validate publication at all. Closing the class
+         * properly means making task publication generation-visible, or its counter
+         * atomic end-to-end, which is a change to the scheduler task-publication
+         * protocol and is owned by the SMP phase-2 work; the accounting-quotas TODO
+         * carries the accepted-finding stamp naming it. The residue is bounded and
+         * self-correcting: a child published mid-walk is counted in ActiveProcesses
+         * while the microseconds of usage it accrued during the walk are not, and the
+         * next query is right.
+         *
+         * Both equal means every baseline read above still belongs to the membership
+         * the counts describe, so the accumulated delta is publishable AS FAR AS
+         * MEMBERSHIP GOES -- which is the guarantee, and the only one: the accepted
+         * publication window above is explicitly outside it. */
+        if (gen1 == gen0 && pub1 == pub0) {
+            settled = 1;
+            break;
+        }
+        __atomic_fetch_add(&g_job_collect_retries, 1ull, __ATOMIC_RELAXED);
     }
-    acct->TotalProcesses          = job->total_processes;   /* ever associated (monotonic) */
-    acct->ActiveProcesses         = job->num_members;       /* currently live */
-    acct->TotalTerminatedProcesses = job->total_terminated;
-    spin_unlock_irqrestore(&job->lock, flags);
+
+    if (!settled) {
+        /* Invalidation outlasted the retry bound -- from either cause, so possibly
+         * from task publication elsewhere rather than anything this job did. Take the
+         * whole walk under the lock: no join, departure or terminate can invalidate
+         * it, so this terminates in one pass, and the price is one long IRQ-off hold
+         * rather
+         * than a sum split across two membership states -- which matters because
+         * this function cannot report failure. It is not a stronger guarantee than
+         * that: publication is not serialized by this lock either, so the accepted
+         * window above applies here too, and here it is not even detected. */
+        __atomic_fetch_add(&g_job_collect_fallbacks, 1ull, __ATOMIC_RELAXED);
+        spin_lock_irqsave(&job->lock, &flags);
+        job_snapshot_locked(job, pids, &n, &persistent,
+                            &total_processes, &active, &total_terminated);
+        job_sums_zero(&delta);
+        job_sum_members_locked(pids, n, &delta);
+        spin_unlock_irqrestore(&job->lock, flags);
+    }
+
+    /* Departed-member usage (persistent) + live-member membership-interval usage.
+     * A live member contributes exactly what a departing one folds in: its usage
+     * since it joined. Both halves of the membership lifetime use the same
+     * baseline, so a member's contribution does not jump when it exits. */
+    acct->TotalProcesses           = total_processes;
+    acct->ActiveProcesses          = active;
+    acct->TotalTerminatedProcesses = total_terminated;
 
     /* 100ns units (Windows LARGE_INTEGER convention). */
-    acct->TotalUserTime            = (int64_t)(user_ns / 100);
-    acct->TotalKernelTime          = (int64_t)(kernel_ns / 100);
+    acct->TotalUserTime            = (int64_t)((persistent.user_ns + delta.user_ns) / 100);
+    acct->TotalKernelTime          = (int64_t)((persistent.kernel_ns + delta.kernel_ns) / 100);
     acct->ThisPeriodTotalUserTime  = acct->TotalUserTime;
     acct->ThisPeriodTotalKernelTime = acct->TotalKernelTime;
 
     if (io) {
-        io->ReadOperationCount  = rd_ops;
-        io->WriteOperationCount = wr_ops;
-        io->ReadTransferCount   = rd_bytes;
-        io->WriteTransferCount  = wr_bytes;
+        io->ReadOperationCount  = persistent.read_ops    + delta.read_ops;
+        io->WriteOperationCount = persistent.write_ops   + delta.write_ops;
+        io->ReadTransferCount   = persistent.read_bytes  + delta.read_bytes;
+        io->WriteTransferCount  = persistent.write_bytes + delta.write_bytes;
         /* Control ("Other") I/O completes the Windows IO_COUNTERS ABI, whose
          * Other* fields were previously left zeroed. They report the device-
          * control traffic counted by task_acct_note_control_io(). */
-        io->OtherOperationCount = oth_ops;
-        io->OtherTransferCount  = oth_bytes;
+        io->OtherOperationCount = persistent.other_ops   + delta.other_ops;
+        io->OtherTransferCount  = persistent.other_bytes + delta.other_bytes;
     }
 }
 

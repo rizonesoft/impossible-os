@@ -75,6 +75,29 @@
 /* Maximum members: a job can hold at most every task in the system. */
 #define JOB_MAX_MEMBERS   TASK_MAX
 
+/* How many times ob_job_collect_accounting re-attempts its mostly-unlocked walk
+ * before falling back to the fully-locked one. What invalidates an attempt is
+ * CHANGE, never lock contention, so this bounds reshaping rather than waiting --
+ * and there are TWO causes, not one: this job's membership moving (`member_gen`)
+ * and any task in the system being published (`task_count()`, needed because
+ * publication bumps no generation; see the collector). Four consecutive
+ * invalidations mean the state is moving faster than it is being read, and the
+ * locked walk is then both cheaper and guaranteed to terminate. Never 0 -- that
+ * would make the unlocked path dead code and hand every query the long
+ * IRQ-off hold this whole mechanism exists to remove. */
+#define JOB_COLLECT_MAX_RETRIES   4U
+_Static_assert(JOB_COLLECT_MAX_RETRIES >= 1U,
+    "a zero retry bound would skip the unlocked walk entirely");
+
+/* Members whose join-time baselines are copied per lock acquisition. The baseline
+ * MUST be copied under job->lock (plain multi-word memory), but a full
+ * JOB_MAX_MEMBERS array of them is 2560 bytes against an 8 KiB kernel task stack,
+ * so the collector copies them in batches: bounded stack, and each IRQ-off hold
+ * bounded to a constant instead of scaling with member count. */
+#define JOB_COLLECT_BATCH   8U
+_Static_assert(JOB_COLLECT_BATCH >= 1U && JOB_COLLECT_BATCH <= JOB_MAX_MEMBERS,
+    "the baseline batch must be non-empty and no larger than the member cap");
+
 /* --- Windows accounting / limit ABI structures --------------------------- */
 /* Times are 100ns units (Windows LARGE_INTEGER convention); sizes are bytes. */
 
@@ -179,6 +202,28 @@ typedef struct job_object {
     uint32_t   total_processes;            /* ever assigned (monotonic) */
     uint32_t   total_terminated;           /* members that died while in the job */
     uint8_t    terminated;                 /* set by NtTerminateJobObject: no new joins */
+    /* Membership GENERATION, bumped under `lock` by every event that changes
+     * what a membership snapshot MEANS: a join (ob_job_assign, which every
+     * fork-inherit routes through), a departure (ob_job_detach_task, in the same
+     * critical section that folds the departed usage and removes the pid), and a
+     * job-wide terminate (which forecloses joins and reclassifies every later
+     * departure as a termination). NOT bumped by a limit write and not by any
+     * accounting read. It is not the collector's only invalidation cause, though:
+     * task publication moves no generation, so the collector ALSO re-checks
+     * task_count(), and an attempt can be invalidated with this job untouched.
+     *
+     * This is what lets ob_job_collect_accounting move the expensive half of its
+     * walk out of the IRQ-off critical section: it snapshots the pid list AND
+     * the join-time baselines under the lock, reads the live per-member counters
+     * with the lock RELEASED, then re-reads this counter and retries if it moved.
+     * The baselines cannot move out with the live reads -- task.job_acct_base is
+     * a plain multi-word struct written under this lock, so reading it unlocked
+     * would be a genuine data race that a generation re-check cannot legalize
+     * (it discards a torn VALUE; it does not make the access defined).
+     *
+     * Guarded by `lock` -- every read and write is inside it, which is also why
+     * the two reads need no explicit ordering: the spinlock supplies it. */
+    uint64_t   member_gen;
     /* Persistent accounting for DEPARTED members: what a member accumulated
      * WHILE ASSOCIATED is folded in here the moment it detaches, so a job's
      * aggregate does not shrink when a member exits (Windows keeps departed
@@ -226,9 +271,91 @@ NTSTATUS ob_job_terminate(JOB_OBJECT *job, int32_t exit_code);
 int      ob_job_is_member(JOB_OBJECT *job, uint32_t pid);
 
 /* --- Query / set helpers (fill kernel-local structs; caller copies to user) */
+
+/* Fill the job's aggregate CPU/IO accounting. Returns void BY CONTRACT: there is
+ * no failure a caller could act on, so the implementation cannot say "this answer
+ * is unreliable" and must instead bound how wrong it can be.
+ *
+ * WHAT IS GUARANTEED, exactly -- and it is narrower than "consistent": the CPU/IO
+ * total covers the members that were RESOLVABLE AT THE SNAPSHOT, with no join,
+ * departure or terminate applied halfway through it. A member is never counted
+ * twice and never half-counted, and a departure never lands between the persistent
+ * sums and the live walk.
+ *
+ * It is NOT a promise that the total covers every member the counts describe.
+ * `ActiveProcesses` reports the body's whole member array, and a member that was
+ * unresolvable at the snapshot is in that count while contributing nothing to the
+ * total -- so the fields are NOT cross-consistent, and a caller must not derive
+ * "per-member average" or "every member accounted" from them. The window below is
+ * why that member can be a real, running one rather than only a not-yet-started
+ * one.
+ *
+ * FAST PATH: snapshot the pid list, the persistent departed-member sums and the
+ * counts under `job->lock` with `member_gen`; then walk the members in batches of
+ * JOB_COLLECT_BATCH, taking the lock only to copy that batch's join-time baselines
+ * and computing each member's delta with the lock RELEASED (through the same
+ * saturating `task_acct_delta_since` the locked walk uses, so a counter reset
+ * beneath a live baseline still clamps to zero rather than wrapping); finally
+ * re-read `member_gen`. Equal generation means no join, departure or terminate
+ * intervened, so every baseline still belongs to the member it was read for and the
+ * accumulated delta is publishable on that axis.
+ *
+ * FALLBACK: after JOB_COLLECT_MAX_RETRIES invalidated attempts (from EITHER cause --
+ * this job's membership moving, or any task in the system being published), do the
+ * whole walk under the lock. No join, departure or terminate can make this loop or
+ * split it -- the price of sustained invalidation is one long hold, and a busy fork
+ * workload elsewhere can be what pays it.
+ *
+ * THE PUBLICATION WINDOW, which is what keeps the guarantee above narrow: a task
+ * becomes resolvable via
+ * `num_tasks`, which task creation increments OUTSIDE `job->lock`, while
+ * fork-inheritance puts the child in `member_pids[]` beforehand. So a child can be
+ * compacted out of a walk and then start running inside it. The fast path samples
+ * `task_count()` across the window, which NARROWS this and detects the common
+ * cases, but the sample carries no happens-before against the publisher and the
+ * fallback does not sample at all. Consequence, bounded: such a child is counted in
+ * `ActiveProcesses` while the microseconds of usage it accrued during that walk are
+ * not; the next query is right. Do NOT build a caller that needs this closed --
+ * closing it means making publication generation-visible in the scheduler, which
+ * the accounting-quotas TODO tracks against the SMP phase-2 work.
+ *
+ * Never holds the lock across a user-memory access: the syscall layer copies this
+ * kernel-local result out after the call returns. */
 void ob_job_collect_accounting(JOB_OBJECT *job,
                                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION *acct,
                                IO_COUNTERS *io);
+
+/* Current membership generation (takes `lock` internally). Diagnostic + test
+ * surface: the invariant worth asserting is that it moves on a join and on a
+ * departure and stands still across an accounting read. */
+uint64_t ob_job_member_gen(JOB_OBJECT *job);
+
+/* How many collector attempts were invalidated, and how many collections gave up
+ * and took the locked walk. Counted rather than logged: the collector runs from a
+ * syscall path where a per-event message would be a log flood, and a non-zero
+ * fallback count is the signal that JOB_COLLECT_MAX_RETRIES is mistuned for a real
+ * workload. Both are RELAXED atomics -- diagnostics, not control.
+ *
+ * NOT attributable to this job on their own. An attempt is invalidated by either
+ * cause (see JOB_COLLECT_MAX_RETRIES), and one of them is GLOBAL: any task creation
+ * anywhere bumps `task_count()`, so a busy fork workload can drive these counters --
+ * and even the long locked fallback -- on a job whose own membership never moved.
+ * Reading a rise here as "this job is being reshaped" is therefore wrong; splitting
+ * the counters by cause is what a real tuning question would need. */
+uint64_t ob_job_collect_retry_count(void);
+uint64_t ob_job_collect_fallback_count(void);
+
+#ifdef KERNEL_TESTS
+/* Inject `attempts` membership-churn events into the collector: each collect
+ * attempt consumes one and bumps `member_gen` after taking its snapshot, which is
+ * precisely what a concurrent join or departure does to an in-flight walk. This is
+ * the only way to prove the retry path and the bounded fallback on a harness that
+ * runs the collector on ONE CPU; a genuine cross-CPU race needs the per-CPU run
+ * queues owned by the SMP phase-2 roadmap, with the dependent two-CPU regression
+ * owned by the accounting-quotas test section. Pass 0 to disable. Compiled out of
+ * production builds entirely. */
+void ob_job_test_inject_gen_churn(uint32_t attempts);
+#endif
 void ob_job_collect_limits(JOB_OBJECT *job, JOBOBJECT_BASIC_LIMIT_INFORMATION *lim);
 NTSTATUS ob_job_set_basic_limits(JOB_OBJECT *job,
                                  const JOBOBJECT_BASIC_LIMIT_INFORMATION *lim);

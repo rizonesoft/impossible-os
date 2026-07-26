@@ -58,7 +58,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 | ⭐   |  16   | Charge attribution and status fidelity          | §9, §11, T16 §2         |  [x]   |
 | ⭐   |  17   | Infra-gated charge bounding and stall lanes     | §10, §12, D03T07 §3     |  [/]   |
 | ⭐   |  18   | Obligation ceiling + charge-source pass-through | §14, §16                |  [x]   |
-| ⭐   |  19   | Lockless job membership + pressure-retry seam   | §10, §15                |  [ ]   |
+| ⭐   |  19   | Lockless job membership + pressure-retry seam   | §10, §15                |  [x]   |
 
 ## 1. Resource Type Registry
 
@@ -261,7 +261,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > **Accepted:** [H] wait paths publish a waiter before setting THREAD_BLOCKED and the wake claim tests only the state, not the wait instance (reason: pre-existing, needs a wait-lock transaction) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Give each wait a generation token the wake must match" at line 291)
 > **Accepted:** [M] the tick charges `tasks[current_task]`, one global cursor, so a tick can bill the wrong process once APs schedule (reason: needs per-CPU scheduler state) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Resolve the interrupted task through PER-CPU scheduler state" at line 293)
 > **Accepted:** [M] `thread->state` is CASed by the wake seam but plain-stored by ~16 other writers (reason: scheduler-wide change) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Make `thread->state` uniformly atomic" at line 292)
-> **Accepted:** [M] `ob_job_collect_accounting` holds `job->lock` with IRQs off across up to 32 members of delta math; the snapshot-then-compute refactor was implemented in §15 and REVERTED (per-member revalidation adds 32 lock pairs and raises total cost), so this needs a membership generation first (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Membership generation under `job_lock`")
+> **Accepted:** [M] RESOLVED by §19 -- kept as the historical receipt. `ob_job_collect_accounting` held `job->lock` with IRQs off across up to 32 members of delta math; the §15 snapshot-then-compute refactor was REVERTED (per-member revalidation adds 32 lock pairs), and §19's membership generation is what finally moved those reads out (reason: infra) -> XREF: `02-kernel-core/TODO-25 §19` (item: "`JOB_OBJECT.member_gen` bumped under `job->lock` by assign, detach and terminate")
 > **Accepted:** [L] the tick quantum is the nominal rate, so a one-shot/tickless arm would mis-charge (reason: not-functional-today, no production one-shot caller) -> XREF: `03-memory-concurrency/TODO-06-scheduler-enhancement.md §15` (item: "Derive the tick quantum from the ACTUAL elapsed monotonic delta" at line 294)
 > **Accepted:** [H] `SYS_READFILE` is uninstrumented and hands its ring-3 `buf` to `vfs_read` for kernel-mode writing (reason: scope, the primitive is slated for retirement and must not be instrumented) -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §5` (item: "Closing `SYS_READFILE` must close its hazards" at line 152)
 > **Deferred:** [M] control-I/O counters are wired and projected but read zero until a device-control op completes -> XREF: `05-storage-filesystems/TODO-05-win32-file-io-api.md §14` (item: "task_acct_note_control_io" at line 313)
@@ -346,6 +346,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 - [/] Bounded worker join + CPU-pinned `kmalloc_fail_next`: `thread_join` has no timeout, and the injection countdown lives in the armed CPU's per-CPU data so a migrating task never trips it. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Invocation-scoped lock accounting: attributes to the ARMING THREAD at `PASSIVE_LEVEL`, so migration no longer drops a section. NOT SMP-sound: `thread_current()` reads global cursors. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [/] Bound `quota_dump()` whole-invocation OUTPUT, not just its block count: 32 blocks x 16 types can exceed 64 KiB of serial and evict most of the klog ring. Needs pagination or an async drain. -> XREF: `TODO-27-crash-dump-generation.md §7`
+- [/] Two-CPU proof for the §19 collector: a real detach or a fork-inherit publication landing inside the unlocked walk, asserting one invalidated attempt, no torn total, no fallback. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md §3`
 - [x] Commit: quota: unit tests, boot leak sweep, quota_dump dashboard.
 
 **Test checkpoint:** the quota category passes (charge/return, rollback, concurrent charges; ALPC quota via `TEST_CAT_IPC`); the boot leak sweep reports zero net quota delta across every category and the summary carries a `quota-leaked` field the test driver folds into FAILED; every sweep verdict branch (clean, count-only, leaked, indeterminate) is asserted from synthetic snapshots; `quota_dump()` renders a named per-type usage row without mutating the registry, `quota_dump_crash()` takes its header-only fallback and RETURNS when the registry lock is held, and a snapshot spanning two pin batches sums exactly.
@@ -360,7 +361,7 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 > - Canonical doc: the "Dashboards and the leak sweep" contract block in `include/kernel/quota/quota.h`.
 > - Scope boundary: §10 owns the dashboards, the sweep, and bulletproofing; §17 owns lifetime-safe task enumeration, TODO-27 §7 the panic-safe emitter, TODO-07 §3 the per-CPU run queues.
 
-> **Verified:** 2026-07-25 | commit `b18c881d` + review fixes | 3/8 items | build OK | tests 23766/23766 PASS, 0 quota-leaked | smoke PASS (KVM 3.120s)
+> **Verified:** 2026-07-25 | commit `b18c881d` + review fixes | 3/9 items | build OK | tests 23766/23766 PASS, 0 quota-leaked | smoke PASS (KVM 3.120s)
 > **Accepted:** [M] the contention test holds the registry lock across a klog that busy-waits the UART, so proving the try-lock fallback costs a bounded IRQ-off window (reason: needs a non-blocking emitter) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
 > **Accepted:** [H] `quota_dump_crash` still emits through `klog`, which takes the blocking `s_klog_lock` and can also flush to disk; pre-existing and repo-wide on this panic path (reason: scope) -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`dump_emit_raw(str)` -- panic-safe emitter replacing `klog` in panic-path dumpers" at line 258)
 > **Deferred:** [M] the dashboard suite asserts exact equalities over global registry state, which becomes flaky the moment threads run on more than one CPU (reason: infra) -> XREF: 02-kernel-core/TODO-25 §10 (item: "Cross-CPU contention proof for the §2 charge path AND the §4 receipt tag" at line 347)
@@ -515,7 +516,7 @@ Split out of the original §14 by its complexity verdict (20 items, ABI impact).
 
 Split out of the original §14. Every item here is a COST defect against an already-shipped charge path, each filed by another section's review (§6 ALPC, §7 job accounting, §11 adjust): a lock held with IRQs off across per-member math, a per-message receipt that triples its entry, an allocation performed before the refusal that discards it, and test instrumentation inside an IRQ-off window. None changes what is billed -- only what the billing costs. Runs after §14 because item 2's subject may be removed by §14 item 3.
 
-- [/] Cut the `ob_job_collect_accounting` lock hold. Snapshot-then-compute needs per-member `t->job_lock` to stay correct, which ADDS 32 lock pairs; the lockless form needs a membership generation. -> XREF: `§7`
+- [x] Cut the `ob_job_collect_accounting` lock hold: §19 shipped the membership generation this waited on, moving the per-member live reads out of the IRQ-off section behind a generation re-check. -> XREF: `§19`
 - [x] Compact per-chain charge receipt: `QUOTA_CHAIN_MAX` 8 -> 4 (reachable depth is 3), shrinking the receipt 88 -> 56 bytes and `PORT_MESSAGE_ENTRY` 152 -> 120, with `_Static_assert`s pinning both. -> XREF: `§6`
 - [x] Reserve-then-commit charge so a refused send does not first allocate: `AlpcAllocateMessage` charges into a stack receipt BEFORE `kmalloc` and moves it into the entry after. -> XREF: `§6`
 - [x] Move the `KERNEL_TESTS` writer instrumentation out of `quota_charge_adjust`'s IRQ-off window: one `quota_writers_enter_active` before the mask, epoch plus sections settled after it. -> XREF: `§11`
@@ -532,11 +533,11 @@ Split out of the original §14. Every item here is a COST defect against an alre
 > - **How it runs** -- nothing changes what is billed: chain contents, message charge and writer totals are identical; only where the work happens moved. No net cycle claim is made (no SMP benchmark harness).
 > - **Downstream effects** -- also shrank `quota_ledger_slot_t` 104 -> 72 bytes, raising the obligation ceiling 1544 -> 2184 for less heap; does NOT unblock §14's conversion (see Deferred).
 > - **Canonical doc** -- the chain-width contract at `QUOTA_CHAIN_MAX` in `include/kernel/quota/quota.h`.
-> - **Scope boundary** -- §15 owns charge-path COST; §16 owns fidelity; §17 owns infra-gated bounding and the membership generation; the advanced-allocator TODO owns the SMP-safe PMM.
+> - **Scope boundary** -- §15 owns charge-path COST; §16 owns fidelity; §17 owns infra-gated bounding; §19 owns the membership generation (shipped, closing this section's lock-hold item); the advanced-allocator TODO owns the SMP-safe PMM.
 
 > **Verified:** 2026-07-25 | commit `c8799a19` + review fixes | 3/6 items | build OK | tests 24640 passed, 0 failed, 0 leaked, 0 quota-leaked | smoke PASS (KVM 2.690s)
 > **Deferred:** [M] the ledger ceiling still cannot be raised to cover a consumer with no aggregate bound of its own. The per-task TOTAL-obligation policy half landed in §18 (per-type caps summing to 2048, refusing by policy); the remaining half is page-backing, which needs an SMP-safe PMM bitmap -- until then every cap is spent against the same fixed heap slice and KNF's 4096-per-state stays out of reach (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Page-back ledger chunks so the ceiling is not a heap bound")
-> **Deferred:** [H] the `ob_job_collect_accounting` lock-hold cut was IMPLEMENTED then REVERTED: correctness needs each snapshotted member re-validated under its own `t->job_lock`, which adds 32 lock pairs and new contention with assign/detach/fork, so perf review found it raises TOTAL cost while cutting only the longest single hold. The lockless form needs a membership generation that does not exist (reason: infra) -> XREF: `02-kernel-core/TODO-25 §17` (item: "Membership generation under `job_lock`")
+> **Deferred:** [H] RESOLVED by §19 -- kept as the historical receipt. The lock-hold cut was IMPLEMENTED then REVERTED here because correctness needed each snapshotted member re-validated under its own `t->job_lock` (32 lock pairs, raising TOTAL cost). §19 supplied the membership generation that makes the snapshot valid without per-member locks (reason: infra) -> XREF: `02-kernel-core/TODO-25 §19` (item: "`JOB_OBJECT.member_gen` bumped under `job->lock` by assign, detach and terminate")
 > **Quality reviewed:** 2026-07-25 | Codex 8x (design, adversarial x2, re-adversarial x2, consistency x2, perf) + kernel-quality-auditor + concurrency-evidence-mapper x2 + test-coverage-mapper | 2H+1M design/adversarial fixed; 1H perf caused the lock-hold revert; 6M consistency fixed; 3M+5L auditor fixed; 1 rejected with evidence | scope: kernel-code-quality
 
 ---
@@ -636,12 +637,25 @@ Split out of §17 on 2026-07-25 as two of the four follow-ups whose stated prere
 
 Split out of §18 on 2026-07-25 when the design review grew both halves past one edit surface. These are the two follow-ups that do NOT touch the ledger: a job-scoped membership generation in `ob_job.c` and a test seam on the live channel-create path in `quota_pressure.c`. Independent of §18 and of each other; neither blocks another section.
 
-- [ ] Membership generation under `job->lock`, so `ob_job_collect_accounting` snapshots membership, computes deltas outside the lock, and re-checks, without the per-member lock pair that got the earlier attempt reverted. -> XREF: `§15`
-- [ ] Bounded-retry fallback to the fully-locked walk, so membership churn cannot make the void-returning collector publish a torn sum. -> XREF: `§15`
-- [ ] Pressure-channel LIVE-path retry seam: `pressure_create_channels` calls `knf_create_state_ex` and raw `uptime_ns()` directly, so only the policy helper is provable today. Needs a test clock plus a creator hook. -> XREF: `§10`
-- [ ] Commit: quota: lockless job membership validation and live pressure-retry test seam.
+- [x] `JOB_OBJECT.member_gen` bumped under `job->lock` by assign, detach and terminate; the collector snapshots the pid list, baselines and persistent sums with it, sums LIVE counters lock-free, then re-checks. -> XREF: `§15`
+- [x] `JOB_COLLECT_MAX_RETRIES` (4) invalidated attempts then the fully-locked walk, counted by `ob_job_collect_fallback_count()`: invalidation costs one long hold, never a sum split across two membership states. -> XREF: `§15`
+- [x] An attempt is validated by generation AND task publication sequence (`task_count()`), which NARROWS the fork-inherit exclusion window and detects the common cases rather than closing it. -> XREF: `§15`
+- [x] Pressure-channel LIVE-path seam: one immutable `{clock, create}` descriptor swapped as a single release/acquire pointer, plus `quota_pressure_test_quiesce` and transactional single-channel isolation. -> XREF: `§10`
+- [x] Commit: quota: lockless job membership validation and live pressure-retry test seam.
 
-**Test checkpoint:** `ob_job_collect_accounting` returns the same totals as the fully-locked walk while a member detaches mid-walk, retrying on the generation mismatch rather than reporting a torn sum, and falls back to the locked walk rather than looping when churn outlasts the retry bound; the generation bumps on assign and on detach but not on a pure accounting update; and the LIVE channel-create path's backoff schedule is asserted end-to-end through an injected clock and a failing creator, without a real wait and without racing the live drain.
+**Test checkpoint:** what is actually proved, and no more. `ob_job_collect_accounting` retries on an INJECTED generation mismatch (`ob_job_test_inject_gen_churn`, which only bumps the generation at the re-check window -- it removes no pid, folds nothing into `acc_*`, and creates no concurrency) and reports the same totals across the retry; it takes the fully-locked walk exactly once rather than looping when the injected churn outlasts the retry bound; the generation bumps on a real assign and a real detach but not on an accounting read or a limit write; a three-entry MIXED list (one resolvable pid at a non-zero index between two unresolvable ones) contributes its resolvable member exactly once while a stably-unresolvable member reads as neither churn nor publication; a SEPARATE synthetic fixture repeating one resolvable pid across all `JOB_MAX_MEMBERS` slots covers the array boundary and the fallback agreeing with the fast path there -- mixed-at-cap and distinct real members at the cap are NOT covered; NULL job / NULL `io` / NULL generation are contracts, not faults. The LIVE channel-create backoff is asserted end-to-end through an injected clock and a failing creator, with the creator-call count asserted at every step, without a real wait and without racing the live drain. NOT proved here: a real mid-walk detach (member removal + the `acc_*` fold) or a cross-CPU publication landing inside the unlocked walk -- injected churn pins the control flow, not the interleaving; that needs the per-CPU run queues owned by `03-memory-concurrency/TODO-07-smp-phase2.md §3`, with the dependent two-CPU proof deferred to §10.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 7 new §19 job suites, 0 failures -- plus `scripts\debug\kernel\run-quota-tests.bat` (SUITE=quota) | 1 new live-create suite, 0 failures
+
+> **Notes:**
+> - Shipped `JOB_OBJECT.member_gen` + a rewritten `ob_job_collect_accounting`: per-member LIVE counter reads moved out of the IRQ-off section behind a generation re-check, 4 invalidated attempts then the locked walk.
+> - Baselines could NOT move out with them (`task.job_acct_base` is plain multi-word memory): they are copied under the lock in 8-member batches (640 bytes) and their deltas summed after unlocking, never via a 2560-byte full array.
+> - Shipped the LIVE create seam in `quota_pressure.c`: one immutable `{clock, create}` pointer (production calls direct), the test hold hoisted above the drain's retry block, transactional channel isolation.
+> - Canonical doc: the `member_gen` block in `include/kernel/ob/ob_job.h` and the create-seam block in `src/kernel/quota/quota_pressure.c`; Codex adoptions in the commit message.
+> - Scope boundary: §19 owns the generation and the create seam; §10 owns the dependent two-CPU collector proof; `TODO-21 §14` owns the task-publication lock; `TODO-07 §3` owns the per-CPU primitives both need; §15 owns the rest of the cost work.
+
+> **Accepted:** [M] the `task_count()` publication check NARROWS the fork-inherit window without closing it (`num_tasks++` is a plain increment outside `job->lock`, so the samples carry no happens-before) and the locked fallback does not check publication at all; both need publication made generation-visible or its counter atomic end-to-end, which is a scheduler-protocol change that would also invert the documented `job_lock -> job->lock` order if done from here. Residue is bounded and self-correcting: a child published mid-walk is counted in `ActiveProcesses` while the microseconds it accrued during the walk are not (reason: infra) -> XREF: `02-kernel-core/TODO-21 §14` (item: "Job membership vs publication lock (`num_tasks++` committed atomically)" at line 462)
+> **Deferred:** [M] the retry and fallback branches are proved by INJECTED generation churn, so they pin the control flow but not a real detach's member removal, `acc_*` fold and cross-CPU publication landing inside the unlocked walk (reason: infra) -> XREF: `02-kernel-core/TODO-25 §10` (item: "Two-CPU proof for the §19 collector" at line 349)
 
 ---
 
@@ -687,6 +701,7 @@ Split out of §18 on 2026-07-25 when the design review grew both halves past one
 | 💎   | Attribution self-honesty counter | ⬜ none (tag totals assumed exact)     | ⬜ none                                      | ✅ unmatched updates counted, cells clamped §16               |
 | ⭐   | Transient vs permanent create    | ⚠️ per-API, no shared retryable class | ⚠️ `EAGAIN` only where the API defines it   | ✅ `STATUS_RETRY` propagated, backoff retry §16               |
 | ⭐   | System pressure "unmeasured"     | ⬜ none (absent reads as calm)         | ⬜ PSI reports 0, not unknown                | ✅ UNKNOWN out-of-band + ABI validity flag §16                |
+| ⭐   | Job accounting read off the lock | ⚠️ member walk under the job lock     | ⚠️ rstat flush holds a per-CPU lock chain   | ✅ generation-validated snapshot + bounded fallback §19       |
 
 ---
 

@@ -238,6 +238,76 @@ static uint32_t   g_drain_armed;
 static uint32_t   g_test_hold;
 #endif
 
+/* --- LIVE channel-create seam --------------------------------------------
+ * The create path was the one part of the retry machinery no test could reach.
+ * The policy helpers in quota_pressure.h are pure and take `now_ns` as a
+ * parameter, so backoff arithmetic was already provable -- but
+ * pressure_create_channels calls the creator and reads the clock DIRECTLY, so the
+ * end-to-end schedule (attempt -> defer -> back off -> warn once) was provable
+ * only in pieces, and the wiring between the policy and the live path was not
+ * covered at all.
+ *
+ * The seam is ONE immutable descriptor published as a SINGLE pointer, never two
+ * independently-visible function-pointer globals: the drain runs on another CPU
+ * and must never observe a half-installed pair. A test clock paired with the real
+ * creator would make the LIVE channels retry against a fake deadline -- exactly
+ * the kind of damage a test seam must be incapable of. Swapping one pointer with
+ * release/acquire makes the pair atomic by construction.
+ *
+ * The creator is deliberately NARROW (name + out-parameter) rather than a mirror
+ * of knf_create_state_ex's seven arguments: the fixed category, lifetime, scope
+ * and access mode are properties of this subsystem, not of the seam, and a
+ * mirrored signature would drift the moment knf grows a parameter.
+ *
+ * Production builds carry no seam: both wrappers compile to a direct call. */
+typedef uint64_t (*pressure_clock_fn)(void);
+typedef NTSTATUS (*pressure_create_fn)(const char *name, KNF_STATE **out);
+
+static NTSTATUS pressure_create_live(const char *name, KNF_STATE **out)
+{
+    return knf_create_state_ex(QUOTA_PRESSURE_KNF_CATEGORY, name,
+                               KNF_LIFETIME_PERMANENT, KNF_SCOPE_SYSTEM,
+                               (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE, out);
+}
+
+#ifdef KERNEL_TESTS
+typedef struct pressure_seam {
+    pressure_clock_fn  clock;
+    pressure_create_fn create;
+} pressure_seam_t;
+
+/* Both descriptors are `const` and statically initialized, so "install" is a
+ * pointer swap between two immutable objects -- there is no window in which a
+ * reader can see a descriptor being built. */
+static const pressure_seam_t  g_seam_live = { uptime_ns, pressure_create_live };
+static const pressure_seam_t *g_seam      = &g_seam_live;
+
+static inline const pressure_seam_t *pressure_seam(void)
+{
+    return (const pressure_seam_t *)__atomic_load_n(&g_seam, __ATOMIC_ACQUIRE);
+}
+
+static inline uint64_t pressure_now_ns(void)
+{
+    return pressure_seam()->clock();
+}
+
+static inline NTSTATUS pressure_create_state(const char *name, KNF_STATE **out)
+{
+    return pressure_seam()->create(name, out);
+}
+#else
+static inline uint64_t pressure_now_ns(void)
+{
+    return uptime_ns();
+}
+
+static inline NTSTATUS pressure_create_state(const char *name, KNF_STATE **out)
+{
+    return pressure_create_live(name, out);
+}
+#endif
+
 /* ==========================================================================
  * Small helpers
  * ========================================================================== */
@@ -649,10 +719,7 @@ static uint32_t pressure_create_channels(uint32_t attempt)
         if (state)
             continue;                       /* already published */
 
-        st = knf_create_state_ex(QUOTA_PRESSURE_KNF_CATEGORY, ch->name,
-                                 KNF_LIFETIME_PERMANENT, KNF_SCOPE_SYSTEM,
-                                 (const KNF_TYPE_ID *)0, KNF_KERNEL_MODE,
-                                 &state);
+        st = pressure_create_state(ch->name, &state);
         if (st != STATUS_SUCCESS || !state) {
             if (quota_pressure_retry_status_retryable(st)) {
                 /* TRANSIENT: say so, and say that it will be retried, so a log
@@ -695,7 +762,7 @@ static uint32_t pressure_create_channels(uint32_t attempt)
     {
         int warn = 0;
 
-        quota_pressure_retry_advance(&g_channels_retry, pending, uptime_ns(), &warn);
+        quota_pressure_retry_advance(&g_channels_retry, pending, pressure_now_ns(), &warn);
         if (warn)
             klog(LOG_ERROR, "quota",
                  "pressure: channel mask 0x%x still uncreated after %u attempts; "
@@ -717,7 +784,7 @@ static int pressure_retry_due(void)
     return quota_pressure_retry_due(&g_channels_retry,
                                     __atomic_load_n(&g_channels_pending,
                                                     __ATOMIC_ACQUIRE),
-                                    uptime_ns());
+                                    pressure_now_ns());
 }
 
 static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg2)
@@ -726,6 +793,27 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
     uint32_t published;
 
     (void)dpc; (void)context; (void)arg1; (void)arg2;
+
+#ifdef KERNEL_TESTS
+    /* A drain queued before the hold was taken can still be dispatched after
+     * it. Checking here as well as in drain_arm is what makes the hold actually
+     * hold: otherwise an in-flight callback would consume the records the test
+     * is about to inspect.
+     *
+     * FIRST, ahead of the channel-retry block below. The hold used to be checked
+     * after it, which meant a held drain still ran the LIVE create path -- so a
+     * test that installed a clock or creator seam could have its state consumed,
+     * and its counted creator calls inflated, by the very callback the hold was
+     * supposed to have stopped. A hold now means the drain does nothing at all. */
+    if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE)) {
+        /* Disarm on the way out. Returning with the flag still set would mean
+         * no producer could ever re-arm (drain_arm's exchange would always see
+         * 1) and publication would stay dead for the rest of the boot once the
+         * hold is released. */
+        __atomic_store_n(&g_drain_armed, 0u, __ATOMIC_RELEASE);
+        return;
+    }
+#endif
 
     /* Retry any channel whose creation was DEFERRED, BEFORE publishing: this is
      * the only context that recurs, runs at PASSIVE_LEVEL, and can afford to
@@ -738,21 +826,6 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
         if (pending != 0)
             (void)pressure_create_channels(pending);
     }
-
-#ifdef KERNEL_TESTS
-    /* A drain queued before the hold was taken can still be dispatched after
-     * it. Checking here as well as in drain_arm is what makes the hold actually
-     * hold: otherwise an in-flight callback would consume the records the test
-     * is about to inspect. */
-    if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE)) {
-        /* Disarm on the way out. Returning with the flag still set would mean
-         * no producer could ever re-arm (drain_arm's exchange would always see
-         * 1) and publication would stay dead for the rest of the boot once the
-         * hold is released. */
-        __atomic_store_n(&g_drain_armed, 0u, __ATOMIC_RELEASE);
-        return;
-    }
-#endif
 
     __atomic_store_n(&g_drain_armed, 0u, __ATOMIC_RELEASE);
 
@@ -1642,5 +1715,155 @@ void quota_pressure_test_sample(quota_resource_type_t type, uint16_t permille)
 {
     pressure_sample(type, permille, (uint16_t)QUOTA_PRESSURE_SAMPLE_WINDOW_MS,
                     QUOTA_PRESSURE_SRC_BUDGET);
+}
+
+/* --- LIVE create-path seam: test side ------------------------------------- */
+
+/* The injected clock, and the status the injected creator reports. Both are read
+ * by the seam functions above, which the drain can call from another CPU until the
+ * quiesce below has flushed it, so both are atomic. */
+static uint64_t g_test_clock_ns;
+static NTSTATUS g_test_create_status;
+static uint32_t g_test_create_calls;
+
+static uint64_t pressure_test_clock(void)
+{
+    return __atomic_load_n(&g_test_clock_ns, __ATOMIC_ACQUIRE);
+}
+
+/* Counts every call and NEVER produces a state, so the caller takes the failure
+ * branch. It cannot damage a live channel: it does not touch any slot, and the
+ * isolation helper below is what decides which slot the create loop may reach. */
+static NTSTATUS pressure_test_create(const char *name, KNF_STATE **out)
+{
+    (void)name;
+    __atomic_fetch_add(&g_test_create_calls, 1u, __ATOMIC_RELAXED);
+    if (out)
+        *out = (KNF_STATE *)0;
+    return __atomic_load_n(&g_test_create_status, __ATOMIC_ACQUIRE);
+}
+
+static const pressure_seam_t g_seam_test = { pressure_test_clock,
+                                             pressure_test_create };
+
+void quota_pressure_test_quiesce(void)
+{
+    /* Order is the whole contract. The hold stops the drain from being ARMED
+     * again and stops an already-dispatched callback from doing any work; the
+     * flush then waits out the callback that was already RUNNING. Without the
+     * flush, `g_drain_armed == 0` proves nothing -- the drain clears that flag
+     * before its body finishes -- so a seam installed on the strength of it could
+     * be observed half-way by a callback still in flight. */
+    __atomic_store_n(&g_test_hold, 1u, __ATOMIC_RELEASE);
+    KeFlushQueuedDpcs();
+}
+
+void quota_pressure_test_seam_install(uint64_t now_ns, NTSTATUS create_status)
+{
+    __atomic_store_n(&g_test_clock_ns, now_ns, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_test_create_status, create_status, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_test_create_calls, 0u, __ATOMIC_RELEASE);
+    /* One release store publishes BOTH function pointers, because they live in a
+     * single immutable descriptor. The values above are published first, so a
+     * reader that sees the new seam necessarily sees the clock and status it was
+     * installed with. */
+    __atomic_store_n(&g_seam, &g_seam_test, __ATOMIC_RELEASE);
+}
+
+void quota_pressure_test_seam_set_now(uint64_t now_ns)
+{
+    __atomic_store_n(&g_test_clock_ns, now_ns, __ATOMIC_RELEASE);
+}
+
+void quota_pressure_test_seam_remove(void)
+{
+    __atomic_store_n(&g_seam, &g_seam_live, __ATOMIC_RELEASE);
+}
+
+uint32_t quota_pressure_test_create_calls(void)
+{
+    return __atomic_load_n(&g_test_create_calls, __ATOMIC_RELAXED);
+}
+
+/* Make exactly ONE channel appear uncreated so the live create loop actually
+ * reaches the creator. Without this the seam is unreachable after boot: every
+ * slot is populated, and the loop skips a populated slot by design -- a test
+ * could install a failing creator, drive the whole retry schedule, and never
+ * invoke it once, "proving" a code path it never entered.
+ *
+ * The live KNF_STATE is SAVED, not destroyed: the slot is cleared so the loop
+ * treats the channel as absent, and the restore below puts the identical pointer
+ * back. Nothing is created, freed, or replaced, so the notification state a real
+ * consumer may already hold a reference to is untouched throughout.
+ *
+ * REQUIRES the quiesce above (hold set AND drain flushed); a live drain would
+ * otherwise see the cleared slot and try to create the channel for real. */
+int quota_pressure_test_channel_isolate(uint32_t index,
+                                        quota_pressure_channel_save_t *save)
+{
+    const pressure_channel_t *ch;
+
+    if (!save || index >= QUOTA_PRESSURE_CHANNEL_COUNT)
+        return -1;
+
+    ch = &g_channel[index];
+    save->index   = index;
+    save->state   = (void *)__atomic_load_n(ch->slot, __ATOMIC_ACQUIRE);
+    save->pending = __atomic_load_n(&g_channels_pending, __ATOMIC_ACQUIRE);
+    save->retry   = g_channels_retry;
+
+    /* Clear ONLY this slot, and seed ONLY this bit: the create loop attempts the
+     * intersection of the attempt mask and the empty slots, so both halves are
+     * needed to make exactly one channel reachable. */
+    __atomic_store_n(ch->slot, (KNF_STATE *)0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_channels_pending, 1u << index, __ATOMIC_RELEASE);
+    g_channels_retry.at_ns  = 0;
+    g_channels_retry.gap_ns = 0;
+    g_channels_retry.tries  = 0;
+    g_channels_retry.warned = 0;
+    return 0;
+}
+
+void quota_pressure_test_channel_restore(const quota_pressure_channel_save_t *save)
+{
+    const pressure_channel_t *ch;
+
+    if (!save || save->index >= QUOTA_PRESSURE_CHANNEL_COUNT)
+        return;
+
+    ch = &g_channel[save->index];
+    /* The saved pointer, restored verbatim. The retry schedule and pending mask
+     * go back too, so the suite cannot leave the live subsystem believing a
+     * channel is missing or owing a backoff it never earned. */
+    __atomic_store_n(ch->slot, (KNF_STATE *)save->state, __ATOMIC_RELEASE);
+    g_channels_retry = save->retry;
+    __atomic_store_n(&g_channels_pending, save->pending, __ATOMIC_RELEASE);
+}
+
+void *quota_pressure_test_channel_state(uint32_t index)
+{
+    if (index >= QUOTA_PRESSURE_CHANNEL_COUNT)
+        return (void *)0;
+    return (void *)__atomic_load_n(g_channel[index].slot, __ATOMIC_ACQUIRE);
+}
+
+uint32_t quota_pressure_test_create_attempt(uint32_t mask)
+{
+    return pressure_create_channels(mask);
+}
+
+int quota_pressure_test_retry_due(void)
+{
+    return pressure_retry_due();
+}
+
+uint64_t quota_pressure_test_retry_deadline(void)
+{
+    return __atomic_load_n(&g_channels_retry.at_ns, __ATOMIC_RELAXED);
+}
+
+uint32_t quota_pressure_test_retry_tries(void)
+{
+    return g_channels_retry.tries;
 }
 #endif /* KERNEL_TESTS */

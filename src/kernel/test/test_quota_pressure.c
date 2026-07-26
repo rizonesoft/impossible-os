@@ -1434,12 +1434,17 @@ static void test_pressure_pending_transitions_keep_order(void)
                    "every level entered produced its own record, none coalesced");
 }
 
-/* The notification-channel retry SCHEDULE, asserted directly. The live path owns
- * a clock and a create call, so the schedule cannot be proved through it -- which
- * is exactly why the policy is pure functions over explicit state and an explicit
- * `now`. Every branch that a regression could break is reachable here: the
- * retryable classification, the backoff floor, the doubling, the cap, the "not yet"
- * refusal, warn-exactly-once, and the reset after recovery. */
+/* The notification-channel retry SCHEDULE, asserted DIRECTLY -- the decision, in
+ * isolation from the path that consumes it. The policy is pure functions over
+ * explicit state and an explicit `now` precisely so every branch a regression could
+ * break is reachable without a clock or a create call: the retryable
+ * classification, the backoff floor, the doubling, the cap, the "not yet" refusal,
+ * warn-exactly-once, and the reset after recovery.
+ *
+ * The live WIRING used to be unprovable and no longer is: the test below drives the
+ * real create path through an injected clock and creator. This one still earns its
+ * place -- it covers the arithmetic exhaustively and cheaply, where the live test
+ * covers that the path actually consults it. */
 static void test_pressure_retry_policy_schedule(void)
 {
     quota_pressure_retry_t st = { 0 };
@@ -1550,6 +1555,172 @@ static void test_pressure_retry_policy_schedule(void)
     TEST_ASSERT_EQ((uint32_t)warn, 0u, "advancing a NULL state warns nothing");
 }
 
+/* The LIVE channel-create path, end to end (TODO-25 s19).
+ *
+ * The policy test above proves the backoff ARITHMETIC against a local struct.
+ * This proves the WIRING: that the live create loop actually reaches a creator,
+ * actually feeds its own clock to the policy, actually republishes the resulting
+ * deadline, and that its own due gate honours it. That seam did not exist before,
+ * so the create path was the one part of the retry machinery covered only by
+ * inspection.
+ *
+ * Three hazards, three mechanisms:
+ *  - racing the live drain -> quiesce (hold, then FLUSH the queued DPCs; the hold
+ *    alone is not a barrier, because the drain clears its armed flag before its
+ *    body finishes);
+ *  - a 30-second capped interval -> an injected clock, so there is no real wait;
+ *  - a creator hook that can never run, because boot published every channel and
+ *    the loop skips a populated slot -> isolate exactly one channel, saving its
+ *    live state pointer and putting it back untouched.
+ * The creator-call COUNT is asserted throughout: without it this test could pass
+ * having never entered the code it claims to cover. */
+static void test_pressure_live_create_backoff(void)
+{
+    /* ZERO-INITIALIZED, and every isolate return code BRANCHED on, not merely
+     * asserted. TEST_ASSERT_EQ records a failure and CONTINUES, so treating an
+     * assertion as a stop would hand a garbage save record to the restore -- whose
+     * index guard would pass whenever the garbage index happened to be in range,
+     * publishing an arbitrary pointer into a live notification slot. A test that
+     * corrupts the kernel when it fails is worse than no test. */
+    quota_pressure_channel_save_t save = { 0 };
+    void    *live_state;
+    uint64_t now        = 5ull * 1000ull * 1000ull * 1000ull;   /* arbitrary base */
+    uint64_t expect_gap = QUOTA_PRESSURE_RETRY_FIRST_NS;
+    uint32_t pending;
+
+    quota_pressure_test_quiesce();
+    quota_pressure_test_seam_install(now, STATUS_RETRY);
+
+    /* An out-of-range index must be refused and must mutate NOTHING -- a guard that
+     * half-applied would strand a live channel. Checked BEFORE the real isolate, so
+     * the comparison baseline is the untouched live state. */
+    {
+        quota_pressure_channel_save_t bad = { 0 };
+        void    *state_before   = quota_pressure_test_channel_state(0u);
+        uint64_t deadline_before = quota_pressure_test_retry_deadline();
+
+        TEST_ASSERT_EQ(quota_pressure_test_channel_isolate(0xFFFFFFFFu, &bad), -1,
+                       "an out-of-range channel index is refused");
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)bad.state, 0ull,
+                       "a refused isolate writes nothing into the save record");
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)quota_pressure_test_channel_state(0u),
+                       (uint64_t)(uintptr_t)state_before,
+                       "and leaves every live channel exactly as it was");
+        TEST_ASSERT_EQ(quota_pressure_test_retry_deadline(), deadline_before,
+                       "and does not disturb the live retry schedule");
+        TEST_ASSERT_EQ(quota_pressure_test_channel_isolate(0u,
+                           (quota_pressure_channel_save_t *)0), -1,
+                       "a NULL save record is refused");
+    }
+
+    live_state = quota_pressure_test_channel_state(0u);
+    {
+        int rc = quota_pressure_test_channel_isolate(0u, &save);
+
+        /* Asserted so a failure is VISIBLE (a silent return would let the suite
+         * pass without the seam ever being exercised), then branched on so a
+         * failure is CONTAINED -- nothing below may touch an unfilled save. */
+        TEST_ASSERT_EQ(rc, 0, "one channel is isolated for the live create path");
+        if (rc != 0) {
+            quota_pressure_test_seam_remove();
+            return;
+        }
+    }
+
+    /* A channel deferred with a cleared schedule is due at once: the backoff
+     * delays RETRIES, it must not delay the first attempt. */
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_test_retry_due(), 1u,
+                   "a pending channel with no deadline is due immediately");
+
+    pending = quota_pressure_test_create_attempt(1u << 0);
+    TEST_ASSERT_EQ(pending, 1u, "a transient failure leaves the channel pending");
+    TEST_ASSERT_EQ(quota_pressure_test_create_calls(), 1u,
+                   "the live create path reached the creator");
+    TEST_ASSERT_EQ(quota_pressure_test_retry_tries(), 1u,
+                   "the live path counted the attempt");
+    TEST_ASSERT_EQ(quota_pressure_test_retry_deadline(), now + expect_gap,
+                   "the live path published the floor interval from ITS clock");
+
+    /* The live gate, answered against the injected clock. */
+    quota_pressure_test_seam_set_now(now + expect_gap - 1ull);
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_test_retry_due(), 0u,
+                   "the live gate refuses an attempt before the deadline");
+    quota_pressure_test_seam_set_now(now + expect_gap);
+    TEST_ASSERT_EQ((uint32_t)quota_pressure_test_retry_due(), 1u,
+                   "and admits one exactly at the deadline");
+
+    /* DOUBLING through the live path, checked at every step. A regression that
+     * jumped straight to the 30 s cap would satisfy a first-and-last assertion
+     * while delaying every channel recovery by half a minute. */
+    for (uint32_t step = 2u; step <= QUOTA_PRESSURE_RETRY_WARN_TRIES + 3u; step++) {
+        now = quota_pressure_test_retry_deadline();
+        quota_pressure_test_seam_set_now(now);
+        expect_gap = (expect_gap * 2ull > QUOTA_PRESSURE_RETRY_MAX_NS)
+                         ? QUOTA_PRESSURE_RETRY_MAX_NS
+                         : expect_gap * 2ull;
+
+        pending = quota_pressure_test_create_attempt(1u << 0);
+        TEST_ASSERT_EQ(pending, 1u, "still pending while the creator defers");
+        TEST_ASSERT_EQ(quota_pressure_test_create_calls(), step,
+                       "exactly one creator call per live attempt");
+        TEST_ASSERT_EQ(quota_pressure_test_retry_tries(), step,
+                       "every live attempt counted exactly once");
+        TEST_ASSERT_EQ(quota_pressure_test_retry_deadline(), now + expect_gap,
+                       "the live deadline follows the doubled interval");
+    }
+    /* SATURATION on the live path. The loop runs past the reporting threshold on
+     * purpose: doubling from the 100 ms floor only reaches 12.8 s by the eighth
+     * attempt, so stopping at the threshold would never observe the ceiling -- and
+     * an interval that kept doubling past it would go unnoticed. */
+    TEST_ASSERT_EQ(quota_pressure_test_retry_deadline() - now,
+                   QUOTA_PRESSURE_RETRY_MAX_NS,
+                   "the live interval saturates at the ceiling rather than growing");
+
+    /* A PERMANENT failure must CLEAR the bit on the live path, not keep retrying:
+     * a name collision or a missing category has no later answer, and a retry
+     * would re-allocate and re-log for a decision that cannot change. */
+    quota_pressure_test_seam_install(now, STATUS_OBJECT_NAME_COLLISION);
+    pending = quota_pressure_test_create_attempt(1u << 0);
+    TEST_ASSERT_EQ(pending, 0u, "a permanent failure drops the channel from pending");
+    TEST_ASSERT_EQ(quota_pressure_test_create_calls(), 1u,
+                   "the permanent attempt reached the creator exactly once");
+
+    /* RESTORE, and prove it was TRANSACTIONAL rather than just pointer-correct.
+     * The test mutated the pending mask and every retry field, so releasing the
+     * transport with a lost pending bit -- or with this test's 30-second capped
+     * schedule still in force -- would be a silent live-subsystem regression.
+     *
+     * A second isolate is the comparison: it captures the CURRENT live values
+     * BEFORE mutating anything, so save2 must equal save1 field for field. */
+    quota_pressure_test_channel_restore(&save);
+    quota_pressure_test_seam_remove();
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)quota_pressure_test_channel_state(0u),
+                   (uint64_t)(uintptr_t)live_state,
+                   "the ORIGINAL notification state is back, not a replacement");
+    {
+        quota_pressure_channel_save_t after = { 0 };
+        int rc = quota_pressure_test_channel_isolate(0u, &after);
+
+        TEST_ASSERT_EQ(rc, 0, "re-isolating captures the restored live state");
+        if (rc != 0) {
+            /* The comparison isolate failed, so `after` is unusable -- put the
+             * channel back from the save that IS valid rather than from garbage. */
+            quota_pressure_test_channel_restore(&save);
+            return;
+        }
+        TEST_ASSERT_EQ((uint64_t)(uintptr_t)after.state,
+                       (uint64_t)(uintptr_t)save.state, "state pointer restored");
+        TEST_ASSERT_EQ(after.pending, save.pending, "pending mask restored");
+        TEST_ASSERT_EQ(after.retry.at_ns, save.retry.at_ns, "retry deadline restored");
+        TEST_ASSERT_EQ(after.retry.gap_ns, save.retry.gap_ns, "retry interval restored");
+        TEST_ASSERT_EQ((uint64_t)after.retry.tries, (uint64_t)save.retry.tries,
+                       "retry attempt count restored");
+        TEST_ASSERT_EQ((uint32_t)after.retry.warned, (uint32_t)save.retry.warned,
+                       "warn latch restored");
+        quota_pressure_test_channel_restore(&after);   /* undo the comparison isolate */
+    }
+}
+
 void test_register_quota_pressure(void)
 {
     test_suite_register_cat("Quota: permille boundaries",
@@ -1642,6 +1813,11 @@ void test_register_quota_pressure(void)
                             test_pressure_pending_transitions_keep_order, TEST_CAT_QUOTA);
 
     /* LAST: returns the ring to the live publisher (see test_reset). */
+    /* Before the transport release below: this one takes the publication hold and
+     * leaves it set, exactly as the reset helper does, so the release must stay
+     * the last registration in the suite. */
+    test_suite_register_cat("Quota: live channel-create backoff end to end",
+                            test_pressure_live_create_backoff, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: pressure transport hold released",
                             test_pressure_release_transport, TEST_CAT_QUOTA);
 }

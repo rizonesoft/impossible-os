@@ -613,12 +613,19 @@ void quota_registry_worst_all(uint16_t *out_permille, uint32_t count,
  * The SCHEDULE for retrying a notification channel whose creation was refused for
  * a transient reason, as pure state plus pure functions over an explicit clock.
  *
- * Separated from the live path rather than left inline, because inline it is
- * unprovable: the live path owns the clock and the create call, so exercising the
- * schedule through it needs an injectable clock and an injectable creator (filed
- * in section 17). The POLICY is arithmetic over explicit state, so it lives here
- * and is tested directly; the live path just holds one of these structs. What
- * stays unproven is then the wiring alone, not the decision.
+ * Separated from the live path rather than left inline, because inline it would be
+ * unprovable: the live path owns the clock and the create call. The POLICY is
+ * arithmetic over explicit state, so it lives here and is tested directly against a
+ * caller-supplied `now_ns`; the live path just holds one of these structs.
+ *
+ * The WIRING is no longer unproven. The KERNEL_TESTS seam further down this header
+ * (quiesce, injectable clock and creator, transactional single-channel isolation)
+ * makes the live create path reachable, and it is asserted end-to-end: the creator
+ * is invoked and counted, the deadline this policy publishes is read back, the live
+ * due gate refuses before it and admits at it, the interval doubles to its ceiling,
+ * and a permanent status clears the pending bit instead of retrying. The threshold
+ * WARNING is a separate matter -- the one-shot `out_warn` pulse is asserted here,
+ * but the klog line the live path emits from it is not observed by any test.
  *
  * Every mutation goes through the functions below, so the invariants stay in one
  * place. */
@@ -700,6 +707,75 @@ uint32_t quota_pressure_test_pending(void);
 
 /* Refill the failure-event token bucket to full without waiting a window. */
 void quota_pressure_test_refill_tokens(void);
+
+/* --- LIVE channel-create path -------------------------------------------- *
+ * The retry POLICY above is pure and already assertable. This group makes the
+ * live path that CONSUMES it assertable too: the create loop reads the clock and
+ * calls the creator directly, so without a seam the wiring between policy and
+ * path -- attempt, defer, back off, warn once -- was never covered.
+ *
+ * Mandatory order for a test, each step closing a hazard the previous one leaves
+ * open:
+ *   quiesce -> seam_install -> channel_isolate -> drive attempts
+ *           -> channel_restore -> seam_remove -> release
+ * The quiesce must precede the isolate: an in-flight drain that saw a cleared
+ * slot would create the channel for real. */
+
+/* Stop the drain and WAIT for any callback already running to finish (hold +
+ * KeFlushQueuedDpcs). The hold alone is not a barrier -- the drain clears
+ * g_drain_armed before its body completes, so that flag cannot prove quiescence.
+ * The hold stays set until quota_pressure_test_release. */
+void quota_pressure_test_quiesce(void);
+
+/* Install the test clock and a creator that always fails with `create_status`,
+ * as ONE atomic descriptor swap, and zero the creator call count. */
+void quota_pressure_test_seam_install(uint64_t now_ns, NTSTATUS create_status);
+
+/* Move the injected clock forward. Asserting a backoff schedule is otherwise a
+ * real wait: the capped interval is 30 seconds. */
+void quota_pressure_test_seam_set_now(uint64_t now_ns);
+
+/* Restore the live clock and creator. */
+void quota_pressure_test_seam_remove(void);
+
+/* How many times the injected creator was actually called. The assertion that
+ * makes end-to-end coverage honest rather than assumed. */
+uint32_t quota_pressure_test_create_calls(void);
+
+/* Saved live channel state for the isolation window below. `state` is void* so
+ * this header does not need knf.h; it is an opaque KNF_STATE pointer that is
+ * saved and restored verbatim, never dereferenced. */
+typedef struct quota_pressure_channel_save {
+    void                   *state;    /* the live notification state, untouched */
+    quota_pressure_retry_t  retry;    /* schedule to put back                   */
+    uint32_t                index;    /* which channel was isolated             */
+    uint32_t                pending;  /* pending mask to put back               */
+} quota_pressure_channel_save_t;
+
+/* Make exactly one channel look uncreated so the create loop reaches the creator
+ * (a populated slot is skipped by design, and boot populates all of them). Saves
+ * the live state pointer, the pending mask and the retry schedule; creates,
+ * destroys and replaces nothing. Returns 0, or -1 on a bad index/NULL save.
+ * REQUIRES quota_pressure_test_quiesce first. */
+int quota_pressure_test_channel_isolate(uint32_t index,
+                                        quota_pressure_channel_save_t *save);
+
+/* Put back every value the isolate saved, verbatim. */
+void quota_pressure_test_channel_restore(const quota_pressure_channel_save_t *save);
+
+/* The pointer currently published in a channel slot, so a test can prove the
+ * restore put the ORIGINAL live state back rather than a replacement. */
+void *quota_pressure_test_channel_state(uint32_t index);
+
+/* Run one live create attempt over `mask`, returning the new pending mask. */
+uint32_t quota_pressure_test_create_attempt(uint32_t mask);
+
+/* The live due gate, answered against the injected clock. */
+int quota_pressure_test_retry_due(void);
+
+/* The schedule the live path published: next-attempt deadline and attempt count. */
+uint64_t quota_pressure_test_retry_deadline(void);
+uint32_t quota_pressure_test_retry_tries(void);
 #endif /* KERNEL_TESTS */
 
 #endif /* KERNEL_QUOTA_PRESSURE_H */
