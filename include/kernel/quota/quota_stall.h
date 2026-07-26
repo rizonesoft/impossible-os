@@ -303,6 +303,14 @@ void quota_stall_runnable_end(quota_stall_token_t *token);
  * QUOTA_STALL_UPDATE_NS has elapsed since the last fold. Driven from the
  * pressure sampler's 50 ms tick; exposed so a test can step it deterministically.
  * Returns 1 if a window closed, 0 if the call was too early. */
+/* Mutation-free "does the window need servicing" predicate. Safe to call at
+ * DISPATCH_LEVEL: one ACQUIRE load and two comparisons, no lock, no stores.
+ * Returns non-zero when quota_stall_aggregate has work -- an elapsed deadline,
+ * an unseeded anchor, or a backward clock. The seeding/rebaselining those last
+ * two need is deliberately NOT done here; it belongs with the fold, at
+ * PASSIVE_LEVEL, because it walks every CPU under a lock. */
+int quota_stall_fold_due(void);
+
 int quota_stall_aggregate(void);
 
 /* --- Queries -------------------------------------------------------------- */

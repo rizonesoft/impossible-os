@@ -1087,6 +1087,83 @@ static void test_stall_release_clock_and_transport(void)
                    "telemetry is returned to its boot state for the live kernel");
 }
 
+/* quota_stall_fold_due is what a DISPATCH_LEVEL caller uses to decide whether
+ * to hand the fold to the PASSIVE worker. It must not do any of the fold's
+ * work: the fold walks every CPU under a per-CPU lock (measured 678 us against
+ * a 100 us single-DPC budget), and a predicate that rebaselined or claimed
+ * would put that walk right back in the DPC. Calling it repeatedly must
+ * therefore change nothing an aggregate would otherwise observe. */
+static void test_stall_fold_due_is_mutation_free(void)
+{
+    stall_begin();
+
+    /* Nothing is due immediately after seeding. */
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 0, "no service needed right after seeding");
+
+    /* Hammer the predicate, then confirm the window still has not closed:
+     * a mutating predicate would have consumed or advanced it. */
+    for (uint32_t i = 0; i < 64u; i++)
+        (void)quota_stall_fold_due();
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 0, "predicate calls did not fold the window");
+
+    /* Cross the deadline: now it reports due, and STAYS due until a real fold
+     * runs -- proving it never advanced the anchor itself. */
+    stall_advance(STALL_WINDOW_NS);
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 1, "elapsed deadline is due");
+    for (uint32_t i = 0; i < 8u; i++)
+        TEST_ASSERT_EQ(quota_stall_fold_due(), 1, "still due -- predicate did not consume it");
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 1, "the fold closes the window");
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 0, "and only the fold clears it");
+}
+
+/* The predicate must report the two states whose handling lives in the fold:
+ * an unseeded anchor and a backward clock. Returning 0 for those would strand
+ * self-seeding forever, because nothing would ever arm the passive worker. */
+static void test_stall_fold_due_reports_service_needed(void)
+{
+    quota_pressure_test_reset();
+    quota_stall_test_reset();
+    g_now_ns = STALL_BASE_NS;
+    quota_stall_test_set_clock(g_now_ns);
+
+    /* Unseeded: reset cleared the anchor and nothing has folded yet. */
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 1, "unseeded anchor needs service");
+
+    (void)quota_stall_aggregate();                 /* seeds */
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 0, "seeded and inside the window");
+
+    /* Backward clock: only a test clock can do this, and the fold rebaselines. */
+    g_now_ns = STALL_BASE_NS / 2u;
+    quota_stall_test_set_clock(g_now_ns);
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 1, "backward clock needs service");
+}
+
+/* Degraded mode: when the passive worker is unavailable the tick defers the
+ * fold rather than running it inline. The anchor is NOT advanced while
+ * deferring, so when the fold finally runs it must absorb every missed window
+ * in one closed-form step -- otherwise a worker that starts late would silently
+ * lose the stall history it was supposed to be measuring. */
+static void test_stall_deferred_folds_recover(void)
+{
+    stall_begin();
+
+    /* Skip several windows without folding: this is exactly what a down worker
+     * looks like to the stall lane. */
+    const uint32_t missed = 5u;
+    stall_advance(STALL_WINDOW_NS * missed);
+
+    /* Still exactly one pending service request, not five queued ones. */
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 1, "a multi-window gap is due");
+
+    /* One fold covers the whole gap and leaves nothing outstanding. */
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 1, "one fold closes the accumulated gap");
+    TEST_ASSERT_EQ(quota_stall_fold_due(), 0, "no residual windows left pending");
+
+    /* And the lane keeps working afterwards -- recovery is not one-shot. */
+    TEST_ASSERT_EQ(stall_step_window(), 1, "the lane still folds after recovery");
+}
+
+
 void test_register_quota_stall(void)
 {
     test_suite_register_cat("Quota: stall domains are isolated",
@@ -1145,6 +1222,13 @@ void test_register_quota_stall(void)
                             test_stall_info_class_roundtrip, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: resource-pressure class rejects short buffer",
                             test_stall_info_class_rejects_short_buffer, TEST_CAT_QUOTA);
+
+    test_suite_register_cat("Quota: fold-due predicate is mutation-free",
+                            test_stall_fold_due_is_mutation_free, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: fold-due reports unseeded and elapsed",
+                            test_stall_fold_due_reports_service_needed, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: deferred folds recover every missed window",
+                            test_stall_deferred_folds_recover, TEST_CAT_QUOTA);
 
     /* LAST: returns the clock and the transport to the live kernel. */
     test_suite_register_cat("Quota: stall clock and transport released",

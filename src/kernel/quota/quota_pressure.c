@@ -387,20 +387,48 @@ static uint32_t ring_used(void)
  * ring, so arming is skipped and the records simply wait (or age out as ring
  * drops, which is the honest accounting for "recorded before anything could
  * publish"). */
-static void drain_arm(void)
+/* Non-zero once for every fold the tick wanted but could not hand to the
+ * passive worker. The stall fold MUST NOT fall back to running inline in the
+ * DPC (that is the 678 us overrun this whole change exists to remove), so a
+ * missing worker means the window is not closed on time. Losing windows
+ * silently would let pressure read NORMAL through a real stall, so the
+ * degraded state is counted and reported instead of hidden.
+ *
+ * Recovery is NOT lossless, and must not be described as such. The fold does
+ * absorb a multi-period gap in closed form, but ewma_apply (quota_stall.c:371)
+ * is exact only for a CONSTANT sample: one averaged value replayed across N
+ * periods smears a stall confined to the latest window backward over quiet
+ * ones, and advances the rise/fall hysteresis ONCE where N distinct samples
+ * would have advanced it N times -- so a sustained stall can register as a
+ * single observation and leave the level at NORMAL. Closing that needs either
+ * a guaranteed fold per period or an explicit degrade-and-rebaseline on a
+ * missed deadline. Until then a nonzero counter here means the pressure signal
+ * for that span is SUSPECT, not merely late. */
+static uint64_t g_stall_fold_deferred;
+
+uint64_t quota_pressure_stall_folds_deferred(void)
+{
+    return __atomic_load_n(&g_stall_fold_deferred, __ATOMIC_ACQUIRE);
+}
+
+/* Returns non-zero when the drain is armed (or was already armed), zero when
+ * the request had to be dropped. The stall lane needs to distinguish those:
+ * publication records tolerate a drop because they accumulate in the ring, a
+ * stall window does not. */
+static int drain_arm(void)
 {
 #ifdef KERNEL_TESTS
     if (__atomic_load_n(&g_test_hold, __ATOMIC_ACQUIRE))
-        return;
+        return 0;
 #endif
     if (!__atomic_load_n(&g_ready, __ATOMIC_ACQUIRE))
-        return;
+        return 0;
     /* Checked on every arm rather than once at init: a worker that was not up
      * when the subsystem initialized may be up later, and a transient startup
      * failure must not disable publication for the rest of the boot. Records
      * accumulate in the ring meanwhile and their loss is counted. */
     if (!dpc_worker_started())
-        return;
+        return 0;
     if (__atomic_exchange_n(&g_drain_armed, 1u, __ATOMIC_ACQ_REL) == 0u)
         /* PINNED to the service CPU, never DPC_TARGET_CURRENT. A threaded DPC
          * still lands on the queueing CPU's normal queue until that CPU drains
@@ -412,6 +440,9 @@ static void drain_arm(void)
          * rest of the boot. ktimer pins its DPCs for exactly this reason. */
         KeInsertQueueDpcOnCpu(&g_drain_dpc, QUOTA_PRESSURE_SERVICE_CPU,
                               (void *)0, (void *)0, (int *)0);
+    /* Already-armed counts as armed: the callback has not run yet, so it will
+     * still observe whatever became due before it starts. */
+    return 1;
 }
 
 /* ==========================================================================
@@ -816,6 +847,19 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
     }
 #endif
 
+    /* THE STALL FOLD. Unconditionally, on every drain -- not keyed off a DPC
+     * argument. The fold is its own idempotent deadline check (its Stage 1
+     * returns immediately when nothing is due, and g_fold_busy serializes it),
+     * so an unconditional call costs a relaxed load when there is no work and
+     * cannot double-fold when there is. Encoding "this drain is for the stall
+     * lane" in the KDPC arguments would be a race: the arguments are mutable
+     * and a second arm can overwrite them before the callback reads them.
+     *
+     * Here rather than in the 50 ms tick because the fold walks every CPU's
+     * integrals under a per-CPU lock -- 678 us measured against a 100 us
+     * single-DPC watchdog budget. This is PASSIVE_LEVEL, where that is legal. */
+    quota_stall_aggregate();
+
     /* Retry any channel whose creation was DEFERRED, BEFORE publishing: this is
      * the only context that recurs, runs at PASSIVE_LEVEL, and can afford to
      * wait. Only the pending bits are attempted, so a permanently-failed channel
@@ -1168,11 +1212,23 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
     quota_pressure_sample_all();
     const uint64_t t_sample = uptime_ns();
 
-    /* The stall lane rides this timer rather than owning one: it aggregates
-     * every two seconds and this tick is every 50 ms, so the call is a cheap
-     * deadline check forty times out of forty-one. A second ktimer for a 2 s
-     * period would cost a timer slot and another DPC to save nothing. */
-    quota_stall_aggregate();
+    /* The stall lane rides this timer rather than owning one: it needs
+     * servicing every two seconds and this tick is every 50 ms, so the check is
+     * a cheap deadline test forty times out of forty-one. A second ktimer for a
+     * 2 s period would cost a timer slot and another DPC to save nothing.
+     *
+     * The FOLD ITSELF runs on the passive drain, not here. Measured on real
+     * hardware it costs 678 us against a 100 us single-DPC budget: it walks
+     * every CPU's stall integrals under a per-CPU lock, which is work for
+     * PASSIVE_LEVEL, not for a timer DPC that is holding off everything below
+     * DISPATCH on the service CPU. Only the mutation-free predicate stays here.
+     *
+     * A dropped arm is COUNTED, never converted back into an inline fold --
+     * falling back would reintroduce exactly the overrun this removes. The
+     * window is simply not closed until the worker exists, and the fold absorbs
+     * every missed period in closed form when it finally runs. */
+    if (quota_stall_fold_due() && !drain_arm())
+        __atomic_fetch_add(&g_stall_fold_deferred, 1ull, __ATOMIC_RELAXED);
     const uint64_t t_stall = uptime_ns();
 
     /* THE INDEPENDENT RETRY TRIGGER for a deferred notification channel. The

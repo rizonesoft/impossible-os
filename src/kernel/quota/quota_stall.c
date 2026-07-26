@@ -811,6 +811,32 @@ static uint64_t weighted_ns(const uint64_t *per_cpu, uint32_t stride,
     return acc / sum_weight;
 }
 
+int quota_stall_fold_due(void)
+{
+    /* MUTATION-FREE service-needed predicate, for a DISPATCH_LEVEL caller that
+     * must decide whether to hand the fold to a PASSIVE worker without doing
+     * any of the fold's work itself.
+     *
+     * It deliberately mirrors quota_stall_aggregate's STAGE 1 conditions and
+     * NOTHING else. Stage 1 is not purely a deadline test: on an unseeded
+     * anchor or a backward clock it CLAIMS fold ownership and rebaselines every
+     * CPU, which is exactly the MAX_CPUS lock walk that must not run in a DPC.
+     * Reporting those states as "due" and leaving the seeding to the aggregate
+     * on the passive side keeps the walk off DISPATCH_LEVEL while still letting
+     * a system that never seeded reach its first fold -- returning false there
+     * would strand self-seeding forever.
+     *
+     * A relaxed-ordering ACQUIRE load and two comparisons: no lock, no
+     * interrupt masking, no stores. Racing with a concurrent fold is harmless;
+     * the aggregate re-reads the anchor under its own claim and rechecks. */
+    const uint64_t now    = stall_now_ns();
+    const uint64_t anchor = __atomic_load_n(&g_anchor_ns, __ATOMIC_ACQUIRE);
+
+    if (anchor == 0 || now < anchor)
+        return 1;                        /* unseeded / backward clock: seed it */
+    return (now - anchor >= QUOTA_STALL_UPDATE_NS) ? 1 : 0;
+}
+
 int quota_stall_aggregate(void)
 {
     stall_window_t win;

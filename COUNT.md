@@ -15,10 +15,10 @@
 
 |                       |    Files |      Lines |
 | --------------------- | -------: | ---------: |
-| **C sources** (`.c`)  |      584 |     460483 |
-| **Headers** (`.h`)    |      489 |     144566 |
+| **C sources** (`.c`)  |      584 |     460649 |
+| **Headers** (`.h`)    |      489 |     144594 |
 | **Assembly** (`.asm`) |       11 |       1099 |
-| **Subtotal**          | **1084** | **606148** |
+| **Subtotal**          | **1084** | **606342** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1469** | **707073** |
+| **Core code + tooling**        | **1469** | **707267** |
 | **Supporting text + metadata** |  **476** | **197423** |
-| **All counted text files**     | **1945** | **904496** |
+| **All counted text files**     | **1945** | **904690** |
 
 > Vendored code excluded: ~14441 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               707,073 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               707,267 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 4 month(s), 22 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 707,073
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 707,267
 > lines of core code and tooling would take **181 developers** working for **4 month(s), 22 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-27 01:29 · commit `30155b6a`*
+*Last updated: 2026-07-27 01:56 · commit `82037166`*

@@ -695,6 +695,26 @@ int  quota_pressure_retry_due(const quota_pressure_retry_t *st, uint32_t pending
 void quota_pressure_retry_advance(quota_pressure_retry_t *st, uint32_t pending,
                                   uint64_t now_ns, int *out_warn);
 
+/* Count of stall-window folds the 50 ms tick found due but could not hand to
+ * the PASSIVE drain, because the threaded-DPC worker was not running.
+ *
+ * The fold deliberately does NOT fall back to running inline in the tick: it
+ * costs ~678 us against a 100 us single-DPC watchdog budget, and reintroducing
+ * that would defeat the reason it moved. So while the worker is down, stall
+ * windows are not closed on time and this counter is the visible evidence --
+ * an operator seeing pressure sit at NORMAL can tell the difference between
+ * "nothing is stalling" and "nobody folded". Nonzero and rising means the
+ * worker never started; nonzero and static means it recovered.
+ *
+ * INCOMPLETE SIGNAL. This counts refused ARMS, not unserviced FOLDS: a drain
+ * already armed but backlogged behind a blocking callback reports success, so a
+ * fold can go unserviced while this reads zero. A service-based signal (last
+ * successful fold, or overdue duration) is what actually answers the question.
+ * The accessor is also not yet surfaced through quota_pressure_dump() or the
+ * pressure information ABI, so the operator visibility described above is not
+ * yet delivered end to end. */
+uint64_t quota_pressure_stall_folds_deferred(void);
+
 #ifdef KERNEL_TESTS
 /* --- Test-only control ---------------------------------------------------- *
  * The state machine is deliberately reachable without quota_pressure_init, so
