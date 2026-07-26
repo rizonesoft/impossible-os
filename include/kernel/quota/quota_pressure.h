@@ -73,6 +73,11 @@
 #include "kernel/types.h"
 #include "kernel/quota/quota.h"
 
+/* Forward-declared rather than pulled in: the only thing this header does with a
+ * ledger is pass one back as an incarnation token, so including quota_ledger.h
+ * would make every pressure consumer depend on the ledger's whole surface. */
+struct quota_ledger;
+
 /* --- Levels --------------------------------------------------------------- */
 
 typedef enum quota_pressure_level {
@@ -513,6 +518,26 @@ typedef struct quota_failure_source {
  * sequence so a consumer can see that something was dropped between two it
  * received. MUST be called with no quota block lock held. */
 void quota_pressure_note_failure(const quota_failure_source_t *src);
+
+/* Emit a failure record for a refusal the per-task OBLIGATION CEILING made,
+ * naming the task's own quota block as the principal. The ceiling refuses before
+ * any block is charged, so nothing at the block layer can report it, and its own
+ * counters are per resource type only -- this is what puts a WHO beside the
+ * what. `current` and `limit` are the ceiling's obligation count and cap, not
+ * block usage; `requested` is recorded as one obligation.
+ *
+ * `ledger` is the ledger that made the refusal, and it is REQUIRED: the event is
+ * emitted only while the task still owns it. A caller holds a reference to the
+ * ledger but not to the task slot, so without that check a refusal could be
+ * billed to a new process that took the slot over in between.
+ *
+ * Called with no quota block lock held. A no-op for a task whose block is gone
+ * or that no longer owns `ledger`; the refusal remains visible through
+ * quota_ledger_ceiling_refusals_of. */
+void quota_report_ceiling_refusal(struct task *task, struct quota_ledger *ledger,
+                                  quota_resource_type_t type,
+                                  uint64_t current, uint64_t limit,
+                                  NTSTATUS result);
 
 /* --- Queries -------------------------------------------------------------- */
 

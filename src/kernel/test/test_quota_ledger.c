@@ -1253,9 +1253,11 @@ static void test_quota_ledger_ceiling_refuses_and_reserves_per_type(void)
     ledger_probe_reclaim(&probe);
 
     /* The refusal must be VISIBLE. It happens before quota_charge_chain, so no
-     * block failure counter and no quota failure event records it -- without a
-     * counter of its own a converted consumer could fail every request at the
-     * cap while every existing instrument showed a clean subsystem. */
+     * block failure counter records it -- without a counter of its own a
+     * converted consumer could fail every request at the cap while every
+     * existing instrument showed a clean subsystem. (The refusal ALSO emits a
+     * failure record naming the principal; that half is asserted in
+     * test_quota_pressure.c, which owns the ring's test protocol.) */
     TEST_ASSERT_EQ(quota_ledger_ceiling_refusal_count(), refusals_before + 1,
                    "a ceiling refusal is counted exactly once");
     /* And the per-type instrument names the class that was refused, so an

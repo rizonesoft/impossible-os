@@ -22,6 +22,9 @@
 #include "kernel/test/test.h"
 #include "kernel/quota/quota.h"
 #include "kernel/quota/quota_pressure.h"
+#include "kernel/quota/quota_ledger.h"  /* the per-task obligation ceiling */
+#include "kernel/sched/task.h"          /* task_current for the ceiling fill */
+#include "kernel/test/scratch.h"        /* TEST_SCRATCH_KBUF for that fill */
 #include "kernel/security/sid.h"
 
 /* A distinct resource type per test so tests cannot contaminate each other's
@@ -633,6 +636,132 @@ static void test_pressure_charge_refusal_emits_event(void)
                 "an owned block produces a non-zero SID digest");
 
     quota_block_deref(block);
+}
+
+/* A refusal made by the per-task OBLIGATION CEILING must reach this ring too.
+ *
+ * The ceiling refuses before quota_charge_chain runs, so no block ever sees the
+ * request and none of the block-layer reporting fires. Its own counters answer
+ * "which resource type", which leaves the principal -- the one axis an operator
+ * needs to act -- carried by nothing until this event exists. */
+static void test_pressure_ceiling_refusal_emits_event(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    QUOTA_FAILURE_RECORD  rec;
+    QUOTA_PRESSURE_RECORD unused;
+    const quota_resource_type_t type = QUOTA_RES_MAPPED_VIEW;
+    const uint32_t              cap  = quota_ledger_type_cap(type);
+
+    quota_pressure_test_reset();
+
+    /* Start from a task with no ledger so the fill below starts from zero
+     * obligations of this type whatever a sibling suite left behind. */
+    quota_ledger_task_release(t);
+
+    TEST_SCRATCH_KBUF(raw, QUOTA_LEDGER_TASK_MAX * sizeof(quota_obligation_t));
+    quota_obligation_t *obs  = (quota_obligation_t *)raw;
+    uint32_t            held = 0;
+
+    for (uint32_t i = 0; i < cap; i++) {
+        if (quota_ledger_charge(t, type, 1, &obs[held]) != STATUS_SUCCESS)
+            break;
+        held++;
+    }
+    TEST_ASSERT_EQ((uint64_t)held, (uint64_t)cap,
+                   "the type is filled to exactly its obligation cap");
+
+    /* The fill itself is the normal path; drop anything it produced so the next
+     * pop is unambiguously the refusal, and make sure the rate limiter cannot
+     * swallow it. */
+    pressure_drain();
+    quota_pressure_test_refill_tokens();
+
+    quota_obligation_t probe = { 0 };
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, type, 1, &probe),
+                   (uint64_t)STATUS_QUOTA_EXCEEDED,
+                   "one more obligation is refused by the ceiling");
+    quota_ledger_return(&probe);
+
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_test_pop(&unused, &rec),
+                   (uint64_t)QUOTA_PRESSURE_KIND_FAILURE,
+                   "the ceiling refusal produced a failure event");
+    TEST_ASSERT_EQ((uint64_t)rec.resource, (uint64_t)type,
+                   "the event names the refused resource type");
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)rec.result,
+                   (uint64_t)(uint32_t)STATUS_QUOTA_EXCEEDED,
+                   "and reports the policy status the caller received");
+    TEST_ASSERT_EQ(rec.block_id, quota_block_id(t->quota),
+                   "the event names the refused task's own quota block");
+    TEST_ASSERT_EQ((uint64_t)rec.principal, (uint64_t)QUOTA_PRINCIPAL_PROCESS,
+                   "the ceiling is a per-process policy, so the principal is the "
+                   "process layer");
+    TEST_ASSERT_EQ(rec.requested, 1ull,
+                   "one obligation is what was refused, whatever amount rode on it");
+    TEST_ASSERT_EQ(rec.limit, (uint64_t)cap,
+                   "the cap in force is the type's obligation cap, not a block limit");
+    TEST_ASSERT_EQ(rec.current, (uint64_t)cap,
+                   "the count carried is the one the refusal actually observed");
+
+    for (uint32_t i = 0; i < held; i++)
+        quota_ledger_return(&obs[i]);
+    quota_ledger_task_release(t);
+}
+
+/* A refusal made by a ledger the task NO LONGER OWNS names nobody.
+ *
+ * The refusing caller holds a reference to the ledger, not to the task slot, so
+ * between the refusal and the report a reap can hand that slot to a different
+ * process. Emitting then would bill one process's refusal to another -- worse
+ * than emitting nothing, because a wrong principal is acted on. Detaching the
+ * ledger while keeping it alive reproduces exactly that window. */
+static void test_pressure_ceiling_refusal_of_a_detached_ledger_is_silent(void)
+{
+    struct task *t = task_current();
+    if (!t || !t->quota)
+        return;
+
+    quota_obligation_t ob = { 0 };
+    quota_ledger_t    *stale;
+
+    quota_pressure_test_reset();
+    quota_ledger_task_release(t);
+
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, QUOTA_RES_MAPPED_VIEW, 1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "a charge materializes the ledger");
+    stale = ob.ledger;
+    TEST_ASSERT_NOT_NULL((void *)stale, "the obligation names its ledger");
+
+    /* Keep the ledger ALIVE while the task stops owning it -- the reporter must
+     * refuse on ownership, not merely survive a dangling pointer. */
+    quota_ledger_ref(stale);
+    quota_ledger_return(&ob);
+    quota_ledger_task_release(t);
+
+    pressure_drain();
+    quota_pressure_test_refill_tokens();
+
+    quota_report_ceiling_refusal(t, stale, QUOTA_RES_MAPPED_VIEW, 128ull, 128ull,
+                                 STATUS_QUOTA_EXCEEDED);
+
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_test_pending(), 0ull,
+                   "a refusal from a ledger the task no longer owns emits nothing");
+
+    /* And the guard is the ownership check, not a blanket refusal: the same call
+     * against the ledger the task DOES own still reports. */
+    TEST_ASSERT_EQ((uint64_t)quota_ledger_charge(t, QUOTA_RES_MAPPED_VIEW, 1, &ob),
+                   (uint64_t)STATUS_SUCCESS, "a fresh ledger is materialized");
+    pressure_drain();
+    quota_report_ceiling_refusal(t, ob.ledger, QUOTA_RES_MAPPED_VIEW, 128ull,
+                                 128ull, STATUS_QUOTA_EXCEEDED);
+    TEST_ASSERT_EQ((uint64_t)quota_pressure_test_pending(), 1ull,
+                   "the owning ledger's refusal still emits its record");
+
+    quota_ledger_return(&ob);
+    quota_ledger_deref(stale);
+    quota_ledger_task_release(t);
 }
 
 /* A successful charge is not a failure. The event stream must not be polluted
@@ -1762,6 +1891,11 @@ void test_register_quota_pressure(void)
                             test_pressure_failure_record_contract, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: charge refusal emits event",
                             test_pressure_charge_refusal_emits_event, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: obligation-ceiling refusal emits event",
+                            test_pressure_ceiling_refusal_emits_event, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: a detached ledger's refusal names nobody",
+                            test_pressure_ceiling_refusal_of_a_detached_ledger_is_silent,
+                            TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: successful charge emits no event",
                             test_pressure_success_emits_no_event, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: failure event rate limit counts drops",

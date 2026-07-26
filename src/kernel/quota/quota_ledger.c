@@ -6,6 +6,7 @@
  * ------------------------------------------------------------------------- */
 #include "kernel/quota/quota.h"
 #include "kernel/quota/quota_ledger.h"
+#include "kernel/quota/quota_pressure.h" /* failure record for a ceiling refusal */
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"   /* KeGetCurrentIrql for the diagnostic gate */
 #include "kernel/sched/dpc.h"    /* threaded DPC for deferred completion */
@@ -694,10 +695,17 @@ static void quota_ledger_count_refusal(uint64_t *cell)
  * says "ask again", which is exactly what a caller should do. Every CAS failure
  * means another CPU made progress, so the bound is generous rather than tight. */
 static NTSTATUS quota_ledger_reserve_obligation(quota_ledger_t *ledger,
-                                                quota_resource_type_t type)
+                                                quota_resource_type_t type,
+                                                int32_t *out_observed)
 {
     atomic_t     *counter = &ledger->obligations[(uint32_t)type];
     const int32_t cap     = (int32_t)s_type_obligation_cap[(uint32_t)type];
+
+    /* The count this call actually decided on, handed back so a refusal can be
+     * REPORTED with the number that produced it. Re-reading the counter at the
+     * report site would publish a value another CPU may already have moved,
+     * which is the same snapshot rule the block-layer reporter follows. */
+    *out_observed = 0;
 
     /* A RESERVATION IS COUNTED FROM THE MOMENT IT IS TAKEN, including the brief
      * window before its charge commits, and a charge that then fails rolls it
@@ -716,6 +724,8 @@ static NTSTATUS quota_ledger_reserve_obligation(quota_ledger_t *ledger,
      * worth keeping; one that is momentarily permissive is not. */
     for (uint32_t attempt = 0; attempt < QUOTA_LEDGER_RESERVE_TRIES; attempt++) {
         int32_t cur = atomic_read(counter);
+
+        *out_observed = cur;
 
         /* A COUNT OUTSIDE [0, cap] IS CORRUPTION, AND IT FAILS CLOSED. No reachable
          * path produces one -- every release is paired with a slot-occupancy
@@ -1786,7 +1796,8 @@ NTSTATUS quota_ledger_charge_from(struct task *task, quota_resource_type_t type,
      * quota_charge_chain's own (SEALED -> terminating, CLOSED -> retry), so the
      * status a caller sees does not depend on which check happened to run
      * first. */
-    NTSTATUS reserved = quota_ledger_reserve_obligation(ledger, type);
+    int32_t  observed = 0;
+    NTSTATUS reserved = quota_ledger_reserve_obligation(ledger, type, &observed);
     if (reserved != STATUS_SUCCESS) {
         /* ASK THE GATE, do not imitate it. Reading quota_gate_state_of and
          * mapping the answer by hand reproduced the classification ALMOST
@@ -1826,6 +1837,20 @@ NTSTATUS quota_ledger_charge_from(struct task *task, quota_resource_type_t type,
         if (reserved == STATUS_QUOTA_EXCEEDED) {
             quota_ledger_count_refusal(&g_ceiling_refusals);
             quota_ledger_count_refusal(&g_ceiling_refusals_by_type[(uint32_t)type]);
+
+            /* And name WHO, which the counters above cannot. Emitted on the same
+             * condition they are counted on, so the ring and the per-type totals
+             * can never disagree about what happened, and only AFTER the gate has
+             * been asked -- a task told RETRY or TERMINATING was not refused by
+             * policy and must not appear in the failure ring as though it were.
+             * No block lock is held here (the gate was entered and left above),
+             * which is this reporter's precondition. The ledger goes with it:
+             * this reference keeps the LEDGER alive but not the task slot, so
+             * the reporter re-checks that the task still owns this ledger before
+             * naming its block. */
+            quota_report_ceiling_refusal(task, ledger, type, (uint64_t)observed,
+                                         (uint64_t)s_type_obligation_cap[(uint32_t)type],
+                                         reserved);
         }
 
         quota_ledger_deref(ledger);

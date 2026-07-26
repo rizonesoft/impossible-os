@@ -1158,6 +1158,68 @@ static void quota_report_refusal(const quota_block_t *block,
     quota_pressure_note_failure(&src);
 }
 
+/* Report a refusal the per-task OBLIGATION CEILING made (quota_ledger.c), which
+ * happens before any block is charged and therefore never reaches the reporter
+ * above.
+ *
+ * The ceiling counts its refusals by resource type, so the axis it cannot supply
+ * on its own is WHO -- and this ring already carries that. The capture lives
+ * here rather than in the ledger because the SID digest and the best-effort
+ * identity rules are this file's; a second copy over there is how two reporters
+ * drift apart.
+ *
+ * `current` and `limit` are the CEILING's numbers -- obligations held of the
+ * type, and that type's cap -- not block usage. The refusal was decided against
+ * the obligation budget, so reporting block usage would answer a question nobody
+ * asked. `requested` is 1 for the same reason: one obligation is what was
+ * refused, whatever the amount attached to it.
+ *
+ * The task's block is read under `task->quota_lock` with the reference taken
+ * INSIDE that section, because a release store cannot make that read
+ * teardown-safe. The section deliberately does not go through a counted lock
+ * helper: it runs only on the refusal path and is not part of the charge cost
+ * the budget instrumentation pins.
+ *
+ * `ledger` IS AN INCARNATION CHECK, and it is why this takes a ledger at all.
+ * The refusing caller holds a reference to the ledger that made the decision but
+ * NOT to the task slot: quota_ledger_charge_from takes an explicit task, so its
+ * caller can be preempted after the gate is left, and a reap on another CPU can
+ * then clear `task->quota_ledger` and let a NEW process occupy the slot. Pinning
+ * whatever `task->quota` happens to be by then would bill one process's refusal
+ * to an unrelated one -- the exact misattribution this record exists to prevent.
+ * `task->quota_ledger` is published and cleared under this same lock (see the
+ * pin rule in quota_ledger.c), so requiring it to still name the refusing ledger
+ * costs one comparison and makes the principal true by construction rather than
+ * by timing.
+ *
+ * A task whose block went away mid-refusal, or that no longer owns the refusing
+ * ledger, emits NOTHING. A record exists to name a principal, and one naming the
+ * WRONG principal is worse than none; the refusal itself is still visible
+ * through quota_ledger_ceiling_refusals_of. */
+void quota_report_ceiling_refusal(struct task *task, struct quota_ledger *ledger,
+                                  quota_resource_type_t type,
+                                  uint64_t current, uint64_t limit,
+                                  NTSTATUS result)
+{
+    quota_block_t *block = (quota_block_t *)0;
+    uint64_t       flags;
+
+    if (!task || !ledger || (uint32_t)type >= (uint32_t)QUOTA_RESOURCE_TYPE_COUNT)
+        return;
+
+    spin_lock_irqsave(&task->quota_lock, &flags);
+    if (task->quota_ledger == ledger && task->quota &&
+        quota_block_try_ref(task->quota))
+        block = task->quota;
+    spin_unlock_irqrestore(&task->quota_lock, flags);
+
+    if (!block)
+        return;
+
+    quota_report_refusal(block, type, 1ull, current, limit, result);
+    quota_block_deref(block);
+}
+
 /* Read a type's usage and limit coherently. Caller holds the block lock, so the
  * pair cannot straddle a mutation the way two lock-free queries would. */
 static void quota_snapshot_locked(const quota_block_t *block, quota_resource_type_t type,
