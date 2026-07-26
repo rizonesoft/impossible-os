@@ -1331,8 +1331,12 @@ else
 fi
 
 # Sub-test 9d: `by-domain` enumerates the whole tree.
+# `--limit 0` is the explicit "complete set" request. Row-returning
+# subcommands apply DEFAULT_ROW_LIMIT when --limit is absent, so a
+# completeness assertion has to opt back in rather than rely on the
+# default -- that opt-in IS the no-lost-answers path being exercised.
 EXPECTED_NODES=$(find "$REPO_ROOT/todo" -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | wc -l)
-ACTUAL_ROWS=$(q_live by-domain --quiet | wc -l)
+ACTUAL_ROWS=$(q_live by-domain --limit 0 --quiet | wc -l)
 if [ "$ACTUAL_ROWS" -eq "$EXPECTED_NODES" ]; then
     t_pass "query: by-domain row count matches find (${ACTUAL_ROWS} == ${EXPECTED_NODES})"
 else
@@ -1390,7 +1394,7 @@ else
 fi
 
 # Sub-test 9k: `stale --days 0` prints every node (nothing is newer).
-STALE_ALL=$(q_live stale --days 0 --quiet | wc -l)
+STALE_ALL=$(q_live stale --days 0 --limit 0 --quiet | wc -l)
 if [ "$STALE_ALL" -eq "$EXPECTED_NODES" ]; then
     t_pass "query: stale --days 0 lists every node (${STALE_ALL})"
 else
@@ -2614,15 +2618,20 @@ tm = srv._tool_manager._tools
 # backlinks / deferred / deferred-by / code must require 'target'.
 # code-by must require 'path' (not 'target').
 # stale must accept optional 'days'. by-domain must accept optional 'domain'.
+# Row-returning tools additionally expose the bounding params
+# (limit / offset / fields, plus scope where the verb has a domain
+# column). stats is unbounded by shape and must expose NONE of them --
+# advertising a limit on a verb with no rows to page would be a lie.
+_B = ['limit', 'offset', 'fields', 'scope']
 expected = {
     'backlinks':   {'required': ['target']},
     'deferred':    {'required': ['target']},
     'deferred-by': {'required': ['target']},
     'code':        {'required': ['target']},
     'code-by':     {'required': ['path']},
-    'stale':       {'props': ['days'], 'required': []},
-    'by-domain':   {'props': ['domain'], 'required': []},
-    'stats':       {'required': []},
+    'stale':       {'props': ['days'] + _B, 'required': []},
+    'by-domain':   {'props': ['domain'] + _B, 'required': []},
+    'stats':       {'props': [], 'required': []},
     'ready':       {'required': []},
 }
 failed = []

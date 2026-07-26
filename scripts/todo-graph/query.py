@@ -32,6 +32,21 @@
 #   --repo-root PATH     override repo root (for tests)
 #   --quiet              suppress [query.py] prefix + pre-migration notice
 #
+# Output bounds (row-returning subcommands; stats + render are exempt):
+#   --limit N            max rows (default 50; `0` = complete set, CLI only)
+#   --offset N           skip N rows -- pages are re-runnable (total order)
+#   --scope DOMAIN       restrict to one domain (verbs with a domain column)
+#   --fields a,b,c       return only these columns
+#   --max-bytes N        hard ceiling (default 24000); breaching it FAILS
+#                        CLOSED with the bound + total_matching + the exact
+#                        narrowing flags, never a silent partial set
+#
+# --json responses carry returned / total_matching / truncated (+ limit,
+# offset, and `next` when truncated) alongside `rows`, so a page can never
+# be mistaken for the complete set. TSV/markdown stay pure columnar data;
+# their envelope goes to stderr, and a TRUNCATED result is announced there
+# even under --quiet.
+#
 # Pre-migration mode: until §5 ships, the 223 TODO cache nodes carry
 # id=null, status="no-frontmatter". Status-gated subcommands (ready /
 # blocked / blocking) print a one-shot pre-migration notice on stderr
@@ -47,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import json
 import os
 import re
@@ -78,6 +94,62 @@ from validate import (  # noqa: E402
 
 DEFAULT_STALE_DAYS = 90
 POLL_INTERVAL_SECONDS = 2.0
+
+# ----------------------------------------------------------------------
+# Output bounding (owner TODO-06, query-surface bound)
+#
+# Every row-returning subcommand scales with the node count, so an
+# unbounded result set lands whole in whatever consumes it -- including a
+# model context via mcp_server.py. These constants bound what comes OUT
+# of the index; nothing about the index itself changes.
+#
+# DEFAULT_ROW_LIMIT applies when --limit is absent. `--limit 0` is an
+# explicit, CLI-only request for the complete set: it is how a human or a
+# script says "I want all of it" (and how the completeness assertions in
+# tests/test_build.sh opt back in). The MCP surface clamps into
+# [1, MCP_MAX_ROW_LIMIT] and can never reach the unlimited form.
+#
+# BYTES_PER_TOKEN is a deliberately crude divisor. It is not a tokenizer;
+# it is a stable, uniformly-applied estimator so before/after numbers are
+# comparable to each other.
+# ----------------------------------------------------------------------
+DEFAULT_ROW_LIMIT = 50
+UNLIMITED_ROW_LIMIT = 0
+# Chosen so a max-limit request FITS under OUTPUT_CEILING_BYTES for every
+# verb rather than tripping the fail-closed path. The widest row measured
+# is by-domain at ~193 bytes, so 24000 bytes holds ~124 rows; 100 leaves
+# headroom. A cap above that would make "ask for the most you may" a
+# reliable way to get zero rows back and force a second call -- the
+# ceiling should be a backstop for pathological rows, not the normal path.
+MCP_MAX_ROW_LIMIT = 100
+OUTPUT_CEILING_BYTES = 24000
+BYTES_PER_TOKEN = 3.9
+
+# Subcommands exempt from row bounding, with the reason each is exempt:
+#   stats  -- shape is O(taxonomy), not O(nodes): scalars plus dicts keyed
+#             by status/domain plus two hardcoded [:3] top-N lists. It
+#             cannot grow with the tree, and tests/test_build.sh 9l pins
+#             its seven top-level keys, so it stays unwrapped too.
+#   render -- returns one self-delimiting diagram string, not rows, and is
+#             deliberately absent from the MCP tool surface. It already
+#             takes --scope, and commonly writes to --output <file>.
+UNBOUNDED_SUBCOMMANDS = frozenset({"stats", "render"})
+
+# Severity rank for the two stamp verbs (deferred / deferred-by). These
+# answer "what is blocking me", so the most severe rows must sort FIRST:
+# a truncated page that dropped a Critical while keeping Mediums would be
+# a bound that hides a blocker, which is worse than no bound at all.
+# Measured on the live tree: `deferred native-api-ssdt` returns 58 rows of
+# which 6 are Critical, and a severity-blind first-50 page lost 2 of them.
+# Unknown / empty severities sort last but are never dropped ahead of a
+# ranked one. Vocabulary observed in the cache: Critical, H, M, L, "".
+SEVERITY_RANK = {"critical": 0, "h": 1, "high": 1, "m": 2, "medium": 2,
+                 "l": 3, "low": 3}
+SEVERITY_UNKNOWN_RANK = 4
+
+
+def _severity_rank(v) -> int:
+    return SEVERITY_RANK.get(str(v or "").strip().lower(), SEVERITY_UNKNOWN_RANK)
 
 # Match `(src/...)` or `(include/...)` path references inside Notes blocks.
 # Path body accepts a broad file-path charset without the trailing close-paren.
@@ -501,7 +573,10 @@ def cmd_backlinks(ctx: Ctx, args) -> tuple:
             "kind": e["kind"],
             "section": e.get("section") or "",
         })
-    rows.sort(key=lambda r: (r["domain"], r["id"], r["kind"]))
+    # Total order: the trailing column is appended so a bounded page is
+    # reproducible across cache rebuilds, not merely within one run.
+    rows.sort(key=lambda r: (r["domain"], r["id"], r["kind"],
+                             str(r.get("section") or "")))
     return rows, ["domain", "id", "kind", "section"]
 
 
@@ -530,7 +605,12 @@ def cmd_deferred(ctx: Ctx, args) -> tuple:
             "section": x.get("target_section") or "",
             "item_name": x.get("item_name") or "",
         })
-    rows.sort(key=lambda r: (r["kind"], r["target"], r["section"]))
+    # Severity FIRST so a bounded page cannot drop a Critical while
+    # keeping a Medium; remaining columns give a total order so the page
+    # is reproducible across cache rebuilds.
+    rows.sort(key=lambda r: (_severity_rank(r.get("severity")),
+                             r["kind"], r["target"], r["section"],
+                             str(r.get("item_name") or "")))
     return rows, ["kind", "severity", "target", "section", "item_name"]
 
 
@@ -560,7 +640,11 @@ def cmd_deferred_by(ctx: Ctx, args) -> tuple:
                 "section": x.get("target_section") or "",
                 "item_name": x.get("item_name") or "",
             })
-    rows.sort(key=lambda r: (r["source"], r["kind"], r["section"]))
+    # Severity FIRST (see cmd_deferred): an inbound blocker must survive
+    # truncation. Remaining columns give a total, reproducible order.
+    rows.sort(key=lambda r: (_severity_rank(r.get("severity")),
+                             r["source"], r["kind"], r["section"],
+                             str(r.get("item_name") or "")))
     return rows, ["source", "kind", "severity", "section", "item_name"]
 
 
@@ -888,6 +972,213 @@ def _emit_stats_markdown(s: dict):
 
 
 # ----------------------------------------------------------------------
+# Output bounding
+#
+# One choke point for every row-returning subcommand: scope filter, then
+# field projection, then offset/limit, then a hard byte ceiling. Verbs in
+# UNBOUNDED_SUBCOMMANDS bypass all of it (see the constant for why).
+# ----------------------------------------------------------------------
+
+def est_tokens(n_bytes: int) -> int:
+    """Uniform crude estimator. Not a tokenizer -- a stable divisor so the
+    before/after numbers in the bounding report are comparable."""
+    return int(n_bytes / BYTES_PER_TOKEN)
+
+
+class CeilingExceeded(Exception):
+    """Raised instead of emitting a silently-truncated set. Carries the
+    envelope that main() writes before returning a nonzero exit code."""
+
+    def __init__(self, envelope: dict):
+        super().__init__(envelope.get("error", "output-ceiling-exceeded"))
+        self.envelope = envelope
+
+
+def _narrowing_flags(columns, scope_supported: bool, limit: int) -> list:
+    """The exact flags a caller can add to bring an over-ceiling query
+    under it. Returned in the failure envelope so the next call is
+    mechanical rather than guesswork."""
+    flags = [f"--limit {max(1, limit // 2)}"]
+    if scope_supported:
+        flags.append("--scope <domain>")
+    if columns:
+        keep = ",".join(list(columns)[:2])
+        flags.append(f"--fields {keep}")
+    flags.append("--offset N  (page through the remainder)")
+    return flags
+
+
+def _apply_scope(rows, columns, scope: str, subcommand: str):
+    """Filter rows to a single domain. Fails closed when the subcommand
+    exposes no domain column: silently ignoring --scope would let a caller
+    believe they narrowed a query that in fact returned everything."""
+    if "domain" not in (columns or []):
+        sys.stderr.write(
+            f"[query.py] FATAL: --scope is not supported by '{subcommand}' "
+            f"(no domain column; columns are: {','.join(columns or [])}). "
+            f"Supported on: ready, blocked, blocking, by-domain, backlinks, "
+            f"orphans, stale, code-by.\n"
+        )
+        sys.exit(2)
+    return [r for r in rows if (r.get("domain") or "") == scope]
+
+
+def _apply_fields(rows, columns, fields: str, subcommand: str):
+    """Project rows onto a caller-chosen column subset. An unknown field
+    is an error, not a silently-dropped request."""
+    want = [f.strip() for f in fields.split(",") if f.strip()]
+    unknown = [f for f in want if f not in (columns or [])]
+    if unknown:
+        sys.stderr.write(
+            f"[query.py] FATAL: unknown --fields for '{subcommand}': "
+            f"{','.join(unknown)}. Valid columns: {','.join(columns or [])}\n"
+        )
+        sys.exit(2)
+    projected = [{k: r.get(k) for k in want} for r in rows]
+    return projected, want
+
+
+def bound_rows(rows, columns, args, subcommand: str):
+    """Apply scope -> fields -> offset/limit. Returns (rows, columns, meta).
+
+    meta always carries returned / total_matching / truncated so a caller
+    can never mistake a bounded page for the complete set."""
+    total_before_scope = len(rows)
+    scope = getattr(args, "scope", None) or None
+    if scope:
+        rows = _apply_scope(rows, columns, scope, subcommand)
+
+    if getattr(args, "fields", None):
+        rows, columns = _apply_fields(rows, columns, args.fields, subcommand)
+
+    total_matching = len(rows)
+
+    limit = getattr(args, "limit", None)
+    limit = DEFAULT_ROW_LIMIT if limit is None else int(limit)
+    offset = int(getattr(args, "offset", None) or 0)
+    if offset < 0:
+        sys.stderr.write("[query.py] FATAL: --offset must be >= 0\n")
+        sys.exit(2)
+
+    if limit == UNLIMITED_ROW_LIMIT:
+        page = rows[offset:] if offset else rows
+    else:
+        if limit < 0:
+            sys.stderr.write("[query.py] FATAL: --limit must be >= 0\n")
+            sys.exit(2)
+        page = rows[offset:offset + limit]
+
+    truncated = (offset + len(page)) < total_matching or offset > 0
+    meta = {
+        "subcommand": subcommand,
+        "returned": len(page),
+        "total_matching": total_matching,
+        "truncated": bool(truncated),
+        "limit": limit,
+        "offset": offset,
+        "scope": scope,
+        "unbounded": limit == UNLIMITED_ROW_LIMIT,
+    }
+    if scope:
+        meta["total_before_scope"] = total_before_scope
+    return page, columns, meta
+
+
+def _render_to_string(rows, columns, fmt: str) -> str:
+    """Run the existing emitters into a buffer so the byte ceiling can be
+    measured on the real output rather than an approximation."""
+    buf = io.StringIO()
+    saved = sys.stdout
+    sys.stdout = buf
+    try:
+        emit(rows, columns, fmt)
+    finally:
+        sys.stdout = saved
+    return buf.getvalue()
+
+
+def emit_bounded(rows, columns, fmt: str, meta: dict, ceiling: int,
+                 scope_supported: bool = True, quiet: bool = False) -> None:
+    """Emit a bounded result, or raise CeilingExceeded.
+
+    JSON carries the envelope inline, always, including for an empty
+    result: that is the machine surface (and the only one MCP serves), so
+    the completeness fields must travel with the data.
+
+    TSV / markdown are COLUMNAR contracts -- callers run awk / cut / wc -l
+    over them, so stdout stays pure data and the envelope goes to stderr.
+    An inline trailer here corrupted `awk -F'\\t' '{print $1}' | sort -u`
+    into seeing a second value. Suppression rule: --quiet hides the
+    informational envelope, but a truncated result is announced even under
+    --quiet, because a silently-truncated set reading as complete is the
+    exact failure this layer exists to prevent."""
+    if fmt == "json":
+        # Only load-bearing fields travel. The envelope is a flat cost on
+        # every response, so it dominates a small result set: carrying
+        # `subcommand` (the caller already knows it) plus null/default
+        # `scope` / `unbounded` cost ~68 bytes per call for nothing.
+        # returned / total_matching / truncated are always present, as is
+        # the limit+offset pair that makes a page re-runnable.
+        envelope = {
+            "returned": meta["returned"],
+            "total_matching": meta["total_matching"],
+            "truncated": meta["truncated"],
+            "limit": meta["limit"],
+            "offset": meta["offset"],
+            "rows": rows,
+        }
+        if meta.get("scope"):
+            envelope["scope"] = meta["scope"]
+            envelope["total_before_scope"] = meta.get("total_before_scope")
+        if meta.get("unbounded"):
+            envelope["unbounded"] = True
+        if meta["truncated"]:
+            envelope["next"] = (
+                f"--limit {meta['limit']} --offset "
+                f"{meta['offset'] + meta['returned']}"
+            )
+        body = json.dumps(envelope, indent=2, sort_keys=True) + "\n"
+    else:
+        body = _render_to_string(rows, columns, fmt)
+        if not meta.get("unbounded") and (meta.get("truncated") or not quiet):
+            label = "WARN: truncated" if meta.get("truncated") else "bounded"
+            sys.stderr.write(
+                f"[query.py] {label}: returned={meta['returned']} "
+                f"total_matching={meta['total_matching']} "
+                f"truncated={str(meta['truncated']).lower()} "
+                f"limit={meta['limit']} offset={meta['offset']}"
+                + ("  (add --limit 0 for the complete set)"
+                   if meta.get("truncated") else "")
+                + "\n"
+            )
+
+    n_bytes = len(body.encode("utf-8"))
+    # `--limit 0` is the explicit, CLI-only "give me the complete set"
+    # request, so the ceiling does not apply to it: a caller who asked for
+    # everything must be able to receive everything, or the no-lost-answers
+    # guarantee has no terminating path. The MCP surface cannot reach this
+    # branch -- _clamp_limit maps 0 onto the default before argv is built.
+    if n_bytes > ceiling and not meta.get("unbounded"):
+        raise CeilingExceeded({
+            "error": "output-ceiling-exceeded",
+            "subcommand": meta["subcommand"],
+            "ceiling_bytes": ceiling,
+            "would_emit_bytes": n_bytes,
+            "would_emit_est_tokens": est_tokens(n_bytes),
+            "returned": 0,
+            "total_matching": meta["total_matching"],
+            "truncated": True,
+            "limit": meta["limit"],
+            "offset": meta["offset"],
+            "narrow_with": _narrowing_flags(columns, scope_supported,
+                                            meta["limit"] or DEFAULT_ROW_LIMIT),
+            "hint": "no rows were emitted; this response is the bound, not a "
+                    "partial answer. Re-run with one of narrow_with.",
+        })
+    sys.stdout.write(body)
+
+
+# ----------------------------------------------------------------------
 # Watch loop
 # ----------------------------------------------------------------------
 
@@ -1013,6 +1304,29 @@ def _add_shared_flags(ap: argparse.ArgumentParser, *, is_subparser: bool):
     ap.add_argument("--quiet", action="store_true",
                     help="suppress stderr notices + [query.py] prefix",
                     **common)
+    # --- Output bounding ------------------------------------------------
+    # `--scope` doubles as the render subcommand's domain filter: the
+    # semantics were already identical ("restrict to a single domain"), so
+    # it is declared once here rather than twice with a name collision.
+    ap.add_argument("--limit", type=int,
+                    help=f"max rows to return (default: {DEFAULT_ROW_LIMIT}; "
+                         f"0 = no limit, CLI only)",
+                    **(common if is_subparser else {"default": None}))
+    ap.add_argument("--offset", type=int,
+                    help="skip this many rows before returning (default: 0)",
+                    **(common if is_subparser else {"default": None}))
+    ap.add_argument("--scope",
+                    help="restrict to a single domain (e.g. 00-infrastructure)",
+                    **(common if is_subparser else {"default": None}))
+    ap.add_argument("--fields",
+                    help="comma-separated subset of columns to return "
+                         "(default: all columns for the subcommand)",
+                    **(common if is_subparser else {"default": None}))
+    ap.add_argument("--max-bytes", dest="max_bytes", type=int,
+                    help=f"hard output ceiling in bytes "
+                         f"(default: {OUTPUT_CEILING_BYTES}); breaching it "
+                         f"fails closed rather than truncating",
+                    **(common if is_subparser else {"default": None}))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1036,8 +1350,9 @@ def _build_parser() -> argparse.ArgumentParser:
                                 default="mermaid",
                                 help="render format (default: mermaid)")
             elif nargs == "scope-opt":
-                sp.add_argument("--scope", default=None,
-                                help="restrict render to a single domain (e.g. 00-infrastructure)")
+                # Now supplied by _add_shared_flags for every subcommand;
+                # re-adding it here would collide on the option string.
+                continue
             elif nargs == "output-opt":
                 sp.add_argument("--output", dest="output_path", default=None,
                                 help="write rendered output to this file (default: stdout)")
@@ -1150,18 +1465,72 @@ def main(argv=None) -> int:
         ctx = _build_ctx()
         rows, columns = fn(ctx, args)
         output_path = getattr(args, "output_path", None)
+
+        # Bounding applies to row-returning subcommands only. `stats`
+        # (scalar dict, columns is None) and `render` (raw text sentinel)
+        # are exempt by shape as well as by name -- see
+        # UNBOUNDED_SUBCOMMANDS for the reasoning.
+        bounded = (
+            args.subcommand not in UNBOUNDED_SUBCOMMANDS
+            and columns is not None
+            and columns != "__RAW_TEXT__"
+        )
+
+        if not bounded:
+            for flag in ("limit", "offset", "fields"):
+                if getattr(args, flag, None) not in (None, ""):
+                    sys.stderr.write(
+                        f"[query.py] WARN: --{flag} does not apply to "
+                        f"'{args.subcommand}' (unbounded by design); ignored\n"
+                        if not args.quiet else ""
+                    )
+            if output_path:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    saved = sys.stdout
+                    sys.stdout = f
+                    try:
+                        emit(rows, columns, fmt)
+                    finally:
+                        sys.stdout = saved
+            else:
+                emit(rows, columns, fmt)
+            return
+
+        page, out_columns, meta = bound_rows(rows, columns, args,
+                                             args.subcommand)
+        ceiling = getattr(args, "max_bytes", None) or OUTPUT_CEILING_BYTES
+        scope_supported = "domain" in (columns or [])
+
         if output_path:
-            # Redirect stdout for a single call so emit() writes to the
-            # target file without each emitter needing to know about it.
+            # A file sink is not a model context; the ceiling exists to
+            # protect the latter. Row bounds still apply so the file
+            # matches what the same flags would print.
             with open(output_path, "w", encoding="utf-8") as f:
                 saved = sys.stdout
                 sys.stdout = f
                 try:
-                    emit(rows, columns, fmt)
+                    emit_bounded(page, out_columns, fmt, meta,
+                                 ceiling=max(ceiling, 1 << 30),
+                                 scope_supported=scope_supported,
+                                 quiet=args.quiet)
                 finally:
                     sys.stdout = saved
         else:
-            emit(rows, columns, fmt)
+            emit_bounded(page, out_columns, fmt, meta, ceiling=ceiling,
+                         scope_supported=scope_supported, quiet=args.quiet)
+
+    def _run_once_guarded():
+        """Ceiling breach is a normal, expected outcome -- it must render
+        as a machine-readable envelope, not a traceback. Returns the exit
+        code so mcp_server.py (which calls main() in-process) receives the
+        envelope on stdout rather than an exception."""
+        try:
+            _run_once()
+            return 0
+        except CeilingExceeded as exc:
+            sys.stdout.write(json.dumps(exc.envelope, indent=2,
+                                        sort_keys=True) + "\n")
+            return 3
 
     if args.watch:
         # Ensure the todo/ directory exists before watching. Also regenerate
@@ -1170,14 +1539,15 @@ def main(argv=None) -> int:
         # won't trigger a rebuild for a schema-stable cache.
         def _watch_rebuild_and_run():
             _rebuild_cache(cache_path, repo_root, args.quiet)
-            _run_once()
+            # A ceiling breach must not kill an interactive watcher; the
+            # envelope is printed and the loop continues to the next tick.
+            _run_once_guarded()
         # First run uses the cache already primed at startup (may be stale
         # if the user edited a file between last build and invoking watch).
         _rebuild_cache(cache_path, repo_root, args.quiet)
         watch_loop(_watch_rebuild_and_run, repo_root / "todo", args.quiet)
-    else:
-        _run_once()
-    return 0
+        return 0
+    return _run_once_guarded()
 
 
 if __name__ == "__main__":

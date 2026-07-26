@@ -172,6 +172,21 @@ def _find_repo_root() -> Path:
     return Path.cwd()
 
 
+def _clamp_limit(raw: Any) -> int:
+    """Map any caller-supplied limit into [1, MCP_MAX_ROW_LIMIT].
+
+    Absent, zero, negative and non-integer all collapse to the default.
+    Zero is query.py's 'complete set' sentinel, so collapsing it here is
+    what makes an unbounded result unreachable from the MCP surface."""
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return _query_mod.DEFAULT_ROW_LIMIT
+    if v <= 0:
+        return _query_mod.DEFAULT_ROW_LIMIT
+    return min(v, _query_mod.MCP_MAX_ROW_LIMIT)
+
+
 def _call_query(subcommand: str, args_ns: argparse.Namespace, repo_root: Path,
                 auto_rebuild: bool = True) -> str:
     """Invoke query.main() with the synthesized namespace and capture
@@ -197,6 +212,26 @@ def _call_query(subcommand: str, args_ns: argparse.Namespace, repo_root: Path,
     ]
     if hasattr(args_ns, "days") and args_ns.days is not None:
         argv.extend(["--days", str(args_ns.days)])
+
+    # --- Output bound (always applied, never opt-out) -------------------
+    # The MCP surface serves a model context, so an unbounded result set
+    # can never be requested through it. query.py's `--limit 0` (complete
+    # set) is deliberately unreachable here: _clamp_limit maps 0, a
+    # negative, or a non-integer onto the default, and caps the maximum.
+    # Verbs that are unbounded by shape (stats) ignore these flags in
+    # query.py, so passing them is harmless and keeps this path uniform.
+    if subcommand not in _query_mod.UNBOUNDED_SUBCOMMANDS:
+        argv.extend(["--limit", str(_clamp_limit(getattr(args_ns, "limit", None)))])
+        scope = getattr(args_ns, "scope", None)
+        if scope:
+            argv.extend(["--scope", str(scope)])
+        fields = getattr(args_ns, "fields", None)
+        if fields:
+            argv.extend(["--fields", str(fields)])
+        offset = getattr(args_ns, "offset", None)
+        if offset:
+            argv.extend(["--offset", str(int(offset))])
+
     if hasattr(args_ns, "target") and args_ns.target:
         argv.append(str(args_ns.target))
     if hasattr(args_ns, "domain") and args_ns.domain:
@@ -219,7 +254,15 @@ def _call_query(subcommand: str, args_ns: argparse.Namespace, repo_root: Path,
         try:
             sys.argv = argv
             with redirect_stdout(buf):
-                _query_mod.main()
+                try:
+                    _query_mod.main()
+                except SystemExit:
+                    # query.py exits nonzero for an unresolvable target and
+                    # for a fail-closed ceiling breach. Both already wrote
+                    # their machine-readable body to the captured stdout,
+                    # so return that body instead of letting SystemExit
+                    # escape and kill the tool call.
+                    pass
         finally:
             sys.argv = argv_save
     return buf.getvalue() or "[]"
@@ -256,25 +299,44 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
     def _run(sub: str, ns: argparse.Namespace) -> str:
         return _call_query(sub, ns, repo_root, auto_rebuild=auto_rebuild)
 
+    # --- Bounding params, shared by every row-returning tool -----------
+    # Every response carries returned / total_matching / truncated, so a
+    # caller always knows whether it is looking at a page or the whole
+    # set, and `narrow_with` names the flags to shrink an over-ceiling
+    # query. `limit` is clamped: an unbounded set is not requestable.
+    def _bounds(limit, scope, fields, offset) -> dict:
+        return {
+            "limit": limit, "scope": scope,
+            "fields": fields, "offset": offset,
+        }
+
     # --- No-arg tools --------------------------------------------------
-    def ready() -> str:
+    def ready(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+              scope: Optional[str] = None, fields: Optional[str] = None,
+              offset: int = 0) -> str:
         """List draft TODOs whose depends_on are all done."""
-        return _run("ready", argparse.Namespace())
+        return _run("ready", argparse.Namespace(**_bounds(limit, scope, fields, offset)))
     srv.tool(name="ready", description=DESCRIPTIONS["ready"])(ready)
 
-    def blocked() -> str:
+    def blocked(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                scope: Optional[str] = None, fields: Optional[str] = None,
+                offset: int = 0) -> str:
         """List active TODOs with at least one unmet depends_on."""
-        return _run("blocked", argparse.Namespace())
+        return _run("blocked", argparse.Namespace(**_bounds(limit, scope, fields, offset)))
     srv.tool(name="blocked", description=DESCRIPTIONS["blocked"])(blocked)
 
-    def blocking() -> str:
+    def blocking(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                 scope: Optional[str] = None, fields: Optional[str] = None,
+                 offset: int = 0) -> str:
         """Rank TODOs by inbound depends_on count (most-blocking first)."""
-        return _run("blocking", argparse.Namespace())
+        return _run("blocking", argparse.Namespace(**_bounds(limit, scope, fields, offset)))
     srv.tool(name="blocking", description=DESCRIPTIONS["blocking"])(blocking)
 
-    def orphans() -> str:
+    def orphans(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                scope: Optional[str] = None, fields: Optional[str] = None,
+                offset: int = 0) -> str:
         """TODOs with zero inbound edges of any kind."""
-        return _run("orphans", argparse.Namespace())
+        return _run("orphans", argparse.Namespace(**_bounds(limit, scope, fields, offset)))
     srv.tool(name="orphans", description=DESCRIPTIONS["orphans"])(orphans)
 
     def stats() -> str:
@@ -283,40 +345,64 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
     srv.tool(name="stats", description=DESCRIPTIONS["stats"])(stats)
 
     # --- Optional single-argument tools --------------------------------
-    def by_domain(domain: Optional[str] = None) -> str:
+    def by_domain(domain: Optional[str] = None,
+                  limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                  scope: Optional[str] = None, fields: Optional[str] = None,
+                  offset: int = 0) -> str:
         """Group TODOs by domain + first unfinished section. When domain
         is None, returns every domain; when supplied, returns only that
         domain's rows."""
-        return _run("by-domain", argparse.Namespace(domain=domain or None))
+        ns = argparse.Namespace(domain=domain or None,
+                                **_bounds(limit, scope, fields, offset))
+        return _run("by-domain", ns)
     srv.tool(name="by-domain", description=DESCRIPTIONS["by-domain"])(by_domain)
 
-    def stale(days: int = 90) -> str:
+    def stale(days: int = 90, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+              scope: Optional[str] = None, fields: Optional[str] = None,
+              offset: int = 0) -> str:
         """TODOs whose last_active_at is older than `days` days (default 90)."""
-        return _run("stale", argparse.Namespace(days=int(days)))
+        ns = argparse.Namespace(days=int(days),
+                                **_bounds(limit, scope, fields, offset))
+        return _run("stale", ns)
     srv.tool(name="stale", description=DESCRIPTIONS["stale"])(stale)
 
     # --- Required single-argument tools --------------------------------
-    def backlinks(target: str) -> str:
+    def backlinks(target: str, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                  scope: Optional[str] = None, fields: Optional[str] = None,
+                  offset: int = 0) -> str:
         """Every TODO that references `target` (id / filename stem / slug)."""
-        return _run("backlinks", argparse.Namespace(target=target))
+        ns = argparse.Namespace(target=target,
+                                **_bounds(limit, scope, fields, offset))
+        return _run("backlinks", ns)
     srv.tool(name="backlinks", description=DESCRIPTIONS["backlinks"])(backlinks)
 
-    def deferred(target: str) -> str:
+    def deferred(target: str, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                 fields: Optional[str] = None, offset: int = 0) -> str:
         """Outbound Accepted/Deferred stamps from `target`."""
-        return _run("deferred", argparse.Namespace(target=target))
+        ns = argparse.Namespace(target=target,
+                                **_bounds(limit, None, fields, offset))
+        return _run("deferred", ns)
     srv.tool(name="deferred", description=DESCRIPTIONS["deferred"])(deferred)
 
-    def deferred_by(target: str) -> str:
+    def deferred_by(target: str, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                    fields: Optional[str] = None, offset: int = 0) -> str:
         """Inbound Accepted/Deferred stamps pointing at `target`."""
-        return _run("deferred-by", argparse.Namespace(target=target))
+        ns = argparse.Namespace(target=target,
+                                **_bounds(limit, None, fields, offset))
+        return _run("deferred-by", ns)
     srv.tool(name="deferred-by", description=DESCRIPTIONS["deferred-by"])(deferred_by)
 
-    def code(target: str) -> str:
+    def code(target: str, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+             fields: Optional[str] = None, offset: int = 0) -> str:
         """Source paths claimed by `target`'s file_patterns + Notes grep."""
-        return _run("code", argparse.Namespace(target=target))
+        ns = argparse.Namespace(target=target,
+                                **_bounds(limit, None, fields, offset))
+        return _run("code", ns)
     srv.tool(name="code", description=DESCRIPTIONS["code"])(code)
 
-    def code_by(path: str) -> str:
+    def code_by(path: str, limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                scope: Optional[str] = None, fields: Optional[str] = None,
+                offset: int = 0) -> str:
         """TODOs whose file_patterns match `path` (a source/header path).
 
         Codex pass 18 M1: the MCP schema exposes this argument as `path`
@@ -325,7 +411,9 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
         tool description already described it as a path, so the schema
         now matches. Internally we still forward to query.py via
         args_ns.target since that's the CLI positional name."""
-        return _run("code-by", argparse.Namespace(target=path))
+        ns = argparse.Namespace(target=path,
+                                **_bounds(limit, scope, fields, offset))
+        return _run("code-by", ns)
     srv.tool(name="code-by", description=DESCRIPTIONS["code-by"])(code_by)
 
     return srv
@@ -348,6 +436,30 @@ def _tool_schema(name: str) -> dict[str, Any]:
     elif name == "code-by":
         props["path"] = {"type": "string"}
         required = ["path"]
+
+    # Bounding params on every row-returning tool. `stats` is unbounded by
+    # shape (see query.UNBOUNDED_SUBCOMMANDS) so it advertises none: an
+    # agent must not be told it can page a verb that has no rows to page.
+    if name not in _query_mod.UNBOUNDED_SUBCOMMANDS:
+        props["limit"] = {
+            "type": "integer",
+            "default": _query_mod.DEFAULT_ROW_LIMIT,
+            "minimum": 1,
+            "maximum": _query_mod.MCP_MAX_ROW_LIMIT,
+            "description": (
+                f"max rows (default {_query_mod.DEFAULT_ROW_LIMIT}, hard cap "
+                f"{_query_mod.MCP_MAX_ROW_LIMIT}). Values outside the range "
+                f"are clamped; an unbounded set cannot be requested."
+            ),
+        }
+        props["offset"] = {"type": "integer", "default": 0,
+                           "description": "skip N rows (page through a large set)"}
+        props["fields"] = {"type": "string",
+                           "description": "comma-separated column subset"}
+        if name in {"ready", "blocked", "blocking", "by-domain",
+                    "backlinks", "orphans", "stale", "code-by"}:
+            props["scope"] = {"type": "string",
+                              "description": "restrict to one domain, e.g. 02-kernel-core"}
     return {
         "type": "object",
         "properties": props,
@@ -367,23 +479,40 @@ def _tool_list() -> list[dict[str, Any]]:
     ]
 
 
+def _bound_ns(arguments: dict[str, Any], **extra) -> argparse.Namespace:
+    """Namespace carrying the caller's narrowing request plus any
+    tool-specific fields. `limit` is passed through verbatim here and
+    clamped in _call_query, so both server paths share one enforcement
+    point and neither can widen past MCP_MAX_ROW_LIMIT."""
+    return argparse.Namespace(
+        limit=arguments.get("limit"),
+        offset=arguments.get("offset") or 0,
+        scope=arguments.get("scope") or None,
+        fields=arguments.get("fields") or None,
+        **extra,
+    )
+
+
 def _dispatch_tool(name: str, arguments: dict[str, Any],
                    repo_root: Path, auto_rebuild: bool) -> str:
     if name not in MCP_TOOLS:
         raise ValueError(f"unknown tool: {name}")
-    if name in {"ready", "blocked", "blocking", "orphans", "stats"}:
+    if name == "stats":
+        # Unbounded by shape; takes no narrowing params.
         return _call_query(name, argparse.Namespace(), repo_root, auto_rebuild)
+    if name in {"ready", "blocked", "blocking", "orphans"}:
+        return _call_query(name, _bound_ns(arguments), repo_root, auto_rebuild)
     if name == "by-domain":
         return _call_query(
             "by-domain",
-            argparse.Namespace(domain=arguments.get("domain") or None),
+            _bound_ns(arguments, domain=arguments.get("domain") or None),
             repo_root,
             auto_rebuild,
         )
     if name == "stale":
         return _call_query(
             "stale",
-            argparse.Namespace(days=int(arguments.get("days", 90))),
+            _bound_ns(arguments, days=int(arguments.get("days", 90))),
             repo_root,
             auto_rebuild,
         )
@@ -393,7 +522,7 @@ def _dispatch_tool(name: str, arguments: dict[str, Any],
             raise ValueError(f"{name} requires string argument 'target'")
         return _call_query(
             name,
-            argparse.Namespace(target=target),
+            _bound_ns(arguments, target=target),
             repo_root,
             auto_rebuild,
         )
@@ -403,7 +532,7 @@ def _dispatch_tool(name: str, arguments: dict[str, Any],
             raise ValueError("code-by requires string argument 'path'")
         return _call_query(
             "code-by",
-            argparse.Namespace(target=path),
+            _bound_ns(arguments, target=path),
             repo_root,
             auto_rebuild,
         )

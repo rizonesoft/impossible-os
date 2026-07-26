@@ -46,6 +46,10 @@ lsp-bridge health note: the OPTIONAL per-language LSP binaries (pyright, asm-lsp
 
 Cache is auto-rebuilt on read when stale (mtime check vs. `todo/`). For a manual refresh: `bash scripts/todo-graph/build-and-validate.sh --keep-cache`.
 
+**Every row-returning tool is output-bounded** (`stats` is exempt: its shape is O(taxonomy), not O(nodes)). Each response carries `returned`, `total_matching` and `truncated`, so a page can never be read as the complete set, plus a `next` string when more rows exist. Narrow with `limit` (default 50, hard cap 100 -- values outside the range are clamped, and an unbounded set is NOT requestable through MCP), `offset`, `scope` (one domain), and `fields` (column subset -- the cheapest lever: `fields=id` cut a 98-row `backlinks` answer from ~3.2k to ~0.9k estimated tokens with no loss). Ordering is total, so a bounded page is re-runnable and pages partition cleanly. `deferred` / `deferred-by` sort **severity-first**, so a truncated page cannot drop a Critical/High while keeping a Medium.
+
+If a response exceeds the byte ceiling it **fails closed**: zero rows, plus `total_matching` and the exact `narrow_with` flags. That envelope is the answer -- re-run narrowed rather than treating it as an empty result. The unbounded escape hatch (`--limit 0`) exists on the CLI only, for humans and scripts: `python3 scripts/todo-graph/query.py by-domain --limit 0`.
+
 ## When to call `lsp-bridge`
 
 15 LSP-backed tools. The 6 high-value ones for code intelligence:
