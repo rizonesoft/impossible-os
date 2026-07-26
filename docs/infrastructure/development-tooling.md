@@ -956,6 +956,19 @@ Mandatory (`always on`) vs opt-in matters because wall-clock cost differs:
 
 Bypass for one commit: `git commit --no-verify ...` (strongly discouraged; lint is fast).
 
+### Pre-commit hook-manifest gate (always on, conditional)
+
+Fires only when a commit stages `.claude/hooks/**` or `.claude/settings.json`, then runs [`scripts/audit-hooks.sh`](../../scripts/audit-hooks.sh) (0.5s). Blocks the commit when a hook file has no `MANIFEST.md` row, a row points at a missing file, `settings.json` references an unlisted hook, or an installed plugin's events are not enumerated in its manifest subsection.
+
+| Behavior  | Detail                                                            |
+| --------- | ----------------------------------------------------------------- |
+| Scope     | Staged `.claude/hooks/**` or `.claude/settings.json` only          |
+| Fast path | No hook-surface file staged -> gate does not run                   |
+| Errors    | Block commit (exit 1), printing each `DRIFT` line                  |
+| Opt-out   | `SKIP_HOOK_AUDIT=1 git commit ...` (last resort)                   |
+
+**Why it is a commit gate and not only a CI check.** `audit-hooks.sh` already ran inside [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh), but that suite's only trigger is the `Build` workflow, which fires on pushes to `main` and pull requests against it. Work on a long-lived feature branch reaches neither, so the audit did not run for 291 commits and two cost-control hooks (`codex_wait_discipline.py`, `websearch_offload_gate.py`) shipped undocumented. The detection was never missing; its only caller was unreachable from where the work happens. This gate makes the check reachable at the point of introduction, independent of CI topology.
+
 ### Post-commit COUNT.md refresh (always on)
 
 Regenerates [`COUNT.md`](../../COUNT.md) after every commit and amends the commit to include the refresh. The report tracks core code/tooling plus human-readable supporting text formats such as markdown, JSON, YAML, HTML, CSS, and config files, while leaving binary assets out of the line totals. Recurses once via `SKIP_COUNT=1` when amending. Silent on success. Disable for one commit with `SKIP_COUNT=1 git commit ...`. For a manual refresh without amending `HEAD`, run `COUNT_ONLY=1 bash .githooks/post-commit`.

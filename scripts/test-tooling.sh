@@ -546,6 +546,25 @@ else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
 fi
 
+# Query-surface output bounds (test_query_bounds.sh). Separate suite from
+# test_build.sh: that one owns subcommand SEMANTICS, this one owns what
+# comes OUT of them (default limit, fail-closed ceiling, envelope fields,
+# deterministic pages, and the MCP surface never returning an unbounded
+# set). Shelled out the same way so failures bubble into the aggregate.
+QUERY_BOUNDS_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_query_bounds.sh"
+if [ -x "$QUERY_BOUNDS_TEST" ]; then
+    QB_OUT=$("$QUERY_BOUNDS_TEST" 2>&1)
+    QB_RC=$?
+    QB_SUMMARY=$(printf '%s\n' "$QB_OUT" | grep -E '^== test_query_bounds' | tail -1)
+    if [ "$QB_RC" = "0" ]; then
+        t_pass "scripts/todo-graph/tests/test_query_bounds.sh PASS (${QB_SUMMARY:-summary unavailable})"
+    else
+        t_fail "scripts/todo-graph/tests/test_query_bounds.sh FAIL (${QB_SUMMARY:-run directly for details})"
+    fi
+else
+    t_fail "scripts/todo-graph/tests/test_query_bounds.sh not found or not executable"
+fi
+
 # ============================================================================
 # LSP-MCP bridge test harness wiring (TODO-07 in 00-infrastructure)
 #
@@ -2945,7 +2964,21 @@ sys.exit(0 if ok else 1)
         t_fail "four_dispatch_gate: A conflicting markers not blocked (stamps exist=$( [ -f "$FD_STAMPS" ] && echo yes || echo no), warn=$WARN_OUT)"
     fi
 
-    # Test B: stamp-only SKIP resets last-codex-review.json received state.
+    # Test B: stamp-only SKIP PRESERVES last-codex-review.json `received` and
+    # records the skip in the audit log.
+    #
+    # This asserted the opposite until 2026-07-26. The reset was deliberately
+    # removed on 2026-07-14 (Canary #2, B3, see the rationale comment in
+    # section_commit_gate.py): a stamp-only commit touches only TODO markdown
+    # and does NOT change the source the code review passed, so `received:
+    # true` still legitimately stands and the immediately-following rollover
+    # plus receiving-review gate need it to persist -- resetting produced a
+    # reset -> rollover-refused -> receiving-review-re-block repair loop. The
+    # original worry (a later section commit reusing a stale `received`) is
+    # already blocked by _review_evidence content-binding, which fails a
+    # later commit whose staged blobs differ from the review's trigger_blobs
+    # regardless of the flag. The paper trail moved to skip-log.jsonl, so the
+    # assertion moved with it.
     rm -f "$FD_STAMPS"
     _fd_unstage
     _fd_stage_stamp_only
@@ -2965,16 +2998,22 @@ JSON
     SKIP_RC=$(cd "$FD_REPO" && \
         printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}' | \
         SKIP_REVIEW_HOOK=1 \
-        SKIP_REVIEW_HOOK_REASON="testing B: stamp-only SKIP must reset state" \
+        SKIP_REVIEW_HOOK_REASON="testing B: stamp-only SKIP preserves received" \
         python3 ".claude/hooks/section_commit_gate.py" >/dev/null 2>&1; echo $?)
     if [ "$SKIP_RC" = "0" ] && python3 -c "
-import json, sys
+import json, pathlib, sys
 s = json.load(open('$FD_REVIEW'))
-sys.exit(0 if s.get('received') is False else 1)
+if s.get('received') is not True:
+    sys.exit(1)                      # B3: the passed code review must persist
+log = pathlib.Path('$FD_REPO/.claude/state/skip-log.jsonl')
+if not log.exists():
+    sys.exit(1)                      # the paper trail replaced the reset
+recs = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+sys.exit(0 if any('preserves received' in json.dumps(r) for r in recs) else 1)
 " 2>/dev/null; then
-        t_pass "four_dispatch_gate: B stamp-only SKIP resets last-codex-review received=false"
+        t_pass "four_dispatch_gate: B stamp-only SKIP preserves received + logs the skip (B3)"
     else
-        t_fail "four_dispatch_gate: B stamp-only SKIP did not reset state (rc=$SKIP_RC)"
+        t_fail "four_dispatch_gate: B stamp-only SKIP contract broken (rc=$SKIP_RC)"
     fi
 
     # Test C: nested blockquote stamp lines are detected (`> > **`).
@@ -3529,8 +3568,13 @@ fi
 rm -f "$ICM_STATE"
 [ -n "$ICM_BACKUP" ] && printf '%s' "$ICM_BACKUP" > "$ICM_STATE"
 
-# (b4) build_offload_reminder: warns on bare build.sh in overnight SECTIONS
-#      with no fresh Agent dispatch; silent interactively.
+# (b4) build_offload_reminder: BLOCKs bare build.sh in overnight SECTIONS with
+#      no fresh Agent dispatch; silent interactively.
+#      The hook was promoted from REMINDER (systemMessage on stdout) to BLOCK
+#      (exit 2 + message on stderr) when the offload routing was enforced.
+#      These captures therefore read the COMBINED stream and assert the exit
+#      code, so the assertion tracks the contract rather than the channel a
+#      given generation happened to use.
 BOR_HOOK="$REPO_ROOT/.claude/hooks/build_offload_reminder.py"
 BOR_SEQ="$REPO_ROOT/.claude/state/sequencer-run.json"
 BOR_DISP="$REPO_ROOT/.claude/state/last-agent-dispatch.json"
@@ -3539,7 +3583,7 @@ BOR_SEQ_BAK=""; BOR_DISP_BAK=""
 [ -f "$BOR_DISP" ] && BOR_DISP_BAK="$(cat "$BOR_DISP")"
 rm -f "$BOR_SEQ" "$BOR_DISP"
 BOR_OUT="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>/dev/null)"
+    python3 "$BOR_HOOK" 2>&1)"
 if [ -z "$BOR_OUT" ]; then
     t_pass "build_offload_interactive  silent when sequencer guard inactive"
 else
@@ -3547,11 +3591,11 @@ else
 fi
 printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
 BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
-    python3 "$BOR_HOOK" 2>/dev/null)"
-if echo "$BOR_OUT2" | grep -q "build-offload"; then
-    t_pass "build_offload_sections  warns on bare test.sh in SECTIONS phase"
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC2=$?
+if echo "$BOR_OUT2" | grep -q "build-offload" && [ "$BOR_RC2" = "2" ]; then
+    t_pass "build_offload_sections  BLOCKs bare test.sh in SECTIONS phase (exit 2)"
 else
-    t_fail "build_offload_sections  expected checks-runner reminder, got: $BOR_OUT2"
+    t_fail "build_offload_sections  expected build-offload BLOCK (exit 2), got rc=$BOR_RC2: $BOR_OUT2"
 fi
 # Freshness must be checks-runner-SPECIFIC (regression fixed 2026-07-05): a
 # fresh dispatch of an UNRELATED agent type must NOT suppress the reminder --
@@ -3561,16 +3605,16 @@ NOW_NS="$(date +%s%N)"
 printf '{"timestamp_ns": %s, "subagent_type": "kernel-explorer", "by_type": {"kernel-explorer": {"timestamp_ns": %s}}}' \
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
 BOR_OUT3="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>/dev/null)"
-if echo "$BOR_OUT3" | grep -q "build-offload"; then
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC3=$?
+if echo "$BOR_OUT3" | grep -q "build-offload" && [ "$BOR_RC3" = "2" ]; then
     t_pass "build_offload_type_specific  unrelated-agent dispatch does NOT suppress the reminder"
 else
-    t_fail "build_offload_type_specific  expected reminder despite unrelated dispatch, got: $BOR_OUT3"
+    t_fail "build_offload_type_specific  expected BLOCK despite unrelated dispatch, got rc=$BOR_RC3: $BOR_OUT3"
 fi
 printf '{"timestamp_ns": %s, "subagent_type": "checks-runner", "by_type": {"checks-runner": {"timestamp_ns": %s}}}' \
     "$NOW_NS" "$NOW_NS" > "$BOR_DISP"
 BOR_OUT4="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
-    python3 "$BOR_HOOK" 2>/dev/null)"
+    python3 "$BOR_HOOK" 2>&1)"
 if [ -z "$BOR_OUT4" ]; then
     t_pass "build_offload_type_specific  fresh checks-runner dispatch DOES suppress the reminder"
 else
@@ -6649,8 +6693,16 @@ fi
 # Stamp invalidation: the flavor stamp must be a REAL prerequisite of EVERY C
 # object rule. An order-only prereq (`| stamp`) does not trigger a rebuild, so
 # a flip would silently relink objects compiled under the opposite flavor.
+#
+# The match accepts the stamp ANYWHERE among the real prerequisites (the
+# `[^|]*` runs stop at the order-only separator, so a `| $(KERNEL_TESTS_STAMP)`
+# is still correctly rejected -- that is the property under test). It used to
+# require the stamp IMMEDIATELY before the `|`, which turned the legitimate
+# addition of a second real stamp into a false failure: the pattern rule at
+# Makefile:1672 carries `$(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) |`
+# and was reported as unstamped despite the stamp being a real prereq.
 _kt_c_rules="$(grep -cE '^(\$\(BUILD_DIR\)/\S+\.o|\$\(LZ4_FULL_OBJ\)): \$\(SRC_DIR\)/\S+\.c ' Makefile)"
-_kt_stamped="$(grep -cE '^(\$\(BUILD_DIR\)/\S+\.o|\$\(LZ4_FULL_OBJ\)): \$\(SRC_DIR\)/\S+\.c \$\(KERNEL_TESTS_STAMP\) \|' Makefile)"
+_kt_stamped="$(grep -cE '^(\$\(BUILD_DIR\)/\S+\.o|\$\(LZ4_FULL_OBJ\)): \$\(SRC_DIR\)/\S+\.c [^|]*\$\(KERNEL_TESTS_STAMP\)[^|]*\|' Makefile)"
 if [ "$_kt_c_rules" = "$_kt_stamped" ] && [ "$_kt_stamped" -gt 0 ]; then
     t_pass "KERNEL_TESTS flavor stamp is a real prereq of all $_kt_stamped C object rules"
 else

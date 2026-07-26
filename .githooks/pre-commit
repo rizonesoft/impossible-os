@@ -65,6 +65,37 @@ if [ -f "$CP_MATCH" ]; then
     fi
 fi
 
+# Hook-manifest gate (2026-07-26): .claude/hooks/MANIFEST.md is the single
+# source of truth for what hooks exist and what each one does, and
+# scripts/audit-hooks.sh already detects drift correctly -- but its only
+# caller was scripts/test-tooling.sh, which runs solely in CI on pushes to
+# main and PRs against it. Work on a long-lived branch therefore never
+# triggered it: two cost-control hooks (codex_wait_discipline,
+# websearch_offload_gate) shipped undocumented and the drift sat unnoticed
+# across 291 commits. Running the audit HERE closes that window -- it is
+# 0.5s and only fires when hook files or settings.json are staged, so a new
+# hook cannot land without its manifest row regardless of CI reachability.
+HOOK_AUDIT="$REPO_ROOT/scripts/audit-hooks.sh"
+if [ -f "$HOOK_AUDIT" ]; then
+    HOOK_HITS="$(git diff --cached --name-only \
+        | grep -E '^\.claude/(hooks/|settings\.json$)' || true)"
+    if [ -n "$HOOK_HITS" ]; then
+        echo ""
+        echo "Pre-commit: hook surface changed -- auditing MANIFEST.md:"
+        printf '%s\n' "$HOOK_HITS" | sed 's/^/  touched: /'
+        if ! bash "$HOOK_AUDIT" >/dev/null 2>&1; then
+            echo ""
+            echo -e "\033[31mHook manifest drift -- commit blocked\033[0m"
+            bash "$HOOK_AUDIT" 2>&1 | grep -E 'DRIFT|FAIL' | sed 's/^/  /'
+            echo "  Every hook needs a MANIFEST.md row (file, event, kind, opt-out,"
+            echo "  purpose); every installed plugin needs its events enumerated."
+            echo "  Opt-out (last resort): SKIP_HOOK_AUDIT=1 git commit ..."
+            [ "${SKIP_HOOK_AUDIT:-}" = "1" ] || exit 1
+            echo -e "\033[33m  SKIP_HOOK_AUDIT=1 set -- manifest drift overridden\033[0m"
+        fi
+    fi
+fi
+
 # TODO-08 §4: section-commit gate -- enforced at the final-index point
 # of git's own pre-commit. The harness PreToolUse hook is the
 # convenience layer; this is the load-bearing one for chained shapes

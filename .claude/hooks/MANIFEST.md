@@ -56,6 +56,13 @@
 | section_commit_gate | `.claude/hooks/section_commit_gate.py` | BLOCK+WARN | N | -- | `SKIP_REVIEW_HOOK=1` (+ `SKIP_REVIEW_HOOK_REASON`); `SKIP_SMOKE_GATE=1` (+ `SKIP_SMOKE_GATE_REASON`) for §20 step-16 only | BLOCKs `git commit` of a section-ship signature without build + Codex + receiving-review evidence. TODO-08 §17 extension: also BLOCKs commits whose staged C/H diff matches step-13.5 triggers when no recent `re-adversarial` stamp exists. TODO-08 §20 extensions (impl-pipeline gates): step-8 test-wiring (require staged or HEAD `test_*.c` matching surface, or `**Note:** No <surface> test surface` exemption), step-13 impl-side adversarial dispatch (`[review-kind: adversarial-impl]` distinct from review-side), step-16 boot-path smoke test (validate `Boot complete` + `C:\>` markers in `build/smoke-test.stripped.log` with mtime > staged file mtime). TODO-08 partial-enforcement heuristics (4 WARN-only): step-9 test-coverage Codex dispatch missing on test-touching commits; step-15 no Edit between latest Codex and commit; step-17 thin validate phase (<2 Read/Grep since latest Codex); step-18 no TODO/FIXME/HACK/STATUS_NOT_IMPLEMENTED Grep since last src/ edit. WARN paths emit stderr + miss-log entry, never block. |
 | phase1_evidence_gate | `.claude/hooks/phase1_evidence_gate.py` | BLOCK | N | -- | `SKIP_PHASE1_BLOCK=1` (+ `SKIP_PHASE1_BLOCK_REASON`) | TODO-08 §17: BLOCKs `Bash` dispatches of `codex-companion.mjs adversarial-review` with `[review-kind: adversarial]` when an active `review-todo-section` skill in `skill-progress.json` has fewer than 2 prior `Read`/`Grep` tool calls scoped to `src/` or `include/`. Walks `transcript_path` JSONL forward from `started_ts`; tool-history.jsonl carries no tool_input so transcript walk is the only viable evidence source. |
 | step5_quality_gate | `.claude/hooks/step5_quality_gate.py` | BLOCK | N | -- | `SKIP_QUALITY_GATE_BLOCK=1` (+ `SKIP_QUALITY_GATE_BLOCK_REASON`) | TODO-08 §20 step-5: BLOCKs Edit/Write/MultiEdit on `src/` or `include/` paths when active `implement-todo-section` skill has not yet invoked the matching `<domain>-code-quality` skill (boot/kernel/desktop/shell/userland). Walks transcript JSONL forward from skill `started_ts`. Bootstrap-mode honored. |
+| codex_wait_discipline | `.claude/hooks/codex_wait_discipline.py` | BLOCK | N | -- | headless-only: inert unless `OVERNIGHT_SEQUENCER_RUN=1` | R3 wait discipline: one LONG verdict wait beats N short polls. In the headless run only, a `wait-for-codex-verdict.sh` call must carry `--max >= MIN_MAX_S` AND a Bash `timeout` that outlives it (max*1000 + slack). Measured motivation: run-20260719-022200 issued 51 separate poll calls (27% of its Bash calls) while one review converged, each a full turn re-reading a ~350K cached prefix. Interactive sessions are never gated. |
+
+### Matcher: `WebSearch|WebFetch`
+
+| Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
+|---|---|---|---|---|---|---|
+| websearch_offload_gate | `.claude/hooks/websearch_offload_gate.py` | BLOCK | N | -- | headless-only: inert unless `OVERNIGHT_SEQUENCER_RUN=1`; researcher subagents always pass | R4 web-research reroute: BLOCKs MAIN-session `WebSearch`/`WebFetch` in the headless run and names the owning researcher agent (parity-research-analyst / spec-research-analyst / web-research-analyst) so multi-page web reads land in a throwaway context. Subagent calls pass untouched, keyed on the agent transcript path. Measured motivation: the headless main session fired 10 WebSearch calls in a 36-second burst IN PARALLEL with a parity-research-analyst dispatch doing the same research. |
 
 ### Matcher: `Skill`
 
@@ -214,13 +221,14 @@ No `hooks/hooks.json` shipped. Plugin contributes commit slash-commands only. Li
 
 No `hooks/hooks.json` shipped. Plugin contributes the agent-creator / plugin-validator / skill-reviewer agents + plugin-dev skills only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
 
-### `remember@claude-plugins-official` 0.7.3
+### `remember@claude-plugins-official` 0.8.6
 
 `hooks/hooks.json`:
 
 | Event | Matcher | Command | Purpose |
 |---|---|---|---|
 | SessionStart | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.sh` | Loads the `.remember/` persistent-memory primer (now/today/recent/archive/core buffers) at session start. |
+| UserPromptSubmit | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-hook.sh` | Injects the current timestamp on every prompt submission so the session knows the wall-clock time. Added by the plugin in the 0.7.3 -> 0.8.6 upgrade; enumerating it here is what check 5 of `scripts/audit-hooks.sh` requires. |
 | PostToolUse | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-hook.sh` | Appends to the `.remember/` rolling history buffer after tool calls. |
 
 > Plugin selection lives at `~/.claude/plugins/installed_plugins.json`. The retired `firecrawl@claude-plugins-official` plugin was uninstalled 2026-04-27. When installing or removing a plugin, add or remove the matching `### <name>@<marketplace>` subsection here in the same commit; `audit-hooks.sh` cross-checks the plugin index against the subsection headings.
