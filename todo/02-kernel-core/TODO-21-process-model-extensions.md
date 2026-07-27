@@ -588,6 +588,13 @@ predate that fix and none is caused by it. Filed rather than hot-fixed because t
 wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later
 lets a tick between the frame write and the store clobber the published frame via the save-gate.
 
+A fourth defect of the same class landed here 2026-07-27, moved out of `todo/overnight-runner-improvements.md` where
+it could never be scheduled (the sequencer does not traverse that file): a **page-table use-after-free across reap +
+fork/exec**, where a live task runs on a reaped task's recycled PML4 and panics with `USER_ACCESS_VIOLATION`. It is
+the same reap-versus-exec lifetime question as the items above, which is why it is owned here rather than in an MM
+TODO. **It is the sole cause of the currently-red `Build Impossible OS` job**, so this section turning green should
+turn CI green with it.
+
 - [ ] Establish a no-return commit point in `task_exec` (`src/kernel/sched/task.c:2683`): perform every fallible step
       (argv frame validation + `argv_addrs` `kmalloc` at 2856-2870, replacement kernel stack at 2877-2886) BEFORE the
       first image mutation, which begins at the fork+exec isolation remap (2723-2746), not at `exec_load_fmt` (2782)
@@ -602,8 +609,25 @@ lets a tick between the frame write and the store clobber the published frame vi
       assigned until 3246, so a tick in that window switches the task in with `kernel_gs_base == 0`. Fix by making the
       commit interval non-preemptible or by an explicit state the scheduler cannot consume until READY -- NOT by moving
       the store later (it gates the save-gate at `task.c:1185` that protects `tasks[pid].rsp`)
+- [ ] **Page-table use-after-free across reap + fork/exec (CURRENTLY RED CI).** A live task executes against a REAPED
+      task's PML4 whose frames have been recycled: free side `vmm_destroy_user_pml4` (`src/kernel/mm/vmm.c:1209`), reap
+      side (`src/kernel/sched/task.c:3479`). Same lifetime class as the defects above, so it is fixed here
+- [ ] Decide which half of that race is wrong: whether reap may free a PML4 while a task still holds that CR3, or
+      whether fork/exec can adopt a recycled one. The evidence does not distinguish them, and the fix differs
+- [ ] Evidence, measured: the transition ring records PID 12 at `cr3=0x16CD000 rsp=0xA6C4B0`; the panic context carries
+      the SAME CR3 and an RSP 16 bytes up the SAME stack, after `task: PID 12 reap cleanup` and
+      `sched: PID 13 -> entry 0x800000`. `RBP` little-endian reads `"PIPE-OK"` -- a pipe test's buffer, so the process
+      is fetching instructions out of recycled data
+- [ ] Repro (deterministic, ~3 min): `PATH=<dir-with-8.2.2>:$PATH FORCE_TCG=1 bash scripts/test.sh SUITE=quota QUIET=1`,
+      then grep the serial log for `USER_ACCESS_VIOLATION` rather than waiting for the timeout. Only `test=1`
+      reproduces it -- a plain 8.2.2 boot reaches `C:\>` and idles, so the smoke test reports green and proves nothing
+- [ ] Do NOT close this by upgrading or pinning CI's QEMU. 8.2.2 is the TRIGGER, not the cause: the same kernel on
+      10.2.1 and on KVM completes 25474 kernel + 16 user tests. It is a timing-sensitive race one emulator hides, the
+      exact class the bare-metal-first rule exists for, and 8.2.2 is the only environment currently exposing it
 - [ ] Unit tests: fault-inject each post-load allocation failure and assert the task dies instead of returning; assert
       PMM free-page count returns to baseline across repeated exec
+- [ ] Unit test the reap/exec lifetime directly: a task must never be schedulable on a CR3 whose PML4 has been freed --
+      assert the reaped PML4's frames are not reachable from any runnable thread before the PMM may hand them out
 - [ ] Commit: `"kernel: task -- exec commit point + kernel-stack reclamation"`
 
 **Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a
