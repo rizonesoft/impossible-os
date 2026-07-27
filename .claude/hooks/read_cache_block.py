@@ -2,7 +2,7 @@
 # block-via: exit 2 (main-session Read only; subagents are never gated)
 """PreToolUse (Read): content-hash read cache -- BLOCK a redundant re-read.
 
-MEASURED WASTE (2026-07-27, todo/token-saver.md T1-1): across one working
+MEASURED WASTE (2026-07-27, todo/token-saver/token-saver.md T1-1): across one working
 period the main session issued 1,412 Read calls over 180 DISTINCT files --
 1,232 of them (87%) re-reads of a file already in context.
 src/kernel/quota/quota.c was read 131 times, quota.h 100, the active TODO 93,
@@ -74,7 +74,7 @@ _MSG = (
     "(sha256 match). Scroll up and reuse that copy. A second copy costs the "
     "body once AND is re-read in the cached prefix on every later turn; "
     "cache-read is ~81% of run spend and 87% of this repo's Reads were "
-    "measured redundant (quota.c x131, 2026-07-27, todo/token-saver.md T1-1). "
+    "measured redundant (quota.c x131, 2026-07-27, todo/token-saver/token-saver.md T1-1). "
     "Legitimate re-reads are NOT gated and need no action from you: after an "
     "edit to this file, after a failed Edit on it, after a compaction, inside "
     "a subagent, or for a wider/non-overlapping slice. If you need a DIFFERENT "

@@ -1,8 +1,14 @@
 # Token Saver -- Cost Reduction Backlog (zero quality loss)
 
-> **Deliberately outside the sequencer.** Named `token-saver.md` (not `TODO-NN-*.md`, not under `todo/NN-domain/`) so
-> `sequencer_triage.is_impl_todo` never traverses it and the todo-graph `rglob("TODO-*.md")` never parses it. Same
-> convention as `todo/overnight-runner-improvements.md`. Keep the name this shape.
+> **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, moved 2026-07-27) and is
+> named `token-saver.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
+> never traverses it, and the todo-graph never parses it. Same intent as `todo/overnight-runner-improvements.md`.
+>
+> **Naming rule for the version files added here.** The directory name defeats the sequencer regardless of filename
+> (`token-saver` is not `\d\d-<domain>`), but the todo-graph glob is `root.rglob("TODO-*.md")` -- it matches on
+> FILENAME, recursively, at any depth. So a version file called `TODO-something.md` in this directory WOULD be pulled
+> into the graph and validated as an implementation TODO. Name versions `token-saver-vN.md` / `token-saver-YYYY-MM-DD.md`
+> -- anything that does not start with `TODO-`.
 >
 > Companion to `todo/overnight-runner-improvements.md`. That file is a **flow / correctness** backlog whose cost items are
 > framed around *wait time and dispatch shape*. This file is framed around the **measured token arithmetic** and reaches
@@ -56,7 +62,7 @@ not a bill.)
 ## T1 -- Context economics (the 81% slice)
 
 - [x] **T1-1. Kill redundant re-reads with a hook-enforced content-hash read cache.**
-  **SHIPPED 2026-07-27** as [`.claude/hooks/read_cache_block.py`](../.claude/hooks/read_cache_block.py) (PreToolUse
+  **SHIPPED 2026-07-27** as [`.claude/hooks/read_cache_block.py`](../../.claude/hooks/read_cache_block.py) (PreToolUse
   `Read` BLOCK + PostToolUseFailure `Edit|MultiEdit` `invalidate` mode), wired in `.claude/settings.json`, documented in
   `.claude/hooks/MANIFEST.md` and `docs/infrastructure/hook-codes.md` (code `[READ-CACHED]`).
   **Evidence:** 1,412 Reads / 180 distinct files / **1,232 redundant (87%)**; top offenders `quota.c` x131, `quota.h`
@@ -134,7 +140,7 @@ not a bill.)
   repo-completion run where the sequencer invokes each many times; at the measured ~15% ratio the whole batch is worth
   roughly another 30 KB of driver. Do them opportunistically when a skill is being edited anyway, not as a batch.
   The shape to follow is documented in
-  [docs/infrastructure/skill-authoring.md "Progressive disclosure"](../docs/infrastructure/skill-authoring.md).
+  [docs/infrastructure/skill-authoring.md "Progressive disclosure"](../../docs/infrastructure/skill-authoring.md).
 
   **Acceptance (met for the 3 split):** no skill's mandatory step list, gate, or hook trigger removed -- only
   relocated; catalog + hook audits pass; step sequences verified identical.
