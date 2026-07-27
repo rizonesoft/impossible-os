@@ -1053,6 +1053,48 @@ def cli(argv):
                   "is NOT done -- continue the loop. FIXPOINT is only valid when "
                   "`sequencer_triage.py --next` returns DONE.", file=sys.stderr)
             return 1
+        # P6.3 -- STRANDED-DEFERRAL GATE (promoted from advisory 2026-07-27).
+        #
+        # The section oracle above classifies on the Implementation Order row +
+        # SECTION stamps only, so a `[/]` checklist item INSIDE a shipped
+        # section is invisible to it: the section carries Verified +
+        # Quality-reviewed, classifies DONE, and fixpoint never revisits it.
+        # That is the one way this runner could declare the OS complete with
+        # real, now-runnable work parked -- exactly the completeness hole the
+        # fixpoint loop exists to close.
+        #
+        # This ran advisory-only while the audit's precision was unmeasured (an
+        # early naive signal over-matched ~6x). A 10-item hand sample on the
+        # live tree (2026-07-27) found 0 false positives, 6 items verified
+        # genuinely unblocked at file:line, so it now GATES.
+        #
+        # It cannot wedge an unattended run: `park` is always a legal
+        # disposition (with a reason), so there is a way forward for every
+        # item. The gate forces a DECISION, never a particular decision.
+        #
+        # Fail-OPEN on infrastructure error (missing script, timeout, crash):
+        # a broken audit must not strand a genuinely-complete run forever. Only
+        # a clean exit 1 -- the audit ran and found undispositioned items --
+        # refuses.
+        try:
+            aud = subprocess.run(
+                [sys.executable,
+                 str(repo_root() / "scripts/overnight/stranded_deferrals.py"),
+                 "--gate"],
+                cwd=str(repo_root()), capture_output=True, text=True, timeout=120)
+            gate_rc = aud.returncode
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"[sequencer] stranded-deferral gate could not run "
+                             f"({e}) -- failing OPEN, completion not blocked\n")
+            gate_rc = 0
+        if gate_rc == 1:
+            sys.stderr.write(aud.stderr or "")
+            print("[sequencer] fixpoint REFUSED: unblocked-but-parked work "
+                  "remains (stranded-deferral gate). Disposition each item "
+                  "listed above (reopen / done / park with a reason), then "
+                  "re-run fixpoint. The run is NOT done.", file=sys.stderr)
+            return 1
+
         state["phase"] = "FIXPOINT"
         state["active"] = False
         save_state(state)
@@ -1067,25 +1109,9 @@ def cli(argv):
             ARMED_MARKER.unlink()
         except FileNotFoundError:
             pass
-        # Advisory (P6.2, NON-BLOCKING): surface any stranded-deferral candidates
-        # at the run's end so the operator can triage them. This is NOT a gate --
-        # P6.3 (blocking fixpoint on the audit) stays deferred until the audit is
-        # proven ~zero-false-positive; here it only REPORTS. Fail-open: any error
-        # or timeout is swallowed so it can never affect the verified completion.
-        try:
-            aud = subprocess.run(
-                [sys.executable,
-                 str(repo_root() / "scripts/overnight/stranded_deferrals.py")],
-                cwd=str(repo_root()), capture_output=True, text=True, timeout=60)
-            head = [ln for ln in (aud.stdout or "").splitlines() if ln.strip()][:2]
-            for ln in head:
-                sys.stderr.write("[sequencer] stranded-deferral audit (advisory): "
-                                 + ln.strip() + "\n")
-        except Exception:
-            pass
-        print("[sequencer] FIXPOINT verified by oracle (no remaining work) -- "
-              "run complete; sentinel written, armed marker removed",
-              file=sys.stderr)
+        print("[sequencer] FIXPOINT verified by oracle (no remaining work, no "
+              "undispositioned stranded deferrals) -- run complete; sentinel "
+              "written, armed marker removed", file=sys.stderr)
         return 0
     if cmd == "clear":
         save_state({"active": False})

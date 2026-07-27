@@ -310,12 +310,18 @@ def cmd_classify(cache, root, target):
 
 
 def cmd_summary(cache, root):
-    counts = {DONE: 0, NEEDS_WORK: 0}
+    # All THREE classes must be seeded: classify_file returns BLOCKED for a file
+    # whose remaining sections are all DONE-or-recoverably-deferred, and the
+    # two-key dict crashed with KeyError('BLOCKED') the moment one existed
+    # (found 2026-07-27 -- the live tree has such files, so --summary was dead
+    # for the operator while --next, a separate path, kept working).
+    counts = {DONE: 0, NEEDS_WORK: 0, BLOCKED: 0}
     for entry in traversal_order(cache):
         cls, _ = classify_file(entry, root)
-        counts[cls] += 1
+        counts[cls] = counts.get(cls, 0) + 1
         print(f"{cls:14s} {entry['file_path']}")
-    print(f"\n-- {counts[DONE]} DONE | {counts[NEEDS_WORK]} NEEDS_WORK --")
+    print(f"\n-- {counts[DONE]} DONE | {counts[NEEDS_WORK]} NEEDS_WORK "
+          f"| {counts[BLOCKED]} BLOCKED --")
     return 0
 
 

@@ -260,13 +260,156 @@ def _selftest() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# P6.1 / P6.3 -- dispositions and the fixpoint gate
+# ---------------------------------------------------------------------------
+#
+# The audit above only REPORTS. Two consumers act on it:
+#
+#   --owner <todo> [--section N]   P6.1 owner-side sweep. When a section ships,
+#                                  list the inbound stranded items that section
+#                                  just unblocked so the shipping pass re-opens
+#                                  them AT THE MOMENT they become runnable.
+#   --gate                         P6.3 fixpoint gate. Exit 1 while any STRANDED
+#                                  item lacks a current disposition, so an
+#                                  unattended run cannot declare completion with
+#                                  unblocked-but-parked work outstanding.
+#
+# Why a gate cannot wedge the run: `park` is always an available disposition
+# (with a reason), so there is a legal way forward for every item. The gate
+# forces a DECISION, never a particular decision.
+#
+# Precision evidence (2026-07-27): a 10-item hand sample across all three action
+# labels found 0 false positives -- 6 verified genuinely-unblocked at file:line
+# (RtlCaptureStackBackTrace, media_role_locate_blackbox_fs,
+# SYSTEM_KERNEL_CONFIG_INFORMATION, csprng_fill/csprng_crypto_ok,
+# SeSinglePrivilegeCheck, eif_decompress_segment) and 2 ambiguous-but-correctly
+# -flagged. That retired the ~6x over-match which kept P6.3 deferred. The sample
+# also showed the `action` label is over-CONSERVATIVE: items tagged `blocked`
+# were in fact unblocked with stale item text, so `flip` badly understates the
+# actionable set -- which is why the gate keys on `stranded`, not on `action`.
+
+DISPOSITIONS_REL = ".claude/state/stranded-dispositions.json"
+VALID_ACTIONS = ("reopen", "done", "park")
+
+
+def item_key(entry: dict) -> str:
+    """Content-bound identity for a stranded item.
+
+    Deliberately EXCLUDES the line number -- an item that merely moves down the
+    file keeps its disposition -- but INCLUDES the item text, so editing what
+    the item says re-opens the question rather than silently inheriting a stale
+    verdict.
+    """
+    import hashlib
+    raw = "\x1f".join((
+        entry.get("source", ""), entry.get("target", ""),
+        str(entry.get("section", "")),
+        " ".join((entry.get("item") or "").split()),
+    ))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def load_dispositions(root: Path) -> dict:
+    try:
+        d = json.loads((root / DISPOSITIONS_REL).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_disposition(root: Path, key: str, action: str, reason: str) -> None:
+    p = root / DISPOSITIONS_REL
+    d = load_dispositions(root)
+    d[key] = {"action": action, "reason": reason}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(d, indent=1, sort_keys=True), encoding="utf-8")
+    tmp.replace(p)
+
+
+def cmd_gate(root: Path, res: list) -> int:
+    """Exit 0 when every STRANDED item is dispositioned; 1 otherwise."""
+    disp = load_dispositions(root)
+    pending = [e for e in res if e.get("stranded")
+               and disp.get(item_key(e), {}).get("action") not in VALID_ACTIONS]
+    if not pending:
+        n = sum(1 for e in res if e.get("stranded"))
+        print(f"stranded-deferral gate: PASS ({n} stranded item(s), all "
+              f"dispositioned).")
+        return 0
+    print(f"stranded-deferral gate: REFUSED -- {len(pending)} unblocked-but-"
+          f"parked item(s) have no disposition. Their XREF owner has SHIPPED "
+          f"(both Verified and Quality-reviewed), so fixpoint would never "
+          f"revisit them and the OS would be declared complete with this work "
+          f"outstanding.", file=sys.stderr)
+    print("Disposition each with:\n"
+          "  python3 scripts/overnight/stranded_deferrals.py --dispose <key> "
+          "--action <reopen|done|park> --reason '<why>'\n"
+          "  reopen = flip the item back to `- [ ]` and work it (do the edit "
+          "too; the disposition only records the decision)\n"
+          "  done   = the owner already did this work; confirm and close\n"
+          "  park   = still genuinely blocked on something else; name it\n",
+          file=sys.stderr)
+    for e in pending:
+        print(f"  [{item_key(e)}] {e['source']}:{e['line']} -> {e['target']} "
+              f"sec {e['section']}\n      {e['item'][:150]}", file=sys.stderr)
+    return 1
+
+
+def cmd_owner(res: list, owner: str, section: str | None) -> int:
+    """P6.1: inbound stranded items whose owner is this just-shipped section."""
+    hits = [e for e in res
+            if (owner in e.get("target", ""))
+            and (section is None or str(e.get("section")) == str(section))]
+    if not hits:
+        print(f"owner sweep: no inbound parked items point at {owner}"
+              + (f" sec {section}" if section else "") + ".")
+        return 0
+    print(f"owner sweep: {len(hits)} inbound parked item(s) name {owner}"
+          + (f" sec {section}" if section else "")
+          + " as their owner. This section shipping is what unblocks them -- "
+            "re-open the ones its work actually freed, NOW, while the context "
+            "is fresh:")
+    for e in hits:
+        print(f"  [{item_key(e)}] {e['source']}:{e['line']}  ({e['action']})"
+              f"\n      {e['item'][:200]}")
+    return 0
+
+
 def main(argv) -> int:
     if "--selftest" in argv:
         return _selftest()
+
+    if "--dispose" in argv:
+        def _opt(name, default=None):
+            return argv[argv.index(name) + 1] if name in argv else default
+        key = _opt("--dispose")
+        action = _opt("--action")
+        reason = _opt("--reason", "")
+        if action not in VALID_ACTIONS:
+            print(f"--action must be one of {VALID_ACTIONS}", file=sys.stderr)
+            return 2
+        if not reason or len(reason) < 8:
+            print("--reason is required (>= 8 chars): a disposition without a "
+                  "recorded why is how stranded work goes missing again.",
+                  file=sys.stderr)
+            return 2
+        save_disposition(REPO, key, action, reason)
+        print(f"recorded: {key} -> {action} ({reason})")
+        return 0
+
     res = audit(REPO)
     if "--json" in argv:
         print(json.dumps(res, indent=2))
         return 0
+    if "--gate" in argv:
+        return cmd_gate(REPO, res)
+    if "--owner" in argv:
+        owner = argv[argv.index("--owner") + 1]
+        section = (argv[argv.index("--section") + 1]
+                   if "--section" in argv else None)
+        return cmd_owner(res, owner, section)
     if not res:
         print("stranded-deferral audit: 0 candidates (no cross-TODO [/] item "
               "whose shipped owner leaves it parked).")

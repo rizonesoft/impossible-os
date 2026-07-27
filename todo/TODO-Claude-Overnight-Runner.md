@@ -359,18 +359,42 @@ This doctrine is not just guidance: it is hard-enforced. Architecture is
   REFUSES unless `sequencer_triage.py --next` returns DONE (zero remaining work).
   Until then `Stop` is blocked, so the run cannot finish early; a false fixpoint
   is impossible. Only a verified fixpoint auto-disarms the watchdog.
-- **Stranded-deferral advisory at fixpoint (P6.2, non-blocking).** After a
-  verified fixpoint, `run_phase_guard.py fixpoint` prints a summary from
-  `scripts/overnight/stranded_deferrals.py` -- cross-TODO `[/]` items whose XREF
-  owner section has shipped (V+Q) yet remain parked, classified flip / clean /
-  blocked / review. It is ADVISORY only (fail-open; never changes the completion
-  verdict): the fixpoint DONE-gate does NOT block on it, because the audit is not
-  yet proven zero-false-positive (owner-shipped is necessary but not sufficient --
-  most parked items stay blocked on a further dependency). An operator triages the
-  `flip` set by hand; run the audit anytime with `python3
-  scripts/overnight/stranded_deferrals.py`. The blocking form (fixpoint refuses on
-  a non-empty stranded set) is deliberately deferred until the audit's precision is
-  proven on real triage.
+- **Stranded-deferral gate (P6.1 owner sweep + P6.3 fixpoint gate; promoted from
+  advisory 2026-07-27).** THIS is what makes "the runner completes Impossible OS
+  in full" true rather than approximately true. The section oracle classifies on
+  the Implementation Order row plus SECTION stamps only, so a `[/]` checklist item
+  INSIDE a shipped section is invisible to it: the section carries V+Q, classifies
+  DONE, and the fixpoint loop never returns to it -- even after the work that
+  blocked it ships. Two layers close that hole:
+  - **P6.1, at the moment of unblocking.** `implement-todo-section` step 18 runs
+    `stranded_deferrals.py --owner <todo> --section <N>` on every section ship and
+    re-opens the inbound parked items that section's work actually freed. Verify at
+    file:line first: item text is frequently stale (a 2026-07-27 sample found items
+    reading "BLOCKED: X unimplemented" whose X had long since shipped).
+  - **P6.3, at the end, as backstop.** `run_phase_guard.py fixpoint` now runs
+    `stranded_deferrals.py --gate` and REFUSES completion while any stranded item
+    lacks a disposition. Each is cleared with
+    `stranded_deferrals.py --dispose <key> --action <reopen|done|park> --reason
+    '<why>'`. **It cannot wedge a run:** `park` is always legal, so every item has a
+    way forward -- the gate forces a DECISION, never a particular decision. It
+    fails OPEN on infrastructure error (missing script / timeout / crash), so a
+    broken audit can never strand a genuinely-complete run; only a clean exit 1
+    refuses. Dispositions live in `.claude/state/stranded-dispositions.json`, keyed
+    on a content hash that ignores line drift but invalidates when the item TEXT
+    changes.
+
+  Precision evidence that retired the deferral: the original naive signal
+  over-matched ~6x (171 hits, 143 self-XREFs). The audit was then narrowed to
+  item-level `[/]` only, cross-TODO only, `awaiting-*` excluded, owner must carry
+  BOTH stamps, unambiguous resolution only. A 10-item hand sample across all three
+  action labels (2026-07-27) found **0 false positives** -- 6 verified genuinely
+  unblocked at file:line (`RtlCaptureStackBackTrace`,
+  `media_role_locate_blackbox_fs`, `SYSTEM_KERNEL_CONFIG_INFORMATION`,
+  `csprng_fill`/`csprng_crypto_ok`, `SeSinglePrivilegeCheck`,
+  `eif_decompress_segment`) and 2 ambiguous-but-correctly-flagged. The sample also
+  showed the `action` label runs CONSERVATIVE -- items tagged `blocked` were in fact
+  unblocked with stale text -- which is why the gate keys on `stranded`, not on
+  `action`. Live tree at promotion: **48 stranded items**.
 
 ### Guardrails against re-breaking the runner (2026-07-11)
 
