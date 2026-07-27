@@ -57,9 +57,32 @@ def _opt_out(payload: dict) -> bool:
     _cmd = ""
     if payload.get("tool_name") == "Bash":
         _cmd = (payload.get("tool_input") or {}).get("command", "") or ""
-    return _se.read_skip_envs(
+    if _se.read_skip_envs(
         _cmd, keys=("RECEIVING_REVIEW_OVERRIDE",)
-    ).get("RECEIVING_REVIEW_OVERRIDE") == "1"
+    ).get("RECEIVING_REVIEW_OVERRIDE") == "1":
+        return True
+
+    # File-based ONE-SHOT override, for the tools that have no other channel.
+    #
+    # The env scanner reads an INLINE prefix, which only exists for Bash. An
+    # Edit/Write has no command string, so its only route was the ambient
+    # process environment -- which an interactive session cannot set per call.
+    # The documented opt-out was therefore unusable for exactly the two tools
+    # this gate blocks.
+    #
+    # One-shot on purpose: the sentinel is consumed on read, so it cannot be
+    # created once and left to disable the gate indefinitely. That keeps it an
+    # override rather than an off-switch, which is the property that makes it
+    # safe to offer at all.
+    try:
+        sentinel = (Path(__file__).resolve().parent.parent
+                    / "state" / "receiving-review-override")
+        if sentinel.exists():
+            sentinel.unlink()          # consume BEFORE allowing
+            return True
+    except OSError:
+        pass                            # unreadable sentinel is not an override
+    return False
 
 
 def _load_state(path: Path) -> dict | None:
@@ -135,6 +158,41 @@ def main() -> int:
         return 0  # malformed state file -- fail open
     if state.get("received") is True:
         return 0  # already triaged
+
+    # SESSION BINDING. This state file is per-repo shared state, so an unbound
+    # gate blocks every session in the repo -- not just the one that dispatched.
+    # Measured 2026-07-24 21:40: the headless overnight run dispatched a review
+    # and 6 seconds later the interactive operator's unrelated Edit to a backlog
+    # file was BLOCKed by it, followed by a Write to a scratchpad .py OUTSIDE the
+    # repo. Same class as the unspaced-operator bug: it fails closed, so nothing
+    # unreviewed ships, but it blocks CORRECT work and trains reflexive
+    # RECEIVING_REVIEW_OVERRIDE use -- the habit these gates exist to prevent.
+    #
+    # Receiving another session's review would also be WRONG, not merely
+    # unnecessary: it consumes a receipt bound to that pipeline, the same
+    # receipt-state corruption runner_bash_guard.py exists to stop subagents
+    # causing. So a foreign record is skipped, never auto-received.
+    #
+    # Bound on session_id, NOT the driver_run_id the backlog item suggested:
+    # that field is parsed from an optional prompt marker and is empty on every
+    # real dispatch, so it would bind to nothing. Records written before this
+    # change carry no session_id; those stay enforcing for every session
+    # (fail-closed on absence), which keeps a mid-flight review from being
+    # silently dropped by the upgrade.
+    rec_session = state.get("session_id") or ""
+    cur_session = payload.get("session_id") or ""
+    if rec_session and cur_session and rec_session != cur_session:
+        return 0  # another session's review -- not this session's to receive
+
+    # Cross-lane guard for the case where session ids are unavailable on one
+    # side: a review dispatched BY the headless run is never the interactive
+    # operator's to receive, and vice versa. OVERNIGHT_SEQUENCER_RUN=1 is the
+    # discriminator CLAUDE.md already documents for run_phase_guard.py -- this
+    # gate family simply never got the same treatment.
+    rec_overnight = state.get("overnight_run")
+    cur_overnight = os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1"
+    if isinstance(rec_overnight, bool) and rec_overnight != cur_overnight:
+        return 0  # dispatched by the other lane
     ts_ns = state.get("timestamp_ns")
     if not isinstance(ts_ns, int):
         return 0  # malformed state -- fail open

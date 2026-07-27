@@ -1272,6 +1272,25 @@ def main() -> int:
         head_at_dispatch = _head_sha(root)
         state = {
             "timestamp_ns": now_ns,
+            # WHO dispatched this review. The gate that consumes this record is
+            # per-repo shared state, so without an owner it blocks EVERY session
+            # in the repo -- measured 2026-07-24: the headless overnight run
+            # dispatched a review and 6 seconds later the interactive operator's
+            # unrelated Edit was BLOCKed by it, then a Write to a scratchpad file
+            # outside the repo entirely.
+            #
+            # session_id, not driver_run_id: driver_run_id is parsed from an
+            # optional `driver-run-id:` prompt marker and is EMPTY on every real
+            # dispatch, so binding to it would bind to nothing. session_id comes
+            # from the harness payload and is always present. Same idiom as
+            # review_dispatch_gate.py's per-session entry filter.
+            "session_id": payload.get("session_id") or "",
+            # Secondary signal, and the one CLAUDE.md already documents as THE
+            # headless discriminator. Kept alongside session_id so a record can
+            # still be attributed after a session id is forgotten, and so an
+            # operator reading the state file can see at a glance whether the
+            # runner or a human produced it.
+            "overnight_run": os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1",
             "trigger": label,
             "trigger_files": trigger_files,
             "trigger_blobs": trigger_blobs,

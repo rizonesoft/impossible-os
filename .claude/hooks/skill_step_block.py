@@ -201,7 +201,16 @@ def _is_blocking_signature(d: dict) -> bool:
     return False
 
 
-def _select_active_skill(state: dict, root: str = ""):
+def _cur_session(payload) -> str:
+    """Session id of the call being gated. Empty when unavailable, which the
+    selector treats as 'cannot attribute' and therefore keeps enforcing."""
+    try:
+        return (payload or {}).get("session_id") or ""
+    except Exception:  # noqa: BLE001 -- attribution must never raise into a gate
+        return ""
+
+
+def _select_active_skill(state: dict, root: str = "", cur_session: str = ""):
     """Pick the most-recently-started multi-step skill entry. Returns
     (skill_name, entry_dict) or (None, None) if state is empty.
 
@@ -213,6 +222,7 @@ def _select_active_skill(state: dict, root: str = ""):
     (see file header for the structural catch-22 rationale)."""
     if not isinstance(state, dict):
         return (None, None)
+    cur_session = cur_session or ""
     best = None
     best_ts = -1
     for name, entry in state.items():
@@ -225,6 +235,20 @@ def _select_active_skill(state: dict, root: str = ""):
             # orphaned entry whose steps_observed froze pre-compact.
             if root:
                 _log_orphan_skip(root, name, entry)
+            continue
+        # SESSION BINDING. skill-progress.json is per-repo shared state and its
+        # entries ALREADY record session_id -- this selector simply never read
+        # it, so a skill started in one session gated tool calls in every other
+        # session in the repo. Measured 2026-07-24: an unrelated infra commit
+        # was blocked by a review-todo-section gate inherited from a PRIOR
+        # session's HEAD, and the same class blocked interactive edits while the
+        # headless overnight run held an entry.
+        #
+        # Fail-closed on ABSENCE: an entry with no session_id still gates every
+        # session, so pre-existing entries and any writer that forgets the field
+        # keep their protection. Only a POSITIVE mismatch is skipped.
+        ent_session = entry.get("session_id") or ""
+        if ent_session and cur_session and ent_session != cur_session:
             continue
         ts = entry.get("started_ts", 0)
         if not isinstance(ts, int):
@@ -442,7 +466,7 @@ def main() -> int:
                 state_path = os.path.join(root, _STATE_REL)
                 with open(state_path, "r", encoding="utf-8") as f:
                     state = json.load(f)
-                skill, entry = _select_active_skill(state, root)
+                skill, entry = _select_active_skill(state, root, _cur_session(d))
                 if skill == "implement-todo-section" and entry:
                     _heuristic_check_steps_1_2_3(d, root, entry)
         except Exception:
@@ -487,7 +511,7 @@ def main() -> int:
         # the canonical guard for sections without an active skill flow.
         return 0
 
-    skill, entry = _select_active_skill(state, root)
+    skill, entry = _select_active_skill(state, root, _cur_session(d))
     if not skill or not entry:
         return 0
 
