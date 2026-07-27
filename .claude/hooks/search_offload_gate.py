@@ -39,16 +39,21 @@ Selftest: python3 search_offload_gate.py --selftest
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
 import sys
+from pathlib import Path
 
 _SEARCH = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 _FIND = {"find", "locate"}
 _WRAPPERS = {"cd", "env", "sudo", "doas", "nice", "nohup", "timeout",
              "ionice", "stdbuf", "command", "exec"}
 _BREAK = {"&&", "||", ";", "|", "&"}
+
+STATE_REL = ".claude/state/search-offload-blocks.json"
+MAX_BLOCKS = 2      # then the SAME command is released -- see _valve()
 
 _MSG = (
     "[SEARCH-OFFLOAD BLOCK -- T2-3] `{cmd}` is a LEADING file search: its whole "
@@ -59,7 +64,9 @@ _MSG = (
     "NOT gated, because the Grep tool cannot do them: a search that filters "
     "another command's OUTPUT (anything after a `|`), and any command this hook "
     "cannot tokenize. If you genuinely need the shell form, pipe it -- "
-    "`<cmd> | grep ...` is allowed by construction."
+    "`<cmd> | grep ...` is allowed by construction. And if you genuinely need this "
+    "exact shell form (aggregation the Grep tool cannot do, e.g. `| sort | uniq -c`), "
+    "repeat it: the same command is released after {maxb} blocks."
 )
 
 _TODO_EXTRA = (
@@ -150,6 +157,47 @@ def _leading_search(cmd: str):
     return None
 
 
+def _valve(cmd: str, session_id: str) -> bool:
+    """True = still gated; False = release (the model insisted, let it through).
+
+    ANTI-WEDGE. The Grep tool covers -n/-A/-B/-C/-c/-l/head_limit, but it cannot
+    do shell aggregation: `grep -o ... | sort | uniq -c`, `grep ... | awk ...`.
+    Those are LEADING searches, so they are gated -- and in the headless run the
+    model cannot unset OVERNIGHT_SEQUENCER_RUN, so without a valve a genuinely
+    needed pipeline would be blocked forever. That is a wedge, and every other
+    gate added alongside this one has an escape (the read cache releases after
+    two blocks, the advisory budget fails open, the stranded gate always allows
+    `park`). This one shipped without one; found while checking canary
+    readiness, before any unattended arm.
+
+    Keyed on the exact command, so insisting on ONE pipeline does not disable
+    the gate for anything else. Fail-open on any state error.
+    """
+    try:
+        key = hashlib.sha256(cmd.encode()).hexdigest()[:16]
+        p = Path(os.path.dirname(os.path.abspath(__file__))).parents[0] / STATE_REL
+        try:
+            st = json.loads(p.read_text(encoding="utf-8"))
+            if not isinstance(st, dict) or st.get("session_id") != session_id:
+                raise ValueError
+        except Exception:
+            st = {"session_id": session_id, "counts": {}}
+        n = int(st["counts"].get(key) or 0) + 1
+        st["counts"][key] = n
+        if len(st["counts"]) > 200:
+            st["counts"] = dict(list(st["counts"].items())[-200:])
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(json.dumps(st))
+            tmp.replace(p)
+        except Exception:
+            pass
+        return n <= MAX_BLOCKS
+    except Exception:
+        return False        # cannot track -> do not gate
+
+
 def main() -> int:
     if os.environ.get("OVERNIGHT_SEQUENCER_RUN") != "1":
         return 0
@@ -175,8 +223,10 @@ def main() -> int:
     if not hit:
         return 0
     kind, tok, todo = hit
+    if not _valve(cmd, str(d.get("session_id") or "")):
+        return 0        # released after MAX_BLOCKS -- never wedge the run
     sys.stderr.write(_MSG.format(
-        cmd=tok, tool="Grep" if kind == "grep" else "Glob",
+        cmd=tok, tool="Grep" if kind == "grep" else "Glob", maxb=MAX_BLOCKS,
         extra=_TODO_EXTRA if todo else "") + "\n")
     try:
         import _offload_log
