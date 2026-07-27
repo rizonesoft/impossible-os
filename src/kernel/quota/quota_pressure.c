@@ -1259,6 +1259,34 @@ void quota_pressure_sample_all(void)
     }
 }
 
+/* Cheap in-tick phase clock.
+ *
+ * NOT uptime_ns. On this platform uptime_ns resolves to the monotonic source's
+ * read, and when that source is HPET it is an MMIO load against an emulated
+ * device -- a trap to the hypervisor on every call. Measured 2026-07-27 with
+ * the phase split: 107 us attributed to a phase whose entire body is a branch
+ * test that did not execute, and 13 us for a phase containing one atomic load.
+ * Those are not the phases; they are the clock. Five such reads per tick cost
+ * more than the work being measured and can by themselves push this DPC past
+ * the 100 us budget it exists to report on -- the instrumentation becoming the
+ * defect it reports.
+ *
+ * rdtsc is a register read on every x86-64 part, needs no CPUID gate (unlike
+ * rdtscp), and needs no calibration here: the phase costs are apportioned out
+ * of a real-nanosecond total, so an unknown or drifting tick rate cancels in
+ * the ratio. The tick's two uptime_ns reads stay, because deciding whether the
+ * budget was blown needs real time and nothing else can supply it.
+ *
+ * A phase share still includes any interrupt that landed inside it -- DPC
+ * callbacks run with interrupts enabled -- so a single overrun report is a
+ * hint, not a measurement. Repeated agreement across reports is the signal. */
+static inline uint64_t tick_phase_tsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));   /* ARCH: x86-64 */
+    return ((uint64_t)hi << 32) | lo;
+}
+
 /* Periodic sampler DPC. Runs at DISPATCH_LEVEL on the timer service CPU, which
  * is where the registry walk belongs: bounded, off the charge path, and single
  * threaded so sample order is total. */
@@ -1290,9 +1318,10 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * The report is emitted ONLY on an overrun, so a healthy tick stays
      * silent and the logging can never itself be the thing being measured. */
     const uint64_t t_start = uptime_ns();
+    const uint64_t c_start = tick_phase_tsc();
 
     quota_pressure_sample_all();
-    const uint64_t t_sample = uptime_ns();
+    const uint64_t c_sample = tick_phase_tsc();
 
     /* The stall lane rides this timer rather than owning one: it needs
      * servicing every two seconds and this tick is every 50 ms, so the check is
@@ -1324,7 +1353,7 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * different buckets, and a reader chasing an overrun needs to know WHICH
      * before deciding whether the answer is a cheaper arm or a rarer one. */
     const int fold_due = quota_stall_fold_due();
-    const uint64_t t_due = uptime_ns();
+    const uint64_t c_due = tick_phase_tsc();
 
     int fold_armed = 0;
     if (fold_due) {
@@ -1332,7 +1361,7 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
         if (!fold_armed)
             __atomic_fetch_add(&g_stall_fold_deferred, 1ull, __ATOMIC_RELAXED);
     }
-    const uint64_t t_stall = uptime_ns();
+    const uint64_t c_arm = tick_phase_tsc();
 
     /* THE INDEPENDENT RETRY TRIGGER for a deferred notification channel. The
      * drain is where the retry actually happens (it is the threaded, PASSIVE
@@ -1349,6 +1378,7 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
     if (pressure_retry_due())
         drain_arm();
 
+    const uint64_t c_end = tick_phase_tsc();
     const uint64_t t_end = uptime_ns();
 
     /* Attribute the overrun to a phase. Same 100 us budget the DPC watchdog
@@ -1359,10 +1389,27 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * the wrong thing. */
     if (t_end >= t_start &&
         (t_end - t_start) > (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US * 1000ull) {
-        const uint64_t sample_ns = (t_sample >= t_start)  ? (t_sample - t_start)  : 0ull;
-        const uint64_t due_ns    = (t_due    >= t_sample) ? (t_due - t_sample)    : 0ull;
-        const uint64_t arm_ns    = (t_stall  >= t_due)    ? (t_stall - t_due)     : 0ull;
-        const uint64_t drain_ns  = (t_end    >= t_stall)  ? (t_end - t_stall)     : 0ull;
+        /* Apportion the REAL total across the phases by their TSC share. Exact
+         * whenever the tick rate holds steady across one tick, which is the
+         * only interval that matters here, and it keeps the phase figures in
+         * nanoseconds without paying for a real-clock read at each boundary.
+         *
+         * If the TSC span is zero or ran backwards (a migration or a hypervisor
+         * that rewrites it), publish the total and zero the phases rather than
+         * dividing by zero or printing a wrapped span -- a report that says
+         * "over budget, attribution unavailable" is honest; one that invents a
+         * distribution is not. */
+        const uint64_t total_ns  = t_end - t_start;
+        const uint64_t span      = (c_end > c_start) ? (c_end - c_start) : 0ull;
+        const uint64_t d_sample  = (c_sample >= c_start)  ? (c_sample - c_start)  : 0ull;
+        const uint64_t d_due     = (c_due    >= c_sample) ? (c_due - c_sample)    : 0ull;
+        const uint64_t d_arm     = (c_arm    >= c_due)    ? (c_arm - c_due)       : 0ull;
+        const uint64_t d_drain   = (c_end    >= c_arm)    ? (c_end - c_arm)       : 0ull;
+
+        const uint64_t sample_ns = span ? (total_ns * d_sample) / span : 0ull;
+        const uint64_t due_ns    = span ? (total_ns * d_due)    / span : 0ull;
+        const uint64_t arm_ns    = span ? (total_ns * d_arm)    / span : 0ull;
+        const uint64_t drain_ns  = span ? (total_ns * d_drain)  / span : 0ull;
 
         /* RECORD here, EMIT from the passive drain. klog is not safe to call
          * from this DPC: when live disk logging is active its write path runs

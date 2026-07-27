@@ -449,6 +449,8 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 - [ ] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
 - [ ] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test.
 - [ ] -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
+- [ ] Record a milestone between EXEC and DESKTOP_READY: that interval is 2272ms and its real content is TTF/glyph/icon loading plus a 1935x1080 JPEG decode, none of which EXEC names.
+- [ ] `vfs_rename_ex` fails (rc=-1) on `X:\Perf\boot-trend.json.tmp` -> `.json`, so every boot leaves a stray .tmp; suspect FAT32 rename on a two-dot long name. The short-write path unlinks, the rename path does not.
 - [ ] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
 
 **Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

@@ -126,9 +126,29 @@ void boot_perf_budget_check(void)
         if (cls == BUDGET_OK) continue;
 
         int prod_level = (cls == BUDGET_HARD) ? LOG_ERROR : LOG_WARN;
+        /* Name BOTH endpoints. What is measured is the INTERVAL from this
+         * milestone to the next one, which is not the same thing as the cost of
+         * the step the milestone is named after -- everything that runs between
+         * them is inside it, recorded or not.
+         *
+         * The old "%s took %ums" wording hid that and misdirected the reader.
+         * Two live examples from a 2026-07-27 boot: "VFS took 3212ms" was the
+         * VFS -> PARTITION interval, whose real content is the partition scan,
+         * the IXFS mount and a FAT32 dirty-volume fsck -- vfs_init itself just
+         * registers 26 drive letters. "EXEC took 2272ms" was EXEC ->
+         * DESKTOP_READY, whose real content is five TTF faces, a 1410-glyph
+         * cache bake, four icon fonts and a 1935x1080 JPEG decode and rescale.
+         * Neither number described the subsystem it named, and acting on either
+         * would have meant optimizing code that was never the cost.
+         *
+         * The fix is to say what was measured. Narrowing an interval is then a
+         * matter of recording a milestone inside it, which the reader can now
+         * see is the actual remedy. */
         klog(boot_perf_budget_log_level(prod_level), "BOOT-BUDGET",
-             "%s took %ums (target %ums): %s%s",
-             b->step, observed_ms, b->target_ms, b->reason,
+             "%s -> %s took %ums (target %ums): %s%s",
+             b->step,
+             steps[i + 1].step ? steps[i + 1].step : "?",
+             observed_ms, b->target_ms, b->reason,
              boot_perf_budget_suffix());
     }
 }
