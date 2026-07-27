@@ -145,7 +145,35 @@ not a bill.)
   **Acceptance (met for the 3 split):** no skill's mandatory step list, gate, or hook trigger removed -- only
   relocated; catalog + hook audits pass; step sequences verified identical.
 
-- [ ] **T1-2b. Collapse the in-pass `receiving-code-review` repeats at their SOURCE (batch the review legs).**
+- [x] **T1-2b. Collapse the in-pass `receiving-code-review` repeats at their SOURCE (batch the review legs).**
+  **SHIPPED 2026-07-27.** The root cause was not the dispatch shape -- it was the skill prose contradicting itself.
+  `review-todo-section` step 8 already described the batched broker shape ("ONE structural wait + ONE
+  `review-envelope.py` read"), while the same step's tail said "triage findings from each independently" and step 8's
+  closing line said "follow it on every finding from every dispatch". That per-dispatch phrasing is what produced one
+  reception per leg; `overnight-sequencer` carried the same shape as "receive every findings set".
+  **Mechanism confirmed before changing anything:** `codex_review_completed.py` OVERWRITES
+  `.claude/state/last-codex-review.json` on every trigger -- a single record with one `trigger` label and
+  `received: false`, no per-kind accumulation. So legs dispatched in ONE parallel message collapse to one record that
+  ONE reception clears, and `receiving_review_required` (which reads that single record) is satisfied by it. Receiving
+  per leg was never required by any gate.
+  **Fix:** a "Reception cadence" rule in both drivers -- ONE reception per WAVE, where a wave is the set of legs
+  dispatched together and waited on together. Step 5 adversarial is a wave of one; 8a+8b are one wave of two; the
+  unattended broker bundle is one wave of three. The rule names the overwrite mechanism so it reads as a fact rather
+  than an assertion, and states explicitly that each dispatch's PostToolUse reminder is the harness prompting per Bash
+  call, NOT a per-leg obligation.
+  **Rigor is unchanged and says so:** every finding from every leg still goes through Fix / Reject / Accept at
+  file:line; reading the legs together is strictly better for catching the same defect reported twice; and a leg whose
+  findings must be fixed before another can be scoped is explicitly its own wave.
+  **No enforcement hook, deliberately.** T1-4 in this same file says an advisory under ~20% follow-through should be
+  promoted or deleted, not added to -- and a BLOCK on the reception path is precisely the review-gate coupling T1-2b
+  refused in the first place. The effect is measurable from existing data instead: `tool-history.jsonl` already records
+  every `Skill` invocation, which is how the 75 repeats were found.
+  **Checks run:** no per-leg phrasing remains in any skill; all 17 `review-todo-section` steps present;
+  `scripts/lint.sh` 0 errors; `scripts/audit-ai-system.sh` 7/7; control-plane suite 47/47.
+  **Acceptance (to confirm on the next run):** consecutive `receiving-code-review` gaps under 30 min drop from 75
+  toward ~0, with no drop in findings triaged per round.
+
+  <details><summary>Original item text (superseded)</summary>
   **Measured 2026-07-27 -- this replaces the "idempotent Skill re-invocation" hook originally filed here.** Gap
   distribution between consecutive invocations of the same skill: `receiving-code-review` **75 repeats within 30 min**
   (plus 2 within 5 min) against 27 at >=30 min, while EVERY other high-volume skill is >=30 min apart --
@@ -172,6 +200,8 @@ not a bill.)
   best case), against renaming `superpowers:receiving-code-review` across 9 `codex-*` skills plus the hook messages, and
   forking a plugin that is actively versioned (6.0.3 / 6.1.1 / 6.2.0 all cached locally) and pinned load-bearing by
   `CLAUDE.md`. 79% of the injected volume is our own skills, which T1-2 diets without touching the plugin at all.
+
+  </details>
 
 - [ ] **T1-3. Trigger rollover on CONTEXT SIZE, not only on section ship.**
   **Evidence:** per-segment context/turn climbs to **600-660K** before the section boundary arrives

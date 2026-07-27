@@ -138,8 +138,17 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   envelope's `needs_redispatch` names exactly the legs to re-run (missing OR
   crashed); reuse the already-clean legs' artifacts as-is. Envelope exit 0 =
   `all_clean`.
-- Receive every findings set through `superpowers:receiving-code-review` before
-  acting; then continue the pipeline in the same session.
+- **Receive ONCE per WAVE, not once per leg (T1-2b).** A wave is the set of legs
+  dispatched together and waited on together. Wait for all of them, read the ONE
+  combined envelope, then apply `superpowers:receiving-code-review` ONCE across
+  every finding in it, and continue the pipeline in the same session. Each
+  dispatch fires its own PostToolUse reminder -- that is the harness prompting
+  per Bash call, NOT a per-leg obligation. `codex_review_completed.py`
+  OVERWRITES `last-codex-review.json` on every trigger, so a parallel bundle
+  collapses to one `received: false` record that one reception clears. Measured
+  2026-07-27: 75 of 102 receptions landed within 30 min of the previous one,
+  ~465 KB of repeated discipline body for no added rigor. Cadence changes;
+  rigor does not -- every finding still gets Fix / Reject / Accept at file:line.
 - **Convergence gate (P2.1/P2.2) -- the primary churn mechanism.** BEFORE
   re-dispatching kind K in a fix loop: `bash
   .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`
