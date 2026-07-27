@@ -217,9 +217,13 @@ not a bill.)
   glossed over:** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads
   `section-checkpoint.json`, so 1b is dead weight until 1c lands.
 
-  - [ ] **(1a) Size/turn trigger, advisory only.** When context (or a turn-count proxy) crosses ~350K, set a "rotate at next safe point" flag. Sets the flag ONLY; takes no action. Cannot corrupt state -- low risk. Ship independently.
-  - [ ] **(1b) Enrich `section-checkpoint.py gather()`.** Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, and next intended action. Additive + fail-open per field. Ship independently.
-  - [ ] **(1c) Wire the resume path to CONSUME the enriched checkpoint.** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads `section-checkpoint.json`, so 1b is dead weight until this lands.
+  - [x] **(1a) ALREADY EXISTS** as `.claude/hooks/rotate_hint.py` (P4.1): a turn-count proxy, `ROTATE_HINT_TURNS = 140`, sets advisory `hint: true` and never blocks.
+    Exactly the described behaviour; cleared per worker by `run_phase_guard rollover`.
+  - [x] **(1b) ALREADY DONE** (P4.2 enrichment in `gather()`): captures `phase`, `open_findings` (loc + decision + title, newest 10), `findings_recorded`,
+    `decisions_indexed`, and a DERIVED `next_action`. Additive and fail-open per field, as specified.
+  - [x] **(1c) SHIPPED 2026-07-27** -- `session_brief_inject.checkpoint_block()` appends the checkpoint to the resume brief.
+    The gap was real and total: the hook had ZERO references to `section-checkpoint.json`, so every field 1b captures was dead weight and each resumed session re-derived facts already on disk.
+    **Bound to the current cursor** (same TODO file AND same `section_idx`) -- a checkpoint for other work is worse than none, since it hands the worker confident stale facts. Emits nothing on mismatch, missing file, malformed JSON, or an empty body. 3 tests.
   - [ ] **(1d) Attended-canary the enriched re-orient.** Prove a resumed session re-orients from the brief WITHOUT re-deriving the same file:line facts. Gates whether 1a-1c pay off before any gate work is built.
   - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.
   - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).
