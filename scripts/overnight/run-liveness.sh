@@ -81,7 +81,16 @@ launcher_running() {
 
 report_fresh() {
   local newest
-  newest="$(ls -t "$REPORT_DIR"/run-*.log 2>/dev/null | head -1)"
+  # A DRYRUN writes a report log with the SAME name shape into the SAME
+  # directory, so `pre-arm-check.sh` (which runs a launcher DRYRUN) leaves
+  # minutes-fresh logs behind. Counting those as evidence made this script
+  # answer ARMED -- "the schedule is ticking, do not re-arm" -- immediately
+  # after a pre-arm check on a repo that was not armed at all, which is the
+  # exact wrong instruction at the exact moment an operator asks. Skip any log
+  # that never got past the dry run. (Observed 2026-07-28.)
+  newest="$(ls -t "$REPORT_DIR"/run-*.log 2>/dev/null \
+            | while read -r f; do grep -q 'DRYRUN ok:' "$f" 2>/dev/null || echo "$f"; done \
+            | head -1)"
   [ -n "$newest" ] || return 1
   [ -n "$(find "$newest" -mmin "-$FRESH_MINUTES" 2>/dev/null)" ]
 }
@@ -111,6 +120,13 @@ selftest() {
   # An OLD log must not read as fresh.
   touch -d '2 hours ago' "$tmp/run-x.log"
   REPORT_DIR="$tmp" report_fresh && { echo "FAIL: 2h-old log reported fresh"; fails=1; }
+  # A DRYRUN log is not evidence of a ticking schedule, however fresh.
+  rm -f "$tmp"/run-*.log
+  printf 'DRYRUN ok: report=%s\n' "$tmp/run-d.log" > "$tmp/run-d.log"
+  REPORT_DIR="$tmp" report_fresh && { echo "FAIL: DRYRUN log reported fresh"; fails=1; }
+  # ...but a real log sitting BESIDE a newer DRYRUN log still counts.
+  touch "$tmp/run-real.log"; touch "$tmp/run-d.log"
+  REPORT_DIR="$tmp" report_fresh || { echo "FAIL: real log masked by DRYRUN"; fails=1; }
   rm -rf "$tmp"
   [ "$fails" = 0 ] && echo "run-liveness selftest OK" || return 1
 }
