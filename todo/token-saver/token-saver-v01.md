@@ -217,18 +217,28 @@ not a bill.)
   glossed over:** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads
   `section-checkpoint.json`, so 1b is dead weight until 1c lands.
 
-  - [x] **(1a) ALREADY EXISTS** as `.claude/hooks/rotate_hint.py` (P4.1): a turn-count proxy, `ROTATE_HINT_TURNS = 140`, sets advisory `hint: true` and never blocks.
-    Exactly the described behaviour; cleared per worker by `run_phase_guard rollover`.
+  - [x] **(1a) EXISTS BUT IS DISABLED -- correction 2026-07-27.** `.claude/hooks/rotate_hint.py` implements the turn-count proxy (`ROTATE_HINT_TURNS = 140`), but `ROTATE_HINT_ENABLED = False`:
+    the hint is RETIRED (B1, Canary #2 2026-07-14) and never fires. An earlier note here called it live; that was wrong.
   - [x] **(1b) ALREADY DONE** (P4.2 enrichment in `gather()`): captures `phase`, `open_findings` (loc + decision + title, newest 10), `findings_recorded`,
     `decisions_indexed`, and a DERIVED `next_action`. Additive and fail-open per field, as specified.
   - [x] **(1c) SHIPPED 2026-07-27** -- `session_brief_inject.checkpoint_block()` appends the checkpoint to the resume brief.
     The gap was real and total: the hook had ZERO references to `section-checkpoint.json`, so every field 1b captures was dead weight and each resumed session re-derived facts already on disk.
     **Bound to the current cursor** (same TODO file AND same `section_idx`) -- a checkpoint for other work is worse than none, since it hands the worker confident stale facts. Emits nothing on mismatch, missing file, malformed JSON, or an empty body. 3 tests.
   - [ ] **(1d) Attended-canary the enriched re-orient.** Prove a resumed session re-orients from the brief WITHOUT re-deriving the same file:line facts. Gates whether 1a-1c pay off before any gate work is built.
-  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.
-  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).
-  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
-  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
+  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
+  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
+  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
+  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
+
+  **CORRECTION 2026-07-27 -- the mid-section mechanism this item proposes was already TRIED AND RETIRED.** The
+  sequencer skill records it: *"Mid-section context-cap rotation -- RETIRED (B1, Canary #2 2026-07-14). Do NOT attempt
+  a mid-section rotation; the `rotate_hint` reminder is disabled so it will not fire."* The canary proved the
+  PRECONDITION never occurs: commit and push are ATOMIC at ship, so there is never a committed-but-unpushed WIP window
+  for `rollover-wip` to rotate at. Steps 1e-1h therefore rest on a state the runner does not produce, and building them
+  would repeat a disproved experiment. What survives and is genuinely useful is 1b + 1c: a richer checkpoint that a
+  resumed worker actually reads, which improves the EXISTING per-section ship rollover. 1d still gates that.
+  **Revisit condition:** only if the ship flow changes so that a WIP window exists (commit without push), or a
+  different rotation trigger is found that does not need one.
 
   **Gates another item:** `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` "a REFUSED rollover must BLOCK starting the next section"
   is BLOCKED-ON this item by decision 2026-07-27. That one hard-blocks the next section on a refused rollover, which can
@@ -280,7 +290,23 @@ not a bill.)
   **Acceptance:** every hook retired or rate-limited is recorded in `.claude/hooks/MANIFEST.md` with its measured follow
   rate; `scripts/audit-hooks.sh` stays green; no *blocking* gate is touched by this item.
 
-- [ ] **T1-5. Stop the high-context / low-work tail segments.**
+- [x] **T1-5. Stop the high-context / low-work tail segments.**
+  **CLOSED 2026-07-27 -- PREMISE INVALIDATED, not implemented. The $73 is real but it is DOUBLE-COUNTED.**
+  The item calls these "post-rollover stubs that inherit a full context". They are not. `overnight-launch.sh` states
+  it outright: *"Every launch is a fresh headless agent (there is no real conversation resume); the guard cursor in
+  sequencer-run.json is what carries state across relaunches."* A segment is NOT a spawn -- one run is ONE session,
+  sliced into segments at commit boundaries. `run-20260725-052736` is the proof: idx0 = 275 turns at 377K/turn, then
+  idx1 (2 turns) and idx2 (5 turns) at 654K and 660K -- the SAME session, its context having grown.
+  So the tail turns are expensive BECAUSE THE SESSION GREW, not because of what they do. Moving bookkeeping to the
+  launcher (the stated fix) would change nothing: those 7 turns would still cost ~660K each. And the measured shape
+  contradicts the fix anyway -- the tail segments run 61 `bash` + 12 `bash_search` calls with zero Reads, Edits or
+  Agent dispatches, and that is rollover VERIFICATION, which is inherently model-side (the guard's `rollover` verb is
+  invoked and its verdict read), not the `advance-work.py` / `run-status.py` / `metrics-report.py` bookkeeping the item
+  names. The launcher already runs `run-outcome.py`, `parse-usage-limit.py` and `stream-report.py` post-run, plus
+  `run-status.py` on the fixpoint path.
+  **There is no separate tail-segment problem.** It is the same context-growth cost that T1-1, T1-2 and T1-3 target,
+  measured at the end of the session where it is most visible. Counting its $73 as an additional 3% saving on top of
+  those items would be double-counting the same tokens.
   **Evidence:** **25 of 53 segments** did <=10 turns each at >300K context/turn -- 88 turns total (2% of work) burning
   48.9M cache-read tokens (**$73**, 3.7% of cache-read spend). These are post-rollover stubs that inherit a full context,
   do a handful of bookkeeping turns, and exit.
