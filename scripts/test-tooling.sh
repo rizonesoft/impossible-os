@@ -3744,6 +3744,11 @@ if python3 "$REPO_ROOT/.claude/hooks/edit_retry_reminder.py" --selftest >/dev/nu
 else
     t_fail "edit_retry_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/cd_prefix_reminder.py" --selftest >/dev/null 2>&1; then
+    t_pass "cd_prefix_reminder_selftest  redundant-prefix reminder green"
+else
+    t_fail "cd_prefix_reminder_selftest  embedded selftest failed"
+fi
 if python3 "$REPO_ROOT/.claude/hooks/search_offload_gate.py" --selftest >/dev/null 2>&1; then
     t_pass "search_offload_gate_selftest  leading-file-search reroute green"
 else

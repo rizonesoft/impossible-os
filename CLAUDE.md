@@ -2,6 +2,16 @@
 
 > Claude Code project instructions for the Impossible OS kernel. This file and `.claude/skills/` are the complete Claude Code system -- self-contained, no shared layers.
 
+## Shell Calls -- no `cd <project-dir>` prefix
+
+The working directory PERSISTS between Bash calls, so `cd <project-dir> && <cmd>` is redundant. It is not a
+style nit: the prefix defeats permission-allowlist matching -- an entry like `Bash(bash scripts/test.sh:*)`
+cannot match a `cd /long/path && bash scripts/test.sh` string, so every prefixed variant becomes a fresh
+permission decision. Measured 2026-07-28: **3,187 of 4,729 Bash calls (67%)** carried the prefix; only 4 were a
+legitimate `cd <other dir>`. Use `cd` only when you genuinely need a DIFFERENT directory.
+`.claude/hooks/cd_prefix_reminder.py` warns (twice per session, never blocks -- the prefixed command is
+correct, just costly).
+
 ## Build -- Never use raw `make`
 
 ```bash

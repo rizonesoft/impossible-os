@@ -469,7 +469,29 @@ not a bill.)
 
 ## T3 -- Deterministic work that is currently spending a model
 
-- [ ] **T3-1. Collapse the `cd`-prefix and shell-wrapper habit.**
+- [x] **T3-1. Collapse the `cd`-prefix and shell-wrapper habit.**
+  **SHIPPED 2026-07-28** as `.claude/hooks/cd_prefix_reminder.py` + a `CLAUDE.md` rule.
+  **Both premises verified, and the count is larger than stated:** cwd persistence confirmed LIVE (a call with no
+  prefix reports the project root), and re-measuring gives **3,187 of 4,729 Bash calls (67%)** carrying
+  `cd <project-dir> &&` against only **4** legitimate `cd <other dir>` -- so the redundant shape can be targeted
+  precisely with essentially no false-positive surface.
+  **The item's "rewrite" half is NOT buildable and was not attempted.** No hook in this repo modifies `tool_input`,
+  and the only documented JSON envelope is `permissionDecision: deny` -- a block, not a rewrite. Blocking was also
+  rejected on its merits: the prefixed command is CORRECT and runs fine, so blocking it would trade real friction for a
+  cosmetic gain. Warning-only.
+  **Budgeted at 2 injections/session via `_advisory_budget` (T1-4's helper, first reuse).** A 3,187-fire nag would
+  itself become the cost problem this item describes -- exactly what T1-4 measured on `interactive_offload_router`
+  (487 injections, zero follows). The habit is learned in one or two reminders.
+  **The real payoff is permission friction, not tokens** (the item says as much). An allowlist entry like
+  `Bash(bash scripts/test.sh:*)` cannot match a `cd /long/path && bash scripts/test.sh` string, so every prefixed
+  variant is a fresh permission decision.
+  **Acceptance met:** nothing loses its working directory (the hook never blocks and never edits a command), and
+  sandbox behaviour is untouched. Silent on `cd <other dir>`, on subdirectories, and on unprefixed commands --
+  verified live.
+  **Checks run:** `--selftest` (13 cases incl. never-blocks and the budget cap); `scripts/test-tooling.sh`
+  **557/557**; control-plane suite 48/48; `audit-hooks.sh` no drift; lint 0 errors.
+  **Operator follow-up (yours, not automatable here):** run `/fewer-permission-prompts` once the unprefixed shapes
+  start appearing, so the allowlist is rebuilt against them.
   **Evidence:** **2,976 of 4,400 Bash calls start with `cd`.** The working directory persists between calls; the `cd`
   prefix is pure repetition, and it also defeats permission-allowlist matching (every distinct `cd X && Y` is a new
   string), which drives permission churn.
