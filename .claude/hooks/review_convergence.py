@@ -222,6 +222,23 @@ def _selftest() -> int:
     return 0
 
 
+def _log_decision(root: Path, slice_id: str, kind: str, redo: bool,
+                  why: str) -> None:
+    """Append the convergence decision to the offload-events log (best-effort).
+
+    Never raises and never changes the verdict: a logging failure must not turn
+    a CONVERGED into a REDISPATCH or vice versa."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import _offload_log
+        _offload_log.log_event(
+            root, "redispatch" if redo else "converged",
+            "review_convergence",
+            f"{_norm_kind(kind)} {slice_id} -- {why[:120]}")
+    except Exception:
+        pass
+
+
 def main(argv: list) -> int:
     if "--selftest" in argv:
         return _selftest()
@@ -233,6 +250,16 @@ def main(argv: list) -> int:
     if len(argv) >= 3 and argv[0] == "should-redispatch":
         redo, why = should_redispatch(root, argv[1], argv[2])
         print(("REDISPATCH: " if redo else "CONVERGED: ") + why)
+        # T3-3: record BOTH outcomes so the saving is countable. A suppressed
+        # round removes three things from the main context at once -- the Codex
+        # verdict body, the finding triage, and a ~6.2 KB
+        # `receiving-code-review` skill body -- but until now nothing recorded
+        # that it happened, so the mechanism's value was unmeasurable in exactly
+        # the way the agent cache's was (155 stores, 0 hits, unnoticed).
+        # Logging the REDISPATCH side too makes the ratio meaningful: a
+        # suppression count alone cannot say whether the gate is working or
+        # simply never consulted.
+        _log_decision(root, argv[1], argv[2], redo, why)
         return 0 if redo else 1
     if len(argv) >= 3 and argv[0] == "record":
         ok = record(root, argv[1], argv[2])

@@ -41,6 +41,26 @@ def main(argv) -> int:
         except ValueError:
             continue
     events.sort(key=lambda e: e["ts"])
+    # T3-3: the convergence gate is not a reminder -- it has no "follow", it
+    # either suppressed a Codex round or it did not. Report it as a ratio so
+    # the saving is COUNTABLE. A suppression count alone cannot say whether the
+    # gate works or is simply never consulted, which is how the agent cache sat
+    # at 155 stores / 0 hits unnoticed.
+    conv = sum(1 for e in events if e.get("kind") == "converged")
+    redis = sum(1 for e in events if e.get("kind") == "redispatch")
+    if conv or redis:
+        tot = conv + redis
+        print(f"review convergence: {conv}/{tot} rounds suppressed "
+              f"({100 * conv // max(tot, 1)}%)")
+        print(f"  each suppressed round removes a Codex verdict body, its "
+              f"finding triage, and a ~6.2 KB receiving-code-review body "
+              f"from the main context.")
+        if conv == 0 and redis:
+            print("  NOTE: 0 suppressed. Either inputs genuinely moved every "
+                  "round, or the gate is not being consulted -- check that the "
+                  "review skills call `should-redispatch` before each kind.")
+        print()
+
     dispatch_ts = [e["ts"] for e in events if e.get("kind") == "dispatch"]
     # R2 (2026-07-19): non-Agent compliance. A hook whose sanctioned follow-up
     # is a rerouted COMMAND (build_offload_reminder -> run-artifact.sh) logs

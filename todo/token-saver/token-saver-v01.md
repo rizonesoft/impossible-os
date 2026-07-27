@@ -530,7 +530,27 @@ not a bill.)
   **Acceptance:** the section boundary still runs the FULL suite + smoke and still quotes real output for the Verified
   stamp. Only the intra-loop runs are narrowed.
 
-- [ ] **T3-3. Never re-dispatch an unchanged review kind on unchanged inputs.**
+- [x] **T3-3. Never re-dispatch an unchanged review kind on unchanged inputs.**
+  **"Not yet done" was STALE -- the filed items shipped as P2.1 + P2.2. The one genuine gap, LOGGING, is now closed
+  (2026-07-28).**
+  **Already done:** `review_convergence.py` implements convergence-as-a-rule (P2.1) and per-kind scope (P2.2);
+  adversarial/perf/re-adversarial fingerprint SOURCE only, consistency/design SOURCE+TODO, so a docs-only fix converges
+  the source-only kinds. Both source items in `overnight-runner-improvements-v01` were closed on this evidence earlier
+  today; this item's "not yet done" predates that check.
+  **ADD (1) -- keying on `diff-facts.py` -- REJECTED, because it cuts against this item's own acceptance.** The gate
+  currently fingerprints the whole scope family. Narrowing it to "the files this kind's findings touched" would make
+  suppression MORE likely, and the acceptance says "Any doubt re-dispatches" and "**Never** suppress a re-adversarial
+  round that follows a fix". Note this is the OPPOSITE call from T2-2, and deliberately so: in the CACHE a false hit
+  serves a stale map, so the scope had to narrow; in the REVIEW gate a false "converged" SKIPS a needed review, so the
+  broad scope is the conservative choice. Both fail toward more work, which is why they move in opposite directions.
+  **ADD (2) -- SHIPPED.** Every decision is logged to `offload-events.jsonl` as `converged` / `redispatch`, and
+  `offload-report.py` prints the suppression ratio. BOTH outcomes are logged on purpose: a suppression count alone
+  cannot distinguish "the gate is working" from "the gate is never consulted" -- which is precisely how the agent
+  cache sat at 155 stores / 0 hits unnoticed until T2-2. The report calls that case out explicitly when it sees 0/N.
+  **Acceptance unchanged and still enforced by the existing code:** suppression requires the kind's ENTIRE scope to be
+  unchanged since its recorded verdict; any git failure or unknown kind fails open to REDISPATCH.
+  **Checks run:** `review_convergence --selftest`; live end-to-end confirmed a REDISPATCH and a CONVERGED each log
+  their own event with the verdict unchanged; `offload-report.py` renders the ratio; `audit-hooks.sh` no drift.
   Filed in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` as two items (convergence-based review as a RULE; per-kind x per-file
   invalidation) and **not yet done**. The cost case: a Codex round is cheap on our side but the *reception* is not -- the
   verdict body, the finding triage, and the `receiving-code-review` skill body (6.2 KB, invoked 103 times) all land in
