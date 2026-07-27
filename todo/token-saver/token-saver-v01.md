@@ -226,6 +226,12 @@ not a bill.)
   - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
   - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
 
+  **Gates another item:** `overnight-runner-improvements.md` "a REFUSED rollover must BLOCK starting the next section"
+  is BLOCKED-ON this item by decision 2026-07-27. That one hard-blocks the next section on a refused rollover, which can
+  wedge an unattended run (its escape path, defer-with-state, does not exist). T1-3 attacks the same context balloon from
+  the mid-section side and cannot wedge, because it fires only at safe boundaries. Land T1-3, re-measure boundary-side
+  ballooning, and only then decide whether the hard block is still needed.
+
   **Sharpens:** `overnight-runner-improvements.md` "Context-cap rollover ... (Path B)" -- that item is scoped as a flow
   fix; this adds the measured threshold and the arithmetic that justifies it.
   **Expected saving:** caps the worst-case multiplier. On the measured distribution, holding steady state at 250K instead
