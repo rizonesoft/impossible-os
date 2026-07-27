@@ -388,6 +388,24 @@ python3 "$SCRIPT_DIR/parse-usage-limit.py" "$REPORT" "$SNOOZE_FILE" >> "$REPORT"
 # A usage-limit death is excluded -- the snooze file above already governs it.
 SNOOZED_ARG=()
 if [ -f "$SNOOZE_FILE" ]; then SNOOZED_ARG=(--snoozed); fi
+# T3-4: per-section cost report, appended to the run report with ZERO model
+# cost. section-cost-report.py was fully built (per-section turns, output and
+# cache-read tokens, sidechain share, agents dispatched, plus cost normalized by
+# changed LOC and per shipped commit, with advisory soft-SLO flags) and had NO
+# CALLER anywhere -- an audit for "bookkeeping still done in model turns" found
+# the opposite problem: a finished deterministic report nothing was running.
+# Best-effort and never fatal: a reporting failure must not affect the run's
+# outcome classification below.
+if [ -f "${OVERNIGHT_METRICS_FILE:-}" ]; then
+  {
+    echo ""
+    echo "=== per-section cost report ==="
+    timeout 120 python3 "$SCRIPT_DIR/section-cost-report.py" \
+      "$OVERNIGHT_METRICS_FILE" --project "$PROJECT_DIR" 2>&1 || \
+      echo "(section-cost-report unavailable)"
+  } >> "$REPORT" 2>&1 || true
+fi
+
 OUTCOME_JSON="$(python3 "$SCRIPT_DIR/run-outcome.py" "$PROJECT_DIR" \
   --exit "$AGENT_EXIT" --start-head "${START_HEAD:-}" \
   --run-secs "$(( $(date +%s) - RUN_START_EPOCH ))" \

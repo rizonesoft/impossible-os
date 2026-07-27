@@ -560,7 +560,31 @@ not a bill.)
   **Acceptance:** a round is only suppressed when BOTH the review kind and every file in its relevant set are unchanged
   since the receipt. Any doubt re-dispatches. **Never** suppress a re-adversarial round that follows a fix.
 
-- [ ] **T3-4. Move the remaining bookkeeping/verdict parsing out of model turns.**
+- [x] **T3-4. Move the remaining bookkeeping/verdict parsing out of model turns.**
+  **AUDIT DONE 2026-07-28. The audit found the OPPOSITE problem, and fixing that is what shipped.**
+  **No step restates script output.** Grepping the sequencer skill for restate/summarize/report-the-output patterns
+  returns nothing, and every script the skill tells the model to run already emits a bounded result:
+  `section-checkpoint.py show` 893 B, `preflight.py` 1,497 B, `runner_status.py` 2,956 B, `advance-work.py` 4,265 B
+  (its "ONE bounded packet"). `run-outcome.py` is called only by the LAUNCHER, so it is already out of model turns.
+  **The premise does not hold either.** Classifying all 4,757 Bash calls: only **154 (3%)** invoke the deterministic
+  overnight fleet at all. The traffic is search 15%, build/test 14% (already wrapped by `run-artifact.sh` via the
+  `build_offload_reminder` block), text/file utils 14%, inline python 11%, git 6% -- so "the fleet is being
+  supplemented by model-side parsing of the same data" has almost no traffic behind it. The 2-3% had no target.
+  **What the audit DID find: `section-cost-report.py` has NO CALLER anywhere.** A fully-built per-section cost report
+  -- turns, output tokens, cache-read, sidechain share, agents dispatched, cost normalized by changed LOC and per
+  shipped commit, with advisory soft-SLO flags (e.g. high turns with zero agent dispatches = offload miss) -- sitting
+  unrun. Looking for bookkeeping still done in model turns turned up a finished deterministic report nobody was
+  running.
+  **Shipped:** wired into `overnight-launch.sh` so every run appends the report with ZERO model cost. Best-effort and
+  never fatal -- guarded on the metrics file existing, `timeout 120`, `|| true` -- so a reporting failure cannot affect
+  the run-outcome classification that follows it.
+  **This is most of T4-1 already built.** T4-1 asks for exactly these numbers per run; it is now largely a matter of
+  extending this report (re-read ratio, skill-injection bytes, hook-fire counts, cache-hit rate) rather than building
+  reporting from scratch.
+  **Acceptance met trivially:** no gate was touched, so none lost evidence; the on-disk artifact remains the source of
+  truth for stamps.
+  **Checks run:** launcher `bash -n` clean; the block simulated against a real metrics file renders the report;
+  fail-safe verified (missing metrics file emits nothing, exits clean); control-plane suite 48/48.
   **Evidence:** `main_tools` shows `bash 1,810` and `other 144`; the deterministic script fleet
   (`preflight.py`, `receipts.py`, `run-outcome.py`, `section-cost-report.py`, `advance-work.py`) already exists and is
   correct -- it is just being supplemented by model-side parsing of the same data.
