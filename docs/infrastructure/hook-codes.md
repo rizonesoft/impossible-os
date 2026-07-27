@@ -92,6 +92,21 @@ If the block is wrong anyway, it releases itself: the same request is blocked
 at most twice, then allowed. Operator escapes are `READ_CACHE_DISABLE=1`
 (session kill switch) and the one-shot file `.claude/state/read-cache-override`.
 
+## AGENT-* (agent_coverage_gate.py)
+
+### AGENT-COVERED
+A read-only agent already mapped this file earlier in the session and its report
+covers it, so reading the whole file again is the "dispatch ADDS a layer" pattern
+CLAUDE.md forbids. Reuse the report.
+
+WARNs twice, then BLOCKs. A **slice read is always allowed** -- `Read(offset,
+limit)` is the trust-contract verification read (confirming one finding at
+file:line before acting), which this gate deliberately protects; only unbounded
+whole-file re-reads are gated. Subagents, other sessions, non-covering agent
+types, and any path the agent never touched are all exempt.
+
+Kill switch: `AGENT_COVERAGE_DISABLE=1`.
+
 ## EDIT-* (edit_preflight.py)
 
 ### EDIT-STALE

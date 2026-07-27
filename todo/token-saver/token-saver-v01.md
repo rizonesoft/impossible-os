@@ -324,7 +324,27 @@ not a bill.)
 
 ## T2 -- Offload that actually replaces work (the user's lean)
 
-- [ ] **T2-1. Enforce "dispatch REPLACES the read" -- today it demonstrably layers.**
+- [x] **T2-1. Enforce "dispatch REPLACES the read" -- today it demonstrably layers.**
+  **SHIPPED 2026-07-27** as `.claude/hooks/agent_coverage_gate.py` (PreToolUse `Read` gate + PostToolUse
+  `Task|Agent` recorder), code `[AGENT-COVERED]`.
+  **The half that already existed:** `inflight_race_guard` (D1) warns when a read RACES a still-running agent -- but it
+  CLEARS its map at SubagentStop, so the moment the report lands and the coverage becomes durable, it stops caring.
+  This hook owns exactly that other half: coverage AFTER the agent returned. `agent_dispatch_recorder` records type and
+  timestamp but no file set, so the covered-path map is new.
+  **The carve-out is the whole design, not a footnote.** Only WHOLE-FILE reads are gated; a slice read
+  (`offset`/`limit`) is ALWAYS free. That is the trust-contract verification read -- the main session confirming ONE
+  load-bearing finding at file:line before acting -- and it is the read that PROTECTS quality. Gating it would trade a
+  real guarantee for tokens, which is the Never-cut line. Acceptance met verbatim.
+  **Escalation:** WARN twice, BLOCK from the third. The first read after a report is often a legitimate spot-check; by
+  the third the message has been shown twice and it is the layering this exists to stop.
+  **Exempt by construction:** subagents (their reads ARE the delegated work), other sessions (a fresh worker holds
+  neither report nor context), non-covering agent types (a judgment/executor dispatch maps no file surface, so recording
+  it would suppress reads nothing covered), and any path the agent never touched. Fail-open everywhere; kill switch
+  `AGENT_COVERAGE_DISABLE=1`.
+  **Checks run:** `--selftest` (12 cases incl. the slice carve-out and the non-covering-agent case);
+  `scripts/test-tooling.sh` **555/555**; control-plane suite 48/48; `audit-hooks.sh` no drift; lint 0 errors; live
+  end-to-end confirmed warn -> warn -> BLOCK with the slice read still free.
+  **Still to measure (T4-1/T4-3 own it):** the predicted 8-15%.
   **Evidence:** 48 agent dispatches in the metrics window against 4,400 main-session Bash calls, 1,412 Reads, 1,343 Greps.
   The sidechain did 1,016 greps for 14,584 output tokens -- it is doing the cheap work correctly, but the main session
   kept doing its own anyway. `CLAUDE.md` already states the rule ("An agent dispatch must REPLACE expected main-session

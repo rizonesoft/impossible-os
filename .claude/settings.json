@@ -238,6 +238,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_cache_block.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_coverage_gate.py\"",
+            "timeout": 5
           }
         ]
       }
@@ -404,6 +409,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_dispatch_recorder.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_coverage_gate.py\" record",
+            "timeout": 10
           }
         ]
       },
