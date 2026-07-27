@@ -1159,6 +1159,76 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
     return (True, "")
 
 
+def _crashed_broker_legs(root: Path, todo: str, entry: dict) -> list[str]:
+    """Kinds whose BROKER dispatch never completed (crashed / still running).
+
+    Closes the dispatch-bound-receipt gap. The broker detaches each review into
+    a transient unit and returns instantly, and its stamp is deliberately
+    written at DISPATCH time -- `codex_review_completed._record_stamp` treats a broker
+    dispatch as stampable because a broker leg IS a real review wrapper (the
+    `is_broker` carve-out), unlike a generic `task --background`. That is right
+    for ATTRIBUTION and wrong as COMPLETION proof: a leg that dies with
+    `app-server exited unexpectedly, rc=1` leaves a stamp that satisfied the
+    four-dispatch check while no review ever ran. Codex crashes are common
+    (16 in one measured run), so this is not theoretical.
+
+    The broker manifest is the authority on which dispatches were brokered and
+    whether they finished, so no new state is introduced: a manifest entry for
+    (todo, kind) means the dispatch WAS brokered, and `leg_summary` reports
+    `complete` / `crashed` from the artifact itself.
+
+    FAIL-OPEN in every direction it cannot prove a crash -- unreadable manifest,
+    unimportable envelope module, no matching entry (a FOREGROUND
+    `scripts/codex-dispatch.sh` dispatch is synchronous, so its return already
+    proves completion and it has no manifest line). Only a positively-observed
+    crashed-or-unfinished leg blocks.
+    """
+    try:
+        mf = root / ".claude" / "overnight" / "reviews" / "manifest.jsonl"
+        if not mf.exists():
+            return []
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_rev_env", root / "scripts" / "overnight" / "review-envelope.py")
+        rev = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rev)
+        newest: dict[str, dict] = {}
+        for line in mf.read_text(encoding="utf-8").splitlines():
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            if e.get("todo") != todo:
+                continue
+            k = e.get("kind")
+            if k in _DISPATCH_KINDS and (
+                    k not in newest or (e.get("ts") or 0) >= (newest[k].get("ts") or 0)):
+                newest[k] = e
+        bad: list[str] = []
+        for kind in _DISPATCH_KINDS:
+            ts = entry.get(kind)
+            if not isinstance(ts, int) or ts <= 0:
+                continue          # already reported as missing
+            e = newest.get(kind)
+            if not e:
+                continue          # foreground dispatch: nothing to prove here
+            # Only judge a manifest entry from THIS dispatch onward; an older
+            # brokered leg for a prior round must not condemn a fresh one.
+            if (e.get("ts") or 0) * 1_000_000_000 < ts - 300_000_000_000:
+                continue
+            try:
+                s = rev.leg_summary(e)
+            except Exception:
+                continue          # cannot read the artifact -> cannot prove a crash
+            if s.get("crashed"):
+                bad.append(f"{kind} (crashed, rc={s.get('rc')})")
+            elif not s.get("complete"):
+                bad.append(f"{kind} (no completion sentinel)")
+        return bad
+    except Exception:
+        return []                 # a broken check must never block a commit
+
+
 def _history_covers(root: Path, staged_src: list[str], current_blobs: dict) -> bool:
     """Return True if any received review in
     .claude/state/codex-review-history.jsonl covered every staged path
@@ -1447,7 +1517,8 @@ def _four_dispatch_evidence(
                         f"dispatches will record the binding.\n"
                     )
                     legacy_warned = True
-        if missing or stale or cross_branch:
+        crashed = _crashed_broker_legs(root, todo, entry)
+        if missing or stale or cross_branch or crashed:
             parts: list[str] = []
             if missing:
                 parts.append(f"missing: {', '.join(missing)}")
@@ -1457,6 +1528,13 @@ def _four_dispatch_evidence(
             if cross_branch:
                 parts.append(
                     f"cross-branch (not ancestor of HEAD): {', '.join(cross_branch)}"
+                )
+            if crashed:
+                parts.append(
+                    f"dispatched but never COMPLETED: {', '.join(crashed)} "
+                    f"-- re-dispatch those legs (review-envelope.py "
+                    f"`needs_redispatch` names them); a crashed leg's "
+                    f"dispatch-time stamp is attribution, not review proof"
                 )
             issues.append(f"{todo}: {'; '.join(parts)}")
 

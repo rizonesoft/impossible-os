@@ -135,6 +135,62 @@ def test_partially_intersecting_record_is_rejected():
         assert "unreviewed.c" in why, f"the block must NAME the unreviewed file: {why}"
 
 
+def _broker_fixture(d, todo, legs):
+    """legs: {kind: "clean"|"crash"} -> manifest + artifacts under root."""
+    root = pathlib.Path(d)
+    (root / ".claude/overnight/reviews").mkdir(parents=True)
+    (root / "scripts/overnight").mkdir(parents=True)
+    import shutil
+    shutil.copy(REPO / "scripts/overnight/review-envelope.py",
+                root / "scripts/overnight/review-envelope.py")
+    ts = int(time.time())
+    lines = []
+    for kind, how in legs.items():
+        log = root / f".claude/overnight/reviews/{kind}.out"
+        log.write_text('{"verdict":"approve"}\nTurn completed (rc=0)\n' if how == "clean"
+                       else "app-server exited unexpectedly\nTurn completed (rc=1)\n")
+        lines.append(json.dumps({"ts": ts, "kind": kind, "todo": todo,
+                                 "logFile": str(log)}))
+    (root / ".claude/overnight/reviews/manifest.jsonl").write_text("\n".join(lines) + "\n")
+    return root
+
+
+def test_crashed_broker_leg_is_not_review_proof():
+    """A broker leg is stamped at DISPATCH time (the `is_broker` carve-out in
+    codex_review_completed), which is correct for attribution and wrong as
+    completion proof. A leg that dies with rc=1 must not satisfy the
+    four-dispatch check -- Codex crashes are common (16 in one measured run),
+    so a dispatch-bound stamp would let a section ship on a review that never
+    ran."""
+    todo = "todo/x/TODO-1.md"
+    with tempfile.TemporaryDirectory() as d:
+        root = _broker_fixture(d, todo, {"adversarial": "clean",
+                                         "consistency": "crash"})
+        now = time.time_ns()
+        entry = {"adversarial": now, "consistency": now, "perf": now}
+        bad = scg._crashed_broker_legs(root, todo, entry)
+        assert any("consistency" in b and "crashed" in b for b in bad), bad
+        assert not any("adversarial" in b for b in bad), bad
+        # perf has no manifest line -> a FOREGROUND dispatch, which is
+        # synchronous and therefore already proven complete by its return.
+        assert not any("perf" in b for b in bad), bad
+
+
+def test_completion_check_fails_open_when_it_cannot_prove_a_crash():
+    """A gate that cannot read its evidence must never block a commit."""
+    todo = "todo/x/TODO-1.md"
+    now = time.time_ns()
+    entry = {"adversarial": now, "consistency": now, "perf": now}
+    with tempfile.TemporaryDirectory() as d:
+        root = _broker_fixture(d, todo, {"adversarial": "crash"})
+        # different TODO -> no matching manifest entries at all
+        assert scg._crashed_broker_legs(root, "todo/other/TODO-9.md", entry) == []
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)          # no manifest, no envelope module
+        (root / ".claude/state").mkdir(parents=True)
+        assert scg._crashed_broker_legs(root, todo, entry) == []
+
+
 def test_received_false_but_history_covers_accepts():
     # The churn fix: a newer kind's trigger reset received:false, but a prior
     # RECEIVED review in the history covers the exact current staged content.
@@ -475,6 +531,8 @@ if __name__ == "__main__":
     test_received_true_and_covered_accepts()
     test_non_intersecting_record_is_stale_rejected()
     test_partially_intersecting_record_is_rejected()
+    test_crashed_broker_leg_is_not_review_proof()
+    test_completion_check_fails_open_when_it_cannot_prove_a_crash()
     test_received_false_but_history_covers_accepts()
     test_received_false_and_no_history_blocks()
     test_b3_review_over_unstaged_binds_then_gate_accepts_when_staged()
