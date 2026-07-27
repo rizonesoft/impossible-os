@@ -107,6 +107,21 @@ types, and any path the agent never touched are all exempt.
 
 Kill switch: `AGENT_COVERAGE_DISABLE=1`.
 
+## SEARCH-* (search_offload_gate.py)
+
+### SEARCH-OFFLOAD
+A leading file search (`grep`/`rg`/`find` family) run through Bash in the
+headless run. Its whole result lands in context and is re-charged as cache-read
+on every later turn; the Grep/Glob TOOL returns the same matches without that,
+and supports `-n`, `-A`/`-B`/`-C`, `-c`, `-l`, `head_limit` and glob/type
+filters.
+
+NOT gated, by design: a search after a `|` (it filters another command's
+stdout, which the Grep tool cannot do), a command this hook cannot tokenize, a
+grep with no path operand (reads stdin), a compound command whose first real
+segment is other work (`sed -i ... && grep ...` -- blocking it would reject the
+write), subagent searches, and every interactive session.
+
 ## EDIT-* (edit_preflight.py)
 
 ### EDIT-STALE

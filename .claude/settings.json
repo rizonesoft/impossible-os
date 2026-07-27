@@ -133,6 +133,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/broker_dispatch_required.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/search_offload_gate.py\"",
+            "timeout": 5
           }
         ]
       },

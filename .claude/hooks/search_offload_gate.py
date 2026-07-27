@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# block-via: exit 2 (headless overnight run only -- OVERNIGHT_SEQUENCER_RUN=1;
+# subagents and interactive sessions are never gated)
+r"""PreToolUse (Bash): reroute a LEADING file-search to the Grep/Glob tool.
+
+CLAUDE.md sets the floor -- "the Grep-tool-over-Bash-grep floor is
+MCP-independent and always applies" -- and it is measurably not being held.
+
+MEASURED 2026-07-27 (token-saver T2-3). The main session's tool mix was
+`bash 1,810 / bash_search 885 / edit 969 / read 282 / agent 48`: the search
+bucket was the second-largest consumer and every one of its results landed in
+the main context, where it is re-read in the cached prefix on every later turn.
+
+THE ITEM'S 885 IS NOT ALL ADDRESSABLE, and the difference is the whole design.
+Re-counting `.claude/state/tool-history.jsonl` with shlex tokenization instead
+of a regex:
+
+    669   LEAD file-search           <- gated here; the Grep tool does this
+    563   search in a pipe/subshell  <- MUST be allowed: it filters a COMMAND's
+                                        stdout, which the Grep tool cannot do
+  1,619   unparseable by shlex       <- fail open; a third of Bash traffic is
+                                        multi-line/heredoc and cannot be judged
+  1,860   not a search
+
+So this gate reroutes ~669 calls, not 885, and is deliberately blind to a third
+of the traffic. A regex would have "seen" more and been wrong: a grep pattern
+containing `\|` (alternation) inside quotes reads as a pipe to a regex, so a
+naive matcher mistakes a leading file-search for an output filter and vice
+versa. Tokenizing is the only way to tell them apart, and an unparseable
+command is one we decline to judge.
+
+Scoped to the HEADLESS run, following `websearch_offload_gate`'s precedent: the
+measurement comes from unattended runs, and an interactive operator can make
+this call themselves. Subagents are never gated -- their searches ARE the
+delegated work.
+
+Code: [SEARCH-OFFLOAD] -- docs/infrastructure/hook-codes.md
+Selftest: python3 search_offload_gate.py --selftest
+"""
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import sys
+
+_SEARCH = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
+_FIND = {"find", "locate"}
+_WRAPPERS = {"cd", "env", "sudo", "doas", "nice", "nohup", "timeout",
+             "ionice", "stdbuf", "command", "exec"}
+_BREAK = {"&&", "||", ";", "|", "&"}
+
+_MSG = (
+    "[SEARCH-OFFLOAD BLOCK -- T2-3] `{cmd}` is a LEADING file search: its whole "
+    "result lands in this context and is re-charged as cache-read on every later "
+    "turn. Use the {tool} TOOL instead -- it returns the same matches without the "
+    "shell round-trip, and supports `-n`, `-A`/`-B`/`-C`, `-c`, `-l`, `head_limit`, "
+    "and glob/type filters, so the flags you were reaching for are covered.{extra}\n"
+    "NOT gated, because the Grep tool cannot do them: a search that filters "
+    "another command's OUTPUT (anything after a `|`), and any command this hook "
+    "cannot tokenize. If you genuinely need the shell form, pipe it -- "
+    "`<cmd> | grep ...` is allowed by construction."
+)
+
+_TODO_EXTRA = (
+    " This one targets `todo/` -- for TODO STRUCTURE (sections, XREFs, stamps, "
+    "readiness) prefer `python3 scripts/todo-graph/query.py <verb>`, which "
+    "returns the structured answer a grep sweep only approximates."
+)
+
+
+_VALUE_FLAGS = {"-A", "-B", "-C", "-m", "-e", "-f", "-d", "--include",
+                "--exclude", "--exclude-dir", "--max-count", "--context"}
+
+
+def _leading_search(cmd: str):
+    """Return ("grep"|"find", token, targets_todo) for a LEADING file search.
+
+    Returns None when the command is not a leading file search, or cannot be
+    tokenized -- both mean "do not judge this one".
+
+    `|` and `&&` are NOT the same and the distinction is the whole point. After
+    a PIPE the search filters another command's stdout, which the Grep tool
+    cannot do, so it is allowed. After `&&`/`;` a NEW command begins -- and
+    `cd <dir> && grep ...` is the single most common real shape, so treating a
+    sequence operator as "not leading" would miss most of the traffic.
+    """
+    try:
+        toks = shlex.split(cmd, posix=True, comments=False)
+    except ValueError:
+        return None                      # unparseable -> fail open
+    segments, cur = [], []
+    for t in toks:
+        if t == "|":
+            segments.append(cur); cur = None      # everything past a pipe filters
+            break
+        if t in ("&&", "||", ";", "&"):
+            segments.append(cur); cur = []
+            continue
+        if cur is not None:
+            cur.append(t)
+    if cur:
+        segments.append(cur)
+    # ONLY the first non-wrapper segment counts. A compound command whose real
+    # work comes first -- `sed -i ... && grep -c ... file`, `make && grep` --
+    # must NOT be blocked: rejecting it rejects the WRITE too, and the caller
+    # loses the edit, not just the search. Found by validating against real
+    # command history, where exactly this shape appeared.
+    for seg in segments:
+        if not seg:
+            continue
+        i = 0
+        while i < len(seg):
+            tok = seg[i]
+            if tok in _WRAPPERS:
+                i += 1
+                if tok in ("cd", "timeout", "env") and i < len(seg):
+                    i += 1
+                continue
+            if "=" in tok and not tok.startswith("-"):
+                i += 1
+                continue
+            break
+        if i >= len(seg):
+            continue             # pure-wrapper segment (bare `cd dir`): skip
+        head = os.path.basename(seg[i])
+        if head not in _SEARCH and head not in _FIND:
+            return None          # first real command is not a search -> allow
+        rest = seg[i + 1:]
+        if head in _FIND:
+            return ("find", head, any("todo" in a for a in rest))
+        # grep-family: skip flags (and their values), take the PATTERN, then any
+        # remaining non-flag operand is a PATH. No path operand -> reads stdin,
+        # which is not a file search.
+        j, pattern_seen, has_path = 0, False, False
+        while j < len(rest):
+            a = rest[j]
+            if a.startswith("-"):
+                j += 2 if a in _VALUE_FLAGS else 1
+                continue
+            if not pattern_seen:
+                pattern_seen = True
+            else:
+                has_path = True
+                break
+            j += 1
+        if not has_path:
+            return None          # reads stdin, not a file search
+        return ("grep", head, any("todo/" in a or a == "todo" for a in rest))
+    return None
+
+
+def main() -> int:
+    if os.environ.get("OVERNIGHT_SEQUENCER_RUN") != "1":
+        return 0
+    try:
+        d = json.load(sys.stdin)
+    except Exception:
+        return 0
+    if not isinstance(d, dict) or d.get("tool_name") != "Bash":
+        return 0
+    cmd = str((d.get("tool_input") or {}).get("command") or "")
+    if not cmd:
+        return 0
+    # A subagent's searches ARE the delegated work.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import runner_bash_guard
+        if runner_bash_guard._is_subagent_transcript(
+                str(d.get("transcript_path") or "")):
+            return 0
+    except Exception:
+        pass
+    hit = _leading_search(cmd)
+    if not hit:
+        return 0
+    kind, tok, todo = hit
+    sys.stderr.write(_MSG.format(
+        cmd=tok, tool="Grep" if kind == "grep" else "Glob",
+        extra=_TODO_EXTRA if todo else "") + "\n")
+    try:
+        import _offload_log
+        from pathlib import Path
+        _offload_log.log_event(Path.cwd(), "fire", "search_offload_gate", tok)
+    except Exception:
+        pass
+    return 2
+
+
+def _selftest() -> int:
+    fails = []
+
+    def check(name, cond):
+        if not cond:
+            fails.append(name)
+
+    # Gated: leading file searches.
+    for c in ('grep -rn "kmalloc" src/kernel/mm/heap.c',
+              'grep -n "void \\*kmalloc" -A 12 src/kernel/mm/heap.c',
+              'cd /repo && grep -rn "foo" src/',
+              'rg "pattern" include/',
+              'find src -name "*.c"'):
+        check(f"gated: {c[:34]}", _leading_search(c) is not None)
+
+    # NOT gated: filters another command's output -- the Grep tool cannot.
+    for c in ('git log --oneline | grep fix',
+              'systemctl --user list-timers | grep overnight',
+              'ls todo/*/ | grep -i log',
+              'cat build.log | rg error'):
+        check(f"allowed (piped): {c[:30]}", _leading_search(c) is None)
+
+    # NOT gated: no path operand -> reads stdin.
+    check("allowed: grep on stdin", _leading_search('grep -n "x"') is None)
+
+    # NOT gated: unparseable -> decline to judge (33% of real traffic).
+    check("allowed: unbalanced quote", _leading_search('grep -n "unclosed src/') is None)
+
+    # THE REGEX TRAP: `\|` is a grep ALTERNATION inside a quoted pattern, not a
+    # pipe. A regex matcher reads this as piped and wrongly allows it; the
+    # tokenizer sees a leading grep and gates it.
+    check("alternation is not a pipe",
+          _leading_search(r'grep -n "usage\|failures" src/kernel/a.c') is not None)
+
+    # The todo/ special case names the graph query.
+    r = _leading_search('grep -rn "XREF" todo/02-kernel-core/')
+    check("todo target flagged", r is not None and r[2] is True)
+    r2 = _leading_search('grep -rn "kmalloc" src/kernel/mm/heap.c')
+    check("non-todo not flagged", r2 is not None and r2[2] is False)
+
+    if fails:
+        sys.stderr.write("search_offload_gate selftest FAIL: "
+                         + "; ".join(sorted(set(fails))) + "\n")
+        return 1
+    print("search_offload_gate selftest OK")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(_selftest() if "--selftest" in sys.argv else main())
+    except Exception:
+        sys.exit(0)   # fail-open: a broken search gate must never wedge a run

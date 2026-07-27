@@ -390,7 +390,34 @@ not a bill.)
   **Acceptance:** a deliberately repeated identical dispatch produces a logged `cache-hit`; a materially different
   question still produces a fresh run (no false hits -- a false hit IS a quality loss).
 
-- [ ] **T2-3. Route the four highest-volume main-session shapes to standing agents by default.**
+- [/] **T2-3. Route the four highest-volume main-session shapes to standing agents by default.**
+  **(b) SHIPPED 2026-07-27 as `.claude/hooks/search_offload_gate.py`; (c) and (d) already had enforcement; (a) folded
+  into (b)'s message.**
+  **The 885 figure is not all addressable, and that IS the design.** Re-counting `tool-history.jsonl` with shlex
+  tokenization instead of a regex: **669 LEAD file-searches** (gateable), **563 searches after a pipe** -- these filter
+  another command's STDOUT, which the Grep tool structurally cannot do -- and **1,619 commands (a third of all Bash
+  traffic) that do not shlex-parse at all** and must fail open. So the gate reroutes ~663, not 885, and is deliberately
+  blind to a third of the traffic. Expected saving revised DOWN accordingly.
+  **Tokenized, never regex.** A `\|` alternation inside a quoted grep pattern reads as a pipe to a regex, so a naive
+  matcher confuses a file search with an output filter in both directions.
+  **Two bugs caught by validating against real command history rather than fixtures:** (1) `cd <dir> && grep ...` -- the
+  single most common real shape -- was not gated, because the first cut treated a sequence operator like a pipe;
+  (2) `sed -i '...' file && grep -c '...' file` WAS gated, which would have rejected the WRITE along with the search.
+  The gate now judges only the FIRST real segment, and 0 write/build compound commands are gated across the whole
+  history (verified).
+  **Scope:** headless only (`OVERNIGHT_SEQUENCER_RUN=1`), following `websearch_offload_gate`'s precedent -- the
+  measurement comes from unattended runs and an interactive operator can make the call themselves. Subagents never
+  gated (their searches ARE the delegated work).
+  **(c) build/test/lint/smoke** was already enforced by `build_offload_reminder` (a BLOCK-with-reroute, despite its
+  name -- class corrected in T1-4). **(d) big-log reads** are covered by `read_offload_reminder` plus T1-1's read cache
+  and T2-1's coverage gate. **(a) TODO structural** is folded in: a gated search targeting `todo/` names
+  `scripts/todo-graph/query.py` in its message.
+  **Checks run:** `--selftest` (14 cases incl. the alternation trap and the piped/stdin exemptions);
+  `scripts/test-tooling.sh` **556/556**; control-plane suite 48/48; `audit-hooks.sh` no drift; lint 0 errors; live
+  scoping confirmed inert interactively, active headless, piped allowed, subagent allowed.
+  **Still open:** the acceptance metric -- `bash_search` below 200 in the next run's `main_tools`. Note the metric
+  counts the BROADER `_SEARCH_RE` (it includes piped searches this gate must allow), so the realistic floor is ~563,
+  not 200. The acceptance threshold needs restating against the addressable subset.
   **Evidence:** main-session tool mix is `bash 1,810 / bash_search 885 / edit 969 / read 282 / agent 48`. The
   `bash_search` bucket (885 calls) is grep/sed-through-Bash -- the exact shape doctrine says must go to the Grep tool or
   an agent.
