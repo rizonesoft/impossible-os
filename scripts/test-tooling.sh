@@ -6904,6 +6904,39 @@ else
 fi
 
 # ============================================================================
+# Hook repo-root resolution (regression pin, 2026-07-28)
+# ============================================================================
+# Five hooks find the repo root by walking up to the first directory that
+# CONTAINS a `.claude`. A hook that mis-joins a `.claude/...`-relative state
+# path onto `.claude/` itself creates `.claude/.claude/`, which then satisfies
+# that test one level early -- so those hooks resolve the root to `.claude` and
+# every gate keyed on repo state silently stops firing. No error, no log; the
+# only symptom was two BLOCK tests here reporting rc=0. Pin both halves.
+
+if [ -d "$REPO_ROOT/.claude/.claude" ]; then
+    t_fail "no doubled .claude/.claude directory" \
+           "exists -- it breaks _repo_root() in 5 hooks (see search_offload_gate._valve)"
+else
+    t_pass "no doubled .claude/.claude directory"
+fi
+
+_rr_bad=""
+for _h in build_offload_reminder rotate_hint agent_dispatch_required \
+          session_brief_inject verify_cadence_reminder; do
+    _rr=$(cd "$REPO_ROOT" && python3 -c "
+import importlib.util, sys
+s = importlib.util.spec_from_file_location('$_h', '.claude/hooks/$_h.py')
+m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+print(m._repo_root())" 2>/dev/null)
+    [ "$_rr" = "$REPO_ROOT" ] || _rr_bad="$_rr_bad $_h=$_rr"
+done
+if [ -z "$_rr_bad" ]; then
+    t_pass "hook _repo_root() resolves to the repo root (5 hooks)"
+else
+    t_fail "hook _repo_root() resolves to the repo root" "wrong:$_rr_bad"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

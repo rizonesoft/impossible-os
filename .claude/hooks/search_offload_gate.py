@@ -175,7 +175,15 @@ def _valve(cmd: str, session_id: str) -> bool:
     """
     try:
         key = hashlib.sha256(cmd.encode()).hexdigest()[:16]
-        p = Path(os.path.dirname(os.path.abspath(__file__))).parents[0] / STATE_REL
+        # parents[2] of THIS FILE is the repo root (.claude/hooks/x.py -> root).
+        # Getting this wrong is not a local bug: it created a `.claude/.claude/`
+        # directory, and `_repo_root()` in build_offload_reminder, rotate_hint,
+        # agent_dispatch_required, session_brief_inject and
+        # verify_cadence_reminder walks up to the first directory CONTAINING a
+        # `.claude`, so `.claude/` itself then satisfied the test and those
+        # hooks silently resolved the root one level short -- disabling five
+        # live gates with no error anywhere. Caught by test-tooling 2026-07-28.
+        p = Path(__file__).resolve().parents[2] / STATE_REL
         try:
             st = json.loads(p.read_text(encoding="utf-8"))
             if not isinstance(st, dict) or st.get("session_id") != session_id:
