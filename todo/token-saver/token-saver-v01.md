@@ -358,7 +358,27 @@ not a bill.)
   **Acceptance:** the trust contract is preserved verbatim -- verification-before-completion quotes still come from the
   main session's own read of the artifact; only *exploratory* re-reads are suppressed.
 
-- [ ] **T2-2. Fix the agent result cache: 155 stores, 0 hits, all time.**
+- [x] **T2-2. Fix the agent result cache: 155 stores, 0 hits, all time.**
+  **SHIPPED 2026-07-27 -- root-caused via `superpowers:systematic-debugging`, not guessed.**
+  **Root cause (none of the three hypotheses in this item).** Prompt drift was already handled (P2.3 canonical scope)
+  and there was no timestamp in the key. The defect: the key included a fingerprint of the WHOLE source tree
+  (`SRC_PATHS` = src, include, user, resources, tools, Makefile, ...), so ANY edit anywhere invalidated EVERY entry.
+  The designed hit case is a mapper re-dispatched across review rounds -- and a fix loop EDITS CODE between those
+  rounds. The cache was keyed on something guaranteed to change between any two dispatches in a working session, so it
+  could never hit even once. Editing `src/desktop/foo.c` invalidated a `kernel-explorer` report about
+  `src/kernel/quota/`.
+  **Reproduced deterministically before any fix:** same prompt, covered file untouched, one unrelated file edited ->
+  key changed. After the fix, the key is stable.
+  **Fix:** the filename key is now the SCOPE (agent + canonical scope prose). Freshness became a SEPARATE check against
+  `covered_fp` -- a fingerprint over the paths the report actually covered, taken from the prompt AND the report,
+  because an explorer follows callers beyond the files it was handed and a prompt-only scope could serve a stale map.
+  **No-false-hit acceptance met, and it is the half that matters:** an edit to a COVERED file still misses (verified);
+  a missing fingerprint, unreadable tree, or any mismatch fails toward a MISS. The 53 pre-existing entries carry no
+  `covered_fp` and are never served -- they re-populate naturally.
+  **Checks run:** 3 new contract tests (unrelated-edit-hits, covered-edit-misses, legacy-entry-never-hits) plus the
+  existing round-trip suite; control-plane suite 48/48; lint 0 errors.
+  **Still to measure:** the hit RATE on a real run. The mechanism was 100% overhead and 0% benefit; it should now hit
+  on mapper re-dispatches within a fix loop, which is where T2-1 also routes work. T4-1 owns the reporting.
   **Evidence:** `.claude/state/offload-events.jsonl` shows `cache-store` **155** and `grep -c cache-hit` returns **0**.
   `.claude/state/agent-cache/` holds 53 entries. The cache described in `CLAUDE.md` as making "repeat dispatches free"
   has never served a single hit.

@@ -164,13 +164,55 @@ def _cache_key(root: Path, stype: str, prompt: str) -> str | None:
     key_prose = scope_tok if scope_tok is not None else \
         re.sub(r"\s+", " ", (prompt or "").strip())
     h.update(key_prose.encode())
-    for s in scopes:
-        sk = _scope_key(root, SRC_PATHS if s == "src" else TODO_PATHS)
-        if sk is None:
-            return None  # git unavailable -> no caching (fail-open)
-        h.update(b"\0")
-        h.update(sk.encode())
+    # T2-2: the content fingerprint is NO LONGER part of the filename key.
+    #
+    # It used to be, hashed over SRC_PATHS -- the WHOLE source tree -- which is
+    # why the cache served 155 stores and 0 hits. The designed hit case is a
+    # mapper re-dispatched across review rounds over an unchanged scope, but a
+    # fix loop EDITS CODE between those rounds, so the whole-tree fingerprint
+    # always differed and the key always missed. Editing src/desktop/foo.c
+    # invalidated a cached kernel-explorer report about src/kernel/quota/.
+    #
+    # The key is now the SCOPE (agent + canonical scope prose). Freshness is
+    # validated separately, in _covered_fingerprint(), against the paths the
+    # report ACTUALLY covered -- which preserves the real invariant (a report
+    # dies when the content it covered changes) without the false invalidation
+    # from unrelated files. `scopes` is retained: it still decides WHICH path
+    # families a fallback fingerprint spans.
     return h.hexdigest()
+
+
+_COVERED_PATH_RE = re.compile(
+    r"\b((?:src|include|user|tools|scripts|todo|resources)/[\w./-]+"
+    r"\.(?:c|h|asm|S|cc|cpp|hpp|py|md|sh|json))\b")
+
+
+def _covered_paths(prompt: str, report: str) -> set:
+    """Repo-relative paths a cached report covers: those named in the dispatch
+    prompt plus those cited in the report itself."""
+    out = set()
+    for text in (prompt or "", report or ""):
+        out |= {m.group(1) for m in _COVERED_PATH_RE.finditer(text)}
+    return out
+
+
+def _covered_fingerprint(root: Path, stype: str, covered: list) -> str | None:
+    """Fingerprint over the paths a cached report actually covered.
+
+    Falls back to the FULL scope when `covered` is empty -- a report whose
+    coverage could not be determined must keep the old, conservative
+    whole-tree behaviour rather than hit on a narrow guess. Fail toward a
+    miss, never toward a stale hit: a false hit is a quality loss, and this
+    cache exists to save tokens, not to be clever."""
+    paths = [c for c in (covered or []) if isinstance(c, str) and c.strip()]
+    if not paths:
+        scopes = CACHE_SCOPES.get(stype) or ()
+        paths = []
+        for s in scopes:
+            paths.extend(SRC_PATHS if s == "src" else TODO_PATHS)
+        if not paths:
+            return None
+    return _scope_key(root, sorted(set(paths)))
 
 
 def _extract_report(resp) -> str:
@@ -228,8 +270,17 @@ def _store(root: Path, stype: str, prompt: str, report: str) -> None:
     cache_dir = root / CACHE_DIR_REL
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
+        # T2-2: record WHAT the report covered and that content's fingerprint,
+        # so a later lookup can revalidate against exactly those paths instead
+        # of the whole tree. Coverage comes from the prompt AND the report --
+        # an explorer follows callers beyond the files it was handed, and its
+        # report names them at file:line, so prompt-only coverage would miss
+        # them and could serve a stale hit.
+        covered = sorted(_covered_paths(prompt, report))
         (cache_dir / f"{key}.json").write_text(json.dumps({
             "agent": stype, "stored_epoch": int(time.time()),
+            "covered": covered,
+            "covered_fp": _covered_fingerprint(root, stype, covered),
             "report": report}), encoding="utf-8")
         _prune(cache_dir)
     except Exception:
@@ -309,6 +360,19 @@ def main(mode: str) -> int:
     try:
         rec = json.loads(entry.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return 0
+    # T2-2 FRESHNESS GATE. The filename key is the SCOPE; freshness is a
+    # separate check against the content the report actually covered. Serve the
+    # hit only if that content is byte-identical to when it was stored.
+    #
+    # Fail toward a MISS in every uncertain case -- a missing fingerprint (an
+    # entry from before this change), an unreadable tree, or any mismatch. A
+    # stale hit would hand the model a confidently wrong map, and a false hit
+    # is a QUALITY loss, which no token saving justifies.
+    stored_fp = rec.get("covered_fp")
+    if not stored_fp:
+        return 0
+    if _covered_fingerprint(root, stype, rec.get("covered") or []) != stored_fp:
         return 0
     age_min = (time.time() - rec.get("stored_epoch", 0)) / 60
     try:

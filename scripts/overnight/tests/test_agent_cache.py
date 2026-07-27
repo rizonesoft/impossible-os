@@ -186,6 +186,70 @@ def test_researcher_prompt_still_load_bearing():
         assert k1 and k2 and k1 != k2, (k1, k2)
 
 
+def test_unrelated_edit_does_not_invalidate_a_cached_report():
+    """T2-2, the 155-stores/0-hits root cause.
+
+    The key used to include a fingerprint of the WHOLE source tree, so an edit
+    to ANY file invalidated every entry. The designed hit case is a mapper
+    re-dispatched across review rounds -- and a fix loop EDITS CODE between
+    those rounds, so the key always differed and the cache never once hit.
+    Editing src/desktop/unrelated.c invalidated a kernel-explorer report about
+    src/kernel/. The key is now the SCOPE; freshness is validated separately
+    against the paths the report actually covered."""
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        (fx / "src/desktop").mkdir(parents=True)
+        (fx / "src/desktop/unrelated.c").write_text("int u(void){return 1;}\n")
+        prompt = "map src/kernel/a.c for todo/TODO-01.md section 3"
+        k1 = arc._cache_key(fx, "kernel-explorer", prompt)
+        (fx / "src/desktop/unrelated.c").write_text("int u(void){return 99;}\n")
+        k2 = arc._cache_key(fx, "kernel-explorer", prompt)
+        assert k1 and k1 == k2, ("unrelated edit still moves the key", k1, k2)
+
+
+def test_freshness_is_bound_to_covered_paths_only():
+    """The hit must survive an unrelated edit and DIE on a covered-file edit.
+    A false hit is a quality loss, so the second half matters more."""
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        (fx / "src/desktop").mkdir(parents=True)
+        (fx / "src/desktop/unrelated.c").write_text("int u(void){return 1;}\n")
+        prompt = "map src/kernel/a.c for todo/TODO-01.md section 3"
+        arc._store(fx, "kernel-explorer", prompt, "a.c:10 covers src/kernel/a.c")
+        key = arc._cache_key(fx, "kernel-explorer", prompt)
+        rec = json.loads((fx / arc.CACHE_DIR_REL / f"{key}.json").read_text())
+        assert "src/kernel/a.c" in rec["covered"], rec["covered"]
+
+        def fresh():
+            return arc._covered_fingerprint(
+                fx, "kernel-explorer", rec["covered"]) == rec["covered_fp"]
+
+        assert fresh(), "unchanged tree must be fresh"
+        (fx / "src/desktop/unrelated.c").write_text("int u(void){return 99;}\n")
+        assert fresh(), "an unrelated edit must NOT invalidate"
+        (fx / "src/kernel/a.c").write_text("int a(void){return 1234;}\n")
+        assert not fresh(), "an edit to a COVERED file MUST invalidate (stale hit)"
+
+
+def test_legacy_entry_without_fingerprint_never_hits():
+    """Entries stored before this change carry no covered_fp. They must MISS,
+    not be trusted -- fail toward a re-run, never toward a stale map."""
+    arc = _load_hook()
+    with tempfile.TemporaryDirectory() as d:
+        fx = _mk_fixture(pathlib.Path(d))
+        prompt = "map src/kernel/a.c for todo/TODO-01.md section 3"
+        arc._store(fx, "kernel-explorer", prompt, "a.c:10 covers src/kernel/a.c")
+        key = arc._cache_key(fx, "kernel-explorer", prompt)
+        f = fx / arc.CACHE_DIR_REL / f"{key}.json"
+        rec = json.loads(f.read_text()); rec.pop("covered_fp", None)
+        f.write_text(json.dumps(rec))
+        r = _hook(fx, "pre", {"tool_name": "Task", "tool_input": {
+            "subagent_type": "kernel-explorer", "prompt": prompt}})
+        assert r.returncode == 0, "a legacy entry must not be served as a hit"
+
+
 if __name__ == "__main__":
     test_cache_roundtrip_and_invalidation()
     test_non_cacheable_agent_passthrough()
@@ -194,4 +258,7 @@ if __name__ == "__main__":
     test_canonical_scope_key_hits_across_volatile_prompts()
     test_canonical_scope_key_distinguishes_sections()
     test_researcher_prompt_still_load_bearing()
+    test_unrelated_edit_does_not_invalidate_a_cached_report()
+    test_freshness_is_bound_to_covered_paths_only()
+    test_legacy_entry_without_fingerprint_never_hits()
     print("PASS: agent-result cache")
