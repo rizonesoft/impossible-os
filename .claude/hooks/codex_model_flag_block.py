@@ -333,8 +333,28 @@ def main() -> int:
     cmd = (payload.get("tool_input") or {}).get("command", "")
     if not isinstance(cmd, str) or not cmd.strip():
         return 0
+    # Space-pad unquoted control operators BEFORE tokenizing.
+    #
+    # shlex.split only breaks on whitespace, so an operator written without
+    # surrounding spaces stays glued to its neighbour and the segment walk below
+    # never sees it. Measured 2026-07-27: `true&&codex exec --model gpt-4` and
+    # `cd /tmp;codex exec --model gpt-4` were ALLOWED while the spaced forms were
+    # BLOCKED -- a real bypass of this policy, in a hook whose entire job is to
+    # be un-bypassable. It is the same substring-vs-argv weakness the module
+    # docstring already describes, one level lower down.
+    #
+    # Reuses the shared quote-aware padder so this hook and the dispatch
+    # recognizer cannot drift: an operator inside a quoted prompt is never
+    # touched, and redirects (`2>&1`, `&>log`) are left intact so the
+    # complex-construct fail-open below still triggers on exactly what it did.
     try:
-        tokens = shlex.split(cmd, posix=True)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from _codex_dispatch import _unquoted_newlines_to_sep as _pad_ops
+        cmd_for_tokens = _pad_ops(cmd)
+    except Exception:  # noqa: BLE001 -- padding is a hardening step, never fatal
+        cmd_for_tokens = cmd
+    try:
+        tokens = shlex.split(cmd_for_tokens, posix=True)
     except ValueError:
         # Unparseable shell command (unbalanced quotes); fail open.
         # A real shell would reject it too; we don't want to mask

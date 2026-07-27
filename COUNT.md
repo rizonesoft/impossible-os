@@ -32,35 +32,35 @@
 
 |                                   |   Files |     Lines |
 | --------------------------------- | ------: | --------: |
-| **Shell scripts** (`.sh`)         |      86 |     34872 |
+| **Shell scripts** (`.sh`)         |      86 |     34921 |
 | **Batch scripts** (`.bat`)        |      72 |      1034 |
 | **PowerShell** (`.ps1`)           |      11 |      3389 |
-| **Python** (`.py`)                |     195 |     53968 |
+| **Python** (`.py`)                |     195 |     54046 |
 | **JavaScript** (`.js`)            |       1 |       524 |
 | **Include fragments** (`.inc`)    |       7 |      3241 |
 | **Makefile**                      |       4 |      2258 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |       199 |
-| **Subtotal**                      | **379** | **99485** |
+| **Subtotal**                      | **379** | **99612** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     427 |     118684 |
+| **Markdown** (`.md`)        |     427 |     118687 |
 | **JSON** (`.json`)          |      14 |       1158 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1656 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **477** | **197701** |
+| **Subtotal**                | **477** | **197704** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1470** | **708233** |
-| **Supporting text + metadata** |  **477** | **197701** |
-| **All counted text files**     | **1947** | **905934** |
+| **Core code + tooling**        | **1470** | **708360** |
+| **Supporting text + metadata** |  **477** | **197704** |
+| **All counted text files**     | **1947** | **906064** |
 
 > Vendored code excluded: ~14441 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               708,233 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               708,360 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
-| **Time span**                 |      33 years |    40 years | 4 month(s), 22 day(s) |
+| **Time span**                 |      33 years |    40 years | 4 month(s), 23 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 708,233
-> lines of core code and tooling would take **182 developers** working for **4 month(s), 22 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 708,360
+> lines of core code and tooling would take **180 developers** working for **4 month(s), 23 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-07-27 14:22 · commit `4cd1197e`*
+*Last updated: 2026-07-27 18:05 · commit `19b5d92b`*

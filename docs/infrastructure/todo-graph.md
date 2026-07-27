@@ -222,6 +222,9 @@ flowchart TD
   todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375["higher-half-kernel-relocation<br/>TODO-33"]
   class todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 draft
   click todo_02_kernel_core_TODO_33_higher_half_kernel_relocation_md_495375 "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-33-higher-half-kernel-relocation.md"
+  todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e["serial-log-signal-to-noise<br/>TODO-34"]
+  class todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e draft
+  click todo_02_kernel_core_TODO_34_serial_log_signal_to_noise_md_81bf2e "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-34-serial-log-signal-to-noise.md"
   todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab["ssdt-master-table<br/>TODO-A"]
   class todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab active
   click todo_02_kernel_core_TODO_A_SSDT_Master_Table_md_7bc3ab "https://github.com/rizonetech/impossible-os/blob/main/todo/02-kernel-core/TODO-A-SSDT-Master-Table.md"

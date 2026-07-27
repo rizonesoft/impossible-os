@@ -496,6 +496,45 @@ def _unquoted_newlines_to_sep(cmd):
             break
         elif c == "\n":
             out.append(" ; ")
+        elif c in (";", "|", "&"):
+            # Space-pad UNQUOTED control operators so shlex emits them as their
+            # own tokens.
+            #
+            # shlex.split only breaks on whitespace, so an operator written
+            # WITHOUT surrounding spaces stays glued to its neighbour:
+            # `cd /tmp; codex ...` tokenizes as [..., '/tmp;', 'codex', ...] and
+            # `true&&codex ...` as ['true&&codex', ...]. `_segment_by_separators`
+            # already lists ';' '|' '&' '&&' '||' -- it simply never sees one, so
+            # the whole compound reads as a single `cd`/`true`-led segment and
+            # the dispatch inside it is invisible.
+            #
+            # Direction differs by consumer and BOTH are wrong. For the review
+            # gates it fails closed (a performed review goes unrecognized, so
+            # correct work is BLOCKED and the operator is trained to reach for
+            # SKIP_*_HOOK). For codex_model_flag_block it fails OPEN: measured
+            # 2026-07-27, `true&&codex exec --model gpt-4` and
+            # `cd /tmp;codex exec --model gpt-4` were both ALLOWED while their
+            # spaced equivalents were BLOCKED -- a policy bypass, which is the
+            # exact substring-classifier weakness this module exists to close.
+            #
+            # Padding happens HERE, inside the existing quote-aware walk, rather
+            # than by switching to shlex(punctuation_chars=True): that would also
+            # re-tokenize redirects (`2>&1` -> '2','>&','1') and change shapes
+            # every downstream consumer already agrees on. This keeps quoting
+            # semantics exactly as they were -- an operator inside a quoted
+            # prompt is never touched, because this branch is unreachable while
+            # `quote` is set.
+            prev = cmd[i - 1] if i > 0 else ""
+            nxt = cmd[i + 1] if i + 1 < n else ""
+            if c == "&" and (prev in (">", "<") or nxt == ">"):
+                # Part of a redirect (`2>&1`, `&>log`), not a control operator.
+                out.append(c)
+            elif c in ("&", "|") and nxt == c:
+                out.append(" " + c + c + " ")   # && / ||
+                i += 2
+                continue
+            else:
+                out.append(" " + c + " ")
         else:
             out.append(c)
         i += 1

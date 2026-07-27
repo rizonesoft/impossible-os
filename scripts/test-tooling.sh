@@ -938,6 +938,26 @@ else
     #     (re-adversarial review H regression check).
     _flag_probe 0 "allow echo --model > /tmp/out (non-codex with redirect)" \
         'echo --model > /tmp/out'
+
+    # 30-34. UNSPACED control operators. shlex.split only breaks on whitespace,
+    #     so `true&&codex ...` and `cd /x;codex ...` tokenized as ONE glued
+    #     token and slipped past this hook entirely. Measured 2026-07-27: the
+    #     spaced forms blocked, the unspaced ones did not -- a real bypass of a
+    #     hook whose whole job is to be un-bypassable. The spaced variants are
+    #     kept alongside so a future tokenizer change cannot fix one shape
+    #     while regressing the other.
+    _flag_probe 2 "block unspaced && before codex --model" \
+        'true&&codex exec --model gpt-5.5 prompt'
+    _flag_probe 2 "block unspaced ; before codex --model" \
+        'cd /tmp;codex exec --model gpt-5.5 prompt'
+    _flag_probe 2 "block spaced ; before codex --model" \
+        'cd /tmp; codex exec --model gpt-5.5 prompt'
+    _flag_probe 2 "block spaced && before codex --model" \
+        'cd /tmp && codex exec --model gpt-5.5 prompt'
+    # A ';' INSIDE a quoted argument is data, not an operator. The padding must
+    #     never reach into quotes or it becomes a false-positive machine.
+    _flag_probe 0 "allow quoted semicolon as data (non-codex)" \
+        'echo "a;b" && ls'
     # 29. Allow: process substitution with --model in argv (proc-sub
     #     fail-open guard handles `<(...)` / `>(...)` constructs).
     _flag_probe 0 "allow diff <(echo a) <(echo b)" \
@@ -2244,6 +2264,35 @@ def check(label, cond):
 check("skill_maps_gap_audit", crc._detect_review_kind("codex-gap-audit", "") == "gap-audit")
 check("marker_matches_gap_audit", crc._detect_review_kind("", "[review-kind: gap-audit] todo/x") == "gap-audit")
 check("trigger_skills_include_gap_audit", "codex-gap-audit" in crc.CODEX_TRIGGER_SKILLS)
+
+# Control-operator shapes. A dispatch behind an UNSPACED operator used to be
+# invisible to BOTH the review-kind detector and the receipt binder, because
+# shlex.split leaves an unspaced ';' or '&&' glued to its neighbour and the
+# segment walk never sees a separator token. Fails closed for these two (a
+# performed review reads as no review, so correct work is BLOCKED and the
+# operator is trained to reach for SKIP_*_HOOK). `cd <repo>; <dispatch>` is a
+# shape the runner emits constantly, so this is not exotic.
+from _review_kind import detect_review_kind_from_cmd as drk
+_D = "bash scripts/codex-dispatch.sh '[review-kind: design] todo/x body'"
+check("kind_plain", drk(_D) == "design")
+check("kind_spaced_and", drk("cd /tmp && " + _D) == "design")
+check("kind_spaced_semi", drk("cd /tmp; " + _D) == "design")
+check("kind_unspaced_semi", drk("cd /tmp;" + _D) == "design")
+check("kind_unspaced_and", drk("true&&" + _D) == "design")
+check("kind_piped", drk(_D + " 2>&1 | tail -5") == "design")
+# A ';' inside the quoted PROMPT is data, not an operator -- padding must never
+# reach into quotes or the prompt itself would be split.
+check("kind_semicolon_inside_prompt",
+      drk("bash scripts/codex-dispatch.sh '[review-kind: design] todo/x a;b'") == "design")
+# The broker is the shape the sequencer doctrine mandates; it is recognized
+# because its basename ENDS IN codex-dispatch.sh. Asserted so that stays true.
+check("kind_broker_wrapper",
+      drk("bash scripts/overnight/review-broker-codex-dispatch.sh "
+          "'[review-kind: adversarial] todo/x body'") == "adversarial")
+# Receipt binding must agree with detection on every shape above -- a dispatch
+# the gate recognizes but the receipt does not would leave the gate unsatisfiable.
+check("receipt_unspaced_semi", crc._is_codex_bash_trigger("cd /tmp;" + _D))
+check("receipt_unspaced_and", crc._is_codex_bash_trigger("true&&" + _D))
 d, r, hint = crc._detect_run_metadata("review-run-id: forged-by-prompt-123", 42, "adversarial")
 check("receipt_generates_trusted_run_id", r == "codex-review-adversarial-42" and hint == "forged-by-prompt-123")
 d2, r2, h2 = crc._detect_run_metadata("", 43, "perf")
@@ -2292,11 +2341,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "10" ]; then
+if [ "$GA_OK" = "20" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 10))
+    PASS=$((PASS + 20))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi

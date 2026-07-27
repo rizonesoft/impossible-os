@@ -34,6 +34,25 @@ def detect_review_kind_from_cmd(cmd: str) -> str:
       2. bash scripts/codex-dispatch.sh '<prompt>' (section-28 wrapper)
       3. codex review "<prompt>" / codex e "<prompt>" (bare CLI)
 
+    The BROKER -- scripts/overnight/review-broker-codex-dispatch.sh, the shape
+    the sequencer doctrine mandates for unattended runs -- is covered by (2),
+    and this is INTENTIONAL rather than accidental: shape 2 matches on a
+    basename ENDING IN `codex-dispatch.sh`, so every wrapper that keeps that
+    suffix is attributed identically and no hook needs editing when a new one
+    lands. That is a naming CONTRACT, not a coincidence: a future wrapper named
+    something else (`review-dispatch.sh`, say) would be silently unrecognized,
+    and silent non-recognition here means a performed review reads as no review.
+    Keep the suffix, or add the new name explicitly to the helper's shape list.
+    Pinned by `kind_broker_wrapper` in scripts/test-tooling.sh.
+
+    Control operators are handled by the helper's quote-aware padding, which
+    covers UNSPACED forms (`cd /repo;<dispatch>`, `true&&<dispatch>`) as well as
+    spaced ones. Before that padding existed, shlex left an unspaced operator
+    glued to its neighbour and the whole compound read as one `cd`-led segment,
+    so the dispatch inside it was invisible -- and `cd <repo>; <dispatch>` is a
+    shape the runner emits constantly. Pinned by the `kind_*` checks in
+    scripts/test-tooling.sh.
+
     Returns empty string when the command is not a Codex dispatch OR
     the prompt's first non-blank line carries no marker.
     """
