@@ -1,4 +1,4 @@
-# Token Saver -- Cost Reduction Backlog (zero quality loss)
+# Token Saver v01 -- Cost Reduction Backlog (measured 2026-07-20 -> 2026-07-26)
 
 > **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, 2026-07-27) as
 > `token-saver-v01.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
