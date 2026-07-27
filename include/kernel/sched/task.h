@@ -826,6 +826,19 @@ int task_fork(struct interrupt_frame *frame);
  * Returns 0 on success, -1 on failure. */
 int task_exec(const uint8_t *data, uint64_t size);
 
+/* Adopt a pending exec frame on the syscall-return path.
+ *
+ * task_exec() publishes the new ring-3 frame and sets exec_pending, expecting
+ * the next context switch to adopt it. A synchronous SYS_EXEC has no such
+ * switch guaranteed, so its handler MUST route its return through this helper:
+ * otherwise, when no tick lands in the window, the stub iretqs back to the
+ * pre-exec RIP over the freshly loaded image and the task executes garbage.
+ *
+ * Returns the frame pointer the ISR stub should iretq from -- the exec frame
+ * when one is pending, otherwise 'frame' unchanged. Safe (and a no-op) to call
+ * from any syscall-return path; only the exec'ing task can see its own flag. */
+uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame);
+
 /* Exit the current task with a status code.
  * Wakes any parent waiting via waitpid. */
 void task_exit(int32_t status);

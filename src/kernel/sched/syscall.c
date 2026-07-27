@@ -989,7 +989,10 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     syscall_restore_entry_irql(entry_irql, syscall_nr);
 
     frame->rax = (uint64_t)ret;
-    return (uint64_t)frame;
+    /* SYS_EXEC publishes a new ring-3 frame instead of returning to this one.
+     * Route the return through the exec handoff so the new image is entered
+     * deterministically; a no-op (returns 'frame') for every other syscall. */
+    return task_exec_take_pending_frame(frame);
 }
 
 /* --- INT 0x2E handler: NT syscall compatibility path ---

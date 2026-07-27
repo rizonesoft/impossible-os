@@ -71,6 +71,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  16   | Protected Process Light (PS_PROTECTION)                   | D02 T19 §1, T12 §7 |  [/]   |
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --                 |  [/]   |
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
+| 💎   |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -394,8 +395,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 397)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 398)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 398)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 399)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 661)
 > **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 663)
 > **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 665)
@@ -554,7 +555,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 557)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 558)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -574,6 +575,45 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 **Test checkpoint:** two `NtWaitForSingleObject` waiters on the same exited process handle BOTH wake; a POSIX `sys_wait4` reaps that process exactly once; `sys_waitid(WNOWAIT)` leaves the zombie reapable; a `dumpable=0` process produces no core dump on crash; `RLIMIT_CORE=0` suppresses the dump even when dumpable. `klog(LOG_DEBUG, "task", "proc %u signaled, %u NT waiters woken")`. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
 > **Deferred:** 2026-07-12 | Blocked on §15 -- these are the richer wait variants + NT multi-waiter wake that layer on §15's ZOMBIE + single-reaper + centralized `task_publish_exit()` foundation, which is itself deferred on the process-identity model -> XREF: §15 (item: "NT non-reap decouple (ZOMBIE safety)" and the §15 Deferred design spec). `PR_SET_DUMPABLE` + `RLIMIT_CORE` core-dump gate additionally needs the crash-dump generator -> XREF: `TODO-27-crash-dump-generation.md`.
+
+---
+
+## 19. `task_exec` Commit Point and Kernel-Stack Reclamation
+
+`task_exec()` has no transactional commit point: it mutates the process image and THEN performs fallible work, so a
+late failure returns `-1` to a caller that iretqs back into an image that no longer exists. It also replaces
+`tasks[pid].stack_base` with a fresh guarded kernel stack and never reclaims the old one. Found 2026-07-27 by Codex
+adversarial review of the exec frame-handoff fix (commit that added `task_exec_take_pending_frame`); all three defects
+predate that fix and none is caused by it. Filed rather than hot-fixed because the two obvious local patches are both
+wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later
+lets a tick between the frame write and the store clobber the published frame via the save-gate.
+
+- [ ] Establish a no-return commit point in `task_exec` (`src/kernel/sched/task.c:2683`): perform every fallible step
+      (argv frame validation + `argv_addrs` `kmalloc` at 2856-2870, replacement kernel stack at 2877-2886) BEFORE the
+      first image mutation, which begins at the fork+exec isolation remap (2723-2746), not at `exec_load_fmt` (2782)
+- [ ] Past the commit point, never return `-1` into a destroyed image: `exec_load_fmt` failure (2785) and any later
+      failure must terminate the calling task via `task_death_teardown`/`task_exit` instead of returning, since the
+      isolation remap has already replaced its image pages with zeroed private frames
+- [ ] Reclaim the previous kernel stack on a successful exec: `task_exec` re-points `stack_base` (2885) and reap frees
+      only the latest (`task.c:3615`), so each re-exec permanently leaks `TASK_STACK_SIZE` + 1 guard page. Retain the
+      old base and reclaim it from a deferred reaper AFTER control has left that stack; `vmm_uninstall_guard_page`
+      (`include/kernel/mm/vmm.h:215`) must run before the PMM free
+- [ ] Close the publication race: `exec_pending` is RELEASE-stored at 3228 but `threads[0].kernel_gs_base` is not
+      assigned until 3246, so a tick in that window switches the task in with `kernel_gs_base == 0`. Fix by making the
+      commit interval non-preemptible or by an explicit state the scheduler cannot consume until READY -- NOT by moving
+      the store later (it gates the save-gate at `task.c:1185` that protects `tasks[pid].rsp`)
+- [ ] Unit tests: fault-inject each post-load allocation failure and assert the task dies instead of returning; assert
+      PMM free-page count returns to baseline across repeated exec
+- [ ] Commit: `"kernel: task -- exec commit point + kernel-stack reclamation"`
+
+**Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a
+named log instead of returning to ring 3; N repeated `SYS_EXEC` calls leave the PMM free-page count unchanged (today it
+drops by `TASK_STACK_SIZE`+4 KiB per exec). `klog(LOG_ERROR, "sched", "exec: post-commit failure, terminating PID %u")`.
+Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
+
+> **Note:** the deterministic ring-3 crash that surfaced these (a synchronous `SYS_EXEC` returning to its pre-exec RIP
+> when no timer tick landed) is FIXED and verified -- see `task_exec_take_pending_frame` in `src/kernel/sched/task.c`
+> and the `Sched: exec frame handoff pass-through` test. This section is the remaining transactional work only.
 
 ---
 

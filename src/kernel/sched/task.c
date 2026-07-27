@@ -2680,6 +2680,29 @@ _Static_assert(EXEC_AUXV_PAIRS * 16u + 24u == ARGV_FRAME_RESERVE,
                "ARGV_FRAME_RESERVE must equal the exec auxv fixed overhead "
                "(AT_RANDOM 16 + auxv EXEC_AUXV_PAIRS*16 + envp NULL 8)");
 
+/* The exec/thread-entry frame builders below write a 22-qword ring-3 iretq
+ * frame through a raw uint64_t *sp, and task_exec_take_pending_frame() hands
+ * that same memory back to the ISR stub as a struct interrupt_frame. Pin every
+ * index those builders assign by name so a field reorder in idt.h cannot
+ * silently retarget rip/rsp/cs/ss -- the failure mode is a ring-3 return to a
+ * garbage RIP, which is exactly the class of bug this frame handoff caused on
+ * 2026-07-27. sizeof + the individual offsets are asserted in idt.h; these tie
+ * the INDICES used here to those offsets. */
+_Static_assert(__builtin_offsetof(struct interrupt_frame, int_no)   == 15 * 8,
+    "task.c frame builders write int_no at sp[15]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, err_code) == 16 * 8,
+    "task.c frame builders write err_code at sp[16]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, rip)      == 17 * 8,
+    "task.c frame builders write rip at sp[17]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, cs)       == 18 * 8,
+    "task.c frame builders write cs at sp[18]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, rflags)   == 19 * 8,
+    "task.c frame builders write rflags at sp[19]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, rsp)      == 20 * 8,
+    "task.c frame builders write rsp at sp[20]");
+_Static_assert(__builtin_offsetof(struct interrupt_frame, ss)       == 21 * 8,
+    "task.c frame builders write ss at sp[21]");
+
 int task_exec(const uint8_t *data, uint64_t size)
 {
     uint64_t entry;
@@ -3274,6 +3297,96 @@ int task_exec(const uint8_t *data, uint64_t size)
            (uint64_t)pid, entry);
 
     return 0;
+}
+
+/* Adopt a pending exec frame on the SYSCALL-RETURN path.
+ *
+ * task_exec() publishes the new ring-3 iretq frame on a fresh kernel stack and
+ * sets exec_pending, expecting the next context switch to adopt it -- which is
+ * why the scheduler's save-gate deliberately does NOT overwrite tasks[pid].rsp
+ * while the flag is set. That contract holds for the kernel-launcher exec path,
+ * whose caller hlt-loops afterwards so a tick is guaranteed to land.
+ *
+ * SYS_EXEC gets no such guarantee: it runs synchronously on the calling task,
+ * and with no tick between task_exec() and the stub's iretq the syscall returns
+ * to the PRE-exec RIP. By then exec_load has already written the new binary
+ * across the image range, so the task resumes on whatever bytes the new image
+ * holds at the old RIP -- arbitrary instructions, then a fault at a nonsense
+ * address. Diagnosed 2026-07-27 from a transition-ring dump: PID 13 returned to
+ * ring 3 at its pre-exec RIP 0x8003A0 and faulted at 0x62226100202020 with RBP
+ * holding ASCII "PIPE-OK" popped off the recycled stack. Deterministic under
+ * QEMU 8.2.2 TCG, invisible under 10.2.1 -- purely tick-timing luck, and the
+ * sole cause of the red CI unit-test job.
+ *
+ * Adopting the frame here makes the handoff deterministic instead of
+ * timing-dependent. It mirrors the scheduler switch-in work that a same-task
+ * return would otherwise skip:
+ *   - TSS.rsp0 / per-CPU syscall_rsp0: task_exec moved the task to a new
+ *     kernel stack, so the next ring-3 -> ring-0 entry must land on it.
+ *   - KERNEL_GS_BASE: task_exec allocated a new TEB for thread 0.
+ * CR3 needs no reload -- the fork+exec branch keeps the task's existing
+ * per-process PML4, and the launcher branch already loaded the new one inside
+ * task_exec. The abandoned kernel stack is left exactly as the tick path
+ * leaves it (task_exec already re-pointed stack_base at the new allocation).
+ *
+ * Returns the frame pointer the ISR stub should iretq from: the exec frame when
+ * one is pending, otherwise the caller's own frame unchanged. */
+uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame)
+{
+    uint32_t pid = current_task;
+    uint64_t exec_frame;
+
+    /* ACQUIRE pairs with the RELEASE store in task_exec: observing the flag
+     * also observes every iretq-frame write that preceded it. */
+    if (!__atomic_load_n(&tasks[pid].exec_pending, __ATOMIC_ACQUIRE))
+        return (uint64_t)frame;
+
+    exec_frame = tasks[pid].rsp;
+    if (!exec_frame) {
+        /* Flag set with no published frame: refuse to iretq from a NULL RSP.
+         * Returning the pre-exec frame is still wrong for the task, but it is
+         * a recoverable user-mode fault instead of a ring-0 triple fault. */
+        klog(LOG_ERROR, "sched",
+             "PID %u: exec_pending set with no frame -- keeping pre-exec frame",
+             (uint64_t)pid);
+        __atomic_store_n(&tasks[pid].exec_pending, 0u, __ATOMIC_RELEASE);
+        tasks[pid].exec_pending_tick = 0;
+        return (uint64_t)frame;
+    }
+
+    /* ARCH: x86-64 -- will move to arch/ with the TSS/MSR HAL. */
+    {
+        uint64_t krsp = tasks[pid].threads[0].kernel_rsp;
+        if (krsp) {
+            tss_set_kernel_stack(krsp);
+            smp_this_cpu()->syscall_rsp0 = krsp;
+        }
+    }
+
+    {
+        uint64_t new_gs = tasks[pid].threads[0].kernel_gs_base;
+        if (new_gs) {
+            msr_write(MSR_IA32_KERNEL_GS_BASE, new_gs);
+            /* Same readback invariant the scheduler applies: a hypervisor that
+             * swallows the write must surface as a named log, not as a silent
+             * gs:<off> fault on the new image's first TEB read. */
+            {
+                uint64_t rb = msr_read(MSR_IA32_KERNEL_GS_BASE);
+                if (rb != new_gs)
+                    klog(LOG_FATAL, "sched",
+                         "MSR_KERNEL_GS_BASE corrupted on exec return: "
+                         "wrote=0x%X read=0x%X (task=%u)",
+                         new_gs, rb, (uint64_t)pid);
+            }
+        }
+    }
+
+    /* RELEASE so the next scheduler save-gate sees the cleared flag together
+     * with the TSS/MSR updates above, and resumes saving frames normally. */
+    __atomic_store_n(&tasks[pid].exec_pending, 0u, __ATOMIC_RELEASE);
+    tasks[pid].exec_pending_tick = 0;
+
+    return exec_frame;
 }
 
 /* Release the resources reclaimable at the DEAD-transition point, shared by

@@ -7,6 +7,8 @@
 #include "kernel/test/test.h"
 #include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
+#include "kernel/idt.h"           /* struct interrupt_frame (exec frame handoff) */
+#include "libc/string.h"          /* memset -- zero a local frame fixture */
 #include "kernel/nt/filetime.h"   /* NS_PER_FILETIME_TICK, FILETIME_* (accounting math) */
 #include "kernel/time/wall_clock.h" /* wall_clock_time_sourced (CreateTime stamp test) */
 #include "kernel/sched/irql.h"
@@ -51,6 +53,54 @@ static void test_exec_pending_state(void)
     }
     TEST_ASSERT_EQ(t->exec_pending, 0, "PID 0 exec_pending is 0 (not exec'd)");
     TEST_ASSERT_EQ(t->exec_pending_tick, 0, "PID 0 exec_pending_tick is 0");
+}
+
+/* Test: the exec frame handoff is a pass-through when no exec is pending.
+ *
+ * Every syscall return on the INT 0x80 path now routes through
+ * task_exec_take_pending_frame(). For all syscalls except a successful
+ * SYS_EXEC the flag is clear and the helper MUST hand back the caller's own
+ * frame byte-for-byte -- returning anything else would iretq the task from a
+ * foreign (or NULL) frame. That pass-through is the property the other ~40
+ * syscalls depend on, so it is the one worth pinning.
+ *
+ * No side effects on this path: with exec_pending == 0 the helper does a
+ * single atomic load and returns, touching no TSS, MSR, or task state. The
+ * pending branch cannot be unit-tested without programming TSS.rsp0 and
+ * MSR_KERNEL_GS_BASE for real -- forbidden live-infrastructure mutation under
+ * the test policy -- so it is covered by the user-mode fork+exec test
+ * (test_process.exe) which regressed deterministically before this fix. */
+static void test_exec_take_pending_frame_passthrough(void)
+{
+    struct task *t = task_current();
+    struct interrupt_frame f;
+    uint64_t got;
+
+    if (!t) {
+        TEST_SKIP("task_current() returned NULL");
+        return;
+    }
+    if (t->exec_pending) {
+        TEST_SKIP("current task has an exec pending");
+        return;
+    }
+
+    /* Distinctive contents: proves the helper returns THIS frame, not merely
+     * some non-NULL pointer, and that it leaves the frame unmodified. */
+    memset(&f, 0, sizeof(f));
+    f.rip = 0xDEAD0000BEEF1234ull;
+    f.rsp = 0x0BADC0DE0000F00Dull;
+
+    got = task_exec_take_pending_frame(&f);
+
+    TEST_ASSERT_EQ(got, (uint64_t)(uintptr_t)&f,
+                   "no exec pending: returns the caller's own frame");
+    TEST_ASSERT_EQ(f.rip, 0xDEAD0000BEEF1234ull,
+                   "no exec pending: frame rip left unmodified");
+    TEST_ASSERT_EQ(f.rsp, 0x0BADC0DE0000F00Dull,
+                   "no exec pending: frame rsp left unmodified");
+    TEST_ASSERT_EQ(t->exec_pending, 0,
+                   "no exec pending: flag still clear after the call");
 }
 
 /* Test: per-thread kernel_rsp mirrors task-level kernel_rsp for thread 0.
@@ -1427,6 +1477,9 @@ void test_register_sched(void)
                             test_sched_create_thread, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: exec_pending state",
                             test_exec_pending_state, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec frame handoff pass-through",
+                            test_exec_take_pending_frame_passthrough,
+                            TEST_CAT_SCHED);
     test_suite_register_cat("Sched: per-thread kernel_rsp mirror",
                             test_per_thread_kernel_rsp_mirror, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: cooperative-yield fairness (regression)",
