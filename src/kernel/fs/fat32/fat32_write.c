@@ -650,8 +650,11 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
      * the source path doesn't exist, regardless of whether old==new. */
     rc = fat32_find_dirent_by_sfn(vol, dir_cluster, old_short,
                                   &src_cluster, &src_sector, &src_offset, NULL);
-    if (rc != 1)
+    if (rc != 1) {
+        klog(LOG_WARN, "fat32",
+             "rename: source '%s' not found (sfn lookup rc=%d)", old_name, (uint64_t)rc);
         return -1;
+    }
 
     /* POSIX same-file no-op: src exists and resolves to the same SFN as
      * dst -- treat as success without touching the FAT. */
@@ -672,8 +675,11 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
         int dst_rc = fat32_find_dirent_by_sfn(vol, dir_cluster, new_short,
                                               &dst_cluster, &dst_sector,
                                               &dst_offset, &dst_de);
-        if (dst_rc < 0)
+        if (dst_rc < 0) {
+            klog(LOG_WARN, "fat32",
+                 "rename: dst '%s' lookup failed (rc=%d)", new_name, (uint64_t)dst_rc);
             return -1;
+        }
 
         if (dst_rc == 1) {
             uint32_t dst_first;
@@ -710,13 +716,19 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
             }
 
             cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
-            if (!cluster_buf)
+            if (!cluster_buf) {
+                klog(LOG_WARN, "fat32",
+                     "rename: OOM for %u-byte cluster buffer (replace path)",
+                     (uint64_t)bytes_per_cluster);
                 return -1;
+            }
 
             /* Step 1: remove dst dirent + LFN slots in that cluster, flush. */
             if (fat32_read_sectors_multi(vol, dst_sector,
                                          vol->bpb.sectors_per_cluster,
                                          cluster_buf) != 0) {
+                klog(LOG_WARN, "fat32",
+                     "rename: dst cluster read failed (sector=%u)", (uint64_t)dst_sector);
                 kfree(cluster_buf);
                 return -1;
             }
@@ -725,6 +737,8 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
             if (fat32_write_sectors_multi(vol, dst_sector,
                                           vol->bpb.sectors_per_cluster,
                                           cluster_buf) != 0) {
+                klog(LOG_WARN, "fat32",
+                     "rename: dst cluster write failed (sector=%u)", (uint64_t)dst_sector);
                 kfree(cluster_buf);
                 return -1;
             }
@@ -743,11 +757,16 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
 
     /* Step 3: rename src dirent (rewrite the 11-byte SFN field in place). */
     cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
-    if (!cluster_buf)
+    if (!cluster_buf) {
+        klog(LOG_WARN, "fat32", "rename: OOM for %u-byte cluster buffer (sfn rewrite)",
+             (uint64_t)bytes_per_cluster);
         return -1;
+    }
     if (fat32_read_sectors_multi(vol, src_sector,
                                  vol->bpb.sectors_per_cluster,
                                  cluster_buf) != 0) {
+        klog(LOG_WARN, "fat32", "rename: src cluster read failed (sector=%u)",
+             (uint64_t)src_sector);
         kfree(cluster_buf);
         return -1;
     }
@@ -759,6 +778,8 @@ int fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     if (fat32_write_sectors_multi(vol, src_sector,
                                   vol->bpb.sectors_per_cluster,
                                   cluster_buf) != 0) {
+        klog(LOG_WARN, "fat32", "rename: src cluster write failed (sector=%u)",
+             (uint64_t)src_sector);
         kfree(cluster_buf);
         return -1;
     }
