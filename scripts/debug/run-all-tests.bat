@@ -36,6 +36,14 @@ set NO_PAUSE=1
 :: serial (the log this sweep exists to produce) is untouched.
 :: Set IOS_HEADLESS=0 before calling if you want the windows back.
 if not defined IOS_HEADLESS set IOS_HEADLESS=1
+:: Bound every per-category launch so one stalled guest cannot wedge the sweep.
+:: run-qemu.ps1 blocks until the guest exits, and at least one category boots
+:: through to the desktop and idles instead of shutting down -- unattended, that
+:: stops the chain forever, and headless makes it silent (the only symptom is a
+:: log that stops growing). 600s is far above a normal category (a full suite is
+:: ~25s) so this only ever fires on a genuine stall. A timed-out category exits
+:: 124, is recorded as a failure, and the sweep MOVES ON.
+if not defined IOS_QEMU_TIMEOUT_SEC set IOS_QEMU_TIMEOUT_SEC=600
 :: pushd auto-maps a UNC working dir (\\wsl.localhost\...) to a temp
 :: drive letter so chained bats see a real local CWD; without this
 :: CMD falls back to C:\Windows when launched from a UNC path and

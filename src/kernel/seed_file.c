@@ -389,21 +389,31 @@ void seed_file_phase3(void)
         crypto_wipe(payload, sizeof(payload));
     }
 
+    /* These report ONLY what was READ, never what will be written.
+     *
+     * They used to predict the outcome ("rejected, rewriting fresh"), which the
+     * rotation-provenance gate immediately below is entitled to veto -- so a
+     * degraded boot logged "rewriting fresh" and then "rotation deferred, prior
+     * file kept" two lines later, a flat contradiction in the only
+     * operator-visible account of what the seed file now contains. The read
+     * disposition is not the write decision and must not speak for it. Every
+     * outcome IS reported: rotation logs "seed file: rotated (counter=N)", the
+     * gate logs its deferral, and a failed write logs its own error. */
     if (!have_payload) {
         if (saw_bad_mac && !token_fresh) {
             klog(LOG_WARN, "entropy",
                  "seed file: MAC mismatch (cloned file or token reset) -- "
-                 "rejected, rewriting fresh");
+                 "rejected, not credited");
         } else if (saw_replay) {
             klog(LOG_WARN, "entropy",
-                 "seed file: stale counter (replay) -- rejected, rotating");
+                 "seed file: stale counter (replay) -- rejected, not credited");
         } else if (saw_malformed) {
             klog(LOG_WARN, "entropy",
                  "seed file: malformed (torn write or corruption) -- "
-                 "rejected, rewriting fresh");
+                 "rejected, not credited");
         } else if (!saw_any_file && !token_fresh) {
             klog(LOG_INFO, "entropy",
-                 "seed file: absent -- writing first seed file");
+                 "seed file: absent (no prior seed to credit)");
         }
     }
 

@@ -267,8 +267,40 @@ if ($ExtraArgs) {
     }
 }
 
+# Watchdog: bound the run when IOS_QEMU_TIMEOUT_SEC is set.
+#
+# `& $QEMU @QemuArgs` blocks until the guest exits, with no bound. That is right
+# for an interactive session -- you close the window when you are done -- but it
+# is what makes the aggregate sweep unattended-UNSAFE: at least one category
+# boots through to the desktop and idles instead of shutting down, so
+# run-all-tests.bat stops there forever. Headless makes that stall silent rather
+# than visible, which is worse: the only symptom is a log that stops growing.
+#
+# Opt-IN, so no interactive behavior changes. The aggregate sets it; a developer
+# running one category by hand still gets an unbounded session. On expiry the
+# process is killed and a non-zero exit is returned, so the caller records a
+# stalled category and moves on instead of hanging the whole chain.
+$TimeoutSec = 0
+if ($env:IOS_QEMU_TIMEOUT_SEC) { [int]::TryParse($env:IOS_QEMU_TIMEOUT_SEC, [ref]$TimeoutSec) | Out-Null }
+
 try {
-    & $QEMU @QemuArgs
+    if ($TimeoutSec -gt 0) {
+        # -NoNewWindow keeps the parent console, so `-serial stdio` still
+        # streams into whatever redirect the caller set up -- the log this
+        # sweep exists to produce must not change shape just because it is
+        # now bounded.
+        $proc = Start-Process -FilePath $QEMU -ArgumentList $QemuArgs -NoNewWindow -PassThru
+        if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+            Write-Host ""
+            Write-Host "run-qemu: STALLED -- no exit after $TimeoutSec s; killing." -ForegroundColor Red
+            Write-Host "  A category that reaches the desktop and idles is a bug in THAT bat" -ForegroundColor DarkGray
+            Write-Host "  (it should boot -TestOnly and shut down), not in the sweep." -ForegroundColor DarkGray
+            try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+            $global:LASTEXITCODE = 124   # conventional timeout status
+        }
+    } else {
+        & $QEMU @QemuArgs
+    }
 } finally {
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
