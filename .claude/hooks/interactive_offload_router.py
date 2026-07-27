@@ -87,6 +87,22 @@ def main() -> int:
 
     for pat, agent, note in _ROUTES:
         if re.search(pat, prompt, re.I):
+            # T1-4: budget this advisory. Measured 2026-07-27: 487 injections
+            # across the offload-events log with ZERO recorded follows -- the
+            # single largest advisory emitter and the least-heeded. The first
+            # couple of hints per session carry the whole teaching value; the
+            # rest are pure cache-read, re-charged on every later turn.
+            # Suppressions are still COUNTED in state, so the volume stays
+            # measurable for the retire-or-promote call (T1-4(b)).
+            try:
+                from pathlib import Path
+                import _advisory_budget
+                if not _advisory_budget.should_emit(
+                        Path.cwd(), "interactive_offload_router",
+                        cap=2, session_id=str(d.get("session_id") or "")):
+                    return 0
+            except Exception:
+                pass    # fail-open: a budget bug must never silence the hook
             try:
                 import _offload_log
                 from pathlib import Path

@@ -3744,6 +3744,25 @@ if python3 "$REPO_ROOT/.claude/hooks/edit_retry_reminder.py" --selftest >/dev/nu
 else
     t_fail "edit_retry_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/_advisory_budget.py" --selftest >/dev/null 2>&1; then
+    t_pass "advisory_budget_selftest  per-session injection budget green"
+else
+    t_fail "advisory_budget_selftest  embedded selftest failed"
+fi
+# T1-4: the budget is for ADVISORY hooks only. A BLOCK's fire means it BLOCKED,
+# so budgeting one would punch a hole in a gate -- assert no blocking hook
+# imports it.
+_ab_block_users=""
+for _h in "$REPO_ROOT"/.claude/hooks/*.py; do
+    grep -q '_advisory_budget' "$_h" 2>/dev/null || continue
+    grep -qE '^\s*(return 2|sys\.exit\(2\))' "$_h" 2>/dev/null && \
+        _ab_block_users="$_ab_block_users $(basename "$_h")"
+done
+if [ -z "$_ab_block_users" ]; then
+    t_pass "advisory_budget_no_block_users  no blocking hook is rate-limited"
+else
+    t_fail "advisory_budget_no_block_users  BLOCK hook(s) import the budget:$_ab_block_users"
+fi
 if python3 "$REPO_ROOT/.claude/hooks/read_cache_block.py" --selftest >/dev/null 2>&1; then
     t_pass "read_cache_block_selftest  fixture suite green"
 else

@@ -243,7 +243,30 @@ not a bill.)
   **Acceptance:** no section resumes with a lost finding, lost review receipt, or lost stamp; `rollover-wip` never fires
   mid-review-round (only at a step boundary with a clean gate).
 
-- [ ] **T1-4. Budget the hook injections -- 1,609 reminder fires, 226 dispatches.**
+- [/] **T1-4. Budget the hook injections -- 1,609 reminder fires, 226 dispatches.**
+  **(a) SHIPPED 2026-07-27; (b) RESOLVED BY MEASUREMENT -- nothing to retire; (c) not needed.**
+  **The headline conflated two different things.** Re-measured per hook from `offload-events.jsonl` (1,974 fire
+  events), the fires split by hook CLASS -- and a BLOCK's "fire" means it BLOCKED, not that it advised and was
+  ignored, so a follow-rate is meaningless for one and rate-limiting it would punch a hole in a gate:
+  `interactive_offload_router` 487 injections / 0 follows (REMINDER), `build_offload_reminder` 441 (BLOCK),
+  `codex_wait_discipline` 228 (BLOCK), `websearch_offload_gate` 180 (BLOCK), `agent_dispatch_required` 26
+  (BLOCK+WARN). Only ONE genuine advisory candidate existed, not 34 -- and it is the least-heeded of all.
+  **(a)** `.claude/hooks/_advisory_budget.py`: per-SESSION cap (default 2) that COUNTS its suppressions in
+  `.claude/state/advisory-budget.json` rather than discarding them, so the volume stays measurable for a later
+  retire-or-promote call. Wired into `interactive_offload_router` only. Fail-open in the EMIT direction -- a budget
+  bug must never silence a hook. No session id means NO budget (the contract is per-session; counting without one
+  would accumulate across unrelated invocations and silence the hook forever) -- caught by the existing
+  `offload_router` tests, which drive the hook with no session and went silent from the third case on.
+  **(b)** No hook was retired: after excluding the BLOCK gates the acceptance criterion protects, the only advisory
+  with a poor follow rate is the one now budgeted. Retiring it outright would lose the routing hint entirely; the
+  budget keeps the first two per session, which is where the teaching value is.
+  **(c)** Skipped -- the surviving advisory is already a single formatted line.
+  **Found on the way:** `build_offload_reminder` was recorded as REMINDER in `MANIFEST.md` but is a P3.4
+  BLOCK-with-reroute (`return 2`). Class corrected. `audit-hooks.sh` cannot catch that direction -- it flags a
+  BLOCK-labelled hook with NO exit-2 path, not a REMINDER-labelled hook that blocks.
+  **Checks run:** `_advisory_budget --selftest`; `scripts/test-tooling.sh` **554/554** (incl. a new invariant that no
+  hook with a `return 2` imports the budget); control-plane suite 48/48; `audit-hooks.sh` no drift; lint 0 errors.
+  **Still open:** measuring the achieved reduction on the next full run (T4-1 owns the reporting).
   **Evidence:** `.claude/state/offload-events.jsonl`: `fire` **1,609**, `dispatch` **226** (14% follow-through), `follow`
   638. 34 of 78 hooks emit `systemMessage` / `additionalContext`. Every fire is context that is then re-read for the rest
   of the session, and 86% of them changed no behavior.
