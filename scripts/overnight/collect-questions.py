@@ -11,7 +11,7 @@ awaiting-answer slices (see scripts/overnight/lifecycle-unblocked.sh).
 
 TODO tree is NESTED (todo/NN-domain/TODO-NN-*.md), so the scan is recursive.
 todo/TODO-Claude-Overnight-Runner.md and any other non-"TODO-<digits>-*" file
-under todo/ (INDEX, overnight-runner-improvements.md, ...) are excluded by the
+under todo/ (INDEX, overnight-runner-improvements/, ...) are excluded by the
 filename shape check, not by a special-case path list.
 
 Run at fixpoint/lifecycle-exit (the launcher does this on DONE; the SKILL on exit).

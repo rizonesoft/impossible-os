@@ -278,7 +278,7 @@ def main() -> int:
         "stamp edit. Legitimate revert / stamp-repair / false-positive: "
         "SKIP_DISPATCH_GATE=1 SKIP_DISPATCH_GATE_REASON='<why, >=12 chars>' "
         "(logged). Doctrine: CLAUDE.md 'Specialist agents' + "
-        "todo/overnight-runner-improvements.md compliance item.\n")
+        "todo/overnight-runner-improvements/overnight-runner-improvements-v01.md compliance item.\n")
     return 2
 
 

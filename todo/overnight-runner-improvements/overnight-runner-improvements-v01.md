@@ -1,13 +1,23 @@
-# Overnight Runner -- Improvement Backlog
+# Overnight Runner v01 -- Improvement Backlog (items filed 2026-07-02 -> 2026-07-27)
 
-> **Deliberately outside the sequencer.** This file is named `overnight-runner-improvements.md`
-> (NOT `TODO-NN-*.md` and NOT in a `todo/NN-domain/` dir) on purpose: the overnight
-> sequencer only traverses files matching `todo/\d\d-<domain>/TODO-\d+-*.md`
-> (`sequencer_triage.is_impl_todo`), and the todo-graph only parses `TODO-*.md`
-> (`build.py` `rglob("TODO-*.md")`). This name matches neither, so the runner
-> never tries to "complete" its own improvement list and the graph never
-> validates it. Keep the name this shape. Companion to the doctrine file
-> `todo/TODO-Claude-Overnight-Runner.md`.
+> **Deliberately outside the sequencer.** Lives at `todo/overnight-runner-improvements/`
+> (a versioned directory, 2026-07-27) as `overnight-runner-improvements-v01.md`. Three
+> separate scanners must keep skipping it, and they key on DIFFERENT things:
+> `sequencer_triage.is_impl_todo` requires the path `todo/\d\d-<domain>/TODO-\d+-*.md`
+> (the directory name defeats it), while the todo-graph (`build.py`
+> `rglob("TODO-*.md")`) and `collect-questions.py` (`_TODO_NN_RE` =
+> `^TODO-\d+-.*\.md$`) both match on FILENAME at any depth. So the runner never
+> tries to "complete" its own improvement list, the graph never validates it, and
+> its `Q:` bullets are never collected as operator questions.
+>
+> **Naming rule for the version files added here.** Because two of those three
+> scanners match on filename, a version called `TODO-something.md` in this
+> directory WOULD be pulled into the graph and the question sweep even though the
+> directory keeps it away from the sequencer. Name versions
+> `overnight-runner-improvements-vN.md` -- anything that does not start with `TODO-`.
+>
+> Companion to the doctrine file `todo/TODO-Claude-Overnight-Runner.md`, and to the
+> cost backlog `todo/token-saver/token-saver-v01.md`.
 >
 > This is a plain operator backlog, not a formal impl TODO: no IO table, no
 > Verified/Quality stamps, no Codex pipeline. Promote an item to a real

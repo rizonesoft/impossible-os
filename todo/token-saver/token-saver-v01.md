@@ -2,7 +2,7 @@
 
 > **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, 2026-07-27) as
 > `token-saver-v01.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
-> never traverses it, and the todo-graph never parses it. Same intent as `todo/overnight-runner-improvements.md`.
+> never traverses it, and the todo-graph never parses it. Same intent as `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md`.
 >
 > **Naming rule for the version files added here.** The directory name defeats the sequencer regardless of filename
 > (`token-saver` is not `\d\d-<domain>`), but the todo-graph glob is `root.rglob("TODO-*.md")` -- it matches on
@@ -10,7 +10,7 @@
 > into the graph and validated as an implementation TODO. Name versions `token-saver-vN.md` / `token-saver-YYYY-MM-DD.md`
 > -- anything that does not start with `TODO-`.
 >
-> Companion to `todo/overnight-runner-improvements.md`. That file is a **flow / correctness** backlog whose cost items are
+> Companion to `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md`. That file is a **flow / correctness** backlog whose cost items are
 > framed around *wait time and dispatch shape*. This file is framed around the **measured token arithmetic** and reaches
 > mostly different conclusions. Where an item here sharpens one there, the cross-reference is named inline.
 >
@@ -191,7 +191,7 @@ not a bill.)
   a review received that was never applied. That is the Never-cut line; 116K tokens does not buy it.
   **Fix instead:** remove the REASON for the repeats. The 75 in-pass receptions exist because each Codex leg's findings
   are received separately. Batch the legs (`review-envelope.py` already combines legs; the concurrent-dispatch item in
-  `overnight-runner-improvements.md` wants the same shape) and the repeat receptions collapse at the source -- same
+  `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` wants the same shape) and the repeat receptions collapse at the source -- same
   saving, no gate coupling, no duplicated receipt, and it makes that backlog item cheaper too.
   **Acceptance:** every finding is still received through the discipline; `received: true` is still set only by the real
   PostToolUse path; no reduction in findings triaged per review round.
@@ -212,7 +212,7 @@ not a bill.)
   threshold (start at 250K), the next legal step is a `rollover-wip` -- commit-and-push the WIP, rotate, resume the same
   section from the section pack. The section pack + checkpoint machinery (`section-pack.py`, `section-checkpoint.py`)
   already exists to make the resume lossless.
-  **Small steps, ported 2026-07-27 from `overnight-runner-improvements.md` when that item closed** (safest-first; the
+  **Small steps, ported 2026-07-27 from `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` when that item closed** (safest-first; the
   relaxed gate 1e/1f is the only high-risk piece -- ship it last and canary it). **1c is the gap the original item
   glossed over:** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads
   `section-checkpoint.json`, so 1b is dead weight until 1c lands.
@@ -226,13 +226,13 @@ not a bill.)
   - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
   - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
 
-  **Gates another item:** `overnight-runner-improvements.md` "a REFUSED rollover must BLOCK starting the next section"
+  **Gates another item:** `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` "a REFUSED rollover must BLOCK starting the next section"
   is BLOCKED-ON this item by decision 2026-07-27. That one hard-blocks the next section on a refused rollover, which can
   wedge an unattended run (its escape path, defer-with-state, does not exist). T1-3 attacks the same context balloon from
   the mid-section side and cannot wedge, because it fires only at safe boundaries. Land T1-3, re-measure boundary-side
   ballooning, and only then decide whether the hard block is still needed.
 
-  **Sharpens:** `overnight-runner-improvements.md` "Context-cap rollover ... (Path B)" -- that item is scoped as a flow
+  **Sharpens:** `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` "Context-cap rollover ... (Path B)" -- that item is scoped as a flow
   fix; this adds the measured threshold and the arithmetic that justifies it.
   **Expected saving:** caps the worst-case multiplier. On the measured distribution, holding steady state at 250K instead
   of letting it run to 650K is **~15-20%**.
@@ -247,7 +247,7 @@ not a bill.)
   logged to state, not injected. (b) **Retire or promote:** any advisory hook under a ~20% follow rate is either promoted
   to a hard block (if the behavior genuinely matters) or deleted (if it does not). A warning nobody follows is pure cost.
   (c) **Compress the survivors** to one line plus a path -- several are currently multi-paragraph.
-  **Sharpens:** `overnight-runner-improvements.md` "Make offload actually bite" -- same root cause, opposite prong: that
+  **Sharpens:** `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` "Make offload actually bite" -- same root cause, opposite prong: that
   item promotes hints to enforcement, this one deletes the hints that enforcement makes redundant. Do both together.
   **Expected saving:** **3-5%**, and a measurable drop in attention dilution.
   **Acceptance:** every hook retired or rate-limited is recorded in `.claude/hooks/MANIFEST.md` with its measured follow
@@ -331,7 +331,7 @@ not a bill.)
   **Acceptance:** no command loses its working directory; the sandbox behavior is unchanged.
 
 - [ ] **T3-2. Targeted suites during the fix loop; ONE full suite + smoke at the section boundary.**
-  Already filed in `overnight-runner-improvements.md` ("Cadence: targeted suites DURING the fix loop") and **not yet
+  Already filed in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` ("Cadence: targeted suites DURING the fix loop") and **not yet
   done**. Restating it here because the cost framing changes its priority: a full-suite run is cheap in wall-clock (~24s)
   but its *output* lands in context and is then re-read for the rest of the session. Repeating it every fix round is a
   cache-read multiplier, not just a time cost.
@@ -341,7 +341,7 @@ not a bill.)
   stamp. Only the intra-loop runs are narrowed.
 
 - [ ] **T3-3. Never re-dispatch an unchanged review kind on unchanged inputs.**
-  Filed in `overnight-runner-improvements.md` as two items (convergence-based review as a RULE; per-kind x per-file
+  Filed in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` as two items (convergence-based review as a RULE; per-kind x per-file
   invalidation) and **not yet done**. The cost case: a Codex round is cheap on our side but the *reception* is not -- the
   verdict body, the finding triage, and the `receiving-code-review` skill body (6.2 KB, invoked 103 times) all land in
   main context and compound. Cutting a redundant round removes all three.
@@ -377,7 +377,7 @@ not a bill.)
   `.claude/overnight/NEEDS-OPERATOR.md`. Warning only -- never block a run on a cost metric.
   **Acceptance:** the gate cannot stop shipping work; it can only report.
 
-  **Budget backstop, ported 2026-07-27 from `overnight-runner-improvements.md`.** Land AFTER T1/T2 bring the baseline
+  **Budget backstop, ported 2026-07-27 from `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md`.** Land AFTER T1/T2 bring the baseline
   down -- a runner that mostly sleeps ships nothing, so this must never become the primary strategy.
 
   - [ ] **(5a) Track cumulative 7-day token burn** in the arm/launch layer (rolling window sourced from run reports).
@@ -406,7 +406,7 @@ not a bill.)
 These do not sum -- they overlap heavily (T1-1 and T2-1 both attack re-reading from different ends). A realistic
 combined target is **50-65% cost reduction with zero change to what gets built or how hard it is reviewed.** Sequence:
 **T1-1 (done) -> T2-2 -> T1-2 -> T2-1 -> T1-3**, then measure (T4-3) before doing the rest. T1-2b rides along with the
-concurrent-leg work in `overnight-runner-improvements.md` rather than being scheduled on its own.
+concurrent-leg work in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` rather than being scheduled on its own.
 
 ---
 
@@ -416,7 +416,7 @@ Every item above was scoped to leave the following completely intact. If an impl
 one of these, the item is wrong and gets re-scoped, not the floor.
 
 - **The Codex review pipeline.** Adversarial, consistency, perf, design, re-adversarial, and the fix loop stay as-is.
-  Nothing here caps review rounds (already evaluated and rejected in `overnight-runner-improvements.md`).
+  Nothing here caps review rounds (already evaluated and rejected in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md`).
 - **`kernel-quality-auditor` stays on Opus.** It is the sole SMP / lock-order / bare-metal net for the repo's most
   expensive bug class.
 - **The full unit suite + smoke test at every section boundary**, and the CI-parity pre-push gate. Intra-loop runs narrow;

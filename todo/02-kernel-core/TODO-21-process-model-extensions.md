@@ -588,7 +588,7 @@ predate that fix and none is caused by it. Filed rather than hot-fixed because t
 wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later
 lets a tick between the frame write and the store clobber the published frame via the save-gate.
 
-A fourth defect of the same class landed here 2026-07-27, moved out of `todo/overnight-runner-improvements.md` where
+A fourth defect of the same class landed here 2026-07-27, moved out of `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` where
 it could never be scheduled (the sequencer does not traverse that file): a **page-table use-after-free across reap +
 fork/exec**, where a live task runs on a reaped task's recycled PML4 and panics with `USER_ACCESS_VIOLATION`. It is
 the same reap-versus-exec lifetime question as the items above, which is why it is owned here rather than in an MM
