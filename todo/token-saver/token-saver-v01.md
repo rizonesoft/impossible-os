@@ -1,7 +1,7 @@
 # Token Saver -- Cost Reduction Backlog (zero quality loss)
 
-> **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, moved 2026-07-27) and is
-> named `token-saver.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
+> **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, 2026-07-27) as
+> `token-saver-v01.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
 > never traverses it, and the todo-graph never parses it. Same intent as `todo/overnight-runner-improvements.md`.
 >
 > **Naming rule for the version files added here.** The directory name defeats the sequencer regardless of filename
