@@ -431,7 +431,31 @@ not a bill.)
   **Acceptance:** `bash_search` in the next run's `main_tools` drops below 200; no reduction in what gets found (spot
   check: the agent report names the same file:line the inline grep would have).
 
-- [ ] **T2-4. Make every analyst return the typed envelope, and cap its size.**
+- [x] **T2-4. Make every analyst return the typed envelope, and cap its size.**
+  **COST CLAIM INVALIDATED; the useful half SHIPPED 2026-07-27.**
+  **The 2-4% is off by ~25-50x.** Agent reports are already small: total sidechain OUTPUT across the measured window is
+  **14,584 tokens over 48 dispatches = ~303 tokens (~1.2 KB) per report**. That is already envelope-sized -- converting
+  it to JSON could make it BIGGER. Even assuming a report is carried for 150 later turns, the whole corpus is 0.16% of
+  cache-read spend, so HALVING every report saves **~0.08%**, not 2-4%. The item's "1,407 historical dispatches" also
+  mixes an all-time count with a windowed cost -- the same double-counting T1-5 was closed for.
+  **NOT implemented, deliberately: REJECT on `SubagentStop`.** It is the wrong mechanism in the wrong direction. The
+  agent has already RUN by then, so its tokens are spent; rejecting discards the work and forces a re-dispatch, which
+  costs MORE. `SubagentStop` is also not used as a gate anywhere in this repo (`subagent_audit` is STATE-only,
+  `inflight_race_guard` uses it to CLEAR), so exit-2 semantics there are unproven. Chasing 0.08% with an unproven
+  gate that is cost-negative when it fires is a bad trade.
+  **SHIPPED instead -- the part with non-cost value.** "Every analyst" was the item's flaw: 6 of the 21 return
+  NARRATIVES (the three researchers, `diagnostic-digester`, `serial-log-auditor`, `overnight-log-explorer`) and forcing
+  a citation narrative or an anomaly timeline into a findings array degrades it. The envelope went to the **11
+  findings-shaped analysts** only (auditors + mappers). Each block carries the schema, the validator command, and the
+  two rules that matter more than the format: **`unknowns[]` is not optional padding** (an envelope that silently omits
+  what it could not determine is worse than prose, because it reads as complete), and **a ~400-line cap where overflow
+  goes to `unknowns[]` rather than being truncated** -- exceeding it signals the dispatch was scoped too wide.
+  **Doc drift fixed:** `CLAUDE.md` implied the envelope discipline applied to analysts generally while 0 of 21 carried
+  it; it now states the 11/6 split and why the narrative six are excluded.
+  **Acceptance met on the term that matters:** findings per dispatch cannot drop (nothing rejects a return), and
+  `unknowns[]` is explicitly required rather than silently truncated.
+  **Checks run:** a sample envelope validates against `evidence-schema.py` (exit 0); lint 0 errors (Check 14 read-only
+  allowlist unaffected).
   **Evidence:** `review-result-v1` + `evidence-schema.py` exist and are used by the command wrappers, but the 21 agent
   definitions largely return prose. 1,407 historical subagent dispatches at prose length is a lot of main-context text
   for findings that could be 20 lines of JSON.
