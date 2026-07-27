@@ -335,6 +335,21 @@ uint64_t quota_stall_last_update_ns(void);
 /* Number of windows the aggregator has closed since boot. */
 uint64_t quota_stall_windows_closed(void);
 
+/* Periods that elapsed with no fold of their own, counted at the fold from the
+ * span it had to represent. This is the SIGNAL-QUALITY counter: the aggregator
+ * conserves total stall time across a gap (the raw per-CPU integrals are
+ * additive), but it cannot recover the DISTRIBUTION -- one span average is
+ * applied uniformly to every period it covers, so a burst confined to the last
+ * window reads as an even smear and the levels it should have driven arrive
+ * late. A nonzero delta over an interval therefore means the averages and
+ * levels for that interval are reconstructed, not observed.
+ *
+ * Distinct from quota_pressure_stall_folds_deferred(), which counts arms the
+ * producer could not issue: that is a CAUSE counter and neither implies nor is
+ * implied by this one (a successful arm serviced late still loses periods; many
+ * dropped arms inside a single period lose none). */
+uint64_t quota_stall_missed_periods(void);
+
 /* --- Coherent whole-state snapshot ---------------------------------------- *
  * Everything a reporting surface needs, taken under ONE lock acquisition.
  * Assembling the same picture from the individual queries above lets the 2 s
@@ -344,6 +359,13 @@ uint64_t quota_stall_windows_closed(void);
 typedef struct quota_stall_summary {
     uint64_t last_update_ns;
     uint64_t windows_closed;
+    /* Carried HERE rather than left to a separate quota_stall_missed_periods()
+     * call so a reporting surface cannot pair this count with a DIFFERENT
+     * generation of the levels it qualifies. Two independent acquisitions let a
+     * fold land in between and print "every period folded on time" above
+     * freshly reconstructed values -- which inverts the counter's entire
+     * purpose. One lock, one generation. */
+    uint64_t missed_periods;
     uint8_t  system_level;    /* quota_pressure_level_t */
     uint8_t  _pad[7];
     quota_stall_snapshot_t domain[QUOTA_STALL_DOMAIN_COUNT];

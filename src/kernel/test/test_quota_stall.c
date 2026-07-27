@@ -566,6 +566,82 @@ static void test_stall_over_long_stalled_gap_keeps_its_measurement(void)
     quota_stall_task_unstalled(&tok);
 }
 
+/* The missed-period counter is what lets a consumer tell a RECONSTRUCTED span
+ * from an observed one. The aggregator conserves total stall time across a gap,
+ * but it applies one span average uniformly to every period the gap covered --
+ * so the averages and levels for that span are smeared, and without a count
+ * saying so they are indistinguishable from measured ones.
+ *
+ * This pins the counter to the SERVICE side (periods actually folded late),
+ * which is deliberately not the same quantity as the producer-side dropped-arm
+ * counter: folds that arm successfully but run late still lose periods here. */
+static void test_stall_missed_periods_counts_reconstructed_spans(void)
+{
+    uint64_t after_clean, after_gap, after_more;
+
+    stall_begin();
+    quota_stall_declare_instrumented(QUOTA_STALL_MEM);
+
+    /* On-time folds represent exactly one period each: nothing reconstructed. */
+    stall_step_windows(3);
+    after_clean = quota_stall_missed_periods();
+    TEST_ASSERT_EQ((uint32_t)after_clean, 0u,
+                   "folds arriving on time reconstruct nothing");
+
+    /* One fold covering ten periods reconstructs the nine it did not observe. */
+    stall_advance(10ull * STALL_WINDOW_NS);
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 1, "the delayed fold closes a window");
+    after_gap = quota_stall_missed_periods();
+    TEST_ASSERT_EQ((uint32_t)(after_gap - after_clean), 9u,
+                   "a ten-period fold charges nine reconstructed periods");
+
+    /* Returning to cadence must stop charging -- a counter that kept climbing
+     * after service recovered would leave every later span looking suspect. */
+    stall_step_windows(3);
+    after_more = quota_stall_missed_periods();
+    TEST_ASSERT_EQ((uint32_t)(after_more - after_gap), 0u,
+                   "on-time folds after a gap charge nothing further");
+
+    /* Monotonic and non-resetting: it is a since-boot health total, not a gauge
+     * that a consumer could miss by polling on the wrong side of a clear. */
+    TEST_ASSERT(after_more >= after_gap, "the counter never runs backward");
+
+    /* The count MUST ride the aggregate snapshot, not just a standalone getter.
+     * A reporting surface that read the two separately could have a fold land
+     * between them and certify levels it had just smeared -- so the snapshot
+     * carrying its own copy is the property that makes the dump honest. */
+    {
+        quota_stall_summary_t sum;
+        TEST_ASSERT_EQ(quota_stall_snapshot_all(&sum), 0, "snapshot succeeds");
+        TEST_ASSERT_EQ((uint32_t)sum.missed_periods, (uint32_t)after_more,
+                       "the snapshot carries the same count as the accessor");
+    }
+}
+
+/* The missed-period count is a SERVICE measure -- how late the fold was -- and
+ * must come from the fold's own wall interval, not from the weighted span the
+ * EWMA uses. The two diverge whenever a per-CPU slot stamp sits just off a
+ * period boundary, which is precisely the case a boundary-sensitive counter
+ * gets wrong. Here the domain is left uninstrumented and idle, so the weighted
+ * span collapses to the elapsed fallback and only the wall interval can produce
+ * the exact answer. */
+static void test_stall_missed_periods_track_wall_interval(void)
+{
+    uint64_t before, after;
+
+    stall_begin();
+    /* No declare_instrumented, no stall token: nothing is non-idle, so the
+     * weighted span has nothing to derive from. */
+    before = quota_stall_missed_periods();
+
+    stall_advance(7ull * STALL_WINDOW_NS);
+    TEST_ASSERT_EQ(quota_stall_aggregate(), 1, "an idle late fold still closes");
+    after = quota_stall_missed_periods();
+
+    TEST_ASSERT_EQ((uint32_t)(after - before), 6u,
+                   "a seven-period wall gap charges exactly six missed periods");
+}
+
 /* The mirror case: a long QUIET gap must decay rather than hold the old value,
  * and must not invent pressure. */
 static void test_stall_over_long_quiet_gap_decays(void)
@@ -1196,6 +1272,12 @@ void test_register_quota_stall(void)
                             test_stall_missed_periods_decay, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: over-long stalled gap keeps its measurement",
                             test_stall_over_long_stalled_gap_keeps_its_measurement, TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: missed periods count reconstructed spans",
+                            test_stall_missed_periods_counts_reconstructed_spans,
+                            TEST_CAT_QUOTA);
+    test_suite_register_cat("Quota: missed periods track the wall interval",
+                            test_stall_missed_periods_track_wall_interval,
+                            TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: over-long quiet stall gap decays",
                             test_stall_over_long_quiet_gap_decays, TEST_CAT_QUOTA);
     test_suite_register_cat("Quota: runnable tracking does not backfill full",

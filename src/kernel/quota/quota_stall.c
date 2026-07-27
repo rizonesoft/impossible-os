@@ -136,6 +136,21 @@ static uint64_t       g_anchor_ns;
 static uint64_t       g_last_closed_ns;
 /* Guarded by g_agg_lock (g_anchor_ns is also read locklessly, atomically). */
 static uint64_t       g_windows_closed;
+
+/* Periods that elapsed without a fold of their own, measured AT THE FOLD from
+ * the span it actually had to represent.
+ *
+ * This is the SERVICE-side measure, and it is the one that describes the
+ * signal. The producer-side counter (quota_pressure_stall_folds_deferred)
+ * records arms that could not be issued -- useful for diagnosing why, but it
+ * over- and under-counts what was lost: an arm that succeeded still leaves a
+ * gap if the worker was slow to run it, and a run of dropped arms inside one
+ * period costs no periods at all. A period counted here is a period whose
+ * distribution was reconstructed from a span average rather than observed, so
+ * a nonzero delta over an interval means the averages and levels for that
+ * interval are SMEARED -- suspect in shape, though still conserved in total.
+ * Accumulated under g_agg_lock by the fold, read atomically. */
+static uint64_t       g_fold_missed_periods;
 /* Non-zero while a fold is in progress. The anchor alone cannot serialize a
  * fold: advancing it up front only keeps a second caller out until the NEXT
  * deadline, so a folder delayed past one window could resume and overwrite a
@@ -1055,8 +1070,46 @@ int quota_stall_aggregate(void)
         if (!sd->instrumented)
             continue;
         sd->valid = 1;
+        /* ONE fold is ONE debounce observation, however many periods it spanned.
+         *
+         * Deliberately NOT scaled by `periods`, even though ewma_apply above is.
+         * The two advance differently because they measure different things: an
+         * EWMA is a time-decaying quantity, so advancing it by elapsed time is
+         * what keeps it correct, whereas the rise/fall debounce is a count of
+         * INDEPENDENT CONSECUTIVE observations whose whole purpose is to refuse
+         * to act on a single reading. Replaying one span average N times would
+         * manufacture the very corroboration the debounce exists to demand, and
+         * would let a reconstructed span drive a domain to CRITICAL on evidence
+         * the counters never held.
+         *
+         * The level is not stranded by this: the averages catch up in full here,
+         * and the next RISE_SAMPLES real folds move the level at its normal
+         * rate. Pinned by test_stall_over_long_stalled_gap_keeps_its_measurement
+         * (test_quota_stall.c), which asserts both halves -- no jump on the
+         * delayed fold, and a rise immediately afterward. */
         stall_level_step(sd, avg_to_permille(sd->some_avg[QUOTA_STALL_AVG10]));
     }
+    /* Charge every SERVICE period this fold had to cover beyond its own.
+     *
+     * Computed from `elapsed` (the fold's own wall interval, now - anchor) and
+     * deliberately NOT from `periods`. Only one of them answers "how late was
+     * the service": `periods` derives from the WEIGHTED represented span, and
+     * collect_percpu lets a producer advance a slot past the fold timestamp, so
+     * it drifts by one at the boundary -- a fold exactly ten wall periods late
+     * can compute nine from a slot stamp a nanosecond short. That drift is
+     * correct for the EWMA (it is the interval the sample describes) and wrong
+     * for a health counter a reader uses to decide whether to trust the numbers
+     * above it.
+     *
+     * Written under g_agg_lock with the publish, so the aggregate snapshot
+     * carries the averages and the count that qualifies them together. */
+    {
+        uint64_t service_periods = elapsed / QUOTA_STALL_UPDATE_NS;
+        if (service_periods > 1ull)
+            g_fold_missed_periods = sat_add_u64(g_fold_missed_periods,
+                                                service_periods - 1ull);
+    }
+
     g_last_closed_ns = now;
     g_windows_closed = sat_add_u64(g_windows_closed, periods);
     spin_unlock_irqrestore(&g_agg_lock, flags);
@@ -1149,6 +1202,7 @@ int quota_stall_snapshot_all(quota_stall_summary_t *out)
     spin_lock_irqsave(&g_agg_lock, &flags);
     out->last_update_ns = g_last_closed_ns;
     out->windows_closed = g_windows_closed;
+    out->missed_periods = g_fold_missed_periods;
     out->system_level   = (uint8_t)system_level_locked();
     for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++)
         fill_snapshot_locked((quota_stall_domain_t)d, &out->domain[d]);
@@ -1187,6 +1241,16 @@ uint64_t quota_stall_windows_closed(void)
     return v;
 }
 
+uint64_t quota_stall_missed_periods(void)
+{
+    uint64_t flags, v;
+
+    spin_lock_irqsave(&g_agg_lock, &flags);
+    v = g_fold_missed_periods;
+    spin_unlock_irqrestore(&g_agg_lock, flags);
+    return v;
+}
+
 const char *quota_stall_domain_name(quota_stall_domain_t domain)
 {
     return domain_valid(domain) ? g_domain_name[domain] : "?";
@@ -1206,6 +1270,15 @@ void quota_stall_dump(void)
     klog(LOG_INFO, "quota", "stall: system=%s windows=%llu\n",
          quota_pressure_level_name((quota_pressure_level_t)summary.system_level),
          (unsigned long long)summary.windows_closed);
+
+    /* Qualify the rows BEFORE printing them, from the SAME snapshot. A separate
+     * quota_stall_missed_periods() call here would be a second generation, and a
+     * fold landing between the two could certify rows it had just smeared. */
+    if (summary.missed_periods)
+        klog(LOG_WARN, "quota",
+             "  %llu period(s) below are RECONSTRUCTED from a span average "
+             "(service fell behind; totals conserved, distribution smeared)\n",
+             (unsigned long long)summary.missed_periods);
 
     for (uint32_t d = 0; d < (uint32_t)QUOTA_STALL_DOMAIN_COUNT; d++) {
         const quota_stall_snapshot_t s = summary.domain[d];
@@ -1285,6 +1358,7 @@ void quota_stall_test_reset(void)
     __atomic_store_n(&g_anchor_ns, 0ull, __ATOMIC_RELEASE);
     g_last_closed_ns = 0;
     g_windows_closed = 0;
+    g_fold_missed_periods = 0;
     spin_unlock_irqrestore(&g_agg_lock, flags);
 
     /* Release the fold LAST, so nothing can start one against half-reset state. */

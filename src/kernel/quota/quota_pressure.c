@@ -406,6 +406,79 @@ static uint32_t ring_used(void)
  * for that span is SUSPECT, not merely late. */
 static uint64_t g_stall_fold_deferred;
 
+/* Deferred report for a pressure-tick budget overrun.
+ *
+ * Written by the tick at DISPATCH_LEVEL, printed by the drain at
+ * PASSIVE_LEVEL. The split exists because klog is NOT callable from the tick:
+ * with live disk logging active its write path flushes through the VFS to the
+ * storage driver inline, which is blocking I/O -- reached, by construction,
+ * only when this DPC is already over budget.
+ *
+ * Single slot, no lock, no allocation. `pending` is the claim: the tick's
+ * exchange either wins the slot and fills it or bumps `suppressed`, so a run of
+ * overruns costs one report plus a count rather than N reports competing with
+ * the drain that has to print them. */
+typedef enum {
+    OVERRUN_ARM_NOT_DUE = 0,
+    OVERRUN_ARM_ARMED   = 1,
+    OVERRUN_ARM_DROPPED = 2
+} overrun_arm_disposition_t;
+
+static struct {
+    uint32_t pending;        /* claim flag: 1 = record filled, awaiting print */
+    uint32_t disposition;    /* overrun_arm_disposition_t, RELEASE-stored last */
+    uint64_t total_us;
+    uint64_t sample_us;
+    uint64_t due_us;
+    uint64_t arm_us;
+    uint64_t drain_us;
+    uint64_t suppressed;     /* overruns dropped while a report was pending */
+} g_overrun;
+
+static const char *overrun_arm_name(uint32_t d)
+{
+    switch (d) {
+    case OVERRUN_ARM_ARMED:   return "armed";
+    case OVERRUN_ARM_DROPPED: return "dropped";
+    default:                  return "not-due";
+    }
+}
+
+/* Print any pending overrun report. PASSIVE_LEVEL only -- this is the half of
+ * the tick's phase attribution that is allowed to touch klog. */
+static void pressure_report_overrun(void)
+{
+    if (!__atomic_load_n(&g_overrun.pending, __ATOMIC_ACQUIRE))
+        return;
+
+    klog_unrated(LOG_WARN, "quota",
+         "pressure tick overran: total %llu us "
+         "(sample %llu, due %llu, arm %llu [%s], drain %llu)%s",
+         g_overrun.total_us, g_overrun.sample_us, g_overrun.due_us,
+         g_overrun.arm_us,
+         overrun_arm_name(__atomic_load_n(&g_overrun.disposition,
+                                          __ATOMIC_ACQUIRE)),
+         g_overrun.drain_us,
+         __atomic_load_n(&g_overrun.suppressed, __ATOMIC_RELAXED)
+             ? " (+more suppressed)" : "");
+
+    /* Report the suppressed run separately rather than folding it into the line
+     * above: the count belongs to the WINDOW between reports, not to the single
+     * tick whose phases were just printed, and merging them would invite reading
+     * one tick's 210 us arm as if it described all of them. */
+    {
+        uint64_t sup = __atomic_exchange_n(&g_overrun.suppressed, 0ull,
+                                           __ATOMIC_ACQ_REL);
+        if (sup)
+            klog_unrated(LOG_WARN, "quota",
+                 "  %llu further overrun(s) suppressed while that report waited",
+                 sup);
+    }
+
+    /* Release the slot LAST so the tick cannot refill it mid-print. */
+    __atomic_store_n(&g_overrun.pending, 0u, __ATOMIC_RELEASE);
+}
+
 uint64_t quota_pressure_stall_folds_deferred(void)
 {
     return __atomic_load_n(&g_stall_fold_deferred, __ATOMIC_ACQUIRE);
@@ -860,6 +933,15 @@ static void quota_pressure_drain(KDPC *dpc, void *context, void *arg1, void *arg
      * single-DPC watchdog budget. This is PASSIVE_LEVEL, where that is legal. */
     quota_stall_aggregate();
 
+    /* Emit any pending tick-overrun report. HERE, and not in the tick that
+     * measured it, because klog's write path flushes live disk logging through
+     * the VFS inline -- blocking I/O that a DISPATCH_LEVEL DPC must not perform,
+     * least of all in a branch that only runs when that DPC is already over its
+     * budget. After the fold rather than before it, so a fold that itself
+     * overruns is described by the report the NEXT drain prints instead of
+     * racing the one being printed now. */
+    pressure_report_overrun();
+
     /* Retry any channel whose creation was DEFERRED, BEFORE publishing: this is
      * the only context that recurs, runs at PASSIVE_LEVEL, and can afford to
      * wait. Only the pending bits are attempted, so a permanently-failed channel
@@ -1225,10 +1307,31 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      *
      * A dropped arm is COUNTED, never converted back into an inline fold --
      * falling back would reintroduce exactly the overrun this removes. The
-     * window is simply not closed until the worker exists, and the fold absorbs
-     * every missed period in closed form when it finally runs. */
-    if (quota_stall_fold_due() && !drain_arm())
-        __atomic_fetch_add(&g_stall_fold_deferred, 1ull, __ATOMIC_RELAXED);
+     * window is simply not closed until the worker exists.
+     *
+     * The late fold CONSERVES the missed span but does not reconstruct it: the
+     * raw per-CPU integrals are additive so no stall time is lost, but one span
+     * average is then applied to every period it covers, which smears a burst
+     * evenly across quiet windows. quota_stall counts those periods and
+     * quota_pressure_dump prints them, so a consumer can tell a reconstructed
+     * span from an observed one rather than reading both as measured. */
+    /* Split the deadline test from the arm. Measured on WHPX the whole stall
+     * phase cost 131 us against a 100 us budget AFTER the fold itself moved to
+     * the passive drain -- which left the arm as the only remaining candidate
+     * and made the phase label actively misleading, since nothing named "stall"
+     * runs here any more. The predicate is one acquire load; the arm queues a
+     * threaded DPC on another CPU under that CPU's queue lock. Those belong in
+     * different buckets, and a reader chasing an overrun needs to know WHICH
+     * before deciding whether the answer is a cheaper arm or a rarer one. */
+    const int fold_due = quota_stall_fold_due();
+    const uint64_t t_due = uptime_ns();
+
+    int fold_armed = 0;
+    if (fold_due) {
+        fold_armed = drain_arm();
+        if (!fold_armed)
+            __atomic_fetch_add(&g_stall_fold_deferred, 1ull, __ATOMIC_RELAXED);
+    }
     const uint64_t t_stall = uptime_ns();
 
     /* THE INDEPENDENT RETRY TRIGGER for a deferred notification channel. The
@@ -1256,14 +1359,48 @@ static void quota_pressure_tick(KDPC *dpc, void *context, void *arg1, void *arg2
      * the wrong thing. */
     if (t_end >= t_start &&
         (t_end - t_start) > (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US * 1000ull) {
-        const uint64_t sample_ns = (t_sample >= t_start) ? (t_sample - t_start) : 0ull;
-        const uint64_t stall_ns  = (t_stall  >= t_sample) ? (t_stall - t_sample) : 0ull;
-        const uint64_t drain_ns  = (t_end    >= t_stall)  ? (t_end - t_stall)  : 0ull;
+        const uint64_t sample_ns = (t_sample >= t_start)  ? (t_sample - t_start)  : 0ull;
+        const uint64_t due_ns    = (t_due    >= t_sample) ? (t_due - t_sample)    : 0ull;
+        const uint64_t arm_ns    = (t_stall  >= t_due)    ? (t_stall - t_due)     : 0ull;
+        const uint64_t drain_ns  = (t_end    >= t_stall)  ? (t_end - t_stall)     : 0ull;
 
-        klog_unrated(LOG_WARN, "quota",
-             "pressure tick overran: total %llu us (sample %llu, stall %llu, drain %llu)",
-             (t_end - t_start) / 1000ull, sample_ns / 1000ull,
-             stall_ns / 1000ull, drain_ns / 1000ull);
+        /* RECORD here, EMIT from the passive drain. klog is not safe to call
+         * from this DPC: when live disk logging is active its write path runs
+         * klog_disk_append + klog_disk_flush inline (klog.c), which descends
+         * through the VFS into FAT32 and the storage driver. Doing that at
+         * DISPATCH_LEVEL on the timer service CPU means blocking I/O in the one
+         * branch that only executes when this DPC is ALREADY over its budget --
+         * the report would compound the very stall it exists to describe, and
+         * can wait on locks a DPC has no business waiting on.
+         *
+         * So the overrun goes into a fixed-size single-slot record (no
+         * allocation, no lock, DIRQL-safe) and the drain prints it at
+         * PASSIVE_LEVEL. Single slot on purpose: overruns arrive in runs, and a
+         * ring of them would report the same condition N times while the drain
+         * that must print them is itself being starved. First-of-a-run wins and
+         * the rest are counted, which is the shape that stays bounded. */
+        if (__atomic_exchange_n(&g_overrun.pending, 1u, __ATOMIC_ACQ_REL) == 0u) {
+            g_overrun.total_us  = (t_end - t_start) / 1000ull;
+            g_overrun.sample_us = sample_ns / 1000ull;
+            g_overrun.due_us    = due_ns / 1000ull;
+            g_overrun.arm_us    = arm_ns / 1000ull;
+            g_overrun.drain_us  = drain_ns / 1000ull;
+            /* Disposition of the ARM, published with the cost. The queue insert
+             * only happens on the unarmed -> armed transition, so an expensive
+             * arm and a free one are the same code path on different ticks; the
+             * label is what lets a reader tell a slow insert from a tick that
+             * merely found the drain already pending. RELEASE last so the drain
+             * never reads a half-written record. */
+            __atomic_store_n(&g_overrun.disposition,
+                fold_due ? (fold_armed ? OVERRUN_ARM_ARMED : OVERRUN_ARM_DROPPED)
+                         : OVERRUN_ARM_NOT_DUE,
+                __ATOMIC_RELEASE);
+        } else {
+            __atomic_fetch_add(&g_overrun.suppressed, 1ull, __ATOMIC_RELAXED);
+        }
+        /* Get the drain scheduled so the record is actually printed. Idempotent,
+         * and already the mechanism this tick uses for retries. */
+        drain_arm();
     }
 }
 
@@ -1556,6 +1693,32 @@ void quota_pressure_dump(void)
     klog(LOG_INFO, "quota", "  drops: %llu rate-limited, %llu ring, %llu transport",
          quota_pressure_dropped_ratelimit(), quota_pressure_dropped_ring(),
          quota_pressure_dropped_transport());
+
+    /* Stall-lane SERVICE HEALTH, and the reason both numbers are printed rather
+     * than one: they answer different questions and neither implies the other.
+     *
+     * "missed periods" is the one that qualifies the data above -- periods whose
+     * shape was reconstructed from a span average instead of observed, so a
+     * nonzero value means the stall levels just printed are smeared, not wrong
+     * in total but late and flattened in distribution. "dropped arms" is the
+     * cause-side counter: it says the producer could not get the fold scheduled,
+     * which is how a reader distinguishes a wedged DPC worker from a fold that
+     * ran late for some other reason. A silent zero for both is the only
+     * combination that certifies the stall picture as fully observed. */
+    /* PRODUCER-side stall health only. The SERVICE-side count (periods actually
+     * reconstructed) is printed by quota_stall_dump from the same snapshot as
+     * the levels it qualifies -- reading it here would be a second generation,
+     * and could certify rows a fold had just smeared. The two are separate
+     * quantities: an arm dropped here says the fold could not be SCHEDULED,
+     * which is how a reader tells a wedged DPC worker from a fold that merely
+     * ran late, and neither count implies the other. */
+    {
+        uint64_t dropped = quota_pressure_stall_folds_deferred();
+        if (dropped)
+            klog(LOG_WARN, "quota",
+                 "  stall arm: %llu drop(s) -- the fold could not be scheduled",
+                 dropped);
+    }
     /* The stall lane is the other half of the pressure picture; a dump that
      * showed only budget-sourced levels would read as "no pressure" for a
      * system stalling on I/O. */
