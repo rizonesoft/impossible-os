@@ -275,6 +275,32 @@ needed, records the green stamp, and queries CI directly via `gh run list`
 
 ### 5. SECTIONS (`phase SECTIONS`)
 
+**FIRST, before classifying: read the PREVIOUS section's CI verdict.**
+
+```
+python3 scripts/overnight/ci-check.py .
+```
+
+Deterministic JSON, no model tokens, and it NEVER waits. Sections are pushed
+individually but CI used to be read only at PREFLIGHT and at file close-out, so
+a section that broke CI stayed invisible until its file closed or the next
+night's preflight -- which is how a fork+exec panic sat in a red
+`Build Impossible OS` job. Checking here moves detection from per-file to
+per-section for one JSON query.
+
+It does not block on purpose: `gh run watch` costs ~9 min per section
+serialized, and by the time the next section starts the previous push has
+already had a full section of wall-clock to finish. A run still `in_progress` is
+NOT a verdict -- carry on and let the next boundary pick it up.
+
+- `"ours_red": false` -> proceed.
+- `"ours_red": true` -> a FAILED run's head SHA is an ancestor of local HEAD.
+  **Fix it before shipping the next section.** Pushing on top of a red CI
+  compounds the bisect surface for whoever diagnoses it. Dispatch
+  `gh-query-runner` for the `--log-failed` slices, diagnose
+  (`superpowers:systematic-debugging`), fix, push.
+- CI unreachable is a NOTE in the JSON, never a blocker.
+
 For each `## N.` section in Implementation-Order order, classify it with
 `python3 .claude/hooks/sequencer_triage.py --classify <file>`:
 
