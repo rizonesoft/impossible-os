@@ -958,6 +958,50 @@ else
     #     never reach into quotes or it becomes a false-positive machine.
     _flag_probe 0 "allow quoted semicolon as data (non-codex)" \
         'echo "a;b" && ls'
+fi
+
+# ============================================================================
+# broker_dispatch_required (review-kind dispatches must use the broker)
+# ============================================================================
+# A 12.95h run sent 17 of 54 Codex dispatches down the raw script -- 12 of 19
+# re-adversarial rounds, the round that decides whether a finding is resolved.
+# The direct path was measured truncating a review to a 544-byte capture and
+# persists no artifact, so that evidence cannot be re-read without a full
+# re-dispatch. Gated in the UNATTENDED run only; interactive keeps the script.
+BROKER_HOOK="$REPO_ROOT/.claude/hooks/broker_dispatch_required.py"
+if [ ! -f "$BROKER_HOOK" ]; then
+    t_fail "broker_dispatch_required hook missing: $BROKER_HOOK"
+else
+    _broker_probe() {
+        # Args: <expected_rc> <description> <env-assignments> <command-string>
+        local want="$1" desc="$2" envs="$3" cmd="$4"
+        local payload rc
+        payload=$(python3 -c "import json,sys; print(json.dumps({'tool_name':'Bash','tool_input':{'command':sys.argv[1]}}))" "$cmd" 2>/dev/null || echo '{}')
+        printf '%s' "$payload" | env $envs python3 "$BROKER_HOOK" >/dev/null 2>&1
+        rc=$?
+        if [ "$rc" = "$want" ]; then
+            t_pass "broker_dispatch: $desc (rc=$rc)"
+        else
+            t_fail "broker_dispatch: $desc (want $want, got $rc)"
+        fi
+    }
+    _BD="bash scripts/codex-dispatch.sh '[review-kind: re-adversarial] todo/x body'"
+    _BB="bash scripts/overnight/review-broker-codex-dispatch.sh '[review-kind: re-adversarial] todo/x body'"
+    _broker_probe 2 "unattended: direct + review-kind BLOCKS" \
+        "OVERNIGHT_SEQUENCER_RUN=1" "$_BD"
+    _broker_probe 0 "unattended: broker + review-kind allowed" \
+        "OVERNIGHT_SEQUENCER_RUN=1" "$_BB"
+    # The broker basename ENDS IN codex-dispatch.sh; a suffix test would
+    #     misclassify it as direct and block the mandated path.
+    _broker_probe 0 "unattended: non-review-kind dispatch untouched" \
+        "OVERNIGHT_SEQUENCER_RUN=1" "bash scripts/codex-dispatch.sh 'no marker'"
+    _broker_probe 2 "unattended: direct behind 'cd X;' still BLOCKS" \
+        "OVERNIGHT_SEQUENCER_RUN=1" "cd /tmp;$_BD"
+    _broker_probe 0 "unattended: override allows" \
+        "OVERNIGHT_SEQUENCER_RUN=1 BROKER_DISPATCH_OVERRIDE=1" "$_BD"
+    # Interactive is the whole point of scoping this to the unattended run.
+    _broker_probe 0 "interactive: direct + review-kind allowed" \
+        "X=1" "$_BD"
     # 29. Allow: process substitution with --model in argv (proc-sub
     #     fail-open guard handles `<(...)` / `>(...)` constructs).
     _flag_probe 0 "allow diff <(echo a) <(echo b)" \
