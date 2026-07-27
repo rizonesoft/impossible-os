@@ -346,8 +346,14 @@ def cmd_gate(root: Path, res: list) -> int:
     print("Disposition each with:\n"
           "  python3 scripts/overnight/stranded_deferrals.py --dispose <key> "
           "--action <reopen|done|park> --reason '<why>'\n"
-          "  reopen = flip the item back to `- [ ]` and work it (do the edit "
-          "too; the disposition only records the decision)\n"
+          "  reopen = the work is now runnable -- FILE IT as a concrete `- [ ]` "
+          "item in a section the oracle can still see (an open section, or a "
+          "new one via scope-gap Branch B/C/D) with a reciprocal XREF.\n"
+          "           Do NOT just flip `- [/]` to `- [ ]` in place: the oracle "
+          "classifies on the Implementation Order ROW + section stamps, never "
+          "on items, so an in-place flip inside a shipped section is invisible "
+          "to the runner AND drops out of this audit (it matches `- [/]` "
+          "only) -- invisible to both nets.\n"
           "  done   = the owner already did this work; confirm and close\n"
           "  park   = still genuinely blocked on something else; name it\n",
           file=sys.stderr)

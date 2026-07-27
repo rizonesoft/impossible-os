@@ -124,6 +124,22 @@ def test_owner_sweep_filters_to_the_shipping_section():
               f"{expected} inbound parked item" in out)
 
 
+def test_reopen_guidance_forbids_the_invisible_in_place_flip():
+    """The oracle classifies on the Implementation Order ROW + section stamps,
+    never on checklist items. So flipping `- [/]` -> `- [ ]` inside a shipped
+    section leaves the item invisible to the runner AND drops it out of this
+    audit (which matches `- [/]` only) -- invisible to BOTH nets, i.e. silently
+    lost work. Both the gate's help text and the owner-sweep step must say so."""
+    src = (REPO / "scripts/overnight/stranded_deferrals.py").read_text()
+    check("gate-help-forbids-in-place-flip", "in place" in src
+          and "invisible to both nets" in src.lower())
+    skill = (REPO / ".claude/skills/implement-todo-section/SKILL.md").read_text()
+    check("skill-forbids-in-place-flip",
+          "do NOT just flip" in skill or "Do NOT just flip" in skill)
+    check("skill-names-the-correct-shape",
+          "concrete `- [ ]` item in a section the oracle can still see" in skill)
+
+
 def test_fixpoint_wires_the_gate():
     """The gate is only a completeness guarantee if fixpoint actually calls it."""
     guard = (REPO / ".claude/hooks/run_phase_guard.py").read_text()
@@ -139,6 +155,7 @@ if __name__ == "__main__":
     test_gate_can_never_wedge_a_run()
     test_disposition_requires_a_recorded_reason()
     test_owner_sweep_filters_to_the_shipping_section()
+    test_reopen_guidance_forbids_the_invisible_in_place_flip()
     test_fixpoint_wires_the_gate()
     if FAILS:
         for f in FAILS:
