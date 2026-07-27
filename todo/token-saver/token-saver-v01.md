@@ -597,7 +597,27 @@ not a bill.)
 
 ## T4 -- Measurement, so the savings cannot silently regress
 
-- [ ] **T4-1. Put cost in the run report, in the units that matter.**
+- [x] **T4-1. Put cost in the run report, in the units that matter.**
+  **SHIPPED 2026-07-28** as `scripts/overnight/cost-summary.py`, wired into `overnight-launch.sh` so every run ends
+  with the table (zero model cost). All eight requested figures are present: bucket table with tokens/cost/share,
+  average and peak context/turn, re-read ratio, skill-injection bytes, hook fires, agent dispatches, and agent
+  cache-hit rate -- plus the review-convergence ratio that T3-3 made loggable.
+  **Acceptance MET by hand.** Every figure reconciles against the raw jsonl, checked independently:
+  segments 4, turns 201, main cache-read 50,142,178, sidechain 9,309,295, output 112,887, cache-write 338,175,
+  agents 2, avg context/turn 249,463, peak 354,291, cache-read cost $75.21 -- identical from both paths.
+  **It reproduces the finding it exists to surface:** on a real run, cache-read is **82%** of cost (69.3% main +
+  12.9% sidechain) against 7.8% output. That is the number whose absence let the backlog optimize the 10% slice.
+  **Scoping is the load-bearing design choice.** Two of four sources (`tool-history.jsonl`, `offload-events.jsonl`)
+  are append-only across runs with no run id, so they are filtered to this run's WINDOW -- start parsed from the
+  metrics filename `run-YYYYMMDD-HHMMSS`, end from its mtime. Verified isolating: 49 in-window Reads out of 9,437
+  total events. When the filename carries no stamp the rows are OMITTED with an explicit note, never reported as
+  all-time: a per-run table that quietly mixes in an all-time count reads as authoritative, and that exact
+  double-count is what inflated two backlog items (T1-5, T2-4).
+  **Dollars are labelled as list-rate RELATIVE sizing, not a bill**, with sidechain priced at Opus as an upper bound.
+  **Checks run:** 4 contract tests (reconciliation, cache-read ranked first, unscopable-run omission, fail-open on
+  missing/malformed); launcher `bash -n` clean; control-plane suite 49/49; lint 0 errors.
+  **What this unblocks:** T4-3 can now compare a before/after run instead of arguing from estimates -- and several
+  estimates in this file are already known wrong (T1-2 ~5x, T1-5 double-counted, T2-3 ~25%, T2-4 ~30x).
   **Evidence:** `metrics-report.py` and `section-cost-report.py` exist, but nothing surfaces the cache-read-dominance
   finding -- which is why the backlog to date optimized the 10% slice.
   **Fix:** every run report ends with: total cache-read, average context/turn, peak context/turn, re-read ratio,

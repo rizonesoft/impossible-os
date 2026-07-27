@@ -399,6 +399,11 @@ if [ -f "$SNOOZE_FILE" ]; then SNOOZED_ARG=(--snoozed); fi
 if [ -f "${OVERNIGHT_METRICS_FILE:-}" ]; then
   {
     echo ""
+    echo "=== cost summary ==="
+    timeout 120 python3 "$SCRIPT_DIR/cost-summary.py" \
+      "$OVERNIGHT_METRICS_FILE" --project "$PROJECT_DIR" 2>&1 || \
+      echo "(cost summary unavailable)"
+    echo ""
     echo "=== per-section cost report ==="
     timeout 120 python3 "$SCRIPT_DIR/section-cost-report.py" \
       "$OVERNIGHT_METRICS_FILE" --project "$PROJECT_DIR" 2>&1 || \
