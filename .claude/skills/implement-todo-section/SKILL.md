@@ -53,15 +53,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     bash scripts/codex-dispatch.sh '[review-kind: design] <todo-path> <design review prompt>'
     ```
 
-    The PostToolUse hook fires `receiving-code-review` reminder; follow it on every design finding with the same Fix / Reject / Accept rigor as adversarial. **Design-review false-positive watch:** Codex suggests APIs that don't fit the codebase pattern, misses constraints already enforced elsewhere, pushes complexity already resolved differently, or recommends libraries that aren't available. Bulk-adopting design findings without verification is the same blind-implementation failure mode the discipline was created to prevent.
-
-    For EACH design finding (Critical/High/Medium/Low):
-    - **Verify against existing code first.** Read the file:line Codex cites to confirm the situation actually matches Codex's claim. Check whether the suggested change is already partially or fully in place under a different name. Check whether a related constraint (CLAUDE.md rule, existing pattern in the file, reciprocal API in another module) already addresses the concern.
-    - **If valid:** adopt the design change. Note WHY in the implementation (one-line comment near the relevant code, or a "Codex design review caught X" line in the file's header docstring). When ready to mark the checklist item `[x]` at step 10, REWRITE the item wording to reflect the adopted approach, not the original draft.
-    - **If wrong/misleading:** reject with concrete code evidence (the suggested API already exists at file:line, the constraint Codex thinks is missing is enforced at file:line, the alternative Codex proposed conflicts with CLAUDE.md X). Do NOT silently drop -- name the rejection in chat so the user sees the design rationale.
-    - **If out of scope (genuine cross-section concern):** accept with domain-qualified XREF to a concrete `[ ]` item in the appropriate later section / TODO, same as adversarial-review's Accepted-XREF rule.
-
-    **Record in the TODO section's pre-stamp `> **Notes:**` block** (see step 10) using a single-line "Codex design review adoptions in commit `<hash>`" reference -- detailed per-finding evidence belongs in the commit message, not in Notes (the brevity rule from `feedback_todo_notes_brevity`). The stamp's `Codex Nx (design + adversarial + consistency + perf)` counter at step 16 reflects the design dispatch when it happens.
+    The PostToolUse hook fires `receiving-code-review` reminder; follow it on every design finding with the same Fix / Reject / Accept rigor as adversarial: verify at file:line, then Fix (adopt + note why) / Reject (with code evidence, named in chat) / Accept (domain-qualified XREF to a concrete `[ ]` item). Per-finding decision detail, the measured design-review false-positive shapes, and the Notes-recording rule: [references/review-triage.md](references/review-triage.md).
 5. **Run the domain-appropriate code quality skill** -- walk the gates BEFORE writing code. The hook auto-selects based on path:
    - `src/boot/` -> `boot-code-quality` (UEFI error handling, EBS boundary, table safety, fallbacks)
    - `src/kernel/`, `include/kernel/` -> `kernel-code-quality` (SMP safety, memory rules, bare-metal)
@@ -74,10 +66,9 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    - No `malloc()`/`printf()` -- use `kmalloc()` (<=4 KB), `pmm_alloc_contiguous()` (larger), `printk()`.
    - Assembly: NASM x86-64 only. UEFI-era, Long Mode, APIC -- no BIOS/VGA/PIC.
    - API surface: Win32 native. Windows-style canonical paths (`C:\Impossible\System32\`).
-   - **POST16 codes are for BOOT-PATH code ONLY.** POST16 was designed for pre-`sti` triple-fault diagnostics where klog isn't yet running. Use POST16 only when the code might trip a triple fault before klog is initialized: Phase 0/1/2 boot, hardware init (CPUID, GDT, IDT, page tables, APIC, ACPI, SMP AP startup), or any function called from `boot_init.c` before `boot_phase3()` returns. Do NOT add POST16 to scheduler, syscall handlers, file I/O, ELF loading, exec, network, or any code that runs after Phase 3 completes -- a single `klog(LOG_INFO, ...)` line is more useful there. If `boot_init.h` defines a POST16 constant, check `boot_phase0/1/2.c` for the call site before assuming new code needs one.
+   - **POST16 codes are for BOOT-PATH code ONLY** -- Phase 0/1/2 boot and hardware init, where a triple fault can beat klog to the serial line. Never in scheduler / syscall / file I/O / exec / network code that runs after Phase 3; a `klog(LOG_INFO, ...)` line is more useful there. Full rule: [references/implementation-rules.md](references/implementation-rules.md).
    - **Scope-gap protocol (MANDATORY).** If while writing code you find yourself about to add a `// TODO`/`// FIXME`/`// HACK`/`// for now`/`// placeholder` comment, a `STATUS_NOT_IMPLEMENTED` return, a stub function body, or a conditional that narrows supported input below what the section's user-visible behavior promises -- STOP. You have hit a scope gap. Walk the decision tree in [scope-gap-protocol.md](scope-gap-protocol.md): Branch A (inline expansion under 1000 lines with `[x]` checklist item + NOTE callout), Branch B (new section in same TODO), Branch C (new TODO via `/create-todo` after dedup sweep), or Branch D (add to existing TODO found during dedup). Gate 10 of `kernel-code-quality` forbids the TODO comment; the scope-gap protocol is how you resolve the gap without breaking Gate 10. Report the branch you took in chat for clear cases; ASK the user which branch if sizing is borderline (900-1100 lines, unclear subsystem boundary).
-   - **STATUS_NOT_IMPLEMENTED completion-first policy.** The aim is to write complete code so features do not get lost behind stubs. If a function would return `STATUS_NOT_IMPLEMENTED`: (1) if it is **standalone** (self-contained, under 1000 lines, no deep dependency chain), implement it fully via Branch A; (2) if it requires **significant new infrastructure**, use Branch B/C/D to create a tracked TODO item with a domain-qualified XREF (e.g., `-> XREF: 02-kernel-core/TODO-17 §N`). Never leave a `STATUS_NOT_IMPLEMENTED` stub without a tracked follow-up.
-   - **Stale TODO patterns:** if the section's checklist explicitly demands `POST16(...)` codes for non-boot-path code (e.g., scheduler/exec/syscall/auxv work), treat that as a stale guideline from before this rule was added. SKIP the POST16 work AND remove the stale checklist item from the TODO -- do not satisfy obsolete patterns. The same applies to "test POST16 constants are 0xDDNN" items: those are tautological (the compiler enforces #define values; the real protection is the boot-time uniqueness check). Document the removal in the commit message.
+   - **STATUS_NOT_IMPLEMENTED completion-first policy.** Standalone and under 1000 lines -> implement it fully (Branch A). Needs significant new infrastructure -> Branch B/C/D with a tracked item and domain-qualified XREF. Never leave a stub without a tracked follow-up. **Stale TODO patterns** (a checklist demanding POST16 for non-boot-path code, or tautological constant tests) get DELETED from the TODO, not satisfied. Both in [references/implementation-rules.md](references/implementation-rules.md).
 7. **Build** -- `bash scripts/build.sh`, confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.
 8. **Wire unit tests** -- before writing any test code, read the TODO file's **Unit Tests** section (if one exists) to find:
    - The expected test file name (e.g. `test_exec.c`)
@@ -87,41 +78,10 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
    
    Create the test file / registration function if it doesn't exist yet. Do NOT piggy-back tests onto an unrelated test file just because it's convenient. If the subsystem doesn't fit existing `TEST_CAT_*` categories, create a new one (enum in `test.h`, names/labels in `test_runner.c`, `make test-*` target in Makefile, `bootx64.c` test_suite parser, AND the matching bat runner under the **right subdir** for the test layer -- see the bullet below). Then add/update assertions and confirm build passes.
    
-   > **CRITICAL (incident 2026-04-12): Every section MUST have at least one unit test wired.** Multiple sections (TODO-03 §1-§12, TODO-17 §1-§3) shipped without tests, requiring after-the-fact test creation. Tests catch real bugs -- the TODO-19 §1 review found 3 critical FPU context switch bugs that unit tests would have caught earlier. If the section has no testable surface (pure bootloader UEFI code with no kernel-side fields), document why in the TODO section with `**Note:** No kernel test surface -- validation via serial log on WHPX.`
+   > **CRITICAL (incident 2026-04-12): Every section MUST have at least one unit test wired.** If the section has no testable surface (pure bootloader UEFI code with no kernel-side fields), document why in the TODO section with `**Note:** No kernel test surface -- validation via serial log on WHPX.`
    
-   - **After wiring tests, add a one-line note to the TODO section** documenting which bat file to run and expected results. The bat lives in the **subdir matching the test layer** (split 2026-04-20):
-     - **Kernel TEST_CAT_* suite** -- `scripts\debug\kernel\run-<cat>-tests.bat`:
-       ```
-       > **Test runner:** `scripts\debug\kernel\run-<category>-tests.bat` (SUITE=<cat>) | N suites, 0 failures
-       ```
-     - **User-mode `test_*.exe` binary** -- `scripts\debug\usermode\run-<binary>.bat` (each one passes `utest_filter=<binary>` so only that binary runs):
-       ```
-       > **Test runner:** `scripts\debug\usermode\run-<binary>.bat` (utest_filter=<binary>) | N suites, 0 failures
-       ```
-     - **Desktop UI test** -- `scripts\debug\desktop\run-<test>.bat`:
-       ```
-       > **Test runner:** `scripts\debug\desktop\run-<test>.bat` | N suites, 0 failures
-       ```
-     - **No test surface** (pure UEFI boot code, docs-only):
-       ```
-       > **Test runner:** N/A (<reason>) | validation: <how-verified>
-       ```
-     **Forbidden:** putting a per-category bat at the `scripts/debug/` root. That location is reserved for `run-all-tests.bat` (the cross-layer aggregate) ONLY; everything else lives in a kernel/usermode/desktop subdir.
-
-     **If the matching bat does NOT exist on disk yet:** create it before committing the section. Mirror an existing bat's one-liner shape:
-     ```bat
-     @echo off
-     :: run-<name>-tests.bat -- <one-line description>
-     powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -TestSuite <cat>
-     pause
-     ```
-     The `%~dp0..\..\machines\run-qemu.ps1` relative path is correct for any of the three subdirs.
-
-     **Aggregate runner per subdir:** if creating a NEW per-category bat AND its subdir's `run-all-<layer>-tests.bat` aggregate is missing, create that too (`kernel/run-all-kernel-tests.bat`, `usermode/run-all-usermode-tests.bat`, `desktop/run-all-desktop-tests.bat`). The root `scripts/debug/run-all-tests.bat` chains all three aggregates with `if exist` so missing ones are silent no-ops; aggregates land when the subdir has at least one per-category bat.
-
-     This note goes after the Test checkpoint paragraph and before the stamps. It tells the user exactly how to validate on Windows QEMU. Do NOT split across multiple blockquote lines.
-   - **No tautological constant tests.** A test like `TEST_ASSERT_EQ(POST16_FOO, 0xDF20, "POST16_FOO == 0xDF20")` only verifies that you typed `0xDF20` in the `#define` -- the compiler already enforces that. The real protection is the boot-time uniqueness check that scans `boot_init.h` for duplicate codes. Same goes for `TEST_ASSERT_EQ(SOME_DEFINE, expected_value)` where the assertion just echoes the literal: skip it. Tests should exercise behavior, not re-state literals.
-   - **HARD BAN: tests must NEVER call live boot infrastructure.** WSL has no working QEMU, so runtime regressions in tests are not caught until the user boots on native Windows or bare metal -- 3 incidents to date. Forbidden in `src/kernel/test/test_*.c`: `boot_progress(`, `boot_post_write16(`, `boot_post_nvram_write16(`, `post_display16(`, `vpd_stage_*(`, `vpd_init(`, `boot_splash_*(`, `boot_halt(`, `panic(`, `KeBugCheckEx(`, any subsystem `_init(` (`pmm_init`, `vmm_init`, `heap_init`, `serial_init`, `klog_early_init`, `klog_disk_enable`, `acpi_init`, `lapic_init`, `ioapic_init`, `timer_hal_init`, `gdt_init`, `idt_init`). **Allowed alternatives:** pure constant checks, save/restore wrappers around `kernel_subsystem_set_ready`/`_ready`, direct calls to PURE data helpers (`boot_timing_record_step()` is OK -- in-memory append only; `boot_progress()` is NOT because it ALSO updates VPD/framebuffer), BOOT_REQUIRE/BOOT_STEP via wrapper functions, read-only oracle queries. The pre-commit hook in `settings.json` enforces this -- a test file with forbidden calls cannot be committed. See `feedback_test_no_live_boot_calls` memory and CLAUDE.md "Test Code -- No Live Boot Infrastructure Calls."
+   - **After wiring tests, add a one-line `> **Test runner:**` note to the TODO section** (after the Test checkpoint paragraph, before the stamps) naming the bat to run and expected results, and create the bat if it is missing. The four note shapes, the per-layer bat subdir rules, the bat template, and the aggregate-runner rule: [references/test-wiring.md](references/test-wiring.md).
+   - **No tautological constant tests** (an assertion echoing a `#define` literal verifies only that you typed it; the compiler already enforces that) and **HARD BAN: tests must NEVER call live boot infrastructure** in `src/kernel/test/test_*.c` -- `boot_progress(`, `vpd_*(`, `panic(`, any subsystem `_init(`, etc. The pre-commit hook enforces the ban; the full forbidden table and the allowed alternatives are in [references/test-wiring.md](references/test-wiring.md) and [docs/infrastructure/test-policy.md](../../../docs/infrastructure/test-policy.md).
 9. **Codex test coverage analysis** -- after wiring tests, dispatch a test coverage gap analysis to catch missing assertions before the adversarial review finds them. Follow the `codex-test-coverage` skill: list public functions, existing tests, and ask Codex to find untested error paths, boundaries, and negative cases. **If Codex recommends testing a forbidden function, REJECT with code evidence** -- Codex doesn't know WSL constraints. Test the underlying pure helper, or accept the gap with a `**Note:**` line in the TODO's Unit Tests section. Add any other missing tests found. Skip for trivial sections (< 3 test assertions).
     ```bash
     bash scripts/codex-dispatch.sh '[review-kind: test-coverage] <todo-path> <test coverage prompt>'
@@ -136,25 +96,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **Cross-TODO sync:** when this section references or satisfies external TODO requirements, update those TODOs in the same run.
     - Preserve existing formatting (table headers, icons, column structure).
     - **No N.M subnumbering:** never add `### N.M`, `**N.M ...**`, or extra heading levels that carve one `## N.` into sub-chapters. Keep **one continuous** `- [ ]` list under each `## N.`; put grouping in bullet wording. Need more structure -- add a new `##` section with the next number, not `17.1`/`17.2`.
-    - **Write a `> **Notes:**` block** (MANDATORY for sections marked `[x]` or `[/]` that shipped any artifact). Placement: immediately after the pre-stamp `> **Test runner:**` line, before the `> **Verified:**` stamp.
-
-      **HARD RULE: 3-6 bullets, ONE LINE EACH (one logical line in the markdown source -- a long single bullet is fine, a wrapped multi-paragraph bullet is not).**
-
-      **FORBIDDEN patterns (PreToolUse hook in `.claude/settings.json` BLOCKS edits that introduce these):**
-      - More than 6 top-level bullets in the Notes block.
-      - Indented sub-bullets (`>   - ...`) under a Notes bullet.
-      - Per-finding adoption sub-blocks like "Design review adoptions:" / "Implementation adversarial adoptions:" / "Latent bug fixed:" / "Bundle root discovery:" with their own enumerated children. Adoption details (Codex finding evidence, file:line citations, per-dispatch breakdowns, "before this fix / after this fix" prose) belong in **commit messages**, NOT in Notes.
-      - Inventing extra bullets beyond the canonical shape below to capture review-pipeline narrative. If the canonical shape can't hold a fact, that fact lives in the commit message or in a concrete `[ ]` checklist item in a dependent section.
-
-      **Canonical shape (one bullet each, in this order):**
-      - **What shipped** -- name the concrete artifact (filename + one-phrase purpose) and any key knob/count (line count, sentinel count, hook count, etc.).
-      - **How it runs / integrates** -- invocation path, idempotence claim, how it fires (hook / skill / CI). Skip if the artifact is pure docs.
-      - **Downstream effects** -- other TODOs it satisfies or unblocks, stamp sweeps it enables. May also point at the commit message for review-pipeline adoption details (e.g. "Codex 4x review adoptions in commit `<hash>`").
-      - **Canonical doc** -- single link to the authoritative file for this section's subject (usually `docs/<area>/<topic>.md` or `CLAUDE.md` anchor). One link, not three.
-      - **Scope boundary** -- name what this section does NOT own, with pointers (e.g. "§7 owns X; TODO-XX §N owns Y").
-      - For docs-only sections, collapse "How it runs" and "Downstream effects" into one "Structure / consumers" bullet.
-
-      Purpose: Notes is a 30-second human scan summary, NOT a review-pipeline transcript. The stamps are the machine-readable audit trail; commit messages are the per-finding evidence trail; Notes is "what shipped, how it integrates, what's still owed elsewhere." A contributor six months from now should be able to read this block in 30 seconds. If you find yourself drafting a bullet that needs a colon-introduced sub-list or a multi-paragraph explanation, STOP -- promote the structural fact to a single sentence and move the rest to the commit message. Same applies if you find yourself reaching for "Latent bug fixed", "Design review adoptions", or per-finding bullets: those signal Notes is being misused as a review log.
+    - **Write a `> **Notes:**` block** (MANDATORY for sections marked `[x]` or `[/]` that shipped any artifact). Placement: immediately after the pre-stamp `> **Test runner:**` line, before the `> **Verified:**` stamp. **HARD RULE: 3-6 bullets, ONE LINE EACH**, in the canonical order (what shipped / how it integrates / downstream effects / canonical doc / scope boundary). No sub-bullets, no per-finding adoption sub-blocks -- that evidence belongs in the commit message. `notes_bloat_check.py` BLOCKs violations. Canonical shape, forbidden patterns, and the rationale: [references/todo-bookkeeping.md](references/todo-bookkeeping.md).
 11. **Update Implementation Order table** -- `[x]` (fully done) or `[/]` (in progress).
 12. **Update OS Comparison table** -- replace placeholders with concrete descriptions. `Planned` -> `Done` or `Partial`. **If the section added a capability not yet represented in the table, ADD a row** (do not just update existing rows). Scan the Implementation Order table and confirm every `[x]` row has a corresponding row in OS Comparison; a missing row is as much drift as a stale one. Also update the post-table summary sentences if they cap out before the section just shipped. **Do not** add or extend `<!-- Sources: ... -->` URL comment blocks; cite new research in the PR or chat only.
 13. **Codex adversarial review** (MANDATORY -- NO EXCEPTIONS) -- dispatch to Codex plugin. If Codex responds with "no diff available", re-dispatch with actual file content (read 100-200 relevant lines). A shallow response requires re-prompting.
@@ -196,17 +138,11 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - Stale warning boxes that should be updated to NOTE (resolved).
     - Implementation Order rows that need status updates.
     - Cross-TODO dependency notes that are now satisfied.
-    - **Inbound `> **Accepted:**` + `> **Deferred:**` sweep (MANDATORY).** Any `[x]` item this section just closed is almost certainly the target of `> **Accepted:**` stamps (from other TODO sections pointing at us) or `> **Deferred:**` stamps (from this TODO file pointing at us). **Fast path:** `python3 scripts/todo-graph/query.py deferred-by <id>` enumerates every inbound Accepted/Deferred stamp pointing at the target TODO (resolves by frontmatter id / filename stem / slug; one row per stamp with severity + kind + section + item_name). Use it to short-circuit the `grep -rn "TODO-XX §N"` sweep (and, if the item name was quoted, the quoted item name too) across `todo/`. If the query returns empty, the sweep is done; if it returns rows, walk each inbound reference. Note: stamp resolution requires the cache to be current -- a recent `bash scripts/todo-graph/build-and-validate.sh --keep-cache` run or the PostToolUse auto-rewrite hook keeps the cache fresh. For each match:
-        - If the inbound entry's concern is FULLY resolved by this section's work: DELETE the entire `> **Accepted:**` or `> **Deferred:**` line. If it was the only deferred entry on that line, remove the line entirely; keep the Verified + Quality reviewed stamps adjacent.
-        - If the inbound entry is PARTIALLY resolved (you closed one of several concerns on the line): rewrite the line, dropping the resolved concern while preserving the remaining XREFs.
-        - If uncertain, leave the entry and note the ambiguity in chat so the user can decide.
-
-      **Why this step exists:** otherwise Accepted/Deferred lines accumulate indefinitely and lose their value as a "what's still deferred on this section" scan target. The XREF target moving to `[x]` is exactly when the inbound reference becomes stale. (Semantic reminder: `Accepted:` = out-of-scope for the emitting section, owner is elsewhere; `Deferred:` = in-scope for the emitting TODO, owner is later. Both need sweeping when their target closes. See `review-todo-section` SKILL.md step 16 for the full stamp field rules including severity tags and reason parentheticals.)
+    - **Inbound `> **Accepted:**` + `> **Deferred:**` sweep (MANDATORY).** Any `[x]` item this section just closed is almost certainly the target of inbound Accepted/Deferred stamps. **Fast path:** `python3 scripts/todo-graph/query.py deferred-by <id>` enumerates every one of them; empty result means the sweep is done, rows mean walk each reference and delete / rewrite / flag it. Resolution rules and the reason the step exists: [references/todo-bookkeeping.md](references/todo-bookkeeping.md).
     - Any checklist items in other sections affected by this implementation.
     - **PE export table sync:** if this section implemented new public APIs callable from user-mode, verify they're in `s_kernel32_exports[]`/`s_ntdll_exports[]` in `pe.c`.
     - **SSDT audit trigger:** if this section implemented or modified SSDT handlers, recommend running `/audit-ssdt` after commit to verify master table consistency.
-    - **Filed-in-owner check:** any follow-up `[ ]` item that names an owner (e.g., "tracked in TODO-XX §N", "owner: TODO-YY") must ALSO be filed as a checklist item in that owner section with reciprocal `→ XREF`. If the owner section doesn't exist yet, find or create one via scope-gap protocol Branch C/D before filing. A note here alone is a dead-end paper trail.
-    - **Accepted-XREF concreteness check (MANDATORY):** for every Codex finding that step 13 marked "Accepted with XREF" (out-of-scope deferral), open the XREF target and verify a **concrete `[ ]` checklist item** exists that would close the gap when checked. A section title, an enum definition, or prose mention is NOT concrete. If the target lacks such an item, create one NOW: write a checklist item that names the source file/function to fix, the helper to add (with signature), and the validation behavior. If no owner section exists or fits, follow scope-gap protocol Branch C/D to create one BEFORE marking the section complete. Update the Accepted XREF in any chat output and in TODO stamps to reference the concrete item by name/line. **Why this matters:** "Accepted with XREF: TODO-XX §N" with no concrete item there is a paper trail that someone later finds empty. Every accepted finding must be exactly one `[x]` away from being fully closed.
+    - **Filed-in-owner check** and **Accepted-XREF concreteness check (MANDATORY):** every follow-up `[ ]` that names an owner must ALSO exist as a checklist item in that owner section with a reciprocal XREF, and every "Accepted with XREF" finding from step 13 must point at a **concrete `[ ]` item** (a section title or prose mention is NOT concrete) -- create it now if missing, via scope-gap protocol Branch C/D if no owner section fits. Both rules in full: [references/todo-bookkeeping.md](references/todo-bookkeeping.md).
     - **Completion radar, post-implementation (MANDATORY):** ask one last time whether the feature is merely section-complete or genuinely credible. If obvious adjacent work remains and fits one-session same-subsystem scope, implement it now. If it does not fit, create or extend the owner TODO now before committing.
 19. **Commit and push** -- only after steps 13-18 are ALL complete.
     - Use the section's `Commit:` line as the commit message.
@@ -276,8 +212,14 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
 
 ## Additional Resources
 
+Read on demand -- the step that needs one names it inline.
+
 - [build-evidence.md](build-evidence.md) -- shared with verify-todo-section (single source of truth)
 - [scope-gap-protocol.md](scope-gap-protocol.md) -- shared with verify-todo-section (Branches A/B/C/D decision tree for scope gaps)
+- [references/review-triage.md](references/review-triage.md) -- steps 4 + 13: per-finding Fix/Reject/Accept detail and the measured Codex false-positive shapes
+- [references/test-wiring.md](references/test-wiring.md) -- step 8: Test-runner note shapes, bat layout + template, no-tautological-constants, the live-boot HARD BAN table
+- [references/implementation-rules.md](references/implementation-rules.md) -- step 6: POST16 boot-path-only rule, STATUS_NOT_IMPLEMENTED policy, stale-TODO-pattern deletion
+- [references/todo-bookkeeping.md](references/todo-bookkeeping.md) -- steps 10 + 18: Notes-block canonical shape, inbound Accepted/Deferred sweep, Accepted-XREF concreteness
 
 ## TODO-08 §10 step-state telemetry
 

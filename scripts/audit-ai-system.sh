@@ -102,10 +102,25 @@ log "=== audit-ai-system.sh ==="
 log "  repo: $REPO_ROOT"
 log ""
 
-# Helper: enumerate every .claude/skills/**/SKILL.md that invokes Codex.
+# Helper: enumerate every markdown file BELONGING TO A SKILL that invokes
+# Codex -- i.e. `.claude/skills/<slug>/**/*.md`, which is SKILL.md plus any
+# `references/*.md`.
+#
+# Widened from `--include='SKILL.md'` on 2026-07-27 (token-saver T1-2): a
+# skill may carry reference files under the progressive-disclosure shape
+# (thin driver + on-demand reference, docs/infrastructure/skill-authoring.md),
+# and a Codex dispatch example living there is exactly as load-bearing as one
+# in the driver. The old glob left every references/ file unaudited by checks
+# 2, 3 and 4.
+#
+# Depth matters: the loose fragments directly under .claude/skills/
+# (README.md, TEMPLATE.md, codex-prompt-shape.md) are shared documentation,
+# NOT skills -- codex-prompt-shape.md is a prompt-shape reference with no
+# skill semantics, which scripts/lint.sh Check 12 likewise special-cases. The
+# `*/` in the path restricts the scan to slug directories and excludes them.
 codex_using_skills() {
-    grep -rln "codex-companion\\.mjs" "$REPO_ROOT/.claude/skills/" \
-        --include='SKILL.md' 2>/dev/null | sort
+    grep -rln "codex-companion\\.mjs" "$REPO_ROOT/.claude/skills/"*/ \
+        --include='*.md' 2>/dev/null | sort
 }
 
 # ---- Check 1: MCP cross-config parity ----

@@ -82,7 +82,7 @@ not a bill.)
   **Still to measure (T4-3 owns it):** the predicted **20-30%** saving. Re-read ratio in `tool-history.jsonl` must drop
   below 20% on the next full run with no increase in Codex-found defects.
 
-- [ ] **T1-2. Put the skill bodies on a diet (the injected volume is ours, not the plugin's).**
+- [/] **T1-2. Put the skill bodies on a diet (the injected volume is ours, not the plugin's).**
   **Evidence:** 203 `Skill` invocations. Injected body by owner -- `implement-todo-section` 48.4 KB x17 = 823 KB,
   `review-todo-section` 37.5 KB x18 = 674 KB, `overnight-sequencer` 27.7 KB x23 = 638 KB, `kernel-code-quality`
   14.7 KB x21 = 309 KB, rest ~100 KB. **Repo skills = ~2.54 MB (~79%)**; the two plugin skills we actually invoke
@@ -93,11 +93,51 @@ not a bill.)
   `references/*.md` that the step text names by path. This is the standard skill-authoring shape
   (`docs/infrastructure/skill-authoring.md`) and loses nothing -- the content is one Read away at the moment it is
   actually needed, and T1-1 now keeps that Read from being paid for twice.
-  **Expected saving:** ~2.54 MB of body reduced by ~60% is ~380K tokens of injection per measured window, plus the
-  compounding cache-read tail. **6-10%.**
-  **Acceptance:** no skill's mandatory step list, gate, or hook trigger is removed -- only relocated; `scripts/lint.sh`
-  skill-catalog checks and `scripts/audit-hooks.sh` still pass; a spot re-run of `implement-todo-section` follows the
-  identical step sequence.
+  **PARTIALLY SHIPPED 2026-07-27 -- the 4 highest-cost skills done, 10 smaller ones outstanding. The ~60% ratio in the
+  original item was wrong; see the correction below.**
+
+| Skill                    | Before |  After |                                 Cut | Invocations | Injection saved |
+| ------------------------ | -----: | -----: | ----------------------------------: | ----------: | --------------: |
+| `implement-todo-section` | 48,417 | 38,303 |                                -21% |         x17 |          172 KB |
+| `review-todo-section`    | 37,461 | 31,195 |                                -17% |         x18 |          113 KB |
+| `overnight-sequencer`    | 27,735 | 25,920 |                               -6.5% |         x23 |           42 KB |
+| `kernel-code-quality`    | 14,701 | 14,701 | 0% (assessed, correctly left whole) |         x21 |              -- |
+
+  Reference files created: `implement-todo-section/references/{review-triage,test-wiring,todo-bookkeeping,implementation-rules}.md`,
+  `review-todo-section/references/{stamp-fields,fix-loop}.md`, `overnight-sequencer/references/wait-discipline.md`.
+  `stamp-fields.md` is now the canonical repo-wide stamp grammar; `quality-review-section` and
+  `implement-todo-section` were repointed at it.
+
+  **Correction to the estimate.** Achieved **~327 KB (~82K tokens)** of injection saved per measured window, not the
+  ~380K tokens projected -- roughly a fifth. The projection assumed these files were padded; they are not. They are
+  dense operative content, and three categories are immovable by the acceptance criterion: step actions, hook-enforced
+  rules, and the anti-corner-cutting prose (which must be IN context exactly when the agent is deciding whether to skip
+  a step -- moving it one Read away defeats its purpose). `kernel-code-quality` was assessed and left whole: all ten
+  gates are operative checklist items, so any cut would have removed gate content. **Realistic ceiling for this item is
+  ~15%, not 60%; revised tier estimate 1.5-3%, not 6-10%.**
+
+  **Prerequisite fixed along the way:** `scripts/audit-ai-system.sh` checks 2/3/4 scanned only `SKILL.md`, so Codex
+  prose moved into `references/` would have gone unaudited (it already missed the pre-existing
+  `kernel-code-quality/references/incidents.md`). Widened to `.claude/skills/<slug>/**/*.md`, scoped to slug dirs so
+  the loose shared fragments (`README.md`, `TEMPLATE.md`, `codex-prompt-shape.md`) stay excluded as
+  `scripts/lint.sh` Check 12 already does. `scripts/lint.sh` Check 12 needed no change (it already walked every `.md`).
+
+  **Checks run:** `scripts/lint.sh` 0 errors; `scripts/audit-ai-system.sh` 7/7; `scripts/audit-hooks.sh` no drift;
+  `scripts/test-tooling.sh` 552/552; all 20 `implement-todo-section` steps and all 17 `review-todo-section` steps
+  present post-split; every mandatory-gate token still in its driver; relative-link sweep clean (the 7 hits are
+  pre-existing `<path>` placeholders in README/TEMPLATE).
+
+  **Outstanding -- 10 skills over 12 KB not yet split**, all low-invocation in the measured window (0-1 each), so their
+  share of the 2.54 MB is small: `gap-audit-todo` 35.2 KB, `implement-unit-tests` 32.7, `diagnose-serial-log` 30.9,
+  `complete-todo-file` 26.5, `validate-todo-file` 24.6, `overnight-todo-runner` 16.5, `create-todo` 16.4,
+  `boot-code-quality` 13.9, `implement-todo-item` 13.0, `codex-design-review` 12.0. They matter over a full
+  repo-completion run where the sequencer invokes each many times; at the measured ~15% ratio the whole batch is worth
+  roughly another 30 KB of driver. Do them opportunistically when a skill is being edited anyway, not as a batch.
+  The shape to follow is documented in
+  [docs/infrastructure/skill-authoring.md "Progressive disclosure"](../docs/infrastructure/skill-authoring.md).
+
+  **Acceptance (met for the 3 split):** no skill's mandatory step list, gate, or hook trigger removed -- only
+  relocated; catalog + hook audits pass; step sequences verified identical.
 
 - [ ] **T1-2b. Collapse the in-pass `receiving-code-review` repeats at their SOURCE (batch the review legs).**
   **Measured 2026-07-27 -- this replaces the "idempotent Skill re-invocation" hook originally filed here.** Gap

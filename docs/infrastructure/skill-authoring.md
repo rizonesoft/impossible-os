@@ -94,6 +94,42 @@ If your skill needs a shape neither A nor B covers, update this document BEFORE 
 
 ---
 
+## Progressive disclosure -- thin driver + `references/`
+
+**A SKILL.md body is injected into context in full, every time the skill is invoked.** Measured 2026-07-27 (token-saver
+T1-2): 203 skill invocations put ~2.5 MB of repo-skill body into context over one working window, and because it lands
+early in a session, every later turn re-reads it in the cached prefix. Cache-read is ~81% of run spend, so a skill's
+size is charged once per invocation and then again on every subsequent turn.
+
+Skills over roughly 12 KB should therefore split:
+
+- **`SKILL.md` is the driver.** It keeps everything the agent must see WITHOUT being told to look: the numbered step
+  spine, every MANDATORY gate, every hook-enforced rule, the commands to run, and the "you will be tempted to skip
+  this" enforcement prose. Each step names the reference it needs inline, so the lookup is one Read away at the moment
+  it is needed.
+- **`references/*.md` holds lookup-shaped content:** field-format specs, incident histories and the measurements behind
+  a rule, worked examples, templates, long forbidden-token tables. Group by *when it is consulted*, not by topic -- two
+  or three cohesive files beat six fragments.
+
+**What must NOT move out of the driver:** any step action or gate; any rule with no hook backstop; and the
+anti-corner-cutting prose. That last one is deliberate -- prose that exists because the agent skipped a step must be in
+context at the moment the agent is deciding whether to skip it, not one Read away.
+
+Reference files are audited exactly like the driver: `scripts/audit-ai-system.sh` scans `.claude/skills/<slug>/**/*.md`
+(not just `SKILL.md`) for Codex model-flag and invocation-shape violations, and `scripts/lint.sh` Check 12 already
+walked every `.md` under `.claude/skills/`.
+
+**Expect a modest ratio.** These skills are dense operative content, not padded prose: the measured cut on the four
+highest-cost skills was 6-21% each, with `kernel-code-quality` correctly left whole (all ten gates are operative
+checklist items). A split that reports a large reduction is probably removing something the agent needed.
+
+Live examples: [`implement-todo-section/references/`](../../.claude/skills/implement-todo-section/references/),
+[`review-todo-section/references/`](../../.claude/skills/review-todo-section/references/),
+[`overnight-sequencer/references/`](../../.claude/skills/overnight-sequencer/references/),
+[`kernel-code-quality/references/`](../../.claude/skills/kernel-code-quality/references/).
+
+---
+
 ## Catalog Hygiene
 
 Three canonical locations must stay in sync. A skill that exists in only one is drift.

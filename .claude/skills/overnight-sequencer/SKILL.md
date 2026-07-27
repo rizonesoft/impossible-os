@@ -118,66 +118,44 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
 #    calls; R3 gates only the headless run.)
 ```
 
-- **The session NEVER exits to wait on a review.** There is no `wait`/`wake`
-  verb and no watcher -- that apparatus deadlocked the runner and was removed.
-  The only session exits are: a verified `rollover` (context hygiene; the
-  watchdog relaunches), external death (crash/usage-limit; watchdog
-  relaunches), or an oracle-verified `fixpoint`.
+- **The session NEVER exits to wait on a review.** The only session exits are a
+  verified `rollover` (watchdog relaunches), external death, or an
+  oracle-verified `fixpoint`. There is no `wait`/`wake` verb and no watcher -- that apparatus deadlocked the runner and was removed.
 - **Do NOT narrate between polls.** One blocking Bash call absorbs the whole
-  wait; emitting turns while it sleeps is the exact cost blowup to avoid. If
-  you need a second poll call past the 10-min wall, that is fine -- just don't
-  add "holding for the verdict" turns.
-- **Multi-kind review rounds go through the broker.** Dispatch each kind as
-  its own `bash scripts/overnight/review-broker-codex-dispatch.sh
-  '[review-kind: X] <todo> <body>'` call (one Bash call per kind, in one
-  parallel message -- the per-kind gate receipts attribute off the command
-  line, so NEVER bundle several dispatches behind one opaque shell command).
-  Poll all their logFiles with the canonical waiter (B1) in one LONG call (R3)
-  `bash scripts/overnight/wait-for-codex-verdict.sh --max 540 f1 f2 f3` (+ tool
-  `timeout: 600000`), then read ONE
-  combined envelope SCOPED to this section (E3): `python3
-  scripts/overnight/review-envelope.py . --todo <this-section's-todo-path>` --
-  the `--todo` filter is REQUIRED because the broker manifest accumulates across
-  sections and runs, so an unscoped read pulls a PRIOR section's stale review.
-  The envelope gives per-kind status, every severity-marked finding, artifact
-  path + sha256; slice-read an artifact only for findings needing full context.
-  The `.out` artifact (+ this envelope) IS the authoritative review body -- NEVER
-  glob `~/.codex/sessions/**/*.jsonl` for the "full" review (E2): the thread-id
-  does not map to a session filename, so that glob returns an unrelated foreign
-  session (measured: a Conclave run misread as the verdict).
-- **On a crashed leg, re-dispatch ONLY that leg -- NEVER the whole bundle.**
-  Codex `app-server exited unexpectedly, rc=1` crashes are common and produce
-  no verdict. The envelope now reports this: `crashed` lists completed-but-
-  crashed kinds and `needs_redispatch` lists exactly the legs to re-run
-  (missing OR crashed); envelope exit 0 means `all_clean` (every leg completed
-  AND rc==0). Re-dispatch precisely `needs_redispatch` via the broker and REUSE
-  the already-clean legs' artifacts as-is. Re-running the full 3-leg bundle
-  when one leg crashed was a top measured token sink (16 crashes / 5+ full
-  re-dispatches in one section, 2026-07-12).
-- Receive every findings set through `superpowers:receiving-code-review`
-  before acting; then continue the pipeline in the same session.
+  wait. A second poll call past the 10-min wall is fine; "holding for the
+  verdict" turns are not.
+- **Multi-kind review rounds go through the broker.** One Bash call per kind in
+  one parallel message (per-kind gate receipts attribute off the command line,
+  so NEVER bundle several dispatches behind one opaque shell command). Poll all
+  their logFiles in one long call `... wait-for-codex-verdict.sh --max 540 f1 f2
+  f3` (+ tool `timeout: 600000`), then read ONE combined envelope SCOPED to this
+  section: `python3 scripts/overnight/review-envelope.py . --todo
+  <this-section's-todo-path>`. **The `--todo` filter is REQUIRED** (the manifest
+  accumulates across sections; an unscoped read pulls a stale prior review). The
+  `.out` artifact + envelope IS the authoritative review body -- NEVER glob
+  `~/.codex/sessions/**/*.jsonl` for it.
+- **On a crashed leg, re-dispatch ONLY that leg -- NEVER the whole bundle.** The
+  envelope's `needs_redispatch` names exactly the legs to re-run (missing OR
+  crashed); reuse the already-clean legs' artifacts as-is. Envelope exit 0 =
+  `all_clean`.
+- Receive every findings set through `superpowers:receiving-code-review` before
+  acting; then continue the pipeline in the same session.
 - **Convergence gate (P2.1/P2.2) -- the primary churn mechanism.** BEFORE
-  re-dispatching a review kind K in a fix loop, `bash
-  .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`:
-  exit 1 = CONVERGED -> SKIP K (its reviewed files did not move since its last
-  verdict, so a redispatch only re-derives it); exit 0 = redispatch. After K's
-  round resolves, `... record '<todo>#<section>' <K>`. Per-kind scope:
-  adversarial / perf / re-adversarial fingerprint SOURCE only, consistency /
-  design SOURCE + TODO -- so a docs/TODO-only fix converges the source-only
-  kinds and one changed file never re-triggers ALL kinds. Fail-open (unknown
-  kind / git error -> redispatch): it can only skip a redundant review.
-- **Round counter + standing evidence map (P2.3).** After each Codex re-dispatch
-  in a fix loop, `bash .claude/hooks/review_round_guard.py --bump
-  '<todo>#<section>' --progress <new|none>`. Exit 2 = CAPPED (K consecutive
-  no-new rounds or the 30-round infinite-loop ceiling) -> stop the loop, spin
-  unresolved findings to a concrete follow-up `[ ]` + XREF, advance. This is
-  STALL detection, never a fixed round cap -- a productive review runs as long
-  as it keeps finding new Critical/High. For rounds >= 4 (REQUIRED, `--status`),
-  verify at file:line through ONE `review-evidence-mapper` dispatch (the
-  `agent_result_cache`, now keyed on the scoped evidence set rather than the
-  volatile round prompt, serves an unchanged-content map from cache) instead of
-  inline re-reading the same hot files -- the 2026-07-12 run re-read task.c ~31x.
+  re-dispatching kind K in a fix loop: `bash
+  .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`
+  (exit 1 = CONVERGED -> SKIP K; exit 0 = redispatch), then `... record
+  '<todo>#<section>' <K>` once K's round resolves.
+- **Round counter (P2.3).** After each re-dispatch: `bash
+  .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress
+  <new|none>`. Exit 2 = CAPPED -> stop the loop, spin unresolved findings to a
+  concrete follow-up `[ ]` + XREF, advance. For rounds >= 4 (REQUIRED,
+  `--status`), verify at file:line through ONE `review-evidence-mapper`
+  dispatch, not inline re-reads.
 
+> Measured costs behind every rule above (the 531-turn poll burst, the 27%-of-
+> Bash short-poll loop, the 16-crash re-dispatch sink, the task.c 31x re-read),
+> the waiter exit-code table, and the E2/E3 incidents:
+> [references/wait-discipline.md](references/wait-discipline.md).
 **Non-gating background watches** (a CI run you monitor while doing unrelated
 forward work) follow the same rule: ONE wait mechanism, no per-poll narration.
 Convert any long stall into a single blocking Bash poll -- never a burst of
