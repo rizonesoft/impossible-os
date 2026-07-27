@@ -364,19 +364,74 @@ fi
 # daemon-reload makes them effective for the scheduled start.
 mkdir -p .claude/state
 : > "$MARKER"
+
+# ---- Tail-completion guard ---------------------------------------------------
+#
+# Observed on the 2026-07-20 and 2026-07-24 arms: everything below
+# write_sequencer_model_dropin silently did not run -- no token drop-in, no
+# ChromeMCP drop-in, no daemon-reload, no summary. File mtimes proved the first
+# two writers ran and the third did not, so execution stopped at or inside
+# write_claude_token_dropin. It is NOT reproducible in isolation: that function
+# traces to completion under `bash -x` with rc=0 against the real token file,
+# all three writers are structurally identical, and the drop-in dir accepts
+# writes from the same sandbox. Root cause still unknown.
+#
+# The load-bearing loss is `systemctl --user daemon-reload`. Drop-ins written
+# seconds earlier are not guaranteed effective for a start scheduled ~2 min out,
+# so a silent skip can launch the run WITHOUT the model pin, WITHOUT the
+# OVERNIGHT_SEQUENCER_RUN=1 phase-guard discriminator, and WITHOUT the OAuth
+# EnvironmentFile -- and nothing says so until 03:00.
+#
+# So the reload does not depend on reaching the end of the script any more: it
+# moves into an EXIT trap, which fires however the script leaves. The stage
+# marker turns an unexplained early exit from invisible into a named WARN, and
+# the summary reports systemd's EFFECTIVE state rather than the armed INTENT,
+# so a skip is visible AT ARM TIME instead of at 03:00.
+ARM_TAIL_STAGE="pre-arm"
+arm_tail_finalize() {
+  local rc=$?
+  # Unconditional: whatever drop-ins DID land must be made effective. Cheap and
+  # idempotent, so running it on an error path costs nothing and running it on
+  # the happy path is the normal case.
+  systemctl --user daemon-reload 2>/dev/null || true
+
+  if [ "$ARM_TAIL_STAGE" != "complete" ]; then
+    {
+      echo ""
+      echo "WARN: arm tail did NOT complete (stopped after stage: $ARM_TAIL_STAGE, rc=$rc)."
+      echo "      daemon-reload was run by the EXIT trap, so drop-ins that DID land"
+      echo "      are effective -- but later ones may be missing. Verify below, and"
+      echo "      re-run the arm if the effective state is wrong."
+    } >&2
+  fi
+
+  # EFFECTIVE state, not intent. The three vars that must be present are
+  # CLAUDE_PROJECT_DIR/OVERNIGHT_SEQUENCER_RUN (phase-guard discriminator) and
+  # the model pin; the token arrives via EnvironmentFile, which shows separately.
+  echo ""
+  echo "  effective unit environment (systemctl show -- what the run will ACTUALLY see):"
+  systemctl --user show "$UNIT.service" -p Environment -p EnvironmentFiles 2>/dev/null \
+    | sed 's/^/    /' || echo "    (systemctl show unavailable)"
+}
+trap arm_tail_finalize EXIT
+
 bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
+ARM_TAIL_STAGE="local-arm-done"
 write_sequencer_env_dropin
+ARM_TAIL_STAGE="env-dropin-written"
 write_sequencer_model_dropin
+ARM_TAIL_STAGE="model-dropin-written"
 write_claude_token_dropin
+ARM_TAIL_STAGE="token-dropin-written"
 if [ "$WITH_BROWSER" = "1" ]; then
   remove_chromemcp_dropin
   : > .claude/state/overnight-with-browser   # I5: file-based positive signal the launcher reads
-  systemctl --user daemon-reload 2>/dev/null || true
+  # daemon-reload is owned by the EXIT trap -- one caller, so a future edit
+  # cannot leave one branch reloading and the other not.
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP ON (gh-pages run)"
 else
   write_chromemcp_dropin
   rm -f .claude/state/overnight-with-browser  # I5: no positive signal -> launcher skips the lane (fail-safe OFF)
-  systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run)"
 fi
 echo "  model: ${ARM_PRIMARY:-<saved default>} primary, ${ARM_FALLBACK} fallback (claude --fallback-model; overload/unavailable only, re-tries primary each turn)"
@@ -385,3 +440,7 @@ echo "  monitor (from any dir): bash $REPO_ROOT/scripts/overnight/overnight-moni
 echo "  reports: $REPO_ROOT/.claude/overnight/reports/latest.log (created at first launch)"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"
+# Reached only if every statement above ran. The EXIT trap reads this to decide
+# between a clean summary and the did-not-complete WARN, and it is the last
+# assignment on purpose: anything added below must move it further down.
+ARM_TAIL_STAGE="complete"
