@@ -21,6 +21,14 @@ LINES="${OVERNIGHT_MONITOR_LINES:-80}"
 WAIT=1
 [ "${1:-}" = "--no-wait" ] && WAIT=0
 
+# Liveness header (2026-07-27). This script is a log TAILER -- it never told the
+# operator whether a run was actually alive, so the fallback was a bare
+# `systemctl --user is-active` on the main unit, which reports "inactive" while
+# the watchdog is carrying the run after a timer collision. Print the real
+# three-state answer first; never let its failure block the tail.
+bash "$SCRIPT_DIR/run-liveness.sh" 2>/dev/null || true
+echo
+
 resolve_target() {
   # Prefer the latest.log symlink (repointed each launch); fall back to the
   # newest run-*.log by mtime. Absolute paths throughout.
