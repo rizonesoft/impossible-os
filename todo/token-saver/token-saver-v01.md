@@ -500,7 +500,27 @@ not a bill.)
   **Expected saving:** small in tokens (**~1%**) but a large drop in permission-prompt friction and hook re-evaluation.
   **Acceptance:** no command loses its working directory; the sandbox behavior is unchanged.
 
-- [ ] **T3-2. Targeted suites during the fix loop; ONE full suite + smoke at the section boundary.**
+- [x] **T3-2. Targeted suites during the fix loop; ONE full suite + smoke at the section boundary.**
+  **CLOSED 2026-07-28 -- substantially ALREADY DONE, and the cost rationale no longer holds.**
+  **The "plus" clauses are already enforced or moot.** `build_offload_reminder` BLOCKS a bare
+  `bash scripts/{build,test,test-smoke,lint,test-tooling}.sh` and explicitly EXEMPTS the sanctioned
+  `run-artifact.sh <label> -- bash scripts/...` route, so every suite run already goes through the wrapper. And
+  `QUIET=1` is moot: the wrapper emits only `{exit, errors (<=40), tail (8 lines), artifact, sha256}` -- the raw PASS
+  lines never reach context whatever QUIET does.
+  **Measured: the envelope is 2,744 bytes (~686 tokens) against a full suite's ~25,000 PASS lines.** That is ~99% of
+  the output cost already gone. So this item's premise -- "its output lands in context and is then re-read for the
+  rest of the session ... a cache-read multiplier" -- is NO LONGER TRUE. A repeated full suite now costs a bounded
+  envelope plus ~24s wall-clock, not a compounding cache-read.
+  **(1) targeted-suite cadence stays a WARN, deliberately.** `verify_cadence_reminder` (P3.3) already nudges at >=3
+  full-suite or >=2 smoke runs per section, with targeted `SUITE=` runs never counted. Promoting it to a BLOCK is not
+  justified: the cost it was meant to prevent is gone, and the section BOUNDARY *requires* a full suite + smoke -- a
+  block that misjudged boundary-vs-mid-loop would wedge the ship. Wall-clock discipline does not warrant that risk.
+  **Acceptance already satisfied by the existing design:** the boundary still runs FULL suite + smoke, and
+  verification-before-completion still quotes the on-disk artifact (the skill requires the main session to read
+  `build/build.log` / the suite summary itself), so the Verified stamp rests on real output.
+  **Fixed on the way:** the `build_offload_reminder` MANIFEST row still read "Warning-only BY DESIGN ... a BLOCK would
+  deadlock the sanctioned path" after T1-4 corrected its Kind to BLOCK -- residue from that correction. The row now
+  explains the actual mechanism: the wrapped route is EXEMPTED before the block, which is what makes blocking safe.
   Already filed in `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` ("Cadence: targeted suites DURING the fix loop") and **not yet
   done**. Restating it here because the cost framing changes its priority: a full-suite run is cheap in wall-clock (~24s)
   but its *output* lands in context and is then re-read for the rest of the session. Repeating it every fix round is a
