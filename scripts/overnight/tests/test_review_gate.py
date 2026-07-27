@@ -96,6 +96,45 @@ def test_non_intersecting_record_is_stale_rejected():
         assert not ok and "STALE" in why, why
 
 
+def test_partially_intersecting_record_is_rejected():
+    """The dangerous foreign-record shape: a review that shares SOME staged
+    files but not all.
+
+    A wholly non-intersecting record is caught by the STALE check above. A
+    PARTIAL one is not -- it passes the intersection test and is only stopped
+    by the `uncovered` full-coverage check, which is what makes the binding a
+    SUPERSET requirement rather than an intersection one. That distinction is
+    load-bearing and easy to "simplify" away: the overnight-runner-improvements
+    item that asked for this binding literally proposed "reject a record whose
+    scope does not INTERSECT the staged files", which would have accepted this
+    case and let a review that never saw most of the committed code satisfy the
+    section-commit gate. Pinned so the superset requirement cannot be relaxed
+    to intersection by a later cleanup.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        (root / "src/kernel").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        # TWO staged source files; the review will cover only the first.
+        (root / "src/kernel/x.c").write_text("int x(void){return 1;}\n")
+        (root / "src/kernel/unreviewed.c").write_text("int y(void){return 2;}\n")
+        subprocess.run(["git", "-C", str(root), "add",
+                        "src/kernel/x.c", "src/kernel/unreviewed.c"], check=True)
+        staged = scg._staged_source_files(root)
+        assert len(staged) >= 2, staged
+        blobs = crc._staged_source_blobs(root, staged)
+        covered = "src/kernel/x.c"
+        _state(root, received=True, received_timestamp_ns=time.time_ns(),
+               trigger="Bash(review of a DIFFERENT section)",
+               trigger_files=[covered],
+               trigger_blobs={covered: blobs[covered]}, head_sha="abc123")
+        ok, why = scg._review_evidence(root, staged)
+        assert not ok, "a review covering only part of the staged source must NOT pass"
+        assert "uncovered source" in why, why
+        assert "unreviewed.c" in why, f"the block must NAME the unreviewed file: {why}"
+
+
 def test_received_false_but_history_covers_accepts():
     # The churn fix: a newer kind's trigger reset received:false, but a prior
     # RECEIVED review in the history covers the exact current staged content.
@@ -435,6 +474,7 @@ if __name__ == "__main__":
     test_generic_bg_task_is_background_but_not_broker()
     test_received_true_and_covered_accepts()
     test_non_intersecting_record_is_stale_rejected()
+    test_partially_intersecting_record_is_rejected()
     test_received_false_but_history_covers_accepts()
     test_received_false_and_no_history_blocks()
     test_b3_review_over_unstaged_binds_then_gate_accepts_when_staged()

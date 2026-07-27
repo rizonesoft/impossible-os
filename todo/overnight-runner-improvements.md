@@ -133,14 +133,18 @@ Goal: run the sequencer 24/7 without exhausting the weekly token budget while re
   - [x] **(2c) DONE.** Driven off `needs_redispatch`; prior clean legs' artifacts are reused as-is.
   - [x] **(2d) DONE.** `review-todo-section` step 8 and `overnight-sequencer` both instruct re-dispatching only `needs_redispatch`.
   - [x] **(2e) DONE.** `scripts/overnight/tests/test_review_envelope.py` covers the crash/partial shape (11 refs).
-- [ ] **Fix `last-codex-review.json` diff-binding so the commit gate can't read a foreign-TODO record in a multi-file staged diff.**
+- [x] **Fix `last-codex-review.json` diff-binding so the commit gate can't read a foreign-TODO record in a multi-file staged diff.**
+  **ALREADY IMPLEMENTED -- verified 2026-07-27, closed rather than rebuilt.** The P1.2 + C1 + C2 fixes shipped this binding: the record is content-bound (`trigger_blobs` per-path blob SHAs + `head_sha`), the gate recomputes the staged blobs at commit time, a non-intersecting record is rejected as STALE, and a partially-covering one is rejected as `uncovered source`. Measured effect: `SKIP_REVIEW_HOOK` usage is down to 2 entries in a 899-line skip log. **Caution for anyone re-reading step 3c: it asked for INTERSECTION, and the shipped gate requires full COVERAGE. Do not 'simplify' the coverage check into an intersection check -- that is a downgrade, and `test_partially_intersecting_record_is_rejected` now pins it.**
   Measured: 60 stale-gate lines; §12 blocked its ship 5x because the gate matched a re-adversarial record keyed to a DIFFERENT TODO in the multi-file staged diff, "resolved" twice only via `SKIP_REVIEW_HOOK=1` -- which WEAKENS the review guarantee, so fixing the binding strictly IMPROVES quality. Bind the review record to the actual staged diff (paths + head SHA), reject a record whose scope does not intersect the staged files, and stop forcing re-dispatches that exist only to satisfy the gate.
   Small steps:
-  - [ ] **(3a) Record review scope** (staged file paths + head SHA) into `last-codex-review.json` when a review completes.
-  - [ ] **(3b) Compute the actual staged diff** (paths + head SHA) at commit-gate time.
-  - [ ] **(3c) Reject a record whose scope does not intersect the staged files** (fail-closed on non-intersection).
-  - [ ] **(3d) Drop the forced re-dispatch** that existed only to satisfy the gate; a scope-matched record passes without it.
-  - [ ] **(3e) Audit + shrink `SKIP_REVIEW_HOOK=1` usage** once binding is correct; add a test for the multi-file foreign-TODO shape.
+  - [x] **(3a) ALREADY DONE.** The record carries `trigger_files`, `trigger_blobs` (per-path blob SHA), `head_sha` and `tree_hash`.
+  - [x] **(3b) ALREADY DONE.** `_review_evidence` computes `crc._staged_source_blobs(root, staged_src)` + `crc._head_sha(root)` at gate time.
+  - [x] **(3c) DONE, and SHIPPED STRONGER THAN THIS STEP ASKED.** `section_commit_gate.py:1128` rejects a non-intersecting record as STALE, but the binding does not stop there.
+    Line 1138 requires `trigger_blobs` to COVER EVERY staged source path and 1143 requires each blob SHA to still match. Accepting on mere intersection, as written, would have WEAKENED the gate.
+  - [x] **(3d) DONE.** The wall-clock TTL was replaced by content-addressed receipts: a review stays valid while the staged content equals what it covered.
+    A received-review ring buffer (`_history_covers`) also rescues the multi-kind broker round where a newer kind's trigger reset `received:false` on an earlier, genuinely received kind.
+  - [x] **(3e) DONE.** Audit: `skip-log.jsonl` (899 entries) now records just **2** `SKIP_REVIEW_HOOK` uses -- the bypass this item was filed on has collapsed.
+    Test: the wholly-foreign record was already covered; added `test_partially_intersecting_record_is_rejected` for the shape that was NOT pinned -- a record sharing SOME staged files but not all.
 - [x] **Reuse a standing evidence map across review rounds, and alarm on review-round count (spiral detection).**
   **DONE (verified 2026-07-27).** Both halves shipped: `review_round_guard.py` is the stall alarm (`--bump`, exit 2 = CAPPED), and `agent_result_cache` P2.3 keys mapper dispatches on the CANONICAL file/section scope rather than the volatile round prompt, so an unchanged-content evidence map is cache-served across rounds.
   Measured: `task.c` re-read ~31x; 23 of 24 §12 rounds re-derived the same file:line facts inline over the same ~7 hot files instead of refreshing one `review-evidence-mapper` map per round; §12 reached round 20 on a section its own round-18 commit called "maximally hardened." Make round-N verification route through `review-evidence-mapper` unconditionally for rounds >= ~4, and emit a spiral-check `systemMessage` at round ~8/12 so a non-converging section is caught before it eats the night.
