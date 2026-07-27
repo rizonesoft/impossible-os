@@ -3744,6 +3744,19 @@ if python3 "$REPO_ROOT/.claude/hooks/edit_retry_reminder.py" --selftest >/dev/nu
 else
     t_fail "edit_retry_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/read_cache_block.py" --selftest >/dev/null 2>&1; then
+    t_pass "read_cache_block_selftest  fixture suite green"
+else
+    t_fail "read_cache_block_selftest  embedded selftest failed"
+fi
+# The read gate's correctness depends on pre_compact_flush deleting its table:
+# the block asserts "already in context", which a compaction falsifies. Assert
+# the wiring directly so the two files cannot drift apart silently.
+if grep -q '_READ_CACHE_REL' "$REPO_ROOT/.claude/hooks/pre_compact_flush.py"; then
+    t_pass "read_cache_precompact_clear  pre_compact_flush unlinks read-cache.json"
+else
+    t_fail "read_cache_precompact_clear  pre_compact_flush no longer clears the read cache"
+fi
 
 # (c) stop_audit detects an "I'll run review-todo-section" promise without
 #     a matching tool call. Synthetic transcript fixture below uses the

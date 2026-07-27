@@ -75,6 +75,23 @@ cached report follows the code in the block message. Reuse it (verify
 load-bearing file:line claims as usual). Force a fresh run by changing the
 prompt; kill switch `AGENT_RESULT_CACHE_DISABLE=1`.
 
+## READ-* (read_cache_block.py)
+
+### READ-CACHED
+The requested line range of this file is already covered by an earlier read in
+this session, and the file is byte-identical since (sha256 match) -- so the
+content is still in context. Scroll up and reuse it; do not pay for a second
+copy, which is charged again in the cached prefix on every later turn.
+
+This does NOT fire for a re-read you actually need. Content changed, a failed
+Edit on the file, a compaction, a subagent's own read, a new session, a wider
+or non-overlapping slice, files under 2 KB, and image/PDF/notebook reads all
+pass untouched. If you need a different region, pass `offset`/`limit` for it.
+
+If the block is wrong anyway, it releases itself: the same request is blocked
+at most twice, then allowed. Operator escapes are `READ_CACHE_DISABLE=1`
+(session kill switch) and the one-shot file `.claude/state/read-cache-override`.
+
 ## EDIT-* (edit_preflight.py)
 
 ### EDIT-STALE

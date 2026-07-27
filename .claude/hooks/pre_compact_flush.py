@@ -39,6 +39,7 @@ _STATE_DIR_REL = ".claude/state"
 _SNAPSHOT_DIR_REL = ".claude/state/.compaction-snapshots"
 _SKILL_PROGRESS_REL = ".claude/state/skill-progress.json"
 _TRANSCRIPT_CACHE_REL = ".claude/state/transcript-scan-cache.json"
+_READ_CACHE_REL = ".claude/state/read-cache.json"
 SNAPSHOT_RETAIN_COUNT = 3
 
 
@@ -179,6 +180,18 @@ def main() -> int:
     cache_path = os.path.join(root, _TRANSCRIPT_CACHE_REL)
     try:
         os.unlink(cache_path)
+    except (FileNotFoundError, IsADirectoryError):
+        pass
+    except Exception:
+        pass
+
+    # token-saver T1-1: drop the read cache. read_cache_block.py BLOCKs a
+    # re-read on the grounds that the content is "already in context" -- after
+    # a compaction that premise is false, so the table MUST NOT survive the
+    # event or the gate would withhold reads the model genuinely needs. This
+    # unlink is the load-bearing half of that hook's correctness.
+    try:
+        os.unlink(os.path.join(root, _READ_CACHE_REL))
     except (FileNotFoundError, IsADirectoryError):
         pass
     except Exception:

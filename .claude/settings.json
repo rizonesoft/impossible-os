@@ -230,6 +230,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_cache_block.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -517,6 +527,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/edit_retry_reminder.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/read_cache_block.py\" invalidate",
             "timeout": 5
           }
         ]
