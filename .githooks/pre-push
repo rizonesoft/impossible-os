@@ -154,9 +154,36 @@ elif [ ! -x /usr/bin/qemu-system-x86_64 ]; then
   echo "           CI runs 'apt-get install qemu-system-x86'; install it to enable the gate."
 else
   echo "[pre-push] CI-parity gate: unit suite on the QEMU CI installs (forced TCG)..."
-  if (cd "$REPO_ROOT" && CI_PARITY=1 bash scripts/test.sh QUIET=1 >/tmp/ci-parity-prepush.log 2>&1); then
+  # Serialize against the post-commit test hook on the SHARED lock.
+  #
+  # Both run scripts/test.sh, which patches boot.conf and launches QEMU, and the
+  # overnight sequencer does commit-then-push back to back: the post-commit hook
+  # would still be mid-run (it holds this lock) when the push fires. Two
+  # concurrent runs race on the same boot.conf -- one finishing restores the
+  # file out from under the other mid-boot -- which is the sort of intermittent
+  # failure that is miserable to diagnose at 3am and trivial to prevent here.
+  #
+  # Waits rather than skips: the other run is ~25s, and its engine is KVM, so it
+  # does NOT substitute for this one. Same lock path (and env override) as
+  # .claude/hooks/_postcommit_lock.py so the two agree on what they serialize.
+  # On timeout the gate SKIPS with a warning rather than failing -- a stuck lock
+  # must not wedge an unattended run's push, and something else is demonstrably
+  # testing this tree if the lock is still held ten minutes on.
+  CI_PARITY_LOCK="${IMPOSSIBLE_OS_POSTCOMMIT_LOCK:-/tmp/impossible-os-postcommit.lock}"
+  CI_PARITY_RC=0
+  exec 9>"$CI_PARITY_LOCK" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1 && ! flock -w 600 9 2>/dev/null; then
+    echo -e "\033[33m  CI-parity SKIPPED: another test run held $CI_PARITY_LOCK for 600s\033[0m"
+    exec 9>&- 2>/dev/null || true
+    CI_PARITY_RC=-1
+  fi
+  if [ "$CI_PARITY_RC" = "0" ] && (cd "$REPO_ROOT" && CI_PARITY=1 bash scripts/test.sh QUIET=1 >/tmp/ci-parity-prepush.log 2>&1); then
+    exec 9>&- 2>/dev/null || true
     echo -e "\033[32m  CI-parity: PASS\033[0m"
+  elif [ "$CI_PARITY_RC" = "-1" ]; then
+    : # already reported as skipped above
   else
+    exec 9>&- 2>/dev/null || true
     echo -e "\033[31m  CI-parity gate FAILED -- this is what CI would have reported.\033[0m"
     tail -15 /tmp/ci-parity-prepush.log | sed 's/^/    /'
     echo "  Full log: /tmp/ci-parity-prepush.log"
