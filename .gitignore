@@ -96,3 +96,6 @@ src/boot/uefi/*.o
 
 # .claude/worktrees/ -- harness-created git worktrees (embedded repos).
 .claude/worktrees/
+
+# Local serial-capture scratch (any suffix, not just *.log)
+debug-tmp/

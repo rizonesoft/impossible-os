@@ -26,6 +26,16 @@ set OVERALL=0
 :: PowerShell exit code via `exit /b %RC%` instead of the pause result.
 :: Each layer aggregate honors `if not defined NO_PAUSE pause`.
 set NO_PAUSE=1
+:: Suppress the per-launch QEMU window for the whole sweep. This aggregate
+:: chains ~20 per-category launches; each one opening its own window gives the
+:: operator a storm they cannot dismiss, because closing one only lets the next
+:: open. run-qemu.ps1 honors IOS_HEADLESS=1 as the env form of -Headless, and
+:: setlocal above keeps it scoped to this sweep, so an operator running a SINGLE
+:: category bat directly still gets a window. Only the display is suppressed:
+:: the VGA device is still emulated, screendump over -Monitor still works, and
+:: serial (the log this sweep exists to produce) is untouched.
+:: Set IOS_HEADLESS=0 before calling if you want the windows back.
+if not defined IOS_HEADLESS set IOS_HEADLESS=1
 :: pushd auto-maps a UNC working dir (\\wsl.localhost\...) to a temp
 :: drive letter so chained bats see a real local CWD; without this
 :: CMD falls back to C:\Windows when launched from a UNC path and

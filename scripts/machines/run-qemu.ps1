@@ -39,8 +39,26 @@ Param(
     [switch]$Monitor,          # expose QEMU HMP monitor on 127.0.0.1:$MonitorPort for scripts/qemu-screenshot.sh (desktop-UI screendump)
     [ValidateRange(1, 65535)]
     [int]$MonitorPort = 4444,  # HMP monitor TCP port; auto-enables -Monitor if set explicitly
-    [string]$MonitorSocket = ''  # HMP monitor UNIX-socket path (Linux/WSL QEMU builds only); auto-enables -Monitor when set. Windows-native QEMU keeps TCP because WSL's AF_UNIX interop across the WSL/Windows boundary is flaky.
+    [string]$MonitorSocket = '',  # HMP monitor UNIX-socket path (Linux/WSL QEMU builds only); auto-enables -Monitor when set. Windows-native QEMU keeps TCP because WSL's AF_UNIX interop across the WSL/Windows boundary is flaky.
+    [switch]$Headless          # suppress the local QEMU window (-display none); see the IOS_HEADLESS note below
 )
+
+# Headless: suppress the QEMU UI window, keep everything else identical.
+#
+# The switch OR the IOS_HEADLESS=1 environment variable enables it. The env
+# form is what makes an unattended sweep bearable: run-all-tests.bat chains
+# roughly twenty per-category QEMU launches, each of which opens and closes its
+# own window, so an operator running the aggregate gets a window storm they
+# cannot dismiss (closing one only lets the next open). CMD exports the
+# variable once and every nested bat and PowerShell child inherits it, with no
+# edit to any per-category bat.
+#
+# This does NOT make the guest headless. `-display none` disables only the
+# local UI; the VGA device is still emulated, the guest still renders its
+# framebuffer, and the desktop layer's screenshots still work because those go
+# through the HMP `screendump` command over -Monitor, never through the window.
+# Serial is on stdio, so the log is unaffected -- which is the whole point.
+if ($env:IOS_HEADLESS -eq '1') { $Headless = $true }
 
 # UX consistency: if the caller explicitly passed -MonitorPort or
 # -MonitorSocket but forgot -Monitor, the non-default transport would be
@@ -162,6 +180,11 @@ $QemuArgs += @(
     '-rtc', 'base=localtime',
     '-no-reboot'
 )
+
+# Appended rather than folded into the array above so the VGA device line stays
+# the single place the display hardware is described -- headless is a property
+# of the HOST window, not of the emulated adapter.
+if ($Headless) { $QemuArgs += @('-display', 'none') }
 
 # HMP monitor exposure -- scripts/qemu-screenshot.sh connects here to
 # issue `screendump` commands. Only wired when -Monitor is explicitly

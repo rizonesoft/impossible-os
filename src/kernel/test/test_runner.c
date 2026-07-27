@@ -191,13 +191,70 @@ void test_runner_set_quiet(int quiet)
 
 /* ---- Assert implementations ---- */
 
+/* Run-length collapse for repeated PASSING assertions.
+ *
+ * A loop-driven test emits one identical line per iteration, and a few of them
+ * dominate the whole serial log: the 1000-key AVL suite and the counted-string
+ * fuzzer together account for roughly 7600 of a 30244-line run (25%), all of it
+ * the same dozen strings. That volume buries the lines an operator actually
+ * needs, and on a slow serial link it is also the run's wall-clock cost.
+ *
+ * The first occurrence still prints IMMEDIATELY -- collapsing must not turn
+ * into buffering, or a hang mid-loop would lose the very line that localizes
+ * it. Subsequent identical passes are counted and the total is emitted when the
+ * run ends, so no information is lost, only repetition.
+ *
+ * Identity is a POINTER compare, deliberately. The clutter case is one string
+ * literal re-passed by a loop, which is always the same address; two distinct
+ * literals that happen to read alike stay separate, so this can never merge
+ * assertions the author wrote as different checks.
+ *
+ * FAILURES ARE NEVER COLLAPSED -- every failing assertion prints in full, with
+ * its own file:line. Counters are untouched either way, so the summary totals
+ * and scripts/test.sh's parse of them are unaffected. */
+static const char *s_pass_last_msg;
+static const char *s_pass_last_suite;
+static uint32_t    s_pass_run;
+
+static void test_pass_run_flush(void)
+{
+    if (s_pass_run > 1u && !g_quiet)
+        klog(LOG_INFO, test_tag(), "%s :: %s  (repeated x%u)",
+             s_pass_last_suite ? s_pass_last_suite : "unknown",
+             s_pass_last_msg ? s_pass_last_msg : "?",
+             (uint64_t)s_pass_run);
+    s_pass_last_msg   = (const char *)0;
+    s_pass_last_suite = (const char *)0;
+    s_pass_run        = 0u;
+}
+
+/* Record one passing assertion, printing it unless it repeats the previous
+ * one. Callers must have already bumped g_test_state.passed. */
+static void test_pass_emit(const char *msg)
+{
+    const char *suite = g_test_state.current_suite;
+
+    if (s_pass_run > 0u && msg == s_pass_last_msg && suite == s_pass_last_suite) {
+        s_pass_run++;
+        return;
+    }
+    test_pass_run_flush();
+    s_pass_last_msg   = msg;
+    s_pass_last_suite = suite;
+    s_pass_run        = 1u;
+    if (!g_quiet)
+        klog(LOG_INFO, test_tag(), "%s :: %s", suite, msg);
+}
+
 void _test_assert(int condition, const char *msg, const char *file, int line)
 {
     if (condition) {
         g_test_state.passed++;
-        if (!g_quiet)
-            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
+        test_pass_emit(msg);
     } else {
+        /* Flush first so the collapsed run reads BEFORE the failure that
+         * followed it, rather than after. */
+        test_pass_run_flush();
         g_test_state.failed++;
         klog(LOG_ERROR, test_tag(), "%s :: %s  (%s:%d)",
              g_test_state.current_suite, msg, file, line);
@@ -209,9 +266,9 @@ void _test_assert_eq(uint64_t a, uint64_t b, const char *msg,
 {
     if (a == b) {
         g_test_state.passed++;
-        if (!g_quiet)
-            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
+        test_pass_emit(msg);
     } else {
+        test_pass_run_flush();
         g_test_state.failed++;
         klog(LOG_ERROR, test_tag(), "%s :: %s  (got %u, expected %u)  (%s:%d)",
              g_test_state.current_suite, msg, a, b, file, line);
@@ -223,9 +280,9 @@ void _test_assert_neq(uint64_t a, uint64_t b, const char *msg,
 {
     if (a != b) {
         g_test_state.passed++;
-        if (!g_quiet)
-            klog(LOG_INFO, test_tag(), "%s :: %s", g_test_state.current_suite, msg);
+        test_pass_emit(msg);
     } else {
+        test_pass_run_flush();
         g_test_state.failed++;
         klog(LOG_ERROR, test_tag(), "%s :: %s  (both are %u)  (%s:%d)",
              g_test_state.current_suite, msg, a, file, line);
@@ -236,6 +293,7 @@ void _test_skip(const char *msg, const char *file, int line)
 {
     (void)file;
     (void)line;
+    test_pass_run_flush();
     g_test_state.skipped++;
     if (!g_quiet)
         klog(LOG_WARN, test_tag(), "%s :: SKIP: %s",
@@ -858,6 +916,14 @@ void test_runner_run(void)
             test_desktop_reset();
 
         s->fn();
+
+        /* Close any collapsed PASS run before the suite's own trailing output
+         * (action drain, leak check, summary). Without this the "repeated xN"
+         * line would surface after those, reading as if it belonged to the next
+         * suite. The pointer-identity check would also stop matching across the
+         * boundary anyway, but flushing HERE is what keeps the ordering honest
+         * rather than relying on that. */
+        test_pass_run_flush();
 
         /* Drain any actions the suite registered via test_add_action().
          * Runs regardless of whether the body's assertions passed or
