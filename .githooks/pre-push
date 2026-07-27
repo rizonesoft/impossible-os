@@ -28,6 +28,37 @@ STDIN_DATA="$(cat)"
 
 EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+# ---- Branch policy: main + gh-pages only -------------------------------------
+#
+# This repo is main-only by decision (CI fires on main; long-lived branches were
+# how a control-plane change once sat unproven for 291 commits). Until now that
+# was a convention with nothing enforcing it -- and it demonstrably did not hold:
+# work on 2026-07-27 began on a stale `overnight-runner-improvements-2026-07-13`
+# that an earlier session created and nobody noticed until it needed cleaning up.
+#
+# gh-pages is the one legitimate exception: it serves impossibleos.co and must
+# never be deleted or blocked.
+#
+# Scope is honest about its limits. A local hook only governs pushes from THIS
+# checkout; it is not a substitute for server-side branch protection, which is
+# the only thing that governs pushes from anywhere else. Treat this as the fast
+# feedback half, not the guarantee.
+while read -r _lref _lsha rref _rsha; do
+  [ -n "${rref:-}" ] || continue
+  case "$rref" in
+    refs/heads/main|refs/heads/gh-pages) ;;
+    refs/heads/*)
+      branch="${rref#refs/heads/}"
+      echo -e "\033[31m[pre-push] BLOCKED: pushing branch '$branch'.\033[0m"
+      echo "  This repo is main-only (gh-pages excepted, it serves impossibleos.co)."
+      echo "  Land the work on main instead:  git switch main && git merge $branch"
+      echo "  Deliberate exception (rare):    SKIP_BRANCH_GUARD=1 git push ..."
+      [ "${SKIP_BRANCH_GUARD:-}" = "1" ] || exit 1
+      echo -e "\033[33m  SKIP_BRANCH_GUARD=1 set -- branch policy overridden\033[0m"
+      ;;
+  esac
+done <<< "$STDIN_DATA"
+
 # Files changed across every non-delete ref update in this push.
 pushed_files() {
   local lref loid rref roid base
@@ -94,6 +125,30 @@ fi
 # skip: SKIP_CI_PARITY=1 git push ...
 if [ "${SKIP_CI_PARITY:-}" = "1" ]; then
   echo -e "\033[33m[pre-push] SKIP_CI_PARITY=1 -- CI-parity gate skipped\033[0m"
+  # Logged, not silent. An override that leaves no trace is indistinguishable
+  # from a gate that never ran, and this repo has a standing problem with
+  # reflexive skip-flag use -- the habit the guardrails exist to prevent. Same
+  # skip-log the review-gate opt-outs write to, so "how often was this bypassed"
+  # is one query rather than an act of memory. Never fails the push: a logging
+  # problem must not become a push problem.
+  python3 - <<'PYSKIP' 2>/dev/null || true
+import json, os, subprocess, time
+root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                      capture_output=True, text=True).stdout.strip()
+if root:
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+                          capture_output=True, text=True).stdout.strip()
+    path = os.path.join(root, ".claude", "state", "skip-log.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "timestamp_ns": time.time_ns(),
+            "kind": "ci-parity",
+            "mode": "SKIP_CI_PARITY",
+            "reason": os.environ.get("SKIP_CI_PARITY_REASON", "(none given)"),
+            "head_sha": head,
+        }) + "\n")
+PYSKIP
 elif [ ! -x /usr/bin/qemu-system-x86_64 ]; then
   echo -e "\033[33m[pre-push] CI-parity gate SKIPPED: /usr/bin/qemu-system-x86_64 absent\033[0m"
   echo "           CI runs 'apt-get install qemu-system-x86'; install it to enable the gate."

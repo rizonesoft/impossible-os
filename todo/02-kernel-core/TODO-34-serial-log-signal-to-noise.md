@@ -117,10 +117,16 @@ the specific reason an operator's reasonable assumption -- that smoke testing af
 ## 4. Surface the Platform Blind Spots in the Run Summary
 
 65% of the warnings in the 2026-07-27 capture (1776 DPC-watchdog lines) CANNOT appear on the development host. The watchdog
-needs a calibrated invariant TSC; under TCG it prints `single-DPC threshold 100 us (no TSC -- timing off)` and never times
-anything. A developer running the full local suite therefore sees a clean run and concludes the DPC path is healthy, when the
-measurement was simply switched off. The same class of gap hides `BOOT-BUDGET` wherever `boot_timing_tsc_freq()` reads below
-1000. A gate that is silently disabled is worse than one that fails, because it reports success.
+needs a calibrated invariant TSC and prints `single-DPC threshold 100 us (no TSC -- timing off)` without one, timing nothing.
+
+**This is NOT just a TCG limitation** -- corrected 2026-07-27 after re-checking. It is off on BOTH local tiers: `/dev/kvm` is
+writable on the dev host and `scripts/test-smoke.sh` does select KVM, yet `build/smoke-test.log` and `build/test.log` both carry
+the `no TSC -- timing off` banner. So neither the KVM inner loop nor the CI-parity tier can observe DPC timing at all, and the
+only place those 1776 lines exist is a native WHPX or bare-metal run that no gate covers. A developer runs the full local suite,
+sees green, and concludes the DPC path is healthy when the measurement was switched off on every engine available to them.
+
+The same class of gap hides `BOOT-BUDGET` wherever `boot_timing_tsc_freq()` reads below 1000. A check that is silently disabled
+is worse than one that fails, because it reports success -- and here two of them are disabled on every tier a developer can run.
 
 - [ ] Report DISABLED checks in the run summary, not just results: a run that could not time DPCs says so, in the same block as the pass/fail counts.
 - [ ] Apply the same treatment to every other capability-gated check (boot perf budget, MSR probes, anything gated on `cpu_has`), so "not run" is never presented as "passed".
