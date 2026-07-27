@@ -225,10 +225,14 @@ not a bill.)
     The gap was real and total: the hook had ZERO references to `section-checkpoint.json`, so every field 1b captures was dead weight and each resumed session re-derived facts already on disk.
     **Bound to the current cursor** (same TODO file AND same `section_idx`) -- a checkpoint for other work is worse than none, since it hands the worker confident stale facts. Emits nothing on mismatch, missing file, malformed JSON, or an empty body. 3 tests.
   - [ ] **(1d) Attended-canary the enriched re-orient.** Prove a resumed session re-orients from the brief WITHOUT re-deriving the same file:line facts. Gates whether 1a-1c pay off before any gate work is built.
-  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
-  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
-  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
-  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).  **[RETIRED-PRECONDITION -- see the T1-3 note below; do not build without re-proving it.]**
+  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.
+    **[RETIRED-PRECONDITION -- see the T1-3 correction note.]**
+  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).
+    **[RETIRED-PRECONDITION -- see the T1-3 correction note.]**
+  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
+    **[RETIRED-PRECONDITION -- see the T1-3 correction note.]**
+  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
+    **[RETIRED-PRECONDITION -- see the T1-3 correction note.]**
 
   **CORRECTION 2026-07-27 -- the mid-section mechanism this item proposes was already TRIED AND RETIRED.** The
   sequencer skill records it: *"Mid-section context-cap rotation -- RETIRED (B1, Canary #2 2026-07-14). Do NOT attempt
