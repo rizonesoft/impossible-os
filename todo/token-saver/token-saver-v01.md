@@ -212,6 +212,20 @@ not a bill.)
   threshold (start at 250K), the next legal step is a `rollover-wip` -- commit-and-push the WIP, rotate, resume the same
   section from the section pack. The section pack + checkpoint machinery (`section-pack.py`, `section-checkpoint.py`)
   already exists to make the resume lossless.
+  **Small steps, ported 2026-07-27 from `overnight-runner-improvements.md` when that item closed** (safest-first; the
+  relaxed gate 1e/1f is the only high-risk piece -- ship it last and canary it). **1c is the gap the original item
+  glossed over:** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads
+  `section-checkpoint.json`, so 1b is dead weight until 1c lands.
+
+  - [ ] **(1a) Size/turn trigger, advisory only.** When context (or a turn-count proxy) crosses ~350K, set a "rotate at next safe point" flag. Sets the flag ONLY; takes no action. Cannot corrupt state -- low risk. Ship independently.
+  - [ ] **(1b) Enrich `section-checkpoint.py gather()`.** Capture open Codex findings + verdicts (`finding-ledger.py`), decisions (`decision-registry.py`), current phase, and next intended action. Additive + fail-open per field. Ship independently.
+  - [ ] **(1c) Wire the resume path to CONSUME the enriched checkpoint.** `session_brief_inject.py` recomputes `runner_status.full_brief` and never reads `section-checkpoint.json`, so 1b is dead weight until this lands.
+  - [ ] **(1d) Attended-canary the enriched re-orient.** Prove a resumed session re-orients from the brief WITHOUT re-deriving the same file:line facts. Gates whether 1a-1c pay off before any gate work is built.
+  - [ ] **(1e) Parallel `_rollover_failures_wip()` gate (HIGH-RISK).** Accepts a committed-unpushed-unstamped tree, KEEPS the review-received + no-background-jobs checks. Never weaken shipped `_rollover_failures()`; it governs ship rollover too.
+  - [ ] **(1f) Safe-boundary firing (HIGH-RISK).** Rotate only at a WIP-clean tree, between Codex rounds, or after a green fix-loop round. Forbid it during a review wait, an uncommitted edit, or mid-fix-loop (fix-then-regress guard).
+  - [ ] **(1g) Tests for the WIP gate + boundary guard.** Rejects open review, active background job, and dirty tree; accepts committed-clean-unpushed; boundary guard blocks a mid-fix-loop rotation.
+  - [ ] **(1h) Attended canary of full mid-section rotation before ANY unattended arm** (control-plane-manifest change mandates the green canary).
+
   **Sharpens:** `overnight-runner-improvements.md` "Context-cap rollover ... (Path B)" -- that item is scoped as a flow
   fix; this adds the measured threshold and the arithmetic that justifies it.
   **Expected saving:** caps the worst-case multiplier. On the measured distribution, holding steady state at 250K instead
@@ -356,6 +370,15 @@ not a bill.)
   hook fires <= 400/run). A run that regresses more than 25% past baseline writes a WARN into
   `.claude/overnight/NEEDS-OPERATOR.md`. Warning only -- never block a run on a cost metric.
   **Acceptance:** the gate cannot stop shipping work; it can only report.
+
+  **Budget backstop, ported 2026-07-27 from `overnight-runner-improvements.md`.** Land AFTER T1/T2 bring the baseline
+  down -- a runner that mostly sleeps ships nothing, so this must never become the primary strategy.
+
+  - [ ] **(5a) Track cumulative 7-day token burn** in the arm/launch layer (rolling window sourced from run reports).
+  - [ ] **(5b) Project 7-day burn** from the current rate; surface it in the status brief / monitor.
+  - [ ] **(5c) Self-snooze until reset** via the existing snooze/backoff plumbing when projected burn would exceed 100% of the weekly budget.
+  - [ ] **(5d) Add an activation floor** so the backstop can't dominate; gate it behind the context-cap + review-spiral fixes landing.
+  - [ ] **(5e) Test the project -> snooze -> resume transition** at the ceiling.
 
 - [ ] **T4-3. Measure one section end-to-end before and after, and publish the delta.**
   **Fix:** pick one representative shipped section, replay the same work with T1-1 / T1-2 / T2-1 active, and record
