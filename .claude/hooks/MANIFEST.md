@@ -78,7 +78,7 @@
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
 |---|---|---|---|---|---|---|
 | post_commit_smoketest | `.claude/hooks/post_commit_smoketest.py` | REMINDER | N | -- (alias-aware) | -- | After a `git commit` (alias-aware) touching `.c/.h/.asm/.ld`, runs `scripts/test.sh QUIET=1` and reports via systemMessage. `if: Bash(git commit:*)`. |
-| post_commit_smoketest_boot | `.claude/hooks/post_commit_smoketest_boot.py` | REMINDER | N | -- (alias-aware) | -- | After a `git commit` (alias-aware) touching boot-path files, runs `scripts/test-smoke.sh` and reports via systemMessage. `if: Bash(git commit:*)`. |
+| post_commit_smoketest_boot | `.claude/hooks/post_commit_smoketest_boot.py` | REMINDER | N | -- (alias-aware) | -- | After a `git commit` (alias-aware) touching any kernel/boot SOURCE (`src/`, `include/kernel/`), runs `scripts/test-smoke.sh` and reports via systemMessage. Broadened from a boot-path allowlist 2026-07-27: the list had live counterexamples (quota DPC runs during boot; exec handoff lives in task.c) and a smoke run is ~2.7s on KVM. `if: Bash(git commit:*)`. |
 | codex_review_reception_reminder | `.claude/hooks/codex_review_reception_reminder.py` | REMINDER | Y | `adversarial-review` | -- | After a `codex-companion.mjs adversarial-review` Bash, emits the `receiving-code-review` discipline reminder. |
 
 ### Matcher: `Task`

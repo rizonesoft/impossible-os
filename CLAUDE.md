@@ -62,11 +62,16 @@ The smoke test complements unit tests: unit tests cover individual behaviors aga
 
 | Platform | Speed | Catches | Misses |
 |---|---|---|---|
-| **KVM** (default when available) | ~2s boot | real-CPU MSR traps, SMP timing, cache semantics | emulated-device bugs (NVMe, USB) |
-| **TCG** (fallback) | ~10s boot | device emulation bugs, portable x86 behavior | per-CPU state, real MSR behavior |
+| **KVM** (default when available) | ~2s boot | real-CPU MSR traps, SMP timing, cache semantics | emulated-device bugs (NVMe, USB); **timing-sensitive races its own speed hides** |
+| **TCG** (fallback) | ~10s boot | device emulation bugs, portable x86 behavior; **timing-sensitive lifetime/ordering races** | per-CPU state, real MSR behavior |
+| **CI-parity** (`CI_PARITY=1`, distro QEMU + forced TCG) | ~24s full suite | **exactly what CI will report, before you push** | anything needing a real CPU or real hardware |
 | **WHPX / VBox / bare metal** (user runs) | varies | the rest | (authoritative) |
 
 Neither WSL runner replaces native Windows or bare metal for shipping. They filter regressions before the user has to boot the image.
+
+**TCG is not only a device-emulation net.** It also catches timing-sensitive races that KVM's speed hides, which is a stronger claim than the original table made and was paid for on 2026-07-27: a `SYS_EXEC` frame handoff depended on a timer tick landing in a window between publishing the new ring-3 frame and returning from the syscall. Under KVM and QEMU 10.2.1 the tick essentially always landed, so the bug was invisible; under the QEMU CI installs it did not, and the process returned to its pre-exec RIP over a freshly overwritten image. It survived **297 commits and a green local suite** that way. When a bug reproduces on one engine and not another, the engine difference IS the evidence -- do not dismiss it as an emulator quirk.
+
+**Run the CI-parity tier before pushing.** `CI_PARITY=1 bash scripts/test.sh` pins the distro apt QEMU (what `.github/workflows/build.yml` installs) and forces TCG (CI has no reliable `/dev/kvm`). Measured 2026-07-27: **23.8s vs 25.6s for the default KVM run** -- indistinguishable, so there is no speed argument for skipping it. It is enforced by `.githooks/pre-push` as a REQUIRED gate (`SKIP_CI_PARITY=1` to override), unlike the opt-in heavy gate beside it: "CI already gates PRs" is precisely the assumption the 297 commits disproved. Version drift is detected rather than assumed -- `scripts/ci-qemu-version.txt` records the version CI installs and the gate warns when the local package stops matching, because a hardcoded pin silently stops tracking the day GitHub moves the runner image.
 
 ## Test Code Policy
 

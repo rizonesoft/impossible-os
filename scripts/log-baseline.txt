@@ -1,0 +1,79 @@
+# Serial-log cleanliness baseline -- TODO-34 §2/§3
+#
+# Lines listed here are KNOWN-CORRECT [FAIL]/[WARN] output that must not fail a
+# run. Everything NOT listed is unexpected, and unexpected is a failure.
+#
+# This file is the single baseline for BOTH gates (scripts/test-smoke.sh and,
+# when §2 lands, the kernel test runner). One file on purpose: two lists would
+# drift, and a line baselined in one gate but not the other is exactly the
+# confusion this whole TODO exists to remove.
+#
+# FORMAT: one substring per line, matched with grep -F (literal, no regex).
+#   `#` starts a comment. Blank lines ignored.
+#   Keep each entry as NARROW as still matches -- a broad substring silently
+#   baselines future failures that merely share a prefix.
+#
+# ADDING AN ENTRY IS A REVIEWED ACT, not a way to quiet a red run. Every entry
+# needs a reason comment saying WHY the line is correct. If you cannot write
+# that sentence, the line is a bug and belongs fixed, not listed. Entries are
+# never auto-generated from a failing run -- that would baseline the regression
+# you were trying to catch.
+#
+# Classifications below come from a 2026-07-27 serial-log-auditor pass over a
+# 30244-line native-QEMU capture, each verified at its emitting file:line.
+
+# ---- Environment: absent hardware on QEMU/OVMF -----------------------------
+# Correct degraded-capability reporting; the platform genuinely lacks these, and
+# the kernel is expected to say so rather than pretend otherwise.
+TPM: Measured boot degraded
+Secure Boot: UNKNOWN
+SecureBoot variable read failed
+SecureBoot: state=UNKNOWN
+trust-landscape degraded
+trust-landscape: secure-boot-unreadable
+trust-landscape: sbat-absent
+trust-landscape: dbx-absent
+RECOMMENDED: SMEP not available
+RECOMMENDED: SMAP not available
+RECOMMENDED: RDRAND not available
+
+# ---- Environment: OVMF firmware-table placement ----------------------------
+# OVMF places some config tables outside the memory-map region the bootloader
+# preserves. The kernel detects and degrades; nothing here is actionable by us.
+MAT: header at
+W^X: no EFI_MEMORY_ATTRIBUTES_TABLE
+cfg-table base outside firmware mmap
+firmware tables: 16 cataloged
+
+# ---- Environment: entropy without a hardware source ------------------------
+# Fail-closed by design: no RDRAND and no TPM means the CSPRNG must refuse to
+# credit its seed. The warning IS the correct behavior.
+csprng: seeded DEGRADED
+early seed: carryover rejected
+seed file: MAC mismatch
+
+# ---- Environment: optional data files absent on the test image -------------
+nls: C:\Impossible\System\NLS\invariant.nls absent
+
+# ---- Environment: reused OVMF vars store across builds ---------------------
+# The code explicitly anticipates a stale NVRAM pointer from a previous layout.
+crash recovery: stale/out-of-range NVRAM address
+
+# ---- Known-open defects with an owning TODO --------------------------------
+# Baselined ONLY because they are filed and tracked. Each MUST name its owner,
+# and removing the entry is part of closing that item -- otherwise a fix would
+# land with the gate still ignoring the line it was supposed to prove.
+
+# -> 01-boot-platform/TODO-29 §18 (vfs_rename_ex fails on a two-dot long name)
+boot_trend: atomic rename failed
+
+# -> 02-kernel-core/TODO-25 §9 (pressure tick over the 100 us DPC budget)
+quota: pressure tick overran
+
+# -> 02-kernel-core/TODO-25 §9 + TODO-07 (DPC watchdog; needs a calibrated TSC
+#    to time anything, so this cannot even fire on a TCG dev host)
+dpc: watchdog: DPC
+
+# -> 01-boot-platform/TODO-29 §18 (interval budgets exceed target on emulated
+#    storage; the EXEC -> DESKTOP_READY milestone is filed there)
+BOOT-BUDGET:

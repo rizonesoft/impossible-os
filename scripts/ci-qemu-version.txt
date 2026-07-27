@@ -1,0 +1,18 @@
+# QEMU version the CI runner installs -- the CI-parity gate asserts against this.
+#
+# NOT the selector. CI_PARITY=1 selects /usr/bin/qemu-system-x86_64 (the distro
+# apt package), which is what .github/workflows/build.yml installs via
+# 'apt-get install qemu-system-x86' on ubuntu-latest. Selecting by PACKAGE rather
+# than by version is what keeps the gate tracking CI when the runner image moves.
+#
+# This file exists so that move is DETECTED rather than assumed away: when the
+# local apt QEMU stops matching the version CI reports, test.sh warns instead of
+# silently testing an engine CI no longer runs.
+#
+# TO REFRESH: read the QEMU version from a recent CI Build log, put it below,
+# and say where it came from. Do not copy the local version without checking CI
+# -- that defeats the entire point of the assertion.
+#
+# Recorded 2026-07-27 from the local ubuntu-24.04 apt package; ubuntu-latest was
+# on the same package line at the time. Confirm against a CI log on next refresh.
+8.2.2

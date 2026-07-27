@@ -135,6 +135,51 @@ trap cleanup EXIT INT TERM
 cp "$OVMF_VARS" "$OVMF_VARS_CP"
 rm -f "$TEST_LOG"
 
+# CI_PARITY=1 -- reproduce what CI runs, exactly, before code leaves the machine.
+#
+# This is a TIER, not a replacement for the KVM inner loop. KVM stays the default
+# (~2s boot); losing it would wreck iteration speed for no benefit, because the
+# two engines catch different things:
+#
+#   inner loop      KVM (auto-selected)        every edit
+#   CI-parity gate  distro QEMU + forced TCG   before push
+#   authoritative   WHPX / VBox / bare metal   before shipping
+#
+# Why this tier has to exist: a fork+exec frame-handoff bug survived 297 commits
+# and a green local suite because it only reproduced on the QEMU CI installs.
+# The dev host runs a custom /usr/local build; CI runs `apt-get install
+# qemu-system-x86` on ubuntu-latest with no reliable /dev/kvm. Different engine,
+# different timing, different bug -- and the local runs never saw it.
+#
+# The selection is DERIVED, not pinned to a version string: CI installs the
+# distro package, so this uses the distro package (/usr/bin), which tracks apt
+# the same way CI's does. A hardcoded "8.2.2" would silently stop matching the
+# day GitHub moves the runner image. The recorded version below is an assertion,
+# not the selector -- a mismatch WARNS loudly (drift detected) instead of quietly
+# testing something CI does not run.
+CI_PARITY_QEMU="/usr/bin/qemu-system-x86_64"
+QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
+if [ "${CI_PARITY:-0}" = "1" ]; then
+    if [ ! -x "$CI_PARITY_QEMU" ]; then
+        echo -e "${RED}[TEST]${RESET} CI_PARITY=1 but $CI_PARITY_QEMU is absent."
+        echo -e "${YELLOW}       CI runs 'apt-get install qemu-system-x86'; install it locally to match.${RESET}"
+        exit 1
+    fi
+    QEMU_BIN="$CI_PARITY_QEMU"
+    FORCE_TCG=1          # CI has no reliable /dev/kvm (see .github/workflows/build.yml)
+    CI_PARITY_VER="$("$CI_PARITY_QEMU" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    CI_PARITY_EXPECT_FILE="$PROJECT/scripts/ci-qemu-version.txt"
+    if [ -f "$CI_PARITY_EXPECT_FILE" ]; then
+        CI_PARITY_EXPECT="$(grep -vE '^\s*#|^\s*$' "$CI_PARITY_EXPECT_FILE" | head -1 | tr -d '[:space:]')"
+        if [ -n "$CI_PARITY_EXPECT" ] && [ "$CI_PARITY_VER" != "$CI_PARITY_EXPECT" ]; then
+            echo -e "${YELLOW}[TEST]${RESET} CI-parity DRIFT: local QEMU $CI_PARITY_VER, recorded CI $CI_PARITY_EXPECT."
+            echo -e "${YELLOW}       The runner image may have moved. Confirm against a CI log and refresh${RESET}"
+            echo -e "${YELLOW}       $CI_PARITY_EXPECT_FILE -- do not assume the gate still matches CI.${RESET}"
+        fi
+    fi
+    echo -e "${CYAN}[TEST]${RESET} CI-parity mode: $CI_PARITY_QEMU ($CI_PARITY_VER), forced TCG"
+fi
+
 # Detect acceleration: KVM > TCG. `FORCE_TCG=1` overrides for runs that
 # must exercise the software-emulation path (device emulation bugs,
 # leak-detector platform-coverage sweeps, etc.).
@@ -154,7 +199,7 @@ echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s
 
 # Launch QEMU in background -- kernel continues to desktop after tests,
 # so we poll for the summary line and kill QEMU once we have results.
-qemu-system-x86_64 \
+"$QEMU_BIN" \
     $ACCEL_ARGS \
     -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \

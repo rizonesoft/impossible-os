@@ -28,7 +28,25 @@ import section_commit_gate as scg  # noqa: E402
 import _postcommit_lock as pclock  # noqa: E402
 
 
+# Any kernel or boot source can break the boot path.
+#
+# This was an ALLOWLIST of files judged able to break boot. That judgement is
+# not maintainable, and it had live counterexamples in the tree: the quota
+# pressure DPC runs during boot (its init is a Phase 2 step and the watchdog is
+# already armed) yet src/kernel/quota/ was not listed, and the fork+exec frame
+# handoff lives in task.c and syscall.c, also unlisted. Both are exactly the
+# "cannot break boot" assumption the list encodes, and both were wrong.
+#
+# So the trigger is now the whole kernel + boot surface. The cost argument for
+# an allowlist does not survive measurement either: a smoke run boots in ~2.7s
+# on KVM against a 30s budget, which is nothing next to the section that
+# produced the commit. Broadening the trigger trades a few seconds for removing
+# a standing judgement call that was already producing false negatives.
+#
+# Still bounded to SOURCE: docs, todo/, and scripts do not boot anything.
 _BOOT_PATHS = (
+    "src/",
+    "include/kernel/",
     "src/boot/",
     "src/kernel/main/boot_",
     "src/kernel/idt.c",

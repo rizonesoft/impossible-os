@@ -371,6 +371,53 @@ if [ "$PATTERN_FAIL" = true ]; then
     FAIL_REASON="Boot pattern check failed (see MISSING/UNEXPECTED above)"
 fi
 
+# ---- Log cleanliness: ANY unexpected [FAIL] fails the run -------------------
+#
+# FAIL_PATTERNS above is a nine-string allowlist of FATAL signatures. It is an
+# early abort, not a verdict: a [FAIL] outside those nine passed straight
+# through, so this script would print SMOKE TEST PASSED over a log that
+# contained one. Demonstrated 2026-07-27 -- a local run reported PASS with
+# "[FAIL] BOOT-BUDGET: EXEC -> DESKTOP_READY took 1139ms" and 32 [WARN] lines in
+# its own output. That is the specific reason smoke testing after each TODO
+# section did not catch what a full native run later surfaced.
+#
+# So the verdict is inverted here: every [FAIL] counts UNLESS it is baselined.
+# The baseline is shared with the kernel-runner cleanliness gate so the two
+# cannot drift, and every entry there carries a reason.
+#
+# WARN is deliberately NOT gated yet. A clean run still emits ~30 of them, and
+# gating before the expected-output declaration lands (the test-side half of
+# this work) would mean baselining thirty correct lines -- which is how a
+# baseline turns into a rubber stamp. FAIL is the tight, high-signal half.
+BASELINE_FILE="$REPO_ROOT/scripts/log-baseline.txt"
+UNEXPECTED_FAILS=""
+if [ -f "$STRIPPED_LOG" ]; then
+    while IFS= read -r fail_line; do
+        [ -n "$fail_line" ] || continue
+        is_baselined=false
+        if [ -f "$BASELINE_FILE" ]; then
+            while IFS= read -r entry; do
+                case "$entry" in ''|'#'*) continue ;; esac
+                case "$fail_line" in *"$entry"*) is_baselined=true; break ;; esac
+            done < "$BASELINE_FILE"
+        fi
+        if [ "$is_baselined" = false ]; then
+            UNEXPECTED_FAILS="${UNEXPECTED_FAILS}${fail_line}"$'\n'
+        fi
+    done < <(grep -F '[FAIL]' "$STRIPPED_LOG" 2>/dev/null || true)
+fi
+
+if [ -n "$UNEXPECTED_FAILS" ]; then
+    UNEXPECTED_COUNT=$(printf '%s' "$UNEXPECTED_FAILS" | grep -c . || true)
+    echo -e "  ${RED}UNEXPECTED [FAIL] lines: $UNEXPECTED_COUNT${NC}"
+    printf '%s' "$UNEXPECTED_FAILS" | head -10 | sed 's/^/    /'
+    echo -e "  ${DIM}If one is correct, add it to scripts/log-baseline.txt WITH a reason.${NC}"
+    BOOT_FAILED=true
+    FAIL_REASON="Unexpected [FAIL] in serial log ($UNEXPECTED_COUNT line(s))"
+else
+    echo -e "  ${DIM}Log cleanliness: no unexpected [FAIL] lines${NC}"
+fi
+
 if [ "$BOOT_FAILED" = true ]; then
     echo ""
     echo -e "${RED}══════════════════════════════════════════════════${NC}"

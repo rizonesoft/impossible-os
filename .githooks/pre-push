@@ -73,6 +73,43 @@ if [ -f "$CP_MATCH" ]; then
   fi
 fi
 
+# ---- REQUIRED CI-parity gate -------------------------------------------------
+#
+# Runs the unit suite on the engine CI actually uses -- the distro apt QEMU with
+# forced TCG -- before anything leaves the machine.
+#
+# This is NOT the opt-in heavy gate below, and it is deliberately not opt-in.
+# That one is optional because "CI already gates PRs", an assumption this repo
+# proved false: a fork+exec frame-handoff bug rode 297 commits and a green local
+# suite into a red CI job, because it only reproduced on the QEMU CI installs.
+# The dev host runs a custom /usr/local build and never saw it. A gate that only
+# runs what already passes is not a gate.
+#
+# Cost measured 2026-07-27: 23.8s CI-parity vs 25.6s for the default KVM run --
+# indistinguishable, and marginally FASTER. There is no speed argument for
+# skipping it, so it is required rather than opt-in. The KVM inner loop is
+# untouched; this is a separate tier that runs once, at the push boundary.
+#
+# Opt-out stays available for a genuine emergency and is logged like every other
+# skip: SKIP_CI_PARITY=1 git push ...
+if [ "${SKIP_CI_PARITY:-}" = "1" ]; then
+  echo -e "\033[33m[pre-push] SKIP_CI_PARITY=1 -- CI-parity gate skipped\033[0m"
+elif [ ! -x /usr/bin/qemu-system-x86_64 ]; then
+  echo -e "\033[33m[pre-push] CI-parity gate SKIPPED: /usr/bin/qemu-system-x86_64 absent\033[0m"
+  echo "           CI runs 'apt-get install qemu-system-x86'; install it to enable the gate."
+else
+  echo "[pre-push] CI-parity gate: unit suite on the QEMU CI installs (forced TCG)..."
+  if (cd "$REPO_ROOT" && CI_PARITY=1 bash scripts/test.sh QUIET=1 >/tmp/ci-parity-prepush.log 2>&1); then
+    echo -e "\033[32m  CI-parity: PASS\033[0m"
+  else
+    echo -e "\033[31m  CI-parity gate FAILED -- this is what CI would have reported.\033[0m"
+    tail -15 /tmp/ci-parity-prepush.log | sed 's/^/    /'
+    echo "  Full log: /tmp/ci-parity-prepush.log"
+    echo "  Opt-out (last resort): SKIP_CI_PARITY=1 git push ..."
+    exit 1
+  fi
+fi
+
 # ---- Opt-in heavy build/test gate --------------------------------------------
 [ -f "$SENTINEL" ] || exit 0
 exec "$REPO_ROOT/scripts/hooks/pre-push" "$@" <<< "$STDIN_DATA"
