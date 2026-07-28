@@ -200,9 +200,26 @@ void vmm_unmap_mmio(void *virt, uint32_t size);
  * individual 4 KiB pages within the boot-time identity map. */
 int vmm_split_huge_page(uintptr_t virt);
 
-/* Install a guard page: split the containing huge page, clear the PTE,
- * and register the address for detection by the page fault handler.
- * On hit, panic_screen shows the label instead of generic "PAGE_FAULT". */
+/* Capacity of the guard-page table. Sized for the worst case a running system
+ * can demand, because an install that cannot be recorded is an install that
+ * must be REFUSED (see vmm_install_guard_page): every task holds a guard under
+ * its live kernel stack, a task mid-exec holds a SECOND under the parked stack
+ * it has not released yet, and every user thread holds one under its own
+ * per-thread kernel stack -- so the ceiling is TASK_MAX * (THREAD_MAX + 2),
+ * plus headroom for the fixed guards (heap end, IST stacks, AP stacks, user
+ * ELF range). task.c pins that relation with a _Static_assert, so growing
+ * TASK_MAX or THREAD_MAX without resizing the table fails the build. */
+#define VMM_MAX_GUARD_PAGES 640
+
+/* Install a guard page: reserve a table slot, split the containing huge page,
+ * clear the PTE, so the page fault handler can name the region on a hit
+ * (panic_screen shows the label instead of a generic "PAGE_FAULT").
+ *
+ * Returns 0 on success, -1 if the guard table is full or the huge-page split
+ * failed. A FAILED install leaves the mapping INTACT -- the slot is reserved
+ * before any PTE is touched -- so the caller may still safely free the frame
+ * or keep using it unguarded. Callers depend on this fail-before-clearing
+ * contract (see heap.c's heap-end guard). */
 int vmm_install_guard_page(uintptr_t virt, const char *label);
 
 /* Reverse of vmm_install_guard_page: restore the identity mapping at
@@ -210,9 +227,20 @@ int vmm_install_guard_page(uintptr_t virt, const char *label);
  * the guard-page table. MUST be called before returning the underlying
  * physical frame to PMM -- otherwise the next pmm_alloc that hands out
  * the same frame will fault when its zero/init writer dereferences the
- * (still-not-present) virtual address. Idempotent: if `virt` is not a
- * registered guard, returns 0 without touching the page tables. */
+ * (still-not-present) virtual address.
+ *
+ * Returns 0 only when `virt` is CONFIRMED mapped on return, so a caller may
+ * treat 0 as "safe to hand the frame back to the PMM"; -1 means the VA is
+ * still not present and the frame must NOT be freed. A VA that was never
+ * guarded is a no-op success (it is already mapped) -- but, unlike the
+ * original implementation, that answer now comes from reading the PTE rather
+ * than from the mere absence of a table entry. */
 int vmm_uninstall_guard_page(uintptr_t virt);
+
+/* Guard-table slots still available. Diagnostics + the saturation unit test;
+ * a caller that merely wants to install a guard should call
+ * vmm_install_guard_page() and check its return instead of pre-testing. */
+uint32_t vmm_guard_pages_free(void);
 
 /* Change protection flags on an already-mapped page.
  * Updates the PTE flags without changing the physical address.

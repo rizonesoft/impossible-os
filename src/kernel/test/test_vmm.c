@@ -124,6 +124,198 @@ static void test_vmm_guard_page_install(void)
     /* The page after the guard should still be accessible */
     uintptr_t phys2 = vmm_get_physical(base + 4096);
     TEST_ASSERT(phys2 == base + 4096, "page after guard still mapped");
+
+    /* Unwind: this test used to leave the guard installed and the frames
+     * allocated, so every boot consumed a table slot it never returned. */
+    {
+        int urc = vmm_uninstall_guard_page(base);
+        TEST_ASSERT_EQ(urc, 0, "vmm_uninstall_guard_page succeeds");
+        TEST_ASSERT(vmm_get_physical(base) == base,
+                    "uninstall restored the guard page mapping");
+        if (urc == 0)
+            pmm_free_contiguous(base, 2);
+    }
+}
+
+/* Uninstall is the last gate before a guarded frame goes back to the PMM, so
+ * "present" is not good enough -- the IDENTITY mapping has to be back. If the
+ * VA has been re-pointed at some other frame, freeing on that evidence hands
+ * out a frame whose identity address writes through another owner's memory.
+ *
+ * Frame 0 is the case that makes this sharp: vmm_get_physical() answers 0 for
+ * both "absent" and "present, mapped to frame 0", so an alias to frame 0 is
+ * exactly the alias a naive check would miss. */
+static void test_vmm_guard_page_alias_refused(void)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    int rc;
+
+    TEST_ASSERT(frame != 0, "alias test frame allocated");
+    if (!frame)
+        return;
+
+    TEST_ASSERT_EQ(vmm_install_guard_page(frame, "TEST: alias guard"), 0,
+                   "guard installed for the alias case");
+
+    /* Re-point the guard VA at physical frame 0 without going through the
+     * guard API -- the shape an unrelated mapper would leave behind. */
+    TEST_ASSERT_EQ(vmm_map_page(frame, 0, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE), 0,
+                   "guard VA aliased to physical frame 0");
+
+    rc = vmm_uninstall_guard_page(frame);
+    TEST_ASSERT_EQ(rc, -1, "uninstall refuses a present alias to frame 0");
+    TEST_ASSERT(vmm_get_physical(frame) == 0,
+                "refused uninstall left the alias untouched");
+
+    /* Repair by hand: the API deliberately refused to do it for us. */
+    TEST_ASSERT_EQ(vmm_map_page(frame, frame, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE), 0,
+                   "identity mapping restored by the test");
+    if (vmm_get_physical(frame) == frame)
+        pmm_free_frame(frame);
+}
+
+/* A registered guard's leaf is REWRITTEN on uninstall, not merely inspected:
+ * the frame is about to go back to the PMM, so the identity mapping has to be
+ * writable (the next allocator's zero-fill writes through it) and kernel-only
+ * (a freed kernel frame must not stay reachable from ring 3). A same-frame
+ * mapping left read-only or user-accessible by another path must be normalized,
+ * not waved through on the address alone. */
+static void test_vmm_guard_page_flags_normalized(void)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    uint64_t flags;
+    int rc;
+
+    TEST_ASSERT(frame != 0, "flag-normalization test frame allocated");
+    if (!frame)
+        return;
+
+    /* Case 1: same frame, read-only. */
+    TEST_ASSERT_EQ(vmm_install_guard_page(frame, "TEST: RO guard"), 0,
+                   "guard installed for the read-only case");
+    TEST_ASSERT_EQ(vmm_map_page(frame, frame, VMM_FLAG_PRESENT), 0,
+                   "guard VA remapped read-only to its own frame");
+    rc = vmm_uninstall_guard_page(frame);
+    TEST_ASSERT_EQ(rc, 0, "uninstall accepts a same-frame read-only mapping");
+    flags = vmm_query_flags(frame);
+    TEST_ASSERT(flags & VMM_FLAG_WRITABLE,
+                "uninstall restored WRITABLE before authorizing the free");
+
+    /* Case 2: same frame, user-accessible. */
+    TEST_ASSERT_EQ(vmm_install_guard_page(frame, "TEST: user guard"), 0,
+                   "guard installed for the user-accessible case");
+    TEST_ASSERT_EQ(vmm_map_page(frame, frame,
+                                VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | VMM_FLAG_USER), 0,
+                   "guard VA remapped user-accessible to its own frame");
+    rc = vmm_uninstall_guard_page(frame);
+    TEST_ASSERT_EQ(rc, 0, "uninstall accepts a same-frame user-accessible mapping");
+    flags = vmm_query_flags(frame);
+    TEST_ASSERT(!(flags & VMM_FLAG_USER),
+                "uninstall cleared USER before authorizing the free");
+
+    if (vmm_get_physical(frame) == frame)
+        pmm_free_frame(frame);
+}
+
+/* An UNREGISTERED VA is inspected, never rewritten -- that mapping belongs to
+ * someone else. It therefore has to fail CLOSED: a read-only identity leaf is
+ * not safe to hand to the PMM (the next allocator's zero-fill would fault), so
+ * uninstall must refuse rather than wave it through on the address alone. */
+static void test_vmm_guard_page_unregistered_ro_refused(void)
+{
+    uintptr_t frame = pmm_alloc_frame();
+    int rc;
+
+    TEST_ASSERT(frame != 0, "unregistered-RO test frame allocated");
+    if (!frame)
+        return;
+
+    /* Split first: vmm_map_page on a 4 KiB VA inside an unsplit 2 MiB region
+     * must not be the thing that demotes it. No guard is installed here -- the
+     * point is a VA the guard table has never heard of. */
+    TEST_ASSERT_EQ(vmm_split_huge_page(frame), 0, "region split for the unregistered case");
+    TEST_ASSERT_EQ(vmm_map_page(frame, frame, VMM_FLAG_PRESENT), 0,
+                   "unregistered VA mapped read-only to its own frame");
+
+    rc = vmm_uninstall_guard_page(frame);
+    TEST_ASSERT_EQ(rc, -1, "uninstall refuses an unregistered read-only mapping");
+
+    /* Restore by hand and return the frame. */
+    TEST_ASSERT_EQ(vmm_map_page(frame, frame, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE), 0,
+                   "identity mapping restored by the test");
+    if (vmm_get_physical(frame) == frame)
+        pmm_free_frame(frame);
+}
+
+/* Saturating the guard table must REFUSE the install, not silently drop the
+ * entry after the PTE is already cleared. The dropped-entry shape was the bug:
+ * install reported success, uninstall found no entry and skipped the remap, and
+ * the caller handed a still-unmapped frame back to the PMM.
+ *
+ * The scratch array is a file static rather than a 1 KiB stack local; the test
+ * runner is single-threaded on the BSP, so it needs no locking. */
+static uintptr_t s_guard_sat_frames[VMM_MAX_GUARD_PAGES];
+
+static void test_vmm_guard_page_saturation(void)
+{
+    uint32_t free_slots = vmm_guard_pages_free();
+    uint32_t filled = 0;
+    uint32_t i;
+    int saturated;
+
+    TEST_ASSERT(free_slots <= VMM_MAX_GUARD_PAGES,
+                "free guard slots within table capacity");
+
+    /* Fill every remaining slot, guarding only frames this test owns. */
+    for (i = 0; i < free_slots; i++) {
+        uintptr_t frame = pmm_alloc_frame();
+        if (!frame)
+            break;
+        if (vmm_install_guard_page(frame, "TEST: saturation guard") != 0) {
+            pmm_free_frame(frame);
+            break;
+        }
+        s_guard_sat_frames[filled++] = frame;
+    }
+    saturated = (filled == free_slots);
+    TEST_ASSERT(saturated, "every free guard slot accepted an install");
+
+    /* TEST_ASSERT records a failure but does NOT abort the test, so the
+     * overflow probe runs only when the table really is full. On a partial
+     * fill the probe would SUCCEED, and freeing its frame afterwards would
+     * hand a still-unmapped page back to the PMM -- the test would poison the
+     * allocator it is meant to protect. */
+    if (saturated) {
+        uintptr_t extra = pmm_alloc_frame();
+
+        TEST_ASSERT_EQ(vmm_guard_pages_free(), 0, "guard table is saturated");
+        if (extra) {
+            /* One install past capacity: must fail AND leave the frame mapped. */
+            int rc = vmm_install_guard_page(extra, "TEST: overflow guard");
+            TEST_ASSERT_EQ(rc, -1, "install fails once the guard table is full");
+            if (rc == 0) {
+                /* Unexpected success: restore before the frame goes back. */
+                if (vmm_uninstall_guard_page(extra) == 0)
+                    pmm_free_frame(extra);
+            } else {
+                TEST_ASSERT(vmm_get_physical(extra) == extra,
+                            "refused install left the frame mapped (fail before clearing)");
+                pmm_free_frame(extra);
+            }
+        }
+    }
+
+    /* Unwind: a frame goes back to the PMM only on a CONFIRMED restore. */
+    for (i = 0; i < filled; i++) {
+        int rc = vmm_uninstall_guard_page(s_guard_sat_frames[i]);
+        TEST_ASSERT_EQ(rc, 0, "saturation guard uninstalled");
+        TEST_ASSERT(vmm_get_physical(s_guard_sat_frames[i]) == s_guard_sat_frames[i],
+                    "uninstall restored the mapping before the frame is freed");
+        if (rc == 0)
+            pmm_free_frame(s_guard_sat_frames[i]);
+    }
+    TEST_ASSERT_EQ(vmm_guard_pages_free(), free_slots,
+                   "guard table returned to its pre-test occupancy");
 }
 
 /* --- vmm_map_user_page round-trip test ---
@@ -454,6 +646,14 @@ void test_register_vmm(void)
     test_suite_register_cat("VMM: set_ro clears WRITABLE", test_vmm_set_ro, TEST_CAT_MM);
     test_suite_register_cat("VMM: set_nx sets NX", test_vmm_set_nx, TEST_CAT_MM);
     test_suite_register_cat("VMM: guard page install", test_vmm_guard_page_install, TEST_CAT_MM);
+    test_suite_register_cat("VMM: guard table saturation refuses install",
+                            test_vmm_guard_page_saturation, TEST_CAT_MM);
+    test_suite_register_cat("VMM: guard uninstall refuses aliased mapping",
+                            test_vmm_guard_page_alias_refused, TEST_CAT_MM);
+    test_suite_register_cat("VMM: guard uninstall normalizes leaf flags",
+                            test_vmm_guard_page_flags_normalized, TEST_CAT_MM);
+    test_suite_register_cat("VMM: guard uninstall fails closed on unregistered RO",
+                            test_vmm_guard_page_unregistered_ro_refused, TEST_CAT_MM);
     test_suite_register_cat("VMM: map_user_page roundtrip",
                             test_vmm_map_user_page_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: fault-inject vmm_map_fail_next",

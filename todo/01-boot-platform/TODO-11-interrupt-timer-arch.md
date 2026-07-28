@@ -189,7 +189,7 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 > - Static asserts in `vectors.h` now pin every DPL=3 software vector outside every hardware IRQ window.
 
 > **Verified:** 2026-06-11 | commit `5ae7bdb8` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
-> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 213)
+> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 214)
 > **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... = terminate the process, never `panic_screen()`"). TODO-23 §4 landed the dispatcher routing but the unhandled-user terminal is still a kernel panic; §5 ring-3 delivery + per-process termination is what closes the DoS.
 > **Deferred:** [M] no dedicated IDT/vector unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
 > **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 6H+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
@@ -261,7 +261,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 > - Downstream: tickless-idle mechanism ready for the D02 T26 idle governor; closes the D01 T10 §10 rt_call PIT gap (normal path).
 > - Scope boundary: HV reference-TSC page init is D02 T09 §15 (consumer here stays blocked until it lands); recalibrate-on-freq-change is D02 T26 §15; AP timers are §7.
 > **Verified:** 2026-06-12 | commit `00adcb9b` | 9/10 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
-> **Accepted:** [H] AP-side timer-resolution requests are refused + rolled back (BSP delegation needs a cross-CPU call) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call" at line 100)
+> **Accepted:** [H] AP-side timer-resolution requests are refused + rolled back (BSP delegation needs a cross-CPU call) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call" at line 101)
 > **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1M accepted-XREF (raw-tick consumers migrated in TODO-08 §16) | scope: kernel-code-quality
 
 ---
@@ -290,7 +290,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 > - Downstream: per-finding evidence in the review commit; NT-timer wheel and DPC ISR budget filed with their owners (see Accepted lines).
 > - Scope boundary: AP LAPIC timers stay masked until per-CPU run queues land (own open item below); recalibrate-on-frequency-change is owned by the cpufreq governor section.
 > **Verified:** 2026-06-12 | commit `4208a2e0` | 5/7 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
-> **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 115)
+> **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 116)
 > **Accepted:** [M] recalibrate hook for CPU frequency changes -> XREF: 02-kernel-core/TODO-26 §15 (item: "Timer recalibration on frequency transition" at line 608)
 > **Accepted:** [H] `nt_timer_tick()` walks every armed timer in the 100 Hz ISR (O(N) IRQ-off work at scale) -> XREF: 02-kernel-core/TODO-05 (item: "Replace the flat NT timer armed list with an ordered structure" at line 245)
 > **Accepted:** [M] DPC drain in the timer ISR caps count (32) but not per-callback runtime -> XREF: 02-kernel-core/TODO-07 §6 (item: "DPC runtime budget in the timer ISR drain" at line 212)

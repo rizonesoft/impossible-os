@@ -3759,6 +3759,19 @@ if python3 "$REPO_ROOT/.claude/hooks/todo_wrap_reminder.py" --selftest >/dev/nul
 else
     t_fail "todo_wrap_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/scripts/todo-staged-check.py" --selftest >/dev/null 2>&1; then
+    t_pass "todo_staged_check_selftest  commit-time item-length backstop green"
+else
+    t_fail "todo_staged_check_selftest  embedded selftest failed"
+fi
+# The backstop must be WIRED, not merely present: its whole reason for existing
+# is that the PreToolUse hook is bypassed by python3-via-Bash writes, and an
+# unwired backstop reproduces exactly that gap one layer down.
+if grep -q 'todo-staged-check\.py' "$REPO_ROOT/.githooks/pre-commit" 2>/dev/null; then
+    t_pass "todo_staged_check_wired  called from .githooks/pre-commit"
+else
+    t_fail "todo_staged_check_wired  not called from .githooks/pre-commit"
+fi
 if python3 "$REPO_ROOT/scripts/todo-reflow.py" --selftest >/dev/null 2>&1; then
     t_pass "todo_reflow_selftest  reflow is content-preserving + idempotent"
 else

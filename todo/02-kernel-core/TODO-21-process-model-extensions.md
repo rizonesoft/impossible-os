@@ -581,86 +581,53 @@ Split from §15 (2026-07-12). Layers on §15's ZOMBIE + single-reaper foundation
 
 ## 19. `task_exec` Commit Point and Kernel-Stack Reclamation
 
-`task_exec()` had no transactional commit point: it mutated the process image and THEN performed fallible work, so a
-late failure returned `-1` to a caller that iretqs back into an image that no longer exists. It also replaced
-`tasks[pid].stack_base` with a fresh guarded kernel stack and never reclaimed the old one. Found 2026-07-27 by Codex
-adversarial review of the exec frame-handoff fix (commit that added `task_exec_take_pending_frame`); all three defects
-predate that fix and none is caused by it. Filed rather than hot-fixed because the two obvious local patches are both
-wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later
-lets a tick between the frame write and the store clobber the published frame via the save-gate.
+`task_exec()` had no transactional commit point: it mutated the process image and THEN performed fallible work, so a late failure returned `-1` to a caller that iretqs back into an image that no longer exists. It also replaced `tasks[pid].stack_base` with a fresh guarded kernel stack and never reclaimed the old one. Found 2026-07-27 by Codex adversarial review of the exec frame-handoff fix (commit that added `task_exec_take_pending_frame`); all three defects predate that fix and none is caused by it. Filed rather than hot-fixed because the two obvious local patches are both wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later lets a tick between the frame write and the store clobber the published frame via the save-gate.
 
-A fourth defect of the same class was filed here 2026-07-27 and split out to §20 on 2026-07-28 (page-table
-use-after-free across reap + fork/exec). It is a distinct lifetime question with its own repro and its own decision,
-and this section carries ABI-affecting transactional work that a single section cannot hold; see §20.
+A fourth defect of the same class was filed here 2026-07-27 and split out to §20 on 2026-07-28 (page-table use-after-free across reap + fork/exec). It is a distinct lifetime question with its own repro and its own decision, and this section carries ABI-affecting transactional work that a single section cannot hold; see §20.
 
 - [x] Commit point established in `task_exec` (`src/kernel/sched/task.c`): argv-frame validation, the `argv_addrs`
-      `kmalloc`, the replacement guarded kernel stack, and the fork+exec private-frame table are all acquired BEFORE
-      the isolation remap, which is now the marked COMMIT POINT. The remap itself was made infallible -- every private
-      frame is allocated and zeroed first, so an OOM returns `-1` pre-commit instead of the old partial remap that let
-      `exec_load` write through mappings still shared with the fork parent
+      `kmalloc`, the replacement guarded kernel stack, and the fork+exec private-frame table are all acquired BEFORE the isolation remap, which is now the marked COMMIT POINT. The remap itself was made infallible -- every private frame is allocated and zeroed first, so an OOM returns `-1` pre-commit instead of the old partial remap that let `exec_load` write through mappings still shared with the fork parent
 - [x] Past the commit point nothing returns `-1` into a destroyed image: `exec_load_fmt` failure, launcher
-      `vmm_create_user_pml4` failure, and a NULL PEB or TEB all route through `exec_commit_failure()`, which frees the
-      unpublished kernel stack + argv table and returns `TASK_EXEC_IMAGE_DESTROYED`. The four callers (SYS_EXEC,
-      `shell_loader`, `test_threads`, the user-mode test loader) release their staging buffer and `task_exit()` on it;
-      returning to the KERNEL caller is safe because it is on its own kernel stack, not ring 3
+      `vmm_create_user_pml4` failure, and a NULL PEB or TEB all route through `exec_commit_failure()`, which frees the unpublished kernel stack + argv table and returns `TASK_EXEC_IMAGE_DESTROYED`. The four callers (SYS_EXEC, `shell_loader`, `test_threads`, the user-mode test loader) release their staging buffer and `task_exit()` on it; returning to the KERNEL caller is safe because it is on its own kernel stack, not ring 3
 - [x] Previous kernel stack reclaimed: `task.stack_pending_free` parks the superseded stack (task_exec cannot free it
-      -- its own caller is still running on it) and it is drained at the next `task_exec` for that task and at
-      `task_cleanup`. Both go through the new `task_free_kernel_stack()`, extracted from `task_cleanup` so the
-      `heap_owns` discrimination and the `vmm_uninstall_guard_page`-before-PMM-free order exist once, not twice
+      -- its own caller is still running on it) and it is drained at the next `task_exec` for that task and at `task_cleanup`. Both go through the new `task_free_kernel_stack()`, extracted from `task_cleanup` so the `heap_owns` discrimination and the `vmm_uninstall_guard_page`-before-PMM-free order exist once, not twice
 - [x] Publication race closed by making publication the LAST act of `task_exec` -- after PEB/TEB and
-      `kernel_gs_base` -- inside `local_irq_save`/`local_irq_restore`. NOT `KeRaiseIrql(DISPATCH_LEVEL)`: that maps to
-      TPR 0x20 (`irql.c`), which masks only priority groups 0-1, so the LAPIC timer still preempts. The iret frame's
-      RCX slot is patched at publication instead of snapshotting the pre-exec PEB
+      `kernel_gs_base` -- inside `local_irq_save`/`local_irq_restore`. NOT `KeRaiseIrql(DISPATCH_LEVEL)`: that maps to TPR 0x20 (`irql.c`), which masks only priority groups 0-1, so the LAPIC timer still preempts. The iret frame's RCX slot is patched at publication instead of snapshotting the pre-exec PEB
 - [x] A fork child that lost its PML4 to OOM (`task_fork` leaves `cr3 = 0` and only warns) can no longer exec: the new
       `task.forked_shares_parent_image` origin flag makes the state explicit and `task_exec` refuses pre-commit rather
       than skipping isolation and overwriting the parent's image
 - [x] `SYS_EXEC` now frees its staging buffer unconditionally -- it freed only on failure, and the success path never
       returns there, so every successful exec leaked one heap allocation of the file's size
 - [/] Unit tests (`src/kernel/test/test_sched.c`, 3 shipped): parked stack clear on a never-exec'd task; kernel stacks
-      never alias (live-live, parked-live, parked-parked, across the whole table); reclamation returns every frame
-      through the production helper via a `KERNEL_TESTS` seam. Structural invariants only -- they observe state, they
-      do not drive an exec, so the fault-injection checkpoint below is still open
+      never alias (live-live, parked-live, parked-parked, across the whole table); reclamation returns every frame through the production helper via a `KERNEL_TESTS` seam. Structural invariants only -- they observe state, they do not drive an exec, so the fault-injection checkpoint below is still open
 - [ ] Fault-injected exec lifecycle coverage (this section's Test checkpoint, still unmet). A kernel unit test cannot
-      call `task_exec` -- a post-commit failure terminates the calling task by design and the test runner IS a task --
-      so build it in `user/test/test_process.c` with the task-filtered primitives that already exist
-      (`pmm_alloc_fail_task_filter_set` + `pmm_alloc_fail_countdown_set`, `kmalloc_fail_*`): a post-commit failure
-      terminates the child instead of returning; each pre-commit refusal (fork child with no isolated CR3, oversized
-      argv, argv/stack/private-frame OOM) leaves the child's OLD image intact and reclaims every injected allocation;
-      a fork -> exec -> re-exec -> reap chain returns the PMM free-page count to baseline. Raised by both the
-      test-coverage and re-adversarial passes
-- [ ] Guard-page registration is not transactional, and this section increased the pressure on it.
-      `guard_page_register` (`src/kernel/mm/vmm.c:576`) silently drops the entry once `guard_page_count` reaches
-      `MAX_GUARD_PAGES`, but `vmm_install_guard_page` has ALREADY cleared the PTE and `vmm_uninstall_guard_page`
-      treats a missing entry as idempotent success -- so a saturated table hands a still-unmapped frame back to the
-      PMM and the next allocator writing through its identity address faults in kernel mode. A task mid-exec now
-      holds TWO stack guards (live + parked) against a 32-entry table with `TASK_MAX` 32. Fix: capacity-aware
-      failable registration, check `vmm_install_guard_page` at the exec call site (pre-commit), and never free a
-      stack frame unless uninstall confirms the PTE was restored. Test: saturate past `MAX_GUARD_PAGES` and assert
-      install fails instead of unmapping silently
+      call `task_exec` -- a post-commit failure terminates the calling task by design and the test runner IS a task -- so build it in `user/test/test_process.c` with the task-filtered primitives that already exist (`pmm_alloc_fail_task_filter_set` + `pmm_alloc_fail_countdown_set`, `kmalloc_fail_*`): a post-commit failure terminates the child instead of returning; each pre-commit refusal (fork child with no isolated CR3, oversized argv, argv/stack/private-frame OOM) leaves the child's OLD image intact and reclaims every injected allocation; a fork -> exec -> re-exec -> reap chain returns the PMM free-page count to baseline. Raised by both the test-coverage and re-adversarial passes
+- [x] Guard-page registration is transactional (`src/kernel/mm/vmm.c`): capacity-aware failable registration, checked installs at every producer, and a teardown gate that proves the identity mapping before frames return to the PMM
+      `guard_page_register` used to drop the entry once the table saturated -- AFTER `vmm_install_guard_page` had already cleared the PTE and returned success -- so `vmm_uninstall_guard_page` found no entry, skipped the remap, and the caller handed a still-unmapped frame to the PMM. Registration now reserves its slot BEFORE any PTE is touched and fails the install instead, restoring the fail-before-clearing contract `heap.c`'s heap-end guard already documented.
+      Uninstall returns 0 only for a CONFIRMED kernel identity mapping (`phys == page`, Present + Writable, User clear). A registered guard has its leaf rewritten and re-verified; a present alias to another frame is refused outright; an unregistered VA is inspected, never rewritten, and fails closed. Presence comes from a new `vmm_translate()` that reports presence and address separately, because `vmm_get_physical()` answers 0 for both "absent" and "mapped to frame 0".
+      Every producer now checks the failable install and rolls back: `task_create`, `task_exec` (pre-commit), `uthread_create`, and AP startup (`src/kernel/smp/smp.c`) which frees the run and skips that AP rather than launching it on writable padding. Thread-stack teardown routes through a new `uthread_free_kernel_stack()` -- its run's FIRST page is the guard -- so the four `uthread_create` rollbacks and `thread_free_stacks` can no longer free an unrestored frame.
+      `guard_page_lock` spans the whole install/uninstall transaction, so a competing split cannot publish a stale table over a guard PTE another CPU just cleared; the fault-path lookup takes it with `spin_trylock` and degrades to no label rather than blocking in a panic path. Capacity is `VMM_MAX_GUARD_PAGES` 640, pinned by a `_Static_assert` against `TASK_MAX * (THREAD_MAX + 2)`.
+      Tests (`src/kernel/test/test_vmm.c`, 4 added): saturation refuses the install and leaves the frame mapped; uninstall refuses an alias to frame 0; it normalizes read-only and user-accessible same-frame leaves; it fails closed on an unregistered read-only mapping. The pre-existing guard-install test also stopped leaking its slot and frames.
+- [ ] Guard installs are not cross-CPU coherent, and the teardown gate cannot bind mappers that do not take `guard_page_lock`. Both need the VMM-wide page-table lock + TLB shootdown. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §2
+      Accepted three times across this section's adversarial rounds as architectural, not local: a remote CPU can retain a stale present translation for a page this CPU guarded, and any mapper may re-point a VA between the teardown gate's verification and the caller's `pmm_free_frame`. `vmm.c` has no global page-table lock (see the note in `vmm_protect_range`) and the kernel has no shootdown IPI, so neither is closable inside this section. Shortening the guard critical section (preallocate the split's frames outside the lock, publish under it) belongs with the same work.
 - [ ] Caller staging-buffer release races publication on the interrupt-enabled launcher path: once the release-store
-      makes the new frame scheduler-visible and `local_irq_restore` re-enables interrupts, a tick can switch the task
-      into the new image before `task_exec` returns, so the caller's `kfree(buf)` never runs. `SYS_EXEC` is safe today
-      only because INT 0x80 is an interrupt gate (IF=0). Fix: release caller-owned staging BEFORE publication -- split
-      prepare from publish, or hand `task_exec` an allocator-specific release callback it invokes after its final read
-      of `data`. `exec_loader_func` (`src/kernel/main/test_threads.c`) also has the deterministic form: its success
-      path HLT-loops with no `kfree`
+      makes the new frame scheduler-visible and `local_irq_restore` re-enables interrupts, a tick can switch the task into the new image before `task_exec` returns, so the caller's `kfree(buf)` never runs. `SYS_EXEC` is safe today only because INT 0x80 is an interrupt gate (IF=0). Fix: release caller-owned staging BEFORE publication -- split prepare from publish, or hand `task_exec` an allocator-specific release callback it invokes after its final read of `data`. `exec_loader_func` (`src/kernel/main/test_threads.c`) also has the deterministic form: its success path HLT-loops with no `kfree`
 - [x] Commit: `"kernel: task -- exec commit point + kernel-stack reclamation"` (code shipped; the three items
       above keep this section open)
 
-**Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a
-named log instead of returning to ring 3; N repeated `SYS_EXEC` calls leave the PMM free-page count unchanged (today it
-drops by `TASK_STACK_SIZE`+4 KiB per exec). `klog(LOG_ERROR, "sched", "exec: post-commit failure, terminating PID %u")`.
-Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
+**Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a named log instead of returning to ring 3; N repeated `SYS_EXEC` calls leave the PMM free-page count unchanged (today it drops by `TASK_STACK_SIZE`+4 KiB per exec). `klog(LOG_ERROR, "sched", "exec: post-commit failure, terminating PID %u")`. Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
 
 > **Test runner:** `bash scripts/test.sh SUITE=sched` -- 3 new Sched assertions (parked-stack clear, stack-pointer
-> non-aliasing, reclamation leak-free). Full gate: `bash scripts/test.sh` + `bash scripts/test-smoke.sh`.
+> non-aliasing, reclamation leak-free). `bash scripts/test.sh SUITE=mm` -- 4 new VMM guard-table suites (saturation
+> refusal, alias refusal, flag normalization, unregistered fail-closed). Full gate: `bash scripts/test.sh` +
+> `bash scripts/test-smoke.sh`.
 
 > **Notes:**
 > - Shipped: an explicit commit point in `task_exec`, non-returning post-commit failures via `exec_commit_failure` + `TASK_EXEC_IMAGE_DESTROYED`, kernel-stack reclamation through `task.stack_pending_free`, and publication moved last under `local_irq_save`.
 > - Integrates: `task_free_kernel_stack()` is the single free path shared by `task_exec` and `task_cleanup`; all four `task_exec` callers implement the image-destroyed contract.
 > - Downstream: closes TODO-11 §20's RCX-ordering item (the iret frame carried the pre-exec PEB); fork children carry an explicit `forked_shares_parent_image` origin.
 > - Canonical doc: `include/kernel/sched/task.h` documents `TASK_EXEC_IMAGE_DESTROYED` and `stack_pending_free`.
-> - Scope boundary: section stays `[/]` -- the four named defects shipped and are gate-verified, but the fault-injection checkpoint, guard-registry transactionality and staging-release ordering remain open items above. Unchecked `vmm_map_page` in the PEB/TEB allocators stays with TODO-11 §20; the PMM bitmap SMP lock with `D03 T03 §1`; per-exec private-image-frame reclamation with §20 here.
+> - Scope boundary: section stays `[/]` -- the four named defects and the guard-registry transactionality shipped and are gate-verified, but the fault-injection checkpoint and staging-release ordering remain open items above, alongside the cross-CPU coherence gap deferred to `D03 T07 §2`. Unchecked `vmm_map_page` in the PEB/TEB allocators stays with TODO-11 §20; the PMM bitmap SMP lock with `D03 T03 §1`; per-exec private-image-frame reclamation with §20 here.
 
 > **Note:** the deterministic ring-3 crash that surfaced these (a synchronous `SYS_EXEC` returning to its pre-exec RIP
 > when no timer tick landed) is FIXED and verified -- see `task_exec_take_pending_frame` in `src/kernel/sched/task.c`
@@ -670,19 +637,9 @@ Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
 
 ## 20. Page-Table Lifetime Across Reap + fork/exec
 
-A live task was observed executing against a REAPED task's PML4 whose frames had been recycled, panicking with
-`USER_ACCESS_VIOLATION`: free side `vmm_destroy_user_pml4` (`src/kernel/mm/vmm.c:1209`), reap side
-(`src/kernel/sched/task.c:3479`). Split out of §19 on 2026-07-28 -- same reap-versus-exec lifetime class, but a
-distinct decision and a distinct repro, so it is owned separately rather than bundled with §19's transactional work.
+A live task was observed executing against a REAPED task's PML4 whose frames had been recycled, panicking with `USER_ACCESS_VIOLATION`: free side `vmm_destroy_user_pml4` (`src/kernel/mm/vmm.c:1209`), reap side (`src/kernel/sched/task.c:3479`). Split out of §19 on 2026-07-28 -- same reap-versus-exec lifetime class, but a distinct decision and a distinct repro, so it is owned separately rather than bundled with §19's transactional work.
 
-**Status correction (2026-07-28, measured).** The filing claimed this was "the sole cause of the currently-red
-`Build Impossible OS` job". That is false. The red run (`051df5e0`) failed on **Run tooling regression pack** --
-`build_offload_sections` + `build_offload_type_specific` -- which `eb2af727` fixed by repairing the `_repo_root()`
-doubled-path bug that had silently disabled the gate; `build.yml` is green at `103a2db8` and after. **The repro no
-longer reproduces**: three consecutive `CI_PARITY=1 bash scripts/test.sh SUITE=quota QUIET=1` runs on
-`/usr/bin/qemu-system-x86_64` 8.2.2 with forced TCG -- the exact environment named below -- pass 3342 kernel + 16
-user-mode tests with zero `USER_ACCESS_VIOLATION`. Three green runs of a timing-sensitive race are NOT a fix, and
-no commit claims to have addressed the lifetime question, so the section stays open on the invariant, not the crash.
+**Status correction (2026-07-28, measured).** The filing claimed this was "the sole cause of the currently-red `Build Impossible OS` job". That is false. The red run (`051df5e0`) failed on **Run tooling regression pack** -- `build_offload_sections` + `build_offload_type_specific` -- which `eb2af727` fixed by repairing the `_repo_root()` doubled-path bug that had silently disabled the gate; `build.yml` is green at `103a2db8` and after. **The repro no longer reproduces**: three consecutive `CI_PARITY=1 bash scripts/test.sh SUITE=quota QUIET=1` runs on `/usr/bin/qemu-system-x86_64` 8.2.2 with forced TCG -- the exact environment named below -- pass 3342 kernel + 16 user-mode tests with zero `USER_ACCESS_VIOLATION`. Three green runs of a timing-sensitive race are NOT a fix, and no commit claims to have addressed the lifetime question, so the section stays open on the invariant, not the crash.
 
 - [ ] Decide which half of the race is wrong: whether reap may free a PML4 while a task still holds that CR3, or
       whether fork/exec can adopt a recycled one. The 2026-07-27 evidence does not distinguish them, and the fix differs
@@ -690,35 +647,23 @@ no commit claims to have addressed the lifetime question, so the section stays o
       must never be schedulable on a CR3 whose PML4 has been freed. Enforce it where it can be checked cheaply and
       assert it in a debug build, so a re-emergence names itself instead of arriving as a recycled-data instruction fetch
 - [ ] Original evidence, measured 2026-07-27: the transition ring records PID 12 at `cr3=0x16CD000 rsp=0xA6C4B0`; the
-      panic context carries the SAME CR3 and an RSP 16 bytes up the SAME stack, after `task: PID 12 reap cleanup` and
-      `sched: PID 13 -> entry 0x800000`. `RBP` little-endian reads `"PIPE-OK"` -- a pipe test's buffer, so the process
-      was fetching instructions out of recycled data
+      panic context carries the SAME CR3 and an RSP 16 bytes up the SAME stack, after `task: PID 12 reap cleanup` and `sched: PID 13 -> entry 0x800000`. `RBP` little-endian reads `"PIPE-OK"` -- a pipe test's buffer, so the process was fetching instructions out of recycled data
 - [ ] Repro as filed (no longer reproducing, see status correction): `CI_PARITY=1 bash scripts/test.sh SUITE=quota
-      QUIET=1` (selects `/usr/bin/qemu-system-x86_64` 8.2.2 + forced TCG), then grep the serial log for
-      `USER_ACCESS_VIOLATION` rather than waiting for the timeout. Only `test=1` ever reproduced it -- a plain 8.2.2
-      boot reaches `C:\>` and idles, so the smoke test reports green and proves nothing
+      QUIET=1` (selects `/usr/bin/qemu-system-x86_64` 8.2.2 + forced TCG), then grep the serial log for `USER_ACCESS_VIOLATION` rather than waiting for the timeout. Only `test=1` ever reproduced it -- a plain 8.2.2 boot reaches `C:\>` and idles, so the smoke test reports green and proves nothing
 - [ ] Do NOT close this by upgrading or pinning CI's QEMU. 8.2.2 was the TRIGGER, not the cause: the same kernel on
       10.2.1 and on KVM completed 25474 kernel + 16 user tests. It is a timing-sensitive race one emulator exposed, the
       exact class the bare-metal-first rule exists for
 - [ ] Every re-exec orphans the previous exec's private image frames: `vmm_remap_user_page` overwrites a PTE and
-      does not free the frame it displaced, so the second exec drops ~1 MiB of `PAGE_OWNED` frames the first exec
-      installed and `vmm_destroy_user_pml4` only reaches the newest set. Capture each old PTE's frame + owned bit
-      before the remap and free the displaced owned frames after it. Found by §19 round-2 adversarial review
+      does not free the frame it displaced, so the second exec drops ~1 MiB of `PAGE_OWNED` frames the first exec installed and `vmm_destroy_user_pml4` only reaches the newest set. Capture each old PTE's frame + owned bit before the remap and free the displaced owned frames after it. Found by §19 round-2 adversarial review
 - [ ] Two-exec lifecycle test: `pmm_get_free_frames()` across exec -> re-exec -> reap returns to baseline (today it
       drops by the image range per re-exec). Pairs with the kernel-stack reclamation §19 already closed
 - [ ] Reap-versus-exec barrier on SMP: `task_terminate_remote` publishes `TASK_DEAD` immediately while
-      `task_cleanup` treats `TASK_DEAD` as permission to free stacks, so another CPU could free `stack_base` or
-      `stack_pending_free` while `task_exec` still runs on it. Safe today only because the scheduler is
-      single-cursor. Needs a DYING -> QUIESCED transition acknowledged by every CPU before any stack is freed.
-      Found by §19 design review; §19 relies on the same assumption its existing free path already did
+      `task_cleanup` treats `TASK_DEAD` as permission to free stacks, so another CPU could free `stack_base` or `stack_pending_free` while `task_exec` still runs on it. Safe today only because the scheduler is single-cursor. Needs a DYING -> QUIESCED transition acknowledged by every CPU before any stack is freed. Found by §19 design review; §19 relies on the same assumption its existing free path already did
 - [ ] Unit test the reap/exec lifetime directly: a task must never be schedulable on a CR3 whose PML4 has been freed --
       assert the reaped PML4's frames are not reachable from any runnable thread before the PMM may hand them out
 - [ ] Commit: `"kernel: mm -- page-table lifetime across reap and fork/exec"`
 
-**Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a
-freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota
-suite and record the result either way -- a green run is evidence about the trigger, not about the invariant.
-Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
+**Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota suite and record the result either way -- a green run is evidence about the trigger, not about the invariant. Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
 
 ---
 

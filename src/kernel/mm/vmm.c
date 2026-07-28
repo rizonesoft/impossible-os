@@ -517,7 +517,16 @@ uint64_t vmm_query_flags(uintptr_t virt)
     return pt[pti] & ~PTE_ADDR_MASK;        /* flag bits only */
 }
 
-uintptr_t vmm_get_physical(uintptr_t virt)
+/* Walk the kernel tables for `virt`. Returns 1 and stores the translation in
+ * *phys_out when a mapping exists; returns 0 when the VA is not present.
+ *
+ * Presence and address are reported SEPARATELY because one return value cannot
+ * carry both: vmm_get_physical() answers 0 for "not mapped" AND for "mapped to
+ * physical frame 0". The guard-page teardown gate turns that answer into a
+ * decision to hand a frame back to the PMM, so it must not have to guess -- a
+ * present alias to frame 0 would otherwise read as absent and get silently
+ * overwritten with an identity mapping. */
+static int vmm_translate(uintptr_t virt, uintptr_t *phys_out, uint64_t *flags_out)
 {
     pte_t *pdpt, *pd, *pt;
     uint64_t pml4i, pdpti, pdi, pti;
@@ -536,7 +545,9 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     /* Check for 1 GiB huge page at PDPT level */
     if ((pdpt[pdpti] & VMM_FLAG_PRESENT) && (pdpt[pdpti] & VMM_FLAG_HUGE)) {
         uintptr_t gib_base = pdpt[pdpti] & ~GIB_ALIGN_MASK & PTE_ADDR_MASK;
-        return gib_base + (virt & GIB_ALIGN_MASK);
+        *phys_out = gib_base + (virt & GIB_ALIGN_MASK);
+        if (flags_out) *flags_out = pdpt[pdpti] & ~PTE_ADDR_MASK;
+        return 1;
     }
 
     pd = get_or_create_table(pdpt, pdpti, 0, 0);
@@ -544,8 +555,13 @@ uintptr_t vmm_get_physical(uintptr_t virt)
 
     /* Check for 2 MiB huge page at PD level */
     if (pd[pdi] & VMM_FLAG_HUGE) {
-        uintptr_t huge_base = pd[pdi] & PTE_ADDR_MASK;
-        return huge_base + (virt & 0x1FFFFF);   /* offset within 2 MiB page */
+        uintptr_t huge_base;
+        if (!(pd[pdi] & VMM_FLAG_PRESENT))
+            return 0;
+        huge_base = pd[pdi] & PTE_ADDR_MASK;
+        *phys_out = huge_base + (virt & 0x1FFFFF);  /* offset within 2 MiB page */
+        if (flags_out) *flags_out = pd[pdi] & ~PTE_ADDR_MASK;
+        return 1;
     }
 
     pt = get_or_create_table(pd, pdi, 0, 0);
@@ -554,41 +570,158 @@ uintptr_t vmm_get_physical(uintptr_t virt)
     if (!(pt[pti] & VMM_FLAG_PRESENT))
         return 0;
 
-    return (pt[pti] & PTE_ADDR_MASK) + offset;
+    *phys_out = (pt[pti] & PTE_ADDR_MASK) + offset;
+    if (flags_out) *flags_out = pt[pti] & ~PTE_ADDR_MASK;
+    return 1;
+}
+
+uintptr_t vmm_get_physical(uintptr_t virt)
+{
+    uintptr_t phys = 0;
+    return vmm_translate(virt, &phys, (uint64_t *)0) ? phys : 0;
+}
+
+/* Does this translation snapshot describe `page` mapped to ITSELF and
+ * kernel-writable? That is the exact condition a guarded frame must satisfy
+ * before it can go back to the PMM: identity mapping restored, writable so the
+ * next allocator's zero-fill does not fault, and User clear so a freed kernel
+ * frame is not left reachable from ring 3.
+ *
+ * It takes a SNAPSHOT rather than walking itself so a decision and the value it
+ * was made from cannot drift apart -- guard_page_lock does not serialize
+ * unrelated mappers, so every extra walk is another chance to decide on
+ * different evidence than it reports. */
+static int guard_map_is_kernel_identity(uintptr_t page, int present,
+                                        uintptr_t phys, uint64_t flags)
+{
+    if (!present || phys != page)
+        return 0;
+    if (!(flags & VMM_FLAG_PRESENT) || !(flags & VMM_FLAG_WRITABLE))
+        return 0;
+    return (flags & VMM_FLAG_USER) ? 0 : 1;
+}
+
+/* Walk-and-evaluate wrapper, for confirming the state left behind by a rewrite. */
+static int guard_va_is_kernel_identity(uintptr_t page)
+{
+    uintptr_t phys = 0;
+    uint64_t flags = 0;
+    int present = vmm_translate(page, &phys, &flags);
+
+    return guard_map_is_kernel_identity(page, present, phys, flags);
 }
 
 /* --- Guard page tracking -------------------------------------------------- */
 
-/* Track guard page ranges so the page fault handler can identify them.
- * Fixed-size table -- guard pages are allocated once at boot. */
-#define MAX_GUARD_PAGES 32
-
+/* Track guard page ranges so the page fault handler can identify them, and so
+ * vmm_uninstall_guard_page() knows which VAs it must restore before their
+ * frames go back to the PMM. Guard pages are NOT boot-only: every task_create
+ * and every task_exec installs one, so the table is live-mutated at runtime.
+ * Capacity (VMM_MAX_GUARD_PAGES) and its TASK_MAX relation live in vmm.h.
+ *
+ * Registration is FAILABLE and transactional: the slot is reserved BEFORE the
+ * PTE is cleared. The reverse order is the defect this replaces -- a saturated
+ * table silently dropped the entry AFTER vmm_install_guard_page() had already
+ * unmapped the page and returned success, uninstall then found no entry and
+ * skipped the remap, and the caller handed a still-unmapped frame back to the
+ * PMM; the next allocator writing through its identity address faulted in
+ * kernel mode. heap.c's heap-end guard already documents the fail-before-
+ * clearing contract this restores.
+ *
+ * SMP: guard_page_lock spans the WHOLE install/uninstall transaction -- the
+ * registry slot AND the page-table work -- not merely the table. Two CPUs
+ * installing guards on different frames inside the same unsplit 2 MiB region
+ * would otherwise each observe the huge PDE, build their own page table, and
+ * the later PDE publication would drop the earlier caller's cleared PTE: both
+ * calls return success, both entries stay registered, and one stack is silently
+ * unguarded with a page-table frame leaked. Doing the split and the clear under
+ * one lock removes that lost update BETWEEN GUARD INSTALLS. It does not make
+ * guard installs atomic against unrelated mappers -- the VMM has no global
+ * page-table lock (see the note in vmm_protect_range) -- which is tracked with
+ * the TLB-shootdown gap in 03-memory-concurrency/TODO-07-smp-phase2.
+ *
+ * guard_page_lookup() runs inside the #PF
+ * handler -- a panic-context path that must never BLOCK on a lock some faulting
+ * context might already hold (kernel-code-quality Gate 4) -- so it acquires the
+ * same lock with spin_trylock and simply reports no label if the acquire fails.
+ * Non-blocking gives both properties at once: no deadlock, and no torn read.
+ * An unlocked scan would have neither -- removal overwrites a slot's addr and
+ * label as two independent stores, so an unlocked reader can pair one entry's
+ * address with another's label and mislabel the crash it is there to explain.
+ * Exception vectors are 0x8E interrupt gates (idt.c), so IRQs are already off
+ * in the handler and the scan cannot be preempted into a same-CPU mutator. */
 struct guard_page_entry {
     uintptr_t addr;
     const char *label;
 };
 
-static struct guard_page_entry guard_pages[MAX_GUARD_PAGES];
+static struct guard_page_entry guard_pages[VMM_MAX_GUARD_PAGES];
 static uint32_t guard_page_count;
+static spinlock_t guard_page_lock = SPINLOCK_INIT;
 
-static void guard_page_register(uintptr_t addr, const char *label)
+/* Reserve a slot for `page`. Returns 0 on success, -1 when the table is full.
+ * Caller holds guard_page_lock. */
+static int guard_page_register_locked(uintptr_t page, const char *label)
 {
-    if (guard_page_count < MAX_GUARD_PAGES) {
-        guard_pages[guard_page_count].addr = addr & ~((uintptr_t)0xFFF);
-        guard_pages[guard_page_count].label = label;
-        guard_page_count++;
+    if (guard_page_count >= VMM_MAX_GUARD_PAGES)
+        return -1;
+    guard_pages[guard_page_count].addr = page;
+    guard_pages[guard_page_count].label = label;
+    guard_page_count++;
+    return 0;
+}
+
+/* Release the slot for `page`. Returns 1 if an entry was removed, 0 if `page`
+ * was not registered. Caller holds guard_page_lock. */
+static int guard_page_unregister_locked(uintptr_t page)
+{
+    uint32_t i;
+
+    for (i = 0; i < guard_page_count; i++) {
+        if (guard_pages[i].addr != page)
+            continue;
+        /* Swap-remove: move the tail into the hole, then retire the tail. */
+        if (i != guard_page_count - 1)
+            guard_pages[i] = guard_pages[guard_page_count - 1];
+        guard_page_count--;
+        return 1;
     }
+    return 0;
+}
+
+uint32_t vmm_guard_pages_free(void)
+{
+    uint64_t irq_flags;
+    uint32_t n;
+
+    spin_lock_irqsave(&guard_page_lock, &irq_flags);
+    n = guard_page_count;
+    spin_unlock_irqrestore(&guard_page_lock, irq_flags);
+    return (n < VMM_MAX_GUARD_PAGES) ? (VMM_MAX_GUARD_PAGES - n) : 0;
 }
 
 static const char *guard_page_lookup(uintptr_t fault_addr)
 {
     uintptr_t page = fault_addr & ~((uintptr_t)0xFFF);
-    uint32_t i;
-    for (i = 0; i < guard_page_count; i++) {
-        if (guard_pages[i].addr == page)
-            return guard_pages[i].label;
+    const char *label = (const char *)0;
+    uint32_t i, n;
+
+    /* Non-blocking by construction -- see the block comment above (Gate 4).
+     * A failed acquire means a mutator holds the table right now; the fault is
+     * then reported with the generic PAGE_FAULT text rather than a label that
+     * might belong to a different guard. */
+    if (!spin_trylock(&guard_page_lock))
+        return (const char *)0;
+
+    n = guard_page_count;
+    for (i = 0; i < n; i++) {
+        if (guard_pages[i].addr == page) {
+            label = guard_pages[i].label;
+            break;
+        }
     }
-    return (const char *)0;
+    spin_tryunlock(&guard_page_lock);
+    return label;
 }
 
 /* --- Page Fault Handler (ISR 14) ---
@@ -1469,44 +1602,142 @@ int vmm_split_huge_page(uintptr_t virt)
 
 int vmm_install_guard_page(uintptr_t virt, const char *label)
 {
-    /* Split the containing 2 MiB huge page if needed */
-    if (vmm_split_huge_page(virt) != 0)
+    uintptr_t page = virt & ~((uintptr_t)0xFFF);
+    uint64_t irq_flags;
+    int full = 0;
+    int split_failed = 0;
+
+    /* The split MUST happen under the lock, not before it. vmm_split_huge_page
+     * fills its new page table from the ORIGINAL huge mapping and then
+     * publishes the PDE unconditionally, without re-checking whether another
+     * CPU published one meanwhile. So a split that starts before a competing
+     * install and publishes after it would restore the identity PTE that
+     * install had already cleared: the earlier caller returns success, stays
+     * registered, and runs on a silently unguarded stack. Serializing the split
+     * and the clear together is what makes an install atomic against another
+     * install.
+     *
+     * The cost is that this critical section can allocate a PMM frame, reload
+     * CR3, and -- only when demoting a 1 GiB page, which happens at most once
+     * per region -- klog while IRQs are off. That is the accepted trade: a rare
+     * bounded latency spike against a silently missing guard page. Shortening
+     * it needs a split that preallocates outside the lock and publishes under
+     * one, which changes vmm_split_huge_page for every caller and belongs with
+     * the VMM-wide page-table lock (03-memory-concurrency/TODO-07-smp-phase2). */
+    spin_lock_irqsave(&guard_page_lock, &irq_flags);
+    if (guard_page_register_locked(page, label) != 0) {
+        full = 1;
+    } else if (vmm_split_huge_page(page) != 0) {
+        guard_page_unregister_locked(page);
+        split_failed = 1;
+    } else {
+        /* Clear the PTE to make the page not-present */
+        vmm_unmap_page(page, 0);
+    }
+    spin_unlock_irqrestore(&guard_page_lock, irq_flags);
+
+    /* Serial output never happens under the lock (Gate 2). */
+    if (full) {
+        klog(LOG_WARN, "mm",
+             "guard table full (%u entries) -- refusing guard at %p (%s)",
+             (uint64_t)VMM_MAX_GUARD_PAGES, (void *)page, label);
         return -1;
-
-    /* Clear the PTE to make the page not-present */
-    vmm_unmap_page(virt, 0);
-
-    guard_page_register(virt, label);
+    }
+    if (split_failed) {
+        klog(LOG_WARN, "mm", "guard install: huge-page split failed at %p (%s)",
+             (void *)page, label);
+        return -1;
+    }
     return 0;
 }
 
 int vmm_uninstall_guard_page(uintptr_t virt)
 {
     uintptr_t page = virt & ~((uintptr_t)0xFFF);
-    uint32_t i;
-    int found = 0;
+    uintptr_t phys = 0;
+    uint64_t flags = 0;
+    uint64_t irq_flags;
+    int was_registered;
+    int present;
+    int aliased = 0;
+    int repaired = 0;
+    int rc;
 
-    /* Remove from the guard table (compact-on-delete to keep lookups O(N)
-     * tight). If `virt` is not registered, this is a no-op success -- the
-     * caller may legitimately call us on a page that was never guarded
-     * (e.g. task_create_user kernel stacks have no guard). */
-    for (i = 0; i < guard_page_count; i++) {
-        if (guard_pages[i].addr == page) {
-            uint32_t j;
-            for (j = i; j + 1 < guard_page_count; j++)
-                guard_pages[j] = guard_pages[j + 1];
-            guard_page_count--;
-            found = 1;
-            break;
-        }
+    /* Virtual page 0 is never guarded, and accepting it would make the identity
+     * test below (phys == page) trivially true for a zeroed answer. */
+    if (!page)
+        return -1;
+
+    spin_lock_irqsave(&guard_page_lock, &irq_flags);
+    was_registered = guard_page_unregister_locked(page);
+
+    /* Success MUST mean "the IDENTITY mapping is back" -- vmm_get_physical
+     * returning exactly `page` -- not merely "the table holds no entry" and not
+     * merely "something is present here". This function is the last gate before
+     * the caller hands `page` to the PMM, and it answers two distinct failures:
+     *
+     *   - Not present: the original code returned 0 for any unregistered VA
+     *     without ever reading the PTE, so a dropped registration read as a
+     *     clean uninstall and the caller freed a frame whose identity mapping
+     *     was still cleared. Failable registration closes that at the source;
+     *     restoring here is the second layer.
+     *   - Present but ALIASED to a different frame: the VA now belongs to
+     *     someone else, so freeing `page` would hand out a frame whose identity
+     *     address writes through another owner's memory. Never report success.
+     *
+     * Presence comes from vmm_translate rather than vmm_get_physical: the
+     * latter's 0 cannot distinguish an absent PTE from a present alias to
+     * physical frame 0, and mistaking that alias for "absent" would overwrite
+     * someone else's mapping and then authorize the free.
+     *
+     * A registered guard always has its leaf REWRITTEN, even when the address
+     * already reads back right: the mapping must also be writable and
+     * kernel-only before the frame is reusable, and a same-frame mapping left
+     * read-only or user-accessible by some other path would otherwise be waved
+     * through. An unregistered VA is only INSPECTED -- normalizing there would
+     * rewrite a mapping this function does not own, and the boot identity map
+     * legitimately carries User on its 2 MiB pages. */
+    present = vmm_translate(page, &phys, &flags);
+
+    if (present && phys != page) {
+        aliased = 1;
+        rc = -1;
+    } else if (was_registered || !present) {
+        /* Restore the identity mapping at `page`. The frame physically backing
+         * the VA in the boot identity map is `page` itself: Present + Writable,
+         * kernel-only (no User bit). A registered guard is rewritten even when
+         * the address already reads back right, because the permissions may
+         * not; an absent mapping with no table entry is repaired rather than
+         * freed unmapped. */
+        repaired = !was_registered;
+        rc = (vmm_map_page(page, page,
+                           VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE) == 0 &&
+              guard_va_is_kernel_identity(page)) ? 0 : -1;
+    } else {
+        /* Never guarded and already present: INSPECT, never rewrite -- this
+         * mapping belongs to someone else, and the boot identity map carries
+         * User on its 2 MiB pages. Judge it on the snapshot already taken, and
+         * fail CLOSED: a read-only or user-accessible leaf is not safe to hand
+         * to the PMM, so refuse rather than authorize the free. With failable
+         * registration this branch is only reachable as a repair case, so the
+         * refusal costs a logged frame leak, never a working teardown. */
+        rc = guard_map_is_kernel_identity(page, present, phys, flags) ? 0 : -1;
     }
-    if (!found)
-        return 0;
+    spin_unlock_irqrestore(&guard_page_lock, irq_flags);
 
-    /* Restore identity mapping at `virt`. The frame physically backing
-     * the VA in the boot identity map is `virt` itself. We re-map it as
-     * Present + Writable, kernel-only (no User bit). */
-    return vmm_map_page(page, page, VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE);
+    if (aliased)
+        klog(LOG_ERROR, "mm",
+             "guard uninstall: %p maps a DIFFERENT frame -- refusing to report it freeable",
+             (void *)page);
+    else if (rc != 0)
+        klog(LOG_ERROR, "mm",
+             "guard uninstall: %p could not be restored to its identity mapping",
+             (void *)page);
+    else if (repaired)
+        klog(LOG_WARN, "mm",
+             "guard uninstall: %p was unmapped with no table entry -- restored",
+             (void *)page);
+    return rc;
 }
 
 /* --- 1 GiB huge page support --- */

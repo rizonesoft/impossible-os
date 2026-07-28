@@ -112,6 +112,23 @@ if [ -f "$GATE" ]; then
     fi
 fi
 
+# TODO item-length backstop. `todo_item_line_length.py` is a PreToolUse hook and
+# it works -- but it only sees Edit/Write, and both the operator and the
+# unattended runner routinely write TODO content through a `python3` heredoc or
+# rewrite script executed via Bash, which no PreToolUse hook observes. Measured
+# 2026-07-28: five over-cap items landed AFTER that hook shipped, in exactly the
+# two commits that used the script path (8ac3c976 operator, c64bec7c runner).
+# Everything reaches a commit, so this is the choke point that closes the bypass.
+# Only ADDED lines are judged -- the ~1,407 legacy violations are left alone.
+TODO_STAGED="$REPO_ROOT/scripts/todo-staged-check.py"
+if [ -f "$TODO_STAGED" ]; then
+    if ! python3 "$TODO_STAGED"; then
+        echo -e "\033[31mPre-commit: over-cap TODO checklist item(s) in this commit\033[0m"
+        echo "  Opt-out (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ..."
+        exit 1
+    fi
+fi
+
 echo ""
 echo -e "\033[32mPre-commit lint passed\033[0m"
 exit 0

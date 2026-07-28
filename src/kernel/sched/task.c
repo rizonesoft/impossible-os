@@ -731,7 +731,22 @@ int task_create(task_entry_t entry, const char *name)
                 PsDereferencePrimaryToken(inherited_token);
             return -1;
         }
-        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
+        if (vmm_install_guard_page(stack_base,
+                                   "GUARD: kernel task stack overflow") != 0) {
+            /* Refuse rather than run a task on an unguarded kernel stack: a
+             * silent stack overflow corrupts whatever frame sits below it,
+             * while a refused task_create is visible and recoverable. The
+             * install failed before touching any PTE, so the frames are still
+             * mapped and free normally. */
+            klog(LOG_ERROR, "sched",
+                 "task_create: no guard page available for kernel stack");
+            pmm_free_contiguous(stack_base, stack_pages + 1);
+            quota_task_teardown(&tasks[pid]);  /* roll back the early quota init */
+            ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
+            if (inherited_token)
+                PsDereferencePrimaryToken(inherited_token);
+            return -1;
+        }
         stack = (uint8_t *)(stack_base + 4096);  /* usable stack after guard */
     }
 
@@ -2719,6 +2734,16 @@ _Static_assert(EXEC_AUXV_PAIRS * 16u + 24u == ARGV_FRAME_RESERVE,
  * Extracted from task_cleanup so the exec stack-reclamation paths free by the
  * same rules -- a second copy of this logic is exactly how the 2026-04-20 bug
  * would come back. */
+/* Guard-table capacity vs. what the task table can demand: every live task
+ * holds one guard under its kernel stack, a task mid-exec holds a second under
+ * the parked stack it has not released yet (task.stack_pending_free), and every
+ * user thread holds one under its own per-thread kernel stack (uthread_create).
+ * The remainder covers the fixed guards -- heap end, IST stacks, AP stacks,
+ * user ELF range. Undersizing this is not a soft failure: installs start
+ * refusing, and task_create/uthread_create refuse with them. */
+_Static_assert(VMM_MAX_GUARD_PAGES >= (TASK_MAX * (THREAD_MAX + 2)) + 32,
+               "guard table must hold every task and thread stack guard plus the fixed guards");
+
 #ifdef KERNEL_TESTS
 /* Test seam: the unit test must exercise THIS function, not a copy of its
  * arithmetic, or a divergence between the two is exactly what it fails to
@@ -2740,7 +2765,17 @@ static void task_free_kernel_stack(uint8_t *stack_base)
         uintptr_t base = (uintptr_t)stack_base;
         uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
         uint32_t p;
-        vmm_uninstall_guard_page(base - 4096);
+        if (vmm_uninstall_guard_page(base - 4096) != 0) {
+            /* The guard VA is still not present, so the frame under it cannot
+             * be handed back: the next allocator to write through its identity
+             * address would fault in kernel mode -- exactly the 2026-04-20
+             * failure this helper exists to prevent. Leak the run and say so;
+             * a bounded leak is recoverable, a poisoned free list is not. */
+            klog(LOG_ERROR, "sched",
+                 "task: leaking kernel stack at %p -- guard page %p not restored",
+                 (void *)base, (void *)(base - 4096));
+            return;
+        }
         for (p = 0; p < pages; p++)
             pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
     }
@@ -2918,7 +2953,19 @@ int task_exec(const uint8_t *data, uint64_t size)
             if (argv_addrs) kfree(argv_addrs);
             return -1;
         }
-        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
+        if (vmm_install_guard_page(stack_base,
+                                   "GUARD: kernel task stack overflow") != 0) {
+            /* Pre-commit refusal: the image is still the task's own, so this
+             * returns -1 to a caller that can still use it. Failing here is
+             * the point -- past the commit point there is no way to decline an
+             * unguarded stack, and a task mid-exec is exactly the case that
+             * holds two guards at once. */
+            klog(LOG_ERROR, "sched",
+                 "task_exec: no guard page available for replacement kernel stack");
+            pmm_free_contiguous(stack_base, stack_pages + 1);
+            if (argv_addrs) kfree(argv_addrs);
+            return -1;
+        }
         new_kstack = (uint8_t *)(stack_base + 4096);
     }
 
@@ -4437,6 +4484,30 @@ static void pmm_free_pages(uintptr_t phys, uint32_t count)
         pmm_free_frame(phys + (uintptr_t)i * 4096);
 }
 
+/* Free a per-thread kernel stack run whose FIRST page is the guard.
+ *
+ * The uthread run is [guard][stack pages...] with kernel_stack_base pointing at
+ * the GUARD, unlike a task-level stack (task_free_kernel_stack) whose base is
+ * the first usable page. Both obey the same rule: the guard's identity PTE must
+ * be restored before any frame in the run goes back to the PMM, or the next
+ * allocator that writes through that address faults in kernel mode. Every
+ * uthread_create rollback and thread_free_stacks route through here so the rule
+ * exists once -- five open-coded copies of the free loop is how the 2026-04-20
+ * defect survived on this path after the task-level one was fixed. */
+static void uthread_free_kernel_stack(uintptr_t kstack_phys, uint32_t kstack_pages)
+{
+    if (!kstack_phys || !kstack_pages)
+        return;
+
+    if (vmm_uninstall_guard_page(kstack_phys) != 0) {
+        klog(LOG_ERROR, "sched",
+             "uthread: leaking kernel stack at %p -- guard page not restored",
+             (void *)kstack_phys);
+        return;
+    }
+    pmm_free_pages(kstack_phys, kstack_pages);
+}
+
 int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
 {
     uint32_t task_idx = current_task;
@@ -4480,15 +4551,22 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     }
     kstack = (uint8_t *)kstack_phys;
 
-    /* Guard page at bottom of kernel stack */
-    vmm_install_guard_page(kstack_phys, "uthread kernel stack");
+    /* Guard page at bottom of kernel stack. Refuse the thread rather than run
+     * ring-3 code on an unguarded kernel stack; the install fails before
+     * touching any PTE, so the run is still mapped and frees normally. */
+    if (vmm_install_guard_page(kstack_phys, "uthread kernel stack") != 0) {
+        klog(LOG_ERROR, "sched",
+             "uthread_create: no guard page available for kernel stack");
+        pmm_free_pages(kstack_phys, kstack_pages);
+        return -1;
+    }
 
     /* Allocate per-thread USER stack (PMM: 16 KiB) */
     ustack_phys = pmm_alloc_contiguous(ustack_pages);
     if (!ustack_phys) {
         klog(LOG_ERROR, "sched",
              "uthread_create: cannot allocate user stack");
-        pmm_free_pages(kstack_phys, kstack_pages);
+        uthread_free_kernel_stack(kstack_phys, kstack_pages);
         return -1;
     }
 
@@ -4503,7 +4581,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
         klog(LOG_ERROR, "sched",
              "uthread_create: PID %u has no per-process PML4",
              (uint64_t)t->pid);
-        pmm_free_pages(kstack_phys, kstack_pages);
+        uthread_free_kernel_stack(kstack_phys, kstack_pages);
         pmm_free_pages(ustack_phys, ustack_pages);
         return -1;
     }
@@ -4526,7 +4604,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
                 for (j = i; j < ustack_pages; j++)
                     pmm_free_frame(ustack_phys + (uintptr_t)j * 4096);
             }
-            pmm_free_pages(kstack_phys, kstack_pages);
+            uthread_free_kernel_stack(kstack_phys, kstack_pages);
             return -1;
         }
     }
@@ -4547,7 +4625,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
                     vmm_unmap_user_page(t->cr3,
                         ustack_va + (uintptr_t)j * 4096);
             }
-            pmm_free_pages(kstack_phys, kstack_pages);
+            uthread_free_kernel_stack(kstack_phys, kstack_pages);
             return -1;
         }
         t->threads[tid].teb = (void *)thread_teb;
@@ -4723,12 +4801,13 @@ void thread_exit(int32_t status)
  * Otherwise, the thread's stack_base was kmalloc'd -- use kfree. */
 static void thread_free_stacks(struct thread *thr)
 {
-    /* PMM-allocated kernel stack (per-thread, for user threads) */
+    /* PMM-allocated kernel stack (per-thread, for user threads). The run's
+     * first page is the guard, so it goes back through the shared helper that
+     * restores the identity PTE first -- freeing it raw left the guard's entry
+     * in the table forever AND handed an unmapped frame to the PMM. */
     if (thr->kernel_stack_pages > 0 && thr->kernel_stack_base) {
-        uint32_t i;
-        for (i = 0; i < thr->kernel_stack_pages; i++)
-            pmm_free_frame((uintptr_t)thr->kernel_stack_base +
-                           (uintptr_t)i * 4096);
+        uthread_free_kernel_stack((uintptr_t)thr->kernel_stack_base,
+                                  thr->kernel_stack_pages);
         thr->kernel_stack_base = (uint8_t *)0;
         thr->kernel_stack_pages = 0;
     }
