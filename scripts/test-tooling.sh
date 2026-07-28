@@ -3757,6 +3757,18 @@ fi
 # The boot-validation matrix must stay wired and must keep covering BOTH engines
 # at BOTH cpu counts. The gate it replaces had silently run one CPU on one engine
 # for its whole life, which is how an SMP regression shipped green.
+# .claude/settings.json wires every hook, so an edit that neuters one must run
+# the runner suite and re-arm the canary. It was in NEITHER manifest until
+# 2026-07-28, which meant "turn this gate off" was a silent, ungated change.
+_cp_full=$(printf '%s\n' '.claude/settings.json' | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" 2>/dev/null)
+_cp_flow=$(printf '%s\n' '.claude/settings.json' | bash "$REPO_ROOT/scripts/overnight/control-plane-match.sh" --flow-critical 2>/dev/null)
+if [ -n "$_cp_full" ] && [ -n "$_cp_flow" ]; then
+    t_pass "settings_json_control_plane  wiring file is manifest + flow-critical"
+else
+    t_fail "settings_json_control_plane  settings.json escapes a control-plane gate" \
+           "full='$_cp_full' flow='$_cp_flow'"
+fi
+
 if [ -x "$REPO_ROOT/scripts/test-smoke-matrix.sh" ]; then
     t_pass "smoke_matrix_present  scripts/test-smoke-matrix.sh is executable"
 else

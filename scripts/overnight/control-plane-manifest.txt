@@ -31,6 +31,24 @@
 .claude/skills/overnight-sequencer/
 scripts/overnight/
 
+# The file that WIRES every hook below. Added 2026-07-28 after verifying it was
+# in NEITHER manifest: `printf '.claude/settings.json' | control-plane-match.sh`
+# returned nothing, with or without --flow-critical. The manifest listed ten
+# individual hook FILES but not the wiring, so an edit that neuters any of them
+# ran the runner suite zero times and left the canary stamp valid.
+#
+# Not hypothetical: commit a1c3802b disabled a live PreToolUse BLOCK hook by
+# deleting five lines from this file. It happened to also touch the hook itself,
+# which is the only reason the hook audit saw it -- a settings-only change, the
+# natural shape for "turn this gate off", would have passed silently. The same
+# shape can raise a timeout, swap a matcher, or reorder a gate chain.
+#
+# Deliberately NOT added to control-plane-deterministic.txt. scripts/audit-hooks.sh
+# already catches an undocumented hook, but "a gate was silently unwired" is
+# precisely the failure an attended canary exists to notice, so this stays
+# flow-critical by the default-conservative rule above.
+.claude/settings.json
+
 # Phase machine, oracle, status brief, edit preflight (guard hooks the run relies on)
 .claude/hooks/run_phase_guard.py
 .claude/hooks/sequencer_triage.py
