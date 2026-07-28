@@ -31,6 +31,18 @@ Every item below was observed live on the attended canary run of 2026-07-28 (arm
 
 ---
 
+## Gates that passed while the image was broken
+
+- [ ] **A section shipped `[x]` claiming "SMOKE TEST PASSED" and the image FATALs 2.5s later. Both smoke markers precede the crash.**
+  Reported by the operator 2026-07-28 from a WHPX boot of the post-canary image (`main@238c49f6`). The system halts launching `cmd.exe`: `[CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0 (task.teb=0x7ffdb000 thread.teb=0x7ffdb000)` followed by `[**] FATAL -- system halted`. That is a boot-to-userspace failure, not a degraded boot.
+  **Why every gate was green.** `scripts/test-smoke.sh` PASSes on two sentinels, "Boot complete in" and the `C:` prompt. In the failing log the ordering is: `22.640 Boot complete in 14.860s`, `24.570 Command Prompt window opened`, `25.170 CRIT ... FATAL`. Both sentinels are satisfied roughly 2.5 seconds BEFORE the fatal, so the smoke test observes a healthy prefix of a run that then dies. TODO-21 section 19 therefore shipped `[x]` with a verification stamp citing a passing smoke test, truthfully, against a test that cannot see the failure.
+  **The smoke test's own contract is the bug.** Its stated purpose in CLAUDE.md is to prove "the image actually boots to userspace"; the marker it uses proves only that the kernel reached a banner. `cmd.exe` is the first ring-3 process, so a crash there is exactly the failure the test exists to catch, and it lands after the sentinel. Fix directions: require the shell to survive N seconds past the prompt (the run already waits 3s for log flush, so the wall-clock cost is near zero); treat any `[CRIT]` / `FATAL --` / `system halted` line ANYWHERE in the captured log as a hard FAIL regardless of markers; and assert the log ENDS cleanly rather than merely contains the sentinels.
+  **Not a theoretical gap -- it cost a real regression.** Section 19's commits touched the guarded path directly: `c64bec7c` changed 5 `kernel_gs_base` lines and `1bed1fdc` another 6. The CRIT guard itself is old (`cd77b635`, 2026-04-22), so this is a pre-existing invariant newly violated, not a newly added check. The run's own review even reasoned about the window ("a tick in that window switches the task in with `kernel_gs_base == 0`") and shipped anyway.
+  **Canary implication, recorded rather than quietly dropped:** the 2026-07-28 canary stamp (`2454518f`) cites this section ship as its evidence. The ship was real and satisfied every gate that exists; the gates were insufficient. Whether the stamp should be re-recorded once the kernel defect is fixed is an operator decision -- flagged here so that it IS a decision and not an oversight.
+  **Kernel-side owner required:** the `kernel_gs_base=0` defect is kernel work, not runner work, and must be reopened against `todo/02-kernel-core/TODO-21-process-model-extensions.md` section 19 (or a successor section) with this WHPX log attached. This item owns only the GATE hole.
+
+---
+
 ## Control plane
 
 - [ ] **Control plane: `.claude/settings.json` is in NEITHER manifest, so a hook can be disabled with no gate firing.**
