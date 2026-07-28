@@ -243,8 +243,8 @@ def format_block(title: str, entries: list[tuple[str, int, str]], name_width: in
 def render(syscalls, ssdt, ntstatus, abi_hash: int) -> str:
     hash_block = (
         '/* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */\n'
-        '/* Hash over the sorted tuple of (SYS_*, SSDT_*, TEB offsets, KUSD\n'
-        ' * offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user\n'
+        '/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, TEB offsets,\n'
+        ' * KUSD offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user\n'
         ' * crt0 calls that syscall and aborts with EX_ABI_MISMATCH = 0x42 on\n'
         ' * disagreement. A kernel-side renumber that slipped through review\n'
         ' * but skipped this generator surfaces at process start, not at the\n'

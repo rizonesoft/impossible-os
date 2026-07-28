@@ -111,8 +111,8 @@
 #define STATUS_ACCESS_DENIED             0xC0000022
 
 /* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */
-/* Hash over the sorted tuple of (SYS_*, SSDT_*, TEB offsets, KUSD
- * offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
+/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, TEB offsets,
+ * KUSD offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
  * crt0 calls that syscall and aborts with EX_ABI_MISMATCH = 0x42 on
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the

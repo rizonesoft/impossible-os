@@ -696,6 +696,15 @@ static void test_fork_pml4_partial_alloc_is_net_zero(void)
         pmm_alloc_fail_countdown_clear();
         after = pmm_get_free_frames();
 
+        /* The countdown is PER-CPU, not per-call: an unrelated allocation on
+         * this CPU between the arm and the call (a DPC drained on a timer
+         * tick, a preempting task) consumes it and the create SUCCEEDS. That
+         * is a mis-timed run rather than a defect in the code under test, but
+         * it must not LEAK the four frames it just took -- destroy them before
+         * asserting, so a flake stays a flake. */
+        if (pml4)
+            vmm_destroy_user_pml4(pml4);
+
         TEST_ASSERT_EQ((uint64_t)pml4, 0ULL,
                        "vmm_create_user_pml4 fails when a frame is denied");
         TEST_ASSERT_EQ(after, before,

@@ -3045,11 +3045,14 @@ int task_exec(const uint8_t *data, uint64_t size,
      * Without one, the isolation remap below is skipped (it keys off cr3) and
      * exec_load writes the new binary through identity mappings still shared
      * with the parent, overwriting the parent's code. Since 2026-07-28
-     * task_fork fails the fork CLOSED when vmm_create_user_pml4 hits OOM, so a
-     * published fork child always has its own cr3 and this check no longer has
-     * a reachable producer. It is retained as a backstop: the cost is one
-     * predictable-branch compare on the exec path, and the failure it guards
-     * against is one process silently overwriting another's code. */
+     * task_fork fails the fork CLOSED when vmm_create_user_pml4 hits OOM, so
+     * FORK no longer produces this state and the check is a backstop there.
+     * It is NOT dead: task_create_user still degrades to cr3 = 0 with a
+     * LOG_WARN, and while that path clears forked_shares_parent_image (so it
+     * does not reach THIS branch), the wider class of published tasks with no
+     * isolated address space is not yet closed. Keeping the compare costs one
+     * predictable branch on the exec path; what it guards against is one
+     * process silently overwriting another's code. */
     if (tasks[pid].forked_shares_parent_image && !tasks[pid].cr3) {
         klog(LOG_ERROR, "sched",
              "task_exec: PID %u is a fork child with no isolated CR3 "
@@ -5220,6 +5223,17 @@ static const uint32_t s_fault_site_owner[FAULT_SITE_MAX + 1] = {
     [FAULT_SITE_PEB_FRAMES]          = FI_ALLOC_PMM,
     [FAULT_SITE_FORK_CHILD_PML4]     = FI_ALLOC_PMM,
 };
+
+/* Layer 1 for the site enum: appending a FAULT_SITE_* id without bumping
+ * FAULT_SITE_MAX would size this table one short, and the new id would then
+ * read owner 0 -- which fails CLOSED (fault_site_arm_set refuses a tag that
+ * matches no allocator) but silently, so the site would look armable in
+ * review and never fire. Pin the highest id to the bound instead; a new site
+ * must update BOTH lines, and forgetting is a build error rather than a test
+ * that quietly proves nothing. */
+_Static_assert(FAULT_SITE_FORK_CHILD_PML4 == FAULT_SITE_MAX,
+               "append a FAULT_SITE_* id and bump FAULT_SITE_MAX together, "
+               "then give it a row in s_fault_site_owner[]");
 
 uint32_t fault_site_owner(uint32_t site)
 {
