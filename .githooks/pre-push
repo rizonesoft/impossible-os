@@ -104,6 +104,31 @@ if [ -f "$CP_MATCH" ]; then
   fi
 fi
 
+# True when an unattended run is LIVE and has uncommitted work in the tree.
+#
+# Both halves are required. A run that is live but between sections leaves a
+# clean tree, and the gate can verify the commit correctly then -- refusing
+# would be pure friction. It is only when foreign work is IN the tree that a
+# build here stops testing what is being pushed.
+#
+# Liveness is probed by trying to take the launcher's flock, not by testing
+# that the file exists: `.claude/overnight/launch.lock` outlives a disarm, so
+# existence alone would refuse every push forever after the first run.
+_run_owns_tree() {
+  local root="$1" active=0
+  local lock="$root/.claude/overnight/launch.lock"
+  local state="$root/.claude/state/sequencer-run.json"
+  if [ -f "$lock" ] && command -v flock >/dev/null 2>&1; then
+    flock -n "$lock" true 2>/dev/null || active=1     # cannot take it => held
+  fi
+  if [ "$active" = "0" ] && [ -f "$state" ]; then
+    grep -q '"active"[[:space:]]*:[[:space:]]*true' "$state" 2>/dev/null && active=1
+  fi
+  [ "$active" = "1" ] || return 1
+  [ -n "$(git -C "$root" status --porcelain 2>/dev/null | head -1)" ] || return 1
+  return 0
+}
+
 # ---- REQUIRED CI-parity gate -------------------------------------------------
 #
 # Runs the unit suite on the engine CI actually uses -- the distro apt QEMU with
@@ -149,6 +174,41 @@ if root:
             "head_sha": head,
         }) + "\n")
 PYSKIP
+elif [ "${OVERNIGHT_SEQUENCER_RUN:-}" != "1" ] && _run_owns_tree "$REPO_ROOT"; then
+  # OPERATOR PUSHING WHILE AN UNATTENDED RUN HOLDS THE TREE (2026-07-28).
+  #
+  # The gate compiles the WORKING TREE, not the commit being pushed. With a
+  # section half-written in it the build fails on the RUN's in-flight code and
+  # the operator sees `[FAIL] Build failed` naming their own push -- a
+  # markdown-only commit was refused exactly this way. Two things were wrong
+  # with that: the message blamed the wrong change, and when the run's in-flight
+  # code HAPPENS to compile the gate passes while having verified something
+  # other than what is being pushed.
+  #
+  # Refusing here (rather than skipping) keeps the gate's guarantee intact --
+  # nothing unverified leaves the machine -- while making the reason legible
+  # and the exits obvious.
+  #
+  # THE RUN ITSELF PUSHES at every section ship, so exempting it is
+  # load-bearing, not a nicety: without the OVERNIGHT_SEQUENCER_RUN check this
+  # branch would refuse the run's own ship pushes and wedge it at the first
+  # section. Same discriminator run_phase_guard.is_headless() uses.
+  echo -e "\033[33m[pre-push] REFUSED: an overnight run owns this working tree.\033[0m"
+  echo "  The CI-parity gate compiles the WORKING TREE, and the run has work in"
+  echo "  flight, so a build here tests the run's half-written code, not your"
+  echo "  commit. A failure would name your push and mean nothing."
+  echo ""
+  echo "  In flight right now:"
+  git -C "$REPO_ROOT" status --porcelain 2>/dev/null | head -6 | sed 's/^/    /'
+  _dirty_n="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${_dirty_n:-0}" -gt 6 ] && echo "    ... (+$((_dirty_n - 6)) more)"
+  echo ""
+  echo "  Push at a rollover boundary instead -- the run's tree is clean there,"
+  echo "  and its own ship push carries your commits out with it anyway."
+  echo "  Check:  python3 .claude/hooks/run_phase_guard.py status"
+  echo "  Or override, accepting that the gate verified nothing:"
+  echo "          SKIP_CI_PARITY=1 SKIP_CI_PARITY_REASON='run owns tree' git push ..."
+  exit 1
 elif [ ! -x /usr/bin/qemu-system-x86_64 ]; then
   echo -e "\033[33m[pre-push] CI-parity gate SKIPPED: /usr/bin/qemu-system-x86_64 absent\033[0m"
   echo "           CI runs 'apt-get install qemu-system-x86'; install it to enable the gate."
