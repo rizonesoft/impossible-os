@@ -2876,7 +2876,58 @@ _Static_assert(__builtin_offsetof(struct interrupt_frame, rsp)      == 20 * 8,
 _Static_assert(__builtin_offsetof(struct interrupt_frame, ss)       == 21 * 8,
     "task.c frame builders write ss at sp[21]");
 
-int task_exec(const uint8_t *data, uint64_t size)
+/* ---- Staging-buffer ownership token (see task.h for the contract) ------- */
+
+void task_exec_staging_release(struct task_exec_staging *st)
+{
+    task_exec_release_fn fn;
+
+    if (!st)
+        return;
+    fn = st->release;
+    if (!fn)
+        return;
+
+    /* RUNTIME GUARD for the ordering this whole token exists to enforce.
+     *
+     * A real release must never happen after publication. Once exec_pending is
+     * set the task can be carried into the new image at any moment, so a caller
+     * that still owed a free might never run -- which is the leak the token was
+     * introduced to close. The unit tests around this helper can only prove its
+     * own semantics; they stay green if task_exec's call is deleted or moved
+     * below the publication window. This check pins the production ordering
+     * instead, and it is deterministic where it matters: with the call removed,
+     * SYS_EXEC's own post-call release runs with exec_pending still set (INT
+     * 0x80 keeps IF=0, so no tick can have consumed it) and this fires on every
+     * exec. LOG_ERROR is surfaced by the test harness and by the smoke test's
+     * log-cleanliness gate, so the regression cannot land quietly.
+     *
+     * Only reached when a release is actually owed: an already-consumed token
+     * returned above, which is the normal state of the caller's post-call
+     * release on the success path. */
+    if (current_task < TASK_MAX &&
+        __atomic_load_n(&tasks[current_task].exec_pending, __ATOMIC_ACQUIRE))
+        klog(LOG_ERROR, "sched",
+             "exec: staging release ran AFTER publication (PID %u) -- the "
+             "caller may never run to free it", (uint64_t)current_task);
+
+    /* Clear BEFORE invoking: that ordering is what makes this idempotent, so
+     * task_exec's pre-publication release and the caller's own post-call
+     * release can both run unconditionally and exactly one of them frees. */
+    st->release = (task_exec_release_fn)0;
+    fn(st);
+}
+
+void task_exec_staging_kfree(struct task_exec_staging *st)
+{
+    if (st && st->ptr) {
+        kfree(st->ptr);
+        st->ptr = (void *)0;
+    }
+}
+
+int task_exec(const uint8_t *data, uint64_t size,
+              struct task_exec_staging *staging)
 {
     uint64_t entry;
     int exec_err = 0;
@@ -3588,6 +3639,27 @@ int task_exec(const uint8_t *data, uint64_t size)
 
     klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
            (uint64_t)pid, entry);
+
+    /* ---- Release the caller's staging buffer, BEFORE publication ----
+     *
+     * This is the last point at which the caller is provably still running.
+     * The moment the publication below stores exec_pending, a tick may switch
+     * this task into the new ring-3 image and the caller's own release never
+     * executes -- which is exactly how a successful exec from an
+     * interrupts-enabled kernel launcher stranded its buffer.
+     *
+     * Safe here because everything above has already consumed 'data': the last
+     * read is the ELF phdr extraction in the frame builder, and nothing between
+     * that point and this one reads it or can fail. Deliberately OUTSIDE the
+     * local_irq_save window below -- the release calls into kfree/pmm, which
+     * must not run with interrupts disabled, and a reschedule landing here is
+     * harmless because exec_pending is still clear.
+     *
+     * Idempotent: the caller calls task_exec_staging_release() again after
+     * task_exec returns, which is a no-op once this one has consumed it. On
+     * every FAILURE return above, this line is never reached and the caller's
+     * post-call release is the one that frees. */
+    task_exec_staging_release(staging);
 
     /* ---- PUBLICATION: the last act of task_exec ----
      *

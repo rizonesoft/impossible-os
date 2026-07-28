@@ -846,10 +846,57 @@ uint64_t schedule(struct interrupt_frame *frame);
  * 'frame' is the parent's interrupt frame (from the syscall). */
 int task_fork(struct interrupt_frame *frame);
 
+/* Caller-owned staging-buffer ownership token for task_exec().
+ *
+ * task_exec's caller reads the binary into a staging buffer and owns it. On a
+ * SUCCESSFUL exec the caller never runs again: publication makes the new ring-3
+ * frame scheduler-visible and re-enables interrupts, so a tick can switch the
+ * task into the new image before task_exec even returns, and the caller's free
+ * is simply never reached. SYS_EXEC escapes that only by accident of running
+ * with IF=0 (INT 0x80 is an interrupt gate); every kernel-launcher caller runs
+ * in ordinary thread context with interrupts enabled and does race it.
+ *
+ * The token closes that by handing task_exec an allocator-specific release it
+ * performs itself, after its last read of 'data' and BEFORE publication -- the
+ * one point where the buffer is provably dead and the caller is provably still
+ * running. 'release' is invoked at most once and the token clears itself first,
+ * so task_exec's release and the caller's own task_exec_staging_release() after
+ * the call cannot double-free: exactly one of them does the work on every path.
+ *
+ * The two shapes in tree: kmalloc (ptr) and pmm_alloc_contiguous (phys+pages).
+ * A caller with nothing to release passes NULL. */
+struct task_exec_staging;
+typedef void (*task_exec_release_fn)(struct task_exec_staging *st);
+
+struct task_exec_staging {
+    task_exec_release_fn release;  /* cleared once consumed; NULL = nothing owed */
+    void      *ptr;                /* kmalloc shape: buffer to kfree */
+    uintptr_t  phys;               /* pmm shape: base physical address */
+    uint32_t   pages;              /* pmm shape: frame count */
+};
+
+/* Release the staging buffer if it has not been released yet. Idempotent by
+ * construction: the release hook is cleared BEFORE it is invoked, so a second
+ * call (or a caller that always calls it after task_exec, which is the intended
+ * shape) is a no-op. NULL token is a no-op. */
+void task_exec_staging_release(struct task_exec_staging *st);
+
+/* Release hook for the kmalloc shape -- kfree(st->ptr). Shared by the three
+ * kmalloc-based callers so the shape exists once, not three times. */
+void task_exec_staging_kfree(struct task_exec_staging *st);
+
 /* Exec: load an ELF binary and replace the current task's code.
  * 'data' is the raw ELF file, 'size' is its length.
+ * 'staging' is the caller's ownership token for 'data' (see above); it may be
+ * NULL when the caller owns nothing. On SUCCESS task_exec releases it just
+ * before publication; on every failure return it is left untouched and the
+ * caller still owns the buffer (its image is intact, or destroyed with the
+ * caller running on its own kernel stack -- either way it can still free).
+ * Callers must call task_exec_staging_release() after task_exec regardless of
+ * the result; it is a no-op when task_exec already released.
  * Returns 0 on success, -1 on failure. */
-int task_exec(const uint8_t *data, uint64_t size);
+int task_exec(const uint8_t *data, uint64_t size,
+              struct task_exec_staging *staging);
 
 /* Adopt a pending exec frame on the syscall-return path.
  *
@@ -883,6 +930,27 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame);
  * before the commit point and the task's image is intact, so the caller may
  * report the error normally. */
 #define TASK_EXEC_IMAGE_DESTROYED (-2)
+
+/* ---- Reserved exit statuses for KERNEL-ORIGINATED terminations -----------
+ *
+ * A parent reading waitpid gets a raw int32, so every producer of an exit
+ * status shares one number space. Two regions are already spoken for: signal
+ * deaths use -(signum) (`signal.c`, so -1 through -64), and ordinary
+ * applications return small non-negative codes. A kernel-originated
+ * termination that wants to NAME its cause must therefore sit outside both, or
+ * it is not a cause at all -- the first attempt at this used -2, which is
+ * exactly SIGINT.
+ *
+ * Reserve a block well below the signal range. Add new reasons here, never as
+ * a bare literal at the call site. */
+#define TASK_EXIT_REASON_BASE           (-1000)
+
+/* The task was terminated because a post-commit exec destroyed its image: past
+ * task_exec's commit point there is nothing to return to, so the task is exited
+ * rather than handed back a failure. Lets a parent distinguish "the exec commit
+ * point killed my child" from a kill, a signal, or the child's own exit -- the
+ * distinction the post-commit lifecycle test depends on for an honest oracle. */
+#define TASK_EXIT_EXEC_IMAGE_DESTROYED  (TASK_EXIT_REASON_BASE - 1)
 
 #ifdef KERNEL_TESTS
 /* Test seam over the internal kernel-stack free helper, so the reclamation

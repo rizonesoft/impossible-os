@@ -17,6 +17,7 @@
 #include "kernel/sched/kinterrupt.h"
 #include "kernel/sched/apc.h"
 #include "kernel/mm/pmm.h"        /* pmm_get_free_frames -- exec stack reclaim */
+#include "kernel/mm/heap.h"       /* kmalloc -- exec staging-token release shape */
 #include "kernel/mm/vmm.h"        /* vmm_install/uninstall_guard_page */
 #include "kernel/irq.h"
 #include "kernel/timer.h"
@@ -225,6 +226,106 @@ static void test_exec_kernel_stack_reclaim_leak_free(void)
     after = pmm_get_free_frames();
     TEST_ASSERT_EQ(after, before,
                    "reclaiming a task kernel stack returns every frame");
+}
+
+/* ---- task_exec staging-buffer ownership token ---------------------------
+ *
+ * The token is what lets task_exec release the caller's staging buffer BEFORE
+ * publication (once published, a tick can carry the task into the new image and
+ * the caller never runs again). Both task_exec and the caller invoke the
+ * release unconditionally, so the whole design rests on it running EXACTLY
+ * once. These tests pin that directly rather than inferring it from an exec. */
+
+static uint32_t s_staging_release_calls;
+
+static void test_staging_counting_release(struct task_exec_staging *st)
+{
+    s_staging_release_calls++;
+    if (st)
+        st->ptr = (void *)0;
+}
+
+/* Test: the release runs exactly once no matter how many times it is invoked.
+ * This is the double-free guard -- task_exec releases on the success path and
+ * the caller releases again after the call, and only one of them may free. */
+static void test_exec_staging_release_is_idempotent(void)
+{
+    struct task_exec_staging st;
+    uint8_t dummy = 0;
+
+    s_staging_release_calls = 0;
+    st.release = test_staging_counting_release;
+    st.ptr = &dummy;
+    st.phys = 0;
+    st.pages = 0;
+
+    task_exec_staging_release(&st);
+    TEST_ASSERT_EQ((uint64_t)s_staging_release_calls, 1,
+                   "first staging release invokes the hook exactly once");
+
+    /* The caller's post-call release, and then a paranoid third: both no-ops. */
+    task_exec_staging_release(&st);
+    task_exec_staging_release(&st);
+    TEST_ASSERT_EQ((uint64_t)s_staging_release_calls, 1,
+                   "repeat staging releases are no-ops (no double free)");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)st.release, 0,
+                   "a consumed staging token clears its release hook");
+}
+
+/* Test: a token with nothing owed, and a NULL token, are both safe no-ops --
+ * the shape a caller with a borrowed or static buffer passes. */
+static void test_exec_staging_release_empty_is_safe(void)
+{
+    struct task_exec_staging st;
+
+    s_staging_release_calls = 0;
+    st.release = (task_exec_release_fn)0;
+    st.ptr = (void *)0;
+    st.phys = 0;
+    st.pages = 0;
+
+    task_exec_staging_release(&st);
+    task_exec_staging_release((struct task_exec_staging *)0);
+    TEST_ASSERT_EQ((uint64_t)s_staging_release_calls, 0,
+                   "empty and NULL staging tokens release nothing");
+}
+
+/* Test: the shared kmalloc release hook actually RETURNS the allocation, not
+ * merely clears the bookkeeping. Uses the PRODUCTION hook the three
+ * kmalloc-shaped callers pass to task_exec.
+ *
+ * The heap-accounting assertion is the load-bearing one: asserting only that
+ * ptr and release were cleared would stay green if the kfree were deleted and
+ * the pointer nulled anyway, which is a leak that looks exactly like success. */
+static void test_exec_staging_kfree_shape(void)
+{
+    struct task_exec_staging st;
+    uint64_t before, after;
+    void *p;
+
+    before = heap_get_free();
+    p = kmalloc(64);
+    if (!p) {
+        TEST_SKIP("kmalloc(64) failed");
+        return;
+    }
+    TEST_ASSERT(heap_get_free() < before,
+                "kmalloc consumed heap capacity (baseline is measurable)");
+
+    st.release = task_exec_staging_kfree;
+    st.ptr = p;
+    st.phys = 0;
+    st.pages = 0;
+
+    task_exec_staging_release(&st);
+    after = heap_get_free();
+
+    TEST_ASSERT_EQ(after, before,
+                   "kmalloc staging release returns the allocation to the heap");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)st.ptr, 0,
+                   "kmalloc staging release clears the buffer pointer");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)st.release, 0,
+                   "kmalloc staging release consumes the token");
 }
 
 /* Test: per-thread kernel_rsp mirrors task-level kernel_rsp for thread 0.
@@ -1612,6 +1713,14 @@ void test_register_sched(void)
     test_suite_register_cat("Sched: exec kernel-stack reclaim is leak-free",
                             test_exec_kernel_stack_reclaim_leak_free,
                             TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec staging release is idempotent",
+                            test_exec_staging_release_is_idempotent,
+                            TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec staging empty/NULL token is safe",
+                            test_exec_staging_release_empty_is_safe,
+                            TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec staging kmalloc release shape",
+                            test_exec_staging_kfree_shape, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: per-thread kernel_rsp mirror",
                             test_per_thread_kernel_rsp_mirror, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: cooperative-yield fairness (regression)",

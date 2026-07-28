@@ -680,20 +680,30 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
                 }
             }
 
-            ret = (int64_t)task_exec(buf, fsz);
-            /* Unconditional: task_exec copies the image into the new
-             * process's own pages and never takes ownership of `buf` on
-             * EITHER outcome. Freeing only on failure leaked one heap
-             * allocation of file size per SUCCESSFUL exec -- the success path
-             * never returns here (the task iretqs into the new image), so the
-             * release has to happen before that. */
-            kfree(buf);
+            /* Hand task_exec the ownership token so the SUCCESS-path release
+             * happens inside it, before publication. The unconditional kfree
+             * that used to sit here worked only because INT 0x80 is an
+             * interrupt gate (IF=0), so no tick could switch this task into
+             * the new image before the free; the token makes the ordering
+             * explicit instead of load-bearing on the gate type. */
+            {
+                struct task_exec_staging st = { task_exec_staging_kfree,
+                                                buf, 0, 0 };
+                ret = (int64_t)task_exec(buf, fsz, &st);
+                /* No-op when task_exec already released (success); frees on
+                 * every failure return, where the caller still owns it. */
+                task_exec_staging_release(&st);
+            }
             if (ret == TASK_EXEC_IMAGE_DESTROYED) {
                 /* The image this syscall would return to no longer exists --
                  * task_exec replaced it with zeroed private frames past its
                  * commit point. Returning ret to ring 3 would iretq into that.
-                 * The buffer is already released above, so terminate. */
-                task_exit(-1);          /* does not return */
+                 * The buffer is already released above, so terminate.
+                 *
+                 * The status NAMES the cause: a plain -1 here is also what a
+                 * kill produces, so a parent could not tell an exec-destroyed
+                 * child from a killed one. */
+                task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);  /* no return */
             }
         }
         break;

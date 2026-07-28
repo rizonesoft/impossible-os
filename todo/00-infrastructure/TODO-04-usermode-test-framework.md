@@ -77,6 +77,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  17   | Fast-path transport hardening (probes + invariants) | §2, §3, §4                    |  [x]   |
 | ⭐   |  18   | Fast-path observability + ABI versioning            | §17                           |  [x]   |
 | ⭐   |  19   | Transition ring buffer + 3-way transport fuzz       | §17, §18                      |  [x]   |
+| 💎   |  20   | Site-targeted and PMM-countdown fault selectors     | §5                            |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -508,7 +509,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 511)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 512)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -684,6 +685,29 @@ The ring-0↔3 fast paths (`gs:`-relative TEB reads, `KUSER_SHARED_DATA` at 0x7F
 
 > [!NOTE]
 > Earlier drafts warned this section waited on `02-kernel-core/TODO-06` per-CPU cached task info. That was wrong: the ring only records CURRENT register state, so no cached-expected-value comparison is needed. Only the 3 remaining §18 iretq invariants (MSR/CR3/RSP vs expected) still wait on the kernel-core cache.
+
+---
+
+## 20. Site-Targeted and PMM-Countdown Fault Selectors
+
+§5 shipped the ring-3 fault-injection bridge, and it is enough to prove that SOME allocation failure on a path is handled. It cannot prove that a NAMED allocation site is handled, because the only addressing it offers is an ordinal: `FAULT_KMALLOC_COUNTDOWN` fails the Nth kmalloc after arming, and which branch that lands on shifts the moment any code on the path adds or removes an allocation. Two consequences surfaced while implementing `02-kernel-core/TODO-21` §19 and neither is fixable in the consuming test: a countdown cannot pin `task_exec`'s individual pre-commit OOM branches (they are reachable, but only by an ordinal that silently drifts), and `FAULT_PMM_NEXT` is single-shot with no countdown form at all, so the Nth PMM frame allocation cannot be failed from ring 3 even by ordinal.
+
+> [!TIP]
+> Linux `fail_page_alloc` / `failslab` address this with per-callsite debugfs knobs plus `probability`/`interval`/`times`; a `should_fail()` call at the site consults its own state. The equivalent here is a small site ID passed to the existing `*_should_fire()` gate, which keeps the arming surface a single syscall rather than a filesystem.
+
+- [ ] `FAULT_PMM_COUNTDOWN` selector mirroring `FAULT_KMALLOC_COUNTDOWN`: bridge `pmm_alloc_fail_countdown_set(N)` (already implemented in
+      `src/kernel/mm/pmm.c`, currently unreachable from ring 3) through `sys_fault_inject_dispatch` with the same self-PID task filter the other selectors apply. Without it no ring-3 test can fail the Nth frame allocation, which is what the post-load PEB/TEB allocations in `task_exec` need. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Site-targeted fault injection for `task_exec`'s OWN pre-commit OOM branches")
+- [ ] Site-targeted arming: a stable site ID (enum in a shared header, not a line number) that a test names to fail one
+      SPECIFIC allocation regardless of how many allocations precede it. Minimum viable set is the sites existing tests cannot otherwise pin: the `task_exec` argv address table and private-frame table (reachable only by kmalloc ORDINAL, which drifts) and the `peb_alloc_for_task` frames (need the PMM countdown above). The replacement guarded kernel stack is NOT in this set -- `FAULT_PMM_NEXT` already lands on it directly and it is covered by a ring-3 test today
+- [ ] Child-targeted arming so a parent can arm a fault that fires in a not-yet-forked child: the filter binds to
+      `task_current()->pid` at arm time, so the fork-time `vmm_create_user_pml4` OOM path (which leaves a fork child with no isolated CR3) has no deterministic ring-3 regression today. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fork-child-with-no-isolated-CR3")
+- [ ] Extend `user/test/test_faultinject.c` with a regression per new selector, and assert the negative case: arming a
+      site ID that the exercised path never reaches must NOT fire, so a mis-targeted test fails loudly instead of passing on an unrelated allocation
+- [ ] Per-sub-test SKIP must reach the machine artifacts. `UTEST_SKIP` (added 2026-07-28 in
+      [`user/include/test.h`](../../user/include/test.h)) prints a `[SKIP]` line and records no state, so a binary whose preconditions were unavailable still ends `[UTEST-END] all pass`, returns `g_fail == 0`, and is classified PASS with zero skips in TAP / XML / JSON -- only a whole-binary exit 77 increments the launcher's skip counter. Raw serial is honest; every automated consumer is not, which is the same false-coverage signal the macro was introduced to remove. Do NOT "fix" this by returning 77 whenever a skip occurred: that discards the assertions that DID pass and reports a partly-verified binary as entirely unverified. Track skip counts in harness state and extend the launcher protocol so a binary can report passed + skipped together. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fault-injected exec lifecycle coverage")
+- [ ] Commit: `"test: site-targeted and PMM-countdown fault selectors"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=exec` -- a test arming a named `task_exec` site observes that exact branch's refusal (identified by its klog) and no other; arming `FAULT_PMM_COUNTDOWN` with N greater than the path's frame count leaves the path succeeding; the gate still denies every new selector under `boot.conf test=0`. Test on: QEMU TCG, QEMU KVM; bare metal.
 
 ---
 

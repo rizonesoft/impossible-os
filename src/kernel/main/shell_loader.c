@@ -76,22 +76,26 @@ void shell_loader_func(void)
         return;
     }
 
-    /* task_exec() takes `data` as `const uint8_t *` and never frees it on
-     * either outcome (it copies bytes into the new process's own pages on
-     * success); the caller owns buf's lifetime regardless of the result. */
+    /* This function runs as an ordinary scheduled kernel task with interrupts
+     * ENABLED, so it is the path the staging-release race actually bites: on a
+     * successful exec, publication can hand the task to the new ring-3 image
+     * before task_exec returns, and a kfree placed after the call would never
+     * run. The ownership token moves the success-path release inside task_exec,
+     * just before publication; the call below then frees only on the failure
+     * returns, where this task is still alive to do it. */
     {
-        int erc = task_exec(buf, fsize);
+        struct task_exec_staging st = { task_exec_staging_kfree, buf, 0, 0 };
+        int erc = task_exec(buf, fsize, &st);
+        task_exec_staging_release(&st);   /* no-op when task_exec released */
         if (erc < 0) {
             klog(LOG_ERROR, "cmd", "exec failed");
-            kfree(buf);
             /* Past task_exec's commit point the shell image is gone; this task
              * must not continue as if it still had one. */
             if (erc == TASK_EXEC_IMAGE_DESTROYED)
-                task_exit(-1);          /* does not return */
+                task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);  /* no return */
             return;
         }
     }
-    kfree(buf);
 
     for (;;)
         __asm__ volatile("hlt");

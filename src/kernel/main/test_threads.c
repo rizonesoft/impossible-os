@@ -267,13 +267,19 @@ void exec_loader_func(void)
     vfs_read(file, 0, (uint32_t)file->size, buf);
     vfs_close(file);
 
+    /* Same interrupts-enabled thread context as shell_loader_func. This path
+     * previously had no success-path free at all -- it HLT-loops below -- so it
+     * leaked the staging buffer on every successful exec rather than merely
+     * racing it. The ownership token closes both: task_exec releases before
+     * publication on success, this call frees on the failure returns. */
     {
-        int erc = task_exec(buf, file->size);
+        struct task_exec_staging st = { task_exec_staging_kfree, buf, 0, 0 };
+        int erc = task_exec(buf, file->size, &st);
+        task_exec_staging_release(&st);   /* no-op when task_exec released */
         if (erc < 0) {
             klog(LOG_WARN, "TEST", "[ExecLoader] exec failed");
-            kfree(buf);
             if (erc == TASK_EXEC_IMAGE_DESTROYED)
-                task_exit(-1);          /* does not return */
+                task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);  /* no return */
             return;
         }
     }

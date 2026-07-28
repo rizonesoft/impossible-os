@@ -43,10 +43,15 @@ test_harness_smoke.exe
 test_syscall.exe
 test_libc.exe
 test_ipc.exe
-# test_process.exe forks three children for fork/exec/kill sub-tests.
+# test_process.exe forks eight children: three for fork/exec/kill and five for
+# the exec commit-point lifecycle (post-commit termination, injected kmalloc
+# OOM, oversized argv, the allocation-depth sweep, injected PMM OOM).
 # Tell the launcher's pre-flight budget check so fork-heavy binaries
-# count for 1 (launcher task) + 3 (forked children) = 4 slots.
-test_process.exe expects_tasks=4
+# count for 1 (launcher task) + 8 (forked children) = 9 slots. Keep this in
+# step with the TASK-SLOT BUDGET comment at the top of test_process.c: a stale
+# value here reports capacity the run does not have, and the binary then
+# exhausts TASK_MAX and destabilises whatever runs after it.
+test_process.exe expects_tasks=9
 test_fileio.exe
 test_win32.exe
 # §15 binary-format loader coverage: one binary per registered format.

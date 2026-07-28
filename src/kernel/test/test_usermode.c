@@ -1070,6 +1070,22 @@ static void u_manifest_free(struct manifest_state *ms)
  * never produced output.
  * --------------------------------------------------------------------- */
 
+/* Staging release for the PMM shape of the ownership token: this loader stages
+ * the binary in contiguous frames rather than on the kmalloc heap, so it cannot
+ * share task_exec_staging_kfree. Clears the count first so a second call is a
+ * no-op even independently of the token's own idempotence. */
+static void utest_staging_free_frames(struct task_exec_staging *st)
+{
+    uint32_t n, i;
+
+    if (!st || !st->pages)
+        return;
+    n = st->pages;
+    st->pages = 0;
+    for (i = 0; i < n; i++)
+        pmm_free_frame(st->phys + (uintptr_t)i * 4096u);
+}
+
 static void utest_loader_func(void)
 {
     const char *path = (const char *)s_pending_test_path;
@@ -1115,21 +1131,28 @@ static void utest_loader_func(void)
     /* task_exec stages an iretq frame for user mode (consumed on the
      * next scheduling switch). It DOES NOT take ownership of `buf` --
      * exec_load() inside copies the binary into user pages, so once
-     * task_exec returns 0 the staging buffer is no longer needed. */
-    rc = task_exec(buf, size);
-    if (rc < 0) {
-        /* Covers BOTH outcomes: a pre-commit -1 (image intact) and
+     * task_exec returns 0 the staging buffer is no longer needed.
+     *
+     * This loader runs with interrupts enabled, so the frame release must go
+     * through the ownership token: on success task_exec drops these frames
+     * before publication, because a tick can carry this task into the new image
+     * before the call returns and the loop below would never run. */
+    {
+        struct task_exec_staging st = { utest_staging_free_frames,
+                                        (void *)0, buf_phys, pages };
+        rc = task_exec(buf, size, &st);
+        /* Covers BOTH failure outcomes: a pre-commit -1 (image intact) and
          * TASK_EXEC_IMAGE_DESTROYED (image gone). Either way the staging
-         * frames are released here and the loader task exits -- it must never
-         * fall through to ring 3 with a destroyed image. */
+         * frames are released here and the loader task exits below -- it must
+         * never fall through to ring 3 with a destroyed image. On success this
+         * is a no-op; task_exec already released. */
+        task_exec_staging_release(&st);
+    }
+    if (rc < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_exec failed (rc=%d)",
              path, (int64_t)rc);
-        for (p = 0; p < pages; p++)
-            pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-5);
     }
-    for (p = 0; p < pages; p++)
-        pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
 
     /* Force a cooperative reschedule so the prepared user-mode iretq
      * frame is consumed. yield() goes through schedule_now() which

@@ -79,6 +79,26 @@ extern int g_fail;
         }                                                                    \
     } while (0)
 
+/* Record a sub-test as SKIPPED without counting it as passed.
+ *
+ * The kernel-side harness has TEST_SKIP; the user-mode side had no in-binary
+ * equivalent, so a test whose precondition was unavailable (typically fault
+ * injection, which the kernel refuses under boot.conf test=0) had to choose
+ * between failing and asserting something trivially true. The latter is worse:
+ * a passing assertion makes a configuration that silently disabled the case
+ * indistinguishable from one that ran it. This prints and counts nothing.
+ *
+ * Whole-binary skips remain exit 77; this is the per-sub-test form. */
+#define UTEST_SKIP(msg)                                                      \
+    do {                                                                     \
+        const char *_utest_s = (msg);                                        \
+        sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
+        sys_write(1, "[SKIP] ", 7);                                          \
+        sys_write(1, _utest_s, strlen(_utest_s));                            \
+        sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);                  \
+        sys_write(1, "\n", 1);                                               \
+    } while (0)
+
 /* Suite header -- print once at the top of main(). */
 #define UTEST_BEGIN(name)                                                    \
     do {                                                                     \
