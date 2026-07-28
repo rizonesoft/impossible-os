@@ -89,10 +89,11 @@ Tests under `src/kernel/test/test_*.c` MUST NOT call live boot infrastructure (`
 
 ## Code Style: ASCII Dashes, No Bare Section Refs
 
-Two enforced policies; full text and rationale at [docs/infrastructure/code-style-policies.md](docs/infrastructure/code-style-policies.md).
+Three enforced policies; full text and rationale at [docs/infrastructure/code-style-policies.md](docs/infrastructure/code-style-policies.md).
 
 - **No Unicode dashes (U+2013/U+2014).** Windows serial and CMD garble them as mojibake. Don't paste `--` as typographic substitute either; rewrite (colon, semicolon, parens). PreToolUse hook blocks edits introducing them.
 - **No bare `section`-sign + digit refs in source code comments.** Outside `.md` / `todo/` / `.claude/`, the glyph + digit is only legal when paired with an external-spec qualifier (UEFI, Intel SDM, RFC, ACPI, NVMe, PE/COFF, etc.). `scripts/lint.sh` Check 5 + PreToolUse hook enforce.
+- **No hard-wrapped prose in `todo/`.** One paragraph per physical line; the reader's editor wraps it. A fill column makes a section inconsistent with the file around it and turns every later edit into a reflow (measured 2026-07-28 on TODO-21: sections 19-20 averaged 102 chars/line against 209 for the rest of the file). The 250-char cap on `- [ ]`/`- [x]`/`- [/]` LEAD lines still applies, so a long item keeps a short lead and puts its body on an indented continuation line, also unwrapped. `todo_wrap_reminder` warns at authoring time (never blocks); `python3 scripts/todo-reflow.py --diff|--write` repairs existing files and is wired into `validate-todo-file` step 2. The reflow refuses any change that is not purely line breaks, so don't hand-reflow a long TODO.
 
 ## Freestanding Kernel -- No stdlib
 
