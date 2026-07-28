@@ -1,5 +1,6 @@
 # Token Saver v01 -- Cost Reduction Backlog (measured 2026-07-20 -> 2026-07-26)
 
+> **Superseded for NEW items:** file findings dated 2026-07-28 onward in [`token-saver-v02.md`](token-saver-v02.md). Corrections to items in THIS file stay here, beside what they correct.
 > **Deliberately outside the sequencer.** Lives at `todo/token-saver/` (a versioned directory, 2026-07-27) as
 > `token-saver-v01.md`, so `sequencer_triage.is_impl_todo` -- which requires `todo/\d\d-<domain>/TODO-\d+-*.md` --
 > never traverses it, and the todo-graph never parses it. Same intent as `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md`.

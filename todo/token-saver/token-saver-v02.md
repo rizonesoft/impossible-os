@@ -1,0 +1,16 @@
+# Token Saver v02 -- Cost Reduction Backlog (measured 2026-07-28 ->)
+
+Successor to [`token-saver-v01.md`](token-saver-v01.md), whose H1 bounds it to measurements taken 2026-07-20 -> 2026-07-26. New cost findings belong here; a CORRECTION to an existing v01 item (a re-measurement, a revert, a closed premise) stays in v01 next to the item it corrects, so the history is not orphaned.
+
+The v01 "Never cut" floor still applies unchanged: quality gates, adversarial review, bare-metal validation, and the trust contract are not cost levers.
+
+---
+
+- [ ] **Re-baseline every projected saving in v01: one of its items was reverted outright and the others were never measured post-change.**
+  T2-3 shipped `search_offload_gate` on 2026-07-27 projecting a saving over ~669 rerouted searches, and was REVERTED on 2026-07-28 when the live run disproved its premise: every tool result lands in context, the Grep tool's included, so the blocked `grep -n X file | head -20` and the piped form it forced cost the same. The measured effect was three tool calls where one would do, and no context saved. So one line item in the v01 projection is not merely smaller than claimed, it is negative.
+  This matters beyond that one item because v01 itself records that FIVE of its estimates were already materially wrong when re-checked (T1-2 off ~5x, T1-5 double-counted and closed, T2-3 ~25% smaller and now negative, T2-4 ~30x, T3-2 rationale expired). An aggregate projection built from estimates with that error rate is not a plan, it is a guess. Re-derive the remaining projections from a real post-change run before spending further effort against them.
+  Concrete blocker: no post-change baseline exists. The T1-T4 work landed 2026-07-27 20:17 -> 2026-07-28, and the previous run ended 2026-07-26 03:36, so nothing in `.claude/overnight/metrics/` measures the current control plane. The 2026-07-28 canary run is the first, and `scripts/overnight/cost-summary.py` should be run against its metrics file as the new baseline. XREF: v01 T4-2 (regression gate on context metrics) and T4-3 (measure one section before/after) are both blocked on exactly this and should be re-scoped once the baseline exists.
+
+- [ ] **Count the cost of operator/runner index contamination -- four cross-sweeps cost diagnosis turns on both sides.**
+  Observed 2026-07-28 (four incidents in ~4 hours; see overnight-runner-improvements-v02 "Concurrency: operator and runner share ONE index"). The correctness angle is filed there. The COST angle belongs here and is unmeasured: each sweep cost the other party turns to notice HEAD had moved, re-read git state, and reason about whether its own work survived -- the runner spent an explicit turn concluding "HEAD moved because the operator committed and pushed `c305c165` mid-session; my 16 staged files sit intact on top of it".
+  Worth measuring before fixing, because the fix (a separate `git worktree` for the unattended run) has its own cost: a second checkout of the tree plus a second build directory. If the contamination only bites when an operator works alongside the run -- which is not the normal unattended case -- the cheap fixes (drop `git add -A`, explicit `--` pathspec) may be the whole answer.
