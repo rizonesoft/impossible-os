@@ -1603,6 +1603,52 @@ def _staged_loc_delta(root: Path, paths: list[str]) -> int | None:
     return total
 
 
+# A skill entry older than this is treated as abandoned, not in flight.
+# 6h is deliberately generous: the longest real review-todo-section observed
+# (TODO-21 section 19, 2026-07-28) ran about one hour end to end, so this only
+# fires on an entry no live skill is still writing to. Override for a genuinely
+# longer pass with SECTION_SKILL_STALE_HOURS.
+_SKILL_STALE_HOURS_DEFAULT = 6
+
+
+def _skill_entry_stale(entry: dict) -> bool:
+    """True when a skill-progress entry is a leftover, not an in-flight skill.
+
+    WHY THIS EXISTS. skill-progress.json is append-only across sessions and is
+    never pruned: measured 2026-07-28 it held 346 entries from 53 distinct
+    session ids, 343 of them already flagged compaction_orphaned, the oldest
+    about 90 days. The orphan flag covers entries a PreCompact saw; it does NOT
+    cover an entry whose session simply ended -- an unattended run that finishes
+    or is disarmed leaves its live entry behind, still unflagged.
+
+    That is not hypothetical. On 2026-07-28 the disarmed overnight run left
+    `review-todo-section` pointing at TODO-21 section 19 (session
+    e711ac7b-..., started 09:04). Hours later an unrelated interactive commit
+    touching only boot_timing.c and dpc.c was refused as a "fix-loop commit"
+    needing re-adversarial evidence for section 19 -- the gate had adopted
+    another session's skill as the committer's own. The gate never compared
+    session ids; it still cannot in --git-hook-mode, which is the load-bearing
+    path and receives no stdin payload. Age is the signal that works in both
+    modes.
+
+    Fails OPEN on a missing or unparseable timestamp: an entry that cannot be
+    dated is treated as live, so a real in-flight skill is never dropped by a
+    clock problem. This check can only ever RELAX the gate, never tighten it.
+    """
+    try:
+        started = entry.get("started_ts")
+        if not isinstance(started, int) or started <= 0:
+            return False                    # undatable -> assume live
+        hours = float(os.environ.get("SECTION_SKILL_STALE_HOURS",
+                                     _SKILL_STALE_HOURS_DEFAULT))
+        if hours <= 0:
+            return False                    # explicitly disabled
+        age_ns = time.time_ns() - started
+        return age_ns > int(hours * 3600 * 1e9)
+    except Exception:
+        return False                        # any doubt -> assume live
+
+
 def _active_section_todo(root: Path) -> str:
     """The TODO path of the in-flight implement/review-todo-section skill, or "".
 
@@ -1622,6 +1668,8 @@ def _active_section_todo(root: Path) -> str:
     for skill in ("review-todo-section", "implement-todo-section"):
         entry = state.get(skill)
         if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
+            continue
+        if _skill_entry_stale(entry):
             continue
         todo_path = entry.get("todo_path")
         if isinstance(todo_path, str) and todo_path.endswith(".md") \

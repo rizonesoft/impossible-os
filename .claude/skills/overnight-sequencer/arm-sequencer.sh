@@ -196,6 +196,40 @@ remove_runtime_file() {
 # read to the NEXT run as "the operator reserved this, stop" -- the 2026-06-16
 # self-disarm cause) are cleared so a re-arm always starts from a clean slate.
 reap_overnight_state() {
+  # Retire any skill-progress entry this run left LIVE. A finished or disarmed
+  # run leaves `review-todo-section` / `implement-todo-section` marked in flight
+  # (the compaction_orphaned flag only covers entries a PreCompact saw), and
+  # section_commit_gate reads that as "a review is in flight" for ANY later
+  # commit -- including an unrelated interactive one in a different session.
+  # Observed 2026-07-28: a disarmed run left review-todo-section pointing at
+  # TODO-21 section 19, and hours later a commit touching only boot_timing.c and
+  # dpc.c was refused as that section's fix-loop commit. The gate cannot compare
+  # sessions in --git-hook-mode (no stdin payload), so the run must clean up
+  # after itself here.
+  python3 - <<'PYSKILL' || true
+import json, time
+p = ".claude/state/skill-progress.json"
+try:
+    d = json.load(open(p))
+except Exception:
+    d = None
+if isinstance(d, dict):
+    retired = 0
+    for k in ("review-todo-section", "implement-todo-section"):
+        e = d.get(k)
+        if isinstance(e, dict) and e.get("compaction_orphaned") is not True:
+            # Preserve the record under an orphan key so the history is not
+            # destroyed -- only its in-flight status is withdrawn.
+            e["compaction_orphaned"] = True
+            e["orphan_reason"] = "run disarmed with the skill still in flight"
+            e["orphan_ts_ns"] = time.time_ns()
+            d[f"{k}.orphan.{e['orphan_ts_ns']}"] = e
+            del d[k]
+            retired += 1
+    if retired:
+        json.dump(d, open(p, "w"), indent=2)
+        print(f"  retired {retired} in-flight skill entr(ies) from skill-progress.json")
+PYSKILL
   python3 - <<'PY' || true
 import json
 p = ".claude/overnight/state/overnight-runner.json"   # legacy plugin state, if present
