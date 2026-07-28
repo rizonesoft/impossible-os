@@ -10,14 +10,14 @@ Successor to [`overnight-runner-improvements-v02.md`](overnight-runner-improveme
 
 ## 1. The `SKIP_*` opt-out silently fails -- HIGHEST RISK, and the fix is verified
 
-- [ ] **`SKIP_*=1` is not detected when the command carries a heredoc whose body contains an ASCII apostrophe, so a legitimate opt-out is BLOCKED while the message tells the caller to set the variable already set.**
+- [x] **SHIPPED `326bc786` -- the `SKIP_*` opt-out no longer vanishes on a heredoc containing an apostrophe.**
   **Why this is first.** It is the only finding that can wedge a run precisely when the run is trying to unblock itself, and it is silent -- there is no error, the opt-out simply vanishes. It hit this session twice within five minutes.
   **Mechanism, confirmed at source.** `_skip_env._scan_inline()` (`.claude/hooks/_skip_env.py:80`) runs `shlex.split(cmd, posix=True)` over the WHOLE command and returns `{}` on `ValueError` (lines 81-82). An apostrophe inside a heredoc body is an unbalanced quote to `shlex`, which raises "No closing quotation". Isolated by differential test: heredoc + plain body -> detected; heredoc + `v01's lesson` -> NOT detected; heredoc + Unicode apostrophe -> detected; apostrophe in double quotes without a heredoc -> detected.
   **Blast radius is every gate using the shared helper**, not one hook: `SKIP_REVIEW_HOOK`, `SKIP_SKILL_STEP_BLOCK`, `SKIP_PHASE1_BLOCK`, `SKIP_RUNNER_SUITE`, `SKIP_HOOK_AUDIT`, and the `SKIP_REVIEW_PIPELINE` batch alias. The triggering shape is how prose reaches a command at all -- commit messages, TODO edits, doc writes -- which the runner authors constantly.
   **Fix, verified over six cases before filing:** keep the `shlex` path, and on `ValueError` or an empty result fall back to a regex scan of the LEADING env-prefix only -- `^\s*((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+)` -- parsing assignments from that span alone. Verified: recovers the heredoc+apostrophe case and a two-variable prefix, preserves the plain and heredoc-plain cases, and creates no false positives (`echo SKIP_REVIEW_HOOK=1` and an apostrophe-bearing command with no opt-out both stay undetected). Scanning only the leading prefix is also more correct in principle than tokenizing a whole command whose tail is arbitrary data.
   **Ship item 2 in the same commit** -- it is the manifest entry for this same file.
 
-- [ ] **`_skip_env.py` is in NEITHER control-plane manifest, so the helper six gates depend on can be changed with no gate firing.**
+- [x] **SHIPPED `326bc786` -- all SIX shared gate helpers added to the control-plane manifest, flow-critical.**
   Piping `.claude/hooks/_skip_env.py` to `control-plane-match.sh` returns nothing, and `--flow-critical` returns nothing. A change here can silently disable -- or silently universalise -- the escape hatch on every `SKIP_*` gate at once, while the runner test suite and the canary requirement both stay unarmed. **This is the same hole, in the same shape, closed for `.claude/settings.json` earlier the same day** (v02, "Control plane: `.claude/settings.json` is in NEITHER manifest"); that item's reasoning transfers unchanged, and item 1 is the proof it matters -- one line in this helper changes the effective behaviour of six gates.
   Fix: add it to `control-plane-manifest.txt`, starting flow-critical under the manifest's default-conservative rule, since "an opt-out stopped working" is exactly what an attended canary is for. Audit the other shared `_`-prefixed helpers (`_review_kind.py`, `_codex_dispatch.py`, `_advisory_budget.py`, `_heuristic_misses.py`) for the same omission in the same pass.
 
@@ -25,7 +25,7 @@ Successor to [`overnight-runner-improvements-v02.md`](overnight-runner-improveme
 
 ## 2. `build_offload_reminder.py` -- a false-positive BLOCK on read-only commands
 
-- [ ] **Any read-only command naming a `*.sh` script immediately before a suite script is misread as INVOKING it, and BLOCKED.**
+- [x] **SHIPPED `77d36c59` -- both defects: the read-only false positive, and the operator-session scoping.**
   Hit live at 14:28 by a plain `grep -n "..." scripts/build.sh scripts/test.sh` -- blocked with exit 2 and a reroute message telling it to re-issue through `run-artifact.sh`, which is meaningless for a grep. The only exits are rephrasing or giving up.
   **Mechanism, confirmed at source.** `_SCRIPT_RES[0]` (`build_offload_reminder.py:66`) is `\b(?:bash|sh)\s+...`, and the `\b` is satisfied by the DOT inside `build.sh` -- `.` is a non-word character, `s` is a word character -- so the regex reads the tail of one filename as the shell invoking the next. Every `*.sh` path ends in `sh`, so any command naming two suite scripts in sequence trips it, `ls -la` included. It is also the only one of the three patterns lacking a command-position anchor, while the file's own header states that command-position matching is the design intent.
   **Fix, verified over seven shapes:** replace the leading `\b` with a negative lookbehind, `(?<![.\w])(?:bash|sh)\s+`. Silences `grep ... build.sh test.sh` and `ls -la build.sh test.sh` while still catching `bash scripts/test.sh`, `sh scripts/build.sh`, `/bin/bash scripts/test.sh` and `time bash scripts/test.sh`. A plain `_CMD_POS` prefix would be WRONG here -- it would stop matching the last two.
@@ -36,7 +36,7 @@ Successor to [`overnight-runner-improvements-v02.md`](overnight-runner-improveme
 
 ## 3. `bash <a python file>` in three skills -- silently defeats the convergence gate
 
-- [ ] **The convergence gate is documented as `bash .claude/hooks/review_convergence.py` in three skills; FIFTH recorded occurrence, and the failure mode fails OPEN.**
+- [x] **SHIPPED `aa0ec7a4` -- 7 doc invocations fixed plus lint Check 20, which found 2 more immediately.**
   Observed live at 14:13:58: the run issued the documented `bash` form, it failed, and the run re-issued with `python3` four seconds later, noting the skill doc is wrong. One wasted turn -- and only because the run happened to notice.
   **The silent path is the real cost.** `review_convergence.py` carries a `python3` shebang, so `bash` fails with a syntax error and **exit 2**. The gate's contract is exit 1 = CONVERGED, exit 0 = redispatch, so exit 2 fail-opens to REDISPATCH: a run that does not notice pays a full Codex round the gate would have suppressed, and reports nothing wrong.
   **Logged four times before this one** -- `live-gotchas.md` entries dated 2026-07-15, 2026-07-17 and 2026-07-25 (the last covering `review_round_guard.py` too). Two of those carry expiry dates and will lapse, taking the only record with them. A gotcha that has recurred five times is not a gotcha, it is an unfixed bug.
