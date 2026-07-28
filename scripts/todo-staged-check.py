@@ -78,6 +78,35 @@ def over_cap(added):
     return [(n, len(t), t) for n, t in added if _ITEM.match(t) and len(t) > CAP]
 
 
+def wrapped_block(added):
+    """Apparent fill column if the ADDED lines look hard-wrapped, else 0.
+
+    The wrap rule had the same PreToolUse-only bypass this file exists to close
+    (todo_wrap_reminder never sees a python3-via-Bash write), so it is checked
+    here too. WARN, not block, unlike the item cap: the cap is long-standing
+    policy already blocked at Edit, whereas the wrap rule is new (2026-07-28)
+    and a blocking gate on it could refuse the unattended runner's own TODO
+    edits, where a wedge costs a night.
+    """
+    try:
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.abspath(__file__))))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_todo_reflow", os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), "todo-reflow.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception:
+        return 0                      # fail-open: never break a commit on this
+    block = [t for _, t in added]
+    for i in range(len(block)):
+        for j in range(i + 3, len(block) + 1):
+            if mod._hard_wrapped(block[i:j]):
+                return max(len(x.rstrip()) for x in block[i:j - 1])
+    return 0
+
+
 def main(argv) -> int:
     if "--selftest" in argv:
         return _selftest()
@@ -86,10 +115,19 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
-    bad = []
+    bad, wrapped = [], []
     for f in files:
-        for n, ln, text in over_cap(_added_lines(f)):
+        added = _added_lines(f)
+        for n, ln, text in over_cap(added):
             bad.append((f, n, ln, text))
+        col = wrapped_block(added)
+        if col:
+            wrapped.append((f, col))
+    for f, col in wrapped:
+        sys.stderr.write(
+            "[todo-staged-check WARN] %s: this commit adds prose hard-wrapped at "
+            "~%d columns. todo/ prose is one paragraph per physical line. Repair: "
+            "python3 scripts/todo-reflow.py --write %s\n" % (f, col, f))
     if not bad:
         return 0
     sys.stderr.write(

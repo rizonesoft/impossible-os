@@ -639,6 +639,26 @@ int task_rlimit_set(struct task *t, int resource, const rlimit_t *nl,
     return rc;
 }
 
+/* Release a stack run whose guard install FAILED.
+ *
+ * A failed install touches no PTE, so the run is normally still the caller's to
+ * free -- EXCEPT for VMM_GUARD_VA_UNSAFE, which says this run's identity VA
+ * maps somebody else's frame. Such a frame is unusable by ANY consumer in an
+ * identity-mapped kernel: whoever the PMM handed it to next would write through
+ * that VA into the other frame. Quarantine it and say so; a bounded leak is
+ * recoverable, silently poisoning the free list is not. */
+static void stack_run_release_after_guard_failure(uintptr_t base, uint32_t pages,
+                                                  int guard_rc)
+{
+    if (guard_rc == VMM_GUARD_VA_UNSAFE) {
+        klog(LOG_ERROR, "sched",
+             "quarantining stack run at %p -- its identity VA maps another frame",
+             (void *)base);
+        return;
+    }
+    pmm_free_contiguous(base, (uint64_t)pages);
+}
+
 int task_create(task_entry_t entry, const char *name)
 {
     uint32_t pid;
@@ -731,16 +751,15 @@ int task_create(task_entry_t entry, const char *name)
                 PsDereferencePrimaryToken(inherited_token);
             return -1;
         }
-        if (vmm_install_guard_page(stack_base,
-                                   "GUARD: kernel task stack overflow") != 0) {
+        int guard_rc = vmm_install_guard_page(stack_base,
+                                              "GUARD: kernel task stack overflow");
+        if (guard_rc != VMM_GUARD_OK) {
             /* Refuse rather than run a task on an unguarded kernel stack: a
              * silent stack overflow corrupts whatever frame sits below it,
-             * while a refused task_create is visible and recoverable. The
-             * install failed before touching any PTE, so the frames are still
-             * mapped and free normally. */
+             * while a refused task_create is visible and recoverable. */
             klog(LOG_ERROR, "sched",
                  "task_create: no guard page available for kernel stack");
-            pmm_free_contiguous(stack_base, stack_pages + 1);
+            stack_run_release_after_guard_failure(stack_base, stack_pages + 1, guard_rc);
             quota_task_teardown(&tasks[pid]);  /* roll back the early quota init */
             ob_job_detach_task(&tasks[pid]);   /* roll back the early job inherit */
             if (inherited_token)
@@ -2751,14 +2770,14 @@ _Static_assert(VMM_MAX_GUARD_PAGES >= (TASK_MAX * (THREAD_MAX + 2)) + 32,
 void task_test_free_kernel_stack(uint8_t *stack_base);
 #endif
 
-static void task_free_kernel_stack(uint8_t *stack_base)
+static int task_free_kernel_stack(uint8_t *stack_base)
 {
     if (!stack_base)
-        return;
+        return 0;
 
     if (heap_owns(stack_base)) {
         kfree(stack_base);
-        return;
+        return 0;
     }
 
     {
@@ -2766,25 +2785,29 @@ static void task_free_kernel_stack(uint8_t *stack_base)
         uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
         uint32_t p;
         if (vmm_uninstall_guard_page(base - 4096) != 0) {
-            /* The guard VA is still not present, so the frame under it cannot
-             * be handed back: the next allocator to write through its identity
-             * address would fault in kernel mode -- exactly the 2026-04-20
-             * failure this helper exists to prevent. Leak the run and say so;
-             * a bounded leak is recoverable, a poisoned free list is not. */
+            /* The guard VA is not a confirmed identity mapping, so the frame
+             * under it cannot be handed back: the next allocator to write
+             * through its identity address would fault in kernel mode --
+             * exactly the 2026-04-20 failure this helper exists to prevent.
+             * Report failure so the CALLER keeps its pointer: uninstall retains
+             * the registration on refusal precisely so a later drain can retry,
+             * and a caller that cleared the pointer would strand both the run
+             * and its guard slot for the life of the boot. */
             klog(LOG_ERROR, "sched",
-                 "task: leaking kernel stack at %p -- guard page %p not restored",
+                 "task: kernel stack at %p not released -- guard page %p not restored",
                  (void *)base, (void *)(base - 4096));
-            return;
+            return -1;
         }
         for (p = 0; p < pages; p++)
             pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
     }
+    return 0;
 }
 
 #ifdef KERNEL_TESTS
 void task_test_free_kernel_stack(uint8_t *stack_base)
 {
-    task_free_kernel_stack(stack_base);
+    (void)task_free_kernel_stack(stack_base);
 }
 #endif
 
@@ -2896,8 +2919,14 @@ int task_exec(const uint8_t *data, uint64_t size)
      * than at publication) is what bounds the outstanding stale stacks at one
      * per task instead of one per exec. */
     if (tasks[pid].stack_pending_free) {
-        task_free_kernel_stack(tasks[pid].stack_pending_free);
-        tasks[pid].stack_pending_free = (uint8_t *)0;
+        /* Hold the pointer when the release is REFUSED, so a later drain of
+         * this same slot can retry (uninstall keeps the guard registration on
+         * failure for exactly that). This is a best effort, not a guarantee:
+         * a successful exec republishes the slot below and the retained run is
+         * then lost. A durable owner across re-exec, rollback and reap is the
+         * filed section-19 follow-up. */
+        if (task_free_kernel_stack(tasks[pid].stack_pending_free) == 0)
+            tasks[pid].stack_pending_free = (uint8_t *)0;
     }
 
     /* A fork child MUST have its own page table before its image is replaced.
@@ -2953,8 +2982,9 @@ int task_exec(const uint8_t *data, uint64_t size)
             if (argv_addrs) kfree(argv_addrs);
             return -1;
         }
-        if (vmm_install_guard_page(stack_base,
-                                   "GUARD: kernel task stack overflow") != 0) {
+        int guard_rc = vmm_install_guard_page(stack_base,
+                                              "GUARD: kernel task stack overflow");
+        if (guard_rc != VMM_GUARD_OK) {
             /* Pre-commit refusal: the image is still the task's own, so this
              * returns -1 to a caller that can still use it. Failing here is
              * the point -- past the commit point there is no way to decline an
@@ -2962,7 +2992,7 @@ int task_exec(const uint8_t *data, uint64_t size)
              * holds two guards at once. */
             klog(LOG_ERROR, "sched",
                  "task_exec: no guard page available for replacement kernel stack");
-            pmm_free_contiguous(stack_base, stack_pages + 1);
+            stack_run_release_after_guard_failure(stack_base, stack_pages + 1, guard_rc);
             if (argv_addrs) kfree(argv_addrs);
             return -1;
         }
@@ -3921,8 +3951,14 @@ void task_cleanup(uint32_t pid)
         tasks[pid].stack_base = (uint8_t *)0;
     }
     if (tasks[pid].stack_pending_free) {
-        task_free_kernel_stack(tasks[pid].stack_pending_free);
-        tasks[pid].stack_pending_free = (uint8_t *)0;
+        /* Hold the pointer when the release is REFUSED, so a later drain of
+         * this same slot can retry (uninstall keeps the guard registration on
+         * failure for exactly that). This is a best effort, not a guarantee:
+         * a successful exec republishes the slot below and the retained run is
+         * then lost. A durable owner across re-exec, rollback and reap is the
+         * filed section-19 follow-up. */
+        if (task_free_kernel_stack(tasks[pid].stack_pending_free) == 0)
+            tasks[pid].stack_pending_free = (uint8_t *)0;
     }
     tasks[pid].threads[0].kernel_rsp = 0;
     /* Thread 0's task-owned stack is freed here (NOT via thread_free_stacks,
@@ -4553,12 +4589,15 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
 
     /* Guard page at bottom of kernel stack. Refuse the thread rather than run
      * ring-3 code on an unguarded kernel stack; the install fails before
-     * touching any PTE, so the run is still mapped and frees normally. */
-    if (vmm_install_guard_page(kstack_phys, "uthread kernel stack") != 0) {
-        klog(LOG_ERROR, "sched",
-             "uthread_create: no guard page available for kernel stack");
-        pmm_free_pages(kstack_phys, kstack_pages);
-        return -1;
+     * touching any PTE, so the run is still the caller's to release. */
+    {
+        int guard_rc = vmm_install_guard_page(kstack_phys, "uthread kernel stack");
+        if (guard_rc != VMM_GUARD_OK) {
+            klog(LOG_ERROR, "sched",
+                 "uthread_create: no guard page available for kernel stack");
+            stack_run_release_after_guard_failure(kstack_phys, kstack_pages, guard_rc);
+            return -1;
+        }
     }
 
     /* Allocate per-thread USER stack (PMM: 16 KiB) */

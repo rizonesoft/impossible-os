@@ -1280,6 +1280,46 @@ PYEOF
 fi
 
 # ============================================================================
+# Check 19: TODO prose shape -- item-length cap and hard-wrapped prose
+# ============================================================================
+# WHY THIS IS HERE AND NOT ONLY IN A HOOK. Both rules already have PreToolUse
+# hooks (todo_item_line_length, todo_wrap_reminder) and both hooks work -- on
+# Edit/Write. Neither sees a `python3` heredoc or rewrite script run through
+# Bash, which is how the operator AND the unattended runner most often write
+# TODO content. Measured 2026-07-28: five over-cap items landed after the
+# item-length hook shipped, in exactly the two commits that used the script
+# path. lint.sh is the only layer that reaches CI (build.yml, release.yml), so
+# without an entry here the rules are invisible to CI entirely.
+#
+# WARN-only, and one summary line per rule, following Check 17's precedent:
+# this is repo-wide legacy debt (measured 2026-07-28: 1,407 over-cap items
+# across 141 files; 35 files with hard-wrapped prose), so erroring would fail
+# every commit until a sweep lands and per-item WARNs would drown every other
+# check. Enforcement on NEW content is scripts/todo-staged-check.py at
+# pre-commit, which judges only ADDED lines.
+# Skip via SKIP_LINT_TODO_PROSE=1.
+if [ "${SKIP_LINT_TODO_PROSE:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 19 (todo-prose) skipped via SKIP_LINT_TODO_PROSE=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT19_ITEMS=$(awk '/^ *- \[[ x\/]\]/ && length>250 {c++} END{print c+0}' \
+        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null || echo 0)
+    LINT19_FILES=$(awk '/^ *- \[[ x\/]\]/ && length>250 {print FILENAME}' \
+        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null | sort -u | wc -l | tr -d ' ')
+    if [ "${LINT19_ITEMS:-0}" -gt 0 ]; then
+        echo -e "${YELLOW}warn${NC}: Check 19 (todo-item-length) $LINT19_ITEMS checklist item(s) over the 250-char cap across $LINT19_FILES file(s) (legacy debt; NEW ones are blocked at commit by scripts/todo-staged-check.py)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+    LINT19_WRAP=$( { python3 "$REPO_ROOT/scripts/todo-reflow.py" --check \
+        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null || true; } \
+        | grep -c 'would reflow' || true)
+    if [ "${LINT19_WRAP:-0}" -gt 0 ]; then
+        echo -e "${YELLOW}warn${NC}: Check 19 (todo-hard-wrap) $LINT19_WRAP todo/*.md file(s) contain hard-wrapped prose (one paragraph per line is the convention; repair with: python3 scripts/todo-reflow.py --write <file>)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

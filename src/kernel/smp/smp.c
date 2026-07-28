@@ -376,6 +376,7 @@ void smp_init(void)
     for (i = 0; i < cpu_count; i++) {
         const struct cpu_info *ci = acpi_get_cpu_info(i);
         uintptr_t stack_phys;
+        int guard_rc;
 
         if (!ci || !ci->enabled || i == bsp_index)
             continue;
@@ -395,11 +396,16 @@ void smp_init(void)
          * memory, and an AP stack overflow would cross it silently into
          * whatever sits below. Skipping the AP costs one CPU and says so;
          * launching it costs silent memory corruption. */
-        if (vmm_install_guard_page(stack_phys,
-                                   "GUARD: AP kernel stack overflow") != 0) {
+        guard_rc = vmm_install_guard_page(stack_phys,
+                                          "GUARD: AP kernel stack overflow");
+        if (guard_rc != VMM_GUARD_OK) {
             klog(LOG_ERROR, "smp",
                  "No guard page for AP %u stack -- skipping this AP", (uint64_t)i);
-            pmm_free_contiguous(stack_phys, AP_STACK_SIZE / 4096 + 1);
+            /* VMM_GUARD_VA_UNSAFE means this run's identity VA maps another
+             * frame, so it is not reusable by anyone -- quarantine it instead
+             * of handing the next PMM consumer a poisoned frame. */
+            if (guard_rc != VMM_GUARD_VA_UNSAFE)
+                pmm_free_contiguous(stack_phys, AP_STACK_SIZE / 4096 + 1);
             continue;
         }
         stack_phys += 4096;  /* usable stack starts after guard */

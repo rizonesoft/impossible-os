@@ -601,6 +601,26 @@ static int guard_map_is_kernel_identity(uintptr_t page, int present,
     return (flags & VMM_FLAG_USER) ? 0 : 1;
 }
 
+/* Would this frame be safe to hand back to the PMM as it stands?
+ *
+ * Weaker than guard_map_is_kernel_identity by exactly one bit: it does NOT
+ * require User to be clear. That is not laxity, it is this kernel's boot
+ * identity map -- SMEP is disabled globally and the boot PML4 sets User on
+ * every 2 MiB page (CLAUDE.md "Bare Metal Gotchas"), so EVERY frame the PMM
+ * hands out lives under a User-flagged mapping until something splits it.
+ * Requiring User clear here would refuse every legitimate guard install and
+ * halt the boot in ist_alloc(); that is measured, not theoretical (2026-07-28).
+ * Writable IS required: the next owner's zero-fill writes through the identity
+ * address. The stricter predicate applies where it can be honoured -- after
+ * uninstall rewrites the leaf itself as a kernel-only 4 KiB PTE. */
+static int guard_map_is_reusable_frame(uintptr_t page, int present,
+                                       uintptr_t phys, uint64_t flags)
+{
+    if (!present || phys != page)
+        return 0;
+    return (flags & VMM_FLAG_PRESENT) && (flags & VMM_FLAG_WRITABLE);
+}
+
 /* Walk-and-evaluate wrapper, for confirming the state left behind by a rewrite. */
 static int guard_va_is_kernel_identity(uintptr_t page)
 {
@@ -668,6 +688,20 @@ static int guard_page_register_locked(uintptr_t page, const char *label)
     guard_pages[guard_page_count].addr = page;
     guard_pages[guard_page_count].label = label;
     guard_page_count++;
+    return 0;
+}
+
+/* Is `page` a registered guard? Peek only -- uninstall must know this BEFORE it
+ * decides anything, but must not surrender the registration until the identity
+ * mapping is actually restored. Caller holds guard_page_lock. */
+static int guard_page_is_registered_locked(uintptr_t page)
+{
+    uint32_t i;
+
+    for (i = 0; i < guard_page_count; i++) {
+        if (guard_pages[i].addr == page)
+            return 1;
+    }
     return 0;
 }
 
@@ -1603,7 +1637,11 @@ int vmm_split_huge_page(uintptr_t virt)
 int vmm_install_guard_page(uintptr_t virt, const char *label)
 {
     uintptr_t page = virt & ~((uintptr_t)0xFFF);
+    uintptr_t phys = 0;
+    uint64_t flags = 0;
     uint64_t irq_flags;
+    int present;
+    int not_reusable = 0;
     int full = 0;
     int split_failed = 0;
 
@@ -1625,7 +1663,23 @@ int vmm_install_guard_page(uintptr_t virt, const char *label)
      * one, which changes vmm_split_huge_page for every caller and belongs with
      * the VMM-wide page-table lock (03-memory-concurrency/TODO-07-smp-phase2). */
     spin_lock_irqsave(&guard_page_lock, &irq_flags);
-    if (guard_page_register_locked(page, label) != 0) {
+    present = vmm_translate(page, &phys, &flags);
+    if (!guard_map_is_reusable_frame(page, present, phys, flags)) {
+        /* Guarding means "clear the identity mapping of this frame", so refuse
+         * a VA that is not currently its own frame -- clearing it would destroy
+         * an unrelated live mapping, and the teardown gate would later stamp an
+         * identity mapping over whatever it was. This is not hypothetical in an
+         * identity-mapped kernel: a fixed VA like KUSER_SHARED_DATA is just a
+         * number, and nothing stops the PMM from handing out the frame whose
+         * physical address equals it (pmm.c reserves the user PT window for
+         * exactly this collision class, after it cost a boot hang once).
+         *
+         * The same predicate decides the failure CODE for the branches below,
+         * not just this one: a run whose identity mapping is absent, aliased or
+         * read-only is not PMM-safe no matter WHY the install failed, so it is
+         * never reported as merely unavailable. The refusal touches no PTE. */
+        not_reusable = 1;
+    } else if (guard_page_register_locked(page, label) != 0) {
         full = 1;
     } else if (vmm_split_huge_page(page) != 0) {
         guard_page_unregister_locked(page);
@@ -1637,18 +1691,24 @@ int vmm_install_guard_page(uintptr_t virt, const char *label)
     spin_unlock_irqrestore(&guard_page_lock, irq_flags);
 
     /* Serial output never happens under the lock (Gate 2). */
+    if (not_reusable) {
+        klog(LOG_ERROR, "mm",
+             "guard install: %p is not a kernel-writable identity mapping -- refusing, frame is NOT reusable (%s)",
+             (void *)page, label);
+        return VMM_GUARD_VA_UNSAFE;
+    }
     if (full) {
         klog(LOG_WARN, "mm",
              "guard table full (%u entries) -- refusing guard at %p (%s)",
              (uint64_t)VMM_MAX_GUARD_PAGES, (void *)page, label);
-        return -1;
+        return VMM_GUARD_UNAVAILABLE;
     }
     if (split_failed) {
         klog(LOG_WARN, "mm", "guard install: huge-page split failed at %p (%s)",
              (void *)page, label);
-        return -1;
+        return VMM_GUARD_UNAVAILABLE;
     }
-    return 0;
+    return VMM_GUARD_OK;
 }
 
 int vmm_uninstall_guard_page(uintptr_t virt)
@@ -1660,7 +1720,7 @@ int vmm_uninstall_guard_page(uintptr_t virt)
     int was_registered;
     int present;
     int aliased = 0;
-    int repaired = 0;
+    int unowned = 0;
     int rc;
 
     /* Virtual page 0 is never guarded, and accepting it would make the identity
@@ -1669,7 +1729,13 @@ int vmm_uninstall_guard_page(uintptr_t virt)
         return -1;
 
     spin_lock_irqsave(&guard_page_lock, &irq_flags);
-    was_registered = guard_page_unregister_locked(page);
+    /* PEEK, do not remove. The registration is the only record that this VA is
+     * ours to restore, so it is surrendered as the COMMIT step below, after the
+     * identity mapping is verified back. Dropping it first meant a failed
+     * restore forgot the guard forever: the retry would land on the
+     * unregistered path, which refuses by design, and the caller's run would be
+     * stranded for the life of the boot. */
+    was_registered = guard_page_is_registered_locked(page);
 
     /* Success MUST mean "the IDENTITY mapping is back" -- vmm_get_physical
      * returning exactly `page` -- not merely "the table holds no entry" and not
@@ -1702,25 +1768,24 @@ int vmm_uninstall_guard_page(uintptr_t virt)
     if (present && phys != page) {
         aliased = 1;
         rc = -1;
-    } else if (was_registered || !present) {
+    } else if (was_registered) {
         /* Restore the identity mapping at `page`. The frame physically backing
          * the VA in the boot identity map is `page` itself: Present + Writable,
-         * kernel-only (no User bit). A registered guard is rewritten even when
-         * the address already reads back right, because the permissions may
-         * not; an absent mapping with no table entry is repaired rather than
-         * freed unmapped. */
-        repaired = !was_registered;
+         * kernel-only (no User bit). Rewritten even when the address already
+         * reads back right, because the permissions may not. */
         rc = (vmm_map_page(page, page,
                            VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE) == 0 &&
               guard_va_is_kernel_identity(page)) ? 0 : -1;
+        if (rc == 0)
+            guard_page_unregister_locked(page);   /* commit */
     } else {
-        /* Never guarded and already present: INSPECT, never rewrite -- this
-         * mapping belongs to someone else, and the boot identity map carries
-         * User on its 2 MiB pages. Judge it on the snapshot already taken, and
-         * fail CLOSED: a read-only or user-accessible leaf is not safe to hand
-         * to the PMM, so refuse rather than authorize the free. With failable
-         * registration this branch is only reachable as a repair case, so the
-         * refusal costs a logged frame leak, never a working teardown. */
+        /* Never guarded: INSPECT, never rewrite. This mapping is not ours --
+         * the boot identity map carries User on its 2 MiB pages, and an ABSENT
+         * unregistered VA is the very state vmm_install_guard_page() refuses as
+         * VMM_GUARD_VA_UNSAFE, so repairing it here would launder a refused
+         * install into an authorized free. Judge the snapshot and fail CLOSED;
+         * the caller quarantines. */
+        unowned = !present;
         rc = guard_map_is_kernel_identity(page, present, phys, flags) ? 0 : -1;
     }
     spin_unlock_irqrestore(&guard_page_lock, irq_flags);
@@ -1729,13 +1794,13 @@ int vmm_uninstall_guard_page(uintptr_t virt)
         klog(LOG_ERROR, "mm",
              "guard uninstall: %p maps a DIFFERENT frame -- refusing to report it freeable",
              (void *)page);
+    else if (unowned)
+        klog(LOG_ERROR, "mm",
+             "guard uninstall: %p is unmapped with no table entry -- refusing, not ours to repair",
+             (void *)page);
     else if (rc != 0)
         klog(LOG_ERROR, "mm",
              "guard uninstall: %p could not be restored to its identity mapping",
-             (void *)page);
-    else if (repaired)
-        klog(LOG_WARN, "mm",
-             "guard uninstall: %p was unmapped with no table entry -- restored",
              (void *)page);
     return rc;
 }

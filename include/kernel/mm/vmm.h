@@ -211,15 +211,32 @@ int vmm_split_huge_page(uintptr_t virt);
  * TASK_MAX or THREAD_MAX without resizing the table fails the build. */
 #define VMM_MAX_GUARD_PAGES 640
 
+/* vmm_install_guard_page() results. Every failure leaves the mapping INTACT --
+ * the checks run before any PTE is touched -- but they differ in whether the
+ * underlying frame is still USABLE, which the caller's rollback depends on. */
+#define VMM_GUARD_OK           0    /* guarded */
+#define VMM_GUARD_UNAVAILABLE (-1)  /* table full or split failed; frame is fine */
+#define VMM_GUARD_VA_UNSAFE   (-2)  /* frame is NOT PMM-safe -- see below */
+
 /* Install a guard page: reserve a table slot, split the containing huge page,
  * clear the PTE, so the page fault handler can name the region on a hit
  * (panic_screen shows the label instead of a generic "PAGE_FAULT").
  *
- * Returns 0 on success, -1 if the guard table is full or the huge-page split
- * failed. A FAILED install leaves the mapping INTACT -- the slot is reserved
- * before any PTE is touched -- so the caller may still safely free the frame
- * or keep using it unguarded. Callers depend on this fail-before-clearing
- * contract (see heap.c's heap-end guard). */
+ * A FAILED install touches no PTE, so the caller may keep using the run
+ * unguarded -- but only VMM_GUARD_UNAVAILABLE means the frame may go back to
+ * the PMM. VMM_GUARD_VA_UNSAFE is returned whenever `virt` is not confirmed
+ * REUSABLE -- absent, present but pointing at a different frame, or present at
+ * its own frame without Writable. No consumer can take such a frame: the next
+ * owner would write through its identity address into nothing, into somebody
+ * else's frame, or into a read-only page. Quarantine the whole run instead of
+ * freeing it. The check runs FIRST, so a non-reusable frame is never reported
+ * as merely unavailable, whatever else would have failed after it.
+ *
+ * User being set is NOT a refusal: SMEP is disabled globally and the boot PML4
+ * carries User on every 2 MiB page, so every PMM frame starts under a User
+ * mapping. vmm_uninstall_guard_page() is where kernel-only is enforced, because
+ * that is where the leaf is rewritten. Callers also depend on the
+ * fail-before-clearing contract (see heap.c's heap-end guard). */
 int vmm_install_guard_page(uintptr_t virt, const char *label);
 
 /* Reverse of vmm_install_guard_page: restore the identity mapping at
@@ -229,12 +246,15 @@ int vmm_install_guard_page(uintptr_t virt, const char *label);
  * the same frame will fault when its zero/init writer dereferences the
  * (still-not-present) virtual address.
  *
- * Returns 0 only when `virt` is CONFIRMED mapped on return, so a caller may
- * treat 0 as "safe to hand the frame back to the PMM"; -1 means the VA is
- * still not present and the frame must NOT be freed. A VA that was never
- * guarded is a no-op success (it is already mapped) -- but, unlike the
- * original implementation, that answer now comes from reading the PTE rather
- * than from the mere absence of a table entry. */
+ * Returns 0 only when `virt` is CONFIRMED to map ITSELF, Present + Writable
+ * with User clear, so a caller may treat 0 as "safe to hand the frame back to
+ * the PMM". -1 covers every other state -- still not present, present but
+ * pointing at another frame, or present with permissions a reused frame cannot
+ * carry -- and the frame must NOT be freed on any of them. A VA that was never
+ * guarded is a no-op success when it already satisfies that predicate; unlike
+ * the original implementation, the answer comes from reading the PTE rather
+ * than from the mere absence of a table entry, and an unregistered VA is only
+ * ever INSPECTED, never rewritten. */
 int vmm_uninstall_guard_page(uintptr_t virt);
 
 /* Guard-table slots still available. Diagnostics + the saturation unit test;
