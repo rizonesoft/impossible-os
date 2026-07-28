@@ -72,6 +72,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  17   | Process groups and sessions (setpgid/setsid)              | --                 |  [/]   |
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 | 💎   |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [ ]   |
+| 💎   |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -395,8 +396,8 @@ Win11 provides `SetProcessMitigationPolicy` to control per-process security feat
 > - Canonical doc: OpenBSD `pledge(2)`/`unveil(2)` semantics; in-tree contract in `include/kernel/nt/pledge.h`.
 > - Scope boundary: §12 owns pledge/unveil; `inet`/`dns`/`tty` map to no syscall until those subsystems land; the §25 per-index bitmap filter is separate and complementary.
 > **Verified:** 2026-07-12 | commit `b929d91f` | 9/9 items | build OK | 425 sched + 114 fs + 282 ipc PASS | smoke PASS
-> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 398)
-> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 399)
+> **Accepted:** [H] pledge_terminate sibling-CPU quiescence: `task_exit` marks TASK_DEAD with no sibling-stop barrier (pre-existing; all `task_exit` callers) -> XREF: 02-kernel-core/TODO-21 §14 (item: "Coordinated SMP process termination" at line 399)
+> **Accepted:** [H] child publication vs pledge/unveil inheritance ordering: NtCreateProcess publishes before inheriting (entry==0 mitigates), and task_fork inherits early then publishes without revalidating a concurrent tighten -- both need the atomic inherit-and-revalidate-before-publish construction -> XREF: 02-kernel-core/TODO-21 §14 (item: "Unpublished-child construction" at line 400)
 > **Accepted:** [H] aliased/same-handle `FILE_OBJECT.path` goes stale after rename (needs node-shared canonical path; same-handle path-mutating setinfo now fails closed on a stale handle as an interim) -> XREF: 02-kernel-core/TODO-12 §13 (item: "`FILE_OBJECT` canonical-path sync across ALIASED handles on rename" at line 661)
 > **Deferred:** [M] two heap-allocation optimizations (tail-pack `FILE_OBJECT.path`; variable-length `unveil_entry`) (reason: perf, code correct + bounded) -> XREF: 02-kernel-core/TODO-12 §13 (item: "Tail-pack `FILE_OBJECT.path` into the object-manager allocation" at line 663)
 > **Deferred:** [M] finer NtSetInformationFile ACCESS_MASK precision (DELETE vs WRITE) beyond the interim any-write-access gate now enforced -> XREF: 02-kernel-core/TODO-12 §13 (item: "`NtSetInformationFile` NT ACCESS_MASK enforcement" at line 665)
@@ -555,7 +556,7 @@ No section owns session ID, process-group ID, session leadership, the foreground
 > **Accepted:** [H] `signal_send` `t->state` wake can resurrect a DEAD task on SMP (pre-existing plain RMW; §17 amplifies via group fan-out) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Audit signal_send t->state wake" at line 79)
 > **Accepted:** [H] Ctrl+C fan-out queues SIGINT but no `signal_check` call site drains it (pre-existing; the delivery boundary is unbuilt) -> XREF: 10-platform-services/TODO-10-linux-compat.md §8 (item: "SIGINT delivery (signal 2)" at line 265)
 > **Accepted:** [H] job-control lock holds IRQs off across a bounded O(TASK_MAX) scan + the Ctrl+C ISR fan-out scans the group (both bounded; the latency-critical ISR foreground read is lock-free atomic) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §1 (item: "Shrink IRQ-off time in ... job-control paths" at line 80)
-> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 558)
+> **Deferred:** [M] Ctrl+C wake can make `waitpid` false-complete a live child (pre-existing single-yield `task_waitpid`; §17 wakes more waiters) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §15 (item: "task_waitpid/sys_wait4 must LOOP until the child is DEAD/ZOMBIE" at line 559)
 > **Quality reviewed:** 2026-07-13 | Codex 25x (design + adversarial + consistency + perf + re-adversarial) | 2C+11H+9M fixed, 4H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -588,12 +589,9 @@ predate that fix and none is caused by it. Filed rather than hot-fixed because t
 wrong: hoisting the allocations does not close the `exec_load_fmt` failure return, and publishing `exec_pending` later
 lets a tick between the frame write and the store clobber the published frame via the save-gate.
 
-A fourth defect of the same class landed here 2026-07-27, moved out of `todo/overnight-runner-improvements/overnight-runner-improvements-v01.md` where
-it could never be scheduled (the sequencer does not traverse that file): a **page-table use-after-free across reap +
-fork/exec**, where a live task runs on a reaped task's recycled PML4 and panics with `USER_ACCESS_VIOLATION`. It is
-the same reap-versus-exec lifetime question as the items above, which is why it is owned here rather than in an MM
-TODO. **It is the sole cause of the currently-red `Build Impossible OS` job**, so this section turning green should
-turn CI green with it.
+A fourth defect of the same class was filed here 2026-07-27 and split out to §20 on 2026-07-28 (page-table
+use-after-free across reap + fork/exec). It is a distinct lifetime question with its own repro and its own decision,
+and this section carries ABI-affecting transactional work that a single section cannot hold; see §20.
 
 - [ ] Establish a no-return commit point in `task_exec` (`src/kernel/sched/task.c:2683`): perform every fallible step
       (argv frame validation + `argv_addrs` `kmalloc` at 2856-2870, replacement kernel stack at 2877-2886) BEFORE the
@@ -609,25 +607,8 @@ turn CI green with it.
       assigned until 3246, so a tick in that window switches the task in with `kernel_gs_base == 0`. Fix by making the
       commit interval non-preemptible or by an explicit state the scheduler cannot consume until READY -- NOT by moving
       the store later (it gates the save-gate at `task.c:1185` that protects `tasks[pid].rsp`)
-- [ ] **Page-table use-after-free across reap + fork/exec (CURRENTLY RED CI).** A live task executes against a REAPED
-      task's PML4 whose frames have been recycled: free side `vmm_destroy_user_pml4` (`src/kernel/mm/vmm.c:1209`), reap
-      side (`src/kernel/sched/task.c:3479`). Same lifetime class as the defects above, so it is fixed here
-- [ ] Decide which half of that race is wrong: whether reap may free a PML4 while a task still holds that CR3, or
-      whether fork/exec can adopt a recycled one. The evidence does not distinguish them, and the fix differs
-- [ ] Evidence, measured: the transition ring records PID 12 at `cr3=0x16CD000 rsp=0xA6C4B0`; the panic context carries
-      the SAME CR3 and an RSP 16 bytes up the SAME stack, after `task: PID 12 reap cleanup` and
-      `sched: PID 13 -> entry 0x800000`. `RBP` little-endian reads `"PIPE-OK"` -- a pipe test's buffer, so the process
-      is fetching instructions out of recycled data
-- [ ] Repro (deterministic, ~3 min): `PATH=<dir-with-8.2.2>:$PATH FORCE_TCG=1 bash scripts/test.sh SUITE=quota QUIET=1`,
-      then grep the serial log for `USER_ACCESS_VIOLATION` rather than waiting for the timeout. Only `test=1`
-      reproduces it -- a plain 8.2.2 boot reaches `C:\>` and idles, so the smoke test reports green and proves nothing
-- [ ] Do NOT close this by upgrading or pinning CI's QEMU. 8.2.2 is the TRIGGER, not the cause: the same kernel on
-      10.2.1 and on KVM completes 25474 kernel + 16 user tests. It is a timing-sensitive race one emulator hides, the
-      exact class the bare-metal-first rule exists for, and 8.2.2 is the only environment currently exposing it
 - [ ] Unit tests: fault-inject each post-load allocation failure and assert the task dies instead of returning; assert
       PMM free-page count returns to baseline across repeated exec
-- [ ] Unit test the reap/exec lifetime directly: a task must never be schedulable on a CR3 whose PML4 has been freed --
-      assert the reaped PML4's frames are not reachable from any runnable thread before the PMM may hand them out
 - [ ] Commit: `"kernel: task -- exec commit point + kernel-stack reclamation"`
 
 **Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a
@@ -638,6 +619,49 @@ Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
 > **Note:** the deterministic ring-3 crash that surfaced these (a synchronous `SYS_EXEC` returning to its pre-exec RIP
 > when no timer tick landed) is FIXED and verified -- see `task_exec_take_pending_frame` in `src/kernel/sched/task.c`
 > and the `Sched: exec frame handoff pass-through` test. This section is the remaining transactional work only.
+
+---
+
+## 20. Page-Table Lifetime Across Reap + fork/exec
+
+A live task was observed executing against a REAPED task's PML4 whose frames had been recycled, panicking with
+`USER_ACCESS_VIOLATION`: free side `vmm_destroy_user_pml4` (`src/kernel/mm/vmm.c:1209`), reap side
+(`src/kernel/sched/task.c:3479`). Split out of §19 on 2026-07-28 -- same reap-versus-exec lifetime class, but a
+distinct decision and a distinct repro, so it is owned separately rather than bundled with §19's transactional work.
+
+**Status correction (2026-07-28, measured).** The filing claimed this was "the sole cause of the currently-red
+`Build Impossible OS` job". That is false. The red run (`051df5e0`) failed on **Run tooling regression pack** --
+`build_offload_sections` + `build_offload_type_specific` -- which `eb2af727` fixed by repairing the `_repo_root()`
+doubled-path bug that had silently disabled the gate; `build.yml` is green at `103a2db8` and after. **The repro no
+longer reproduces**: three consecutive `CI_PARITY=1 bash scripts/test.sh SUITE=quota QUIET=1` runs on
+`/usr/bin/qemu-system-x86_64` 8.2.2 with forced TCG -- the exact environment named below -- pass 3342 kernel + 16
+user-mode tests with zero `USER_ACCESS_VIOLATION`. Three green runs of a timing-sensitive race are NOT a fix, and
+no commit claims to have addressed the lifetime question, so the section stays open on the invariant, not the crash.
+
+- [ ] Decide which half of the race is wrong: whether reap may free a PML4 while a task still holds that CR3, or
+      whether fork/exec can adopt a recycled one. The 2026-07-27 evidence does not distinguish them, and the fix differs
+- [ ] Because the crash no longer reproduces, do NOT patch toward the symptom. Establish the INVARIANT instead: a task
+      must never be schedulable on a CR3 whose PML4 has been freed. Enforce it where it can be checked cheaply and
+      assert it in a debug build, so a re-emergence names itself instead of arriving as a recycled-data instruction fetch
+- [ ] Original evidence, measured 2026-07-27: the transition ring records PID 12 at `cr3=0x16CD000 rsp=0xA6C4B0`; the
+      panic context carries the SAME CR3 and an RSP 16 bytes up the SAME stack, after `task: PID 12 reap cleanup` and
+      `sched: PID 13 -> entry 0x800000`. `RBP` little-endian reads `"PIPE-OK"` -- a pipe test's buffer, so the process
+      was fetching instructions out of recycled data
+- [ ] Repro as filed (no longer reproducing, see status correction): `CI_PARITY=1 bash scripts/test.sh SUITE=quota
+      QUIET=1` (selects `/usr/bin/qemu-system-x86_64` 8.2.2 + forced TCG), then grep the serial log for
+      `USER_ACCESS_VIOLATION` rather than waiting for the timeout. Only `test=1` ever reproduced it -- a plain 8.2.2
+      boot reaches `C:\>` and idles, so the smoke test reports green and proves nothing
+- [ ] Do NOT close this by upgrading or pinning CI's QEMU. 8.2.2 was the TRIGGER, not the cause: the same kernel on
+      10.2.1 and on KVM completed 25474 kernel + 16 user tests. It is a timing-sensitive race one emulator exposed, the
+      exact class the bare-metal-first rule exists for
+- [ ] Unit test the reap/exec lifetime directly: a task must never be schedulable on a CR3 whose PML4 has been freed --
+      assert the reaped PML4's frames are not reachable from any runnable thread before the PMM may hand them out
+- [ ] Commit: `"kernel: mm -- page-table lifetime across reap and fork/exec"`
+
+**Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a
+freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota
+suite and record the result either way -- a green run is evidence about the trigger, not about the invariant.
+Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
 
 ---
 
