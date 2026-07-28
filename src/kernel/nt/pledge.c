@@ -361,6 +361,15 @@ static uint64_t pledge_legacy_category(uint64_t sys_nr)
     case SYS_EXIT:  case SYS_YIELD:  case SYS_WAITPID: case SYS_GETPID:
     case SYS_UPTIME: case SYS_LOG:   case SYS_SIGNAL:  case SYS_ABI_HANDSHAKE:
     case SYS_CLOSEHANDLE: case SYS_MMAP: case SYS_MUNMAP: case SYS_UNMAPVIEW:
+    /* Reporting your own result is survival, on the same footing as
+     * SYS_LOG: it writes three counters on the caller's OWN TCB and
+     * reaches nothing else. It has to be CORE because UTEST_END sits in
+     * the footer of EVERY test binary -- leaving it to the fail-closed
+     * default would make pledge_terminate kill any binary that pledged,
+     * at the exact moment it tried to report what it had proved. Unlike
+     * SYS_FAULT_INJECT (deliberately DENY) it grants no reach outside
+     * the caller. */
+    case SYS_TEST_REPORT:
     /* File SYS_* reach the handler for the fine rpath/wpath + unveil check. */
     case SYS_OPENFILE: case SYS_READFILE: case SYS_READDIR:
         return PLEDGE_REQ_CORE;

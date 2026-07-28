@@ -76,6 +76,83 @@ struct ki_exception_registration;
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
 #define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
 
+/* ---- Ring-3 test harness self-report (SYS_TEST_REPORT, syscall 48) ----
+ *
+ * A test binary's exit code carries exactly two outcomes (0 = no failures,
+ * 77 = the whole binary was skippable), so a binary that skipped ONE of its
+ * sub-tests and passed the rest had nowhere to say so: the launcher classed
+ * it PASS with zero skips in TAP / JUnit XML / JSON while the serial log
+ * showed the [SKIP] line. This record is the third outcome's channel.
+ *
+ * SKIP BLOCKS, NOT SUB-TESTS: one UTEST_SKIP guards a block that may contain
+ * several assertions, so `skip_blocks` counts skip SITES taken, and is never
+ * comparable to the assertion counts beside it. The two are separate
+ * dimensions and the artifacts report them as such.
+ *
+ * FAIL-CLOSED: every field is ring-3 supplied. `state` is the kernel's own
+ * verdict on the submission and is the only field a consumer may trust
+ * before checking; INVALID means the binary contradicted itself and the
+ * launcher escalates it to FAIL rather than dropping the counts silently.
+ * NONE (the zero value, so a fresh or recycled slot degrades correctly) is
+ * the legacy exit-code-only path every non-reporting binary stays on. */
+#define TASK_UTEST_REPORT_NONE    0u  /* never submitted -- legacy behaviour  */
+#define TASK_UTEST_REPORT_VALID   1u  /* submitted once, within bounds        */
+#define TASK_UTEST_REPORT_INVALID 2u  /* contradicted itself -- escalate FAIL */
+/* Transient: one submitter has CLAIMED the single-submission slot with an
+ * atomic compare-exchange and is filling the counts. Any second submitter
+ * loses that exchange and invalidates the record, so "exactly once" holds
+ * even with several user threads in the same process -- a check-then-set
+ * would let two threads both observe NONE and let the last writer win,
+ * quietly replacing a skip-bearing report with a zero-skip one. A record
+ * still reading CLAIMED at reap means the submitter died mid-write; the
+ * launcher treats that as INVALID, fail-closed. */
+#define TASK_UTEST_REPORT_CLAIMED 3u
+/* Per-binary ceiling on any single reported count. A real binary reports
+ * tens to low thousands of assertions; this bound exists so a malicious or
+ * corrupt count cannot wrap the launcher's 32-bit aggregates. Three counts
+ * per binary, TASK_MAX binaries, all at the cap still sum well inside
+ * uint32_t (3 * 32 * 1e6 < 2^32), which is what makes the aggregation safe
+ * without per-add overflow checks. */
+#define TASK_UTEST_REPORT_MAX     1000000u
+/* Separate, far smaller ceiling on the SKIP-BLOCK count, because that one
+ * is not merely an aggregate -- the launcher emits a TAP point, a JUnit
+ * <testcase> and a JSON record per skip block, so this count governs
+ * ARTIFACT FAN-OUT, not just arithmetic. At the assertion ceiling above a
+ * single binary could demand three million log records, exhaust the run's
+ * wall clock and push every later binary's result off the end of the log:
+ * a denial of service dressed up as honest reporting. Real binaries take a
+ * handful of skip sites; 256 is already generous. Over the bound the
+ * report is REFUSED, never clamped -- a clamped count is a wrong number
+ * that still looks like a measurement. */
+#define TASK_UTEST_REPORT_SKIP_MAX 256u
+
+struct task_utest_report {
+    uint32_t asserts_passed;  /* UTEST_ASSERT calls that held    */
+    uint32_t asserts_failed;  /* UTEST_ASSERT calls that did not */
+    uint32_t skip_blocks;     /* UTEST_SKIP sites taken          */
+    uint32_t state;           /* TASK_UTEST_REPORT_*             */
+};
+
+/* Load-bearing coupling, not a restatement of the value: a fresh or recycled
+ * task slot is zero-filled, and that zero MUST read as "never reported" so an
+ * uninitialized TCB degrades to the legacy path instead of presenting a
+ * zero-count VALID report the launcher would believe. */
+_Static_assert(TASK_UTEST_REPORT_NONE == 0,
+               "a zeroed TCB must read as never-reported");
+
+/* Reset to the legacy (never-reported) state. Called by every task
+ * constructor: task slots are monotonic today, but each constructor already
+ * scrubs the fields a recycled slot could otherwise inherit, and a report is
+ * per-process -- a fork must NOT inherit the parent's submission, or the
+ * child's own UTEST_END would read as the forbidden second call. */
+static inline void task_utest_report_reset(struct task_utest_report *r)
+{
+    r->asserts_passed = 0;
+    r->asserts_failed = 0;
+    r->skip_blocks    = 0;
+    r->state          = TASK_UTEST_REPORT_NONE;
+}
+
 /* Exec argument (argv/envp) ingestion caps for the exec argument-handoff
  * feature. These are EARLY sanity bounds; the BINDING limit is that the exact
  * serialized argv frame must fit USER_STACK_SIZE (enforced by argv_frame_bytes()
@@ -613,6 +690,19 @@ struct task {
      * ELF loader surfaces even when the binary itself exits 0.
      * NULL until the first successful task_exec on this task. */
     const char *loaded_format;
+    /* --- Ring-3 test harness self-report (SYS_TEST_REPORT) ---
+     * What the binary says it did: assertions passed/failed and how many
+     * skip BLOCKS it took (one UTEST_SKIP guards a block that may contain
+     * several assertions, so this is never an assertion count). Written
+     * ONCE by the task itself, from its own syscall, on its own CPU --
+     * single writer, no lock. Read by the user-mode launcher
+     * (test_usermode.c) only AFTER the task reaches TASK_DEAD, so the
+     * writer is already gone when the reader runs.
+     *
+     * Every value is ring-3 supplied and therefore untrusted: `state`
+     * carries the fail-closed verdict (see TASK_UTEST_REPORT_*) and the
+     * launcher escalates INVALID to a FAIL rather than trusting counts. */
+    struct task_utest_report utest_report;
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
      * task's private user address space has a dedicated range starting

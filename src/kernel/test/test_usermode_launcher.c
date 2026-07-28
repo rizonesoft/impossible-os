@@ -40,6 +40,27 @@ int test_usermode_path_join(const char *parent, const char *name,
 int test_usermode_path_has_traversal(const char *p);
 int test_usermode_xml_escape(const char *src, char *dst, uint32_t cap);
 int test_usermode_json_escape(const char *src, char *dst, uint32_t cap);
+uint32_t test_usermode_report_reconcile(uint32_t state, uint32_t failed,
+                                        int32_t exit_status, int timed_out);
+int test_usermode_report_apply_invalid(int verdict, uint32_t *counters);
+uint32_t test_usermode_skip_records_allowed(uint32_t already, uint32_t want);
+uint32_t test_usermode_skip_record_budget(void);
+int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
+                                         const char *base, uint32_t k);
+int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
+                                     uint32_t failures, uint32_t skipped,
+                                     uint64_t total_ms);
+int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                      uint32_t failed, uint32_t skipped,
+                                      uint32_t a_pass, uint32_t a_fail,
+                                      uint32_t blocks, uint32_t records,
+                                      uint32_t reported, uint32_t invalid,
+                                      uint32_t unreported, uint64_t total_ms);
+int test_usermode_format_report_summary(char *dst, uint32_t cap,
+                                        uint32_t a_pass, uint32_t a_fail,
+                                        uint32_t blocks, uint32_t records,
+                                        uint32_t reported, uint32_t invalid,
+                                        uint32_t unreported);
 
 /* sys_fault_inject_dispatch comes from kernel/sched/syscall.h. */
 
@@ -190,26 +211,516 @@ static void test_manifest_rejects_control_bytes(void)
                 "rejects embedded tab");
 }
 
-/* ---- Contract constants --------------------------------------------- */
+/* ---- Contract constants --------------------------------------------- *
+ *
+ * The exit-status constants are pinned by `_Static_assert` in
+ * include/kernel/test/test_usermode.h, NOT by runtime suites here. A test
+ * comparing a #define against its own literal cannot fail unless someone
+ * edits both halves, so it verifies nothing while inflating the assertion
+ * count (scripts/lint.sh flags exactly that shape elsewhere in the tree).
+ * The skip==77 and timeout-distinctness checks moved into that header on
+ * 2026-07-28: they did not weaken, they moved to compile time, where a
+ * violation refuses to build rather than waiting for a boot.
+ * --------------------------------------------------------------------- */
 
-static void test_skip_constant_is_kselftest_77(void)
+/* ---- Ring-3 self-report: reconciliation matrix ---------------------- *
+ *
+ * The counts a binary submits through SYS_TEST_REPORT are ring-3 data.
+ * u_report_reconcile is the gate that decides whether they may reach an
+ * artifact, so its whole truth table is pinned here -- a regression that
+ * relaxed one row would re-open the false-green path this section closed.
+ * --------------------------------------------------------------------- */
+
+static void test_report_reconcile_passthrough_states(void)
 {
-    /* kselftest convention: exit 77 = SKIP. The launcher keys its skip
-     * counter off this exact value. Any drift away from 77 silently
-     * turns SKIPs into FAILs in mixed CI consumers that expect the
-     * Linux convention. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_NONE, 0, 0, 0),
+                   (uint64_t)TASK_UTEST_REPORT_NONE,
+                   "a binary that never reported stays on the legacy path");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_NONE, 0, 5, 0),
+                   (uint64_t)TASK_UTEST_REPORT_NONE,
+                   "NONE is not turned invalid by a non-zero exit");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_INVALID, 0, 0, 0),
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "a kernel-rejected report stays rejected (sticky)");
+    /* CLAIMED means the submitter took the single-submission slot and
+     * died before publishing. Falling through would make it neither VALID
+     * nor INVALID and the launcher would count it as "never reported",
+     * i.e. a half-written record would read as an honest legacy binary. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_CLAIMED, 0, 0, 0),
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "a half-written (CLAIMED) record is INVALID, not unreported");
 }
 
-static void test_timeout_constant_is_negative(void)
+static void test_report_claimed_state_is_distinct(void)
 {
-    /* UTEST_EXIT_TIMEOUT must be negative so it can never collide with a
-     * legitimate test exit code -- those are 0 (pass), 77 (skip), or a
-     * small positive failure code. Conflict with 0 or 77 would misreport
-     * a timeout as a pass or skip. */
-    TEST_ASSERT(UTEST_EXIT_TIMEOUT < 0,
-                "UTEST_EXIT_TIMEOUT is negative (distinct from pass/skip)");
-    TEST_ASSERT(UTEST_EXIT_TIMEOUT != UTEST_EXIT_SKIP,
-                "UTEST_EXIT_TIMEOUT does not collide with UTEST_EXIT_SKIP");
+    TEST_ASSERT(TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_NONE &&
+                TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_VALID &&
+                TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_INVALID,
+                "the transient claim state cannot be mistaken for a settled one");
+}
+
+static void test_report_reconcile_agrees_with_exit(void)
+{
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 0, 0, 0),
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "no failures reported and exit 0 is consistent");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 3, 3, 0),
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "3 failures reported and exit 3 is consistent");
+    /* A binary may normalize its exit code (test.h documents `return
+     * g_fail;` as convention, not requirement), so exit 1 with 3 reported
+     * failures must NOT be called a contradiction. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 3, 1, 0),
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "a normalized non-zero exit still agrees with failures>0");
+}
+
+static void test_report_reconcile_rejects_contradictions(void)
+{
+    /* The false-green shape: "everything passed" alongside a failing exit. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 0, 5, 0),
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "zero reported failures with a failing exit is INVALID");
+    /* The inverse: failures reported but the binary exited clean. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 2, 0, 0),
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "reported failures with exit 0 is INVALID");
+    /* Whole-binary skip cannot coexist with counters from a run. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 0, UTEST_EXIT_SKIP, 0),
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "a report alongside exit 77 is INVALID");
+}
+
+static void test_report_reconcile_timeout_keeps_counts(void)
+{
+    /* On timeout the launcher OVERWROTE exit_status with its own marker,
+     * so no report could ever agree with it. Reconciliation must not
+     * invent a contradiction out of the launcher's own bookkeeping -- the
+     * timeout already fails the binary on its own, more specifically. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
+                       TASK_UTEST_REPORT_VALID, 0, UTEST_EXIT_TIMEOUT, 1),
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "a timed-out binary's counts are not called contradictory");
+}
+
+static void test_report_state_constants_are_distinct(void)
+{
+    /* NONE must be the zero value: a fresh or recycled TCB is zero-filled
+     * and has to read as never-reported, not as an accepted all-zero
+     * report the launcher would believe. */
+    TEST_ASSERT_EQ((uint64_t)TASK_UTEST_REPORT_NONE, (uint64_t)0,
+                   "a zeroed TCB reads as never-reported");
+    TEST_ASSERT(TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_NONE &&
+                TASK_UTEST_REPORT_INVALID != TASK_UTEST_REPORT_NONE &&
+                TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_INVALID,
+                "the three report states are mutually distinguishable");
+}
+
+/* ---- Ring-3 self-report: the kernel-side validation ladder ---------- *
+ *
+ * sys_test_report_dispatch is the FIRST trust boundary for ring-3 data.
+ * Driven here against a zeroed scratch TCB -- no task_create, no
+ * subsystem init, nothing live: the dispatcher touches only the report
+ * fields of the struct it is handed.
+ * --------------------------------------------------------------------- */
+
+static struct task s_report_scratch;
+
+static void u_reset_report_scratch(void)
+{
+    task_utest_report_reset(&s_report_scratch.utest_report);
+    s_report_scratch.pid = 0;
+}
+
+static void test_report_dispatch_rejects_null_task(void)
+{
+    TEST_ASSERT(sys_test_report_dispatch((struct task *)0, 1, 0, 0) == -1,
+                "dispatcher refuses a NULL task rather than faulting");
+}
+
+static void test_report_dispatch_accepts_first_submission(void)
+{
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 12, 0, 3) == 0,
+                "a first, in-range submission is accepted");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "accepted submission records state VALID");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.asserts_passed,
+                   (uint64_t)12, "passed count stored verbatim");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.skip_blocks,
+                   (uint64_t)3, "skip-block count stored verbatim");
+}
+
+static void test_report_dispatch_accepts_all_zero(void)
+{
+    /* A binary with no assertions at all is legal and must not be
+     * mistaken for a binary that never reported: state VALID with zero
+     * counts is a different fact from state NONE. */
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 0, 0, 0) == 0,
+                "an all-zero report is accepted");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "zero counts still read as VALID, not NONE");
+}
+
+static void test_report_dispatch_accepts_exact_ceilings(void)
+{
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch,
+                                         TASK_UTEST_REPORT_MAX,
+                                         TASK_UTEST_REPORT_MAX,
+                                         TASK_UTEST_REPORT_SKIP_MAX) == 0,
+                "every field exactly at its ceiling is accepted");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_VALID,
+                   "the ceilings are inclusive bounds");
+}
+
+static void test_report_dispatch_rejects_over_ceiling(void)
+{
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch,
+                                         TASK_UTEST_REPORT_MAX + 1, 0, 0) == -1,
+                "passed count one over the ceiling is refused");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "an over-cap submission leaves the record INVALID");
+
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 0,
+                                         TASK_UTEST_REPORT_MAX + 1, 0) == -1,
+                "failed count one over the ceiling is refused");
+
+    /* The skip-block bound is far tighter than the assertion bound because
+     * it governs artifact fan-out, not arithmetic: one record per block is
+     * emitted into TAP, XML and JSON. */
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 0, 0,
+                                         TASK_UTEST_REPORT_SKIP_MAX + 1) == -1,
+                "skip-block count one over the artifact bound is refused");
+    TEST_ASSERT(TASK_UTEST_REPORT_SKIP_MAX < TASK_UTEST_REPORT_MAX,
+                "the artifact bound is tighter than the arithmetic bound");
+
+    /* A count that is legal for assertions but illegal for skip blocks
+     * must still be refused -- this is the amplification case. */
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 0, 0,
+                                         TASK_UTEST_REPORT_MAX) == -1,
+                "an assertion-sized skip count cannot flood the artifacts");
+}
+
+static void test_report_dispatch_refuses_second_submission(void)
+{
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 5, 0, 0) == 0,
+                "first submission accepted");
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 99, 0, 0) == -1,
+                "second submission refused");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "a repeat submission invalidates the whole record");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.asserts_passed,
+                   (uint64_t)5,
+                   "the overwrite attempt did not replace the first counts");
+}
+
+static void test_report_dispatch_invalid_is_sticky(void)
+{
+    /* Without stickiness a binary could probe: submit garbage, get
+     * refused, then submit a flattering report and land back on the
+     * trusted path. */
+    u_reset_report_scratch();
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch,
+                                         TASK_UTEST_REPORT_MAX + 1, 0, 0) == -1,
+                "over-cap submission refused");
+    TEST_ASSERT(sys_test_report_dispatch(&s_report_scratch, 1, 0, 0) == -1,
+                "a well-formed retry after a refusal is still refused");
+    TEST_ASSERT_EQ((uint64_t)s_report_scratch.utest_report.state,
+                   (uint64_t)TASK_UTEST_REPORT_INVALID,
+                   "INVALID cannot be cleared by a later submission");
+}
+
+/* ---- Ring-3 self-report: INVALID escalation ------------------------- */
+
+static void test_invalid_escalates_pass_to_fail(void)
+{
+    uint32_t counters[3] = { 4, 1, 2 };   /* pass, fail, skip */
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_apply_invalid(0, counters),
+                   (uint64_t)1, "a PASS on a contradictory report becomes FAIL");
+    TEST_ASSERT_EQ((uint64_t)counters[0], (uint64_t)3, "the PASS is rolled back");
+    TEST_ASSERT_EQ((uint64_t)counters[1], (uint64_t)2, "the FAIL is recorded");
+    TEST_ASSERT_EQ((uint64_t)counters[2], (uint64_t)2, "the skip count is untouched");
+}
+
+static void test_invalid_escalates_skip_to_fail(void)
+{
+    uint32_t counters[3] = { 4, 1, 2 };
+
+    /* exit 77 alongside a report is the contradiction that produces this
+     * case: the binary claimed a whole-binary skip while reporting work. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_apply_invalid(2, counters),
+                   (uint64_t)1, "a SKIP on a contradictory report becomes FAIL");
+    TEST_ASSERT_EQ((uint64_t)counters[2], (uint64_t)1, "the SKIP is rolled back");
+    TEST_ASSERT_EQ((uint64_t)counters[1], (uint64_t)2, "the FAIL is recorded");
+    TEST_ASSERT_EQ((uint64_t)counters[0], (uint64_t)4, "the pass count is untouched");
+}
+
+static void test_invalid_leaves_existing_fail_alone(void)
+{
+    uint32_t counters[3] = { 4, 1, 2 };
+
+    /* An already-failing binary keeps its more specific reason (exit code,
+     * timeout, leak) and must not be double-counted. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_report_apply_invalid(1, counters),
+                   (uint64_t)1, "an existing FAIL stays FAIL");
+    TEST_ASSERT_EQ((uint64_t)counters[0], (uint64_t)4, "pass count untouched");
+    TEST_ASSERT_EQ((uint64_t)counters[1], (uint64_t)1, "FAIL is not double-counted");
+    TEST_ASSERT_EQ((uint64_t)counters[2], (uint64_t)2, "skip count untouched");
+}
+
+/* ---- Ring-3 self-report: run-wide artifact budget ------------------- *
+ *
+ * The syscall's per-binary skip ceiling is multiplicative -- TASK_MAX
+ * binaries each reporting the maximum are all individually legal. This
+ * budget is the aggregate stop, so its arithmetic is what actually cuts
+ * off a fan-out attack.
+ * --------------------------------------------------------------------- */
+
+static void test_skip_budget_allows_normal_runs(void)
+{
+    uint32_t budget = test_usermode_skip_record_budget();
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(0, 3),
+                   (uint64_t)3, "a small first report is emitted in full");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(10, 5),
+                   (uint64_t)5, "a later report well inside the budget is untouched");
+    TEST_ASSERT(budget > TASK_UTEST_REPORT_SKIP_MAX,
+                "the run-wide budget exceeds any single binary's ceiling");
+}
+
+static void test_skip_budget_boundary(void)
+{
+    uint32_t budget = test_usermode_skip_record_budget();
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(budget - 1, 1),
+                   (uint64_t)1, "the last record inside the budget is emitted");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(budget - 1, 2),
+                   (uint64_t)1, "a report straddling the budget is clipped, not dropped");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(budget, 1),
+                   (uint64_t)0, "nothing is emitted once the budget is spent");
+}
+
+static void test_skip_budget_never_underflows(void)
+{
+    uint32_t budget = test_usermode_skip_record_budget();
+
+    /* An already-over-budget count must clamp to zero, not wrap: the
+     * subtraction is unsigned, so a naive `budget - already` would turn
+     * the exhausted case into a four-billion-record allowance -- the
+     * amplification path reopened by the very check meant to close it. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(budget + 500, 4),
+                   (uint64_t)0, "an over-budget run allows nothing further");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(0xFFFFFFFFu, 4),
+                   (uint64_t)0, "a saturated counter cannot wrap into a huge allowance");
+}
+
+/* ---- Ring-3 self-report: artifact formatting ------------------------ */
+
+/* Substring search over NUL-terminated strings. Pure helper: the test
+ * policy bans calling live infrastructure, and the formatters under test
+ * are the only thing this file is allowed to exercise. */
+static int u_test_contains(const char *hay, const char *needle)
+{
+    uint32_t i, j;
+    for (i = 0; hay[i]; i++) {
+        for (j = 0; needle[j] && hay[i + j] == needle[j]; j++)
+            ;
+        if (!needle[j])
+            return 1;
+    }
+    return needle[0] ? 0 : 1;
+}
+
+/* Exact string equality. The formatters emit a wire contract that host
+ * tooling parses positionally, so a substring assertion would accept a
+ * line with extra or reordered fields appended. */
+static int u_test_streq(const char *a, const char *b)
+{
+    uint32_t i;
+    for (i = 0; a[i] && a[i] == b[i]; i++)
+        ;
+    return a[i] == b[i];
+}
+
+static void test_skip_record_name_shape(void)
+{
+    char rec[64];
+
+    TEST_ASSERT(test_usermode_build_skip_record_name(rec, sizeof(rec),
+                                                     "test_process.exe", 3) == 1,
+                "skip-record name builds for a normal binary name");
+    TEST_ASSERT(u_test_streq(rec, "test_process.exe::skipped-block-3"),
+                "skip record is EXACTLY <binary>::skipped-block-<k>");
+    /* The largest index the syscall can admit still has to format: the
+     * skip-block ceiling is what bounds this loop. */
+    TEST_ASSERT(test_usermode_build_skip_record_name(
+                    rec, sizeof(rec), "test_process.exe",
+                    TASK_UTEST_REPORT_SKIP_MAX) == 1,
+                "the maximum admissible skip index still formats");
+    TEST_ASSERT(u_test_streq(rec, "test_process.exe::skipped-block-256"),
+                "maximum index renders without truncation");
+}
+
+static void test_skip_record_name_capacity_boundary(void)
+{
+    char rec[64];
+
+    /* "ab::skipped-block-7" is 19 chars, so 20 bytes is the exact minimum
+     * capacity (19 + NUL) and 19 must fail. Off-by-one in the bound would
+     * either drop a legal record or emit a truncated, colliding name. */
+    TEST_ASSERT(test_usermode_build_skip_record_name(rec, 20, "ab", 7) == 1,
+                "exact required capacity succeeds");
+    TEST_ASSERT(u_test_streq(rec, "ab::skipped-block-7"),
+                "exact-capacity result is the complete name");
+    TEST_ASSERT(test_usermode_build_skip_record_name(rec, 19, "ab", 7) == 0,
+                "one byte less than required fails");
+}
+
+static void test_skip_record_name_refuses_overflow(void)
+{
+    char rec[8];
+
+    /* Refuse rather than truncate: a truncated record name would collide
+     * with another binary's records in the artifact, silently merging two
+     * tests' skip evidence. */
+    TEST_ASSERT(test_usermode_build_skip_record_name(rec, sizeof(rec),
+                                                     "test_process.exe", 1) == 0,
+                "skip-record name refuses to truncate into a short buffer");
+}
+
+static void test_xml_summary_counts_records(void)
+{
+    char line[192];
+
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 12, 2, 5, 1500) == 1,
+                "XML summary formats at realistic widths");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-XML-SUMMARY] tests=12 failures=2 skipped=5 time=1.500"),
+                "XML summary is EXACTLY the contract the host post-processor parses");
+    /* An all-zero run is the empty-suite artifact contract: it must still
+     * produce a complete, patchable summary rather than a degenerate one. */
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 0, 0, 0, 0) == 1,
+                "an empty suite still formats a summary");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-XML-SUMMARY] tests=0 failures=0 skipped=0 time=0.000"),
+                "empty-suite summary carries explicit zeros");
+}
+
+static void test_xml_summary_refuses_truncation(void)
+{
+    char line[16];
+
+    /* The pre-2026-07-28 emitter ignored every append return and would
+     * publish `[UTEST-XML-SUM` as if it were a summary; the host
+     * post-processor then read a truncated `tests=` as a real number. */
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 12, 2, 5, 1500) == 0,
+                "XML summary reports failure instead of truncating");
+}
+
+static void test_json_summary_separates_dimensions(void)
+{
+    char line[384];
+
+    TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
+                                                  9, 1, 2,
+                                                  480, 3, 4, 4, 8, 1, 3,
+                                                  2500) == 1,
+                "JSON summary formats at realistic widths");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-JSON] {\"summary\":{\"passed\":9,\"failed\":1,"
+                    "\"skipped\":2,\"total\":12,\"reported\":{\"asserts_passed\":480,"
+                    "\"asserts_failed\":3,\"skip_blocks\":4,\"skip_records\":4,"
+                    "\"binaries_reported\":8,\"binaries_invalid\":1,"
+                    "\"binaries_unreported\":3},\"time_ms\":2500}}"),
+                "JSON summary is EXACTLY the documented record, every field in order");
+    /* The nesting is the load-bearing part: assertion counts must never sit
+     * beside binary counts where a consumer could read one as the other. */
+    TEST_ASSERT(u_test_contains(line, "\"reported\":{\"asserts_passed\":480"),
+                "assertion counts live in their own object, not beside binaries");
+}
+
+static void test_json_summary_zero_run(void)
+{
+    char line[384];
+
+    TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
+                                                  0, 0, 0,
+                                                  0, 0, 0, 0, 0, 0, 0, 0) == 1,
+                "an all-zero JSON summary formats");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":0,"
+                    "\"skipped\":0,\"total\":0,\"reported\":{\"asserts_passed\":0,"
+                    "\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,"
+                    "\"binaries_reported\":0,\"binaries_invalid\":0,"
+                    "\"binaries_unreported\":0},\"time_ms\":0}}"),
+                "zero counts serialize as explicit zeros, not omitted fields");
+}
+
+static void test_json_summary_refuses_truncation(void)
+{
+    char line[40];
+
+    /* A truncated JSON object is not merely wrong, it is unparseable --
+     * so the formatter must refuse and let the emitter publish a valid
+     * error record instead. */
+    TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
+                                                  9, 1, 2,
+                                                  480, 3, 4, 4, 8, 1, 3,
+                                                  2500) == 0,
+                "JSON summary reports failure instead of truncating");
+}
+
+static void test_report_summary_line_shape(void)
+{
+    char line[224];
+
+    TEST_ASSERT(test_usermode_format_report_summary(line, sizeof(line),
+                                                    480, 3, 4, 4, 8, 1, 3) == 1,
+                "report summary formats at realistic widths");
+    /* Deliberately NOT the legacy `=== N passed, N failed, N skipped of N
+     * total ===` wording: scripts/test.sh parses that line with
+     * position-sensitive patterns and waits on it for boot completion. */
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-REPORT-SUMMARY] asserts_passed=480 asserts_failed=3 "
+                    "skip_blocks=4 skip_records=4 reported=8 invalid=1 unreported=3"),
+                "report summary is EXACTLY the line scripts/test.sh parses");
+    TEST_ASSERT(!u_test_contains(line, "passed,"),
+                "report summary cannot be captured by the legacy summary parser");
+}
+
+static void test_report_summary_refuses_truncation(void)
+{
+    char line[24];
+
+    TEST_ASSERT(test_usermode_format_report_summary(line, sizeof(line),
+                                                    480, 3, 4, 4, 8, 1, 3) == 0,
+                "report summary reports failure instead of truncating");
 }
 
 /* ---- Setter API: no-crash + idempotence ----------------------------- *
@@ -1061,10 +1572,82 @@ void test_register_usermode_launcher(void)
                             test_glob_suffix_longer_than_remaining, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: glob empty name",
                             test_glob_empty_name, TEST_CAT_EXEC);
-    test_suite_register_cat("UTEST: SKIP exit = kselftest 77",
-                            test_skip_constant_is_kselftest_77, TEST_CAT_EXEC);
-    test_suite_register_cat("UTEST: TIMEOUT exit distinct from pass/skip",
-                            test_timeout_constant_is_negative, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report NONE/INVALID pass through",
+                            test_report_reconcile_passthrough_states,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report agreeing with exit stays VALID",
+                            test_report_reconcile_agrees_with_exit,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report contradicting exit is INVALID",
+                            test_report_reconcile_rejects_contradictions,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: timed-out binary keeps its report",
+                            test_report_reconcile_timeout_keeps_counts,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report states distinct, NONE is zero",
+                            test_report_state_constants_are_distinct,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: CLAIMED is distinct from settled states",
+                            test_report_claimed_state_is_distinct,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch refuses NULL task",
+                            test_report_dispatch_rejects_null_task,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch accepts first submission",
+                            test_report_dispatch_accepts_first_submission,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch accepts all-zero report",
+                            test_report_dispatch_accepts_all_zero,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch accepts exact ceilings",
+                            test_report_dispatch_accepts_exact_ceilings,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch refuses over-ceiling counts",
+                            test_report_dispatch_rejects_over_ceiling,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report dispatch refuses second submission",
+                            test_report_dispatch_refuses_second_submission,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report INVALID is sticky",
+                            test_report_dispatch_invalid_is_sticky,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: INVALID escalates PASS to FAIL",
+                            test_invalid_escalates_pass_to_fail, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: INVALID escalates SKIP to FAIL",
+                            test_invalid_escalates_skip_to_fail, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: INVALID leaves an existing FAIL alone",
+                            test_invalid_leaves_existing_fail_alone,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record budget allows normal runs",
+                            test_skip_budget_allows_normal_runs, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record budget boundary",
+                            test_skip_budget_boundary, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record budget never underflows",
+                            test_skip_budget_never_underflows, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record name shape",
+                            test_skip_record_name_shape, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record name capacity boundary",
+                            test_skip_record_name_capacity_boundary,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON summary zero run",
+                            test_json_summary_zero_run, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: skip-record name refuses truncation",
+                            test_skip_record_name_refuses_overflow,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: XML summary counts records",
+                            test_xml_summary_counts_records, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: XML summary refuses truncation",
+                            test_xml_summary_refuses_truncation, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON summary separates dimensions",
+                            test_json_summary_separates_dimensions,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON summary refuses truncation",
+                            test_json_summary_refuses_truncation, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report summary line shape",
+                            test_report_summary_line_shape, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: report summary refuses truncation",
+                            test_report_summary_refuses_truncation,
+                            TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: setter API edge cases no-crash",
                             test_setter_api_no_crash, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: manifest accepts well-formed names",

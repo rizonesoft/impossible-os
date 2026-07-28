@@ -48,6 +48,9 @@ Usage:
   bash scripts/test.sh SUITE=fs QUIET=1   Combine filters
   (QUIET defaults ON when OVERNIGHT_SEQUENCER_RUN=1; FAIL lines always show)
   TIMEOUT=120 bash scripts/test.sh  Extend QEMU timeout (default: 60s)
+  bash scripts/test.sh XML=1        Emit JUnit XML to build/test-results.xml
+  bash scripts/test.sh JSON=1       Emit the launcher's JSON record stream
+  bash scripts/test.sh TAP=1        Emit the launcher's TAP producer stream
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
@@ -80,6 +83,11 @@ QUIET_MODE=0
 [ "${OVERNIGHT_SEQUENCER_RUN:-}" = "1" ] && QUIET_MODE=1
 XML_MODE=0
 JSON_MODE=0
+# TAP is the launcher's third machine artifact and had no runner knob: it
+# could only be turned on by hand-editing boot.conf, so the one artifact
+# with a documented producer contract was the one this script could never
+# exercise. Same shape as XML=1 / JSON=1.
+TAP_MODE=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help) print_help; exit 0 ;;
@@ -89,6 +97,7 @@ for arg in "$@"; do
         QUIET=0)  QUIET_MODE=0 ;;
         XML=1)    XML_MODE=1 ;;
         JSON=1)   JSON_MODE=1 ;;
+        TAP=1)    TAP_MODE=1 ;;
     esac
 done
 
@@ -113,6 +122,9 @@ if [ "$XML_MODE" -eq 1 ]; then
 fi
 if [ "$JSON_MODE" -eq 1 ]; then
     PATCH_ARGS="$PATCH_ARGS json 1"
+fi
+if [ "$TAP_MODE" -eq 1 ]; then
+    PATCH_ARGS="$PATCH_ARGS tap 1"
 fi
 bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
 
@@ -240,6 +252,10 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
         UMODE_NEEDED=0
         [ "$XML_MODE" -eq 1 ] && UMODE_NEEDED=1
         [ "$JSON_MODE" -eq 1 ] && UMODE_NEEDED=1
+        # TAP is a machine-readable stream on the same footing: its plan
+        # line is emitted at the END of the run, so a launcher cut short
+        # would leave a plan-less (malformed) TAP stream.
+        [ "$TAP_MODE" -eq 1 ] && UMODE_NEEDED=1
         # If any UTEST: line has appeared, the launcher has started;
         # require its summary too so a mid-run panic cannot exit green.
         if [ "$UMODE_NEEDED" -eq 0 ] && grep -q 'UTEST:' "$TEST_LOG" 2>/dev/null; then
@@ -432,11 +448,17 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # lines above AND these TAP lines are emitted; show TAP separately so
     # downstream TAP consumers (CI, tap-junit) can also lift them straight
     # from the host log without the launcher's wrapper formatting.
+    # `Bail out!` is part of the producer stream and is the STRONGEST line
+    # in it -- it means the run aborted. Excluding it (as this extraction
+    # did until 2026-07-28) hid the abort from every downstream consumer
+    # reading the lifted stream, which would then see a short, plan-less
+    # run and no reason for it. The plan is now trailing and is suppressed
+    # after a bail-out, per the TAP contract that nothing follows it.
     HAS_TAP=0
-    grep -qE 'UTEST: (ok|not ok|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null && HAS_TAP=1
+    grep -qE 'UTEST: (ok|not ok|Bail out!|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null && HAS_TAP=1
     if [ "$HAS_TAP" -eq 1 ] && [ "$QUIET_MODE" -eq 0 ]; then
         echo -e "  ${CYAN}TAP${RESET} producer stream:"
-        grep -E 'UTEST: (ok|not ok|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null |
+        grep -E 'UTEST: (ok|not ok|Bail out!|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null |
             sed -E 's/.*UTEST: /    /'
     fi
 
@@ -465,6 +487,99 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     if [ "$UTEST_FAIL_OBSERVED" -gt "${UTEST_FAIL:-0}" ]; then
         echo -e "  ${RED}[UTEST]${RESET} summary says ${UTEST_FAIL:-0} failed but ${UTEST_FAIL_OBSERVED} FAIL/TIMEOUT/ISOLATION/LEAK lines on serial -- trusting per-binary count"
         UTEST_FAIL=$UTEST_FAIL_OBSERVED
+    fi
+
+    # --- Report dimension (ring-3 self-reported assertions + skip blocks) ---
+    #
+    # Parsed from its OWN tagged lines, never from the summary above: that
+    # line is position-parsed by the sed expressions at the top of this
+    # block AND is the string the boot-completion poll waits for, so
+    # widening it would let the greedy patterns capture assertion counts as
+    # binary counts. The launcher emits one `[UTEST-REPORT] <name> ...`
+    # line per reporting binary plus a single `[UTEST-REPORT-SUMMARY]`.
+    #
+    # Fail-closed, the same stance as the failure recount above: if a
+    # binary's report was rejected as self-contradicting, or the summary
+    # under-reports what the per-binary lines show, the run FAILS. A
+    # partially-skipped binary that reports honestly is not a failure --
+    # an inconsistent reporting path is.
+    UTEST_REPORT_SUM=$(grep -E 'UTEST: \[UTEST-REPORT-SUMMARY\] ' \
+                       "$TEST_LOG" 2>/dev/null | tail -1 || true)
+    if [ -n "$UTEST_REPORT_SUM" ]; then
+        RPT_BLOCKS=$(echo "$UTEST_REPORT_SUM" | sed -E 's/.* skip_blocks=([0-9]+).*/\1/')
+        RPT_INVALID=$(echo "$UTEST_REPORT_SUM" | sed -E 's/.* invalid=([0-9]+).*/\1/')
+        RPT_REPORTED=$(echo "$UTEST_REPORT_SUM" | sed -E 's/.* reported=([0-9]+).*/\1/')
+        echo -e "  ${CYAN}[UTEST]${RESET} reported: ${RPT_REPORTED} binaries, ${RPT_BLOCKS} skip block(s), ${RPT_INVALID} invalid"
+
+        # Cross-check: recount the per-binary report lines from serial. A
+        # summary claiming fewer reporting binaries than the stream shows
+        # means a launcher counter bug -- trust the stream.
+        RPT_LINES=$({ grep -cE 'UTEST: \[UTEST-REPORT\] ' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+        RPT_LINES=${RPT_LINES:-0}
+        RPT_INVALID_OBSERVED=$({ grep -cE 'UTEST: \[UTEST-REPORT\] .* state=INVALID' \
+                                 "$TEST_LOG" 2>/dev/null || true; } | head -1)
+        RPT_INVALID_OBSERVED=${RPT_INVALID_OBSERVED:-0}
+        RPT_TOTAL_EXPECTED=$(( ${RPT_REPORTED:-0} + ${RPT_INVALID:-0} ))
+        if [ "$RPT_LINES" -gt "$RPT_TOTAL_EXPECTED" ]; then
+            echo -e "  ${RED}[UTEST]${RESET} report summary accounts for ${RPT_TOTAL_EXPECTED} binaries but ${RPT_LINES} [UTEST-REPORT] lines are on serial -- counting the difference as failures"
+            UTEST_FAIL=$(( UTEST_FAIL + RPT_LINES - RPT_TOTAL_EXPECTED ))
+        fi
+        if [ "$RPT_INVALID_OBSERVED" -gt 0 ]; then
+            echo -e "  ${RED}[UTEST]${RESET} ${RPT_INVALID_OBSERVED} binary/binaries submitted a self-contradicting report (the launcher already failed them)"
+        fi
+    fi
+
+    # A summary line that could not be formatted is never published
+    # truncated -- the launcher emits an explicit overflow marker instead.
+    # Its presence means an artifact is missing its summary, which is an
+    # observability failure on the reporting path itself.
+    UTEST_OVERFLOW=$({ grep -cE 'UTEST: \[UTEST-(XML|JSON|REPORT)-SUMMARY-OVERFLOW\]' \
+                       "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_OVERFLOW=${UTEST_OVERFLOW:-0}
+    if [ "$UTEST_OVERFLOW" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${UTEST_OVERFLOW} summary line(s) exceeded their buffer and were not emitted -- artifacts are incomplete"
+        UTEST_FAIL=$(( UTEST_FAIL + UTEST_OVERFLOW ))
+    fi
+
+    # A suite ABORT must never exit green. The launcher aborts the run when
+    # a smoke binary returns any non-PASS verdict -- including SKIP, which
+    # increments the skipped counter and leaves the summary reporting ZERO
+    # failures. Every non-smoke binary then never runs, and before
+    # 2026-07-28 the host still exited 0 on that: a run where most of the
+    # suite silently did not execute reported success. The abort itself is
+    # the failure, whatever verdict triggered it.
+    UTEST_ABORT=$({ grep -cE 'UTEST: (Bail out!|suite ABORT)' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_ABORT=${UTEST_ABORT:-0}
+    if [ "$UTEST_ABORT" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} suite ABORTED (smoke gate) -- the remaining binaries never ran; failing the run"
+        # RAISE to one, never ADD: the smoke binary that triggered the
+        # abort is usually already in the parsed failure count, and adding
+        # an abort event on top would report two failed binaries when one
+        # failed. The case this must still catch is the smoke binary that
+        # SKIPPED -- zero failures counted, whole suite abandoned.
+        [ "${UTEST_FAIL:-0}" -eq 0 ] && UTEST_FAIL=1
+    fi
+
+    # The launcher refuses to emit skip records past its run-wide budget
+    # and says so explicitly. Records it knows about but did not emit mean
+    # the artifacts under-report skips, which is the same false-coverage
+    # class the reporting path exists to close.
+    UTEST_BUDGET=$({ grep -cE 'UTEST: \[UTEST-SKIP-RECORD-BUDGET\]' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_BUDGET=${UTEST_BUDGET:-0}
+    if [ "$UTEST_BUDGET" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${UTEST_BUDGET} binary/binaries exceeded the run-wide skip-record budget -- artifacts under-report skips"
+        UTEST_FAIL=$(( UTEST_FAIL + UTEST_BUDGET ))
+    fi
+
+    # A per-record emit that did not fit its buffer is published as a
+    # verdict-preserving fallback with the name dropped, so the artifact
+    # stays well-formed -- but a record whose identity was lost is still
+    # an artifact that cannot be traced back to its binary. Host-fatal.
+    UTEST_RECORD_OVERFLOW=$({ grep -cE 'UTEST: \[UTEST-RECORD-OVERFLOW\]' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_RECORD_OVERFLOW=${UTEST_RECORD_OVERFLOW:-0}
+    if [ "$UTEST_RECORD_OVERFLOW" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${UTEST_RECORD_OVERFLOW} artifact record(s) lost their name to a buffer overflow -- untraceable results"
+        UTEST_FAIL=$(( UTEST_FAIL + UTEST_RECORD_OVERFLOW ))
     fi
 fi
 

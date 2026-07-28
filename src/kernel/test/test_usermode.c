@@ -1403,6 +1403,148 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
     }
 }
 
+/* ---- ring-3 self-report (SYS_TEST_REPORT) ----------------------- *
+ *
+ * A binary's exit code carries two outcomes; honest reporting needs
+ * three. The harness submits its counters through syscall 48 and the
+ * kernel parks them on the child's TCB (see TASK_UTEST_REPORT_* in
+ * sched/task.h); the launcher lifts them here, BEFORE task_cleanup
+ * destroys the TCB, exactly like the handle-leak snapshot above.
+ *
+ * Two dimensions, never summed: `asserts_*` count UTEST_ASSERT calls,
+ * `skip_blocks` counts UTEST_SKIP sites taken, and one skip site
+ * usually stands in for several assertions that never ran.
+ * ------------------------------------------------------------------ */
+
+/* Run-wide ceiling on synthetic skip records. The per-binary bound the
+ * syscall enforces (TASK_UTEST_REPORT_SKIP_MAX) is multiplicative across
+ * TASK_MAX binaries, so it cannot be the only stop; this is the aggregate
+ * one. Sized generously against reality -- the whole suite reports a
+ * handful of skip blocks today -- so a legitimate run never meets it. */
+#define UTEST_SKIP_RECORD_BUDGET 1024u
+
+struct u_report {
+    uint32_t asserts_passed;
+    uint32_t asserts_failed;
+    uint32_t skip_blocks;
+    uint32_t state;          /* TASK_UTEST_REPORT_* */
+};
+
+/* Run-wide totals over every VALID report, plus the census of how the
+ * submissions themselves landed. `invalid` and `unreported` are carried
+ * so a consumer can tell "nothing was skipped" from "nobody said". */
+struct u_report_totals {
+    uint32_t asserts_passed;
+    uint32_t asserts_failed;
+    uint32_t skip_blocks;
+    uint32_t skip_records;   /* synthetic skip testcases/TAP points emitted */
+    uint32_t reported;       /* binaries with an accepted report            */
+    uint32_t invalid;        /* binaries whose report contradicted itself   */
+    uint32_t unreported;     /* binaries that never submitted one           */
+};
+
+static void u_report_snapshot(uint32_t child_pid, struct u_report *out)
+{
+    struct task *child = task_get_by_pid(child_pid);
+
+    out->asserts_passed = 0;
+    out->asserts_failed = 0;
+    out->skip_blocks    = 0;
+    out->state          = TASK_UTEST_REPORT_NONE;
+    if (!child)
+        return;
+    /* Acquire the state first: the submitter publishes it with a release
+     * store AFTER writing the counts, so acquiring VALID here guarantees
+     * the counts below are the ones that go with it. */
+    out->state          = __atomic_load_n(&child->utest_report.state,
+                                          __ATOMIC_ACQUIRE);
+    out->asserts_passed = child->utest_report.asserts_passed;
+    out->asserts_failed = child->utest_report.asserts_failed;
+    out->skip_blocks    = child->utest_report.skip_blocks;
+    /* A record still CLAIMED at reap means the submitter died between
+     * taking the slot and publishing. Its counts were never completed, so
+     * it is INVALID -- fail-closed, exactly like a contradiction. */
+    if (out->state == TASK_UTEST_REPORT_CLAIMED)
+        out->state = TASK_UTEST_REPORT_INVALID;
+}
+
+/* Reconcile an accepted report against the outcome the kernel actually
+ * observed, and return the state the launcher should act on.
+ *
+ * The kernel-side syscall could not do this: at submission time the
+ * binary has not exited yet, so the exit status does not exist. Here it
+ * does, and a report that disagrees with it is the precise shape this
+ * whole section exists to catch -- a binary claiming "all assertions
+ * passed" while exiting non-zero, or claiming a whole-binary skip while
+ * reporting assertions it ran.
+ *
+ * Deliberately NOT an exact `exit_status == failed` equality: test.h
+ * documents `return g_fail;` as the convention, not a requirement, so a
+ * binary that normalizes its exit code to 1 is well-formed. The
+ * equivalence below catches every false-green direction without
+ * outlawing that.
+ *
+ * Pure function of its arguments so the unit tests can drive the whole
+ * matrix without spawning anything. */
+static uint32_t u_report_reconcile(uint32_t state, uint32_t failed,
+                                   int32_t exit_status, int timed_out)
+{
+    /* A half-written record (submitter died between claiming the slot and
+     * publishing) is a contradiction like any other, and is mapped here
+     * as well as at snapshot time so the two are not order-dependent:
+     * letting CLAIMED fall through would make it neither VALID nor
+     * INVALID, and the caller would count it as "never reported". */
+    if (state == TASK_UTEST_REPORT_CLAIMED)
+        return TASK_UTEST_REPORT_INVALID;
+    if (state != TASK_UTEST_REPORT_VALID)
+        return state;   /* NONE stays legacy; INVALID is already sticky */
+
+    /* Timeout: exit_status is the launcher's own synthetic marker
+     * (u_wait_with_timeout overwrote it), so it can never agree with any
+     * report and reconciliation would be meaningless. The binary reached
+     * UTEST_END and then hung -- its counts are real, and the timeout
+     * verdict dominates on its own. */
+    if (timed_out)
+        return TASK_UTEST_REPORT_VALID;
+
+    /* Exit 77 means "the whole binary was skippable", which contradicts
+     * having reached UTEST_END with counters to submit. */
+    if (exit_status == UTEST_EXIT_SKIP)
+        return TASK_UTEST_REPORT_INVALID;
+
+    if ((exit_status == 0) != (failed == 0))
+        return TASK_UTEST_REPORT_INVALID;
+
+    return TASK_UTEST_REPORT_VALID;
+}
+
+/* Apply an INVALID report to the binary's verdict and the run counters.
+ * Returns the verdict after escalation.
+ *
+ * A PASS or a SKIP built on a self-contradicting report becomes a FAIL:
+ * silently dropping the counts would leave the run green on a binary that
+ * just proved its own reporting untrustworthy, which is the false-green
+ * class this section exists to close. An already-FAIL is left alone --
+ * its exit-code or timeout reason is more specific than "bad report".
+ *
+ * Split out of u_run_one because it is the load-bearing half of the
+ * fail-closed path and u_run_one itself cannot be unit-tested (it spawns
+ * a live child, which the test policy forbids). `counters` is the
+ * [pass, fail, skip] triple; the decrement side is only ever reached from
+ * a branch that incremented the same slot earlier in the same call, so it
+ * cannot underflow. */
+static int u_report_apply_invalid(int verdict, uint32_t *counters)
+{
+    if (verdict == 1)
+        return 1;               /* already failed, for a better reason */
+    if (verdict == 0)
+        counters[0]--;          /* undo PASS */
+    else
+        counters[2]--;          /* undo SKIP */
+    counters[1]++;
+    return 1;
+}
+
 /* ---- emit helpers ---------------------------------------------- */
 
 static void u_emit_xml_suite_open(void)
@@ -1417,13 +1559,46 @@ static void u_emit_xml_suite_open(void)
          "failures=\"0\" skipped=\"0\" errors=\"0\" time=\"0\">");
 }
 
-static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
-                                   uint32_t skipped, uint64_t total_ms)
+/* Build the [UTEST-XML-SUMMARY] body. Returns 1 on success, 0 if the
+ * line would not fit.
+ *
+ * Split out of the emitter for two reasons. Every append is CHECKED here
+ * -- the previous emitter ignored all of them, so a line that outgrew its
+ * buffer was published silently truncated, and the host post-processor
+ * would read a truncated `tests=` as a valid smaller number. And a
+ * formatter that writes into a caller-supplied buffer can be driven to
+ * overflow by a unit test with a deliberately small cap, which an emitter
+ * that klogs directly cannot.
+ *
+ * `tests` and `skipped` count RECORDS (binary testcases plus the
+ * synthetic per-skip-block ones), so the attributes the host patches into
+ * <testsuite> match the number of <testcase>/<skipped> elements actually
+ * emitted. */
+static int u_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
+                                uint32_t failures, uint32_t skipped,
+                                uint64_t total_ms)
 {
-    char line[160];
     uint32_t pos = 0;
     char time_buf[24];
-    uint32_t tests = passed + failed + skipped;
+
+    dst[0] = '\0';
+    if (!u_append(dst, &pos, cap, "[UTEST-XML-SUMMARY] tests=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, tests)) return 0;
+    if (!u_append(dst, &pos, cap, " failures=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, failures)) return 0;
+    if (!u_append(dst, &pos, cap, " skipped=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, skipped)) return 0;
+    u_format_seconds(time_buf, sizeof(time_buf), total_ms);
+    if (!u_append(dst, &pos, cap, " time=")) return 0;
+    if (!u_append(dst, &pos, cap, time_buf)) return 0;
+    return 1;
+}
+
+static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
+                                   uint32_t skipped, uint32_t skip_records,
+                                   uint64_t total_ms)
+{
+    char line[192];
 
     if (!s_xml_mode) return;
     /* Emit a summary line (not a valid XML fragment on its own --
@@ -1431,17 +1606,18 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
      * numbers). Separate line prefixed with [UTEST-XML-SUMMARY] so the
      * post-processor can grep for it distinctly from the <testcase>
      * and closer lines. */
-    u_append(line, &pos, sizeof(line),
-             "[UTEST-XML-SUMMARY] tests=");
-    u_append_uint(line, &pos, sizeof(line), tests);
-    u_append(line, &pos, sizeof(line), " failures=");
-    u_append_uint(line, &pos, sizeof(line), failed);
-    u_append(line, &pos, sizeof(line), " skipped=");
-    u_append_uint(line, &pos, sizeof(line), skipped);
-    u_format_seconds(time_buf, sizeof(time_buf), total_ms);
-    u_append(line, &pos, sizeof(line), " time=");
-    u_append(line, &pos, sizeof(line), time_buf);
-    klog(LOG_INFO, "UTEST", "%s", line);
+    if (u_format_xml_summary(line, sizeof(line),
+                             passed + failed + skipped + skip_records,
+                             failed, skipped + skip_records, total_ms)) {
+        klog(LOG_INFO, "UTEST", "%s", line);
+    } else {
+        /* Never publish a truncated summary: a short `tests=` reads as a
+         * smaller-but-plausible run. Emit an unmistakable marker instead
+         * and let the host gate fail the run on its presence. */
+        klog(LOG_ERROR, "UTEST",
+             "[UTEST-XML-SUMMARY-OVERFLOW] summary line exceeded %u bytes",
+             (uint64_t)sizeof(line));
+    }
     (void)passed;
 
     klog(LOG_INFO, "UTEST", "[UTEST-XML] </testsuite>");
@@ -1463,7 +1639,8 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
  * assembled XML file downstream. */
 static void u_emit_xml_testcase(const char *name, utest_type_t type,
                                  int verdict, uint64_t time_ms,
-                                 const char *reason)
+                                 const char *reason,
+                                 const char *classname_override)
 {
     char line[512];
     uint32_t pos = 0;
@@ -1478,7 +1655,10 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
     APP("[UTEST-XML] <testcase name=\"");
     APP_XML(name);
     APP("\" classname=\"");
-    APP(u_type_label(type));
+    /* Synthetic skip records override the taxonomy label so a JUnit
+     * consumer can separate them from real binaries structurally, not
+     * only by parsing the "::skipped-block-" name suffix. */
+    APP(classname_override ? classname_override : u_type_label(type));
     APP("\" time=\"");
     APP(time_buf);
     APP("\"");
@@ -1512,18 +1692,35 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
     return;
 
 overflow:
-    klog(LOG_WARN, "UTEST",
-         "XML emit overflow for '%s' -- emitting minimal <testcase/> fallback",
+    /* The fallback must preserve the VERDICT and the classname, not just
+     * stay well-formed. A self-closing <testcase/> reads as PASSED, so an
+     * overflowing skip record used to vanish from the failures/skipped
+     * accounting while the suite header still counted it -- a record that
+     * silently became a pass. The name is the only part we drop, because
+     * the name is what did not fit. */
+    klog(LOG_ERROR, "UTEST",
+         "[UTEST-RECORD-OVERFLOW] XML record for '%s' exceeded its buffer",
          name);
-    klog(LOG_INFO, "UTEST",
-         "[UTEST-XML] <testcase name=\"overflow\" classname=\"overflow\" time=\"0\"/>");
+    if (verdict == 0) {
+        klog(LOG_INFO, "UTEST",
+             "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\"/>",
+             classname_override ? classname_override : u_type_label(type));
+    } else {
+        klog(LOG_INFO, "UTEST",
+             "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\">"
+             "%s</testcase>",
+             classname_override ? classname_override : u_type_label(type),
+             verdict == 2 ? "<skipped message=\"record name too long\"/>"
+                          : "<failure message=\"record name too long\"/>");
+    }
 }
 
 /* Emit one `[UTEST-JSON] {...}` per binary. Overflow-safe via the same
  * goto-fallback pattern as u_emit_xml_testcase. */
 static void u_emit_json_testcase(const char *name, utest_type_t type,
                                   int verdict, uint64_t time_ms,
-                                  const char *reason)
+                                  const char *reason,
+                                  const struct u_report *rep)
 {
     char line[512];
     uint32_t pos = 0;
@@ -1540,7 +1737,12 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
     #define APP_JSON(s) do { if (!u_json_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
     #define APP_UINT(v) do { if (!u_append_uint(line, &pos, sizeof(line), (uint64_t)(v))) goto overflow; } while (0)
 
-    APP("[UTEST-JSON] {\"name\":\"");
+    /* record_kind is the stream's discriminator and leads every record.
+     * The stream carries two kinds of object -- one per BINARY and one per
+     * synthetic skip block -- and a consumer that counted every object
+     * with a "name" would report more testcases than summary.total and
+     * skew every pass rate derived from it. */
+    APP("[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"");
     APP_JSON(name);
     APP("\",\"type\":\"");
     APP(u_type_label(type));
@@ -1553,6 +1755,20 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
         APP_JSON(reason);
         APP("\"");
     }
+    /* Report dimension for this binary. Emitted only for an ACCEPTED
+     * report: an invalid one already escalated the verdict to FAIL, and
+     * republishing its counts would hand a consumer the very numbers the
+     * kernel just refused to believe. JSON has no schema to violate here,
+     * so the three-way outcome rides as named fields; XML gets it as
+     * standard <skipped/> testcases instead. */
+    if (rep && rep->state == TASK_UTEST_REPORT_VALID) {
+        APP(",\"asserts_passed\":");
+        APP_UINT(rep->asserts_passed);
+        APP(",\"asserts_failed\":");
+        APP_UINT(rep->asserts_failed);
+        APP(",\"skip_blocks\":");
+        APP_UINT(rep->skip_blocks);
+    }
     APP("}");
     klog(LOG_INFO, "UTEST", "%s", line);
     #undef APP
@@ -1561,33 +1777,319 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
     return;
 
 overflow:
-    klog(LOG_WARN, "UTEST",
-         "JSON emit overflow for '%s' -- emitting minimal fallback record",
+    /* Keep record_kind: it is the stream's discriminator, and a consumer
+     * following the documented contract drops any record without it --
+     * which would make an overflowing binary disappear entirely rather
+     * than surface as the failure it is. */
+    klog(LOG_ERROR, "UTEST",
+         "[UTEST-RECORD-OVERFLOW] JSON record for '%s' exceeded its buffer",
          name);
     klog(LOG_INFO, "UTEST",
-         "[UTEST-JSON] {\"name\":\"overflow\",\"status\":\"FAIL\",\"time_ms\":0}");
+         "[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"overflow\","
+         "\"status\":\"FAIL\",\"time_ms\":0,\"reason\":\"record name too long\"}");
+}
+
+/* Build the [UTEST-JSON] summary body. Returns 1 on success, 0 if the
+ * record would not fit. Same checked-append and testable-cap rationale as
+ * u_format_xml_summary; this one matters more because the record grew the
+ * whole report dimension and a truncated JSON object is not merely wrong,
+ * it is unparseable. */
+static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                 uint32_t failed, uint32_t skipped,
+                                 const struct u_report_totals *rt,
+                                 uint64_t total_ms)
+{
+    uint32_t pos = 0;
+
+    dst[0] = '\0';
+    #define JAPP(s)  do { if (!u_append(dst, &pos, cap, (s))) return 0; } while (0)
+    #define JNUM(v)  do { if (!u_append_uint(dst, &pos, cap, (uint64_t)(v))) return 0; } while (0)
+
+    JAPP("[UTEST-JSON] {\"summary\":{\"passed\":");
+    JNUM(passed);
+    JAPP(",\"failed\":");
+    JNUM(failed);
+    JAPP(",\"skipped\":");
+    JNUM(skipped);
+    JAPP(",\"total\":");
+    JNUM(passed + failed + skipped);
+    /* Report dimension: assertion-level statistics the binaries reported
+     * about themselves. Kept in its own object so a consumer can never
+     * mistake an assertion count for a binary count -- they are different
+     * units and the outer numbers are the ones the exit code reflects. */
+    JAPP(",\"reported\":{\"asserts_passed\":");
+    JNUM(rt->asserts_passed);
+    JAPP(",\"asserts_failed\":");
+    JNUM(rt->asserts_failed);
+    JAPP(",\"skip_blocks\":");
+    JNUM(rt->skip_blocks);
+    JAPP(",\"skip_records\":");
+    JNUM(rt->skip_records);
+    JAPP(",\"binaries_reported\":");
+    JNUM(rt->reported);
+    JAPP(",\"binaries_invalid\":");
+    JNUM(rt->invalid);
+    JAPP(",\"binaries_unreported\":");
+    JNUM(rt->unreported);
+    JAPP("}");
+    JAPP(",\"time_ms\":");
+    JNUM(total_ms);
+    JAPP("}}");
+    #undef JAPP
+    #undef JNUM
+    return 1;
 }
 
 static void u_emit_json_summary(uint32_t passed, uint32_t failed,
-                                uint32_t skipped, uint64_t total_ms)
+                                uint32_t skipped,
+                                const struct u_report_totals *rt,
+                                uint64_t total_ms)
 {
-    char line[200];
+    char line[384];
+
+    if (!s_json_mode) return;
+    if (u_format_json_summary(line, sizeof(line), passed, failed, skipped,
+                              rt, total_ms)) {
+        klog(LOG_INFO, "UTEST", "%s", line);
+    } else {
+        /* Syntactically valid JSON that cannot be mistaken for a run
+         * summary, so a consumer fails rather than reading a truncated
+         * object as zero tests. */
+        klog(LOG_ERROR, "UTEST",
+             "[UTEST-JSON] {\"summary_error\":\"overflow\"}");
+        klog(LOG_ERROR, "UTEST",
+             "[UTEST-JSON-SUMMARY-OVERFLOW] summary record exceeded %u bytes",
+             (uint64_t)sizeof(line));
+    }
+}
+
+/* Build the [UTEST-REPORT-SUMMARY] body -- the report dimension's own
+ * line, deliberately NOT folded into the launcher's legacy
+ * `=== N passed, N failed, N skipped of N total ===` summary.
+ *
+ * That legacy line is parsed by scripts/test.sh with position-sensitive
+ * sed expressions AND is the string its boot-completion poll waits for;
+ * appending a second passed/failed/skipped triplet to it would let the
+ * greedy patterns capture the wrong numbers and silently redefine what
+ * `make test` counts as a failure. Separate tag, separate parser. */
+static int u_format_report_summary(char *dst, uint32_t cap,
+                                   const struct u_report_totals *rt)
+{
+    uint32_t pos = 0;
+
+    dst[0] = '\0';
+    #define RAPP(s)  do { if (!u_append(dst, &pos, cap, (s))) return 0; } while (0)
+    #define RNUM(v)  do { if (!u_append_uint(dst, &pos, cap, (uint64_t)(v))) return 0; } while (0)
+
+    RAPP("[UTEST-REPORT-SUMMARY] asserts_passed=");
+    RNUM(rt->asserts_passed);
+    RAPP(" asserts_failed=");
+    RNUM(rt->asserts_failed);
+    RAPP(" skip_blocks=");
+    RNUM(rt->skip_blocks);
+    RAPP(" skip_records=");
+    RNUM(rt->skip_records);
+    RAPP(" reported=");
+    RNUM(rt->reported);
+    RAPP(" invalid=");
+    RNUM(rt->invalid);
+    RAPP(" unreported=");
+    RNUM(rt->unreported);
+    #undef RAPP
+    #undef RNUM
+    return 1;
+}
+
+static void u_emit_report_summary(const struct u_report_totals *rt)
+{
+    char line[224];
+
+    if (u_format_report_summary(line, sizeof(line), rt))
+        klog(LOG_INFO, "UTEST", "%s", line);
+    else
+        klog(LOG_ERROR, "UTEST",
+             "[UTEST-REPORT-SUMMARY-OVERFLOW] report summary exceeded %u bytes",
+             (uint64_t)sizeof(line));
+}
+
+/* How many of `requested` skip records may still be emitted, given
+ * `already_emitted` across the run so far. Pure, so the aggregate stop
+ * can be unit-tested without spawning anything: it is the arithmetic that
+ * decides whether a hostile fan-out is cut off, and an off-by-one here
+ * either truncates a legitimate run's artifacts or leaves the amplifica-
+ * tion path open by one binary's worth of records. */
+static uint32_t u_skip_records_allowed(uint32_t already_emitted,
+                                       uint32_t requested)
+{
+    uint32_t room = (already_emitted < UTEST_SKIP_RECORD_BUDGET)
+                        ? (UTEST_SKIP_RECORD_BUDGET - already_emitted) : 0u;
+    return (requested < room) ? requested : room;
+}
+
+/* Emit one synthetic skip-block record into the JSON stream.
+ *
+ * Separate from u_emit_json_testcase because it is a DIFFERENT record
+ * kind, not a testcase with odd fields: it carries `record_kind`,
+ * the `parent` binary it belongs to, and its `skip_index`, so a consumer
+ * can group the records under their binary, count binaries and skip
+ * blocks separately, and reconcile both against the summary. Reusing the
+ * testcase emitter is what made the two indistinguishable.
+ *
+ * Same bounded-append + overflow-fallback contract as its sibling. */
+static void u_emit_json_skip_record(const char *rec_name, const char *parent,
+                                    uint32_t index)
+{
+    char line[512];
     uint32_t pos = 0;
 
     if (!s_json_mode) return;
-    u_append(line, &pos, sizeof(line),
-             "[UTEST-JSON] {\"summary\":{\"passed\":");
-    u_append_uint(line, &pos, sizeof(line), passed);
-    u_append(line, &pos, sizeof(line), ",\"failed\":");
-    u_append_uint(line, &pos, sizeof(line), failed);
-    u_append(line, &pos, sizeof(line), ",\"skipped\":");
-    u_append_uint(line, &pos, sizeof(line), skipped);
-    u_append(line, &pos, sizeof(line), ",\"total\":");
-    u_append_uint(line, &pos, sizeof(line), passed + failed + skipped);
-    u_append(line, &pos, sizeof(line), ",\"time_ms\":");
-    u_append_uint(line, &pos, sizeof(line), total_ms);
-    u_append(line, &pos, sizeof(line), "}}");
+
+    #define APP(s)      do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, sizeof(line), (uint64_t)(v))) goto overflow; } while (0)
+
+    APP("[UTEST-JSON] {\"record_kind\":\"skip_block\",\"name\":\"");
+    APP_JSON(rec_name);
+    APP("\",\"parent\":\"");
+    APP_JSON(parent);
+    APP("\",\"skip_index\":");
+    APP_UINT(index);
+    APP(",\"status\":\"SKIP\",\"reason\":\"sub-test block skipped "
+        "(reason on serial log)\"}");
     klog(LOG_INFO, "UTEST", "%s", line);
+    #undef APP
+    #undef APP_JSON
+    #undef APP_UINT
+    return;
+
+overflow:
+    klog(LOG_ERROR, "UTEST",
+         "[UTEST-RECORD-OVERFLOW] JSON skip record for '%s' exceeded its buffer",
+         parent);
+    klog(LOG_INFO, "UTEST",
+         "[UTEST-JSON] {\"record_kind\":\"skip_block\",\"name\":\"overflow\","
+         "\"parent\":\"overflow\",\"skip_index\":0,\"status\":\"SKIP\","
+         "\"reason\":\"record name too long\"}");
+}
+
+/* Build the synthetic record name for one skipped block:
+ * `<binary>::skipped-block-<k>`. Returns 1 on success, 0 if it would not
+ * fit (the caller then skips the synthetic record rather than emitting a
+ * truncated, ambiguous name).
+ *
+ * The label is deliberately positional rather than descriptive: the
+ * kernel receives a COUNT, not the identity of each skipped block, and
+ * inventing a plausible-looking test name would be a fabricated identity
+ * in an artifact whose whole purpose is to stop lying about coverage.
+ * `::skipped-block-K` says exactly what is known -- the K-th skip site
+ * this binary took -- and the reason text stays on serial where the
+ * harness printed it. */
+static int u_build_skip_record_name(char *dst, uint32_t cap,
+                                    const char *base, uint32_t k)
+{
+    uint32_t pos = 0;
+
+    dst[0] = '\0';
+    if (!u_append(dst, &pos, cap, base)) return 0;
+    if (!u_append(dst, &pos, cap, "::skipped-block-")) return 0;
+    if (!u_append_uint(dst, &pos, cap, k)) return 0;
+    return 1;
+}
+
+/* Emit one TAP point + one <testcase><skipped/> + one JSON record per
+ * skip block an ACCEPTED report declared, and advance the TAP point
+ * counter for each.
+ *
+ * Why records and not just a count on the binary's own record: the
+ * binary passed, so its record must stay `ok` / non-skipped -- calling a
+ * partly-verified binary skipped is the error the section's warning box
+ * forbids. But leaving the skip only in prose means TAP's `# SKIP` and
+ * JUnit's `skipped=` still read zero, which is the false-coverage signal
+ * the section exists to remove. One record per skip block satisfies both:
+ * the standard fields become literally accurate and the binary keeps its
+ * true verdict. */
+static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
+                                    const struct u_report *rep,
+                                    uint32_t already_emitted,
+                                    uint32_t *tap_point)
+{
+    char rec[VFS_MAX_NAME + 24];
+    uint32_t k, allowed;
+
+    if (!rep || rep->state != TASK_UTEST_REPORT_VALID || rep->skip_blocks == 0)
+        return 0;
+
+    /* No machine artifact requested means no records exist to count. The
+     * three emitters below are individually no-ops when their mode is
+     * off, so without this the default run would report skip_records it
+     * never emitted -- and could even trip the run-wide budget and fail a
+     * run that asked for no fan-out-producing artifact at all. The skip
+     * BLOCKS themselves are still counted and reported; it is the
+     * synthetic RECORDS that do not exist here. */
+    if (!s_tap_mode && !s_xml_mode && !s_json_mode)
+        return 0;
+
+    /* RUN-WIDE budget, on top of the per-binary ceiling the syscall
+     * enforces. The per-task bound is multiplicative: TASK_MAX binaries
+     * each reporting the maximum are all individually legal and
+     * collectively demand tens of thousands of records. This is the
+     * aggregate stop. Exceeding it is never silently truncated -- one
+     * explicit marker names what was requested, emitted and omitted, and
+     * the host gate counts that marker as a run failure, because an
+     * artifact knowingly missing records is not a passing run. */
+    allowed = u_skip_records_allowed(already_emitted, rep->skip_blocks);
+    if (allowed < rep->skip_blocks) {
+        klog(LOG_ERROR, "UTEST",
+             "[UTEST-SKIP-RECORD-BUDGET] %s requested=%u emitted=%u "
+             "omitted=%u budget=%u",
+             name, (uint64_t)rep->skip_blocks, (uint64_t)allowed,
+             (uint64_t)(rep->skip_blocks - allowed),
+             (uint64_t)UTEST_SKIP_RECORD_BUDGET);
+        if (allowed == 0)
+            return 0;
+    }
+
+    for (k = 1; k <= allowed; k++) {
+        if (!u_build_skip_record_name(rec, sizeof(rec), name, k)) {
+            klog(LOG_WARN, "UTEST",
+                 "%s: skip-record name too long -- %u skip record(s) omitted",
+                 name, (uint64_t)(rep->skip_blocks - k + 1));
+            return k - 1;
+        }
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP reported by binary",
+                 (uint64_t)(++(*tap_point)), rec);
+        else
+            (*tap_point)++;
+        u_emit_xml_testcase(rec, type, 2, 0,
+                            "sub-test block skipped (reason on serial log)",
+                            "skip-block");
+        /* The JSON record carries an explicit discriminator. Without one a
+         * consumer counting objects with a "name" field would count these
+         * as BINARIES -- the stream would show more testcases than
+         * summary.total and every pass-rate derived from it would be
+         * wrong. XML discriminates structurally (these are the only
+         * records with classname="skip-block"); JSON has no such
+         * convention, so it gets the fields. */
+        u_emit_json_skip_record(rec, name, k);
+    }
+    return allowed;
+}
+
+/* Per-binary report diagnostic. Separate from the verdict line so the
+ * host cross-check can recount the report dimension from serial without
+ * re-parsing verdict text, and so a NONE binary produces no line at all
+ * (absence is the legacy signal). */
+static void u_emit_report_line(const char *name, const struct u_report *rep)
+{
+    if (!rep || rep->state == TASK_UTEST_REPORT_NONE)
+        return;
+    klog(LOG_INFO, "UTEST",
+         "[UTEST-REPORT] %s asserts_passed=%u asserts_failed=%u "
+         "skip_blocks=%u state=%s",
+         name, (uint64_t)rep->asserts_passed, (uint64_t)rep->asserts_failed,
+         (uint64_t)rep->skip_blocks,
+         rep->state == TASK_UTEST_REPORT_VALID ? "VALID" : "INVALID");
 }
 
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
@@ -1605,11 +2107,16 @@ static void u_emit_json_summary(uint32_t passed, uint32_t failed,
 static void u_spawn_one(const char *name_copy, const char *path,
                         int *out_pid, int32_t *out_exit_status,
                         int *out_timed_out, uint32_t *out_leaked,
-                        int have_stem)
+                        struct u_report *out_report, int have_stem)
 {
     int pid;
 
     s_pending_test_path = path;
+
+    out_report->asserts_passed = 0;
+    out_report->asserts_failed = 0;
+    out_report->skip_blocks    = 0;
+    out_report->state          = TASK_UTEST_REPORT_NONE;
 
     pid = task_create(utest_loader_func, name_copy);
     *out_pid = pid;
@@ -1626,11 +2133,15 @@ static void u_spawn_one(const char *name_copy, const char *path,
      * even later (contract: vfs_unlink needs the child's handles
      * closed first). */
     *out_leaked = have_stem ? u_isolation_snapshot_leaks((uint32_t)pid) : 0u;
+    /* Same window, same reason: the harness self-report lives on the TCB
+     * that task_cleanup is about to release. Taken unconditionally --
+     * unlike leaks it does not depend on per-test isolation being on. */
+    u_report_snapshot((uint32_t)pid, out_report);
 }
 
 static void u_run_one(const char *name, utest_type_t type,
-                      uint32_t test_num, uint32_t *counters,
-                      int *out_verdict)
+                      uint32_t *tap_point, uint32_t *counters,
+                      struct u_report_totals *rt, int *out_verdict)
 {
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
@@ -1643,6 +2154,8 @@ static void u_run_one(const char *name, utest_type_t type,
     int32_t exit_status = 0;
     int timed_out = 0;
     uint32_t leaked = 0;
+    uint32_t test_num;
+    struct u_report report;
     uint64_t start_ms;
     uint64_t end_ms;
 
@@ -1693,18 +2206,22 @@ static void u_run_one(const char *name, utest_type_t type,
      * env-passing syscall that lets stress binaries query the desired
      * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
-                &timed_out, &leaked, have_stem);
+                &timed_out, &leaked, &report, have_stem);
 
     if (pid < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
         counters[1]++;
+        rt->unreported++;   /* never ran, so it never reported */
         *out_verdict = 1;
+        test_num = ++(*tap_point);
         if (s_tap_mode)
             klog(LOG_INFO, "UTEST",
                  "not ok %u - %s # task_create failed",
                  (uint64_t)test_num, name_copy);
-        u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed");
-        u_emit_json_testcase(name_copy, type, 1, 0, "task_create failed");
+        u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed",
+                            (const char *)0);
+        u_emit_json_testcase(name_copy, type, 1, 0, "task_create failed",
+                             (const struct u_report *)0);
         s_utest_color_active = 0;
         if (have_stem) {
             u_isolation_reap(stem);
@@ -1841,12 +2358,50 @@ static void u_run_one(const char *name, utest_type_t type,
         u_append(reason, &rp, sizeof(reason), " handle(s) leaked");
     }
 
+    /* Ring-3 self-report reconciliation. The counts are the binary's own
+     * claim about itself, so they are checked against the outcome the
+     * kernel observed before any of them reach an artifact.
+     *
+     * An INVALID report escalates a PASS or a SKIP to FAIL. A binary that
+     * says "no assertions failed" and exits non-zero -- or claims a
+     * whole-binary skip while reporting assertions it ran -- is producing
+     * exactly the contradictory signal this section exists to remove, and
+     * silently dropping its counts would leave the run green on a binary
+     * that just proved its own reporting untrustworthy. An already-FAIL
+     * keeps its stronger, more specific reason. */
+    report.state = u_report_reconcile(report.state, report.asserts_failed,
+                                      exit_status, timed_out);
+    if (report.state == TASK_UTEST_REPORT_INVALID) {
+        int was_failing = (*out_verdict == 1);
+        rt->invalid++;
+        *out_verdict = u_report_apply_invalid(*out_verdict, counters);
+        if (!was_failing && reason[0] == '\0') {
+            uint32_t rp = 0;
+            u_append(reason, &rp, sizeof(reason), "invalid test report");
+        }
+        klog(LOG_WARN, "UTEST",
+             "%s: self-report contradicts outcome (exit=%d, reported "
+             "failed=%u) -- counts discarded",
+             name_copy, (int64_t)exit_status,
+             (uint64_t)report.asserts_failed);
+    } else if (report.state == TASK_UTEST_REPORT_VALID) {
+        /* Bounded by TASK_UTEST_REPORT_MAX per binary and TASK_MAX
+         * binaries per run, so these 32-bit sums cannot wrap. */
+        rt->reported++;
+        rt->asserts_passed += report.asserts_passed;
+        rt->asserts_failed += report.asserts_failed;
+        rt->skip_blocks    += report.skip_blocks;
+    } else {
+        rt->unreported++;
+    }
+
     /* Single verdict emit: exactly one [UTEST] line and (when TAP is
      * on) one TAP line per binary. All escalations have applied above,
      * so `*out_verdict`, `reason`, and `leaked`/`isolation_failed` are
      * their final values.  Emitting inside the raw exit-status branches
      * produces a PASS followed by a FAIL (escalation) for the same
      * test_num. */
+    test_num = ++(*tap_point);
     if (*out_verdict == 0) {
         klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
         if (s_tap_mode)
@@ -1914,9 +2469,17 @@ static void u_run_one(const char *name, utest_type_t type,
      * emit. */
     end_ms = u_uptime_ms();
     u_emit_xml_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
-                        reason[0] ? reason : (const char *)0);
+                        reason[0] ? reason : (const char *)0,
+                        (const char *)0);
     u_emit_json_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
-                         reason[0] ? reason : (const char *)0);
+                         reason[0] ? reason : (const char *)0, &report);
+
+    /* Report dimension, emitted last so the binary's own records are
+     * already on the wire: the diagnostic line the host cross-check
+     * recounts, then one standard skip record per reported skip block. */
+    u_emit_report_line(name_copy, &report);
+    rt->skip_records += u_emit_skip_records(name_copy, type, &report,
+                                            rt->skip_records, tap_point);
 }
 
 /* ---- Enumerate binaries via directory glob (fallback path) --------- */
@@ -1963,6 +2526,20 @@ void test_usermode_run(void)
     struct manifest_state manifest;
     struct vfs_node      *root;
     uint32_t              counters[3] = { 0, 0, 0 }; /* pass, fail, skip */
+    /* Report dimension, kept strictly separate from `counters` above:
+     * those count BINARIES (what the exit codes said), these count what
+     * the binaries reported about their own assertions and skip blocks.
+     * Folding the two together would make every total ambiguous. */
+    struct u_report_totals rt = { 0, 0, 0, 0, 0, 0, 0 };
+    /* Running TAP point number. No longer equal to the binary ordinal:
+     * a binary that reports skip blocks contributes extra points after
+     * its own, which is why the `1..N` plan moved to the end of the
+     * stream (TAP permits leading or trailing; only a trailing one can
+     * state a count the launcher does not know up front). */
+    uint32_t              tap_point = 0;
+    /* Set when a `Bail out!` was emitted. TAP makes bail-out terminal, so
+     * the trailing plan must not follow it. */
+    int                   tap_bailed = 0;
     uint32_t              total_planned = 0;
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
@@ -2052,8 +2629,14 @@ void test_usermode_run(void)
          * and tooling doesn't fail on missing artifact. Codex quality
          * M1 2026-04-20. */
         u_emit_xml_suite_open();
-        u_emit_xml_suite_close(0, 0, 0, 0);
-        u_emit_json_summary(0, 0, 0, 0);
+        u_emit_xml_suite_close(0, 0, 0, 0, 0);
+        u_emit_json_summary(0, 0, 0, &rt, 0);
+        /* Empty suite still gets a plan (`1..0`) and a report summary, so
+         * a consumer can tell "ran nothing" from "the launcher died before
+         * emitting either". */
+        if (s_tap_mode)
+            klog(LOG_INFO, "UTEST", "1..0");
+        u_emit_report_summary(&rt);
         u_manifest_free(&manifest);
         scheduler_disable();
         return;
@@ -2086,10 +2669,6 @@ void test_usermode_run(void)
                  (uint64_t)budget, (uint64_t)TASK_MAX, (uint64_t)live);
         }
     }
-
-    /* TAP plan line (emitted once before any test) */
-    if (s_tap_mode)
-        klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)total_planned);
 
     /* XML envelope opener. The testsuite attributes are filled in
      * by scripts/test.sh post-processing using the emitted
@@ -2142,10 +2721,15 @@ void test_usermode_run(void)
                  * runners, CI parsers) treat the run as aborted
                  * instead of "missing N-K results = malformed".
                  * Codex quality Phase-2, 2026-04-20. */
-                if (s_tap_mode)
+                if (s_tap_mode) {
                     klog(LOG_INFO, "UTEST",
                          "Bail out! smoke failed -- %u non-smoke binaries skipped",
                          (uint64_t)(total_planned - total_ran));
+                    /* Bail-out is TERMINAL in TAP: no further points and no
+                     * plan may follow it. Recorded so the trailing plan at
+                     * the bottom of this function stays suppressed. */
+                    tap_bailed = 1;
+                }
                 break;
             }
             if (use_manifest) {
@@ -2164,7 +2748,7 @@ void test_usermode_run(void)
                         continue;
                     }
                     total_ran++;
-                    u_run_one(nm, type, total_ran, counters, &verdict);
+                    u_run_one(nm, type, &tap_point, counters, &rt, &verdict);
                     if (want_smoke && verdict != 0)
                         smoke_failed = 1;
                 }
@@ -2196,8 +2780,8 @@ void test_usermode_run(void)
                         continue;
                     }
                     total_ran++;
-                    u_run_one(scratch_name, type, total_ran, counters,
-                              &verdict);
+                    u_run_one(scratch_name, type, &tap_point, counters,
+                              &rt, &verdict);
                     if (want_smoke && verdict != 0)
                         smoke_failed = 1;
                 }
@@ -2231,13 +2815,29 @@ void test_usermode_run(void)
              (uint64_t)counters[2], (uint64_t)total_ran);
     }
 
+    /* TAP plan, emitted LAST. TAP 13 allows the plan at either end of the
+     * stream, and only the trailing position can state a count that
+     * includes the per-skip-block points -- the launcher does not know how
+     * many binaries will report skips until they have all run.
+     *
+     * SUPPRESSED after a `Bail out!`. The TAP format makes a bail-out
+     * terminal: nothing may follow it, and a consumer that has stopped
+     * parsing would either miss the plan or treat the stream as malformed.
+     * An aborted run is correctly plan-less -- the bail-out line IS the
+     * verdict. */
+    if (s_tap_mode && !tap_bailed)
+        klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)tap_point);
+
     /* summary emissions: close the XML envelope and drop the final
      * JSON summary record. Both are no-ops if the respective modes
-     * were never enabled. */
+     * were never enabled. The report summary is unconditional -- it is a
+     * plain diagnostic line, not part of either machine artifact, and the
+     * host cross-check needs it whenever any binary reported. */
     u_emit_xml_suite_close(counters[0], counters[1], counters[2],
-                           run_end_ms - run_start_ms);
-    u_emit_json_summary(counters[0], counters[1], counters[2],
+                           rt.skip_records, run_end_ms - run_start_ms);
+    u_emit_json_summary(counters[0], counters[1], counters[2], &rt,
                         run_end_ms - run_start_ms);
+    u_emit_report_summary(&rt);
 }
 
 /* ---- Test-only exports --------------------------------------------- *
@@ -2284,6 +2884,108 @@ int test_usermode_json_escape(const char *src, char *dst, uint32_t cap)
     if (cap == 0) return 0;
     dst[0] = '\0';
     return u_json_escape(dst, &pos, cap, src);
+}
+
+/* Ring-3 self-report helpers. The launcher's spawn path is hard-banned
+ * from unit tests (it drives live task_create), so the report machinery
+ * is exposed as pure functions instead: the reconciliation matrix and the
+ * bounded formatters are the parts that can be wrong, and both are
+ * reachable without a child process. */
+uint32_t test_usermode_report_reconcile(uint32_t state, uint32_t failed,
+                                        int32_t exit_status, int timed_out);
+uint32_t test_usermode_report_reconcile(uint32_t state, uint32_t failed,
+                                        int32_t exit_status, int timed_out)
+{
+    return u_report_reconcile(state, failed, exit_status, timed_out);
+}
+
+int test_usermode_report_apply_invalid(int verdict, uint32_t *counters);
+int test_usermode_report_apply_invalid(int verdict, uint32_t *counters)
+{
+    return u_report_apply_invalid(verdict, counters);
+}
+
+uint32_t test_usermode_skip_records_allowed(uint32_t already, uint32_t want);
+uint32_t test_usermode_skip_records_allowed(uint32_t already, uint32_t want)
+{
+    return u_skip_records_allowed(already, want);
+}
+
+uint32_t test_usermode_skip_record_budget(void);
+uint32_t test_usermode_skip_record_budget(void)
+{
+    return UTEST_SKIP_RECORD_BUDGET;
+}
+
+int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
+                                         const char *base, uint32_t k);
+int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
+                                         const char *base, uint32_t k)
+{
+    if (cap == 0) return 0;
+    return u_build_skip_record_name(dst, cap, base, k);
+}
+
+int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
+                                     uint32_t failures, uint32_t skipped,
+                                     uint64_t total_ms);
+int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
+                                     uint32_t failures, uint32_t skipped,
+                                     uint64_t total_ms)
+{
+    if (cap == 0) return 0;
+    return u_format_xml_summary(dst, cap, tests, failures, skipped, total_ms);
+}
+
+/* The report totals are passed as a flat argument list rather than the
+ * struct so the test file does not need the file-local type. */
+int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                      uint32_t failed, uint32_t skipped,
+                                      uint32_t a_pass, uint32_t a_fail,
+                                      uint32_t blocks, uint32_t records,
+                                      uint32_t reported, uint32_t invalid,
+                                      uint32_t unreported, uint64_t total_ms);
+int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                      uint32_t failed, uint32_t skipped,
+                                      uint32_t a_pass, uint32_t a_fail,
+                                      uint32_t blocks, uint32_t records,
+                                      uint32_t reported, uint32_t invalid,
+                                      uint32_t unreported, uint64_t total_ms)
+{
+    struct u_report_totals rt;
+    if (cap == 0) return 0;
+    rt.asserts_passed = a_pass;
+    rt.asserts_failed = a_fail;
+    rt.skip_blocks    = blocks;
+    rt.skip_records   = records;
+    rt.reported       = reported;
+    rt.invalid        = invalid;
+    rt.unreported     = unreported;
+    return u_format_json_summary(dst, cap, passed, failed, skipped, &rt,
+                                 total_ms);
+}
+
+int test_usermode_format_report_summary(char *dst, uint32_t cap,
+                                        uint32_t a_pass, uint32_t a_fail,
+                                        uint32_t blocks, uint32_t records,
+                                        uint32_t reported, uint32_t invalid,
+                                        uint32_t unreported);
+int test_usermode_format_report_summary(char *dst, uint32_t cap,
+                                        uint32_t a_pass, uint32_t a_fail,
+                                        uint32_t blocks, uint32_t records,
+                                        uint32_t reported, uint32_t invalid,
+                                        uint32_t unreported)
+{
+    struct u_report_totals rt;
+    if (cap == 0) return 0;
+    rt.asserts_passed = a_pass;
+    rt.asserts_failed = a_fail;
+    rt.skip_blocks    = blocks;
+    rt.skip_records   = records;
+    rt.reported       = reported;
+    rt.invalid        = invalid;
+    rt.unreported     = unreported;
+    return u_format_report_summary(dst, cap, &rt);
 }
 
 /* taxonomy helpers -- return integer for ABI-stable test binding. */

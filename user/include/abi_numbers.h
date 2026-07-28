@@ -66,6 +66,7 @@
 #define SYS_FAULT_INJECT         44
 #define SYS_WRITEHANDLE          45
 #define SYS_UNMAPVIEW            46
+#define SYS_TEST_REPORT          48
 #define SYS_ABI_HANDSHAKE        47
 #define FAULT_KMALLOC_NEXT       1
 #define FAULT_KMALLOC_COUNTDOWN  2
@@ -117,5 +118,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x68DA2F38402A4A0DULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x9B8D6CD1D01DB251ULL
 #define EX_ABI_MISMATCH          0x42

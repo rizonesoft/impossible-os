@@ -10,6 +10,8 @@
 
 #include "kernel/types.h"
 
+struct task;   /* sched/task.h -- only the test-flavor decls below need it */
+
 /* Syscall numbers */
 #define SYS_WRITE    1   /* sys_write(fd, buf, len) → bytes written */
 #define SYS_READ     2   /* sys_read(fd, buf, len)  → bytes read */
@@ -70,6 +72,27 @@
                              * until reboot because handle_table destroy
                              * does NOT walk section views. Mirror of
                              * NtUnmapViewOfSection on the INT 0x80 path. */
+#define SYS_TEST_REPORT  48 /* sys_test_report(passed, failed, skipped) -> 0 / -1
+                             * Ring-3 harness self-report: the assertion and
+                             * skip-block statistics a test binary accumulated,
+                             * submitted ONCE from UTEST_END before the binary
+                             * returns. The launcher reads the record off the
+                             * child's TCB after it dies, so a binary that
+                             * skipped a sub-test is no longer indistinguishable
+                             * from one that ran every case: an exit code
+                             * carries two outcomes and honest reporting needs
+                             * three. FAIL-CLOSED, because every count here is
+                             * ring-3 supplied. A second call, a count above
+                             * TASK_UTEST_REPORT_MAX, or counts that contradict
+                             * the exit status mark the record INVALID and the
+                             * launcher escalates that binary to FAIL. A binary
+                             * that never calls it stays on the legacy
+                             * exit-code-only path (state NONE).
+                             * KERNEL_TESTS-gated exactly like SYS_FAULT_INJECT:
+                             * the NUMBER stays reserved in both flavors (ABI
+                             * promise + IMPOSSIBLE_OS_ABI_HASH input) but the
+                             * release flavor drops the case, so syscall 48
+                             * returns -1 as an unknown syscall. */
 #define SYS_ABI_HANDSHAKE 47 /* sys_abi_handshake() -> IMPOSSIBLE_OS_ABI_HASH
                               * Returns the kernel's 64-bit ABI fingerprint
                               * FNV-1a over the SYS_ SSDT_ TEB KUSD layout.
@@ -86,6 +109,13 @@
  * here rather than privately in each consumer so a signature change is caught
  * by the compiler instead of linking under an incompatible calling contract. */
 int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
+
+/* Test-flavor only: the SYS_TEST_REPORT dispatch behind syscall 48, exposed
+ * non-static for the same reason -- kernel unit tests drive the validation
+ * ladder (double call, over-cap counts) directly against a scratch TCB
+ * instead of spawning a ring-3 binary, which the test policy forbids. */
+int64_t sys_test_report_dispatch(struct task *t, uint64_t passed,
+                                 uint64_t failed, uint64_t skipped);
 #endif /* KERNEL_TESTS */
 
 /* ---- SYS_FAULT_INJECT subcommand selectors ----

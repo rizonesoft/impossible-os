@@ -838,6 +838,10 @@ int task_create(task_entry_t entry, const char *name)
      * it would double-free on this task's first exec. */
     tasks[pid].stack_pending_free = (uint8_t *)0;
     tasks[pid].forked_shares_parent_image = 0;
+    /* Harness self-report is per-process and never inherited: a recycled
+     * slot presenting the previous tenant's submission would make this
+     * task's own UTEST_END read as the forbidden second call. */
+    task_utest_report_reset(&tasks[pid].utest_report);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
@@ -1062,6 +1066,10 @@ int task_create_user(task_entry_t entry, const char *name)
      * it would double-free on this task's first exec. */
     tasks[pid].stack_pending_free = (uint8_t *)0;
     tasks[pid].forked_shares_parent_image = 0;
+    /* Harness self-report is per-process and never inherited: a recycled
+     * slot presenting the previous tenant's submission would make this
+     * task's own UTEST_END read as the forbidden second call. */
+    task_utest_report_reset(&tasks[pid].utest_report);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
@@ -2136,6 +2144,10 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].quota_policy_lock.flag = 0;
     quota_policy_reset(&tasks[child_pid]);  /* per-process, never inherited (see task_create) */
     fault_site_reset_task(&tasks[child_pid]);  /* arm is per-process, never inherited */
+    /* Same rule for the harness self-report: the child gets a fresh
+     * NONE, so a forked child's own UTEST_END is its FIRST submission
+     * rather than a repeat of the parent's. */
+    task_utest_report_reset(&tasks[child_pid].utest_report);
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process

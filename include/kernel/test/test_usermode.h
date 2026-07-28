@@ -63,6 +63,19 @@ typedef enum {
  * exceeding its wall-clock timeout. */
 #define UTEST_EXIT_TIMEOUT (-6)
 
+/* Layer 1 of the constant's defence, at COMPILE time. 77 is an external
+ * contract -- the GNU automake / kselftest "skipped" status -- so drift
+ * away from it silently turns our SKIPs into FAILs in any mixed CI
+ * consumer expecting the Linux convention. A runtime unit test could only
+ * compare the define against its own literal, which verifies nothing but
+ * that someone typed it twice (scripts/lint.sh Check: tautological-test);
+ * a static assert refuses to BUILD instead, which is the check that was
+ * actually wanted. */
+_Static_assert(UTEST_EXIT_SKIP == 77,
+               "UTEST_EXIT_SKIP must stay the kselftest/automake skip status");
+_Static_assert(UTEST_EXIT_TIMEOUT < 0 && UTEST_EXIT_TIMEOUT != UTEST_EXIT_SKIP,
+               "the timeout marker must not collide with a real exit status");
+
 #ifdef KERNEL_TESTS
 
 /* Run every test_*.exe found at C:\ root sequentially and collect

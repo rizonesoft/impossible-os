@@ -33,6 +33,21 @@ int main(void)
      *    we can portably assert. */
     UTEST_ASSERT(sys_uptime() >= 0, "sys_uptime() >= 0");
 
+    /* 4. Skip path -- the harness's THIRD outcome, exercised deliberately.
+     *    This binary is the only place a skip can be taken on purpose: it
+     *    exists to prove the harness's own documented behaviour, and the
+     *    skip-reporting path has no other unconditional producer (every
+     *    real UTEST_SKIP is guarded by a precondition that is normally
+     *    available, so a green run would exercise none of it).
+     *
+     *    The resulting shape is exactly the case the launcher had to stop
+     *    mishandling: this binary PASSES, exits 0, and must simultaneously
+     *    report a NON-ZERO skip count into TAP, JUnit XML and JSON. If the
+     *    launcher ever regresses to inferring "no skips" from exit 0, the
+     *    run's [UTEST-REPORT-SUMMARY] skip_blocks drops to 0 and the
+     *    per-skip records disappear from every artifact. */
+    UTEST_SKIP("harness skip path: deliberate probe, this binary must report 1 skip block");
+
     UTEST_END();
     return g_fail;
 }

@@ -37,10 +37,23 @@
 #include "syscall.h"
 #include "string.h"
 
-/* Failure counter -- defined once per binary by UTEST_DEFINE_STATE(),
- * read by main()'s `return g_fail;`, mutated by UTEST_ASSERT on FAIL. */
+/* Harness counters -- defined once per binary by UTEST_DEFINE_STATE().
+ *
+ * g_fail is the exit code: read by main()'s `return g_fail;`, mutated by
+ * UTEST_ASSERT on FAIL. g_pass and g_skip exist so UTEST_END can report a
+ * THIRD outcome the exit code has no room for: a binary that skipped one
+ * sub-test and passed the rest used to reach the launcher as an
+ * indistinguishable exit 0, which made every machine artifact claim full
+ * coverage the run never had.
+ *
+ * g_skip counts skip BLOCKS (UTEST_SKIP sites taken), not assertions -- one
+ * UTEST_SKIP typically guards a block containing several assertions that
+ * never ran, so the two counters measure different things and are reported
+ * as separate dimensions rather than summed. */
 extern int g_fail;
-#define UTEST_DEFINE_STATE() int g_fail = 0
+extern int g_pass;
+extern int g_skip;
+#define UTEST_DEFINE_STATE() int g_pass = 0; int g_skip = 0; int g_fail = 0
 
 /* 24-bit truecolor ANSI wrap matching the kernel klog UTEST palette
  * (#84B2E9 light blue). Wrapping every [PASS]/[FAIL]/[UTEST-BEGIN]/
@@ -70,6 +83,7 @@ extern int g_fail;
             sys_write(1, _utest_m, _utest_mlen);                             \
             sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);              \
             sys_write(1, "\n", 1);                                           \
+            g_pass++;                                                        \
         } else {                                                             \
             sys_write(1, "[FAIL] ", 7);                                      \
             sys_write(1, _utest_m, _utest_mlen);                             \
@@ -86,7 +100,12 @@ extern int g_fail;
  * injection, which the kernel refuses under boot.conf test=0) had to choose
  * between failing and asserting something trivially true. The latter is worse:
  * a passing assertion makes a configuration that silently disabled the case
- * indistinguishable from one that ran it. This prints and counts nothing.
+ * indistinguishable from one that ran it.
+ *
+ * Counts one skip BLOCK. The block this macro guards usually contains several
+ * assertions that will not run, so the count is of skip SITES taken, never of
+ * assertions -- UTEST_END submits it as its own dimension beside the assertion
+ * counts, and the launcher keeps them separate all the way into the artifacts.
  *
  * Whole-binary skips remain exit 77; this is the per-sub-test form. */
 #define UTEST_SKIP(msg)                                                      \
@@ -97,6 +116,7 @@ extern int g_fail;
         sys_write(1, _utest_s, strlen(_utest_s));                            \
         sys_write(1, UTEST_COLOR_OFF, UTEST_COLOR_OFF_LEN);                  \
         sys_write(1, "\n", 1);                                               \
+        g_skip++;                                                            \
     } while (0)
 
 /* Suite header -- print once at the top of main(). */
@@ -112,9 +132,21 @@ extern int g_fail;
 
 /* Suite footer -- print once just before `return g_fail;`. The all-pass
  * vs some-fail branch lets a human reading raw serial output spot the
- * verdict without scrolling for every [FAIL] line. */
+ * verdict without scrolling for every [FAIL] line.
+ *
+ * Also submits the counters to the kernel (SYS_TEST_REPORT) so the launcher
+ * can put the skip count in TAP / JUnit XML / JSON instead of inferring
+ * "no skips" from exit 0. Submit EXACTLY once per binary: the kernel treats
+ * a second submission as a self-contradiction and fails the binary. Fire and
+ * forget -- the return is ignored on purpose, because a release-flavor
+ * kernel legitimately refuses syscall 48 and the binary must still run and
+ * exit normally there (the launcher only exists in the test flavor). The
+ * report is submitted BEFORE the [UTEST-END] line so the serial verdict is
+ * the last thing a human sees for this binary. */
 #define UTEST_END()                                                          \
     do {                                                                     \
+        (void)sys_test_report((uint32_t)g_pass, (uint32_t)g_fail,            \
+                              (uint32_t)g_skip);                             \
         sys_write(1, UTEST_COLOR_ON, UTEST_COLOR_ON_LEN);                    \
         if (g_fail == 0) {                                                   \
             sys_write(1, "[UTEST-END] all pass", 20);                        \

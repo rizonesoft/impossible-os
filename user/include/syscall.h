@@ -359,3 +359,26 @@ static inline long sys_fault_inject(uint32_t kind, uint32_t countdown)
 {
     return syscall3(SYS_FAULT_INJECT, (long)kind, (long)countdown, 0L);
 }
+
+/* Test-harness self-report. Submits what this binary counted -- assertions
+ * passed, assertions failed, and skip BLOCKS taken -- so the user-mode test
+ * launcher can report a third outcome in TAP / JUnit XML / JSON. The process
+ * exit code carries only two (0 = no failures, 77 = whole binary skipped),
+ * which is why a binary that skipped one sub-test used to be indistinguishable
+ * from one that ran everything.
+ *
+ * Call EXACTLY once per binary (UTEST_END does this for you). The kernel
+ * treats a repeat submission, or any count above its per-binary ceiling, as a
+ * self-contradiction: the record is marked invalid and the launcher escalates
+ * the binary to FAIL rather than trusting the numbers.
+ *
+ * Returns 0 when the report was accepted. Returns -1 when it was rejected AND
+ * when the kernel has no test flavor at all (syscall 48 is reserved but
+ * undispatched in a release build), so callers must not treat -1 as fatal --
+ * a non-reporting binary simply stays on the legacy exit-code-only path. */
+static inline long sys_test_report(uint32_t passed, uint32_t failed,
+                                   uint32_t skipped)
+{
+    return syscall3(SYS_TEST_REPORT, (long)passed, (long)failed,
+                    (long)skipped);
+}

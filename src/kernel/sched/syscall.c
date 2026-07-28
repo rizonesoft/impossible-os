@@ -437,6 +437,102 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
         return -1;
     }
 }
+
+/* ---- SYS_TEST_REPORT dispatch (ring-3 harness self-report) --------- *
+ *
+ * One submission per binary, from UTEST_END, carrying what the harness
+ * counted: assertions passed, assertions failed, and skip BLOCKS taken.
+ * The launcher reads the record off the dead child's TCB and threads it
+ * into TAP / JUnit XML / JSON, which is the only way a partially skipped
+ * binary can report a third outcome -- the exit code has room for two.
+ *
+ * Everything here is ring-3 supplied, so the ladder is fail-closed and
+ * every refusal is STICKY: a rejected submission leaves the record
+ * INVALID rather than NONE, so a binary cannot probe for an accepted
+ * shape by calling again, and cannot silently fall back to the legacy
+ * path it was trying to escape. The launcher escalates INVALID to FAIL.
+ *
+ * Consistency against the exit status is NOT checked here -- the exit
+ * status does not exist yet at report time. That check lives in the
+ * launcher's reap path (test_usermode.c), which sees both.
+ *
+ * `t` is a parameter rather than task_current() so kernel unit tests can
+ * drive the ladder against a scratch TCB; the syscall path passes
+ * task_current().
+ * ------------------------------------------------------------------ */
+
+int64_t sys_test_report_dispatch(struct task *t, uint64_t passed,
+                                 uint64_t failed, uint64_t skipped)
+{
+    uint32_t expected = TASK_UTEST_REPORT_NONE;
+
+    if (!t)
+        return -1;
+
+    /* Claim the single-submission slot ATOMICALLY. The harness calls this
+     * exactly once, so a repeat is either a corrupt binary or one trying
+     * to overwrite an earlier, less flattering report -- both the
+     * false-green shape this section exists to remove.
+     *
+     * A plain check-then-set would not hold that: a process may run
+     * several user threads, and two of them could both observe NONE, both
+     * succeed, and let the last writer replace a skip-bearing report with
+     * a zero-skip one. (Not reachable today -- INT 0x80 is an interrupt
+     * gate, so IF stays clear across the dispatch, and APs do not yet
+     * schedule tasks -- but SMP-safe-by-default is the repo rule and the
+     * exchange costs one instruction.) The loser of the exchange, and any
+     * later submitter, drives the record to INVALID and it stays there. */
+    if (!__atomic_compare_exchange_n(&t->utest_report.state, &expected,
+                                     TASK_UTEST_REPORT_CLAIMED, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        klog(LOG_WARN, "sys",
+             "SYS_TEST_REPORT repeat submission pid=%u (state=%u) -- INVALID",
+             (uint64_t)t->pid, (uint64_t)expected);
+        __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_INVALID,
+                         __ATOMIC_RELEASE);
+        return -1;
+    }
+
+    /* Out-of-range counts would wrap the launcher's 32-bit aggregates.
+     * Refuse rather than clamp: a clamped count is a wrong number that
+     * still looks like a measurement.
+     *
+     * The skip-block count carries a MUCH tighter bound than the assertion
+     * counts, and for a different reason: the launcher emits one TAP point,
+     * one <testcase> and one JSON record per skip block, so this field
+     * governs artifact fan-out. Bounding it only against arithmetic wrap
+     * would let one binary demand millions of log records and starve the
+     * rest of the run. */
+    if (passed > TASK_UTEST_REPORT_MAX || failed > TASK_UTEST_REPORT_MAX) {
+        klog(LOG_WARN, "sys",
+             "SYS_TEST_REPORT out-of-range pid=%u p=%u f=%u (max=%u)",
+             (uint64_t)t->pid, passed, failed,
+             (uint64_t)TASK_UTEST_REPORT_MAX);
+        __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_INVALID,
+                         __ATOMIC_RELEASE);
+        return -1;
+    }
+    if (skipped > TASK_UTEST_REPORT_SKIP_MAX) {
+        klog(LOG_WARN, "sys",
+             "SYS_TEST_REPORT skip_blocks=%u exceeds artifact bound %u "
+             "pid=%u -- refused",
+             skipped, (uint64_t)TASK_UTEST_REPORT_SKIP_MAX,
+             (uint64_t)t->pid);
+        __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_INVALID,
+                         __ATOMIC_RELEASE);
+        return -1;
+    }
+
+    /* Counts first, then PUBLISH with a release store: a reader that
+     * acquires VALID is guaranteed to see the counts that go with it,
+     * never a half-written record. */
+    t->utest_report.asserts_passed = (uint32_t)passed;
+    t->utest_report.asserts_failed = (uint32_t)failed;
+    t->utest_report.skip_blocks    = (uint32_t)skipped;
+    __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_VALID,
+                     __ATOMIC_RELEASE);
+    return 0;
+}
 #endif /* KERNEL_TESTS */
 
 /* ---- Shared syscall-entry IRQL wrappers -------------------------- *
@@ -1091,6 +1187,14 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
      * unknown-syscall default and returns -1. See the dispatch banner. */
     case SYS_FAULT_INJECT:
         ret = sys_fault_inject_dispatch((uint32_t)arg1, (uint32_t)arg2);
+        break;
+    /* Same flavor gate, same reason: the launcher that consumes this
+     * record is itself KERNEL_TESTS-only, so the release flavor has no
+     * reader and syscall 48 falls to the unknown-syscall default. Args
+     * are scalars -- no user pointer, so no probe/copy is needed. */
+    case SYS_TEST_REPORT:
+        ret = sys_test_report_dispatch(task_current(), (uint64_t)arg1,
+                                       (uint64_t)arg2, (uint64_t)arg3);
         break;
 #endif /* KERNEL_TESTS */
     case SYS_ABI_HANDSHAKE:
