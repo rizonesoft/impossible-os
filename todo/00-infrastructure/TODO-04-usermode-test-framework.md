@@ -78,10 +78,13 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  18   | Fast-path observability + ABI versioning            | §17                           |  [x]   |
 | ⭐   |  19   | Transition ring buffer + 3-way transport fuzz       | §17, §18                      |  [x]   |
 | 💎   |  20   | Site-targeted and PMM-countdown fault selectors     | §5                            |  [ ]   |
+| 💎   |  21   | Child-targeted fault arming across `fork()`         | §5, §20                       |  [ ]   |
+| 💎   |  22   | Honest machine artifacts for skipped sub-tests      | §4, §7                        |  [ ]   |
+| 💎   |  23   | Generated exit-status ABI for ring-3 assertions     | §2                            |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
-> **Sequencing rule:** foundation lands first (§1-§4), runner-side enhancements that every subsystem test consumes ship next (§5-§8), subsystem test binaries follow (§9-§15), repo-wide build integration closes the test-framework loop in §16, fast-path transport hardening + observability (§17-§18) lift the transport layer every subsystem depends on to a level above Win11/Linux, and §19 closes the remaining silent-hang class with a transition-ring replay + cross-transport fuzz (gated on per-CPU cached task info landing in kernel-core).
+> **Sequencing rule:** foundation lands first (§1-§4), runner-side enhancements that every subsystem test consumes ship next (§5-§8), subsystem test binaries follow (§9-§15), repo-wide build integration closes the test-framework loop in §16, fast-path transport hardening + observability (§17-§18) lift the transport layer every subsystem depends on to a level above Win11/Linux, and §19 closes the remaining silent-hang class with a transition-ring replay + cross-transport fuzz (gated on per-CPU cached task info landing in kernel-core). §20-§23 then close the addressability and honesty gaps the framework's own consumers hit: §20 gives fault injection named sites instead of drifting ordinals, §21 extends arming to not-yet-forked children, §22 makes the machine artifacts report skips truthfully, and §23 puts kernel exit statuses on the generated ABI header.
 
 ---
 
@@ -509,7 +512,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 512)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 515)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -695,21 +698,69 @@ The ring-0↔3 fast paths (`gs:`-relative TEB reads, `KUSER_SHARED_DATA` at 0x7F
 > [!TIP]
 > Linux `fail_page_alloc` / `failslab` address this with per-callsite debugfs knobs plus `probability`/`interval`/`times`; a `should_fail()` call at the site consults its own state. The equivalent here is a small site ID passed to the existing `*_should_fire()` gate, which keeps the arming surface a single syscall rather than a filesystem.
 
+> [!NOTE]
+> Split 2026-07-28. This section originally carried three unrelated mechanisms behind one heading and the complexity oracle flagged it SPLIT-RECOMMENDED (6 subsystems, ABI impact, 7 open items). §20 now owns ONLY the self-PID fault-selector addressing work (PMM countdown + named site IDs). Child-targeted arming across `fork()` moved to §21 because it is a different mechanism -- the filter must name a PID that does not exist yet, which is an inheritance question, not an addressing one. The launcher skip-reporting protocol and the generated exit-status ABI moved to §22 because neither touches fault injection at all; they are harness/ABI truthfulness work.
+
 - [ ] `FAULT_PMM_COUNTDOWN` selector mirroring `FAULT_KMALLOC_COUNTDOWN`: bridge `pmm_alloc_fail_countdown_set(N)` (already implemented in
       `src/kernel/mm/pmm.c`, currently unreachable from ring 3) through `sys_fault_inject_dispatch` with the same self-PID task filter the other selectors apply. Without it no ring-3 test can fail the Nth frame allocation, which is what the post-load PEB/TEB allocations in `task_exec` need. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Site-targeted fault injection for `task_exec`'s OWN pre-commit OOM branches")
 - [ ] Site-targeted arming: a stable site ID (enum in a shared header, not a line number) that a test names to fail one
       SPECIFIC allocation regardless of how many allocations precede it. Minimum viable set is the sites existing tests cannot otherwise pin: the `task_exec` argv address table and private-frame table (reachable only by kmalloc ORDINAL, which drifts) and the `peb_alloc_for_task` frames (need the PMM countdown above). The replacement guarded kernel stack is NOT in this set -- `FAULT_PMM_NEXT` already lands on it directly and it is covered by a ring-3 test today
-- [ ] Child-targeted arming so a parent can arm a fault that fires in a not-yet-forked child: the filter binds to
-      `task_current()->pid` at arm time, so the fork-time `vmm_create_user_pml4` OOM path (which leaves a fork child with no isolated CR3) has no deterministic ring-3 regression today. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fork-child-with-no-isolated-CR3")
 - [ ] Extend `user/test/test_faultinject.c` with a regression per new selector, and assert the negative case: arming a
       site ID that the exercised path never reaches must NOT fire, so a mis-targeted test fails loudly instead of passing on an unrelated allocation
-- [ ] Per-sub-test SKIP must reach the machine artifacts. `UTEST_SKIP` (added 2026-07-28 in
-      [`user/include/test.h`](../../user/include/test.h)) prints a `[SKIP]` line and records no state, so a binary whose preconditions were unavailable still ends `[UTEST-END] all pass`, returns `g_fail == 0`, and is classified PASS with zero skips in TAP / XML / JSON -- only a whole-binary exit 77 increments the launcher's skip counter. Raw serial is honest; every automated consumer is not, which is the same false-coverage signal the macro was introduced to remove. Do NOT "fix" this by returning 77 whenever a skip occurred: that discards the assertions that DID pass and reports a partly-verified binary as entirely unverified. Track skip counts in harness state and extend the launcher protocol so a binary can report passed + skipped together. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fault-injected exec lifecycle coverage")
-- [ ] Kernel exit-status constants that ring-3 tests assert on must ride the generated ABI header, not a hand-copied
-      literal. `TASK_EXIT_EXEC_IMAGE_DESTROYED` (`include/kernel/sched/task.h`) is currently restated as a bare `-1001` in `user/test/test_process.c`, so a kernel-side change is invisible to `make check-abi` and surfaces only if that runtime test happens to run. `scripts/gen-user-abi.py` cannot carry it as-is: `parse_defines` extracts UNSIGNED integer literals by prefix, while the authoritative value is a negative expression (`TASK_EXIT_REASON_BASE - 1`). Needs an allowlisted `task.h` exit-status source plus signed/expression resolution, then emit the name into `abi_numbers.h` and consume it. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` added")
 - [ ] Commit: `"test: site-targeted and PMM-countdown fault selectors"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=exec` -- a test arming a named `task_exec` site observes that exact branch's refusal (identified by its klog) and no other; arming `FAULT_PMM_COUNTDOWN` with N greater than the path's frame count leaves the path succeeding; the gate still denies every new selector under `boot.conf test=0`. Test on: QEMU TCG, QEMU KVM; bare metal.
+
+---
+
+## 21. Child-Targeted Fault Arming Across `fork()`
+
+Every selector §5 and §20 ship binds its task filter to `task_current()->pid` at ARM time. That is the correct default -- it is what stops a sibling kthread or the launcher task from consuming a test's pending trap -- but it makes one class of failure permanently untestable from ring 3: a fault that must fire inside a child that does not exist yet. The concrete casualty is fork's `vmm_create_user_pml4` allocation. Its failure path leaves a fork child running on the parent's CR3 with no isolated address space; the kernel-side refusal is shipped and gate-verified (`task.c` `forked_shares_parent_image`), but nothing in ring 3 can drive it, because by the time the child exists the arming window has closed. Arming from inside the child is not a substitute either: the allocation happens during `fork()` itself, before any child code runs.
+
+> [!TIP]
+> Linux solves the same problem with `fail-nth` on the task_struct plus fault-injection attributes that a child inherits across `clone()`. The narrower equivalent here is an arm-for-descendants flag on the existing filter: the filter matches the arming PID OR any task forked from it after the arm, consumed once, so the parent's own subsequent allocations do not eat the trap.
+
+- [ ] Filter semantics: extend the allocator task filters so an arm can name descendants of the arming task rather than the
+      arming task itself, and define the consumption rule explicitly (which task consumes the trap when parent and child both allocate, and whether the arm survives a second fork). Kernel-side only -- no new syscall number; the selector kind or a flag bit carries the intent through the existing `sys_fault_inject_dispatch` signature. The self-PID default must be unchanged for every existing selector: §5's isolation contract is what keeps the other ring-3 tests deterministic
+- [ ] Ring-3 regression in `user/test/test_faultinject.c` driving fork's `vmm_create_user_pml4` OOM: the parent arms for its
+      next child, forks, and asserts fork refuses rather than producing a child sharing the parent's CR3. Assert the negative case too -- a descendant-targeted arm must NOT be consumed by the parent's own allocations between arm and fork. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fork-child-with-no-isolated-CR3")
+- [ ] Commit: `"sched+test: descendant-targeted fault arming across fork"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=exec` plus the `test_faultinject.exe` ring-3 binary -- a descendant-targeted arm fires exactly once inside the forked child and fork refuses with its named klog; the parent's allocations between arm and fork do not consume it; every existing self-PID selector still fires on the arming task only; `boot.conf test=0` still denies the new arming form. Test on: QEMU TCG, QEMU KVM; bare metal.
+
+---
+
+## 22. Honest Machine Artifacts for Skipped Sub-Tests
+
+`UTEST_SKIP` (added 2026-07-28 in `user/include/test.h`) prints a `[SKIP]` line and records no state, so a binary whose preconditions were unavailable still ends `[UTEST-END] all pass`, returns `g_fail == 0`, and is classified PASS with zero skips in TAP / JUnit XML / JSON -- only a whole-binary exit 77 increments the launcher's skip counter. Raw serial is honest; every automated consumer is not, which is exactly the false-coverage signal the macro was introduced to remove. Filed as an Accepted finding by `02-kernel-core/TODO-21` §19 rather than fixed there because it is harness-side, not kernel-side.
+
+> [!WARNING]
+> Do NOT "fix" the skip reporting by returning exit 77 whenever any sub-test skipped. That discards the assertions that DID pass and reports a partly-verified binary as entirely unverified -- the opposite error, equally dishonest. The launcher protocol must be able to carry passed AND skipped together for the same binary.
+
+- [ ] Track per-sub-test skip counts in harness state (`user/include/test.h`) and extend the launcher protocol so a binary
+      reports passed + failed + skipped together, rather than the current pass/fail-plus-whole-binary-77 encoding. The exit-code contract stays backward compatible: 0 still means no failures and 77 still means the whole binary was skippable
+- [ ] Propagate the skip counts into every machine artifact the launcher emits -- TAP (`# SKIP` directives on the skipped
+      points), JUnit XML (`<skipped/>` elements plus the `skipped` attribute on the suite), and JSON -- so a consumer sees the same three-way outcome the serial log shows. §4 and §7 own these emitters
+- [ ] Commit: `"test: honest skip reporting in machine artifacts"`
+
+**Test checkpoint:** `bash scripts/test.sh` -- a binary that skips one sub-test and passes the rest is classified PASS with a NON-ZERO skip count in TAP, JUnit XML, and JSON simultaneously, and its passing assertions are still counted; a whole-binary exit 77 still reports as fully skipped. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fault-injected exec lifecycle coverage"). Test on: QEMU TCG, QEMU KVM.
+
+---
+
+## 23. Generated Exit-Status ABI for Ring-3 Assertions
+
+Kernel exit-status constants that ring-3 tests assert on are hand-copied literals, so `make check-abi` cannot see them drift. `TASK_EXIT_EXEC_IMAGE_DESTROYED` (`include/kernel/sched/task.h`) is currently restated as a bare `-1001` in `user/test/test_process.c`: a kernel-side change to the value is invisible to the ABI check and surfaces only if that one runtime test happens to run, on a platform where it is not skipped. Every other cross-ring constant in the repo already rides the generated header; this class does not, for a mechanical reason rather than a design one.
+
+> [!TIP]
+> `parse_defines` in `scripts/gen-user-abi.py` extracts UNSIGNED integer literals by prefix, while the authoritative value here is a negative expression (`TASK_EXIT_REASON_BASE - 1`). The generator needs signed/expression resolution before it can carry any exit-status constant, so this is generator work first and a one-line consumer change second.
+
+- [ ] Teach `scripts/gen-user-abi.py` to resolve signed and expression-valued constants (at minimum `BASE - N` forms over
+      an already-extracted symbol), with an allowlisted `include/kernel/sched/task.h` exit-status source so the generator does not start hoovering unrelated `task.h` defines. A value the generator cannot resolve must fail the build loudly rather than silently omitting the name
+- [ ] Emit `TASK_EXIT_EXEC_IMAGE_DESTROYED` into `user/include/abi_numbers.h` and consume it in `user/test/test_process.c`
+      in place of the bare `-1001`, so the assertion tracks the kernel definition through `make check-abi`. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` added")
+- [ ] Commit: `"abi: generate signed exit-status constants for ring-3 assertions"`
+
+**Test checkpoint:** `make check-abi` PASSes with `TASK_EXIT_EXEC_IMAGE_DESTROYED` generated rather than hand-copied, and flipping the kernel-side value fails the check instead of passing silently; an unresolvable expression in the allowlisted source fails the build rather than omitting the constant; `bash scripts/test.sh` stays green with `test_process.exe` asserting on the generated name. Test on: QEMU TCG, QEMU KVM.
 
 ---
 
