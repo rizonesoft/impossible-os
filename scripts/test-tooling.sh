@@ -3688,6 +3688,13 @@ else
     t_fail "build_offload_interactive  expected silence, got: $BOR_OUT"
 fi
 printf '%s' '{"active": true, "phase": "SECTIONS"}' > "$BOR_SEQ"
+# SESSION SCOPING (2026-07-28): the gate now requires the run's IDENTITY, not
+# just its state -- OVERNIGHT_SEQUENCER_RUN=1, the same discriminator
+# run_phase_guard.is_headless() uses -- because keying on the global cursor
+# alone meant every interactive operator session inherited the run's phase
+# gates. These cases simulate the RUN, so they must export it; the
+# operator-not-gated case is asserted separately below.
+export OVERNIGHT_SEQUENCER_RUN=1
 BOR_OUT2="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1"}}' | \
     python3 "$BOR_HOOK" 2>&1)"; BOR_RC2=$?
 if echo "$BOR_OUT2" | grep -q "build-offload" && [ "$BOR_RC2" = "2" ]; then
@@ -3718,6 +3725,29 @@ if [ -z "$BOR_OUT4" ]; then
 else
     t_fail "build_offload_type_specific  expected silence after checks-runner dispatch, got: $BOR_OUT4"
 fi
+# An OPERATOR session must NOT inherit the run's gate, even with the run
+# active in SECTIONS. This is the half that was missing: the gate keyed on the
+# global cursor, so a read-only operator command was blocked by a rule whose
+# rationale is explicitly the RUN's context budget.
+unset OVERNIGHT_SEQUENCER_RUN
+BOR_OUT5="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC5=$?
+if [ -z "$BOR_OUT5" ] && [ "$BOR_RC5" = "0" ]; then
+    t_pass "build_offload_operator_scope  operator session NOT gated by the run's phase"
+else
+    t_fail "build_offload_operator_scope  operator session was gated, rc=$BOR_RC5: $BOR_OUT5"
+fi
+# A read-only command naming two suite scripts must never read as an invocation
+# (the `\b` matched the DOT inside `build.sh`, so `grep a.sh b.sh` was BLOCKed).
+export OVERNIGHT_SEQUENCER_RUN=1
+BOR_OUT6="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep -n x scripts/build.sh scripts/test.sh"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC6=$?
+if [ -z "$BOR_OUT6" ] && [ "$BOR_RC6" = "0" ]; then
+    t_pass "build_offload_readonly  grep naming two suite scripts is not an invocation"
+else
+    t_fail "build_offload_readonly  read-only grep was blocked, rc=$BOR_RC6: $BOR_OUT6"
+fi
+unset OVERNIGHT_SEQUENCER_RUN
 rm -f "$BOR_SEQ" "$BOR_DISP"
 [ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
 [ -n "$BOR_DISP_BAK" ] && printf '%s' "$BOR_DISP_BAK" > "$BOR_DISP"

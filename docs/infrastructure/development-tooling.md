@@ -839,7 +839,7 @@ FastMCP dispatches concurrent tool calls. The bridge handles per-LSP serializati
 
 Locks are PER-INSTANCE, not global -- requests against different LSPs run in parallel. Cross-LSP `workspace_symbol(lang=None)` queries fan out via `ThreadPoolExecutor` with a 10 s overall deadline and per-LSP 5 s timeout, fail-soft to per-language errors. Per-request timeout default is 5 s, configurable via `LSP_MCP_TIMEOUT` env var (read at call time, validated positive-finite-numeric).
 
-`bash scripts/lsp-mcp/bridge.py --self-test --stress` runs 100 concurrent hover calls against clangd to validate the lock + Future-leak contract under load. Demux correctness is exercised separately by sub-test 8b's fake-LSP that deliberately reorders responses.
+`python3 scripts/lsp-mcp/bridge.py --self-test --stress` runs 100 concurrent hover calls against clangd to validate the lock + Future-leak contract under load. Demux correctness is exercised separately by sub-test 8b's fake-LSP that deliberately reorders responses.
 
 #### Warm-start and `--warm-start-mode`
 
@@ -1178,7 +1178,7 @@ The repo ships one Model Context Protocol (MCP) server at [`scripts/todo-graph/m
 
 ```bash
 pip install --user mcp     # or use a venv
-bash scripts/todo-graph/mcp_server.py --self-test   # prints `OK: 12 tools registered, cache ...`
+python3 scripts/todo-graph/mcp_server.py --self-test   # prints `OK: 12 tools registered, cache ...`
 ```
 
 The MCP SDK is OPTIONAL per [`scripts/setup-deps.sh`](../../scripts/setup-deps.sh); without it the server exits cleanly and Claude Code simply lists zero tools. `make todo-graph-mcp` launches the stdio server in the foreground for ad-hoc testing.

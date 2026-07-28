@@ -1320,6 +1320,95 @@ else
 fi
 
 # ============================================================================
+# Check 20: documented `bash <a python file>` invocations
+# ============================================================================
+# A file with a `#!/usr/bin/env python3` shebang is NOT runnable by bash: bash
+# reads the docstring as code and dies with "syntax error near unexpected
+# token", exit 2. Documentation that tells the agent to run one that way is a
+# defect, and a SILENT one where the caller reads the exit code -- the
+# convergence gate's contract is exit 1 = CONVERGED / exit 0 = redispatch, so a
+# bash-induced exit 2 FAILS OPEN and silently pays for a Codex round the gate
+# would have suppressed.
+#
+# This recurred five times before it was fixed at source (live-gotchas entries
+# 2026-07-15, 07-17, 07-25, plus two live occurrences on 2026-07-28), because a
+# gotcha note expires and the wrong doc does not. Hence a lint check rather
+# than a sixth note.
+#
+# WARN-first per the partial-enforcement promotion doctrine.
+if [ "${SKIP_LINT_BASH_PY:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 20 (bash-on-python) skipped via SKIP_LINT_BASH_PY=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT20_OUT="$(python3 - <<'PYEOF'
+import pathlib, re
+
+# `bash <path>.py` / `sh <path>.py`, allowing the line-wrap the skills use
+# (`bash\n  .claude/hooks/x.py`) and an optional opening backtick or quote.
+BASH_PY = re.compile(
+    r"(?<![.\w])(?:bash|sh)\s+[`\"']?((?:\S*/)?[A-Za-z0-9_./-]+\.py)\b")
+
+ROOTS = [".claude", "scripts", "docs"]
+out = []
+for root in ROOTS:
+    p = pathlib.Path(root)
+    if not p.exists():
+        continue
+    for f in p.rglob("*"):
+        if not f.is_file() or f.suffix not in (".md", ".sh", ".py", ".mjs"):
+            continue
+        rel = str(f)
+        if rel.endswith("scripts/lint.sh"):        # this scanner documents it
+            continue
+        if "/state/" in rel:                        # live-gotchas records the bug
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        # Join wrapped lines so `bash\n  path.py` is caught, keeping line nos.
+        lines = text.splitlines()
+        for i, ln in enumerate(lines, 1):
+            probe = ln
+            if ln.rstrip().endswith(("bash", "sh")) and i < len(lines):
+                probe = ln.rstrip() + " " + lines[i].strip()
+            m = BASH_PY.search(probe)
+            if not m:
+                continue
+            target = pathlib.Path(m.group(1).lstrip("`\"'"))
+            # Only a REAL python-shebang file in this repo is a defect; a
+            # generic `bash foo.py` in prose about some other tree is not.
+            cand = pathlib.Path(m.group(1))
+            if not cand.exists():
+                continue
+            try:
+                first = cand.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+            except Exception:
+                continue
+            if "python" not in first:
+                continue
+            out.append(f"WARN {rel}:{i}: documents `bash {target}`, but that file "
+                       f"has a python shebang -- bash exits 2 on it. The exit code "
+                       f"is load-bearing for gate callers (2 fails OPEN), so use "
+                       f"`python3 {target}`.")
+for line in out:
+    print(line)
+PYEOF
+)"
+    if [ -n "$LINT20_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                WARN\ *)
+                    echo -e "${YELLOW}warn${NC}: ${line#WARN }"
+                    WARNINGS=$((WARNINGS + 1))
+                    ;;
+            esac
+        done <<< "$LINT20_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

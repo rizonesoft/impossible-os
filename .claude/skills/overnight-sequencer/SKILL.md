@@ -155,11 +155,11 @@ bash scripts/overnight/wait-for-codex-verdict.sh --max 540 <logFile>   # + tool 
   ~465 KB of repeated discipline body for no added rigor. Cadence changes;
   rigor does not -- every finding still gets Fix / Reject / Accept at file:line.
 - **Convergence gate (P2.1/P2.2) -- the primary churn mechanism.** BEFORE
-  re-dispatching kind K in a fix loop: `bash
+  re-dispatching kind K in a fix loop: `python3
   .claude/hooks/review_convergence.py should-redispatch '<todo>#<section>' <K>`
   (exit 1 = CONVERGED -> SKIP K; exit 0 = redispatch), then `... record
   '<todo>#<section>' <K>` once K's round resolves.
-- **Round counter (P2.3).** After each re-dispatch: `bash
+- **Round counter (P2.3).** After each re-dispatch: `python3
   .claude/hooks/review_round_guard.py --bump '<todo>#<section>' --progress
   <new|none>`. Exit 2 = CAPPED -> stop the loop, spin unresolved findings to a
   concrete follow-up `[ ]` + XREF, advance. For rounds >= 4 (REQUIRED,
