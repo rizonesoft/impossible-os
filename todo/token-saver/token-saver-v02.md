@@ -6,6 +6,22 @@ The v01 "Never cut" floor still applies unchanged: quality gates, adversarial re
 
 ---
 
+- [ ] **WHERE THE REMAINING MONEY IS: cache-read is 76.7% of the bill, and 86% of that is accumulated tool output, not skills or doctrine.**
+  Measured 2026-07-28 on the costliest canary segment (run-064228, 325 turns, $220.41). This item exists so the next cost effort starts from the decomposition instead of re-deriving it, and so effort goes to the 86% rather than the visible-but-small 10%.
+
+  | bucket | tokens | cost | share |
+  |---|---|---|---|
+  | main cache-read | 112,723,268 | $169.08 | **76.7%** |
+  | main output | 252,168 | $18.91 | 8.6% |
+  | sidechain cache-read | 8,755,265 | $13.13 | 6.0% |
+  | main cache-write | 562,967 | $10.56 | 4.8% |
+  | sidechain cache-write | 461,595 | $8.65 | 3.9% |
+
+  Cache-read is `context_size x turns`, so the whole question is what sits in context on every turn. At 346,840 avg context/turn, the decomposition is: **skill injection ~35K tokens (10%)** -- 142,223 bytes across 6 repo-skill invocations, the largest being `implement-todo-section` 38.7 KB, `review-todo-section` 32.0 KB; **CLAUDE.md ~13K (4%)**, charged from turn 1; and **~300K (86%) accumulated conversation and tool results**.
+  So the ranked levers are: (1) stop the accumulation, worth up to ~86% of 76.7%; (2) trim skill injection, worth ~$15/segment and ~$44/night -- real, but a tenth of the prize; (3) CLAUDE.md size, ~4%. Do not start with (2) because it is the easiest to see.
+  **The fix for (1) is already written and NOT implemented: v01 T1-3's size trigger.** Only sub-item 1c (section-checkpoint plumbing, `bf3f8899`) landed. `run_phase_guard.py` still has exactly one rollover trigger -- R1, after a fully-SHIPPED section -- so a long section drags its whole context through every remaining turn, which is what T1-3's own evidence predicted ("600-660K before the section boundary arrives") and what this run reproduced (peaks 406,963 / 466,548 / 578,526). XREF: `token-saver/token-saver-v01.md` (item: "T1-3. Trigger rollover on CONTEXT SIZE, not only on section ship.").
+  Two smaller confirmed leaks in the same segment, both already-shipped mechanisms that are not working: `agent_result_cache` 0 hits / 4 stores, and `review convergence 0/2 rounds suppressed` -- the T3-3 gate suppressed nothing across two re-dispatches.
+
 - [ ] **Context per turn RISES across rollover segments (248K -> 294K -> 347K). Rollover is not resetting context, and that is the bill.**
   First post-T1 measurement, the attended canary run of 2026-07-28, via `scripts/overnight/cost-summary.py` over the three segment metrics files:
 
