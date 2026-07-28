@@ -197,7 +197,37 @@ def main(argv: list) -> int:
         print(f"  {k:<22} {toks:>12,}  {_fmt_usd(v):>11}  {100*v/total:>7.1f}%")
     print(f"  {'TOTAL':<22} {'':>12}  {_fmt_usd(total):>11}")
     print()
-    print(f"  context/turn  avg {cr//max(turns,1):,}   peak {max(per_turn or [0]):,}")
+    avg_ctx = cr // max(turns, 1)
+    end_ctx = max(per_turn or [0])
+    print(f"  context/turn  avg {avg_ctx:,} over {turns:,} turns   "
+          f"end-of-segment {end_ctx:,}")
+    # LENGTH CONFOUND (measured 2026-07-28, three canary segments). Context
+    # grows monotonically inside a segment and is never trimmed, so
+    # avg ~= (start + end)/2 -- a LINEAR FUNCTION OF SEGMENT LENGTH. Reading a
+    # rising avg as "rollover is not resetting context" is exactly the wrong
+    # conclusion and cost this repo a backlog item: length-matched at 423
+    # assistant messages the same three segments sat at 244,332 / 243,832 /
+    # 254,769 (4.5% spread) against the 40% spread their raw averages showed,
+    # and each one started at ~57.5K, i.e. rollover reset perfectly every time.
+    # Report the length-invariant figures next to it so the metric cannot be
+    # misread the same way twice.
+    print("    avg SCALES WITH SEGMENT LENGTH (~= (start+end)/2): it measures "
+          "how long the")
+    print("    section ran, NOT whether rollover reset. Compare end-of-segment "
+          "and tok/turn.")
+    if end_ctx > avg_ctx:
+        # Linear model over the segment: start = 2*avg - end (model-consistent,
+        # and conservative -- the true start measured lower, which makes the
+        # split saving LARGER than quoted, never smaller).
+        start_model = max(0, 2 * avg_ctx - end_ctx)
+        rate = (end_ctx - start_model) // max(turns, 1)
+        print(f"    accumulation ~{rate:,} tok/turn, never trimmed -> "
+              f"cache-read is QUADRATIC in segment length")
+        for k in (2, 3):
+            split_avg = start_model + (end_ctx - start_model) / (2 * k)
+            share = split_avg / avg_ctx if avg_ctx else 1.0
+            print(f"    same work split across {k} sections: ~{100*share:.0f}% "
+                  f"of this cache-read cost ({_fmt_usd(cr * share * RATE_CACHE_R / 1e6)})")
     print(f"  agent dispatches: {agents}")
     if not scoped:
         print("  (per-run tool/hook figures unavailable: metrics filename carries "

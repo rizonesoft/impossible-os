@@ -78,6 +78,38 @@ def test_unscopable_run_omits_rather_than_reporting_all_time():
         check("token rows still present", "50,000,000" in out)
 
 
+def test_avg_context_is_labelled_as_length_confounded():
+    """The 2026-07-28 misdiagnosis: a rising `avg context/turn` across segments
+    was read as "rollover is not resetting context" and filed as the top cost
+    item. It was length confound -- context grows monotonically and is never
+    trimmed, so avg ~= (start+end)/2 scales with how long the section ran.
+    Length-matched, the three segments agreed to 4.5% and every one of them
+    started at ~57.5K. The report must carry that caveat and the
+    length-invariant figures beside the average, or it invites the same wrong
+    call again."""
+    with tempfile.TemporaryDirectory() as d:
+        out = _run(_metrics(d), d)
+        check("turn count shown beside avg", "over 150 turns" in out)
+        check("terminal context labelled", "end-of-segment 400,000" in out)
+        check("length caveat stated", "SCALES WITH SEGMENT LENGTH" in out)
+        check("quadratic relation stated", "QUADRATIC in segment length" in out)
+        check("accumulation rate shown", "tok/turn" in out)
+        check("split estimate offered", "split across 2 sections" in out)
+
+
+def test_split_estimate_is_omitted_when_it_cannot_be_derived():
+    """One checkpoint record means end == avg, so the linear model has no slope
+    to fit. Emitting a 'split this and save X%' line from no evidence would be
+    the same invented-authority failure the scoping tests guard against."""
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "run-20260101-120000.jsonl"
+        p.write_text(json.dumps({"turns": 100, "cache_read_input_tokens": 10_000_000}) + "\n")
+        out = _run(p, d)
+        check("avg still reported", "avg 100,000" in out)
+        check("no split estimate", "split across" not in out)
+        check("no invented rate", "accumulation ~" not in out)
+
+
 def test_fail_open_on_missing_and_malformed():
     with tempfile.TemporaryDirectory() as d:
         check("missing file", "nothing to report" in _run(pathlib.Path(d) / "nope.jsonl", d))
@@ -90,6 +122,8 @@ if __name__ == "__main__":
     test_totals_reconcile_with_the_raw_metrics()
     test_cache_read_is_reported_as_the_dominant_bucket()
     test_unscopable_run_omits_rather_than_reporting_all_time()
+    test_avg_context_is_labelled_as_length_confounded()
+    test_split_estimate_is_omitted_when_it_cannot_be_derived()
     test_fail_open_on_missing_and_malformed()
     if FAILS:
         for f in FAILS:
