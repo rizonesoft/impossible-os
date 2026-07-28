@@ -841,7 +841,7 @@ int task_create(task_entry_t entry, const char *name)
     /* Harness self-report is per-process and never inherited: a recycled
      * slot presenting the previous tenant's submission would make this
      * task's own UTEST_END read as the forbidden second call. */
-    task_utest_report_reset(&tasks[pid].utest_report);
+    TASK_UTEST_REPORT_RESET(&tasks[pid]);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
@@ -1069,7 +1069,7 @@ int task_create_user(task_entry_t entry, const char *name)
     /* Harness self-report is per-process and never inherited: a recycled
      * slot presenting the previous tenant's submission would make this
      * task's own UTEST_END read as the forbidden second call. */
-    task_utest_report_reset(&tasks[pid].utest_report);
+    TASK_UTEST_REPORT_RESET(&tasks[pid]);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
@@ -2147,7 +2147,7 @@ int task_fork(struct interrupt_frame *frame)
     /* Same rule for the harness self-report: the child gets a fresh
      * NONE, so a forked child's own UTEST_END is its FIRST submission
      * rather than a repeat of the parent's. */
-    task_utest_report_reset(&tasks[child_pid].utest_report);
+    TASK_UTEST_REPORT_RESET(&tasks[child_pid]);
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process
@@ -3234,6 +3234,15 @@ int task_exec(const uint8_t *data, uint64_t size,
      * readers of loaded_format must see NULL on failure, not stale
      * state from the last successful exec. */
     tasks[pid].loaded_format = (const char *)0;
+    /* Same reason, same moment: exec replaces the process IMAGE, and a
+     * test report is per-image. The three task CONSTRUCTORS reset this,
+     * but exec is the constructor-equivalent that was missed -- without
+     * it a task that reported and then exec'd would make the new image's
+     * UTEST_END read as a forbidden SECOND submission (sticky INVALID,
+     * so the launcher fails a binary that did nothing wrong), and in the
+     * other direction the pre-exec image's counts would be reconciled
+     * against the post-exec image's exit status. */
+    TASK_UTEST_REPORT_RESET(&tasks[pid]);
     const char *fmt_name = (const char *)0;
     entry = exec_load_fmt(data, size, &exec_err, &fmt_name);
     if (entry == 0) {

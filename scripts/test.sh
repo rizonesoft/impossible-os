@@ -524,9 +524,24 @@ if [ "$HAS_UTEST" -eq 1 ]; then
             echo -e "  ${RED}[UTEST]${RESET} report summary accounts for ${RPT_TOTAL_EXPECTED} binaries but ${RPT_LINES} [UTEST-REPORT] lines are on serial -- counting the difference as failures"
             UTEST_FAIL=$(( UTEST_FAIL + RPT_LINES - RPT_TOTAL_EXPECTED ))
         fi
-        if [ "$RPT_INVALID_OBSERVED" -gt 0 ]; then
-            echo -e "  ${RED}[UTEST]${RESET} ${RPT_INVALID_OBSERVED} binary/binaries submitted a self-contradicting report (the launcher already failed them)"
+        # An INVALID report FAILS the run from this channel, independently
+        # of whether the launcher's own escalation counted it. The whole
+        # point of parsing the report dimension separately is that it
+        # still catches the case where the launcher's escalation is what
+        # regressed -- printing a warning and exiting 0 would have made
+        # this an observation channel rather than the gate the TODO
+        # claims it is.
+        RPT_INVALID_TOTAL=$(( ${RPT_INVALID:-0} > RPT_INVALID_OBSERVED ? ${RPT_INVALID:-0} : RPT_INVALID_OBSERVED ))
+        if [ "$RPT_INVALID_TOTAL" -gt 0 ]; then
+            echo -e "  ${RED}[UTEST]${RESET} ${RPT_INVALID_TOTAL} binary/binaries submitted a self-contradicting report -- failing the run"
+            UTEST_FAIL=$(( UTEST_FAIL + RPT_INVALID_TOTAL ))
         fi
+    elif grep -qE 'UTEST: \[UTEST-REPORT\] ' "$TEST_LOG" 2>/dev/null; then
+        # Per-binary report lines but no summary: the report channel was
+        # cut off mid-run. Fail rather than silently skipping the whole
+        # cross-check.
+        echo -e "  ${RED}[UTEST]${RESET} per-binary report lines present but no [UTEST-REPORT-SUMMARY] -- report channel truncated"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
     fi
 
     # A summary line that could not be formatted is never published
@@ -633,6 +648,15 @@ if [ "$HAS_XML" -eq 1 ]; then
         XML_SKIP=$(echo "$SUM_LINE" | sed -E 's/.*skipped=([0-9]+).*/\1/')
         XML_TIME=$(echo "$SUM_LINE" | sed -E 's/.*time=([0-9.]+).*/\1/')
     else
+        # No parseable summary, but [UTEST-XML] records DID reach serial
+        # (HAS_XML=1). Substituting zeros here produced the worst possible
+        # artifact: a <testsuite tests="0" failures="0" skipped="0">
+        # wrapped around real testcases, which reads to a JUnit consumer
+        # as a clean empty run while carrying evidence of an incomplete
+        # one. The counts are unknown, so the run FAILS rather than
+        # publishing an artifact that contradicts itself.
+        echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML] records on serial but no parseable [UTEST-XML-SUMMARY] -- XML artifact counts unknown"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
         XML_TESTS=0; XML_FAIL=0; XML_SKIP=0; XML_TIME=0
     fi
 

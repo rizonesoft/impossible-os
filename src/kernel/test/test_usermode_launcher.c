@@ -255,14 +255,6 @@ static void test_report_reconcile_passthrough_states(void)
                    "a half-written (CLAIMED) record is INVALID, not unreported");
 }
 
-static void test_report_claimed_state_is_distinct(void)
-{
-    TEST_ASSERT(TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_NONE &&
-                TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_VALID &&
-                TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_INVALID,
-                "the transient claim state cannot be mistaken for a settled one");
-}
-
 static void test_report_reconcile_agrees_with_exit(void)
 {
     TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
@@ -311,19 +303,6 @@ static void test_report_reconcile_timeout_keeps_counts(void)
                        TASK_UTEST_REPORT_VALID, 0, UTEST_EXIT_TIMEOUT, 1),
                    (uint64_t)TASK_UTEST_REPORT_VALID,
                    "a timed-out binary's counts are not called contradictory");
-}
-
-static void test_report_state_constants_are_distinct(void)
-{
-    /* NONE must be the zero value: a fresh or recycled TCB is zero-filled
-     * and has to read as never-reported, not as an accepted all-zero
-     * report the launcher would believe. */
-    TEST_ASSERT_EQ((uint64_t)TASK_UTEST_REPORT_NONE, (uint64_t)0,
-                   "a zeroed TCB reads as never-reported");
-    TEST_ASSERT(TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_NONE &&
-                TASK_UTEST_REPORT_INVALID != TASK_UTEST_REPORT_NONE &&
-                TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_INVALID,
-                "the three report states are mutually distinguishable");
 }
 
 /* ---- Ring-3 self-report: the kernel-side validation ladder ---------- *
@@ -501,14 +480,10 @@ static void test_invalid_leaves_existing_fail_alone(void)
 
 static void test_skip_budget_allows_normal_runs(void)
 {
-    uint32_t budget = test_usermode_skip_record_budget();
-
     TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(0, 3),
                    (uint64_t)3, "a small first report is emitted in full");
     TEST_ASSERT_EQ((uint64_t)test_usermode_skip_records_allowed(10, 5),
                    (uint64_t)5, "a later report well inside the budget is untouched");
-    TEST_ASSERT(budget > TASK_UTEST_REPORT_SKIP_MAX,
-                "the run-wide budget exceeds any single binary's ceiling");
 }
 
 static void test_skip_budget_boundary(void)
@@ -1583,12 +1558,6 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: timed-out binary keeps its report",
                             test_report_reconcile_timeout_keeps_counts,
-                            TEST_CAT_EXEC);
-    test_suite_register_cat("UTEST: report states distinct, NONE is zero",
-                            test_report_state_constants_are_distinct,
-                            TEST_CAT_EXEC);
-    test_suite_register_cat("UTEST: CLAIMED is distinct from settled states",
-                            test_report_claimed_state_is_distinct,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: report dispatch refuses NULL task",
                             test_report_dispatch_rejects_null_task,

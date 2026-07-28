@@ -226,9 +226,15 @@ separately as `summary.reported.skip_records`, so
 document. `binaries_unreported` is what makes silence legible: a binary
 that never called `SYS_TEST_REPORT` is a different fact from one that
 reported zero skips, and only the second is evidence of full coverage.
-`binaries_invalid` counts binaries whose self-report contradicted their
-exit status; those were already failed by the launcher and their counts
-are excluded from the totals rather than published.
+`binaries_invalid` counts every REJECTED or INCOMPLETE report, not only
+exit-status contradictions. A report is invalid when the binary submitted
+twice, submitted a count above its ceiling, died between claiming the
+submission slot and publishing it, or reported counts that contradict its
+exit status (zero failures with a failing exit, failures with exit 0, or
+any report alongside the whole-binary skip status 77). All four are
+trust-boundary failures rather than test outcomes: the launcher has
+already failed those binaries, and their counts are excluded from the
+totals rather than published.
 
 ### Field schema
 

@@ -82,6 +82,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  22   | Honest machine artifacts for skipped sub-tests      | §4, §7                        |  [x]   |
 | 💎   |  23   | Generated exit-status ABI for ring-3 assertions     | §2                            |  [ ]   |
 | 💎   |  24   | JSON artifact file + abort-aware summaries          | §7, §22                       |  [ ]   |
+| ⭐   |  25   | Non-forgeable launcher record framing               | §4, §7, §22                   |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -513,7 +514,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 516)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 517)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -812,7 +813,11 @@ Fork's `vmm_create_user_pml4` allocation was the one pre-commit refusal no ring-
 > - Integrates by reusing the launcher's existing pre-`task_cleanup` snapshot window and leaving the legacy summary line byte-identical; the report dimension rides its own tagged lines with an independent fail-closed host cross-check.
 > - Downstream: the two summary emitters no longer publish truncated lines, TAP bail-out is terminal in both producer and host extraction, `scripts/test.sh` gained the missing `TAP=1` knob, and `test_harness_smoke.exe` is now the deliberate producer for the skip path.
 > - Canonical docs: [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) (report record + state contract), [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) (syscall 48 ABI).
-> - Scope boundary: the counts are skip BLOCKS, not sub-test identities -- the kernel receives no names, so records are labelled positionally; the host still writes no JSON artifact FILE, which §24 now owns.
+> - Scope boundary: the counts are skip BLOCKS, not sub-test identities -- the kernel receives no names, so records are labelled positionally; the host still writes no JSON artifact FILE (§24) and the records are not yet unforgeable by ring-3 stdout (§25).
+
+> **Verified:** 2026-07-28 | commit `4bc42f64` + review fixes | 7/7 items | build OK | 26983 kernel + 16 user-mode tests pass | check-abi rc=0 | smoke matrix 4/4 (kvm 1+2 cpu, tcg 1+2 cpu) | lint 0 errors | release flavor (`KERNEL_TESTS=off`) rebuilt clean: `sys_test_report_dispatch` absent, `task.o` carries no report reference
+> **Accepted:** [H] ring-3 `sys_write` shares the serial namespace with every launcher record, so a binary can print a well-formed summary and end the run early, or inject `[UTEST-XML]` records no counter accounts for (reason: predates this section -- the summary line and the XML/JSON streams have shared that namespace since §4 and §7 -- and closing it needs framing across the whole wire contract, not a change to the report dimension) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §25 (item: "Frame every launcher-owned record so raw ring-3 output cannot reproduce it" at line 869)
+> **Quality reviewed:** 2026-07-28 | Codex 7x (design, adversarial x3, test-coverage, consistency, perf) + kernel-quality-auditor + concurrency-evidence-mapper | 4H+8M+4L fixed, 1H accepted-XREF | scope: kernel-code-quality + userland-code-quality
 
 ---
 
@@ -851,6 +856,25 @@ Kernel exit-status constants that ring-3 tests assert on are hand-copied literal
 - [ ] Commit: `"test: harvest the usermode JSON stream into build/test-results.json"`
 
 **Test checkpoint:** `bash scripts/test.sh QUIET=1 JSON=1` writes `build/test-results.json`, `python3 -c 'import json; json.load(open("build/test-results.json"))'` parses it, its `summary.reported.skip_blocks` matches the `[UTEST-REPORT-SUMMARY]` line on serial, and a filtered run that selects zero binaries still produces a parseable empty envelope. Test on: QEMU TCG, QEMU KVM.
+
+---
+
+## 25. Non-Forgeable Launcher Record Framing
+
+Every launcher control and artifact line shares one serial stream with ring-3 stdout. `sys_write(fd=1, ...)` routes caller-controlled bytes straight to `serial_putchar` (`src/kernel/sched/syscall.c`), and the host runner accepts any line matching its patterns as authoritative -- so a test binary can print a well-formed `UTEST: === N passed, 0 failed, 0 skipped of N total ===` and the boot-completion poll will accept it, stop QEMU, and report success without ever seeing the launcher's real verdict. The same shared namespace lets a binary inject `[UTEST-XML]` / `[UTEST-JSON]` records that no budget or counter accounts for. Predates §22 (the summary line and the XML/JSON streams have shared the namespace since §4 and §7) and is not specific to the report dimension, which is why it is filed here rather than patched there.
+
+> [!NOTE]
+> The threat model is a BUGGY binary as much as a hostile one: these binaries are built from this repo's own tree, so the realistic failure is a test that prints something matching a launcher pattern by accident. That does not lower the severity of the artifact being unauthenticated, it just sets the bar at framing rather than cryptography.
+
+- [ ] Frame every launcher-owned record so raw ring-3 output cannot reproduce it -- a per-boot nonce in the marker
+      (`[UTEST-XML:<nonce>]`) that the kernel generates at launcher start and the host learns from a kernel-only line, or move the records off the shared stdout stream entirely. Ring 3 must not be able to emit a line the host will accept
+- [ ] Parse only framed records host-side: the boot-completion poll, the verdict-line loop, the TAP/XML/JSON extraction,
+      and the report cross-check in `scripts/test.sh` all currently key on unframed patterns and must reject any record that fails the framing check rather than falling back to accepting it
+- [ ] Require a genuine terminal launcher summary with reconciled record counts before QEMU is stopped, so a binary that
+      prints a plausible summary and then hangs cannot end the run early. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §22 (item: "The legacy `=== N passed, N failed, N skipped of N total ===` line is byte-identical")
+- [ ] Commit: `"test: non-forgeable framing for launcher records"`
+
+**Test checkpoint:** A test binary that prints a well-formed fake summary line and then sleeps past the poll interval does NOT end the run early and does NOT produce a green verdict; a binary that prints a fake `[UTEST-XML] <testcase/>` record does not reach `build/test-results.xml`; the real launcher stream still parses end to end with TAP, XML and JSON all enabled. Test on: QEMU TCG, QEMU KVM.
 
 ---
 

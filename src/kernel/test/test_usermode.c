@@ -1451,16 +1451,33 @@ static void u_report_snapshot(uint32_t child_pid, struct u_report *out)
     out->asserts_failed = 0;
     out->skip_blocks    = 0;
     out->state          = TASK_UTEST_REPORT_NONE;
-    if (!child)
+    if (!child) {
+        /* The TCB should still be live here -- the pid came from a
+         * successful task_create and task_cleanup has not run yet -- so
+         * its absence is an anomaly, not a legacy non-reporting binary.
+         * Fail CLOSED and say so: leaving state NONE would file a
+         * vanished task under "never reported" with no trace at all, on
+         * the one path whose entire purpose is fail-closed reporting. */
+        klog(LOG_ERROR, "UTEST",
+             "report snapshot: pid %u vanished before reap -- treating as INVALID",
+             (uint64_t)child_pid);
+        out->state = TASK_UTEST_REPORT_INVALID;
         return;
+    }
     /* Acquire the state first: the submitter publishes it with a release
-     * store AFTER writing the counts, so acquiring VALID here guarantees
-     * the counts below are the ones that go with it. */
-    out->state          = __atomic_load_n(&child->utest_report.state,
-                                          __ATOMIC_ACQUIRE);
-    out->asserts_passed = child->utest_report.asserts_passed;
-    out->asserts_failed = child->utest_report.asserts_failed;
-    out->skip_blocks    = child->utest_report.skip_blocks;
+     * compare-exchange AFTER writing the counts, so acquiring VALID here
+     * guarantees the counts below are the ones that go with it. */
+    out->state = __atomic_load_n(&child->utest_report.state,
+                                 __ATOMIC_ACQUIRE);
+    /* Read the counts ONLY behind an acquired VALID. On any other state a
+     * submitter may still be mid-write (the three plain stores between
+     * the claim and the publish), so reading them would be a formal race
+     * for values that are discarded anyway. */
+    if (out->state == TASK_UTEST_REPORT_VALID) {
+        out->asserts_passed = child->utest_report.asserts_passed;
+        out->asserts_failed = child->utest_report.asserts_failed;
+        out->skip_blocks    = child->utest_report.skip_blocks;
+    }
     /* A record still CLAIMED at reap means the submitter died between
      * taking the slot and publishing. Its counts were never completed, so
      * it is INVALID -- fail-closed, exactly like a contradiction. */
@@ -2051,8 +2068,14 @@ static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
 
     for (k = 1; k <= allowed; k++) {
         if (!u_build_skip_record_name(rec, sizeof(rec), name, k)) {
-            klog(LOG_WARN, "UTEST",
-                 "%s: skip-record name too long -- %u skip record(s) omitted",
+            /* Same machine-readable marker its two siblings use (the
+             * budget clip and the record overflow), so the host gate
+             * fails the run. Omitting records with only a WARN would keep
+             * the run GREEN on artifacts that under-report skips, which
+             * is the exact false-coverage class this section closes. */
+            klog(LOG_ERROR, "UTEST",
+                 "[UTEST-RECORD-OVERFLOW] %s skip-record name too long -- "
+                 "%u record(s) omitted",
                  name, (uint64_t)(rep->skip_blocks - k + 1));
             return k - 1;
         }

@@ -474,20 +474,27 @@ int64_t sys_test_report_dispatch(struct task *t, uint64_t passed,
      * to overwrite an earlier, less flattering report -- both the
      * false-green shape this section exists to remove.
      *
-     * A plain check-then-set would not hold that: a process may run
-     * several user threads, and two of them could both observe NONE, both
-     * succeed, and let the last writer replace a skip-bearing report with
-     * a zero-skip one. (Not reachable today -- INT 0x80 is an interrupt
-     * gate, so IF stays clear across the dispatch, and APs do not yet
-     * schedule tasks -- but SMP-safe-by-default is the repo rule and the
-     * exchange costs one instruction.) The loser of the exchange, and any
+     * A plain check-then-set would not hold that. A process CAN own
+     * several user threads today (NtCreateThread, SSDT 0x0036), and two
+     * of them could both observe NONE, both succeed, and let the last
+     * writer replace a skip-bearing report with a zero-skip one. What
+     * makes that unreachable at present is the DISPATCH model, not the
+     * absence of threads: INT 0x80 is an interrupt gate so IF stays clear
+     * across this handler, and APs do not yet schedule tasks. Both are
+     * properties of other subsystems that are expected to change, and the
+     * exchange costs one instruction. The loser of the exchange, and any
      * later submitter, drives the record to INVALID and it stays there. */
     if (!__atomic_compare_exchange_n(&t->utest_report.state, &expected,
                                      TASK_UTEST_REPORT_CLAIMED, 0,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        klog(LOG_WARN, "sys",
-             "SYS_TEST_REPORT repeat submission pid=%u (state=%u) -- INVALID",
-             (uint64_t)t->pid, (uint64_t)expected);
+        /* Log the TRANSITION only. A binary that keeps calling after its
+         * record went INVALID would otherwise re-enter this branch every
+         * time and burn the shared "sys" klog rate budget for its whole
+         * timeout window, suppressing unrelated diagnostics. */
+        if (expected != TASK_UTEST_REPORT_INVALID)
+            klog(LOG_WARN, "sys",
+                 "SYS_TEST_REPORT repeat submission pid=%u (state=%u) -- INVALID",
+                 (uint64_t)t->pid, (uint64_t)expected);
         __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_INVALID,
                          __ATOMIC_RELEASE);
         return -1;
@@ -523,14 +530,31 @@ int64_t sys_test_report_dispatch(struct task *t, uint64_t passed,
         return -1;
     }
 
-    /* Counts first, then PUBLISH with a release store: a reader that
-     * acquires VALID is guaranteed to see the counts that go with it,
-     * never a half-written record. */
+    /* Counts first, then PUBLISH -- and publish with a compare-exchange
+     * from CLAIMED, not a plain store.
+     *
+     * A plain store would be fail-OPEN in the very race this ladder
+     * exists to close: a second submitter that lost the claim writes
+     * INVALID, and if it does so while the winner is still filling its
+     * counts, the winner's store would overwrite that INVALID with VALID
+     * and the double submission would end up trusted. Publishing only
+     * from CLAIMED means any INVALID written in the meantime survives.
+     * The release ordering still guarantees a reader that acquires VALID
+     * sees the counts that go with it, never a half-written record. */
     t->utest_report.asserts_passed = (uint32_t)passed;
     t->utest_report.asserts_failed = (uint32_t)failed;
     t->utest_report.skip_blocks    = (uint32_t)skipped;
-    __atomic_store_n(&t->utest_report.state, TASK_UTEST_REPORT_VALID,
-                     __ATOMIC_RELEASE);
+    expected = TASK_UTEST_REPORT_CLAIMED;
+    if (!__atomic_compare_exchange_n(&t->utest_report.state, &expected,
+                                     TASK_UTEST_REPORT_VALID, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        /* Someone invalidated the record while we were filling it. Their
+         * verdict stands -- the launcher will fail this binary. */
+        klog(LOG_WARN, "sys",
+             "SYS_TEST_REPORT pid=%u invalidated mid-submission (state=%u)",
+             (uint64_t)t->pid, (uint64_t)expected);
+        return -1;
+    }
     return 0;
 }
 #endif /* KERNEL_TESTS */

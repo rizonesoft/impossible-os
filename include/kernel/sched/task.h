@@ -126,12 +126,22 @@ struct ki_exception_registration;
  * that still looks like a measurement. */
 #define TASK_UTEST_REPORT_SKIP_MAX 256u
 
+/* KERNEL_TESTS-only, and the guard is load-bearing rather than tidy: the
+ * only consumer is the user-mode test launcher, which is itself
+ * test-flavor. Left unguarded, the record added 16 bytes to every one of
+ * the TASK_MAX task slots in a PRODUCTION kernel and shifted the slot
+ * stride modulo the cache line, so adjacent slots stopped sharing line
+ * phase -- a real layout cost for a facility a release build can never
+ * use, and a direct contradiction of this section's own claim that the
+ * release flavor pays nothing. */
+#ifdef KERNEL_TESTS
 struct task_utest_report {
     uint32_t asserts_passed;  /* UTEST_ASSERT calls that held    */
     uint32_t asserts_failed;  /* UTEST_ASSERT calls that did not */
     uint32_t skip_blocks;     /* UTEST_SKIP sites taken          */
     uint32_t state;           /* TASK_UTEST_REPORT_*             */
 };
+#endif /* KERNEL_TESTS */
 
 /* Load-bearing coupling, not a restatement of the value: a fresh or recycled
  * task slot is zero-filled, and that zero MUST read as "never reported" so an
@@ -139,12 +149,28 @@ struct task_utest_report {
  * zero-count VALID report the launcher would believe. */
 _Static_assert(TASK_UTEST_REPORT_NONE == 0,
                "a zeroed TCB must read as never-reported");
+/* Mutual distinctness is load-bearing, not cosmetic: the two
+ * compare-exchanges in the dispatcher and the CLAIMED-to-INVALID mapping
+ * in the launcher all key off these four values differing. Pinned at
+ * COMPILE time rather than by a runtime suite -- a test comparing
+ * constants to each other cannot fail unless someone edits both halves,
+ * so it verifies nothing while inflating the assertion count. */
+_Static_assert(TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_NONE &&
+               TASK_UTEST_REPORT_INVALID != TASK_UTEST_REPORT_NONE &&
+               TASK_UTEST_REPORT_VALID != TASK_UTEST_REPORT_INVALID &&
+               TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_NONE &&
+               TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_VALID &&
+               TASK_UTEST_REPORT_CLAIMED != TASK_UTEST_REPORT_INVALID,
+               "the four report states must be mutually distinguishable");
+_Static_assert(TASK_UTEST_REPORT_SKIP_MAX < TASK_UTEST_REPORT_MAX,
+               "the artifact-fan-out bound must be tighter than the wrap bound");
 
 /* Reset to the legacy (never-reported) state. Called by every task
  * constructor: task slots are monotonic today, but each constructor already
  * scrubs the fields a recycled slot could otherwise inherit, and a report is
  * per-process -- a fork must NOT inherit the parent's submission, or the
  * child's own UTEST_END would read as the forbidden second call. */
+#ifdef KERNEL_TESTS
 static inline void task_utest_report_reset(struct task_utest_report *r)
 {
     r->asserts_passed = 0;
@@ -152,6 +178,14 @@ static inline void task_utest_report_reset(struct task_utest_report *r)
     r->skip_blocks    = 0;
     r->state          = TASK_UTEST_REPORT_NONE;
 }
+/* Constructors call THIS, never the helper directly: in the release
+ * flavor the member does not exist, so `&t->utest_report` would not even
+ * compile. The macro keeps every constructor reading identically in both
+ * flavors while the release build resolves it to nothing. */
+#define TASK_UTEST_REPORT_RESET(tp) task_utest_report_reset(&(tp)->utest_report)
+#else
+#define TASK_UTEST_REPORT_RESET(tp) ((void)0)
+#endif /* KERNEL_TESTS */
 
 /* Exec argument (argv/envp) ingestion caps for the exec argument-handoff
  * feature. These are EARLY sanity bounds; the BINDING limit is that the exact
@@ -693,16 +727,22 @@ struct task {
     /* --- Ring-3 test harness self-report (SYS_TEST_REPORT) ---
      * What the binary says it did: assertions passed/failed and how many
      * skip BLOCKS it took (one UTEST_SKIP guards a block that may contain
-     * several assertions, so this is never an assertion count). Written
-     * ONCE by the task itself, from its own syscall, on its own CPU --
-     * single writer, no lock. Read by the user-mode launcher
-     * (test_usermode.c) only AFTER the task reaches TASK_DEAD, so the
-     * writer is already gone when the reader runs.
+     * several assertions, so this is never an assertion count). Claimed
+     * with an atomic compare-exchange and published with a second one, so
+     * exactly one submission per image wins even with several user
+     * threads; read by the user-mode launcher (test_usermode.c) with a
+     * paired acquire, after the task is dead and before task_cleanup.
      *
      * Every value is ring-3 supplied and therefore untrusted: `state`
      * carries the fail-closed verdict (see TASK_UTEST_REPORT_*) and the
-     * launcher escalates INVALID to a FAIL rather than trusting counts. */
+     * launcher escalates INVALID to a FAIL rather than trusting counts.
+     *
+     * KERNEL_TESTS-only, member AND type: a release kernel has no
+     * launcher to read it, and carrying it there cost 16 bytes on every
+     * one of the TASK_MAX slots plus a shift in slot-to-cache-line phase. */
+#ifdef KERNEL_TESTS
     struct task_utest_report utest_report;
+#endif
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
      * task's private user address space has a dedicated range starting
