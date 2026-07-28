@@ -108,12 +108,29 @@ write_sequencer_model_dropin() {
   for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
     d="$DROPIN_BASE/$svc.d"
     mkdir -p "$d"
+    # `if` blocks, NOT `[ -n X ] && echo`. A trailing conditional is the LAST
+    # command in this group, so a false test makes the group exit 1, and that
+    # status propagates group -> loop body -> `for` -> function return, where
+    # `set -euo pipefail` (line 19) kills the script -- AFTER the file has been
+    # written, which is why three separate investigations blamed the NEXT
+    # function and left this documented as "root cause still unknown".
+    #
+    # ARM_EFFORT is empty by DEFAULT (and `--effort inherit` empties it), so
+    # this fired on every default arm: 2026-07-20, -24 and -28, silently
+    # skipping write_claude_token_dropin and dropping the run back onto the
+    # shared credentials file and the single-use-refresh-token race the
+    # long-lived token exists to end. Not intermittent -- it never once didn't
+    # fire. Regression-tested in scripts/overnight/tests/test_arm_dropins.py.
     {
       echo "[Service]"
       echo "# Overnight model policy captured at arm time (arm-sequencer.sh)."
-      [ -n "$ARM_PRIMARY" ] && echo "Environment=OVERNIGHT_MODEL=$ARM_PRIMARY"
+      if [ -n "$ARM_PRIMARY" ]; then
+        echo "Environment=OVERNIGHT_MODEL=$ARM_PRIMARY"
+      fi
       echo "Environment=OVERNIGHT_FALLBACK_MODEL=$ARM_FALLBACK"
-      [ -n "$ARM_EFFORT" ] && echo "Environment=OVERNIGHT_EFFORT=$ARM_EFFORT"
+      if [ -n "$ARM_EFFORT" ]; then
+        echo "Environment=OVERNIGHT_EFFORT=$ARM_EFFORT"
+      fi
     } > "$d/sequencer-model.conf"
   done
 }
@@ -410,8 +427,44 @@ arm_tail_finalize() {
   # the model pin; the token arrives via EnvironmentFile, which shows separately.
   echo ""
   echo "  effective unit environment (systemctl show -- what the run will ACTUALLY see):"
-  systemctl --user show "$UNIT.service" -p Environment -p EnvironmentFiles 2>/dev/null \
-    | sed 's/^/    /' || echo "    (systemctl show unavailable)"
+  local eff
+  eff="$(systemctl --user show "$UNIT.service" -p Environment -p EnvironmentFiles 2>/dev/null || true)"
+  if [ -n "$eff" ]; then
+    printf '%s\n' "$eff" | sed 's/^/    /'
+  else
+    echo "    (systemctl show unavailable)"
+    return 0
+  fi
+
+  # ASSERT, do not merely print. Printing the effective environment is only
+  # useful if a human reads it, and on 2026-07-28 the tail failure was caught
+  # exactly that way -- by eye, minutes before the timer fired. The two
+  # properties below are the ones whose absence silently degrades a whole run,
+  # so they are checked rather than displayed:
+  #
+  #   token EnvironmentFile  absent -> the run shares ~/.claude/.credentials.json
+  #                          with interactive sessions and re-enters the
+  #                          single-use-refresh-token race that has killed runs.
+  #   MCP_NO_AUTO_CHROME     absent -> a kernel run may acquire a browser lane
+  #                          it never needs.
+  #
+  # WARN, not exit: the arm has already happened by the time this trap runs, so
+  # failing here would leave armed timers with no message. A loud, specific
+  # warning naming the repair is the useful output.
+  local missing=""
+  printf '%s\n' "$eff" | grep -q "$CLAUDE_TOKEN_ENV_FILE" \
+    || missing="$missing\n    - token EnvironmentFile ($CLAUDE_TOKEN_ENV_FILE) -- the run will share the interactive credentials file (refresh race)"
+  printf '%s\n' "$eff" | grep -q 'MCP_NO_AUTO_CHROME=1' \
+    || missing="$missing\n    - MCP_NO_AUTO_CHROME=1 -- a kernel run may take a browser lane it does not need"
+  if [ -n "$missing" ]; then
+    {
+      echo ""
+      echo "WARN: the armed unit is MISSING drop-in state that should be effective:"
+      printf "%b\n" "$missing"
+      echo "  Repair before the timer fires: re-run this script, or hand-write the"
+      echo "  drop-in under $DROPIN_BASE/$UNIT.service.d/ and \`systemctl --user daemon-reload\`."
+    } >&2
+  fi
 }
 trap arm_tail_finalize EXIT
 
