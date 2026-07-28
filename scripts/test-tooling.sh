@@ -977,7 +977,12 @@ else
         local want="$1" desc="$2" envs="$3" cmd="$4"
         local payload rc
         payload=$(python3 -c "import json,sys; print(json.dumps({'tool_name':'Bash','tool_input':{'command':sys.argv[1]}}))" "$cmd" 2>/dev/null || echo '{}')
-        printf '%s' "$payload" | env $envs python3 "$BROKER_HOOK" >/dev/null 2>&1
+        # Scrub the two gate variables from the AMBIENT env before applying
+        # $envs. Without this the "interactive" probe inherits the live
+        # OVERNIGHT_SEQUENCER_RUN=1 of an overnight run and blocks, so the
+        # pack could never go green inside the very run it protects.
+        printf '%s' "$payload" | env -u OVERNIGHT_SEQUENCER_RUN -u BROKER_DISPATCH_OVERRIDE \
+            $envs python3 "$BROKER_HOOK" >/dev/null 2>&1
         rc=$?
         if [ "$rc" = "$want" ]; then
             t_pass "broker_dispatch: $desc (rc=$rc)"
@@ -3749,10 +3754,18 @@ if python3 "$REPO_ROOT/.claude/hooks/cd_prefix_reminder.py" --selftest >/dev/nul
 else
     t_fail "cd_prefix_reminder_selftest  embedded selftest failed"
 fi
-if python3 "$REPO_ROOT/.claude/hooks/search_offload_gate.py" --selftest >/dev/null 2>&1; then
-    t_pass "search_offload_gate_selftest  leading-file-search reroute green"
+# search_offload_gate is RETIRED (2026-07-28): the headless run it was scoped to
+# has no Grep tool, so its remediation was impossible, and Bash-grep vs Grep-tool
+# output is identical in context so the saving never existed. The invariant worth
+# testing is no longer "does it work" but "is it still unwired" -- a revival
+# should have to argue with the measurement, not slip back in via settings.json.
+# The leading `/` matters: websearch_offload_gate.py (live, unrelated) CONTAINS
+# "search_offload_gate.py" as a substring, so a bare match would fail forever.
+if grep -q '/search_offload_gate\.py' "$REPO_ROOT/.claude/settings.json" 2>/dev/null; then
+    t_fail "search_offload_gate_retired  re-wired in settings.json" \
+           "retired 2026-07-28 -- see docs/infrastructure/hook-codes.md SEARCH-OFFLOAD"
 else
-    t_fail "search_offload_gate_selftest  embedded selftest failed"
+    t_pass "search_offload_gate_retired  still unwired from settings.json"
 fi
 if python3 "$REPO_ROOT/.claude/hooks/agent_coverage_gate.py" --selftest >/dev/null 2>&1; then
     t_pass "agent_coverage_gate_selftest  dispatch-replaces-read gate green"

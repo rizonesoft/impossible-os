@@ -29,6 +29,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ci_status import collect as ci_collect  # noqa: E402
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -110,35 +113,22 @@ def main(argv) -> int:
             except Exception:
                 out["notes"].append("stamp record failed (non-fatal)")
 
-    # 6. CI status -- a deterministic gh query, not a subagent dispatch.
-    ci = {"available": False, "ours_red": False, "runs": []}
+    # 6. CI status -- a deterministic gh query, not a subagent dispatch. The
+    #    ancestry + supersession logic is shared with ci-check.py (see
+    #    ci_status.py): a red run that a later green run already fixed is NOT
+    #    a blocker, or the gate fires forever after the first broken push.
     try:
-        head = run(["git", "rev-parse", "HEAD"], project, 10).stdout.strip()
-        for wf in ("build.yml", "todo-graph.yml"):
-            r = run(["gh", "run", "list", "--workflow", wf, "--limit", "3",
-                     "--json", "headSha,conclusion,status,workflowName"],
-                    project, 60)
-            if r.returncode != 0:
-                raise RuntimeError(r.stderr.strip()[:200])
-            ci["available"] = True
-            for rec in json.loads(r.stdout or "[]"):
-                entry = {"workflow": wf, "sha": rec.get("headSha", "")[:12],
-                         "status": rec.get("status"),
-                         "conclusion": rec.get("conclusion")}
-                if rec.get("conclusion") == "failure":
-                    anc = run(["git", "merge-base", "--is-ancestor",
-                               rec.get("headSha", ""), head], project, 10)
-                    entry["ours"] = anc.returncode == 0
-                    if entry["ours"]:
-                        ci["ours_red"] = True
-                ci["runs"].append(entry)
+        ci = ci_collect(project)
+        out["notes"].extend(ci.pop("notes", []))
     except Exception as exc:  # noqa: BLE001
+        ci = {"available": False, "ours_red": False, "runs": []}
         out["notes"].append(f"CI check unavailable ({exc}) -- continuing "
                             "(never blocks on tooling absence)")
     out["ci"] = ci
     if ci.get("ours_red"):
-        fail("ci", "a failed CI run's head SHA is an ancestor of local HEAD "
-                   "-- our pushed work broke CI; diagnose before section work",
+        fail("ci", "a failed CI run is an ancestor of local HEAD and no later "
+                   "green run supersedes it -- our pushed work broke CI; "
+                   "diagnose before section work",
              "gh run view --log-failed (dispatch gh-query-runner for slices)")
 
     print(json.dumps(out, indent=1))

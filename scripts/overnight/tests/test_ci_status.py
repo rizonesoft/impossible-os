@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Regression tests for ci_status supersession (2026-07-28).
+
+The bug: both preflight.py and ci-check.py asked only "is a failed run's head
+SHA an ancestor of local HEAD". Once ANY pushed commit went red that stayed true
+forever, so the gate kept demanding a diagnosis of an already-fixed failure at
+every section boundary for the rest of the run. Observed live: 051df5e0 broke
+the tooling pack, eb2af727 fixed it, build.yml went green at HEAD 103a2db8, and
+preflight still reported ours_red.
+
+These tests pin the supersession half of the rule with fabricated run records
+and a stubbed ancestry oracle -- no network, no gh, no repo state.
+"""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import ci_status  # noqa: E402
+
+
+def _anc_from_chain(chain):
+    """Ancestry oracle for a linear history, oldest first."""
+    order = {sha: i for i, sha in enumerate(chain)}
+
+    def is_ancestor(a, b):
+        if a not in order or b not in order:
+            return False
+        return order[a] <= order[b]
+    return is_ancestor
+
+
+# Oldest -> newest, matching the live history that exposed the bug.
+CHAIN = ["797b7335", "051df5e0", "eb2af727", "aaf4a4c3", "103a2db8"]
+ANC = _anc_from_chain(CHAIN)
+
+
+def _rec(sha, conclusion, created="2026-07-27T23:00:00Z"):
+    return {"headSha": sha, "conclusion": conclusion, "status": "completed",
+            "createdAt": created}
+
+
+class SupersessionTests(unittest.TestCase):
+    def test_later_green_descendant_supersedes(self):
+        """A green run on a DESCENDANT commit proves the failure was fixed."""
+        failure = _rec("051df5e0", "failure")
+        greens = [_rec("103a2db8", "success")]
+        self.assertEqual(
+            ci_status._superseded_by(failure, greens, ANC), "103a2db8")
+
+    def test_earlier_green_does_not_supersede(self):
+        """A green run BEFORE the break says nothing about the break."""
+        failure = _rec("051df5e0", "failure")
+        greens = [_rec("797b7335", "success")]
+        self.assertEqual(ci_status._superseded_by(failure, greens, ANC), "")
+
+    def test_same_sha_rerun_supersedes_only_when_later(self):
+        """Re-running the same commit green clears it; an older green does not."""
+        failure = _rec("051df5e0", "failure", "2026-07-27T23:29:47Z")
+        later = [_rec("051df5e0", "success", "2026-07-27T23:45:00Z")]
+        earlier = [_rec("051df5e0", "success", "2026-07-27T23:10:00Z")]
+        self.assertEqual(
+            ci_status._superseded_by(failure, later, ANC), "051df5e0")
+        self.assertEqual(ci_status._superseded_by(failure, earlier, ANC), "")
+
+    def test_no_greens_leaves_failure_standing(self):
+        failure = _rec("051df5e0", "failure")
+        self.assertEqual(ci_status._superseded_by(failure, [], ANC), "")
+
+    def test_green_missing_sha_is_ignored(self):
+        """A malformed record must not silently clear a real failure."""
+        failure = _rec("051df5e0", "failure")
+        self.assertEqual(
+            ci_status._superseded_by(failure, [_rec("", "success")], ANC), "")
+
+
+class WindowTests(unittest.TestCase):
+    def test_window_is_wide_enough_to_see_a_fix_land(self):
+        """--limit 3 could not see the repair: the live fix was 3 pushes later.
+
+        With a 3-run window the green run that proves the fix has already
+        scrolled off, so the false alarm would come back. Pin the wider window
+        so a future 'trim the query' change has to argue with this test.
+        """
+        self.assertGreaterEqual(ci_status.LIMIT, 10)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=0)
