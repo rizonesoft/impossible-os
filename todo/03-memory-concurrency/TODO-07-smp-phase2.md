@@ -118,6 +118,8 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] `task_create()`: pick `cpu = argmin(g_rq[cpu].nr_running)` across online CPUs; enqueue into `g_rq[cpu].q`; respect `affinity_mask`
 - [ ] Per-CPU idle task: created during `sched_init_cpu(cpu_id)` at priority 39, `SCHED_NORMAL`
 - [ ] Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`, not global `current_task`/`current_thread`; closes probe-gating for TODO-12 §12 (`ssdt_previous_mode`), TODO-23 §4 (`in_system_service`) + §16 telemetry attribution
+- [ ] Once the cursor above is per-CPU, move the ORDINAL fault-injection arm records (`kmalloc`/`pmm_alloc`/`vmm_map`/`copy_user`
+      4-field groups in `per_cpu_data`, `include/kernel/smp.h`) into task-owned storage so an arm survives migration, and make claim/decrement/reload ONE synchronized transaction -- the four allocator gates do plain read-modify-write today, which a sibling thread can interleave under preemption. Blocked until then because a task-owned record reached through a global cursor is not migration-safe. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §21 (item: "Make the ORDINAL selectors migration-safe")
 - [ ] Boot log per AP: `[SCHED] CPU%u: run queue initialised`
 - [ ] Commit: `"sched: per-CPU run queues -- struct rq[MAX_CPUS], local dequeue, task placement"`
 - [ ] task_cleanup reap barrier: a TASK_DEAD task must be off-CPU on ALL CPUs before its lock-free frees (pml4, per-thread/TEB frames, handle table, unveil, `env_free` -> T22 §1); local-CR3 guard covers only the reaper.

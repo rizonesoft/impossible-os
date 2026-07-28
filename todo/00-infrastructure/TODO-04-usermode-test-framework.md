@@ -78,13 +78,13 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  18   | Fast-path observability + ABI versioning            | §17                           |  [x]   |
 | ⭐   |  19   | Transition ring buffer + 3-way transport fuzz       | §17, §18                      |  [x]   |
 | 💎   |  20   | Site-targeted and PMM-countdown fault selectors     | §5                            |  [/]   |
-| 💎   |  21   | Child-targeted fault arming across `fork()`         | §5, §20                       |  [ ]   |
+| 💎   |  21   | Child-targeted fault arming across `fork()`         | §5, §20                       |  [/]   |
 | 💎   |  22   | Honest machine artifacts for skipped sub-tests      | §4, §7                        |  [ ]   |
 | 💎   |  23   | Generated exit-status ABI for ring-3 assertions     | §2                            |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
-> **Sequencing rule:** foundation lands first (§1-§4), runner-side enhancements that every subsystem test consumes ship next (§5-§8), subsystem test binaries follow (§9-§15), repo-wide build integration closes the test-framework loop in §16, fast-path transport hardening + observability (§17-§18) lift the transport layer every subsystem depends on to a level above Win11/Linux, and §19 closes the remaining silent-hang class with a transition-ring replay + cross-transport fuzz (gated on per-CPU cached task info landing in kernel-core). §20-§23 then close the addressability and honesty gaps the framework's own consumers hit: §20 gives fault injection named sites instead of drifting ordinals, §21 extends arming to not-yet-forked children, §22 makes the machine artifacts report skips truthfully, and §23 puts kernel exit statuses on the generated ABI header.
+> **Sequencing rule:** foundation lands first (§1-§4), runner-side enhancements that every subsystem test consumes ship next (§5-§8), subsystem test binaries follow (§9-§15), repo-wide build integration closes the test-framework loop in §16, fast-path transport hardening + observability (§17-§18) lift the transport layer every subsystem depends on to a level above Win11/Linux, and §19 closes the remaining silent-hang class with a transition-ring replay + cross-transport fuzz (gated on per-CPU cached task info landing in kernel-core). §20-§23 then close the addressability and honesty gaps the framework's own consumers hit: §20 gives fault injection named sites instead of drifting ordinals, §21 names fork's own PML4 allocation and makes that fork fail closed, §22 makes the machine artifacts report skips truthfully, and §23 puts kernel exit statuses on the generated ABI header.
 
 ---
 
@@ -737,22 +737,36 @@ The ring-0↔3 fast paths (`gs:`-relative TEB reads, `KUSER_SHARED_DATA` at 0x7F
 
 ---
 
-## 21. Child-Targeted Fault Arming Across `fork()`
+## 21. Naming Fork's Child-PML4 Allocation, and Failing That Fork Closed
 
-Every selector §5 and §20 ship binds its task filter to `task_current()->pid` at ARM time. That is the correct default -- it is what stops a sibling kthread or the launcher task from consuming a test's pending trap -- but it makes one class of failure permanently untestable from ring 3: a fault that must fire inside a child that does not exist yet. The concrete casualty is fork's `vmm_create_user_pml4` allocation. Its failure path leaves a fork child running on the parent's CR3 with no isolated address space; the kernel-side refusal is shipped and gate-verified (`task.c` `forked_shares_parent_image`), but nothing in ring 3 can drive it, because by the time the child exists the arming window has closed. Arming from inside the child is not a substitute either: the allocation happens during `fork()` itself, before any child code runs.
+Fork's `vmm_create_user_pml4` allocation was the one pre-commit refusal no ring-3 test could drive, and its failure behaviour was worse than the missing test: `task_fork` published the child anyway with `cr3 = 0` and `forked_shares_parent_image = 1`, a live process on its parent's address space, caught only later when `task_exec` refused rather than corrupt the parent's image. This section names that allocation so a test can address it, and changes the fork to refuse instead of publishing a child that cannot safely run.
+
+> [!NOTE]
+> Rewritten 2026-07-28 after implementation. The original framing blamed the self-PID task filter and prescribed descendant-targeted arming ("the parent arms for a child that does not exist yet"). That premise is wrong on a checkable point: `task_fork` runs entirely on the PARENT's thread, so the allocation already executes with `task_current()` == the arming task. The real obstacle was the second half of the problem the `TODO-21` XREF named -- the allocation "is not separable from the rest of fork's PMM traffic" -- which is ordinal drift, and §20's named-site mechanism already solves that. No descendant-inheritance surface was built; see the first checklist item.
 
 > [!TIP]
-> Linux solves the same problem with `fail-nth` on the task_struct plus fault-injection attributes that a child inherits across `clone()`. The narrower equivalent here is an arm-for-descendants flag on the existing filter: the filter matches the arming PID OR any task forked from it after the arm, consumed once, so the parent's own subsequent allocations do not eat the trap.
+> Linux `fail-nth` lives on `task_struct` and is inherited across `clone()`, which is the shape this section originally copied. Impossible OS does not need the inheritance half: with the allocation named, self-PID arming reaches it, and the arm is consumed at exactly one allocation rather than whichever one happens to be N-th.
 
-- [ ] Filter semantics: extend the allocator task filters so an arm can name descendants of the arming task rather than the
-      arming task itself, and define the consumption rule explicitly (which task consumes the trap when parent and child both allocate, and whether the arm survives a second fork). Kernel-side only -- no new syscall number; the selector kind or a flag bit carries the intent through the existing `sys_fault_inject_dispatch` signature. The self-PID default must be unchanged for every existing selector: §5's isolation contract is what keeps the other ring-3 tests deterministic
-- [ ] Ring-3 regression in `user/test/test_faultinject.c` driving fork's `vmm_create_user_pml4` OOM: the parent arms for its
-      next child, forks, and asserts fork refuses rather than producing a child sharing the parent's CR3. Assert the negative case too -- a descendant-targeted arm must NOT be consumed by the parent's own allocations between arm and fork. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fork-child-with-no-isolated-CR3")
-- [ ] Make the ORDINAL selectors migration-safe, closing the split §20 deliberately left alone. `FAULT_*_COUNTDOWN` /
-      `FAULT_*_NEXT` state lives in `per_cpu_data` and `include/kernel/smp.h` documents the consequence: "a task that migrates to a DIFFERENT CPU before calling the allocator does NOT trigger". §20 avoided inheriting this for named sites by putting the whole site program in task/thread state, but it did not fix the ordinal path -- so a site arm clears only the CURRENT CPU's countdown, and a countdown armed before a migration can still be stranded on the old CPU. Move the ordinal arm record into the same task-owned storage (or add a generation counter that invalidates every older per-CPU countdown), so one tagged program per allocator holds across migration. Raised by the §20 design review; §20 does not create the defect
-- [ ] Commit: `"sched+test: descendant-targeted fault arming across fork"`
+- [x] Descendant-targeted filters are NOT needed and were deliberately not built. The premise above is wrong on a checkable
+      point: `task_fork` runs entirely on the PARENT's thread, so `vmm_create_user_pml4` (`task.c`, called from `task_fork`) already executes with `task_current()` == the arming task and the shipped self-PID scoping reaches it. What actually blocked the probe was the OTHER half of the obstacle the XREF names -- the allocation "is not separable from the rest of fork's PMM traffic" -- which is ordinal drift, solved by naming the site, not by inheriting a filter. Both the §21 design review and the adversarial pass searched for a fork-time allocation running as the not-yet-scheduled child and neither found one. Building the inheritance surface anyway would have added an arm-lifetime question (which of parent/child consumes it, does it survive a second fork) to buy nothing reachable
+- [x] `FAULT_SITE_FORK_CHILD_PML4` (id 4, pmm-owned) names fork's PML4 allocation, and `task_fork` now FAILS THE FORK CLOSED
+      when it cannot allocate. Previously the failure published a child with `cr3 = 0` and `forked_shares_parent_image = 1` -- a live child on the parent's address space, caught only later by `task_exec`'s refusal. The allocation MOVED ahead of the `num_tasks++` publication so the failure can unwind at all: rolling back a published child is unsafe, and the pre-publication ladder (stacks, quota, token, filter, job, pledge/unveil) already exists and is reused verbatim. `task_exec`'s check is retained as a backstop with no reachable producer. SCOPE-HONEST CAVEAT: this closes the PML4 ALLOCATION only. The `vmm_set_user_page` calls that follow it mark the child's image and stack User and can themselves fail silently on a huge-page split, because that function returns `void`; closing that needs a fallible signature and a separate unwind policy per constructor. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §20 (item: "`vmm_set_user_page()` returns `void` and returns SILENTLY")
+- [x] Ring-3 regression in `user/test/test_faultinject.c`: the parent arms the pmm fork site, proves an unrelated syscall
+      leaves the arm live, requires `sys_fork()` to REFUSE, and requires `FAULT_SITE_QUERY` to read CONSUMED -- a refusal alone proves nothing, a task-table-full fork refuses identically with the arm untouched. Then a disarmed positive-control fork must succeed and its child exit with the sentinel, so a fork broken for any unrelated reason cannot satisfy the probe. Kernel-side: the site's owner mapping, single-shot claim, two-way pmm site/ordinal replacement, and net-zero frame accounting across all four `vmm_create_user_pml4` failure positions. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Fork-child-with-no-isolated-CR3")
+- [/] Make the ORDINAL selectors migration-safe. BLOCKED, and the blocker is not in this subsystem: the storage move is only
+      half the fix, because `task_current()` resolves through the single global `current_task` cursor (`task.c`), so a task-owned ordinal record would still be reached by a global lookup. Migration also cannot occur today -- APs park in `hlt` and never schedule (`smp/smp.c`) -- so the stranded-countdown defect this item names has no reachable producer until per-CPU run queues land. Whoever implements it must also make claim/decrement/reload ONE synchronized transaction: the gates do plain read-modify-write today, which a sibling thread can already interleave under preemption. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3 (item: "Per-CPU current-thread cursor")
+- [x] Commit: `"sched+test: fail fork closed on child PML4 OOM, name the site"`
 
-**Test checkpoint:** `bash scripts/test.sh SUITE=exec` plus the `test_faultinject.exe` ring-3 binary -- a descendant-targeted arm fires exactly once inside the forked child and fork refuses with its named klog; the parent's allocations between arm and fork do not consume it; every existing self-PID selector still fires on the arming task only; `boot.conf test=0` still denies the new arming form. Test on: QEMU TCG, QEMU KVM; bare metal.
+**Test checkpoint:** `bash scripts/test.sh SUITE=exec` plus the `test_faultinject.exe` ring-3 binary -- an arm on `FAULT_SITE_FORK_CHILD_PML4` fires exactly once inside `task_fork` and fork REFUSES with its named klog; an unrelated syscall between arm and fork does not consume it; the arm reads CONSUMED afterwards; a disarmed control fork still succeeds and its child exits with the sentinel; a failed `vmm_create_user_pml4` strands no frames at any of its four failure positions; pmm site/ordinal replacement holds in both directions; `boot.conf test=0` still denies the new arming form. Test on: QEMU TCG, QEMU KVM; bare metal.
+
+> **Test runner:** `scripts\debug\usermode\run-test_faultinject.bat` | ring-3 fork-site probe + disarmed control fork in `test_faultinject.exe`; kernel-side gate assertions run under `bash scripts/test.sh SUITE=exec` (`TEST_CAT_EXEC`, +18 assertions across 3 new suites).
+
+> **Notes:**
+> - Shipped: `FAULT_SITE_FORK_CHILD_PML4` naming fork's PML4 allocation, and `task_fork` failing CLOSED on that allocation instead of publishing a child with no isolated address space.
+> - Integrates by moving the PML4 creation ahead of the `num_tasks++` publication so the existing pre-publication unwind ladder applies unchanged; `task_exec`'s no-cr3 refusal stays as a backstop with no reachable producer.
+> - Downstream: `TODO-21` §19's fork-child-with-no-isolated-CR3 item is now driveable from ring 3 and closed there.
+> - Canonical docs: [`include/kernel/sched/syscall.h`](../../include/kernel/sched/syscall.h) (site ABI), [`include/kernel/sched/task.h`](../../include/kernel/sched/task.h) (arm ownership contract).
+> - Scope boundary: descendant-targeted filters were rejected on evidence, not deferred; the ordinal migration-safety item is blocked on the per-CPU scheduler cursor and carries its own XREF.
 
 ---
 
@@ -792,34 +806,35 @@ Kernel exit-status constants that ring-3 tests assert on are hand-copied literal
 
 ## OS Comparison
 
-| ⭐   | Feature              | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS          |
-| --- | -------------------- | --------------------- | ----------------------- | ------------------------ |
-| 💎   | User-mode test bins  | ✅ HLK                 | ✅ kselftest             | ✅ §1-§15 15 binaries     |
-| 💎   | Multi-format loader  | ✅ PE + .NET via HLK   | ✅ ELF + a.out kselftest | ✅ §15 ELF+PE32+ +EIF     |
-| 💎   | Syscall coverage     | ✅ NtDll               | ✅ ptrace selftest       | ✅ §9 11 syscalls         |
-| 💎   | Auto launcher        | ✅ HLK                 | ✅ run_kselftest         | ✅ §3 manifest-driven     |
-| 💎   | TAP or CI parse      | ✅ HLK XML             | ✅ TAP kselftest         | ✅ §7 XML + §4 TAP        |
-| 💎   | JUnit XML / JSON     | ✅ HLK XML             | ⚠️ kselftest TAP only   | ✅ §7 XML+JSON+TAP        |
-| 💎   | Timeouts or skips    | ✅ HLK                 | ✅ LKFT skip             | ✅ §4 10s + exit=77       |
-| 💎   | ABI header sync      | ✅ SDK                 | ✅ uapi                  | ✅ §2+§17 gen+static asr  |
-| 💎   | Per-test isolation   | ✅ HLK session reset   | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak    |
-| 💎   | Libc surface probe   | ✅ HLK CRT tests       | ✅ kselftest libc        | ✅ §10 7 contracts        |
-| 💎   | IPC surface probe    | ✅ HLK pipe+shmem      | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT    |
-| 💎   | Process lifecycle    | ✅ HLK fork+exec       | ✅ kselftest fork+exec   | ✅ §12 fork+exec+kill     |
-| 💎   | File I/O surface     | ✅ HLK filesys tests   | ✅ kselftest openat etc. | ✅ §13 open+read+enum     |
-| 💎   | Stress / longhaul    | ✅ TAEF Loop+Stress    | ✅ LTP runtest/stress    | ✅ §8 stress type         |
-| 💎   | Perf regression      | ✅ perfview/PerfTest   | ✅ perf + flame baseline | ⚠️ §8 threshold-only     |
-| 💎   | Test type taxonomy   | ✅ TAEF categories     | ✅ LTP test classes      | ✅ §8 4 types + phase     |
-| ⭐   | Fault-inject bridge  | ⚠️ AppVerifier hooks  | ⚠️ debugfs failslab     | ✅ §5 SYS_FAULT_INJECT    |
-| ⭐   | Win32 on non-Win     | ❌ N/A                 | ❌ Wine only             | ✅ §14 statically linked  |
-| 💎   | Fast-path isolation  | ⚠️ HLK TEB probes     | ⚠️ kselftest vdso_test  | ✅ §17 5/5 probes PASS    |
-| 💎   | ABI drift guard      | ⚠️ SDK hdr versioning | ✅ syscall.tbl generator | ✅ §17 gen-user-abi.py    |
-| ⭐   | ABI fingerprint hash | ❌ silent Win10/11     | ❌ vDSO unsigned layout  | ✅ §18 FNV-1a handshake   |
-| ⭐   | Self-describing KUSD | ❌ KUSD raw struct     | ❌ vDSO no layout ver    | ✅ §18 magic+ver+hash     |
-| ⭐   | Ring-3 invariants    | ⚠️ debug-only checks  | ⚠️ CONFIG_DEBUG_ENTRY   | 🔄 §18 2/5 always-on      |
-| ⭐   | Transition ring dump | ⚠️ opt-in perf/xperf  | ⚠️ opt-in perf/ftrace   | ✅ §19 always-on panic    |
-| ⭐   | Transport fuzz in CI | ❌ external TAEF       | ❌ external syzkaller    | ✅ §19 3-way fuzz at boot |
-| 💎   | Named-site fault inj | ❌ AppVerifier ordinal | ✅ debugfs per-callsite  | 🔄 §20 2/3 sites e2e      |
+| ⭐   | Feature               | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS          |
+| --- | --------------------- | --------------------- | ----------------------- | ------------------------ |
+| 💎   | User-mode test bins   | ✅ HLK                 | ✅ kselftest             | ✅ §1-§15 15 binaries     |
+| 💎   | Multi-format loader   | ✅ PE + .NET via HLK   | ✅ ELF + a.out kselftest | ✅ §15 ELF+PE32+ +EIF     |
+| 💎   | Syscall coverage      | ✅ NtDll               | ✅ ptrace selftest       | ✅ §9 11 syscalls         |
+| 💎   | Auto launcher         | ✅ HLK                 | ✅ run_kselftest         | ✅ §3 manifest-driven     |
+| 💎   | TAP or CI parse       | ✅ HLK XML             | ✅ TAP kselftest         | ✅ §7 XML + §4 TAP        |
+| 💎   | JUnit XML / JSON      | ✅ HLK XML             | ⚠️ kselftest TAP only   | ✅ §7 XML+JSON+TAP        |
+| 💎   | Timeouts or skips     | ✅ HLK                 | ✅ LKFT skip             | ✅ §4 10s + exit=77       |
+| 💎   | ABI header sync       | ✅ SDK                 | ✅ uapi                  | ✅ §2+§17 gen+static asr  |
+| 💎   | Per-test isolation    | ✅ HLK session reset   | ✅ kselftest fork+tmp    | ✅ §6 scratch+reg+leak    |
+| 💎   | Libc surface probe    | ✅ HLK CRT tests       | ✅ kselftest libc        | ✅ §10 7 contracts        |
+| 💎   | IPC surface probe     | ✅ HLK pipe+shmem      | ✅ kselftest pipe+shm    | ✅ §11 pipe + shmem RT    |
+| 💎   | Process lifecycle     | ✅ HLK fork+exec       | ✅ kselftest fork+exec   | ✅ §12 fork+exec+kill     |
+| 💎   | File I/O surface      | ✅ HLK filesys tests   | ✅ kselftest openat etc. | ✅ §13 open+read+enum     |
+| 💎   | Stress / longhaul     | ✅ TAEF Loop+Stress    | ✅ LTP runtest/stress    | ✅ §8 stress type         |
+| 💎   | Perf regression       | ✅ perfview/PerfTest   | ✅ perf + flame baseline | ⚠️ §8 threshold-only     |
+| 💎   | Test type taxonomy    | ✅ TAEF categories     | ✅ LTP test classes      | ✅ §8 4 types + phase     |
+| ⭐   | Fault-inject bridge   | ⚠️ AppVerifier hooks  | ⚠️ debugfs failslab     | ✅ §5 SYS_FAULT_INJECT    |
+| ⭐   | Win32 on non-Win      | ❌ N/A                 | ❌ Wine only             | ✅ §14 statically linked  |
+| 💎   | Fast-path isolation   | ⚠️ HLK TEB probes     | ⚠️ kselftest vdso_test  | ✅ §17 5/5 probes PASS    |
+| 💎   | ABI drift guard       | ⚠️ SDK hdr versioning | ✅ syscall.tbl generator | ✅ §17 gen-user-abi.py    |
+| ⭐   | ABI fingerprint hash  | ❌ silent Win10/11     | ❌ vDSO unsigned layout  | ✅ §18 FNV-1a handshake   |
+| ⭐   | Self-describing KUSD  | ❌ KUSD raw struct     | ❌ vDSO no layout ver    | ✅ §18 magic+ver+hash     |
+| ⭐   | Ring-3 invariants     | ⚠️ debug-only checks  | ⚠️ CONFIG_DEBUG_ENTRY   | 🔄 §18 2/5 always-on      |
+| ⭐   | Transition ring dump  | ⚠️ opt-in perf/xperf  | ⚠️ opt-in perf/ftrace   | ✅ §19 always-on panic    |
+| ⭐   | Transport fuzz in CI  | ❌ external TAEF       | ❌ external syzkaller    | ✅ §19 3-way fuzz at boot |
+| 💎   | Named-site fault inj  | ❌ AppVerifier ordinal | ✅ debugfs per-callsite  | 🔄 §21 3/4 sites e2e      |
+| 💎   | fork OOM fails closed | ✅ CreateProcess fails | ✅ fork() -ENOMEM        | 🔄 §21 root PML4 only     |
 
 > **Parity state (§1-§17 shipped):** every 💎 parity row is ✅ except `Perf regression`, which is ⚠️ because §8 asserts against hardcoded thresholds rather than tracking a historical baseline over time -- threshold regressions fail the run, but silent drift below the threshold would not. Closing that to full ✅ needs launcher-side `tests/perf-baseline.json` drift detection, which is deferred to §8 follow-up pending an env-passing syscall (tracked inline in §8's Deferred stamp). **⭐ exclusives:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing; §17 closes the fast-path stability floor (probes + ABI generator + invariant panic) so TEB/KUSD/syscall transports are as robust as Win11 TEB reads and Linux vDSO calls; §18 will put Impossible OS past both competitors by baking versioned ABI handshake, self-describing KUSD, always-on ring-3 invariants, always-on transition ring-buffer dumps, and in-boot transport fuzzing into the baseline kernel -- capabilities that on Win11 and Linux require opt-in profilers, external fuzzers, or debug-only builds.
 

@@ -135,7 +135,8 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 #define FAULT_SITE_EXEC_ARGV_TABLE      1  /* task_exec argv address table  */
 #define FAULT_SITE_EXEC_PRIVATE_FRAMES  2  /* task_exec private-frame table */
 #define FAULT_SITE_PEB_FRAMES           3  /* peb_alloc_for_task PEB frames */
-#define FAULT_SITE_MAX                  3  /* highest valid site id         */
+#define FAULT_SITE_FORK_CHILD_PML4      4  /* task_fork child PML4 frames   */
+#define FAULT_SITE_MAX                  4  /* highest valid site id         */
 
 /* --- SSDT index aliases for transition ---
  * These map existing SYS_* names to their SSDT NtXxx equivalents.

@@ -2197,6 +2197,98 @@ int task_fork(struct interrupt_frame *frame)
         return -1;
     }
 
+    /* Per-process page table: clone kernel PML4 + mark image + new user stack
+     * as User. Without this the child inherits cr3=0 from struct-zero-init, the
+     * scheduler falls back to kernel CR3 (which has no User bit on image pages
+     * under the per-process PT regime added by KPTI prep), and the child's
+     * first ring-3 instruction faults silently before touching any user code.
+     * Mirror of the task_exec() PML4 bring-up, minus the destroy-old step
+     * (child has no prior cr3). Bug surfaced by the user-mode process-lifecycle
+     * test on QEMU WHPX 2026-04-21 (forks succeeded but children never ran).
+     *
+     * Placed BEFORE the num_tasks++ publication below, and FAILS THE FORK
+     * CLOSED. Both properties are load-bearing. Until 2026-07-28 this ran
+     * AFTER publication and, on allocation failure, left cr3 = 0 on a child
+     * that had already been published TASK_READY -- a child with no isolated
+     * address space, running on the parent's, which task_exec then had to
+     * refuse to keep it from overwriting the parent's image. Rolling that back
+     * post-publication is not possible safely (another CPU can already observe
+     * the pid through task_count() or terminate it through its job
+     * membership), so the allocation moved ahead of publication instead, where
+     * the same unwind ladder every failure path above uses applies. The
+     * inherited filter is NOT attached yet (that happens further down), so it
+     * is released with kfree() here exactly as the two stack-failure paths do.
+     *
+     * The site annotation is what makes this branch addressable from ring 3:
+     * the four pmm_alloc_frame() calls inside vmm_create_user_pml4() are not
+     * separable from the rest of fork's allocation traffic by an ordinal
+     * countdown, which lands on whichever allocation happens to be N-th. */
+    {
+        uintptr_t user_cr3;
+        uint32_t  fs_saved = fault_site_enter(FAULT_SITE_FORK_CHILD_PML4);
+
+        user_cr3 = vmm_create_user_pml4();
+        fault_site_restore(fs_saved);
+
+        if (!user_cr3) {
+            klog(LOG_ERROR, "sched",
+                 "task_fork: per-process PML4 allocation failed for child slot "
+                 "%u; failing fork closed", (uint64_t)child_pid);
+            kfree(ustack);
+            kfree(kstack);
+            quota_task_teardown(&tasks[child_pid]);
+            if (inherited_token)
+                PsDereferencePrimaryToken(inherited_token);
+            if (inherited_filter)
+                kfree(inherited_filter);
+            ob_job_detach_task(&tasks[child_pid]);
+            pledge_unveil_teardown(&tasks[child_pid]);
+            return -1;
+        }
+
+        {
+            uintptr_t addr;
+            /* Resolve the parent's current image via the interrupt frame's
+             * saved RIP -- parent was executing user code when it INT 0x80'd
+             * into fork, so rip is inside the parent's loaded ELF. Mark every
+             * image page User in the child's cr3. */
+            loaded_module_t img_mod;
+            if (exec_find_module_by_pc(frame->rip, &img_mod) == 0) {
+                uintptr_t img_base = (uintptr_t)img_mod.base_address;
+                uintptr_t img_end  = img_base +
+                                     (uintptr_t)img_mod.size_of_image;
+                for (addr = img_base; addr < img_end; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            } else {
+                /* Fallback: mark the whole ELF range. Matches the
+                 * task_exec() fallback shape. */
+                klog(LOG_WARN, "sched",
+                     "task_fork: no module for rip=0x%x, using ELF range",
+                     frame->rip);
+                for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            }
+            /* Mark child's user stack as User. The stack is kmalloc'd so it is
+             * 16-byte aligned but NOT page-aligned -- the byte
+             * `ustack + USER_STACK_SIZE` (the stack TOP, where RSP starts) can
+             * easily land in the next 4 KiB page not covered by the literal
+             * range. Round DOWN the start and UP the end so every page the
+             * stack touches gets its User bit set. Without this, the first
+             * ring-3 push lands on a kernel-only page and #PFs silently before
+             * any user code runs. Root cause of the 2026-04-21 test_process
+             * fork-hang on WHPX + KVM. */
+            {
+                uintptr_t ustack_lo = (uintptr_t)ustack
+                                      & ~(uintptr_t)0xFFFu;
+                uintptr_t ustack_hi = ((uintptr_t)ustack + USER_STACK_SIZE
+                                       + 0xFFFu) & ~(uintptr_t)0xFFFu;
+                for (addr = ustack_lo; addr < ustack_hi; addr += 4096)
+                    vmm_set_user_page(user_cr3, addr);
+            }
+        }
+        tasks[child_pid].cr3 = user_cr3;
+    }
+
     /* NOTE: fork does NOT copy the parent environment into the child here. A
      * naive env_copy in this window blocks on the parent's environ_lock (a
      * sleeping mutex) BETWEEN ob_job_fork_inherit (child joined the job) and
@@ -2303,8 +2395,10 @@ int task_fork(struct interrupt_frame *frame)
      * the parent will reclaim it. A child that copied the pointer would free a
      * stack its parent is still scheduled on. */
     tasks[child_pid].stack_pending_free = (uint8_t *)0;
-    /* Set BEFORE the PML4 attempt below, so an OOM there cannot leave a child
-     * that looks launcher-spawned to task_exec. */
+    /* The child shares the parent's loaded image until it execs. The PML4 is
+     * already built above, so this can no longer be reached with cr3 == 0 --
+     * that combination is now an invariant violation rather than an OOM
+     * outcome, and task_exec still checks for it as a backstop. */
     tasks[child_pid].forked_shares_parent_image = 1;
     ob_handle_table_init(&tasks[child_pid].handle_table);
     /* Copy parent's KERNEL_GS_BASE (TEB address) -- will allocate
@@ -2364,68 +2458,6 @@ int task_fork(struct interrupt_frame *frame)
         tasks[child_pid].has_execed = 0;
         num_tasks++;
         pgroup_jobctl_unlock(jf);
-    }
-
-    /* Per-process page table: clone kernel PML4 + mark image + new
-     * user stack as User. Without this the child inherits cr3=0 from
-     * struct-zero-init, the scheduler falls back to kernel CR3 (which
-     * has no User bit on image pages under the per-process PT regime
-     * added by KPTI prep), and the child's first ring-3 instruction
-     * faults silently before touching any user code. Mirror of the
-     * task_exec() PML4 bring-up, minus the destroy-old step (child
-     * has no prior cr3). Bug surfaced by the user-mode process-
-     * lifecycle test on QEMU WHPX 2026-04-21 (forks succeeded but
-     * children never ran). */
-    {
-        uintptr_t user_cr3 = vmm_create_user_pml4();
-        if (user_cr3) {
-            uintptr_t addr;
-            /* Resolve the parent's current image via the interrupt
-             * frame's saved RIP -- parent was executing user code
-             * when it INT 0x80'd into fork, so rip is inside the
-             * parent's loaded ELF. Mark every image page User in
-             * the child's cr3. */
-            loaded_module_t img_mod;
-            if (exec_find_module_by_pc(frame->rip, &img_mod) == 0) {
-                uintptr_t img_base = (uintptr_t)img_mod.base_address;
-                uintptr_t img_end  = img_base +
-                                     (uintptr_t)img_mod.size_of_image;
-                for (addr = img_base; addr < img_end; addr += 4096)
-                    vmm_set_user_page(user_cr3, addr);
-            } else {
-                /* Fallback: mark the whole ELF range. Matches the
-                 * task_exec() fallback shape. */
-                klog(LOG_WARN, "sched",
-                     "task_fork: no module for rip=0x%x, using ELF range",
-                     frame->rip);
-                for (addr = USER_ELF_BASE; addr < USER_ELF_END; addr += 4096)
-                    vmm_set_user_page(user_cr3, addr);
-            }
-            /* Mark child's user stack as User. The stack is kmalloc'd
-             * so it is 16-byte aligned but NOT page-aligned -- the
-             * byte `ustack + USER_STACK_SIZE` (the stack TOP, where
-             * RSP starts) can easily land in the next 4 KiB page not
-             * covered by the literal range. Round DOWN the start and
-             * UP the end so every page the stack touches gets its
-             * User bit set. Without this, the first ring-3 push lands
-             * on a kernel-only page and #PFs silently before any user
-             * code runs. Root cause of the 2026-04-21 test_process
-             * fork-hang on WHPX + KVM. */
-            {
-                uintptr_t ustack_lo = (uintptr_t)ustack
-                                      & ~(uintptr_t)0xFFFu;
-                uintptr_t ustack_hi = ((uintptr_t)ustack + USER_STACK_SIZE
-                                       + 0xFFFu) & ~(uintptr_t)0xFFFu;
-                for (addr = ustack_lo; addr < ustack_hi; addr += 4096)
-                    vmm_set_user_page(user_cr3, addr);
-            }
-            tasks[child_pid].cr3 = user_cr3;
-        } else {
-            tasks[child_pid].cr3 = 0;
-            klog(LOG_WARN, "sched",
-                 "task_fork: per-process PML4 failed for child PID %u",
-                 (uint64_t)child_pid);
-        }
     }
 
     /* Register forked process and main thread with Object Manager */
@@ -3012,10 +3044,12 @@ int task_exec(const uint8_t *data, uint64_t size,
     /* A fork child MUST have its own page table before its image is replaced.
      * Without one, the isolation remap below is skipped (it keys off cr3) and
      * exec_load writes the new binary through identity mappings still shared
-     * with the parent, overwriting the parent's code. task_fork leaves cr3 at
-     * 0 when vmm_create_user_pml4 hits OOM, so this state is reachable by
-     * exhausting memory -- refuse the exec while the image is still intact
-     * rather than corrupt another process. */
+     * with the parent, overwriting the parent's code. Since 2026-07-28
+     * task_fork fails the fork CLOSED when vmm_create_user_pml4 hits OOM, so a
+     * published fork child always has its own cr3 and this check no longer has
+     * a reachable producer. It is retained as a backstop: the cost is one
+     * predictable-branch compare on the exec path, and the failure it guards
+     * against is one process silently overwriting another's code. */
     if (tasks[pid].forked_shares_parent_image && !tasks[pid].cr3) {
         klog(LOG_ERROR, "sched",
              "task_exec: PID %u is a fork child with no isolated CR3 "
@@ -5184,6 +5218,7 @@ static const uint32_t s_fault_site_owner[FAULT_SITE_MAX + 1] = {
     [FAULT_SITE_EXEC_ARGV_TABLE]     = FI_ALLOC_KMALLOC,
     [FAULT_SITE_EXEC_PRIVATE_FRAMES] = FI_ALLOC_KMALLOC,
     [FAULT_SITE_PEB_FRAMES]          = FI_ALLOC_PMM,
+    [FAULT_SITE_FORK_CHILD_PML4]     = FI_ALLOC_PMM,
 };
 
 uint32_t fault_site_owner(uint32_t site)

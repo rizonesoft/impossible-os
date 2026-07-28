@@ -23,6 +23,8 @@
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"   /* fault_site_* helpers + FI_ALLOC_* tags */
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"       /* pmm_get_free_frames + ordinal countdown */
+#include "kernel/mm/vmm.h"       /* vmm_create_user_pml4 (the fork site)    */
 #include "kernel/boot_info.h"
 #include "registry.h"
 
@@ -561,6 +563,146 @@ static void test_fault_site_cleared_by_clear_all(void)
     g_boot_info.config.test = saved_test;
 }
 
+/* The fork-child PML4 site is the one site whose allocation runs inside
+ * task_fork rather than task_exec. It is a PMM site: vmm_create_user_pml4()
+ * takes its four page-table frames from pmm_alloc_frame(). Getting the owner
+ * wrong would make the site armable by the kmalloc selector and then never
+ * claimable, which reads from ring 3 exactly like a branch that was covered. */
+static void test_fault_site_fork_pml4_is_pmm_owned(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+
+    TEST_ASSERT_EQ((uint64_t)fault_site_owner(FAULT_SITE_FORK_CHILD_PML4),
+                   (uint64_t)FI_ALLOC_PMM,
+                   "fork-child PML4 site is owned by the pmm allocator");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_KMALLOC_SITE, FAULT_SITE_FORK_CHILD_PML4),
+                   (uint64_t)-1,
+                   "arming the fork PML4 site on kmalloc is refused");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_FORK_CHILD_PML4), 0ULL,
+                   "arming the fork PML4 site on pmm succeeds");
+    TEST_ASSERT_EQ((uint64_t)fault_site_arm_peek(FI_ALLOC_PMM),
+                   (uint64_t)FI_ARM_PACK(FI_ALLOC_PMM,
+                                         FAULT_SITE_FORK_CHILD_PML4),
+                   "the armed word names the fork PML4 site");
+
+    /* Single shot, and confined to its own site: an allocation inside the
+     * PEB site must not consume an arm placed on the fork site. */
+    saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "a PEB-site allocation does not consume the fork arm");
+    fault_site_restore(saved_site);
+
+    saved_site = fault_site_enter(FAULT_SITE_FORK_CHILD_PML4);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 1ULL,
+                   "the fork PML4 site claims its arm");
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "the fork PML4 arm is single-shot");
+    fault_site_restore(saved_site);
+    TEST_ASSERT_EQ((uint64_t)fault_site_arm_peek(FI_ALLOC_PMM), 0ULL,
+                   "the fork PML4 arm reads CONSUMED after it fires");
+
+    sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+    g_boot_info.config.test = saved_test;
+}
+
+/* Replacement is per-allocator in BOTH directions, and the previous coverage
+ * only ever drove the kmalloc direction -- a pmm-specific regression could
+ * leave a site arm and an ordinal countdown both live, so the named fork
+ * failure would consume the site arm and a stale countdown would then fail
+ * some unrelated later allocation while every existing assertion stayed
+ * green. Drive the pmm direction with the fork site to close that. */
+static void test_fault_site_pmm_replacement_is_two_way(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+
+    /* Direction 1: an ordinal pmm arm cancels a live pmm SITE arm. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_FORK_CHILD_PML4), 0ULL,
+                   "fork PML4 site arms before the ordinal replaces it");
+    TEST_ASSERT_EQ((uint64_t)fault_site_arm_peek(FI_ALLOC_PMM),
+                   (uint64_t)FI_ARM_PACK(FI_ALLOC_PMM,
+                                         FAULT_SITE_FORK_CHILD_PML4),
+                   "fork PML4 site arm is live immediately before replacement");
+    sys_fault_inject_dispatch(FAULT_PMM_COUNTDOWN, 1);
+    saved_site = fault_site_enter(FAULT_SITE_FORK_CHILD_PML4);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "an ordinal pmm countdown cancelled the fork site arm");
+    fault_site_restore(saved_site);
+    sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+
+    /* Direction 2: a pmm SITE arm cancels a live ordinal pmm countdown. The
+     * ordinal cannot be observed through fault_site_arm_peek -- that reads 0
+     * in ordinal mode whether or not a countdown is pending -- so the only
+     * honest oracle is an actual allocation OUTSIDE any named site. If the
+     * site arm failed to clear the ordinal, this allocation is the one the
+     * stale countdown would fail, and that is exactly the regression the
+     * test exists to catch. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(FAULT_PMM_NEXT, 0),
+                   0ULL, "an ordinal pmm arm installs");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_FORK_CHILD_PML4), 0ULL,
+                   "fork PML4 site arms over a live ordinal pmm arm");
+    {
+        uintptr_t probe = pmm_alloc_frame();
+        TEST_ASSERT(probe != 0,
+                    "the site arm cleared the ordinal: an unsited frame alloc "
+                    "still succeeds");
+        if (probe)
+            pmm_free_frame(probe);
+    }
+
+    /* And the pmm site coexists with a kmalloc site: separate slots. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_KMALLOC_SITE, FAULT_SITE_EXEC_ARGV_TABLE), 0ULL,
+                   "a kmalloc site arms while the fork pmm site is armed");
+    saved_site = fault_site_enter(FAULT_SITE_FORK_CHILD_PML4);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 1ULL,
+                   "fork pmm arm survived an unrelated kmalloc site arm");
+    fault_site_restore(saved_site);
+
+    sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+    g_boot_info.config.test = saved_test;
+}
+
+/* The allocation the fork site names takes FOUR frames and frees whichever
+ * subset succeeded when any one of them fails. That rollback is what keeps a
+ * failing fork from leaking 1-3 page-table frames per attempt, and it is
+ * invisible to the ring-3 probe (which only sees fork refuse). Drive every
+ * failure position and require the free-frame count to return to baseline.
+ * Lives beside the fault-site suite rather than in test_vmm.c because the
+ * fault-injection lever and the fork site are what make the path reachable. */
+static void test_fork_pml4_partial_alloc_is_net_zero(void)
+{
+    uint32_t n;
+
+    for (n = 1; n <= 4; n++) {
+        uint64_t before, after;
+        uintptr_t pml4;
+
+        /* Arm immediately before the call: an unrelated frame allocation
+         * between the arm and the call would consume the countdown and make
+         * this measure the wrong allocation. */
+        before = pmm_get_free_frames();
+        pmm_alloc_fail_countdown_set(n);
+        pml4 = vmm_create_user_pml4();
+        pmm_alloc_fail_countdown_clear();
+        after = pmm_get_free_frames();
+
+        TEST_ASSERT_EQ((uint64_t)pml4, 0ULL,
+                       "vmm_create_user_pml4 fails when a frame is denied");
+        TEST_ASSERT_EQ(after, before,
+                       "a failed PML4 creation strands no page-table frames");
+    }
+}
+
 /* ---- per-test isolation pure helpers ---------------------------- */
 
 /* Local streq (no libc). Returns 1 on match. */
@@ -961,6 +1103,15 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: FAULT_CLEAR_ALL clears a site arm",
                             test_fault_site_cleared_by_clear_all,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fork-child PML4 site is pmm-owned",
+                            test_fault_site_fork_pml4_is_pmm_owned,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: pmm site/ordinal replacement is two-way",
+                            test_fault_site_pmm_replacement_is_two_way,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: failed PML4 creation strands no frames",
+                            test_fork_pml4_partial_alloc_is_net_zero,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: derive_test_name strips .exe",
                             test_derive_test_name_happy_path, TEST_CAT_EXEC);

@@ -83,7 +83,8 @@
 #define FAULT_SITE_EXEC_ARGV_TABLE 1
 #define FAULT_SITE_EXEC_PRIVATE_FRAMES 2
 #define FAULT_SITE_PEB_FRAMES    3
-#define FAULT_SITE_MAX           3
+#define FAULT_SITE_FORK_CHILD_PML4 4
+#define FAULT_SITE_MAX           4
 #define SYS_NT_WRITE             0x0013
 #define SYS_NT_READ              0x0012
 #define SYS_NT_EXIT              0x0033
@@ -116,5 +117,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x3E6472B0D52FB521ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x68DA2F38402A4A0DULL
 #define EX_ABI_MISMATCH          0x42

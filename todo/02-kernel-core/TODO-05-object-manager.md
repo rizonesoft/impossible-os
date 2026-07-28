@@ -528,7 +528,7 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 > **Verified:** 2026-06-22 | ship `e0361301` + review fixes | 7/8 items | build OK | tests 6892 kernel + 16 user PASS
 > **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
 > **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 152)
-> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 405)
+> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 407)
 > **Quality reviewed:** 2026-06-22 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+4M+1L fixed, 1H+1L accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---

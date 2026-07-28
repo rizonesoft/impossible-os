@@ -600,7 +600,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > **Verified:** 2026-07-18 | ship `c2d25f63` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.66s) | 21775 kernel + 16 user PASS
 > **Accepted:** [H] ALPC recv raw-`memcpy` concurrent-unmap DoS (pre-existing; §13 provides the fix primitive, does not regress it) -> XREF: `02-kernel-core/TODO-24 §7` (item: "Recv-buffer TOCTOU DoS: `alpc_receive_only` + `alpc_sync_request`" at line 313)
 > **Accepted:** [H] `KERNEL_ACCESS_USER_BEGIN/END` BSP-global `cpu_has` SMAP gate #UDs on a feature-skewed AP (shared macro; `copy_*_user` affected identically) -> XREF: `02-kernel-core/TODO-10 §2` (item: "`KERNEL_ACCESS_USER_BEGIN/END` gate on BSP-global `cpu_has`" at line 143)
-> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 546)
+> **Accepted:** [H] Fixed-size query handlers probe the raw user `Length`, so §13's full-range `ProbeForWrite` touch is an O(pages) DoS (caller-side; NtQueryTimer exemplar) -> XREF: `02-kernel-core/TODO-12 §10` (item: "Fixed-size query handlers probe the raw user `Length`" at line 548)
 > **Quality reviewed:** 2026-07-18 | Codex 10x (design, adversarial x4, re-adversarial, consistency x2, perf x2) | 1C+3H+4M fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 - [x] Commit: `"kernel: add try_copy_{from,to}_user + ProbeForWrite page-touch; re-register #PF"`
@@ -640,7 +640,7 @@ Add a WER (Windows Error Reporting) stub: `WerpReportFault()` calls into a futur
 > - **Scope boundary** -- §14 owns `__try`/`__except` v1; `__try`/`__finally` collided-unwind and boot/main-thread `KI_TRY` are tracked open items here; the per-CPU current-thread cursor is TODO-07.
 
 > **Verified:** 2026-07-19 | commit `95a4e592` | 5/7 items | build OK | tests 434/434 PASS
-> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 124)
+> **Accepted:** [H] pre-existing SMP quiescence gap: a joined/reaped thread's kernel stack can be freed while a KI_TRY victim still runs on it (stack UAF predates SEH; the chain-clears + walk bounds checks contain the SEH surface) (reason: scope) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "thread_join / thread_free_stacks off-CPU barrier" at line 126)
 > **Deferred:** [M] `__try`/`__finally` EXCEPTION_COLLIDED_UNWIND two-pass unwind -- larger than the `__try`/`__except` v1 shipped (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` for driver `__try`/`__finally`" at line 627)
 > **Deferred:** [M] boot/main-thread `KI_TRY` declines -- boot stack is not tracked in `stack_base` (the `kfree` target) (reason: infra) -> XREF: 02-kernel-core/TODO-23 §14 (item: "Boot/main-thread `KI_TRY`" at line 628)
 > **Quality reviewed:** 2026-07-19 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H accepted-XREF | scope: kernel-code-quality

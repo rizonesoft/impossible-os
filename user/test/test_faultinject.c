@@ -42,6 +42,8 @@ UTEST_DEFINE_STATE();
 #define FI_SENTINEL_EXEC_UNEXPECTED_OK 72 /* exec succeeded and returned */
 #define FI_SENTINEL_ARM_FAILED        73  /* injection unavailable       */
 #define FI_SENTINEL_SITE_NOT_CONSUMED 74  /* exec refused, but not here  */
+#define FI_SENTINEL_FORK_UNEXPECTED_OK 75 /* fork did not fail closed    */
+#define FI_SENTINEL_FORK_CONTROL_OK   76  /* disarmed control fork ran   */
 
 /* The kmalloc-backed exec sites, both reached by an exec carrying argv from
  * a forked child. FAULT_SITE_PEB_FRAMES is deliberately absent: it is a
@@ -252,6 +254,89 @@ int main(void)
 
     UTEST_ASSERT(utest_fault_inject(FAULT_CLEAR_ALL, 0) == 0,
                  "CLEAR_ALL after the site probes");
+
+    /* ---- fork's own PML4 allocation: named, and fork fails CLOSED ----
+     *
+     * This is the one pre-commit refusal a ring-3 test could not previously
+     * drive. The allocation lives inside task_fork, so an ordinal countdown
+     * cannot address it without landing on whichever of fork's allocations
+     * happens to be N-th; naming it is what makes the probe deterministic.
+     * The arming task is the PARENT -- task_fork runs entirely on the
+     * parent's thread, so the self-PID scoping every selector already
+     * applies reaches this allocation without any descendant-inheritance
+     * machinery. */
+    {
+        long pid_fork;
+        HANDLE h_between;
+
+        UTEST_ASSERT(utest_fault_inject(FAULT_PMM_SITE,
+                                        FAULT_SITE_FORK_CHILD_PML4) == 0,
+                     "FAULT_PMM_SITE arms the fork-child PML4 site");
+
+        /* NEGATIVE: the parent keeps allocating between the arm and the
+         * fork, and none of that traffic may consume the arm. Without this
+         * the probe would prove only that SOMETHING failed during fork --
+         * which an ordinal countdown would also produce. */
+        h_between = sys_openfile("C:\\hello.txt", 0);
+        UTEST_ASSERT(h_between != INVALID_HANDLE_VALUE,
+                     "an armed fork site does not break unrelated allocations");
+        if (h_between != INVALID_HANDLE_VALUE)
+            sys_closehandle(h_between);
+        UTEST_ASSERT(utest_fault_inject(FAULT_SITE_QUERY,
+                                        FAULT_ALLOC_PMM) != 0,
+                     "a kmalloc-backed syscall leaves the pmm fork arm live");
+
+        pid_fork = sys_fork();
+        if (pid_fork == 0) {
+            /* Reached only if fork did NOT fail closed. Exit at once: a
+             * surviving child would re-run the remainder of this binary and
+             * emit a second [UTEST-END] into the launcher's stream. */
+            sys_exit(FI_SENTINEL_FORK_UNEXPECTED_OK);
+            for (;;) sys_yield();
+        }
+        UTEST_ASSERT(pid_fork < 0,
+                     "fork fails closed when the child PML4 cannot allocate");
+        if (pid_fork > 0)
+            sys_waitpid((int)pid_fork);
+
+        /* The refusal alone still proves nothing -- a task-table-full fork
+         * refuses identically with the arm untouched. Requiring the arm to
+         * now read CONSUMED pins the failure to the named allocation. */
+        UTEST_ASSERT(utest_fault_inject(FAULT_SITE_QUERY,
+                                        FAULT_ALLOC_PMM) == 0,
+                     "the fork-site arm was CONSUMED at the named allocation");
+
+        /* CLEAR_ALL must disarm this site too -- and proving that requires a
+         * LIVE arm to clear. Asserting it against the arm consumed above
+         * would be vacuous: that query is already required to read 0, so the
+         * assertion would hold even if CLEAR_ALL stopped clearing pmm sites
+         * entirely. Re-arm, confirm live, clear, then confirm gone. */
+        UTEST_ASSERT(utest_fault_inject(FAULT_PMM_SITE,
+                                        FAULT_SITE_FORK_CHILD_PML4) == 0,
+                     "fork site re-arms after being consumed");
+        UTEST_ASSERT(utest_fault_inject(FAULT_SITE_QUERY,
+                                        FAULT_ALLOC_PMM) != 0,
+                     "the re-armed fork site is live before CLEAR_ALL");
+        UTEST_ASSERT(utest_fault_inject(FAULT_CLEAR_ALL, 0) == 0,
+                     "CLEAR_ALL succeeds with a live fork-site arm");
+        UTEST_ASSERT(utest_fault_inject(FAULT_SITE_QUERY,
+                                        FAULT_ALLOC_PMM) == 0,
+                     "CLEAR_ALL disarmed the live fork-site arm");
+        pid_fork = sys_fork();
+        if (pid_fork == 0) {
+            sys_exit(FI_SENTINEL_FORK_CONTROL_OK);
+            for (;;) sys_yield();
+        }
+        UTEST_ASSERT(pid_fork > 0,
+                     "fork succeeds again once the fork site is disarmed");
+        if (pid_fork > 0)
+            UTEST_ASSERT(sys_waitpid((int)pid_fork)
+                             == FI_SENTINEL_FORK_CONTROL_OK,
+                         "the control child ran and exited normally");
+    }
+
+    UTEST_ASSERT(utest_fault_inject(FAULT_CLEAR_ALL, 0) == 0,
+                 "CLEAR_ALL after the fork-site probe");
 
     UTEST_END();
     return g_fail;
