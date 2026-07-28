@@ -283,14 +283,64 @@ if ($ExtraArgs) {
 $TimeoutSec = 0
 if ($env:IOS_QEMU_TIMEOUT_SEC) { [int]::TryParse($env:IOS_QEMU_TIMEOUT_SEC, [ref]$TimeoutSec) | Out-Null }
 
+# ---- Own our child process -------------------------------------------------
+# The QEMU we start is OURS to clean up. Before this, the no-timeout branch used
+# a bare `& $QEMU`, which keeps no handle: when the caller killed this script --
+# `timeout 200 powershell.exe ...` from WSL is the normal shape -- PowerShell
+# died and QEMU was orphaned. Three such orphans accumulated on 2026-07-28 and
+# held the OVMF flash file, so the next launch failed with
+#   cannot set up guest memory 'system.flash0': Invalid argument
+#
+# Deliberately NOT "kill anything named qemu-system-x86_64.exe": this script
+# cannot tell its own leftovers from a VM the operator is using, and an
+# unattended sweep that guesses wrong kills work in progress. Only PIDs we
+# recorded ourselves are ever touched, and the name is re-checked first so a
+# recycled PID cannot be mistaken for ours.
+$QemuPidFile = Join-Path $env:TEMP "impossible-os-qemu.pid"
+
+# Self-heal: a hard kill never runs `finally`, so reap the previous run's child
+# here instead. This is what makes the cleanup survive `timeout` and Ctrl-C.
+# The file holds a LIST, one PID per line, not a single value. Two hard-killed
+# runs in a row would otherwise lose the older orphan when the second overwrote
+# the record -- observed while testing this very change, which left two live
+# QEMUs and only one of them tracked.
+if (Test-Path $QemuPidFile) {
+    $reaped = 0
+    foreach ($line in (Get-Content $QemuPidFile -ErrorAction SilentlyContinue)) {
+        $stalePid = 0
+        if (-not [int]::TryParse($line.Trim(), [ref]$stalePid)) { continue }
+        try {
+            $stale = Get-Process -Id $stalePid -ErrorAction SilentlyContinue
+            # Name re-check is the PID-reuse guard: a recycled PID belonging to
+            # some other program must never be killed just because we once
+            # recorded that number. Verified against a live explorer.exe decoy.
+            if ($stale -and $stale.ProcessName -eq 'qemu-system-x86_64') {
+                Write-Host "run-qemu: reaping orphaned QEMU from a previous run (PID $stalePid)" -ForegroundColor DarkYellow
+                try { $stale.Kill($true) } catch { try { $stale.Kill() } catch {} }
+                $reaped++
+            }
+        } catch { }
+    }
+    if ($reaped -gt 0) { Start-Sleep -Milliseconds 500 }
+    Remove-Item $QemuPidFile -ErrorAction SilentlyContinue
+}
+
+$proc = $null
 try {
-    if ($TimeoutSec -gt 0) {
+    if ($true) {
         # -NoNewWindow keeps the parent console, so `-serial stdio` still
         # streams into whatever redirect the caller set up -- the log this
         # sweep exists to produce must not change shape just because it is
-        # now bounded.
+        # now bounded. Both branches now go through Start-Process so there is
+        # always a handle to clean up with; the only difference is whether the
+        # wait is bounded.
         $proc = Start-Process -FilePath $QEMU -ArgumentList $QemuArgs -NoNewWindow -PassThru
-        if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+        Add-Content -Path $QemuPidFile -Value $proc.Id -ErrorAction SilentlyContinue
+        if ($TimeoutSec -le 0) {
+            $proc.WaitForExit()
+            $global:LASTEXITCODE = $proc.ExitCode
+        }
+        elseif (-not $proc.WaitForExit($TimeoutSec * 1000)) {
             Write-Host ""
             Write-Host "run-qemu: STALLED -- no exit after $TimeoutSec s; killing." -ForegroundColor Red
             Write-Host "  A category that reaches the desktop and idles is a bug in THAT bat" -ForegroundColor DarkGray
@@ -298,10 +348,19 @@ try {
             try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
             $global:LASTEXITCODE = 124   # conventional timeout status
         }
-    } else {
-        & $QEMU @QemuArgs
+        else {
+            $global:LASTEXITCODE = $proc.ExitCode
+        }
     }
 } finally {
+    # Reap our own child on every exit path we can still observe. A SIGKILL of
+    # this script skips this block entirely -- that case is covered by the
+    # reap-on-start above, which is why both exist.
+    if ($proc -and -not $proc.HasExited) {
+        try { $proc.Kill($true) } catch { try { $proc.Kill() } catch {} }
+    }
+    Remove-Item $QemuPidFile -ErrorAction SilentlyContinue
+
     # Always restore boot.conf to defaults
     if ($PatchArgs.Count -gt 0) {
         & wsl.exe bash -c "cd '$WSL_PROJECT' && bash scripts/patch-boot-conf.sh reset"
