@@ -438,15 +438,84 @@ def _dirty_path(porcelain_line: str) -> str:
     return p.split(" -> ")[-1].strip().strip('"')
 
 
-def _dirty_owner(porcelain_line: str) -> str:
+# An XREF stamp's line-number tail: `... (item: "NAME" at line 467)`.
+_XREF_LINENO_RE = re.compile(r"\bat line \d+\b")
+# Owners a rollover may proceed past. Everything else is real uncommitted work.
+_TOLERATED_OWNERS = ("auto-gen", "xref-repair")
+
+
+def _is_xref_lineno_repair(root: Path, path: str) -> bool:
+    """True iff `path`'s UNSTAGED diff changes NOTHING but `at line N` integers
+    inside XREF stamps.
+
+    WHY (live wedge, 2026-07-28 03:42). The run refused a verified rollover with
+    "blocked by the operator's in-flight TODO-25 edit". No operator had touched
+    TODO-25: the dirty content was four XREF line-number bumps (467->468,
+    302->303, 463->464, 464->465), every one pointing into TODO-21 -- the file
+    the run had just edited, shifting those very lines. The run's OWN tooling
+    (`stranded_deferrals.py --owner`, `todo-graph/build-and-validate.sh`) had
+    emitted them minutes earlier, and the rollover check read the result as a
+    human's work and declined to touch it. That misattribution is SELF-
+    SUSTAINING: every section that shifts a cross-referenced line re-dirties a
+    TODO the run will again refuse to own, so the rollover never fires without a
+    human committing for it (it took operator commit `0f4d6995` to unblock).
+
+    This is the item's blunter fallback -- classify by CONTENT rather than by
+    tracking which script wrote what -- and it is deliberately strict: every
+    removed line must pair with an added line that is byte-identical once the
+    `at line N` integer is normalised, AND both must be XREF stamps. A hunk that
+    adds or removes lines, touches anything outside an XREF, or changes a word
+    fails the test and still blocks. Real section work does not have this shape.
+
+    Tolerating (not committing) matches the existing auto-gen precedent: the
+    repair stays unstaged, the next session regenerates it identically, and a
+    later real commit sweeps it in. A rollover GATE that commits on a run's
+    behalf would be a far larger behaviour change than the wedge warrants.
+    """
+    try:
+        out = subprocess.run(["git", "diff", "--unified=0", "--", path],
+                             cwd=str(root), capture_output=True, text=True,
+                             timeout=30)
+        if out.returncode != 0:
+            return False
+        removed, added = [], []
+        for ln in out.stdout.splitlines():
+            if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
+                continue
+            if ln.startswith("-"):
+                removed.append(ln[1:])
+            elif ln.startswith("+"):
+                added.append(ln[1:])
+        if not removed or len(removed) != len(added):
+            return False
+        for old, new in zip(removed, added):
+            if old == new:
+                return False              # a pair that did not change: not a repair
+            if "XREF:" not in old or "XREF:" not in new:
+                return False
+            if not _XREF_LINENO_RE.search(old) or not _XREF_LINENO_RE.search(new):
+                return False
+            if (_XREF_LINENO_RE.sub("at line N", old)
+                    != _XREF_LINENO_RE.sub("at line N", new)):
+                return False
+        return True
+    except Exception:
+        return False                      # fail-closed: unsure -> keep blocking
+
+
+def _dirty_owner(porcelain_line: str, root: Path | None = None) -> str:
     """Classify a `git status --porcelain` line by its XY status (F4, C-RECV-class
     review 2026-07-14). ONLY an UNSTAGED modification (` M`) of an allowlisted
-    auto-gen file is tolerated. A STAGED change (index column set), a delete /
+    auto-gen file -- or of a todo/*.md whose diff is pure XREF line-number repair
+    (2026-07-28) -- is tolerated. A STAGED change (index column set), a delete /
     rename / copy, an unmerged/conflicted entry (UU/AA/DD/AU/UA/UD/DU), or an
-    untracked file is NEVER 'auto-gen' -- even on an allowlisted path -- because
+    untracked file is NEVER tolerated -- even on an allowlisted path -- because
     each is uncommitted index state or new content a rotation could strand or
     misinterpret. The old pathname-only test tolerated all of these on
-    coverage.*/COUNT.md/todo-graph.md."""
+    coverage.*/COUNT.md/todo-graph.md.
+
+    `root` is optional so existing callers and tests keep working; without it the
+    content-based XREF check is skipped and behaviour is exactly as before."""
     if porcelain_line.startswith("??"):
         return "untracked"
     xy = (porcelain_line[:2] + "  ")[:2]
@@ -456,9 +525,16 @@ def _dirty_owner(porcelain_line: str) -> str:
     # anything staged (X is a real op) or an unstaged delete/rename/copy blocks.
     if x != " " or y in ("D", "R", "C"):
         return "tracked-source"
-    # the ONLY tolerated case: unstaged modification of a tracked generated file.
-    if y == "M" and _dirty_path(porcelain_line) in _ROLLOVER_AUTOGEN:
-        return "auto-gen"
+    if y == "M":
+        path = _dirty_path(porcelain_line)
+        # the ONLY tolerated cases: an unstaged modification of a tracked
+        # generated file, or a TODO dirtied solely by the run's own XREF
+        # line-number repairs.
+        if path in _ROLLOVER_AUTOGEN:
+            return "auto-gen"
+        if (root is not None and path.startswith("todo/")
+                and path.endswith(".md") and _is_xref_lineno_repair(root, path)):
+            return "xref-repair"
     return "tracked-source"
 
 
@@ -480,17 +556,19 @@ def _rollover_failures(root: Path, state: dict) -> list:
             # B4/F2: tolerate a delta that is ONLY auto-gen docs; block on any
             # real change and NAME the paths + probable owner so the diagnostic
             # never mis-attributes the runner's own coverage.* to the operator.
-            blocking = [ln for ln in dirty if _dirty_owner(ln) != "auto-gen"]
+            owners = {ln: _dirty_owner(ln, root) for ln in dirty}
+            blocking = [ln for ln in dirty
+                        if owners[ln] not in _TOLERATED_OWNERS]
             if blocking:
-                named = ", ".join(f"{_dirty_path(ln)} [{_dirty_owner(ln)}]"
+                named = ", ".join(f"{_dirty_path(ln)} [{owners[ln]}]"
                                   for ln in blocking[:6])
                 more = f" (+{len(blocking) - 6} more)" if len(blocking) > 6 else ""
                 tolerated = len(dirty) - len(blocking)
-                autogen_note = (f"; tolerating {tolerated} auto-gen doc delta(s)"
-                                if tolerated else "")
+                autogen_note = (f"; tolerating {tolerated} pipeline-output "
+                                f"delta(s)" if tolerated else "")
                 fails.append(f"tree not clean ({len(blocking)} blocking "
                              f"change(s): {named}{more}{autogen_note})")
-            # else: only auto-gen docs dirty -> tolerated, rollover may proceed.
+            # else: only pipeline output dirty -> tolerated, rollover may proceed.
     except Exception:
         fails.append("git status unavailable")
     try:

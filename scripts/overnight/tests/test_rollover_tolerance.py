@@ -96,7 +96,10 @@ def test_mixed_delta_blocks_but_notes_tolerated():
         tnc = _tree_not_clean(fails)
         assert tnc, fails
         assert "src/kernel/x.c [tracked-source]" in tnc[0], tnc
-        assert "tolerating 1 auto-gen" in tnc[0], tnc
+        # "pipeline-output" (2026-07-28) covers BOTH tolerated owners: the
+        # auto-gen path allowlist and the content-classified `xref-repair`
+        # (see test_rollover_xref_repair.py). The count is what matters.
+        assert "tolerating 1 pipeline-output" in tnc[0], tnc
 
 
 if __name__ == "__main__":
