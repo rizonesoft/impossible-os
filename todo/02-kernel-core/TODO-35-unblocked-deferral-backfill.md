@@ -67,16 +67,9 @@ title: "TODO-35 -- Unblocked-Deferral Backfill (2026-07-27 cohort)"
 
 ## 1. Registry Tree SMP Synchronization and Hive Durability
 
-`registry_load_hives()` exists at `registry.c:4245` with **zero callers**. Its parked items say the blocker is
-"needs C:", but the boot order disproves that: `vfs_init()` (line 390) then `partition_mount_filesystems()` (line 403)
-both run before `registry_init()` (line 866), and the registry block hard-fails if VFS is not ready. The volume has
-been mounted at that point for a long time; the item text is stale.
+`registry_load_hives()` exists at `registry.c:4245` with **zero callers**. Its parked items say the blocker is "needs C:", but the boot order disproves that: `vfs_init()` (line 390) then `partition_mount_filesystems()` (line 403) both run before `registry_init()` (line 866), and the registry block hard-fails if VFS is not ready. The volume has been mounted at that point for a long time; the item text is stale.
 
-The real hazard is different and worse. `grep -c 'spin_lock\|SPINLOCK' src/kernel/registry.c` returns **0** -- the
-registry tree has no SMP synchronization at all. `boot_storage.c:858` names this: readiness is deliberately withheld
-until after population because the tree "has no SMP lock yet" and is mutated "while APs are already running". That
-mitigation covers a short population window. Hive load, journal writes, and a 5-second lazy-writer DPC extend that
-window enormously on a kernel that is SMP-from-day-one. Locking is therefore the first item, not an afterthought.
+The real hazard is different and worse. `grep -c 'spin_lock\|SPINLOCK' src/kernel/registry.c` returns **0** -- the registry tree has no SMP synchronization at all. `boot_storage.c:858` names this: readiness is deliberately withheld until after population because the tree "has no SMP lock yet" and is mutated "while APs are already running". That mitigation covers a short population window. Hive load, journal writes, and a 5-second lazy-writer DPC extend that window enormously on a kernel that is SMP-from-day-one. Locking is therefore the first item, not an afterthought.
 
 - [ ] Add SMP synchronization to the registry tree: a lock discipline covering key create/delete/enumerate and value set/query, with the lock order documented against the VFS and object-manager locks it nests with.
 - [ ] Remove the `boot_storage.c` readiness-withholding workaround once the tree is locked, and publish `SUBSYS_REGISTRY` at its natural point; keep the panic-path gate honest.
@@ -92,10 +85,7 @@ window enormously on a kernel that is SMP-from-day-one. Locking is therefore the
 - [ ] Lazy writer: call `hive_flush_incremental` from a timer DPC on a 5 s cadence, plus an explicit `RegFlushKey` path.
 - [ ] Commit: `"registry: SMP-lock the tree and land hive durability"`
 
-**Test checkpoint:** concurrent key/value mutation from two CPUs leaves the tree consistent under the new lock; a hive
-survives a simulated crash mid-journal-write and recovers to the last committed state; a torn commit marker is
-rejected in favour of the other log; the lazy writer flushes without holding the lock across I/O. Test on: QEMU TCG
-(timing-sensitive ordering), QEMU KVM, bare metal.
+**Test checkpoint:** concurrent key/value mutation from two CPUs leaves the tree consistent under the new lock; a hive survives a simulated crash mid-journal-write and recovers to the last committed state; a torn commit marker is rejected in favour of the other log; the lazy writer flushes without holding the lock across I/O. Test on: QEMU TCG (timing-sensitive ordering), QEMU KVM, bare metal.
 
 ---
 
@@ -113,18 +103,13 @@ resolution, which does not exist in the tree. Those two source items are disposi
 - [ ] Make `hive_load` fully transactional: the validate pass (`apply=0`) already catches malformed input; extend it so a failure part-way through apply rolls back rather than leaving a partial tree.
 - [ ] Commit: `"registry: implement save/restore hive bodies on a transactional load"`
 
-**Test checkpoint:** save-then-restore round-trips a subtree with values of every type; a truncated hive is rejected by
-the validate pass with the live tree unmodified; a fault injected mid-apply leaves no partial subtree. Test on: QEMU
-TCG, QEMU KVM.
+**Test checkpoint:** save-then-restore round-trips a subtree with values of every type; a truncated hive is rejected by the validate pass with the live tree unmodified; a fault injected mid-apply leaves no partial subtree. Test on: QEMU TCG, QEMU KVM.
 
 ---
 
 ## 3. Quota Enforcement and Job Memory Accounting
 
-`quota_charge_chain` is live at `quota/quota_owner.c` and TODO-21 §13 has shipped, so the accounting substrate these
-items waited on exists. What is missing is enforcement: working-set and pagefile limits are stored and returned but
-never acted on, and `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`'s memory fields report 0 rather than real pool bytes --
-a caller reading them gets a confident wrong answer.
+`quota_charge_chain` is live at `quota/quota_owner.c` and TODO-21 §13 has shipped, so the accounting substrate these items waited on exists. What is missing is enforcement: working-set and pagefile limits are stored and returned but never acted on, and `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`'s memory fields report 0 rather than real pool bytes -- a caller reading them gets a confident wrong answer.
 
 - [ ] Per-process VM/commit counters so working-set and pagefile limits can be enforced rather than merely stored.
 - [ ] Enforce the stored working-set and pagefile limits at the allocation path, returning the documented failure status on breach.
@@ -144,17 +129,13 @@ a caller reading them gets a confident wrong answer.
       -> XREF: `02-kernel-core/TODO-34-serial-log-signal-to-noise.md` (item: "Rate-limit the DPC-watchdog warning" -- the log-noise half)
 - [ ] Commit: `"quota: enforce working-set and pagefile limits, report real job memory"`
 
-**Test checkpoint:** a process exceeding its working-set limit is refused with the documented status; job memory
-fields report nonzero pool bytes matching the ledger; a child shares the parent user block and teardown leaves no
-leaked charge. Test on: QEMU TCG, QEMU KVM.
+**Test checkpoint:** a process exceeding its working-set limit is refused with the documented status; job memory fields report nonzero pool bytes matching the ledger; a child shares the parent user block and teardown leaves no leaked charge. Test on: QEMU TCG, QEMU KVM.
 
 ---
 
 ## 4. Module Identity and ELF Unwind Registration
 
-TODO-20 §5 and TODO-23 §6 shipped. ELF modules still register no unwind data, so an exception unwinding through an
-ELF frame has nothing to consult while the PE path has `.pdata`. Module identity is still a bare `name`, which is not
-enough to match a module to its symbols.
+TODO-20 §5 and TODO-23 §6 shipped. ELF modules still register no unwind data, so an exception unwinding through an ELF frame has nothing to consult while the PE path has `.pdata`. Module identity is still a bare `name`, which is not enough to match a module to its symbols.
 
 - [ ] Extend module identity beyond `name`: image-ID storage for EIF `build_id`, PE CodeView GUID, and ELF `.note.gnu.build-id`.
 - [ ] Register ELF `.eh_frame_hdr` unwind data symmetrically with PE `.pdata`: add the fields to `loaded_module_t` and parse `PT_GNU_EH_FRAME`.
@@ -162,18 +143,13 @@ enough to match a module to its symbols.
 - [ ] ELF constructor/destructor ordering: call `DT_PREINIT_ARRAY` (main executable only) then `DT_INIT`/`DT_INIT_ARRAY` in dependency order.
 - [ ] Commit: `"exec: register ELF unwind data and extend module identity"`
 
-**Test checkpoint:** an exception unwinding through an ELF frame finds its FDE via `.eh_frame_hdr`; a module reports a
-build-ID distinct from its name; `NtQuerySection` returns the real ImageBase rather than a zero. Test on: QEMU TCG,
-QEMU KVM.
+**Test checkpoint:** an exception unwinding through an ELF frame finds its FDE via `.eh_frame_hdr`; a module reports a build-ID distinct from its name; `NtQuerySection` returns the real ImageBase rather than a zero. Test on: QEMU TCG, QEMU KVM.
 
 ---
 
 ## 5. User-Buffer Hardening on Fault-Recoverable Usercopy
 
-Four call sites refuse a legitimate non-NULL user buffer purely because no fault-recoverable copy existed when they
-were written. It exists: `copy_from_user()` at `cpu_security.c:398` recovers a `#PF` inside `__uaccess_copy_from` via
-a static exception table and returns -1 rather than bugchecking. Each of these is now a small, bounded change, and
-each currently presents as a capability gap to a caller.
+Four call sites refuse a legitimate non-NULL user buffer purely because no fault-recoverable copy existed when they were written. It exists: `copy_from_user()` at `cpu_security.c:398` recovers a `#PF` inside `__uaccess_copy_from` via a static exception table and returns -1 rather than bugchecking. Each of these is now a small, bounded change, and each currently presents as a capability gap to a caller.
 
 - [ ] Boundary probe+copy for a non-NULL `Environment` in the environment-block path: copy the caller block into a terminated kernel snapshot, then operate on the snapshot.
 - [ ] Apply the same probe+copy to `RtlQueryEnvironmentVariable_U`'s non-NULL `Environment`, which currently refuses it outright.
@@ -181,9 +157,7 @@ each currently presents as a capability gap to a caller.
 - [ ] Honor the client `SecurityQos` for RING-3 ALPC clients, copying the user attribute block through the recoverable path.
 - [ ] Commit: `"kernel: accept non-NULL user buffers via fault-recoverable usercopy"`
 
-**Test checkpoint:** each path accepts a valid user buffer and returns the documented error (never a bugcheck) for an
-unmapped one; a fault injected mid-copy leaves no partial kernel-side state. Test on: QEMU TCG (fault-path timing),
-QEMU KVM, bare metal.
+**Test checkpoint:** each path accepts a valid user buffer and returns the documented error (never a bugcheck) for an unmapped one; a fault injected mid-copy leaves no partial kernel-side state. Test on: QEMU TCG (fault-path timing), QEMU KVM, bare metal.
 
 ---
 
@@ -206,9 +180,7 @@ triage. Grouped because none is large enough to carry a section alone, not becau
 - [ ] Spawn CSRSS as a `SYSTEM`-token process at kernel init Phase 3.
 - [ ] Commit: `"kernel: land the unblocked boot, entropy, config and SRM deferrals"`
 
-**Test checkpoint:** each item verified against its own subsystem's suite; the klog session key is present and distinct
-per boot; `GetCommandLineW` returns the real command line for a spawned process; config writes without the privilege
-are refused. Test on: QEMU TCG, QEMU KVM; bare metal for the boot-media item.
+**Test checkpoint:** each item verified against its own subsystem's suite; the klog session key is present and distinct per boot; `GetCommandLineW` returns the real command line for a spawned process; config writes without the privilege are refused. Test on: QEMU TCG, QEMU KVM; bare metal for the boot-media item.
 
 ---
 
@@ -241,12 +213,4 @@ are refused. Test on: QEMU TCG, QEMU KVM; bare metal for the boot-media item.
 
 ## History
 
-**2026-07-27 -- filed from the stranded-deferral triage.** `stranded_deferrals.py` found 48 cross-TODO `[/]` items
-whose XREF owner had shipped both stamps, across 15 source files of which 14 were fully DONE -- so the sequencer's
-section oracle, which classifies on the Implementation Order row plus section stamps and never on checklist items,
-would never have revisited any of them. All 48 were triaged at file:line: **39 reopen** (38 distinct; the
-`RegSaveKey`/`RegRestoreKey` bodies were recorded from both TODO-14 and TODO-15), **8 park** with a verified-absent
-second blocker, **1 done**. Item text proved stale in both directions -- several items read "BLOCKED: X unimplemented"
-where X had long since shipped (`eif_decompress_segment`, the fault-recoverable usercopy), and the registry cluster's
-"needs C:" blocker was disproved by the boot order itself. The genuinely new finding was the unlocked registry tree,
-which is why §1 leads with SMP synchronization rather than the durability work that motivated the section.
+**2026-07-27 -- filed from the stranded-deferral triage.** `stranded_deferrals.py` found 48 cross-TODO `[/]` items whose XREF owner had shipped both stamps, across 15 source files of which 14 were fully DONE -- so the sequencer's section oracle, which classifies on the Implementation Order row plus section stamps and never on checklist items, would never have revisited any of them. All 48 were triaged at file:line: **39 reopen** (38 distinct; the `RegSaveKey`/`RegRestoreKey` bodies were recorded from both TODO-14 and TODO-15), **8 park** with a verified-absent second blocker, **1 done**. Item text proved stale in both directions -- several items read "BLOCKED: X unimplemented" where X had long since shipped (`eif_decompress_segment`, the fault-recoverable usercopy), and the registry cluster's "needs C:" blocker was disproved by the boot order itself. The genuinely new finding was the unlocked registry tree, which is why §1 leads with SMP synchronization rather than the durability work that motivated the section.
