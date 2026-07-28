@@ -630,7 +630,11 @@ not a bill.)
   the per-bucket split. One table, same shape every run.
   **Acceptance:** the numbers reconcile with `.claude/overnight/metrics/*.jsonl` when checked by hand.
 
-- [ ] **T4-2. Regression gate on the context metrics.**
+- [/] **T4-2. Regression gate on the context metrics.**
+  > **Deferred:** 2026-07-28 | precondition failed -- T1 landed without reaching its targets, so there is no baseline worth gating on -> XREF: `token-saver/token-saver-v02.md` (item: "Context per turn RISES across rollover segments (248K -> 294K -> 347K)")
+  **DEFERRED 2026-07-28 on the context-growth investigation in [`token-saver-v02.md`](token-saver-v02.md). Do not implement as written.** This item's precondition is "after T1 lands, record the achieved baseline", and T1 landed without reaching its targets. First post-T1 measurement (attended canary run, three segments): average context/turn **248K -> 294K -> 347K** against a 180K target, and re-read ratio **60% / 60% / 64%** against a 20% target -- a 1.9x and 3.2x miss. Recording that as "the achieved baseline" and warning at +25% would enshrine the miss as the standard and only complain once things got 25% worse than triple target.
+  Two further reasons to hold. Sub-item **(5d)** already gates the budget backstop "behind the context-cap + review-spiral fixes landing", and the same measurement shows the context cap has not effectively landed -- so 5a-5e are blocked by their own stated condition. And the gate is warning-only by design ("it can only report"), so adding a report while the underlying metric is 2-3x off repeats the `interactive_offload_router` pattern (487 injections, zero follows) that T1-4 exists to correct.
+  Unblock condition: the v02 investigation explains why per-turn context RISES across rollovers, and a baseline worth defending exists. Hook-fire budgeting did deliver (12-73 per segment against 1,609), so that third target is already met and can be gated independently if useful.
   **Fix:** after T1 lands, record the achieved baseline (target: average context/turn <= 180K, re-read ratio <= 20%,
   hook fires <= 400/run). A run that regresses more than 25% past baseline writes a WARN into
   `.claude/overnight/NEEDS-OPERATOR.md`. Warning only -- never block a run on a cost metric.
@@ -645,7 +649,8 @@ not a bill.)
   - [ ] **(5d) Add an activation floor** so the backstop can't dominate; gate it behind the context-cap + review-spiral fixes landing.
   - [ ] **(5e) Test the project -> snooze -> resume transition** at the ceiling.
 
-- [ ] **T4-3. Measure one section end-to-end before and after, and publish the delta.**
+- [x] **T4-3. Measure one section end-to-end before and after, and publish the delta.**
+  **DONE 2026-07-28. The delta is published as the POSTSCRIPT at the end of this file. The verdict clause fired: predictions were off by ~11x and ~26x against a 2x threshold, so the model of where cost goes IS wrong and this file needs re-deriving before more items land.** Measured across whole runs rather than a single replayed section (see the postscript's stated confound); the magnitude is far past anything section variance explains.
   **Fix:** pick one representative shipped section, replay the same work with T1-1 / T1-2 / T2-1 active, and record
   actual vs predicted saving. If the prediction is off by more than 2x, the model of where cost goes is wrong and the
   rest of this file needs re-deriving before more items land.
@@ -685,3 +690,40 @@ one of these, the item is wrong and gets re-scoped, not the floor.
 - **Every blocking hook gate**: `section_commit_gate`, `run_phase_guard`, `review_dispatch_gate`, `broker_dispatch_required`,
   `codex_review_completed`, `runner_bash_guard`, the test-policy and code-style blocks. T1-4 touches advisories only.
 - **Bare-metal-first validation.** No item here trades a hardware-truth check for a cheaper proxy.
+
+---
+
+## POSTSCRIPT -- T4-3 measured delta (2026-07-28)
+
+T4-3 required this published "with the raw numbers, whatever they say". They are not good.
+
+| | pre-T1 (2026-07-25/26, 4 runs, 984 turns) | post-T1 (2026-07-28 canary, 3 segments, 897 turns) | predicted |
+|---|---|---|---|
+| avg context/turn | 311,479 | 299,988 (**-3.7%**) | 180,000 (-42%) |
+| re-read ratio | 132/206 = **64%** | 106/170 = **62%** (-2pp) | 20% (-44pp) |
+| hook fires / segment | ~1,609 (2026-07-10 measurement) | 12 / 26 / 73 | <= 400 |
+
+**Prediction error: ~11x on context per turn, ~26x on re-read ratio.** T4-3's threshold was 2x, so its verdict clause applies without argument: the model of where cost goes is wrong, and the remaining items in this file must be re-derived before any more of them land.
+
+**What actually delivered:** hook-fire budgeting (T1-4), and decisively -- from ~1,609 fires to 12-73 per segment. That item's premise was correct and its mechanism worked.
+
+**What did not:** the read-side items. `read_cache_block` fired 26 times across the canary run and moved the re-read ratio by 2 percentage points. `agent_result_cache` recorded 5 stores and 0 hits, the same zero-hit symptom T2-2 was written to fix. T2-3 was reverted outright as negative (see its entry). So the read/context half of this backlog projected ~40% and returned ~4%.
+
+**Why the projections were wrong is itself unresolved**, and that is the finding worth carrying forward. The estimates assumed re-reads and searches were the dominant repeated cost. The canary data says per-turn context is dominated by something else: context/turn RISES across rollover segments (248K -> 294K -> 347K) when rollover exists to reset it. Until that mechanism is understood, any further estimate in this file is a guess with a known ~10x error bar. Owner: [`token-saver-v02.md`](token-saver-v02.md) "Context per turn RISES across rollover segments".
+
+**Confound, stated plainly:** this is a whole-run before/after, not the single-section replay T4-3 literally specified. The two windows worked different TODO sections, and section difficulty affects context. It is published anyway because a 11-26x gap is far outside what section variance explains, and because a controlled replay would cost another full run at ~$500 to sharpen a number whose direction is already unambiguous. Pre-T1 is 4 runs and 984 turns, not a single sample.
+
+**Cost, for scale:** the 2026-07-28 canary run cost **$509** across three segments (list-rate arithmetic, ~82% of it cache-read).
+
+**DID IT ACTUALLY SAVE MONEY? Per turn yes, per unit of work shipped no -- and the second number is the one that matters.**
+
+| | pre-T1 (2026-07-25/26) | post-T1 (2026-07-28) |
+|---|---|---|
+| total | $906.94 over 1,373 turns | $509.01 over 897 turns |
+| cost per turn | $0.661 | **$0.567 (-14.1%)** |
+| commits flipping an IO row to `[x]` | 4 | 1 |
+| cost per section shipped | **~$227** | **~$509 (+124%)** |
+
+The per-turn improvement is real and reasonably sampled. The per-section figure is NOT a safe conclusion and is recorded with its confounds rather than as a result: n=1 on the post side; section 20 consumed most of segment 3 (~$220) and shipped nothing, so the post window is charged for work-in-progress the pre window is not; sections 19 and 20 are unusually hard SMP-lifetime bugs (7 and 9+ Codex dispatches) rather than average sections; and an operator was working in the same tree, causing four index cross-sweeps plus turns the runner spent diagnosing HEAD movement.
+
+What is NOT in doubt: the read/context half of this backlog projected roughly 40% and returned roughly 4%. Whether cheaper turns translate into cheaper WORK depends on turns-per-section, which this sample cannot settle. Settling it needs a post-fix run on comparable sections with no operator in the tree -- which is the measurement the v02 context-growth item should produce as a side effect.
