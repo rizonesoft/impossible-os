@@ -269,6 +269,31 @@ struct task {
     uint32_t    state;          /* TASK_RUNNING, TASK_READY, etc. */
     uint64_t    rsp;            /* saved stack pointer (interrupt frame) */
     uint8_t    *stack_base;     /* base of kernel stack (for kfree) */
+    /* Superseded exec kernel stack awaiting reclamation.
+     *
+     * task_exec() cannot free the stack it replaces: its own caller
+     * (exec_loader_func / the syscall path) is still executing on that stack
+     * and keeps using it until the task iretqs to ring 3. The old base is
+     * parked here instead and drained at the two points where the task is
+     * provably no longer on it -- the START of the task's NEXT task_exec (it
+     * had to re-enter the kernel on the NEW stack to get there) and
+     * task_cleanup (the task is TASK_DEAD and off-CPU). Without this, every
+     * re-exec leaked TASK_STACK_SIZE + one guard page permanently. At most one
+     * stale stack per task is outstanding, and reap returns it. */
+    uint8_t    *stack_pending_free;
+    /* 1 = this task was produced by task_fork and therefore SHARES its
+     * parent's image frames until an exec isolates it.
+     *
+     * task_exec decides whether to run the private-frame isolation remap by
+     * looking at cr3, treating cr3 == 0 as "launcher-spawned, no parent to
+     * isolate from". That inference is wrong for one case: task_fork leaves a
+     * child's cr3 at 0 when vmm_create_user_pml4 runs out of memory. Such a
+     * child would skip isolation entirely and let exec_load write the new
+     * binary straight through the identity mappings it still shares with its
+     * parent -- parent-image corruption, reachable by exhausting memory.
+     * Recording the origin explicitly removes the inference: a fork child
+     * without an isolated CR3 is refused an exec before anything mutates. */
+    uint8_t     forked_shares_parent_image;
     uint64_t    kernel_rsp;     /* top of kernel stack (for TSS rsp0) */
     uint8_t    *user_stack_base;/* base of user stack (NULL for kernel tasks) */
     const char *name;           /* human-readable name */
@@ -841,6 +866,33 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame);
 
 /* Exit the current task with a status code.
  * Wakes any parent waiting via waitpid. */
+/* task_exec() return value meaning "the image is GONE".
+ *
+ * Past task_exec's commit point the calling task's image has been replaced
+ * with zeroed private frames, so there is nothing to resume: the task MUST NOT
+ * reach ring 3 again. task_exec cannot simply call task_exit() itself, because
+ * every caller still owns the staging buffer it read the binary into and frees
+ * it only after task_exec returns -- terminating inside would strand that
+ * buffer on every failed exec, which a loop of failing fork+execs turns into
+ * an unbounded kernel-memory leak.
+ *
+ * So the contract is explicit instead: on this value the KERNEL caller (which
+ * is running on its own kernel stack, not ring 3 -- returning to it is safe)
+ * must release its buffer and then call task_exit(). Returning to ring 3 with
+ * this value is a bug. A plain -1 keeps its old meaning: the exec failed
+ * before the commit point and the task's image is intact, so the caller may
+ * report the error normally. */
+#define TASK_EXEC_IMAGE_DESTROYED (-2)
+
+#ifdef KERNEL_TESTS
+/* Test seam over the internal kernel-stack free helper, so the reclamation
+ * test exercises the production allocator discrimination and the
+ * uninstall-guard-before-PMM-free ordering rather than a copy of them.
+ * Takes the STACK base (guard page sits at base - 4096), matching what
+ * task.stack_base / task.stack_pending_free hold. */
+void task_test_free_kernel_stack(uint8_t *stack_base);
+#endif
+
 void task_exit(int32_t status);
 
 /* Centralized remote-death transition for killing ANOTHER task (never the

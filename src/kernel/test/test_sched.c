@@ -16,6 +16,8 @@
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/kinterrupt.h"
 #include "kernel/sched/apc.h"
+#include "kernel/mm/pmm.h"        /* pmm_get_free_frames -- exec stack reclaim */
+#include "kernel/mm/vmm.h"        /* vmm_install/uninstall_guard_page */
 #include "kernel/irq.h"
 #include "kernel/timer.h"
 #include "kernel/smp.h"
@@ -101,6 +103,128 @@ static void test_exec_take_pending_frame_passthrough(void)
                    "no exec pending: frame rsp left unmodified");
     TEST_ASSERT_EQ(t->exec_pending, 0,
                    "no exec pending: flag still clear after the call");
+}
+
+/* Test: a task that has never exec'd carries no parked exec stack.
+ *
+ * task_exec parks the kernel stack it supersedes in stack_pending_free and
+ * drains it at the next exec or at reap. A recycled task slot that inherited a
+ * stale value here would double-free on its first exec, so "clear until an exec
+ * puts something there" is the invariant worth pinning. PID 0 is the test
+ * runner itself and has never been exec'd. */
+static void test_exec_stack_pending_free_clear(void)
+{
+    struct task *t = task_get_by_pid(0);
+
+    if (!t) {
+        TEST_SKIP("task_get_by_pid(0) returned NULL");
+        return;
+    }
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t->stack_pending_free, 0,
+                   "PID 0 (never exec'd) has no parked exec stack");
+}
+
+/* Test: kernel stacks are never shared, and a parked exec stack never aliases
+ * a live one.
+ *
+ * stack_pending_free holds the stack task_exec REPLACED; stack_base holds the
+ * one it installed. If those ever named the same allocation, the drain at the
+ * next exec would free the stack the task is running on and reap would free it
+ * again. The same argument applies ACROSS tasks: two tasks sharing a kernel
+ * stack, or one task's parked stack matching another's live stack, is the same
+ * double-free with an extra step.
+ *
+ * Both fields are written together inside one interrupt-disabled publication
+ * block, so the property holds at every instant and is checkable live. The
+ * cross-task walk always has subjects (the test runner itself is a live task
+ * with a stack), so this cannot pass vacuously. */
+static void test_exec_stack_pointers_never_alias(void)
+{
+    uint32_t a, b;
+    uint32_t live = 0;
+
+    for (a = 0; a < TASK_MAX; a++) {
+        struct task *ta = task_get_by_pid(a);
+        if (!ta || !ta->stack_base)
+            continue;
+        live++;
+
+        /* Within one task: the parked stack is never the live one. */
+        if (ta->stack_pending_free)
+            TEST_ASSERT(ta->stack_pending_free != ta->stack_base,
+                        "parked exec stack never aliases its own live stack");
+
+        for (b = a + 1; b < TASK_MAX; b++) {
+            struct task *tb = task_get_by_pid(b);
+            if (!tb || !tb->stack_base)
+                continue;
+            TEST_ASSERT(ta->stack_base != tb->stack_base,
+                        "no two tasks share a kernel stack");
+            if (ta->stack_pending_free)
+                TEST_ASSERT(ta->stack_pending_free != tb->stack_base,
+                            "a parked stack is never another task's live stack");
+            if (tb->stack_pending_free)
+                TEST_ASSERT(tb->stack_pending_free != ta->stack_base,
+                            "a parked stack is never another task's live stack");
+            if (ta->stack_pending_free && tb->stack_pending_free)
+                TEST_ASSERT(ta->stack_pending_free != tb->stack_pending_free,
+                            "two tasks never park the same stack");
+        }
+    }
+
+    /* Proves the live-live comparison had subjects. It does NOT prove the
+     * parked-stack comparisons ran: in steady state stack_pending_free is
+     * already drained, so those branches are usually skipped. Observing a
+     * parked stack requires driving a real exec, which a kernel unit test
+     * cannot do -- a post-commit failure terminates the calling task by design
+     * and the test runner IS a task. That coverage is owned by the
+     * fault-injected exec-lifecycle item in the process-model-extensions
+     * roadmap (exec commit point / kernel-stack reclamation). */
+    TEST_ASSERT(live > 0, "task table has at least one task with a kernel stack");
+}
+
+/* Test: the exec kernel-stack reclamation rule returns every frame.
+ *
+ * The leak this section closes was arithmetic: task_exec allocates
+ * TASK_STACK_SIZE/4096 + 1 frames (the +1 is the guard page BELOW the stack)
+ * and reap freed only the latest such allocation, so each re-exec lost that
+ * many frames permanently. This exercises the allocate/guard/free rule
+ * task_free_kernel_stack() implements -- same page count, same
+ * uninstall-guard-before-PMM-free order -- and asserts the free-frame count
+ * comes back to exactly where it started. A missing uninstall or an off-by-one
+ * page count shows up here as a non-zero delta.
+ *
+ * TEST-SIDE-EFFECT-ALLOWED: installs and then uninstalls one guard page on a
+ * frame this test itself owns for the duration. Paired and self-contained --
+ * no task, no boot infrastructure, and no state survives the test. */
+static void test_exec_kernel_stack_reclaim_leak_free(void)
+{
+    uint32_t pages = (TASK_STACK_SIZE / 4096u) + 1u;   /* +1 = guard page */
+    uint64_t before, after;
+    uintptr_t base;
+
+    before = pmm_get_free_frames();
+
+    base = pmm_alloc_contiguous(pages);
+    if (!base) {
+        TEST_SKIP("pmm_alloc_contiguous for a task-stack-sized block failed");
+        return;
+    }
+    TEST_ASSERT_EQ(pmm_get_free_frames(), before - pages,
+                   "allocating a task kernel stack consumes stack+guard frames");
+
+    vmm_install_guard_page(base, "GUARD: test exec stack reclaim");
+
+    /* Hand it to the PRODUCTION helper, exactly as task_exec and task_cleanup
+     * do -- stack_base is guard_base + 4096, and the helper is responsible for
+     * uninstalling the guard and returning stack+guard frames. Calling the
+     * real function is the point: a test that re-implemented the arithmetic
+     * would stay green while the helper drifted. */
+    task_test_free_kernel_stack((uint8_t *)(base + 4096u));
+
+    after = pmm_get_free_frames();
+    TEST_ASSERT_EQ(after, before,
+                   "reclaiming a task kernel stack returns every frame");
 }
 
 /* Test: per-thread kernel_rsp mirrors task-level kernel_rsp for thread 0.
@@ -1479,6 +1603,14 @@ void test_register_sched(void)
                             test_exec_pending_state, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: exec frame handoff pass-through",
                             test_exec_take_pending_frame_passthrough,
+                            TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec parked stack clear on fresh task",
+                            test_exec_stack_pending_free_clear, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec stack pointers never alias",
+                            test_exec_stack_pointers_never_alias,
+                            TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: exec kernel-stack reclaim is leak-free",
+                            test_exec_kernel_stack_reclaim_leak_free,
                             TEST_CAT_SCHED);
     test_suite_register_cat("Sched: per-thread kernel_rsp mirror",
                             test_per_thread_kernel_rsp_mirror, TEST_CAT_SCHED);

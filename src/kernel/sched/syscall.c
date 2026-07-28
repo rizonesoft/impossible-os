@@ -681,7 +681,20 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             }
 
             ret = (int64_t)task_exec(buf, fsz);
-            if (ret < 0) kfree(buf);
+            /* Unconditional: task_exec copies the image into the new
+             * process's own pages and never takes ownership of `buf` on
+             * EITHER outcome. Freeing only on failure leaked one heap
+             * allocation of file size per SUCCESSFUL exec -- the success path
+             * never returns here (the task iretqs into the new image), so the
+             * release has to happen before that. */
+            kfree(buf);
+            if (ret == TASK_EXEC_IMAGE_DESTROYED) {
+                /* The image this syscall would return to no longer exists --
+                 * task_exec replaced it with zeroed private frames past its
+                 * commit point. Returning ret to ring 3 would iretq into that.
+                 * The buffer is already released above, so terminate. */
+                task_exit(-1);          /* does not return */
+            }
         }
         break;
     }

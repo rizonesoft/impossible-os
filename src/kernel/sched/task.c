@@ -377,6 +377,8 @@ boot_result_t task_init(void)
         tasks[i].exit_status = 0;
         tasks[i].wait_pid = -1;
         tasks[i].exec_pending = 0;
+        tasks[i].stack_pending_free = (uint8_t *)0;
+        tasks[i].forked_shares_parent_image = 0;
         tasks[i].cr3 = 0;
         tasks[i].kernel_gs_base = 0;
         tasks[i].tls_bitmap = 0;
@@ -797,6 +799,11 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+    /* A recycled slot must never inherit the previous occupant's parked exec
+     * stack -- that pointer was already freed by its task_cleanup, so keeping
+     * it would double-free on this task's first exec. */
+    tasks[pid].stack_pending_free = (uint8_t *)0;
+    tasks[pid].forked_shares_parent_image = 0;
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
     tasks[pid].cr3 = 0;  /* kernel task uses boot PML4 */
@@ -1014,6 +1021,11 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+    /* A recycled slot must never inherit the previous occupant's parked exec
+     * stack -- that pointer was already freed by its task_cleanup, so keeping
+     * it would double-free on this task's first exec. */
+    tasks[pid].stack_pending_free = (uint8_t *)0;
+    tasks[pid].forked_shares_parent_image = 0;
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
@@ -2235,6 +2247,13 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].exit_status = 0;
     tasks[child_pid].wait_pid = -1;
     tasks[child_pid].exec_pending = 0;
+    /* NOT inherited: the parked stack belongs to the PARENT's address space and
+     * the parent will reclaim it. A child that copied the pointer would free a
+     * stack its parent is still scheduled on. */
+    tasks[child_pid].stack_pending_free = (uint8_t *)0;
+    /* Set BEFORE the PML4 attempt below, so an OOM there cannot leave a child
+     * that looks launcher-spawned to task_exec. */
+    tasks[child_pid].forked_shares_parent_image = 1;
     ob_handle_table_init(&tasks[child_pid].handle_table);
     /* Copy parent's KERNEL_GS_BASE (TEB address) -- will allocate
      * a new TEB for the child and update this field. */
@@ -2680,6 +2699,102 @@ _Static_assert(EXEC_AUXV_PAIRS * 16u + 24u == ARGV_FRAME_RESERVE,
                "ARGV_FRAME_RESERVE must equal the exec auxv fixed overhead "
                "(AT_RANDOM 16 + auxv EXEC_AUXV_PAIRS*16 + envp NULL 8)");
 
+/* Free a task-level kernel stack, whichever allocator produced it.
+ *
+ * stack_base may have come from EITHER allocator depending on the task's
+ * history:
+ *   - task_create_user: kmalloc(TASK_STACK_SIZE) -- in heap
+ *   - task_create:      pmm_alloc_contiguous(N+1) with guard page below
+ *                       (stack_base = guard_base + 4096)
+ *   - task_exec:        replaces with the same PMM+guard pattern
+ * Calling kfree on a PMM pointer dereferences ptr - HEADER_SIZE as a struct
+ * block_header (garbage), then walks coalesce_free_blocks which can corrupt
+ * the heap free-list and hang; heap_owns() picks the right one. On the PMM
+ * branch the guard MUST be uninstalled BEFORE the frames go back: the install
+ * cleared the identity-map PTE for that VA, so handing the frame to PMM
+ * without restoring the PTE faults the next allocator that writes it
+ * (discovered 2026-04-20 via Boot Tests: #PF write at CR2=guard_phys, RIP in
+ * zero_page).
+ *
+ * Extracted from task_cleanup so the exec stack-reclamation paths free by the
+ * same rules -- a second copy of this logic is exactly how the 2026-04-20 bug
+ * would come back. */
+#ifdef KERNEL_TESTS
+/* Test seam: the unit test must exercise THIS function, not a copy of its
+ * arithmetic, or a divergence between the two is exactly what it fails to
+ * catch. Test-build only -- the release flavor keeps the helper static. */
+void task_test_free_kernel_stack(uint8_t *stack_base);
+#endif
+
+static void task_free_kernel_stack(uint8_t *stack_base)
+{
+    if (!stack_base)
+        return;
+
+    if (heap_owns(stack_base)) {
+        kfree(stack_base);
+        return;
+    }
+
+    {
+        uintptr_t base = (uintptr_t)stack_base;
+        uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
+        uint32_t p;
+        vmm_uninstall_guard_page(base - 4096);
+        for (p = 0; p < pages; p++)
+            pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
+    }
+}
+
+#ifdef KERNEL_TESTS
+void task_test_free_kernel_stack(uint8_t *stack_base)
+{
+    task_free_kernel_stack(stack_base);
+}
+#endif
+
+/* Abandon an exec that has already passed its commit point.
+ *
+ * Past the commit point the calling task's image is gone -- the fork+exec
+ * isolation remap replaced its image-range PTEs with zeroed private frames and
+ * the loader wrote a new binary over them. Returning -1 to the caller would
+ * iretq the task back into an image that no longer exists, which is the defect
+ * this exists to remove. So a post-commit failure terminates the task instead.
+ *
+ * task_exit() is the ONLY correct exit here, not task_death_teardown():
+ * task_death_teardown only releases resources, leaving the task marked alive,
+ * its waiters unsignalled and its abandoned syscall IRQL raised -- a live task
+ * running with a destroyed image. task_exit does the whole transition (thread 0
+ * DEAD under apc_lock, APC rundown, TASK_DEAD, teardown, parent signal, IRQL
+ * lower) and never returns.
+ *
+ * The two resources freed first are the ones task_exec owns and has NOT yet
+ * published into the task: the replacement kernel stack (nothing is running on
+ * it -- the task is still on its old one) and the argv address table. Anything
+ * already published is task_exit's to release. */
+static int exec_commit_failure(uint32_t pid, const char *why,
+                               uint8_t *new_kstack, uint64_t *argv_addrs)
+{
+    klog(LOG_ERROR, "sched",
+         "exec: post-commit failure (%s), terminating PID %u",
+         why, (uint64_t)pid);
+
+    if (argv_addrs)
+        kfree(argv_addrs);
+    task_free_kernel_stack(new_kstack);
+
+    return TASK_EXEC_IMAGE_DESTROYED;
+}
+
+/* Private frames the fork+exec isolation remap needs: one per page of the user
+ * image range. The address table is 8 bytes per frame; pin that it stays inside
+ * kmalloc's 4 KiB ceiling (CLAUDE.md: kmalloc for <= 4 KB only, pmm_alloc_
+ * contiguous above that) so growing USER_ELF_* cannot silently start handing
+ * kmalloc an over-size request. */
+#define EXEC_PRIVATE_FRAMES ((uint32_t)((USER_ELF_END - USER_ELF_BASE) / 4096u))
+_Static_assert((USER_ELF_END - USER_ELF_BASE) / 4096u * sizeof(uintptr_t) <= 4096u,
+    "exec private-frame address table must fit kmalloc's 4 KiB ceiling");
+
 /* The exec/thread-entry frame builders below write a 22-qword ring-3 iretq
  * frame through a raw uint64_t *sp, and task_exec_take_pending_frame() hands
  * that same memory back to the ISR stub as a struct interrupt_frame. Pin every
@@ -2718,6 +2833,10 @@ int task_exec(const uint8_t *data, uint64_t size)
     int       t_argc = 0;
     uint64_t *argv_addrs = (uint64_t *)0;
     int       use_argv = 0;
+    /* Private image frames for fork+exec isolation, acquired in full before
+     * the remap so the remap itself cannot fail partway. NULL for launcher-
+     * spawned tasks (cr3 == 0), which have no parent to isolate from. */
+    uintptr_t *priv_frames = (uintptr_t *)0;
 
     /* Exec must be called from the main thread (tid 0).  A secondary user
      * thread calling exec would leave stale threads[N].kernel_rsp in the
@@ -2729,7 +2848,104 @@ int task_exec(const uint8_t *data, uint64_t size)
         return -1;
     }
 
-    /* Fork+exec isolation (2026-04-21): a forked child inherits its
+    /* ---- Pre-commit phase: every fallible step, before any mutation ----
+     *
+     * Everything below this comment and above the COMMIT POINT can fail and
+     * return -1 safely, because the task's image is still intact at that
+     * point. Everything after the commit point cannot: a failure there goes
+     * through exec_commit_failure() and terminates the task.
+     *
+     * Reclaim the stack a PREVIOUS exec superseded. Reaching task_exec again
+     * proves the task re-entered the kernel on the stack that exec installed,
+     * so it is provably no longer on the parked one. Doing it here (rather
+     * than at publication) is what bounds the outstanding stale stacks at one
+     * per task instead of one per exec. */
+    if (tasks[pid].stack_pending_free) {
+        task_free_kernel_stack(tasks[pid].stack_pending_free);
+        tasks[pid].stack_pending_free = (uint8_t *)0;
+    }
+
+    /* A fork child MUST have its own page table before its image is replaced.
+     * Without one, the isolation remap below is skipped (it keys off cr3) and
+     * exec_load writes the new binary through identity mappings still shared
+     * with the parent, overwriting the parent's code. task_fork leaves cr3 at
+     * 0 when vmm_create_user_pml4 hits OOM, so this state is reachable by
+     * exhausting memory -- refuse the exec while the image is still intact
+     * rather than corrupt another process. */
+    if (tasks[pid].forked_shares_parent_image && !tasks[pid].cr3) {
+        klog(LOG_ERROR, "sched",
+             "task_exec: PID %u is a fork child with no isolated CR3 "
+             "(fork-time PML4 OOM) -- refusing exec", (uint64_t)pid);
+        return -1;
+    }
+
+    /* Acquire the argv-address table and validate the exact argv frame fits
+     * the fixed user stack. When the task carries an argv it MUST be used or
+     * the exec fails -- a name-path fallback would leave the stack argv
+     * disagreeing with the PEB CommandLine (built from the full argv). Name
+     * path (argc=1) applies only when argv is unset. argv is read here on
+     * thread 0 with no concurrent task_set_argv, so no environ_lock is
+     * needed. */
+    t_argv = tasks[pid].argv;
+    t_argc = tasks[pid].argc;
+    if (t_argv && t_argc > 0) {
+        uint32_t need = argv_frame_bytes(t_argc, (const char *const *)t_argv);
+        if ((uint32_t)t_argc > ARG_ARGC_MAX ||
+            (uint64_t)need + ARGV_FRAME_RESERVE > USER_STACK_SIZE) {
+            klog(LOG_ERROR, "sched",
+                 "task_exec: argv frame (%u B, argc %d) exceeds user stack",
+                 need, t_argc);
+            return -1;
+        }
+        argv_addrs = (uint64_t *)kmalloc((uint32_t)t_argc * sizeof(uint64_t));
+        if (!argv_addrs) {
+            klog(LOG_ERROR, "sched",
+                 "task_exec: OOM allocating argv address table (argc %d)", t_argc);
+            return -1;
+        }
+        use_argv = 1;
+    }
+
+    /* Allocate a FRESH kernel stack with guard page -- we cannot reuse the
+     * current one because the calling function (exec_loader_func) is still on
+     * it. Allocated pre-commit so an OOM here returns into a task whose image
+     * is still its own. */
+    {
+        uint32_t stack_pages = TASK_STACK_SIZE / 4096;
+        uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
+        if (!stack_base) {
+            klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
+            if (argv_addrs) kfree(argv_addrs);
+            return -1;
+        }
+        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
+        new_kstack = (uint8_t *)(stack_base + 4096);
+    }
+
+    /* Address table for the fork+exec private frames. Allocated pre-commit
+     * with everything else that can fail. */
+    if (tasks[pid].cr3) {
+        priv_frames = (uintptr_t *)kmalloc(EXEC_PRIVATE_FRAMES
+                                           * sizeof(uintptr_t));
+        if (!priv_frames) {
+            klog(LOG_ERROR, "sched",
+                 "task_exec: OOM allocating private-frame table (%u frames)",
+                 (uint64_t)EXEC_PRIVATE_FRAMES);
+            task_free_kernel_stack(new_kstack);
+            if (argv_addrs) kfree(argv_addrs);
+            return -1;
+        }
+    }
+
+    /* ================= COMMIT POINT =================
+     *
+     * The isolation remap below is the first IRREVERSIBLE mutation of the
+     * process image: it replaces the child's image-range PTEs with freshly
+     * zeroed private frames, and nothing undoes that. Past this line the task
+     * cannot be returned to its caller -- every failure goes through
+     * exec_commit_failure(). Keep new fallible work ABOVE this line.
+     *
+     * Fork+exec isolation (2026-04-21): a forked child inherits its
      * parent's per-process cr3, which identity-maps the USER_ELF range
      * to the same physical frames the parent is actively running from.
      * exec_load writes the new binary to those VAs -- corrupting the
@@ -2742,31 +2958,56 @@ int task_exec(const uint8_t *data, uint64_t size)
      * the classic identity-mapped load is the right shape. */
     if (tasks[pid].cr3) {
         uintptr_t va;
-        for (va = USER_ELF_BASE; va < USER_ELF_END; va += 4096) {
-            uintptr_t new_phys = pmm_alloc_frame();
-            if (!new_phys) {
+        uint32_t  i;
+
+        /* Acquire and zero EVERY private frame before the first PTE moves, so
+         * the remap below cannot fail partway.
+         *
+         * This used to allocate and remap page by page and, on OOM, break out
+         * and carry on -- exec_load then wrote the new binary through the
+         * identity mappings the child still SHARES with its fork parent,
+         * overwriting the parent's code in place. The old comment argued
+         * "refusing exec is worse", but corrupting another process's image is
+         * not a degradation, it is a memory-safety failure a child can provoke
+         * by exhausting memory. Preallocation is what makes failing closed
+         * possible: an OOM here is still PRE-COMMIT, so it returns -1 into a
+         * task whose own image is untouched. */
+        for (i = 0; i < EXEC_PRIVATE_FRAMES; i++) {
+            priv_frames[i] = pmm_alloc_frame();
+            if (!priv_frames[i]) {
+                uint32_t f;
                 klog(LOG_ERROR, "sched",
-                     "task_exec: OOM allocating private frame for "
-                     "VA 0x%x -- forked-exec isolation degraded",
-                     (uint64_t)va);
-                /* Partial isolation still protects the pages we did
-                 * remap. Continue without aborting -- exec_load will
-                 * fall back to identity writes for unremapped pages
-                 * and may corrupt parent, but refusing exec is worse. */
-                break;
+                     "task_exec: OOM on private frame %u of %u -- refusing exec",
+                     (uint64_t)i, (uint64_t)EXEC_PRIVATE_FRAMES);
+                for (f = 0; f < i; f++)
+                    pmm_free_frame(priv_frames[f]);
+                kfree(priv_frames);
+                task_free_kernel_stack(new_kstack);
+                if (argv_addrs) kfree(argv_addrs);
+                return -1;
             }
-            /* Zero the frame so the new binary's uninitialized BSS
-             * doesn't inherit whatever was in the frame before.
-             * pmm_alloc_frame returns an identity-mapped phys, so
-             * writing via (uintptr_t)new_phys is safe in kernel mode. */
+            /* Zero the frame so the new binary's uninitialized BSS doesn't
+             * inherit whatever was in the frame before. pmm_alloc_frame
+             * returns an identity-mapped phys, so writing via (uintptr_t)
+             * phys is safe in kernel mode. */
             {
-                uint64_t *p = (uint64_t *)new_phys;
-                uint32_t i;
-                for (i = 0; i < 512; i++) p[i] = 0;
+                uint64_t *z = (uint64_t *)priv_frames[i];
+                uint32_t q;
+                for (q = 0; q < 512; q++) z[q] = 0;
             }
-            vmm_remap_user_page(tasks[pid].cr3, va, new_phys);
+        }
+
+        /* ===== COMMIT POINT (fork+exec path): infallible from here ===== */
+        i = 0;
+        for (va = USER_ELF_BASE; va < USER_ELF_END; va += 4096, i++) {
+            vmm_remap_user_page(tasks[pid].cr3, va, priv_frames[i]);
             vmm_flush_tlb(va);
         }
+        kfree(priv_frames);
+        priv_frames = (uintptr_t *)0;
+        /* The image is now backed by this task's own frames -- it no longer
+         * shares anything with its fork parent. */
+        tasks[pid].forked_shares_parent_image = 0;
     }
 
     /* Load the binary via multi-format dispatcher (ELF, PE32+, EIF).
@@ -2781,8 +3022,12 @@ int task_exec(const uint8_t *data, uint64_t size)
     const char *fmt_name = (const char *)0;
     entry = exec_load_fmt(data, size, &exec_err, &fmt_name);
     if (entry == 0) {
+        /* Past the commit point: the isolation remap already replaced this
+         * task's image pages with zeroed private frames, so there is nothing
+         * left to return to. */
         klog(LOG_DEBUG, "sched", "exec_load failed (err=%u)", (uint64_t)exec_err);
-        return -1;
+        return exec_commit_failure(pid, "image load failed",
+                                   new_kstack, argv_addrs);
     }
     tasks[pid].loaded_format = fmt_name;
 
@@ -2843,46 +3088,6 @@ int task_exec(const uint8_t *data, uint64_t size)
 
             exec_register_module((process_t *)0, &mod);
         }
-    }
-
-    /* Acquire the argv-address table BEFORE the guard stack below, and validate
-     * the exact argv frame fits the fixed 16 KiB user stack, so a failure here
-     * returns without leaking the guard stack. When the task carries an argv it
-     * MUST be used or the exec fails -- a name-path fallback would leave the
-     * stack argv disagreeing with the PEB CommandLine (built from the full
-     * argv). Name path (argc=1) applies only when argv is unset. */
-    t_argv = tasks[pid].argv;
-    t_argc = tasks[pid].argc;
-    if (t_argv && t_argc > 0) {
-        uint32_t need = argv_frame_bytes(t_argc, (const char *const *)t_argv);
-        if ((uint32_t)t_argc > ARG_ARGC_MAX ||
-            (uint64_t)need + ARGV_FRAME_RESERVE > USER_STACK_SIZE) {
-            klog(LOG_ERROR, "sched",
-                 "task_exec: argv frame (%u B, argc %d) exceeds user stack",
-                 need, t_argc);
-            return -1;
-        }
-        argv_addrs = (uint64_t *)kmalloc((uint32_t)t_argc * sizeof(uint64_t));
-        if (!argv_addrs) {
-            klog(LOG_ERROR, "sched",
-                 "task_exec: OOM allocating argv address table (argc %d)", t_argc);
-            return -1;
-        }
-        use_argv = 1;
-    }
-
-    /* Allocate a FRESH kernel stack with guard page - we cannot reuse the
-     * current one because the calling function (exec_loader_func) is still on it. */
-    {
-        uint32_t stack_pages = TASK_STACK_SIZE / 4096;
-        uintptr_t stack_base = pmm_alloc_contiguous(stack_pages + 1);
-        if (!stack_base) {
-            klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
-            if (argv_addrs) kfree(argv_addrs);
-            return -1;
-        }
-        vmm_install_guard_page(stack_base, "GUARD: kernel task stack overflow");
-        new_kstack = (uint8_t *)(stack_base + 4096);
     }
 
     /* User stack: use the fixed user range address (same as task_create_user).
@@ -2990,8 +3195,14 @@ int task_exec(const uint8_t *data, uint64_t size)
             tasks[pid].cr3 = user_cr3;
             __asm__ volatile("mov %0, %%cr3" : : "r"(user_cr3) : "memory");
         } else {
-            klog(LOG_WARN, "sched", "task_exec: PML4 creation failed for PID %u",
-                 (uint64_t)pid);
+            /* No per-process page table means no address-space isolation: the
+             * new image would run on the kernel PML4. That is a security
+             * failure, not a degradation, so it fails closed. Post-commit --
+             * the old image is already gone -- so the task terminates. */
+            klog(LOG_ERROR, "sched",
+                 "task_exec: PML4 creation failed for PID %u", (uint64_t)pid);
+            return exec_commit_failure(pid, "user PML4 creation failed",
+                                       new_kstack, argv_addrs);
         }
     }
 
@@ -3157,6 +3368,10 @@ int task_exec(const uint8_t *data, uint64_t size)
             }
             ustk--; *ustk = (uint64_t)t_argc;   /* argc */
             kfree(argv_addrs);
+            /* NULL it: every post-commit abort below passes argv_addrs to
+             * exec_commit_failure(), which frees it. A stale pointer here
+             * would be a double free. */
+            argv_addrs = (uint64_t *)0;
         } else {
             /* argv[1] = NULL (terminator) */
             ustk--;
@@ -3201,10 +3416,13 @@ int task_exec(const uint8_t *data, uint64_t size)
         /* RCX = PEB address (Win64 first arg for ntdll/LdrpInitialize).
          * ELF crt0.asm ignores RCX, so this is safe for both formats.
          * When PE32+ loading lands (TODO-08), ntdll will find PEB in RCX
-         * and parse ProcessParameters for argv -- no stack changes needed. */
-        sp[12] = tasks[pid].peb
-                     ? (uint64_t)(uintptr_t)tasks[pid].peb
-                     : 0;                          /* rcx = PEB */
+         * and parse ProcessParameters for argv -- no stack changes needed.
+         *
+         * Left 0 here and PATCHED at publication, after peb_alloc_for_task().
+         * This slot used to snapshot tasks[pid].peb at frame-build time, which
+         * is BEFORE the replacement PEB exists -- so a re-exec handed ring 3
+         * the previous image's PEB and a first exec handed it 0. */
+        sp[12] = 0;                                /* rcx = PEB (patched below) */
         sp[13] = 0;                                /* rbx */
         sp[14] = 0;                                /* rax */
         sp[15] = 0;                                /* int_no */
@@ -3216,31 +3434,29 @@ int task_exec(const uint8_t *data, uint64_t size)
         sp[21] = GDT_USER_DATA | 3;                /* ss = user data */
     }
 
-    /* Switch to new kernel stack and mark exec pending */
-    tasks[pid].rsp = (uint64_t)sp;
-    tasks[pid].stack_base = new_kstack;
-    tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
-    tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
-    /* Release-store pairs with the __atomic_load_n ACQUIRE in the
-     * scheduler save-gate: any CPU observing exec_pending=1 also sees
-     * the iretq frame writes above, so the save-gate can safely skip
-     * the msr_read clobber of threads[0].kernel_gs_base. */
-    __atomic_store_n(&tasks[pid].exec_pending, 1u, __ATOMIC_RELEASE);
-    tasks[pid].exec_pending_tick = uptime();  /* for stuck detection */
-
-    /* Allocate PEB in user address space */
+    /* Allocate PEB in user address space. A NULL PEB means ring 3 would start
+     * with RCX == 0 and no ProcessParameters -- fail closed rather than
+     * publish a process that faults on its first PEB access. */
     tasks[pid].peb = (void *)peb_alloc_for_task(
         pid, entry, tasks[pid].name);
+    if (!tasks[pid].peb)
+        return exec_commit_failure(pid, "PEB allocation failed",
+                                   new_kstack, argv_addrs);
 
     /* Allocate TEB for the initial thread (TID 0) */
     {
         uintptr_t ustack = (uintptr_t)tasks[pid].user_stack_base;
         TEB *teb = teb_alloc_for_task(pid, 0, ustack, USER_STACK_SIZE,
                                        tasks[pid].peb);
+        if (!teb)
+            return exec_commit_failure(pid, "TEB allocation failed",
+                                       new_kstack, argv_addrs);
         tasks[pid].teb = (void *)teb;
         /* Wire GS: swapgs in ISR exchanges GS_BASE <-> KERNEL_GS_BASE.
-         * After swapgs on ring-3 return, user-mode GS points to TEB. */
-        tasks[pid].kernel_gs_base = teb ? (uint64_t)(uintptr_t)teb : 0;
+         * After swapgs on ring-3 return, user-mode GS points to TEB. A zero
+         * kernel_gs_base here is what the publication race used to expose;
+         * the TEB check above makes it unreachable. */
+        tasks[pid].kernel_gs_base = (uint64_t)(uintptr_t)teb;
         /* Mirror into threads[0] so per-thread GS swap reads from thread */
         tasks[pid].threads[0].teb = (void *)teb;
         tasks[pid].threads[0].kernel_gs_base = tasks[pid].kernel_gs_base;
@@ -3295,6 +3511,57 @@ int task_exec(const uint8_t *data, uint64_t size)
 
     klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
            (uint64_t)pid, entry);
+
+    /* ---- PUBLICATION: the last act of task_exec ----
+     *
+     * Publishing hands the task over to the scheduler, so it must come after
+     * EVERY other write this function makes. The moment exec_pending is set,
+     * tasks[pid].rsp names a ring-3 frame the scheduler will happily resume:
+     * a switch-in clears exec_pending (task.c:1212 / 1489) and restores that
+     * frame, abandoning the rest of task_exec wherever it stood. When the
+     * publication sat before the PEB/TEB allocation, a tick in that window
+     * entered ring 3 with no TEB and kernel_gs_base == 0, and the remainder of
+     * task_exec never ran at all.
+     *
+     * local_irq_save() rather than KeRaiseIrql(DISPATCH_LEVEL): raising IRQL
+     * would NOT close this. irql_to_tpr(DISPATCH_LEVEL) is 0x20 (irql.c:73),
+     * which masks only priority groups 0-1, and KeRaiseIrql issues CLI only at
+     * >= HIGH_LEVEL (irql.c:134) -- the LAPIC timer still delivers and still
+     * calls schedule(). IRQL is also per-CPU bookkeeping and serializes
+     * nothing across CPUs. What actually has to be atomic here is same-CPU
+     * interrupt reentry between the rsp write and the exec_pending store: a
+     * tick landing between them sees exec_pending == 0 and the save-gate
+     * (task.c:1185 / 1419) overwrites tasks[pid].rsp with the old syscall
+     * frame, which the store then publishes as if it were the exec frame.
+     * local_irq_save/restore is documented for exactly this shape
+     * (spinlock.h:123). On the SYS_EXEC path IF is already 0 -- INT 0x80 is an
+     * interrupt gate (idt.c:607, type_attr 0xEE) and isr_common_stub never
+     * sti's -- so this is belt-and-braces there and load-bearing on the
+     * kernel-launcher path (shell_loader.c), which runs in thread context. */
+    {
+        uint64_t pub_flags = local_irq_save();
+
+        /* Patch RCX now that the replacement PEB exists (see the frame
+         * builder above for why this cannot be done at build time). */
+        sp[12] = tasks[pid].peb ? (uint64_t)(uintptr_t)tasks[pid].peb : 0;
+
+        /* Park the superseded kernel stack. task_exec's caller is still
+         * running on it, so it cannot be freed here; the next task_exec for
+         * this task or task_cleanup reclaims it. */
+        tasks[pid].stack_pending_free = tasks[pid].stack_base;
+
+        tasks[pid].rsp = (uint64_t)sp;
+        tasks[pid].stack_base = new_kstack;
+        tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
+        tasks[pid].threads[0].kernel_rsp = tasks[pid].kernel_rsp;
+        tasks[pid].exec_pending_tick = uptime();  /* for stuck detection */
+        /* Release-store LAST, and pairs with the __atomic_load_n ACQUIRE in
+         * the scheduler save-gate: any CPU observing exec_pending=1 also sees
+         * the iretq frame writes and every field written above it. */
+        __atomic_store_n(&tasks[pid].exec_pending, 1u, __ATOMIC_RELEASE);
+
+        local_irq_restore(pub_flags);
+    }
 
     return 0;
 }
@@ -3593,45 +3860,22 @@ void task_cleanup(uint32_t pid)
              (uint64_t)pid, (uint64_t)handles_closed);
     }
 
-    /* Free kernel stack (task-level, thread 0).
+    /* Free kernel stack (task-level, thread 0), plus any stack a task_exec
+     * superseded and parked. Both go through task_free_kernel_stack(), which
+     * carries the allocator discrimination and the uninstall-guard-before-PMM
+     * -free rule (see its comment for the two 2026-04-20 incidents).
      *
-     * stack_base may have come from EITHER allocator depending on the
-     * task's history:
-     *   - task_create_user: kmalloc(TASK_STACK_SIZE) -- in heap
-     *   - task_create:      pmm_alloc_contiguous(N+1) with guard page below
-     *                       (stack_base = guard_base + 4096)
-     *   - task_exec:        replaces with the same PMM+guard pattern
-     * Calling kfree on a PMM pointer dereferences ptr - HEADER_SIZE as a
-     * struct block_header (garbage), then walks coalesce_free_blocks
-     * which can corrupt the heap free-list and hang. heap_owns() checks
-     * if stack_base is in the kmalloc range; if not, fall back to PMM
-     * free using the known TASK_STACK_SIZE + guard-below convention.
-     *
-     * Discovered 2026-04-20: the user-mode test launcher's task_cleanup
-     * hung in kfree -> coalesce_free_blocks because the test_*.exe task
-     * was spawned via task_create + task_exec (both PMM stack paths),
-     * so kfree got a PMM pointer. */
+     * The parked stack is safe to free here: task_cleanup runs only after the
+     * parent observed TASK_DEAD in task_waitpid, so the task is off-CPU. If it
+     * exited before reaching another exec, this is where its last stale stack
+     * goes back. */
     if (tasks[pid].stack_base) {
-        if (heap_owns(tasks[pid].stack_base)) {
-            kfree(tasks[pid].stack_base);
-        } else {
-            /* PMM-allocated stack with guard page at stack_base - 4096.
-             * MUST uninstall the guard BEFORE freeing the frame: the
-             * guard install cleared the identity-map PTE for that VA,
-             * so handing the physical frame back to PMM without first
-             * restoring the PTE means the next pmm_alloc that returns
-             * the same frame faults at zero_page (or wherever the
-             * caller writes). Discovered 2026-04-20 via Boot Tests:
-             * #PF write at CR2=guard_phys, RIP in zero_page, after
-             * task_cleanup freed the guard frame. */
-            uintptr_t base = (uintptr_t)tasks[pid].stack_base;
-            uint32_t pages = (TASK_STACK_SIZE / 4096) + 1;  /* +1 for guard */
-            uint32_t p;
-            vmm_uninstall_guard_page(base - 4096);
-            for (p = 0; p < pages; p++)
-                pmm_free_frame((base - 4096) + (uintptr_t)p * 4096);
-        }
+        task_free_kernel_stack(tasks[pid].stack_base);
         tasks[pid].stack_base = (uint8_t *)0;
+    }
+    if (tasks[pid].stack_pending_free) {
+        task_free_kernel_stack(tasks[pid].stack_pending_free);
+        tasks[pid].stack_pending_free = (uint8_t *)0;
     }
     tasks[pid].threads[0].kernel_rsp = 0;
     /* Thread 0's task-owned stack is freed here (NOT via thread_free_stacks,

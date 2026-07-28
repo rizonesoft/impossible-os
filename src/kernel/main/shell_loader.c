@@ -79,10 +79,17 @@ void shell_loader_func(void)
     /* task_exec() takes `data` as `const uint8_t *` and never frees it on
      * either outcome (it copies bytes into the new process's own pages on
      * success); the caller owns buf's lifetime regardless of the result. */
-    if (task_exec(buf, fsize) < 0) {
-        klog(LOG_ERROR, "cmd", "exec failed");
-        kfree(buf);
-        return;
+    {
+        int erc = task_exec(buf, fsize);
+        if (erc < 0) {
+            klog(LOG_ERROR, "cmd", "exec failed");
+            kfree(buf);
+            /* Past task_exec's commit point the shell image is gone; this task
+             * must not continue as if it still had one. */
+            if (erc == TASK_EXEC_IMAGE_DESTROYED)
+                task_exit(-1);          /* does not return */
+            return;
+        }
     }
     kfree(buf);
 

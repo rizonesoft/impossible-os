@@ -1118,7 +1118,12 @@ static void utest_loader_func(void)
      * task_exec returns 0 the staging buffer is no longer needed. */
     rc = task_exec(buf, size);
     if (rc < 0) {
-        klog(LOG_ERROR, "UTEST", "%s: task_exec failed", path);
+        /* Covers BOTH outcomes: a pre-commit -1 (image intact) and
+         * TASK_EXEC_IMAGE_DESTROYED (image gone). Either way the staging
+         * frames are released here and the loader task exits -- it must never
+         * fall through to ring 3 with a destroyed image. */
+        klog(LOG_ERROR, "UTEST", "%s: task_exec failed (rc=%d)",
+             path, (int64_t)rc);
         for (p = 0; p < pages; p++)
             pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
         task_exit(-5);

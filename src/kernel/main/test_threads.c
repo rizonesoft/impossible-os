@@ -267,10 +267,15 @@ void exec_loader_func(void)
     vfs_read(file, 0, (uint32_t)file->size, buf);
     vfs_close(file);
 
-    if (task_exec(buf, file->size) < 0) {
-        klog(LOG_WARN, "TEST", "[ExecLoader] exec failed");
-        kfree(buf);
-        return;
+    {
+        int erc = task_exec(buf, file->size);
+        if (erc < 0) {
+            klog(LOG_WARN, "TEST", "[ExecLoader] exec failed");
+            kfree(buf);
+            if (erc == TASK_EXEC_IMAGE_DESTROYED)
+                task_exit(-1);          /* does not return */
+            return;
+        }
     }
 
     for (;;)
