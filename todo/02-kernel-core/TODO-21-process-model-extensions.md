@@ -623,10 +623,7 @@ A fourth defect of the same class was filed here 2026-07-27 and split out to §2
 
 **Test checkpoint:** a fault-injected argv/stack/PEB/TEB allocation failure after image load terminates the task with a named log instead of returning to ring 3; N repeated `SYS_EXEC` calls leave the PMM free-page count unchanged (today it drops by `TASK_STACK_SIZE`+4 KiB per exec). `klog(LOG_ERROR, "sched", "exec: post-commit failure, terminating PID %u")`. Test on: QEMU TCG (8.2.2 and current), QEMU WHPX; bare metal.
 
-> **Test runner:** `bash scripts/test.sh SUITE=sched` -- 3 new Sched assertions (parked-stack clear, stack-pointer
-> non-aliasing, reclamation leak-free). `bash scripts/test.sh SUITE=mm` -- 5 new VMM guard-table suites (saturation
-> refusal, alias refusal + retry, flag normalization, unregistered fail-closed for read-only and absent, install-side
-> non-identity refusal). Full gate: `bash scripts/test.sh` + `bash scripts/test-smoke.sh`.
+> **Test runner:** `bash scripts/test.sh SUITE=sched` -- 3 new Sched assertions (parked-stack clear, stack-pointer non-aliasing, reclamation leak-free). `bash scripts/test.sh SUITE=mm` -- 5 new VMM guard-table suites (saturation refusal, alias refusal + retry, flag normalization, unregistered fail-closed for read-only and absent, install-side non-identity refusal). Full gate: `bash scripts/test.sh` + `bash scripts/test-smoke.sh`.
 
 > **Notes:**
 > - Shipped: an explicit commit point in `task_exec`, non-returning post-commit failures via `exec_commit_failure` + `TASK_EXEC_IMAGE_DESTROYED`, kernel-stack reclamation through `task.stack_pending_free`, and publication moved last under `local_irq_save`.
