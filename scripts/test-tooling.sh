@@ -3754,6 +3754,28 @@ if python3 "$REPO_ROOT/.claude/hooks/cd_prefix_reminder.py" --selftest >/dev/nul
 else
     t_fail "cd_prefix_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/todo_wrap_reminder.py" --selftest >/dev/null 2>&1; then
+    t_pass "todo_wrap_reminder_selftest  hard-wrap detector green"
+else
+    t_fail "todo_wrap_reminder_selftest  embedded selftest failed"
+fi
+if python3 "$REPO_ROOT/scripts/todo-reflow.py" --selftest >/dev/null 2>&1; then
+    t_pass "todo_reflow_selftest  reflow is content-preserving + idempotent"
+else
+    t_fail "todo_reflow_selftest  embedded selftest failed"
+fi
+# The reflow must never REFUSE (exit 2) across the real tree: a refusal means it
+# would have changed content, not just line breaks, and that is the failure mode
+# worth catching before validate-todo-file runs --write on someone's TODO.
+_reflow_rc=0
+python3 "$REPO_ROOT/scripts/todo-reflow.py" --check $(find "$REPO_ROOT/todo" -name '*.md') \
+    >/dev/null 2>&1 || _reflow_rc=$?
+if [ "$_reflow_rc" = "2" ]; then
+    t_fail "todo_reflow_no_refusals  reflow would alter content in some todo file"
+else
+    t_pass "todo_reflow_no_refusals  content-preserving across every todo/ file"
+fi
+
 # search_offload_gate is RETIRED (2026-07-28): the headless run it was scoped to
 # has no Grep tool, so its remediation was impossible, and Bash-grep vs Grep-tool
 # output is identical in context so the saving never existed. The invariant worth

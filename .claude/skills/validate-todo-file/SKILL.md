@@ -33,7 +33,7 @@ description: Validate a TODO file for structural completeness, Implementation Or
 2. Clean up formatting throughout the file.
    - Run Grep for continuation lines: `rg '^ {2,}[a-zA-Z`'"'"'"]' <file>` -- fix all matches before proceeding.
    - Remove blank lines between consecutive list items in the same group.
-   - Join hard-wrapped mid-sentence line breaks in prose, callouts, and XREF notes.
+   - **Join hard-wrapped mid-sentence line breaks with the SCRIPT, not by hand:** `python3 scripts/todo-reflow.py --diff <file>` to review, then `--write` to apply. `todo/` prose is ONE PARAGRAPH PER LINE, wrapped by the reader's editor; a fill column makes a section inconsistent with the file around it and turns every later edit into a reflow. This step previously read "join hard-wrapped mid-sentence line breaks" as model-driven prose, which is exactly how TODO-21 sections 19-20 shipped wrapped at 120 columns (measured 2026-07-28: 102 chars/line against 209 for the rest of the file). The script is deterministic and idempotent, REFUSES any reflow that would alter content (whitespace-normalised comparison; file left untouched on mismatch), and leaves bullets, tables, headings, fenced and indented code, two-line notes, and runs of complete sentences alone. Do not hand-reflow a long TODO -- that is the operation where a paragraph silently loses a clause. Authoring-time prevention is the `todo_wrap_reminder` hook (warn-only).
    - No blank lines inside a single callout block. No blank lines between table rows.
    - Remove orphaned bold labels (standalone `**Title**` lines that aren't `**Test checkpoint:**` etc.).
    - Max 1 consecutive blank line anywhere. Preserve blank lines between headings, groups, and `---` separators.
