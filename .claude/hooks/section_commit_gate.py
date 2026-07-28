@@ -1603,6 +1603,64 @@ def _staged_loc_delta(root: Path, paths: list[str]) -> int | None:
     return total
 
 
+
+# Where the harness leaves the identity of the session issuing a Bash call, so
+# the --git-hook-mode child (which gets no stdin payload) can tell whether an
+# in-flight skill entry belongs to the committer or to someone else.
+_COMMITTING_SESSION_REL = ".claude/state/committing-session.json"
+# The marker is only trusted this long. A raw `git commit` typed in a terminal
+# with no harness session must NOT be attributed to whoever last used the tool,
+# so a stale marker is ignored and the gate falls back to its previous
+# behaviour (assume the entry is live).
+_COMMITTING_SESSION_FRESH_SEC = 300
+
+
+def _record_committing_session(session_id) -> None:
+    """Best-effort note of the session making this Bash call. Never raises."""
+    if not isinstance(session_id, str) or not session_id:
+        return
+    try:
+        root = _repo_root()
+        if root is None:
+            return
+        p = root / _COMMITTING_SESSION_REL
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps({"session_id": session_id,
+                                   "ts": time.time()}), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
+
+
+def _entry_is_foreign(root: Path, entry: dict) -> bool:
+    """True only with POSITIVE evidence the entry belongs to another session.
+
+    Requires all of: a marker file, a fresh timestamp, a session id on the
+    entry, and a genuine mismatch. Anything missing or stale returns False, so
+    this can only ever RELAX the gate on evidence and never tightens it or
+    guesses. A human committing from a bare terminal has no fresh marker and is
+    therefore treated exactly as before.
+    """
+    try:
+        owner = entry.get("session_id")
+        if not isinstance(owner, str) or not owner:
+            return False
+        raw = (root / _COMMITTING_SESSION_REL).read_text(encoding="utf-8")
+        cur = json.loads(raw)
+        sid = cur.get("session_id")
+        ts = cur.get("ts")
+        if not isinstance(sid, str) or not sid:
+            return False
+        if not isinstance(ts, (int, float)):
+            return False
+        if (time.time() - float(ts)) > _COMMITTING_SESSION_FRESH_SEC:
+            return False                    # stale marker -> no evidence
+        return sid != owner
+    except Exception:
+        return False
+
+
 # A skill entry older than this is treated as abandoned, not in flight.
 # 6h is deliberately generous: the longest real review-todo-section observed
 # (TODO-21 section 19, 2026-07-28) ran about one hour end to end, so this only
@@ -1669,7 +1727,7 @@ def _active_section_todo(root: Path) -> str:
         entry = state.get(skill)
         if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
             continue
-        if _skill_entry_stale(entry):
+        if _skill_entry_stale(entry) or _entry_is_foreign(root, entry):
             continue
         todo_path = entry.get("todo_path")
         if isinstance(todo_path, str) and todo_path.endswith(".md") \
@@ -2078,6 +2136,14 @@ def _harness_command_is_git_commit() -> tuple[bool, bool, str]:
     if payload.get("tool_name") != "Bash":
         return (False, False, "")
     cmd = (payload.get("tool_input") or {}).get("command", "")
+    # Record WHO is issuing this Bash call, for the --git-hook-mode child.
+    # That mode receives no stdin payload and therefore cannot tell whose
+    # session is committing, which is how a finished run's in-flight skill
+    # entry came to gate an unrelated interactive commit (2026-07-28). This
+    # hook fires PreToolUse on every Bash call, including the `git commit`
+    # that spawns pre-commit, so it is the natural place to leave that
+    # identity behind. Best-effort: a failure here must never block a tool.
+    _record_committing_session(payload.get("session_id"))
     if not isinstance(cmd, str):
         return (False, False, "")
     if not _looks_like_git_commit_screen(cmd):
