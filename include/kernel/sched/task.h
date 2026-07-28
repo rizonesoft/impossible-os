@@ -1114,9 +1114,15 @@ void fault_site_restore(uint32_t saved);
  * the ordinal countdown path run unchanged. */
 int fault_site_claim(uint32_t alloc_tag);
 
-/* Install a site arm for ONE allocator (replacing only that allocator's
- * previous site arm), or clear it with FAULT_SITE_NONE. Returns 0 on
- * success, -1 on an invalid allocator tag or site id. */
+/* The allocator that OWNS a site (every site is reached through exactly
+ * one), or 0 for FAULT_SITE_NONE and any out-of-range id. */
+uint32_t fault_site_owner(uint32_t site);
+
+/* Install a site arm for ONE allocator, replacing only that allocator's
+ * previous site arm. Fails CLOSED: returns -1 for an invalid tag, for
+ * FAULT_SITE_NONE, and for a site owned by the OTHER allocator -- all of
+ * which would otherwise report success while installing nothing that could
+ * ever be claimed. Use fault_site_arm_clear() to disarm. */
 int fault_site_arm_set(uint32_t alloc_tag, uint32_t site);
 
 /* Clear the calling task's site arm for ONE allocator. */

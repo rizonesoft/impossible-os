@@ -365,6 +365,45 @@ static void test_fault_site_rejects_invalid_site_id(void)
     g_boot_info.config.test = saved_test;
 }
 
+static void test_fault_site_arm_fails_closed(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+
+    g_boot_info.config.test = 1;
+
+    /* Every shape below LOOKS like a valid arm but could never be
+     * claimed. Each must be refused at arm time, because the ring-3
+     * consumed-check reads a disarmed slot as "it fired" -- so an arm that
+     * silently installs nothing would certify an unexecuted branch. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(FAULT_KMALLOC_SITE,
+                                                       FAULT_SITE_NONE),
+                   (uint64_t)(uint64_t)-1LL,
+                   "arming FAULT_SITE_NONE is refused, not a silent disarm");
+    /* PEB frames are a pmm site; a kmalloc arm on it can never fire. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(FAULT_KMALLOC_SITE,
+                                                       FAULT_SITE_PEB_FRAMES),
+                   (uint64_t)(uint64_t)-1LL,
+                   "kmalloc arm on a pmm-owned site is refused");
+    /* ...and the mirror image. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_EXEC_ARGV_TABLE),
+                   (uint64_t)(uint64_t)-1LL,
+                   "pmm arm on a kmalloc-owned site is refused");
+
+    /* A malformed query must not answer 0 -- that is the consumed value. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(FAULT_SITE_QUERY, 0),
+                   (uint64_t)(uint64_t)-1LL,
+                   "FAULT_SITE_QUERY with tag 0 returns -1, not consumed");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(FAULT_SITE_QUERY,
+                                                       FI_ALLOC_COUNT + 1),
+                   (uint64_t)(uint64_t)-1LL,
+                   "FAULT_SITE_QUERY with an out-of-range tag returns -1");
+
+    fault_site_arm_clear(FI_ALLOC_KMALLOC);
+    fault_site_arm_clear(FI_ALLOC_PMM);
+    g_boot_info.config.test = saved_test;
+}
+
 static void test_fault_site_claim_fires_exactly_once(void)
 {
     uint8_t saved_test = g_boot_info.config.test;
@@ -450,17 +489,53 @@ static void test_fault_site_arms_are_per_allocator(void)
 
     g_boot_info.config.test = 1;
 
-    /* Arm BOTH allocators at the same site, then install an ordinal
-     * kmalloc countdown. Replacement is per-allocator, so that must
-     * cancel the kmalloc site arm and leave the pmm one untouched -- a
-     * single shared arm word would silently delete the pmm program. */
-    sys_fault_inject_dispatch(FAULT_KMALLOC_SITE, FAULT_SITE_PEB_FRAMES);
-    sys_fault_inject_dispatch(FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES);
-    sys_fault_inject_dispatch(FAULT_KMALLOC_COUNTDOWN, 1);
+    /* PART 1 -- the arms COEXIST. This has to be observed directly, before
+     * any replacement: if both arms shared one tagged slot, the pmm arm
+     * would overwrite the kmalloc one, and part 2 alone would still read
+     * exactly as expected (kmalloc 0, pmm 1) while independence was
+     * broken. Claiming BOTH is what rules that out. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_KMALLOC_SITE, FAULT_SITE_EXEC_ARGV_TABLE), 0ULL,
+                   "kmalloc site arms at a site it owns");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES), 0ULL,
+                   "pmm site arms at a site it owns");
+
+    saved_site = fault_site_enter(FAULT_SITE_EXEC_ARGV_TABLE);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 1ULL,
+                   "kmalloc arm is live while a pmm arm is also installed");
+    fault_site_restore(saved_site);
 
     saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 1ULL,
+                   "pmm arm is live at the same time as the kmalloc arm");
+    fault_site_restore(saved_site);
+
+    /* PART 2 -- replacement is per-allocator. Re-arm both (part 1 consumed
+     * them), then install an ordinal kmalloc countdown: it must cancel the
+     * kmalloc SITE arm and leave the pmm one untouched. */
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_KMALLOC_SITE, FAULT_SITE_EXEC_ARGV_TABLE), 0ULL,
+                   "kmalloc site re-arms after being consumed");
+    TEST_ASSERT_EQ((uint64_t)sys_fault_inject_dispatch(
+                       FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES), 0ULL,
+                   "pmm site re-arms after being consumed");
+    /* Prove the kmalloc arm is actually LIVE before the countdown replaces
+     * it. Without this the zero-claim below would also pass if the re-arm
+     * had silently no-opped -- confirming replacement by testing something
+     * that was never armed. */
+    TEST_ASSERT_EQ((uint64_t)fault_site_arm_peek(FI_ALLOC_KMALLOC),
+                   (uint64_t)FI_ARM_PACK(FI_ALLOC_KMALLOC,
+                                         FAULT_SITE_EXEC_ARGV_TABLE),
+                   "kmalloc site arm is live immediately before replacement");
+    sys_fault_inject_dispatch(FAULT_KMALLOC_COUNTDOWN, 1);
+
+    saved_site = fault_site_enter(FAULT_SITE_EXEC_ARGV_TABLE);
     TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 0ULL,
                    "ordinal kmalloc arm cancelled the kmalloc site arm");
+    fault_site_restore(saved_site);
+
+    saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
     TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 1ULL,
                    "the pmm site arm survived an unrelated kmalloc arm");
     fault_site_restore(saved_site);
@@ -868,6 +943,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: fault-site rejects invalid site id",
                             test_fault_site_rejects_invalid_site_id,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site arming fails closed",
+                            test_fault_site_arm_fails_closed,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: fault-site claims exactly once",
                             test_fault_site_claim_fires_exactly_once,

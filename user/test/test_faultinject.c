@@ -140,12 +140,25 @@ int main(void)
                                     FAULT_SITE_PEB_FRAMES) == 0,
                  "FAULT_PMM_SITE arms the PEB-frame site");
 
-    /* Negative case 1: a site id this kernel does not implement must be
-     * refused at arm time. Silently accepting it would produce a test that
-     * passes because nothing ever fired. */
+    /* Negative case 1: every arm shape that could never FIRE must be
+     * refused at arm time. This matters more than it looks: the consumed
+     * check below reads a disarmed slot as "it fired", so an arm that
+     * reports success while installing nothing claimable would let a
+     * mistyped test certify a branch that never executed. */
     UTEST_ASSERT(utest_fault_inject(FAULT_KMALLOC_SITE,
                                     FAULT_SITE_MAX + 1) != 0,
                  "an out-of-range site id is refused at arm time");
+    UTEST_ASSERT(utest_fault_inject(FAULT_KMALLOC_SITE,
+                                    FAULT_SITE_NONE) != 0,
+                 "arming FAULT_SITE_NONE is refused, not a silent disarm");
+    UTEST_ASSERT(utest_fault_inject(FAULT_KMALLOC_SITE,
+                                    FAULT_SITE_PEB_FRAMES) != 0,
+                 "a kmalloc arm on the pmm-owned PEB site is refused");
+    UTEST_ASSERT(utest_fault_inject(FAULT_PMM_SITE,
+                                    FAULT_SITE_EXEC_ARGV_TABLE) != 0,
+                 "a pmm arm on a kmalloc-owned exec site is refused");
+    UTEST_ASSERT(utest_fault_inject(FAULT_SITE_QUERY, 0) != 0,
+                 "FAULT_SITE_QUERY with tag 0 returns -1, not consumed");
 
     /* Negative case 2: with an exec-path site armed, an allocation on a
      * path that never enters that site must still succeed. sys_openfile

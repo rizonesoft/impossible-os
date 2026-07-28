@@ -327,8 +327,15 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
 
     /* Every ORDINAL arm below clears the site arm first, and every SITE arm
      * clears the matching ordinal state. That gives one tagged program per
-     * allocator with replacement semantics, so the two modes can never both
-     * be live and the caller never depends on the order it armed them in. */
+     * allocator with replacement semantics, so the caller never depends on
+     * the order it armed them in.
+     *
+     * SCOPE: the invariant is per-CPU, not global. The ordinal countdowns
+     * live in per_cpu_data, so a clear reaches only THIS CPU -- a countdown
+     * armed before a migration can still sit on the old CPU. The site arm
+     * is task-owned precisely so it does not inherit that; making the
+     * ordinal selectors migration-safe is tracked in the user-mode test
+     * framework TODO (child-targeted fault arming). */
     switch (kind) {
     case FAULT_KMALLOC_NEXT:
         fault_site_arm_clear(FI_ALLOC_KMALLOC);
@@ -400,7 +407,17 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
          * path, and then requires this to read 0 -- proving the injection
          * fired at the named allocation rather than the path merely
          * failing for some unrelated reason, which is otherwise
-         * indistinguishable from the outside. */
+         * indistinguishable from the outside.
+         *
+         * An invalid allocator tag returns -1, NOT 0: zero is the
+         * consumed sentinel, so answering 0 to a malformed query would let
+         * a mistyped test read "it fired" out of "I asked nonsense". */
+        if (countdown < FAULT_ALLOC_KMALLOC || countdown > FAULT_ALLOC_PMM) {
+            klog(LOG_WARN, "sys",
+                 "SYS_FAULT_INJECT bad query tag=%u pid=%u",
+                 (uint64_t)countdown, (uint64_t)pid);
+            return -1;
+        }
         return (int64_t)(uint64_t)fault_site_arm_peek(countdown);
     case FAULT_CLEAR_ALL:
         fault_site_arm_clear(FI_ALLOC_KMALLOC);

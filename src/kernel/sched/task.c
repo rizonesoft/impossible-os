@@ -5171,6 +5171,28 @@ static int fault_site_tag_valid(uint32_t alloc_tag)
     return (alloc_tag >= 1u && alloc_tag <= FI_ALLOC_COUNT);
 }
 
+/* Which allocator OWNS each site. Every site is reached through exactly one
+ * allocator, so an arm naming the other one could never be claimed -- it
+ * would sit there looking armed while the test it belongs to concluded the
+ * branch was covered. Validation is centralized here so the dispatcher, the
+ * arm path, and any future site all agree on one mapping. Indexed by
+ * FAULT_SITE_* id; entry 0 (FAULT_SITE_NONE) is deliberately 0 = no owner,
+ * which is what makes "arm site NONE" an error rather than a silent
+ * disarm-that-reports-success. */
+static const uint32_t s_fault_site_owner[FAULT_SITE_MAX + 1] = {
+    [FAULT_SITE_NONE]                = 0u,
+    [FAULT_SITE_EXEC_ARGV_TABLE]     = FI_ALLOC_KMALLOC,
+    [FAULT_SITE_EXEC_PRIVATE_FRAMES] = FI_ALLOC_KMALLOC,
+    [FAULT_SITE_PEB_FRAMES]          = FI_ALLOC_PMM,
+};
+
+uint32_t fault_site_owner(uint32_t site)
+{
+    if (site > FAULT_SITE_MAX)
+        return 0u;
+    return s_fault_site_owner[site];
+}
+
 int fault_site_claim(uint32_t alloc_tag)
 {
     struct task   *t  = task_current();
@@ -5200,14 +5222,17 @@ int fault_site_arm_set(uint32_t alloc_tag, uint32_t site)
 
     if (!t || !fault_site_tag_valid(alloc_tag))
         return -1;
-    if (site > FAULT_SITE_MAX)
+    /* Fail CLOSED on anything that could not fire. FAULT_SITE_NONE and a
+     * site owned by the other allocator are both rejected rather than
+     * stored: accepting them would return success while installing nothing
+     * claimable, and the caller's later "arm reads 0" consumed-check would
+     * then certify a branch that never executed. */
+    if (fault_site_owner(site) != alloc_tag)
         return -1;
     /* Only THIS allocator's slot moves: a live arm on the other allocator
      * is an independent program and must survive. */
     __atomic_store_n(&t->fault_site_arm[FI_ARM_SLOT(alloc_tag)],
-                     (site == FAULT_SITE_NONE)
-                         ? 0u : FI_ARM_PACK(alloc_tag, site),
-                     __ATOMIC_RELEASE);
+                     FI_ARM_PACK(alloc_tag, site), __ATOMIC_RELEASE);
     return 0;
 }
 
