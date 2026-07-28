@@ -110,6 +110,32 @@ static event_t s_dpc_worker_event;
  * cumulative ">=DISPATCH-time" case (param 0x1) is deferred -- it needs per-CPU
  * time-at-DISPATCH accounting at every current_irql write site (the IRQL-write-
  * surface centralization tracked in section 13). */
+/* Per-routine overrun accounting, so a chronically slow DPC is reported once
+ * with a count instead of once per occurrence.
+ *
+ * WHY: dpc_watchdog_single_overrun() warned unconditionally on every crossing.
+ * A single slow routine therefore owned the serial log -- a 2026-07-27 capture
+ * carried 1776 DPC-watchdog lines, 65% of all warnings in the boot, and a
+ * 2026-07-28 WHPX capture showed the same routine (quota_pressure_tick)
+ * overrunning continuously from Phase 3 onward. The overrun itself is a real
+ * defect and is owned separately; suppressing the SPAM must not suppress the
+ * SIGNAL, so the first crossings still warn and the totals are still reported.
+ *
+ * SMP: this lives inside s_wd[cpu_id], which is only ever touched by the CPU it
+ * indexes -- drain_queue() is reached exclusively via smp_this_cpu()->cpu_id
+ * from both of its callers (verified 2026-07-28), so no lock is needed and none
+ * is taken. That matters here because the reporting path calls klog(), and
+ * holding a spinlock across serial output is forbidden. */
+#define DPC_WD_TRACKED_ROUTINES 8   /* distinct offenders remembered per CPU */
+#define DPC_WD_WARN_BURST       3   /* per-routine lines before collapsing    */
+
+struct dpc_wd_offender {
+    void    *pc;                 /* offending routine, NULL = free slot         */
+    uint32_t count;              /* total crossings observed on this CPU        */
+    uint32_t worst_us;           /* longest single run seen                     */
+    uint32_t warned;             /* lines already emitted for this routine      */
+};
+
 struct dpc_watchdog {
     uint32_t budget;             /* remaining per-tick DPC tokens (carry-over)  */
     uint32_t tick_dpcs;          /* DPCs dispatched in the current tick         */
@@ -145,6 +171,18 @@ struct dpc_watchdog {
 _Static_assert(sizeof(struct dpc_watchdog) == DPC_CACHELINE,
                "dpc_watchdog must occupy exactly one cache line (no false-share)");
 static struct dpc_watchdog s_wd[MAX_CPUS];
+
+/* Offender table lives OUTSIDE struct dpc_watchdog on purpose. That struct is
+ * pinned to exactly one cache line by a _Static_assert because it is written on
+ * every drain and must not false-share between CPUs; this table is touched only
+ * when a DPC actually overruns (rare), so putting it on the hot line would cost
+ * the fast path to serve the slow one. Same per-CPU ownership rule, its own
+ * aligned storage. */
+struct dpc_wd_offender_table {
+    struct dpc_wd_offender slot[DPC_WD_TRACKED_ROUTINES];
+    uint32_t overflow;           /* crossings from routines past the table      */
+} __attribute__((aligned(DPC_CACHELINE)));
+static struct dpc_wd_offender_table s_wd_off[MAX_CPUS];
 
 /* 0 = warn-only (default), 1 = escalate a single-DPC overrun to KeBugCheckEx. */
 static int s_dpc_wd_strict;
@@ -211,9 +249,37 @@ static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
                         + ((cycles % hz) * 1000000ULL) / hz)
                      : 0;
 
-    klog(LOG_WARN, "dpc",
-         "watchdog: DPC %p on CPU %u ran %u us (> %u us threshold)",
-         routine_pc, (uint64_t)cpu_id, us, (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US);
+    /* Account first, then decide whether to speak. Per-CPU table, no lock (see
+     * struct dpc_wd_offender). A routine that has already had its say is
+     * counted silently and surfaces in the end-of-boot roll-up instead. */
+    int suppressed = 0;
+    if (cpu_id < MAX_CPUS) {
+        struct dpc_wd_offender_table *tb = &s_wd_off[cpu_id];
+        struct dpc_wd_offender *slot = (struct dpc_wd_offender *)0;
+        for (uint32_t i = 0; i < DPC_WD_TRACKED_ROUTINES; i++) {
+            if (tb->slot[i].pc == routine_pc) { slot = &tb->slot[i]; break; }
+            if (!tb->slot[i].pc && !slot)      slot = &tb->slot[i];
+        }
+        if (slot) {
+            if (!slot->pc) slot->pc = routine_pc;
+            slot->count++;
+            if ((uint32_t)us > slot->worst_us) slot->worst_us = (uint32_t)us;
+            if (slot->warned >= DPC_WD_WARN_BURST)
+                suppressed = 1;
+            else
+                slot->warned++;
+        } else {
+            /* Table full: count it so the roll-up can say the report is partial
+             * rather than silently under-reporting. */
+            tb->overflow++;
+            suppressed = 1;
+        }
+    }
+
+    if (!suppressed)
+        klog(LOG_WARN, "dpc",
+             "watchdog: DPC %p on CPU %u ran %u us (> %u us threshold)",
+             routine_pc, (uint64_t)cpu_id, us, (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US);
     if (s_dpc_wd_strict)
         /* Win11 DPC_WATCHDOG_VIOLATION param 0x0: p1=0 sub-case, p2=offending
          * routine, p3=elapsed us, p4=threshold us. */
@@ -234,6 +300,42 @@ static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
  * therefore get no BSP coverage. Extending depth/budget/warn bookkeeping to AP
  * queues (a BSP cross-CPU sweep, needing the per-CPU budget made atomic vs the
  * AP's own drain spend) is deferred -- a tracked AP-watchdog-coverage item. */
+/* End-of-boot roll-up of DPC overruns, one line per offending routine.
+ *
+ * The per-routine burst limit above stops a chronic offender from owning the
+ * log, but suppression that loses the signal is worse than the spam: an
+ * operator must still be able to see WHICH routine overran, HOW OFTEN, and how
+ * BAD the worst case was. This prints exactly that, once, and says so when the
+ * per-CPU table overflowed rather than under-reporting silently.
+ *
+ * Read-only aggregation across the per-CPU tables. Safe to call from the boot
+ * path after DPCs have been running; costs one pass over MAX_CPUS x 8 slots. */
+void dpc_watchdog_report(void)
+{
+    uint32_t routines = 0;
+    for (uint32_t c = 0; c < MAX_CPUS; c++) {
+        for (uint32_t i = 0; i < DPC_WD_TRACKED_ROUTINES; i++) {
+            struct dpc_wd_offender *o = &s_wd_off[c].slot[i];
+            if (!o->pc || !o->count) continue;
+            if (!routines)
+                klog(LOG_INFO, "dpc", "--- DPC overrun summary (threshold %u us) ---",
+                     (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US);
+            routines++;
+            klog(LOG_WARN, "dpc",
+                 "  CPU %u %p: %u overrun(s), worst %u us",
+                 (uint64_t)c, o->pc, (uint64_t)o->count, (uint64_t)o->worst_us);
+        }
+        if (s_wd_off[c].overflow)
+            klog(LOG_WARN, "dpc",
+                 "  CPU %u: %u further overrun(s) from untracked routines "
+                 "(more than %u distinct offenders)",
+                 (uint64_t)c, (uint64_t)s_wd_off[c].overflow,
+                 (uint64_t)DPC_WD_TRACKED_ROUTINES);
+    }
+    if (!routines)
+        klog(LOG_INFO, "dpc", "DPC overruns: none");
+}
+
 void dpc_watchdog_tick(void)
 {
     struct per_cpu_data *cpu = smp_this_cpu();

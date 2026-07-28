@@ -257,6 +257,11 @@ int dpc_current_cpu_has_pending(void);
 /* Compute the single-DPC TSC cycle threshold + seed per-CPU token budgets.
  * Called from dpc_init() after TSC calibration; idempotent. */
 void dpc_watchdog_init(void);
+/* One-shot summary of DPC threshold overruns seen so far: one line per
+ * offending routine with its count and worst case. The per-occurrence
+ * warning is burst-limited, so this is what makes a chronic offender
+ * visible without letting it own the log. */
+void dpc_watchdog_report(void);
 
 /* Per-timer-tick watchdog bookkeeping: refill the per-CPU token budget and fire
  * the sustained-queue-depth warning. Call from the timer ISR every tick. */

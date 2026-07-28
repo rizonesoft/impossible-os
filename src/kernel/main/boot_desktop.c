@@ -39,6 +39,7 @@
 #include "kernel/etw.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_timing.h"
+#include "kernel/sched/dpc.h"
 #include "kernel/hw_dump.h"
 #include "kernel/boot_init.h"
 #include "kernel/boot_progress.h"
@@ -538,6 +539,11 @@ void boot_phase3(void)
     boot_timing_print_steps();
     boot_perf_dump();
     boot_perf_compare();
+    /* One line per DPC that crossed the watchdog threshold, with its count and
+     * worst case. The per-occurrence warning is burst-limited (3 per routine),
+     * so without this a chronic offender would be under-reported rather than
+     * over-reported -- suppressing spam must not suppress signal. */
+    dpc_watchdog_report();
     boot_perf_save();
     boot_timing_write_report();
     boot_postcode_write_log();

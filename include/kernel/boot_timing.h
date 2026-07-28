@@ -99,7 +99,16 @@ uint32_t boot_timing_get_fpdt_entries(boot_timing_fpdt_entry_t *out, uint32_t ca
 
 #define BOOT_PERF_MAX_RECORDS  32
 #define BOOT_PERF_NAME_LEN     16  /* truncated step name stored in NVRAM */
-#define BOOT_PERF_MAGIC        0x50455246  /* "PERF" */
+/* "PERG" -- bumped from "PERF" (0x50455246) on 2026-07-28 when the header grew
+ * the config tag below. An old-format variable now fails the magic check and is
+ * treated as "no previous boot", which costs exactly one boot without a
+ * comparison and then self-heals. That is deliberately preferred to reading a
+ * short record array through a longer struct. */
+#define BOOT_PERF_MAGIC        0x47524550  /* "PERG" */
+/* Absolute per-step regression threshold. A step that gains more than this many
+ * milliseconds is reported even when it stays under the 200% ratio, so a slow
+ * step with an already-large baseline is not invisible. */
+#define BOOT_PERF_ABS_REGRESS_MS 500
 /* Sanity ceiling for a per-step elapsed_ms (10 minutes). Applied identically on
  * save, compare, and read so a corrupt/saturated tsc_to_ms() value cannot make
  * the NVRAM record non-round-trippable or overflow the regression math. */
@@ -114,11 +123,34 @@ typedef struct {
     uint8_t  _pad[3];                   /* alignment */
 } boot_perf_record_t;
 
-/* NVRAM variable header -- prefixed before the record array. */
+/* NVRAM variable header -- prefixed before the record array.
+ *
+ * CONFIG TAG (2026-07-28). A boot's step timings are only comparable to another
+ * boot taken under the same machine configuration. Before this tag existed, a
+ * baseline recorded under one accelerator was differenced against a boot under
+ * another and every step looked ~3x slower -- a KVM-vs-WHPX comparison reported
+ * as 30 kernel regressions. cpu_count and tsc_khz identify the configuration
+ * cheaply and without new plumbing: tsc_khz differs across host CPUs and
+ * accelerators, cpu_count across -smp settings, and both are already known here.
+ * A mismatch on either means the comparison is declined, not warned about. */
 typedef struct {
     uint32_t magic;                     /* BOOT_PERF_MAGIC */
     uint32_t count;                     /* number of records following */
+    uint32_t cpu_count;                 /* smp_cpu_count() when saved */
+    uint32_t tsc_khz;                   /* TSC frequency in kHz when saved */
 } boot_perf_header_t;
+
+/* Layer 1 of the 5-layer defense: this struct is serialized into a UEFI NVRAM
+ * variable and read back by a LATER BOOT, possibly of a different kernel build,
+ * so its layout is a cross-boot ABI contract. Pin the offsets and the total
+ * size; adding a field without bumping BOOT_PERF_MAGIC would make an old
+ * variable deserialize as garbage. */
+_Static_assert(__builtin_offsetof(boot_perf_header_t, magic)     == 0,  "perf hdr magic offset");
+_Static_assert(__builtin_offsetof(boot_perf_header_t, count)     == 4,  "perf hdr count offset");
+_Static_assert(__builtin_offsetof(boot_perf_header_t, cpu_count) == 8,  "perf hdr cpu_count offset");
+_Static_assert(__builtin_offsetof(boot_perf_header_t, tsc_khz)   == 12, "perf hdr tsc_khz offset");
+_Static_assert(sizeof(boot_perf_header_t) == 16, "perf hdr size pinned (bump MAGIC if this changes)");
+_Static_assert(sizeof(boot_perf_record_t) == 24, "perf record size pinned (bump MAGIC if this changes)");
 
 /* Read previous boot perf from NVRAM into internal buffer.
  * Call early in boot (after uefi_runtime_init). */

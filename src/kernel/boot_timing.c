@@ -17,6 +17,7 @@
 #include "kernel/fs/vfs.h"
 #include "libc/string.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/smp.h"   /* smp_cpu_count() for the perf config tag */
 
 static uint64_t s_tsc_freq;
 
@@ -532,6 +533,33 @@ void boot_perf_read_prev(void)
         return;
     }
 
+    /* Decline the comparison outright when the baseline came from a different
+     * machine configuration. Differencing timings across accelerators is what
+     * produced 30 false "regressed" warnings on 2026-07-28: a baseline saved
+     * under one accelerator, compared against a boot under another, made every
+     * step look ~3x slower. Reporting nothing is correct here -- the data is
+     * not comparable, and a warning would imply it was. */
+    {
+        uint32_t cur_cpus = smp_cpu_count();
+        uint32_t cur_khz  = (uint32_t)(s_tsc_freq / 1000ULL);
+        /* TSC frequency is compared with a tolerance: calibration jitters by a
+         * few kHz between boots on the same host, which is not a config change.
+         * 1% is far tighter than the gap between any two real configurations
+         * and far looser than calibration noise. */
+        uint32_t tol = hdr->tsc_khz / 100u;
+        uint32_t lo  = hdr->tsc_khz > tol ? hdr->tsc_khz - tol : 0;
+        uint32_t hi  = hdr->tsc_khz + tol;
+        if (hdr->cpu_count != cur_cpus || cur_khz < lo || cur_khz > hi) {
+            klog(LOG_INFO, "PERF",
+                 "Previous boot ran a different config (cpus %u->%u, tsc %u->%u kHz)"
+                 " -- comparison skipped",
+                 (uint64_t)hdr->cpu_count, (uint64_t)cur_cpus,
+                 (uint64_t)hdr->tsc_khz, (uint64_t)cur_khz);
+            POST16(POST16_BOOTPERF_READ);
+            return;
+        }
+    }
+
     uint32_t count = hdr->count;
     if (count > BOOT_PERF_MAX_RECORDS)
         count = BOOT_PERF_MAX_RECORDS;
@@ -575,37 +603,62 @@ void boot_perf_compare(void)
 
     klog(LOG_INFO, "PERF", "--- Boot perf comparison (prev vs current) ---");
 
-    for (uint32_t i = 0; i < s_step_count; i++) {
-        uint32_t cur_ms = tsc_to_ms(s_steps[i].tsc - base);
-        if (cur_ms > BOOT_PERF_MS_SANITY_CAP)
-            cur_ms = BOOT_PERF_MS_SANITY_CAP;   /* same ceiling save/read enforce */
+    /* COMPARE PER-STEP DURATIONS, NOT CUMULATIVE ARRIVAL TIMES.
+     *
+     * boot_perf_record_t.elapsed_ms is time since boot start (its own comment
+     * reads "duration from boot start"), so differencing two of them compares
+     * WHEN a step ran, not how long it took. One slow step early shifts every
+     * later arrival time, and every subsequent step then reports a regression.
+     * Observed 2026-07-28 on a 2-CPU WHPX boot: 30 consecutive "init regressed"
+     * warnings, every one between 287% and 339%, with deltas growing
+     * monotonically down the list (+16ms, +89ms, +92ms, +232ms ... +4285ms).
+     * That is the signature of cumulative drift, not 30 independent
+     * regressions, and all 30 lines were false.
+     *
+     * Records are stored in step order on both sides, so a per-step duration is
+     * the delta to the next entry -- the same derivation the "Boot step
+     * durations" report below already uses. The final entry of each array has
+     * no successor and therefore no derivable duration; it is skipped rather
+     * than guessed at. */
+    for (uint32_t i = 0; i + 1 < s_step_count; i++) {
+        uint32_t cur_start = tsc_to_ms(s_steps[i].tsc - base);
+        uint32_t cur_next  = tsc_to_ms(s_steps[i + 1].tsc - base);
+        if (cur_next < cur_start)
+            continue;                   /* non-monotonic clock: unusable */
+        uint64_t cur_dur = (uint64_t)(cur_next - cur_start);
+        if (cur_dur > BOOT_PERF_MS_SANITY_CAP)
+            cur_dur = BOOT_PERF_MS_SANITY_CAP;  /* ceiling save/read enforce */
         const char *name = s_steps[i].step;
 
-        /* Find matching step in previous boot */
-        for (uint32_t j = 0; j < s_prev_count; j++) {
+        /* Match by name, and the previous boot must have a successor entry too
+         * or its duration is equally underivable. */
+        for (uint32_t j = 0; j + 1 < s_prev_count; j++) {
             if (!str_eq(s_prev_records[j].name, name))
                 continue;
 
-            /* 64-bit math throughout: prev_ms is imported NVRAM data (clamped
-             * to 600000 above) and cur_ms is current-boot elapsed, but compute
-             * in uint64 so prev_ms*2 / cur_ms*100 cannot wrap and the delta
-             * cannot hit signed-overflow UB. Only flag a real slowdown
-             * (cur >= prev), never a speed-up. */
-            uint64_t prev_ms = s_prev_records[j].elapsed_ms;
-            uint64_t cur64   = cur_ms;
-            int64_t  delta   = (int64_t)cur64 - (int64_t)prev_ms;
+            uint32_t p_start = s_prev_records[j].elapsed_ms;
+            uint32_t p_next  = s_prev_records[j + 1].elapsed_ms;
+            if (p_next < p_start)
+                break;                  /* corrupt NVRAM ordering: skip */
+            uint64_t prev_dur = (uint64_t)(p_next - p_start);
+
+            /* 64-bit math throughout: both operands are clamped, but compute in
+             * uint64 so prev*2 and cur*100 cannot wrap and the delta cannot hit
+             * signed-overflow UB. Only a real slowdown is flagged, never a
+             * speed-up. */
+            int64_t delta = (int64_t)cur_dur - (int64_t)prev_dur;
 
             /* Regression threshold: >200% of previous OR >500ms absolute */
-            if (prev_ms > 0 && cur64 > prev_ms * 2) {
+            if (prev_dur > 0 && cur_dur > prev_dur * 2) {
                 klog(LOG_WARN, "PERF",
-                     "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums, %u%%)",
-                     name, (uint32_t)prev_ms, cur_ms,
+                     "[PERF] WARNING: %s step regressed: %ums -> %ums (+%ums, %u%%)",
+                     name, (uint32_t)prev_dur, (uint32_t)cur_dur,
                      (uint32_t)delta,
-                     (uint32_t)(cur64 * 100 / prev_ms));
-            } else if (delta > 500) {
+                     (uint32_t)(cur_dur * 100 / prev_dur));
+            } else if (delta > BOOT_PERF_ABS_REGRESS_MS) {
                 klog(LOG_WARN, "PERF",
-                     "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums)",
-                     name, (uint32_t)prev_ms, cur_ms, (uint32_t)delta);
+                     "[PERF] WARNING: %s step regressed: %ums -> %ums (+%ums)",
+                     name, (uint32_t)prev_dur, (uint32_t)cur_dur, (uint32_t)delta);
             }
             break;
         }
@@ -634,6 +687,10 @@ void boot_perf_save(void)
     boot_perf_header_t *hdr = (boot_perf_header_t *)buf;
     hdr->magic = BOOT_PERF_MAGIC;
     hdr->count = count;
+    /* Stamp the machine configuration alongside the timings so the next boot
+     * can tell whether they are comparable at all (see boot_perf_read_prev). */
+    hdr->cpu_count = smp_cpu_count();
+    hdr->tsc_khz   = (uint32_t)(s_tsc_freq / 1000ULL);
 
     boot_perf_record_t *recs = (boot_perf_record_t *)(buf + sizeof(boot_perf_header_t));
     uint64_t base = s_steps[0].tsc;
