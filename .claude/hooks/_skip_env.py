@@ -48,6 +48,7 @@ Hook category: HELPER (read-only); never raises, never exits non-zero.
 """
 
 import os
+import re
 import shlex
 from typing import Iterable
 
@@ -60,11 +61,72 @@ _WRAPPERS = frozenset({
 })
 
 
+# One leading token: either KEY=VALUE or a bare word (wrapper candidate).
+# Deliberately NOT quote-aware -- it only ever runs over the LEADING prefix,
+# which is `KEY=VALUE` pairs and wrapper words, never arbitrary data.
+_PREFIX_TOKEN_RE = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*=\S*|[A-Za-z_][A-Za-z0-9_.-]*)")
+
+
+def _scan_prefix_no_shlex(cmd: str, key_set: set) -> dict[str, str]:
+    """Fallback prefix walk that never tokenizes the whole command.
+
+    WHY THIS EXISTS (live, 2026-07-28, twice in five minutes). `_scan_inline`
+    ran `shlex.split()` over the ENTIRE command and returned {} on ValueError.
+    An ASCII apostrophe inside a heredoc BODY is an unbalanced quote to shlex
+    ("No closing quotation"), so a command like
+
+        SKIP_REVIEW_HOOK=1 tee notes.md <<'EOF'
+        v01's lesson
+        EOF
+
+    lost its opt-out silently: the gate BLOCKED while its own message told the
+    caller to set the variable that was already set. Isolated by differential
+    test -- plain heredoc detected, apostrophe heredoc NOT, Unicode apostrophe
+    detected, apostrophe in double quotes without a heredoc detected.
+
+    The blast radius was every gate sharing this helper (SKIP_REVIEW_HOOK,
+    SKIP_SKILL_STEP_BLOCK, SKIP_PHASE1_BLOCK, SKIP_RUNNER_SUITE,
+    SKIP_HOOK_AUDIT, SKIP_REVIEW_PIPELINE), and the triggering shape is simply
+    how prose reaches a command -- commit messages, TODO edits, doc writes --
+    which the unattended runner authors constantly.
+
+    Scanning ONLY the leading prefix is also more correct in principle than
+    tokenizing a command whose tail is arbitrary data: an opt-out is a prefix
+    construct, so nothing past the first real token can legitimately set one.
+    It cannot false-positive on a mention (`echo SKIP_REVIEW_HOOK=1` stops at
+    `echo`, the first non-wrapper token). The one thing it does NOT reproduce
+    is a quoted value containing spaces (`FOO="a b"`), which the shlex path
+    above still handles whenever it parses.
+    """
+    out: dict[str, str] = {}
+    pos = 0
+    while True:
+        m = _PREFIX_TOKEN_RE.match(cmd, pos)
+        if not m:
+            break
+        tok, pos = m.group(1), m.end()
+        if "=" in tok:
+            head, val = tok.split("=", 1)
+            if head and (head[0].isalpha() or head[0] == "_") and all(
+                c.isalnum() or c == "_" for c in head
+            ):
+                if head in key_set:
+                    out[head] = val
+                continue
+            break
+        if tok in _WRAPPERS:
+            continue
+        break                     # first real token ends the env-prefix
+    return out
+
+
 def _scan_inline(cmd: str, keys: Iterable[str]) -> dict[str, str]:
     """Walk the leading env-prefix of `cmd` and return matched keys.
 
     Stops at the first non-wrapper, non-env-assignment token. Returns
-    {} on any parse failure or when no requested key is found.
+    {} when no requested key is found. A shlex parse failure (or a shlex
+    pass that found nothing) falls back to `_scan_prefix_no_shlex` rather
+    than silently dropping the opt-out -- see that function for the incident.
     """
     if not isinstance(cmd, str) or not cmd:
         return {}
@@ -79,7 +141,9 @@ def _scan_inline(cmd: str, keys: Iterable[str]) -> dict[str, str]:
     try:
         toks = shlex.split(cmd, posix=True, comments=False)
     except ValueError:
-        return {}
+        # Unbalanced quote SOMEWHERE in the command -- almost always an
+        # apostrophe in a heredoc body, which says nothing about the prefix.
+        return _scan_prefix_no_shlex(cmd, key_set)
     out: dict[str, str] = {}
     for tok in toks:
         if "=" in tok and not tok.startswith("="):
@@ -98,6 +162,12 @@ def _scan_inline(cmd: str, keys: Iterable[str]) -> dict[str, str]:
             continue
         # First non-wrapper, non-env token ends the env-prefix walk.
         break
+    if not out:
+        # shlex parsed, but its tokenization can still mangle a prefix in
+        # exotic quoting. The prefix walk is cheap and cannot false-positive
+        # (it stops at the first real token), so an empty result is worth a
+        # second look rather than a silent "no opt-out".
+        return _scan_prefix_no_shlex(cmd, key_set)
     return out
 
 

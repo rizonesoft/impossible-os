@@ -58,6 +58,27 @@ scripts/overnight/
 # Commit-time gate the runner's own section commits must pass
 .claude/hooks/section_commit_gate.py
 
+# SHARED GATE MACHINERY (2026-07-28). The manifest listed the gate FILES but
+# not the helpers that decide whether a gate applies, so a one-line change here
+# could alter the effective behaviour of every gate importing it with the suite
+# and the canary requirement both unarmed. That is not hypothetical: a single
+# `shlex.split()` over a whole command in _skip_env.py silently dropped the
+# SKIP_* opt-out for any command carrying a heredoc with an apostrophe, and
+# nothing in the control plane would have caught it. Importer counts at filing:
+# _skip_env 8, _review_kind 5, _codex_dispatch 5, _advisory_budget 4,
+# _heuristic_misses 3, _review_pipeline_passthrough 1.
+# Same hole, same shape, as `.claude/settings.json` earlier the same day: the
+# wiring is as load-bearing as the thing wired. All flow-critical by the
+# default-conservative rule -- "an opt-out stopped working" is precisely the
+# failure an attended canary exists to notice, and none of these is covered by
+# the deterministic allowlist.
+.claude/hooks/_skip_env.py
+.claude/hooks/_review_kind.py
+.claude/hooks/_codex_dispatch.py
+.claude/hooks/_advisory_budget.py
+.claude/hooks/_heuristic_misses.py
+.claude/hooks/_review_pipeline_passthrough.py
+
 # Enforcement gates whose weakening could let unreviewed/unexplored work through
 .claude/hooks/agent_dispatch_required.py
 .claude/hooks/review_dispatch_gate.py
