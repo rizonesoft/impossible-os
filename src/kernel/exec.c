@@ -20,9 +20,6 @@
 #include "kernel/boot_init.h"
 #include "kernel/sched/task.h"
 
-/* Upper bound on a path-loaded executable image staged into kernel memory. */
-#define EXEC_MAX_IMAGE_SIZE  (16u * 1024u * 1024u)
-
 /* ---- Format registry ---------------------------------------------------- */
 
 static exec_format_t s_formats[EXEC_MAX_FORMATS];

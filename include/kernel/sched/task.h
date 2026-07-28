@@ -894,7 +894,17 @@ void task_exec_staging_kfree(struct task_exec_staging *st);
  * caller running on its own kernel stack -- either way it can still free).
  * Callers must call task_exec_staging_release() after task_exec regardless of
  * the result; it is a no-op when task_exec already released.
- * Returns 0 on success, -1 on failure. */
+ *
+ * THREE outcomes, and a caller that only tests for -1 is wrong:
+ *   0                          success. The task is published; on the syscall
+ *                              path route the return through
+ *                              task_exec_take_pending_frame().
+ *   -1                         pre-commit refusal. The image is INTACT and the
+ *                              caller may report the error normally.
+ *   TASK_EXEC_IMAGE_DESTROYED  the image is GONE (past the commit point). The
+ *                              caller MUST release its staging and then
+ *                              task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED); it
+ *                              must never return toward ring 3. */
 int task_exec(const uint8_t *data, uint64_t size,
               struct task_exec_staging *staging);
 
@@ -944,6 +954,13 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame);
  * Reserve a block well below the signal range. Add new reasons here, never as
  * a bare literal at the call site. */
 #define TASK_EXIT_REASON_BASE           (-1000)
+
+/* Layer 1: the reserved block must stay clear of the signal range, which is
+ * what -(signum) consumes. This invariant has already failed once unprotected
+ * (the first attempt used -2, i.e. SIGINT), so it is pinned rather than
+ * described. SIG_MAX is the largest signal number signal.c can negate. */
+_Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
+               "kernel exit-reason block overlaps the -(signum) range");
 
 /* The task was terminated because a post-commit exec destroyed its image: past
  * task_exec's commit point there is nothing to return to, so the task is exited

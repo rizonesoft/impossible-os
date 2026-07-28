@@ -142,3 +142,44 @@ uint32_t exec_iterate_modules_lockless(loaded_module_t *out,
 
 /* Return the current number of registered modules (for diagnostics). */
 uint32_t exec_module_count(void);
+
+/* Upper bound on a RAW executable image staged into kernel memory before any
+ * format loader sees it. This is a staging/heap bound and is deliberately NOT
+ * USER_ELF_SIZE: that constant bounds the MAPPED user image window, and a valid
+ * ELF can exceed it on disk through non-PT_LOAD sections, debug data, or file
+ * alignment while every PT_LOAD segment still lands inside the window. Capping
+ * the raw file at the mapped size rejects loadable binaries before the loader
+ * gets to validate them; each format loader enforces its own mapped bounds. */
+#define EXEC_MAX_IMAGE_SIZE  (16u * 1024u * 1024u)
+
+/* Upper bound for a raw image staged on the KMALLOC HEAP specifically.
+ *
+ * Two different limits, because they answer two different questions.
+ * EXEC_MAX_IMAGE_SIZE above is what a FORMAT LOADER can be handed. This one is
+ * what the kmalloc arena can afford to lend a single unprivileged exec: the
+ * heap is a fixed 512-page / 2 MiB region (`heap.c` HEAP_INITIAL_PAGES), so a
+ * multi-megabyte staging request either fails outright or holds most of the
+ * global heap for the whole read-and-load, starving every concurrent kernel
+ * allocation. The format bound is therefore NOT usable as the allocation bound.
+ *
+ * The number is DERIVED, not inherited: a single unprivileged exec must not be
+ * able to claim more than roughly a third of the heap that is actually free at
+ * boot baseline. Measured 2026-07-28: the arena is 2 MiB and about 454 KiB is
+ * already in use once boot settles, leaving ~1.6 MiB, so the ceiling is 512
+ * KiB. The stagers previously enforced 1 MiB by mis-borrowing USER_ELF_SIZE
+ * (the MAPPED-window constant) -- safe-by-accident, wrong reason, and ~62% of
+ * free heap, which is too much for a path any user binary can trigger.
+ *
+ * Not lowered further (256 KiB was proposed): that is only ~3.7x the largest
+ * executable in the tree today and would become a functional ceiling that
+ * rejects legitimate mid-size binaries well before the allocator work lands.
+ * The arena can also come up SHORT of 2 MiB if heap_init takes its partial
+ * fallback, which argues for finishing the vmalloc routing rather than for
+ * tuning this number again.
+ *
+ * Lifting it means staging large images off the kmalloc heap -- a locked
+ * page-backed large-buffer allocator, tracked by the advanced-allocator work
+ * that `shell_loader.c` already cites. Until then a raw image between this
+ * bound and EXEC_MAX_IMAGE_SIZE is loadable only by a path that stages it with
+ * pmm_alloc_contiguous, not by the kmalloc stagers. */
+#define EXEC_KMALLOC_STAGE_MAX  (512u * 1024u)

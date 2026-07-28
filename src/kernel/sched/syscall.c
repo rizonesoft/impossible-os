@@ -23,6 +23,7 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"
 
+#include "kernel/exec.h"       /* EXEC_KMALLOC_STAGE_MAX -- heap staging cap */
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
@@ -642,15 +643,42 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         }
 
         {
-            uint8_t *buf = (uint8_t *)kmalloc(file->size);
+            /* Snapshot the size ONCE and validate it BEFORE allocating, then
+             * use that one local for the allocation, the read, and the exec.
+             * This used to size the buffer from file->size and then re-read
+             * file->size for the read length: a concurrent writer growing the
+             * vfs_node between the two reads made vfs_read write past the
+             * allocation, and the read's return value was discarded so a short
+             * read handed task_exec a length describing bytes it never got.
+             * Same shape shell_loader.c already documents for the same job. */
             uint64_t fsz = file->size;
+            uint8_t *buf;
+            int nread;
+
+            if (fsz == 0 || fsz > EXEC_KMALLOC_STAGE_MAX) {
+                klog(LOG_WARN, "sys",
+                     "exec: image size %u out of range (1..%u)",
+                     fsz, (uint64_t)EXEC_KMALLOC_STAGE_MAX);
+                if (opened) vfs_close(file);
+                exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+                ret = -1; break;
+            }
+            buf = (uint8_t *)kmalloc((uint32_t)fsz);
             if (!buf) {
                 if (opened) vfs_close(file);
                 exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
                 ret = -1; break;
             }
-            vfs_read(file, 0, (uint32_t)fsz, buf);
+            nread = vfs_read(file, 0, (uint32_t)fsz, buf);
             if (opened) vfs_close(file);
+            if (nread < 0 || (uint64_t)nread != fsz) {
+                klog(LOG_ERROR, "sys",
+                     "exec: short read (%d of %u bytes)",
+                     (int64_t)nread, fsz);
+                kfree(buf);
+                exec_free_vec(kargv, kargc); exec_free_vec(kenvp, kenvc);
+                ret = -1; break;
+            }
 
             /* Commit argv (always resets it: empty argv -> frame builder falls
              * back to argc=1/name), then -- ONLY if argv succeeded -- replace
@@ -687,8 +715,9 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
              * the new image before the free; the token makes the ordering
              * explicit instead of load-bearing on the gate type. */
             {
-                struct task_exec_staging st = { task_exec_staging_kfree,
-                                                buf, 0, 0 };
+                struct task_exec_staging st = {
+                    .release = task_exec_staging_kfree, .ptr = buf
+                };
                 ret = (int64_t)task_exec(buf, fsz, &st);
                 /* No-op when task_exec already released (success); frees on
                  * every failure return, where the caller still owns it. */

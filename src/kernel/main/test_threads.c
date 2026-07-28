@@ -14,6 +14,7 @@
 #include "kernel/klog.h"
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
+#include "kernel/exec.h"       /* EXEC_KMALLOC_STAGE_MAX -- heap staging cap */
 #include "kernel/fs/vfs.h"
 #include "kernel/timer.h"
 #include "kernel/sched/mutex.h"
@@ -245,6 +246,8 @@ void exec_loader_func(void)
 {
     struct vfs_node *file;
     uint8_t *buf;
+    uint64_t fsize;
+    int nread;
 
     if (!vfs_is_mounted('C')) {
         klog(LOG_WARN, "TEST", "[ExecLoader] C:\\ not mounted");
@@ -257,15 +260,34 @@ void exec_loader_func(void)
         return;
     }
 
-    buf = (uint8_t *)kmalloc(file->size);
+    /* Snapshot the size ONCE, as shell_loader.c does for the same job: this
+     * read file->size three separate times -- to size the buffer, as the read
+     * length, and again as the exec length AFTER vfs_close -- so a concurrent
+     * writer growing the node between them overflowed the buffer or handed
+     * task_exec a length that did not describe it. */
+    fsize = file->size;
+    if (fsize == 0 || fsize > EXEC_KMALLOC_STAGE_MAX) {
+        klog(LOG_WARN, "TEST", "[ExecLoader] hello.exe size %u out of range",
+             fsize);
+        vfs_close(file);
+        return;
+    }
+
+    buf = (uint8_t *)kmalloc((uint32_t)fsize);
     if (!buf) {
         klog(LOG_WARN, "TEST", "[ExecLoader] cannot allocate buffer");
         vfs_close(file);
         return;
     }
 
-    vfs_read(file, 0, (uint32_t)file->size, buf);
+    nread = vfs_read(file, 0, (uint32_t)fsize, buf);
     vfs_close(file);
+    if (nread < 0 || (uint64_t)nread != fsize) {
+        klog(LOG_WARN, "TEST", "[ExecLoader] short read (%d of %u bytes)",
+             (int64_t)nread, fsize);
+        kfree(buf);
+        return;
+    }
 
     /* Same interrupts-enabled thread context as shell_loader_func. This path
      * previously had no success-path free at all -- it HLT-loops below -- so it
@@ -273,8 +295,10 @@ void exec_loader_func(void)
      * racing it. The ownership token closes both: task_exec releases before
      * publication on success, this call frees on the failure returns. */
     {
-        struct task_exec_staging st = { task_exec_staging_kfree, buf, 0, 0 };
-        int erc = task_exec(buf, file->size, &st);
+        struct task_exec_staging st = {
+            .release = task_exec_staging_kfree, .ptr = buf
+        };
+        int erc = task_exec(buf, fsize, &st);
         task_exec_staging_release(&st);   /* no-op when task_exec released */
         if (erc < 0) {
             klog(LOG_WARN, "TEST", "[ExecLoader] exec failed");

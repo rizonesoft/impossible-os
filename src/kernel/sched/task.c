@@ -1227,8 +1227,17 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     }
 
     /* Save current task/thread's interrupt frame pointer
-     * (skip if exec_pending -- don't overwrite the exec'd frame) */
-    if (!tasks[prev_task].exec_pending) {
+     * (skip if exec_pending -- don't overwrite the exec'd frame).
+     *
+     * ACQUIRE, to actually implement the pairing task_exec's publication
+     * documents. This is the gate that protects tasks[prev_task].rsp, and
+     * observing a stale zero here is the worst outcome in the protocol: the
+     * pre-exec syscall frame overwrites the freshly published exec frame and the
+     * task resumes at its old RIP over an image that no longer exists -- the
+     * exact failure that survived 297 commits. The GS gate further down was
+     * already atomic for the same reason; a plain read here left the more
+     * damaging half of the same protocol unpaired. */
+    if (!__atomic_load_n(&tasks[prev_task].exec_pending, __ATOMIC_ACQUIRE)) {
         /* Save to thread if multi-threaded, otherwise to task */
         if (prev_thread > 0)
             tasks[prev_task].threads[prev_thread].rsp = (uint64_t)frame;
@@ -1462,8 +1471,11 @@ uint64_t schedule(struct interrupt_frame *frame)
     __atomic_fetch_add(&tasks[prev_task].invol_ctxsw, 1ull, __ATOMIC_RELAXED);
 
     /* Save current task/thread's interrupt frame pointer
-     * (skip if exec_pending -- don't overwrite the exec'd frame) */
-    if (!tasks[prev_task].exec_pending) {
+     * (skip if exec_pending -- don't overwrite the exec'd frame).
+     * ACQUIRE for the same reason as the schedule_now() twin above: this gate
+     * guards tasks[prev_task].rsp, and a stale zero here republishes the
+     * pre-exec frame over the exec frame. */
+    if (!__atomic_load_n(&tasks[prev_task].exec_pending, __ATOMIC_ACQUIRE)) {
         if (prev_thread > 0)
             tasks[prev_task].threads[prev_thread].rsp = (uint64_t)frame;
         else
@@ -2946,6 +2958,10 @@ int task_exec(const uint8_t *data, uint64_t size,
      * the remap so the remap itself cannot fail partway. NULL for launcher-
      * spawned tasks (cr3 == 0), which have no parent to isolate from. */
     uintptr_t *priv_frames = (uintptr_t *)0;
+    /* New thread-0 TEB. Held here from its (fallible) allocation until the
+     * publication window wires it into GS -- see the TEB block for why the
+     * wiring cannot happen at allocation time. */
+    TEB *new_teb = (TEB *)0;
 
     /* Exec must be called from the main thread (tid 0).  A secondary user
      * thread calling exec would leave stale threads[N].kernel_rsp in the
@@ -3207,7 +3223,9 @@ int task_exec(const uint8_t *data, uint64_t size,
                             (const eif_header_t *)data, &emeta) && emeta.name[0])
                         n = emeta.name;
                 }
-                while (n[ni] && ni < EXEC_MODULE_NAME_MAX - 1) {
+                /* Bound BEFORE the index: the reversed order read n[ni] at
+                 * ni == EXEC_MODULE_NAME_MAX - 1 before deciding to stop. */
+                while (ni < EXEC_MODULE_NAME_MAX - 1 && n[ni]) {
                     mod.name[ni] = n[ni];
                     ni++;
                 }
@@ -3571,7 +3589,19 @@ int task_exec(const uint8_t *data, uint64_t size,
         return exec_commit_failure(pid, "PEB allocation failed",
                                    new_kstack, argv_addrs);
 
-    /* Allocate TEB for the initial thread (TID 0) */
+    /* Allocate TEB for the initial thread (TID 0).
+     *
+     * The ALLOCATION lands here because it is fallible; the GS WIRING it feeds
+     * is deferred to the publication window below, and that split is
+     * load-bearing. Priming kernel_gs_base at this point exposes it for the
+     * whole remaining stretch before publication: the scheduler's GS save-gate
+     * is keyed on exec_pending, which is still clear until then, so on an
+     * interrupts-enabled launcher path a tick landing in the gap runs the gate
+     * and overwrites the freshly primed TEB pointer with the CURRENT MSR value
+     * -- the OUTGOING image's TEB. task_exec_take_pending_frame would then
+     * program that stale value and ring 3 would start with another process's
+     * TEB in GS. The gate's fail-closed check cannot catch it either: that only
+     * fires when the slot is exactly 0, and a stale non-zero TEB passes. */
     {
         uintptr_t ustack = (uintptr_t)tasks[pid].user_stack_base;
         TEB *teb = teb_alloc_for_task(pid, 0, ustack, USER_STACK_SIZE,
@@ -3580,14 +3610,8 @@ int task_exec(const uint8_t *data, uint64_t size,
             return exec_commit_failure(pid, "TEB allocation failed",
                                        new_kstack, argv_addrs);
         tasks[pid].teb = (void *)teb;
-        /* Wire GS: swapgs in ISR exchanges GS_BASE <-> KERNEL_GS_BASE.
-         * After swapgs on ring-3 return, user-mode GS points to TEB. A zero
-         * kernel_gs_base here is what the publication race used to expose;
-         * the TEB check above makes it unreachable. */
-        tasks[pid].kernel_gs_base = (uint64_t)(uintptr_t)teb;
-        /* Mirror into threads[0] so per-thread GS swap reads from thread */
         tasks[pid].threads[0].teb = (void *)teb;
-        tasks[pid].threads[0].kernel_gs_base = tasks[pid].kernel_gs_base;
+        new_teb = teb;      /* GS wiring happens under local_irq_save below */
     }
 
     if (tasks[pid].peb) {
@@ -3651,9 +3675,14 @@ int task_exec(const uint8_t *data, uint64_t size,
      * Safe here because everything above has already consumed 'data': the last
      * read is the ELF phdr extraction in the frame builder, and nothing between
      * that point and this one reads it or can fail. Deliberately OUTSIDE the
-     * local_irq_save window below -- the release calls into kfree/pmm, which
-     * must not run with interrupts disabled, and a reschedule landing here is
-     * harmless because exec_pending is still clear.
+     * local_irq_save window below, because a reschedule landing HERE is
+     * harmless -- exec_pending is still clear, so the save-gates behave exactly
+     * as they would for any other preemption of this task, and the frame the
+     * gate saves is still the live one. (Not because the release itself needs
+     * interrupts enabled: kfree takes its lock with spin_lock_irqsave and
+     * pmm_free_frame touches no IRQ state, and on the SYS_EXEC path IF is 0
+     * across the whole syscall anyway.) Keeping it out of the window also keeps
+     * the interrupt-disabled region to the publication stores alone.
      *
      * Idempotent: the caller calls task_exec_staging_release() again after
      * task_exec returns, which is a no-op once this one has consumed it. On
@@ -3693,6 +3722,16 @@ int task_exec(const uint8_t *data, uint64_t size,
         /* Patch RCX now that the replacement PEB exists (see the frame
          * builder above for why this cannot be done at build time). */
         sp[12] = tasks[pid].peb ? (uint64_t)(uintptr_t)tasks[pid].peb : 0;
+
+        /* Wire GS here, not at TEB allocation: swapgs in the ISR path exchanges
+         * GS_BASE <-> KERNEL_GS_BASE, so after swapgs on ring-3 return user-mode
+         * GS points at the TEB. Doing it inside this window means no tick can
+         * land between the store and the exec_pending publication below, which
+         * is what previously let the GS save-gate replace the primed TEB with
+         * the outgoing image's. Past publication the gate skips this task
+         * entirely, so the value is stable from here on. */
+        tasks[pid].kernel_gs_base = (uint64_t)(uintptr_t)new_teb;
+        tasks[pid].threads[0].kernel_gs_base = tasks[pid].kernel_gs_base;
 
         /* Park the superseded kernel stack. task_exec's caller is still
          * running on it, so it cannot be freed here; the next task_exec for

@@ -1076,14 +1076,16 @@ static void u_manifest_free(struct manifest_state *ms)
  * no-op even independently of the token's own idempotence. */
 static void utest_staging_free_frames(struct task_exec_staging *st)
 {
-    uint32_t n, i;
+    uint32_t n;
 
     if (!st || !st->pages)
         return;
     n = st->pages;
     st->pages = 0;
-    for (i = 0; i < n; i++)
-        pmm_free_frame(st->phys + (uintptr_t)i * 4096u);
+    /* pmm_free_contiguous is the declared symmetric counterpart of the
+     * pmm_alloc_contiguous that staged these frames -- the per-frame loop this
+     * file already open-codes twice does not need a third copy. */
+    pmm_free_contiguous(st->phys, n);
 }
 
 static void utest_loader_func(void)
@@ -1138,8 +1140,10 @@ static void utest_loader_func(void)
      * before publication, because a tick can carry this task into the new image
      * before the call returns and the loop below would never run. */
     {
-        struct task_exec_staging st = { utest_staging_free_frames,
-                                        (void *)0, buf_phys, pages };
+        struct task_exec_staging st = {
+            .release = utest_staging_free_frames,
+            .phys = buf_phys, .pages = pages
+        };
         rc = task_exec(buf, size, &st);
         /* Covers BOTH failure outcomes: a pre-commit -1 (image intact) and
          * TASK_EXEC_IMAGE_DESTROYED (image gone). Either way the staging
@@ -1151,6 +1155,13 @@ static void utest_loader_func(void)
     if (rc < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_exec failed (rc=%d)",
              path, (int64_t)rc);
+        /* Distinguish the two outcomes like the other three callers do. A
+         * post-commit failure destroyed this task's image, and the launcher's
+         * own -1..-5 codes sit inside the -(signum) range, so reporting one of
+         * those here would be indistinguishable from a signal death to the same
+         * oracle the exec lifecycle test relies on. */
+        if (rc == TASK_EXEC_IMAGE_DESTROYED)
+            task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);   /* no return */
         task_exit(-5);
     }
 

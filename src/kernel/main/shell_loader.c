@@ -14,7 +14,7 @@
 #include "kernel/main/shell_loader.h"
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
-#include "kernel/mm/user_range.h"
+#include "kernel/exec.h"       /* EXEC_KMALLOC_STAGE_MAX -- heap staging cap */
 #include "kernel/fs/vfs.h"
 
 void shell_loader_func(void)
@@ -37,10 +37,13 @@ void shell_loader_func(void)
 
     /* Snapshot the size ONCE: file->size lives on a vfs_node a concurrent
      * writer can grow between the allocation, the read, and the exec call.
-     * Every use below reads this local, never file->size again. Reject
-     * empty files and anything that cannot fit the user ELF load window --
-     * a file wider than that can never load correctly regardless of how
-     * it is staged.
+     * Every use below reads this local, never file->size again. Reject empty
+     * files and anything past the HEAP staging bound. That bound is
+     * EXEC_KMALLOC_STAGE_MAX rather than USER_ELF_SIZE, which this used to
+     * borrow: USER_ELF_SIZE bounds the MAPPED image window, which is a
+     * different question from what the kmalloc arena can lend a single
+     * exec, and a raw file can legitimately exceed the mapped size while
+     * every PT_LOAD still fits inside it (see exec.h for both bounds).
      *
      * Allocation stays on the kmalloc heap for the FULL range (not tiered
      * to PMM above 4 KiB): pmm_alloc_contiguous()/pmm_free_frame() mutate
@@ -53,9 +56,9 @@ void shell_loader_func(void)
      * and its actual fix (a locked runtime large-buffer allocator) is
      * owned by TODO-03-advanced-allocator.md. */
     fsize = file->size;
-    if (fsize == 0 || fsize > USER_ELF_SIZE) {
+    if (fsize == 0 || fsize > EXEC_KMALLOC_STAGE_MAX) {
         klog(LOG_WARN, "cmd", "cmd.exe size %u out of range (1..%u)",
-             fsize, (uint64_t)USER_ELF_SIZE);
+             fsize, (uint64_t)EXEC_KMALLOC_STAGE_MAX);
         vfs_close(file);
         return;
     }
@@ -84,7 +87,9 @@ void shell_loader_func(void)
      * just before publication; the call below then frees only on the failure
      * returns, where this task is still alive to do it. */
     {
-        struct task_exec_staging st = { task_exec_staging_kfree, buf, 0, 0 };
+        struct task_exec_staging st = {
+            .release = task_exec_staging_kfree, .ptr = buf
+        };
         int erc = task_exec(buf, fsize, &st);
         task_exec_staging_release(&st);   /* no-op when task_exec released */
         if (erc < 0) {
