@@ -95,6 +95,21 @@ FAIL_PATTERNS=(
     "[CRIT] ExitBootServices failed"
     "[FAIL] Kernel ELF corrupt"
     "[BOOT HALT]"
+    # GENERIC fatal signals (added 2026-07-28). Every entry above names one
+    # specific failure, which meant a NEW fatal shape shipped green: a WHPX
+    # boot of main@238c49f6 halted at `cmd.exe` with
+    #   [CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0
+    #   [**] FATAL -- system halted
+    # and this test passed, because neither line matched any specific pattern.
+    #
+    # `[CRIT]` is safe to blanket-fail on: it is the klog tag for LOG_FATAL,
+    # documented in include/kernel/klog.h as "serial + framebuffer, then halt".
+    # It is fatal BY DEFINITION, not a severity judgement -- and it appears
+    # zero times in a healthy captured log (verified against the current
+    # build/smoke-test.stripped.log).
+    "[CRIT]"
+    "FATAL -- system halted"
+    "system halted"
 )
 
 # ---- Bootloader + kernel presence checks (verified after boot) ----
@@ -218,6 +233,22 @@ QEMU_FLAGS=(
     -device "ich9-ahci,id=ahci0"
     -device "ide-hd,drive=disk0,bus=ahci0.0"
     -m 2G
+    # SMP (2026-07-28). There was NO -smp flag here, so QEMU defaulted to ONE
+    # cpu and this gate had never exercised SMP -- in a project whose stated
+    # doctrine is "SMP-safe by default ... SMP from day one" (CLAUDE.md).
+    #
+    # That is not a theoretical gap. The exec commit-point work changed the
+    # TEB <-> kernel_gs_base handoff across context switches, shipped with
+    # this test green, and then halted on the operator's 2-CPU WHPX boot:
+    #   [CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0
+    # The single-CPU run reaches the IDENTICAL point (PID 4, same PEB/TEB) and
+    # survives, because the race needs a timer tick to land in the window
+    # between publishing the TEB and assigning kernel_gs_base -- which a second
+    # CPU supplies and a single CPU does not.
+    #
+    # 2 matches the operator's WHPX configuration, which is the setup that
+    # actually caught this. Override with SMOKE_SMP for a wider sweep.
+    -smp "${SMOKE_SMP:-2}"
     -serial file:"$SERIAL_LOG"
     -no-reboot
     -no-shutdown
@@ -225,9 +256,17 @@ QEMU_FLAGS=(
 )
 
 # Use KVM if available
-if [ -c /dev/kvm ] && [ -w /dev/kvm ]; then
+if [ -c /dev/kvm ] && [ -w /dev/kvm ] && [ -z "${SMOKE_FORCE_TCG:-}" ]; then
     QEMU_FLAGS+=(-enable-kvm -cpu host)
     echo -e "  ${DIM}KVM acceleration enabled${NC}"
+elif [ -n "${SMOKE_FORCE_TCG:-}" ]; then
+    # SMOKE_FORCE_TCG (2026-07-28). CLAUDE.md is explicit that TCG is not just
+    # a device-emulation net: it "catches timing-sensitive races that KVM's
+    # speed hides", and the 2026-07-27 SYS_EXEC frame-handoff bug survived 297
+    # commits and a green local suite precisely because KVM always landed the
+    # tick that TCG did not. There was no way to ask this gate for that engine,
+    # so the cheaper-and-blinder one was always used when /dev/kvm existed.
+    echo -e "  ${DIM}TCG forced (SMOKE_FORCE_TCG) -- slower, catches timing races KVM hides${NC}"
 fi
 
 # Clear previous log
@@ -306,6 +345,45 @@ if [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
     sleep "$GRACE_SEC"
     strip_ansi
     printf "\r"
+fi
+
+# ---- SURVIVE-PAST-THE-PROMPT re-check (2026-07-28) -------------------------
+# The poll loop BREAKS the instant PASS_PATTERNS_ALL match, so anything fatal
+# after that instant was never examined. That is not a hypothetical: on the
+# WHPX boot of main@238c49f6 the markers landed at 22.6s and 24.6s and the
+# kernel halted at 25.2s -- INSIDE the grace window above -- and this test
+# reported PASS. `cmd.exe` is the first ring-3 process, so a crash there is
+# precisely the "does it reach userspace" failure this test exists to catch.
+#
+# Re-checking the fail patterns after the grace period costs nothing (the wait
+# already happened for disk flushes) and converts the grace window from a blind
+# spot into the survival assertion. SMOKE_NO_GRACE skips the wait, so re-check
+# regardless of whether the wait ran.
+if [ "$BOOT_PASSED" = true ]; then
+    strip_ansi
+    for pattern in "${FAIL_PATTERNS[@]}"; do
+        if grep -qF -- "$pattern" "$STRIPPED_LOG" 2>/dev/null; then
+            BOOT_PASSED=false
+            BOOT_FAILED=true
+            FAIL_REASON="Detected AFTER pass markers (crash past the prompt): $pattern"
+            break
+        fi
+    done
+fi
+
+# ---- LOG MUST END CLEAN (2026-07-28) ---------------------------------------
+# FAIL_PATTERNS is a denylist and therefore only ever catches fatal shapes
+# somebody already enumerated -- which is exactly how the kernel_gs_base halt
+# got through. This check is shape-based instead: whatever the kernel was
+# saying as it stopped, it must not have been stopping. It costs one tail read
+# and catches fatal shapes nobody has named yet.
+if [ "$BOOT_PASSED" = true ]; then
+    LAST_LINES="$(tail -5 "$STRIPPED_LOG" 2>/dev/null || true)"
+    if printf '%s' "$LAST_LINES" | grep -qiE 'halt|panic|fatal|unrecoverable|triple fault|\[\*\*\]'; then
+        BOOT_PASSED=false
+        BOOT_FAILED=true
+        FAIL_REASON="Log ends on a fatal shape (last 5 lines): $(printf '%s' "$LAST_LINES" | grep -iE 'halt|panic|fatal|unrecoverable|triple fault|\[\*\*\]' | head -1 | cut -c1-100)"
+    fi
 fi
 
 # Kill QEMU (trap also does this; harmless repeat)
