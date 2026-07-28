@@ -125,10 +125,12 @@ def _seq_cursor():
                 d = json.load(f)
             todo = d.get("file") or None
             sec = d.get("section_idx")
-            return (todo, sec if isinstance(sec, int) else None)
+            src = d.get("section_source")
+            return (todo, sec if isinstance(sec, int) else None,
+                    src if isinstance(src, str) else None)
         except Exception:
             continue
-    return (None, None)
+    return (None, None, None)
 
 
 def _resolve_session_transcript(session_id, cwd):
@@ -490,7 +492,7 @@ class SectionMetrics:
 
     def _record(self, marker: str, end_sha) -> dict:
         main, side, turns, side_turns = self._totals()
-        _seq_todo, _seq_section = _seq_cursor()
+        _seq_todo, _seq_section, _seq_src = _seq_cursor()
         return {
             "run_id": self.run_id,
             "section_index": self.index,
@@ -500,6 +502,14 @@ class SectionMetrics:
             "section": (os.environ.get("OVERNIGHT_SECTION")
                         if os.environ.get("OVERNIGHT_SECTION")
                         else _seq_section),
+            # Provenance of `section`, so the split-predictor calibration can
+            # drop rows it cannot trust: explicit | derived | stale | unset,
+            # or `env` when OVERNIGHT_SECTION pinned it. `stale` means the
+            # triage oracle was unavailable at the cursor move and the number
+            # was carried over from the previous section -- plausible, but not
+            # measured, and averaging it in silently would bias the fit.
+            "section_source": ("env" if os.environ.get("OVERNIGHT_SECTION")
+                               else _seq_src),
             "start_sha": self._start_sha,
             "end_sha": end_sha,
             "turns": turns,

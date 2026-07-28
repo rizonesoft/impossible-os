@@ -56,6 +56,7 @@ def test_explicit_index_still_wins():
         mod.save_state({"active": True, "file": None, "section_idx": 0})
         check("explicit accepted", mod.cli(["cursor", "dom", "todo/T.md", "4"]) == 0)
         check("explicit recorded", mod.load_state().get("section_idx") == 4)
+        check("explicit provenance", mod.load_state().get("section_source") == "explicit")
 
 
 def test_omitted_index_is_derived_from_the_oracle():
@@ -69,6 +70,7 @@ def test_omitted_index_is_derived_from_the_oracle():
         mod.save_state({"active": True, "file": None, "section_idx": 0})
         check("cursor accepted", mod.cli(["cursor", "dom", "todo/T.md"]) == 0)
         check("first NEEDS_WORK derived", mod.load_state().get("section_idx") == 19)
+        check("derived provenance", mod.load_state().get("section_source") == "derived")
 
 
 def test_derivation_failure_is_fail_open():
@@ -93,6 +95,29 @@ def test_derivation_failure_is_fail_open():
         check("bad-shape keeps previous", mod.load_state().get("section_idx") == 5)
 
 
+def test_stale_is_marked_so_the_calibration_can_exclude_it():
+    """The dataset-integrity half. When the oracle is unavailable the cursor
+    keeps its previous value -- correct, because a metrics field must never
+    wedge a run -- but the number is then carried over rather than measured.
+    It MUST be distinguishable, or the split-predictor fit silently averages
+    stale sections in as if they were fresh."""
+    with tempfile.TemporaryDirectory() as d:
+        mod = _load(pathlib.Path(d) / "state.json", pathlib.Path(d))
+        # No oracle on disk -> derivation fails -> value carried over, marked stale.
+        mod.save_state({"active": True, "file": None, "section_idx": 7,
+                        "section_source": "derived"})
+        check("stale cursor still succeeds", mod.cli(["cursor", "dom", "todo/T.md"]) == 0)
+        st = mod.load_state()
+        check("stale keeps previous value", st.get("section_idx") == 7)
+        check("stale is MARKED", st.get("section_source") == "stale")
+        # Recovering: the oracle returns, provenance flips back to derived.
+        _stub_oracle(d, {"sections": [{"n": 12, "class": "NEEDS_WORK"}]})
+        check("recovery succeeds", mod.cli(["cursor", "dom", "todo/T.md"]) == 0)
+        st = mod.load_state()
+        check("recovered value", st.get("section_idx") == 12)
+        check("recovered provenance", st.get("section_source") == "derived")
+
+
 def test_derive_helper_returns_none_rather_than_raising():
     """_derive_section_idx is called on a run-critical path; it must swallow
     everything and report None."""
@@ -109,6 +134,7 @@ if __name__ == "__main__":
     test_explicit_index_still_wins()
     test_omitted_index_is_derived_from_the_oracle()
     test_derivation_failure_is_fail_open()
+    test_stale_is_marked_so_the_calibration_can_exclude_it()
     test_derive_helper_returns_none_rather_than_raising()
     if FAILS:
         for f in FAILS:

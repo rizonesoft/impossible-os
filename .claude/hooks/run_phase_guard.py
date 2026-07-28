@@ -1034,6 +1034,11 @@ def cli(argv):
         state = {
             "active": True, "phase": "PREFLIGHT", "pass_no": 1,
             "domain": None, "file": None, "section_idx": 0,
+            # How section_idx was last set: explicit | derived | stale. `unset`
+            # is the start value -- section_idx is 0 and means nothing yet, so
+            # a metrics row carrying it must be excluded from any calibration
+            # rather than read as "section 0".
+            "section_source": "unset",
             "progress_this_pass": False,
             "started_at": argv[1] if len(argv) > 1 else "unknown",
             "updated_at": argv[1] if len(argv) > 1 else "unknown",
@@ -1117,6 +1122,7 @@ def cli(argv):
             state["domain"], state["file"] = argv[1], argv[2]
             if len(argv) >= 4:
                 state["section_idx"] = int(argv[3])
+                state["section_source"] = "explicit"
             else:
                 # COST INSTRUMENTATION (token-saver v02, 2026-07-28). The
                 # documented call shape is `cursor <domain> <file>` with NO
@@ -1135,6 +1141,20 @@ def cli(argv):
                 derived = _derive_section_idx(argv[2])
                 if derived is not None:
                     state["section_idx"] = derived
+                    state["section_source"] = "derived"
+                else:
+                    # The oracle was unavailable (its cache lives under build/
+                    # and build-and-validate.sh deletes it unless --keep-cache;
+                    # observed absent at 16:47 and rebuilt at 16:48 on the
+                    # 2026-07-28 canary). The cursor keeps its PREVIOUS value,
+                    # which is the right safety choice -- a metrics field must
+                    # never be able to fail a cursor move and wedge a run --
+                    # but the number is now carried over, not measured. Mark it
+                    # so the split-predictor calibration can EXCLUDE the row
+                    # instead of averaging a stale section in as if it were
+                    # fresh. A dataset whose gaps are invisible is worse than
+                    # one with holes it can see.
+                    state["section_source"] = "stale"
             save_state(state)
             print(f"[sequencer] cursor -> {argv[2]}", file=sys.stderr)
             return 0
