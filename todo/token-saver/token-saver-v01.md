@@ -394,18 +394,9 @@ not a bill.)
   **(b) REVERTED 2026-07-28 -- shipped 2026-07-27 as `.claude/hooks/search_offload_gate.py`, unwired the next day when
   the live canary run disproved it. (c) and (d) already had enforcement; (a) was folded into (b)'s message and dies
   with it.**
-  **WHY (b) WAS WRONG -- two independent faults, either one fatal.** (1) The remediation was impossible where the gate
-  fired: it was scoped to the headless run ALONE, and that session has no Grep tool (`Grep is not available in this
-  session -- search file contents with `grep` via the Bash tool instead`). It blocked a command and named a tool that
-  does not exist there. (2) The saving never existed: EVERY tool result lands in context, the Grep tool's included, so
-  the blocked `grep -n X file | head -20` and the piped form it was pushed into, `cat file | grep -n X | head -20`,
-  cost the same. Measured live: 3 tool calls where 1 would do, zero context saved, and the run settled on
-  `cat file | grep` as its standing idiom.
-  **The lesson generalizes past this item:** the whole premise rested on "Bash search output lands in context, Grep
-  tool output does not", which was never checked against a running session. That is the same unverified-premise
-  failure this file catalogues in T1-2, T1-5, T2-4 and T3-2 -- committed here by the author of the catalogue. Retired
-  rather than reworded: bounded output and agent offload are owned by other gates, and no message can conjure a Grep
-  tool into an environment that lacks one. Record kept in the hook file, `MANIFEST.md`, and hook-codes SEARCH-OFFLOAD.
+  **WHY (b) WAS WRONG -- the saving never existed.** The premise, written into `MANIFEST.md` as "the Grep/Glob TOOL, whose output does not land in the main context", is false: EVERY tool result lands in context, the Grep tool's included. So the blocked `grep -n X file | head -20` and the piped form it was pushed into, `cat file | grep -n X | head -20`, cost exactly the same. Measured live: 3 tool calls where 1 would do (block, retry, reformulate), zero context saved, and the run settled on `cat file | grep` as its standing idiom. Retired rather than reworded -- bounded output and agent offload are already owned by other gates.
+  **A SECOND FAULT WAS CLAIMED HERE ON 2026-07-28 AND IS WRONG.** The first revert note asserted that the headless run "has no Grep tool", citing one `Grep is not available in this session` error at 02:03:44. The same run then made **14 successful Grep tool calls** from 02:26 onward. Grep is a DEFERRED tool whose schema loads on demand via `ToolSearch`; that single error was an unloaded schema, not an absent tool. The gate's message never naming `ToolSearch` was a message defect, not a fatal one.
+  **The lesson generalizes past this item, twice.** The original premise ("Bash search output lands in context, Grep tool output does not") was never checked against a running session -- the same unverified-premise failure this file catalogues in T1-2, T1-5, T2-4 and T3-2, committed by the author of the catalogue. Then the revert itself repeated it, generalizing a tool-availability claim from a single error line. Verify at the source, including when the finding is your own and points the way you already want to go.
   **The 885 figure is not all addressable, and that IS the design.** Re-counting `tool-history.jsonl` with shlex
   tokenization instead of a regex: **669 LEAD file-searches** (gateable), **563 searches after a pipe** -- these filter
   another command's STDOUT, which the Grep tool structurally cannot do -- and **1,619 commands (a third of all Bash

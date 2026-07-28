@@ -115,18 +115,22 @@ never fires. Retained so a transcript carrying the code can still be read, and
 so the measurement is not lost.
 
 It blocked a leading file search (`grep`/`rg`/`find` family) in the headless
-run and directed the caller to the Grep/Glob TOOL. The live canary run of
-2026-07-28 disproved both halves of that:
+run and directed the caller to the Grep/Glob TOOL, on the premise that the
+tool's output does not land in the main context. The live canary run of
+2026-07-28 disproved that premise:
 
-  * The headless session has NO Grep tool -- `Grep is not available in this
-    session -- search file contents with `grep` via the Bash tool instead`. The
-    gate was scoped to the headless run ALONE, so it fired only where its own
-    remediation was unavailable.
-  * The saving did not exist. Every tool result lands in context, the Grep
-    tool's included, and the blocked `grep -n X file | head -20` and the piped
-    form it was pushed into, `cat file | grep -n X | head -20`, return
-    identical output. Observed cost: three tool calls where one would do, no
-    context saved.
+  * Every tool result lands in context, the Grep tool's included. The blocked
+    `grep -n X file | head -20` and the piped form it was pushed into,
+    `cat file | grep -n X | head -20`, return identical output for identical
+    context. Observed cost: three tool calls where one would do (block, retry,
+    reformulate), no context saved.
+
+A second fault was briefly claimed here and is WRONG -- recorded so it is not
+repeated. The first retirement note said the headless run "has no Grep tool",
+citing one `Grep is not available in this session` error at 02:03:44. The same
+run then made 14 successful Grep tool calls from 02:26 on. Grep is a DEFERRED
+tool whose schema loads on demand via ToolSearch; that single error was an
+unloaded schema, not an absent tool.
 
 Do not revive it by rewording the message. Bounded output and agent offload are
 already owned by other gates, and the premise cannot be repaired in an

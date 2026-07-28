@@ -3,24 +3,27 @@
 r"""RETIRED (2026-07-28). Kept as the record of a measurement that did not hold.
 
 WHY IT WAS RETIRED, from the live 2026-07-28 canary run rather than reasoning.
-Two independent faults, either one fatal:
 
-  1. THE REMEDIATION IS IMPOSSIBLE WHERE THE GATE FIRES. This hook was scoped
-     to the headless run alone (OVERNIGHT_SEQUENCER_RUN=1), and the headless
-     session has no Grep tool: `Grep is not available in this session -- search
-     file contents with `grep` via the Bash tool instead`. So it blocked a
-     command and directed the model to a tool that does not exist there. The
-     scoping decision and the remediation contradicted each other from day one.
+THE SAVING WAS NEVER REAL. The premise was that a Bash search's output "lands
+in this context and is re-charged as cache-read on every later turn", unlike
+the Grep tool -- MANIFEST.md put it as "the Grep/Glob TOOL, whose output does
+not land in the main context". That is simply false: EVERY tool result lands in
+context, the Grep tool's included. Measured on the live run, the blocked
+`grep -n X file | head -20` and the piped form it was pushed into,
+`cat file | grep -n X | head -20`, return IDENTICAL output for identical
+context. Zero saving -- and the gate cost 3 tool calls where 1 would do (block,
+retry, reformulate) before the run settled on `cat file | grep` as its standing
+idiom.
 
-  2. THE SAVING WAS NEVER REAL. The premise was that a Bash search's output
-     "lands in this context and is re-charged as cache-read on every later
-     turn", unlike the Grep tool. But EVERY tool result lands in context,
-     including the Grep tool's. Measured on the live run: the blocked
-     `grep -n X file | head -20` and the piped form it was pushed into,
-     `cat file | grep -n X | head -20`, return IDENTICAL output, hence
-     identical context. Zero saving, and the gate cost 3 tool calls where 1
-     would do (block, retry, reformulate) before the run settled on
-     `cat file | grep` as its standing idiom.
+A CLAIM THAT WAS BRIEFLY MADE HERE AND IS WRONG -- recorded so it is not
+repeated. The first retirement note asserted a second fault: that the headless
+run "has no Grep tool", citing `Grep is not available in this session` at
+02:03:44. The same run then made 14 successful Grep tool calls from 02:26
+onward. Grep is a DEFERRED tool: its schema loads on demand via ToolSearch, and
+the single early error was the schema not yet being loaded -- not absence. The
+gate's message never mentioning ToolSearch was a message defect, not a fatal
+one. Generalizing from one error line, in a file whose whole subject is
+unverified premises, is the failure this paragraph exists to prevent.
 
 The item is not repairable by rewording: bounding output and agent offload are
 already owned by other gates, and the Grep-tool premise cannot be fixed in an
