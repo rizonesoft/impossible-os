@@ -1,7 +1,35 @@
 #!/usr/bin/env python3
-# block-via: exit 2 (headless overnight run only -- OVERNIGHT_SEQUENCER_RUN=1;
-# subagents and interactive sessions are never gated)
-r"""PreToolUse (Bash): reroute a LEADING file-search to the Grep/Glob tool.
+# block-via: RETIRED 2026-07-28 -- unwired from settings.json, never fires.
+r"""RETIRED (2026-07-28). Kept as the record of a measurement that did not hold.
+
+WHY IT WAS RETIRED, from the live 2026-07-28 canary run rather than reasoning.
+Two independent faults, either one fatal:
+
+  1. THE REMEDIATION IS IMPOSSIBLE WHERE THE GATE FIRES. This hook was scoped
+     to the headless run alone (OVERNIGHT_SEQUENCER_RUN=1), and the headless
+     session has no Grep tool: `Grep is not available in this session -- search
+     file contents with `grep` via the Bash tool instead`. So it blocked a
+     command and directed the model to a tool that does not exist there. The
+     scoping decision and the remediation contradicted each other from day one.
+
+  2. THE SAVING WAS NEVER REAL. The premise was that a Bash search's output
+     "lands in this context and is re-charged as cache-read on every later
+     turn", unlike the Grep tool. But EVERY tool result lands in context,
+     including the Grep tool's. Measured on the live run: the blocked
+     `grep -n X file | head -20` and the piped form it was pushed into,
+     `cat file | grep -n X | head -20`, return IDENTICAL output, hence
+     identical context. Zero saving, and the gate cost 3 tool calls where 1
+     would do (block, retry, reformulate) before the run settled on
+     `cat file | grep` as its standing idiom.
+
+The item is not repairable by rewording: bounding output and agent offload are
+already owned by other gates, and the Grep-tool premise cannot be fixed in an
+environment with no Grep tool. Retained (not deleted) so the next person to
+propose "route Bash searches to the Grep tool" finds the measurement first.
+
+Original design notes follow.
+
+PreToolUse (Bash): reroute a LEADING file-search to the Grep/Glob tool.
 
 CLAUDE.md sets the floor -- "the Grep-tool-over-Bash-grep floor is
 MCP-independent and always applies" -- and it is measurably not being held.

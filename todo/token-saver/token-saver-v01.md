@@ -391,8 +391,21 @@ not a bill.)
   question still produces a fresh run (no false hits -- a false hit IS a quality loss).
 
 - [/] **T2-3. Route the four highest-volume main-session shapes to standing agents by default.**
-  **(b) SHIPPED 2026-07-27 as `.claude/hooks/search_offload_gate.py`; (c) and (d) already had enforcement; (a) folded
-  into (b)'s message.**
+  **(b) REVERTED 2026-07-28 -- shipped 2026-07-27 as `.claude/hooks/search_offload_gate.py`, unwired the next day when
+  the live canary run disproved it. (c) and (d) already had enforcement; (a) was folded into (b)'s message and dies
+  with it.**
+  **WHY (b) WAS WRONG -- two independent faults, either one fatal.** (1) The remediation was impossible where the gate
+  fired: it was scoped to the headless run ALONE, and that session has no Grep tool (`Grep is not available in this
+  session -- search file contents with `grep` via the Bash tool instead`). It blocked a command and named a tool that
+  does not exist there. (2) The saving never existed: EVERY tool result lands in context, the Grep tool's included, so
+  the blocked `grep -n X file | head -20` and the piped form it was pushed into, `cat file | grep -n X | head -20`,
+  cost the same. Measured live: 3 tool calls where 1 would do, zero context saved, and the run settled on
+  `cat file | grep` as its standing idiom.
+  **The lesson generalizes past this item:** the whole premise rested on "Bash search output lands in context, Grep
+  tool output does not", which was never checked against a running session. That is the same unverified-premise
+  failure this file catalogues in T1-2, T1-5, T2-4 and T3-2 -- committed here by the author of the catalogue. Retired
+  rather than reworded: bounded output and agent offload are owned by other gates, and no message can conjure a Grep
+  tool into an environment that lacks one. Record kept in the hook file, `MANIFEST.md`, and hook-codes SEARCH-OFFLOAD.
   **The 885 figure is not all addressable, and that IS the design.** Re-counting `tool-history.jsonl` with shlex
   tokenization instead of a regex: **669 LEAD file-searches** (gateable), **563 searches after a pipe** -- these filter
   another command's STDOUT, which the Grep tool structurally cannot do -- and **1,619 commands (a third of all Bash

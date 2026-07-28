@@ -107,20 +107,30 @@ types, and any path the agent never touched are all exempt.
 
 Kill switch: `AGENT_COVERAGE_DISABLE=1`.
 
-## SEARCH-* (search_offload_gate.py)
+## SEARCH-* (search_offload_gate.py) -- RETIRED 2026-07-28
 
-### SEARCH-OFFLOAD
-A leading file search (`grep`/`rg`/`find` family) run through Bash in the
-headless run. Its whole result lands in context and is re-charged as cache-read
-on every later turn; the Grep/Glob TOOL returns the same matches without that,
-and supports `-n`, `-A`/`-B`/`-C`, `-c`, `-l`, `head_limit` and glob/type
-filters.
+### SEARCH-OFFLOAD (retired -- no longer emitted)
+This code is dead: the hook was unwired from `settings.json` on 2026-07-28 and
+never fires. Retained so a transcript carrying the code can still be read, and
+so the measurement is not lost.
 
-NOT gated, by design: a search after a `|` (it filters another command's
-stdout, which the Grep tool cannot do), a command this hook cannot tokenize, a
-grep with no path operand (reads stdin), a compound command whose first real
-segment is other work (`sed -i ... && grep ...` -- blocking it would reject the
-write), subagent searches, and every interactive session.
+It blocked a leading file search (`grep`/`rg`/`find` family) in the headless
+run and directed the caller to the Grep/Glob TOOL. The live canary run of
+2026-07-28 disproved both halves of that:
+
+  * The headless session has NO Grep tool -- `Grep is not available in this
+    session -- search file contents with `grep` via the Bash tool instead`. The
+    gate was scoped to the headless run ALONE, so it fired only where its own
+    remediation was unavailable.
+  * The saving did not exist. Every tool result lands in context, the Grep
+    tool's included, and the blocked `grep -n X file | head -20` and the piped
+    form it was pushed into, `cat file | grep -n X | head -20`, return
+    identical output. Observed cost: three tool calls where one would do, no
+    context saved.
+
+Do not revive it by rewording the message. Bounded output and agent offload are
+already owned by other gates, and the premise cannot be repaired in an
+environment with no Grep tool.
 
 ## EDIT-* (edit_preflight.py)
 
