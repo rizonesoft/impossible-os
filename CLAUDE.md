@@ -53,9 +53,18 @@ Register new tests with `test_suite_register_cat("name", fn, TEST_CAT_XX)`. Use 
 
 ```bash
 bash scripts/test-smoke.sh        # builds, boots in QEMU, checks for Boot complete + C:\>
+bash scripts/test-smoke-matrix.sh # the same, across TCG+KVM x 1+2 CPUs (4 legs, ~3 min)
 ```
 
 The smoke test complements unit tests: unit tests cover individual behaviors against in-memory fixtures, the smoke test proves **the image actually boots to userspace**. It auto-selects KVM if `/dev/kvm` is writable and falls back to TCG otherwise. 30-second timeout, fail-fast on missing markers.
+
+**Boot-validation matrix (2026-07-28).** `test-smoke-matrix.sh` boots the image on **TCG and KVM at 1 and 2 CPUs** and fails if any leg fails. Prefer it over the single-config smoke test wherever a section is being validated; run it under `scripts/overnight/run-artifact.sh` so only the verdict enters context (full logs land in `build/smoke-matrix/`).
+
+Why four legs. Until 2026-07-28 the smoke gate passed **no `-smp` flag at all**, so it had never booted SMP -- and a section changing the TEB <-> `kernel_gs_base` handoff across context switches shipped green through it, then halted on a 2-CPU boot with `[CRIT] ... has TEB but kernel_gs_base=0`. The engines are not redundant either (see the KVM-vs-TCG table below). **A leg that fails on ONE configuration is the finding, not noise** -- never widen an assertion to make it pass; the engine/CPU difference IS the evidence.
+
+**WHPX belongs at the section boundary, not the per-edit loop.** `scripts/machines/run-qemu.ps1 -Accel whpx -Headless` is scriptable from WSL and is the accelerator that caught a halt the Linux matrix could not reproduce, but at ~141s per boot it is a per-section check. It reaps its own QEMU (recorded PIDs only, name-checked against reuse), so a killed wrapper no longer orphans a VM holding the OVMF flash file.
+
+**Triage every leg, and resolve to truth.** Fix a real `[FAIL]`/`[WARN]`/`[CRIT]`/halt/regression; if a line is WRONGLY reported, fix the reporter at source rather than muting it (2026-07-28: 30 "init regressed" warnings were a cumulative-vs-per-step comparison bug -- the fix was correcting the comparison); leave a line alone only when it is genuinely required or normal for the platform, such as absent TPM, absent RDRAND, firmware-table quirks, and deliberate test-path refusals.
 
 **When to run:**
 

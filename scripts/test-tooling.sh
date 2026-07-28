@@ -3754,6 +3754,29 @@ if python3 "$REPO_ROOT/.claude/hooks/cd_prefix_reminder.py" --selftest >/dev/nul
 else
     t_fail "cd_prefix_reminder_selftest  embedded selftest failed"
 fi
+# The boot-validation matrix must stay wired and must keep covering BOTH engines
+# at BOTH cpu counts. The gate it replaces had silently run one CPU on one engine
+# for its whole life, which is how an SMP regression shipped green.
+if [ -x "$REPO_ROOT/scripts/test-smoke-matrix.sh" ]; then
+    t_pass "smoke_matrix_present  scripts/test-smoke-matrix.sh is executable"
+else
+    t_fail "smoke_matrix_present  scripts/test-smoke-matrix.sh missing or not executable"
+fi
+_sm_legs=$(grep -oE 'SMOKE_MATRIX_LEGS:-[^}]*' "$REPO_ROOT/scripts/test-smoke-matrix.sh" 2>/dev/null | head -1)
+if printf '%s' "$_sm_legs" | grep -q 'kvm:1' \
+   && printf '%s' "$_sm_legs" | grep -q 'kvm:2' \
+   && printf '%s' "$_sm_legs" | grep -q 'tcg:1' \
+   && printf '%s' "$_sm_legs" | grep -q 'tcg:2'; then
+    t_pass "smoke_matrix_legs  default covers kvm+tcg x 1+2 cpus"
+else
+    t_fail "smoke_matrix_legs  default legs incomplete" "got: $_sm_legs"
+fi
+if grep -q 'test-smoke-matrix\.sh' "$REPO_ROOT/.claude/skills/implement-todo-section/SKILL.md" 2>/dev/null; then
+    t_pass "smoke_matrix_wired  implement-todo-section calls the matrix"
+else
+    t_fail "smoke_matrix_wired  implement-todo-section still calls the single-config smoke test"
+fi
+
 if python3 "$REPO_ROOT/.claude/hooks/todo_wrap_reminder.py" --selftest >/dev/null 2>&1; then
     t_pass "todo_wrap_reminder_selftest  hard-wrap detector green"
 else
