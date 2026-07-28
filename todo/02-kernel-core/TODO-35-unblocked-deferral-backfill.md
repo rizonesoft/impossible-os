@@ -132,6 +132,16 @@ a caller reading them gets a confident wrong answer.
 - [ ] Quota inheritance: a child gets its own process block and SHARES the parent user block; teardown mirrors the job-detach path.
 - [ ] Per-user caps wired to TODO-02 config: register a privileged `quota.user.<type>` tunable per type in `quota_config.c`.
 - [ ] Targeted-cleanup seam: a cache-drain / log-trim / refuse-new-handles entry point so pressure has somewhere to act.
+- [ ] Bring `quota_pressure_tick` under the 100 us single-DPC watchdog threshold: it is the sampler DPC and it OVERRUNS on every observed boot.
+      Measured 2026-07-28 on a 2-CPU WHPX boot: `llvm-addr2line` resolves the repeat-offending DPC `0x219f80` to `quota_pressure_tick`
+      (`src/kernel/quota/quota_pressure.c:1294`), and it ran 100-481 us against the 100 us threshold in `dpc.c`, continuously, for the
+      whole capture. TODO-34 counted **567 `pressure tick overran` lines plus 1776 DPC-watchdog lines** in an earlier capture and recorded
+      them as "owned elsewhere" -- no such owner existed anywhere in `todo/` until this item, so the perf defect had been characterised
+      three times and assigned zero times. The sampler's own overrun report already carries partial suppression; the DPC watchdog's does
+      not, so the real fix is making the tick fast enough rather than quieting either reporter.
+      Split the work honestly: profile which of `sample` / `due` / `arm` / `drain` dominates (the overrun line already prints all four,
+      and `drain` is frequently the largest), then either bound the per-tick drain batch or move the drain off the DPC path.
+      -> XREF: `02-kernel-core/TODO-34-serial-log-signal-to-noise.md` (item: "Rate-limit the DPC-watchdog warning" -- the log-noise half)
 - [ ] Commit: `"quota: enforce working-set and pagefile limits, report real job memory"`
 
 **Test checkpoint:** a process exceeding its working-set limit is refused with the documented status; job memory

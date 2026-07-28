@@ -20,7 +20,7 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 > **1 real defect**, ~11 environment reports (no TPM, no RDRAND, OVMF firmware-table quirks), and ~30 deliberate test-path
 > messages -- fault injection, refusal paths, and `TEST_SKIP` / `TEST_PENDING`, several of which name the test in the message
 > text (`test-bad`, `NoSuchCategory`, `test_irql_require_at_most`). Two issues account for 86% of the volume by themselves
-> (1776 DPC-watchdog + 567 quota pressure-tick lines) and are owned elsewhere. The single real defect is the `boot_trend`
+> (1776 DPC-watchdog + 567 quota pressure-tick lines). **Correction 2026-07-28: "owned elsewhere" was false when written -- a search of `todo/` found no owner for either, so both had been counted and never assigned. The perf half is now `02-kernel-core/TODO-35 §3` (item: "Bring `quota_pressure_tick` under the 100 us single-DPC watchdog threshold"); the log-noise half is section 5 of THIS file.** The single real defect is the `boot_trend`
 > rename, already filed. So the log is CLEAN and completely unassertable at the same time -- that is the defect this TODO owns.
 
 ## Inputs
@@ -52,6 +52,7 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 | 💎   |   2   | Log-cleanliness gate in the kernel test runner      | §1         |  [ ]   |
 | 💎   |   3   | Smoke test fails on any `[FAIL]` in its own log     | --         |  [ ]   |
 | ⭐   |   4   | Surface the platform blind spots in the run summary | §2         |  [ ]   |
+| 💎   |   5   | Rate-limit the repeat-offender warnings (86% of vol)| --         |  [ ]   |
 
 > 💎 = parity -- Linux kernel selftests and Windows WHQL both gate on unexpected log output.
 > ⭐ = exclusive -- neither treats "expected diagnostic output" as a declared, asserted property of a test.
@@ -134,6 +135,21 @@ is worse than one that fails, because it reports success -- and here two of them
 - [ ] Commit: `"test: report disabled checks so 'not run' never reads as 'passed'"`
 
 **Test checkpoint:** a TCG run's summary names the DPC-timing check as disabled with its reason; a WHPX run reports it active; the per-platform coverage note matches what each platform actually ran. Test on: QEMU TCG, QEMU KVM, QEMU WHPX; bare metal.
+
+---
+
+## 5. Rate-Limit the Repeat-Offender Warnings That Produce 86% of the Volume
+
+Two reporters produce the overwhelming majority of every capture's warning lines, and neither throttles. `dpc.c:215` emits `watchdog: DPC %p on CPU %u ran %u us` unconditionally on every single overrun -- there is no rate limiting of any kind at that call site. The quota sampler's own `pressure tick overran` report does carry partial suppression ("N further overrun(s) suppressed while that report waited"), which is why it produced 567 lines where the DPC watchdog produced 1776 for the same underlying events.
+
+This section owns the LOG-NOISE half only. The underlying performance defect -- `quota_pressure_tick` genuinely running 100-481 us against a 100 us threshold -- is a real bug and must not be silenced instead of fixed; it is owned by `02-kernel-core/TODO-35 §3`. Rate-limiting here is for the case where a slow DPC is legitimately being reported: the operator needs to know it happened and how often, not to receive one line per occurrence forever.
+
+- [ ] Rate-limit the DPC-watchdog warning per offending routine: report the first N, then collapse to a periodic summary naming the routine, the count, and the worst observed duration.
+- [ ] Emit a single end-of-boot roll-up of DPC overruns per routine, so a capture states "quota_pressure_tick: 1776 overruns, worst 481 us" once instead of 1776 times.
+- [ ] Apply the same shape to any other unconditional per-event `LOG_WARN` in a hot path (audit for the pattern rather than fixing only the two known instances).
+- [ ] Commit: `"dpc,klog: rate-limit repeat-offender warnings, roll up per routine"`
+
+**Test checkpoint:** a boot whose sampler overruns hundreds of times produces a bounded number of DPC-watchdog lines plus one roll-up naming the routine and count; the underlying overrun is still visible and still attributable. Test on: QEMU TCG, QEMU KVM, WHPX.
 
 ---
 
