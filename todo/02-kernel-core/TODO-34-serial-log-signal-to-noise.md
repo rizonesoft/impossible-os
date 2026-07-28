@@ -52,7 +52,7 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 | 💎   |   2   | Log-cleanliness gate in the kernel test runner      | §1         |  [ ]   |
 | 💎   |   3   | Smoke test fails on any `[FAIL]` in its own log     | --         |  [ ]   |
 | ⭐   |   4   | Surface the platform blind spots in the run summary | §2         |  [ ]   |
-| 💎   |   5   | Rate-limit the repeat-offender warnings (86% of vol)| --         |  [ ]   |
+| 💎   |   5   | Rate-limit the repeat-offender warnings (86% of vol)| --         |  [/]   |
 
 > 💎 = parity -- Linux kernel selftests and Windows WHQL both gate on unexpected log output.
 > ⭐ = exclusive -- neither treats "expected diagnostic output" as a declared, asserted property of a test.
@@ -101,6 +101,11 @@ attribute a line to a suite and would re-introduce the same "which of these fort
 
 ## 3. Smoke Test Fails on Any `[FAIL]` in Its Own Log
 
+> **PARTIALLY OVERTAKEN 2026-07-28 (`a6a2b828`) -- read before implementing.** The FATAL half of this section shipped: `test-smoke.sh` now fails on generic `[CRIT]` / `FATAL -- system halted` / `system halted` anywhere in the capture (not just the nine-string allowlist), re-checks the fail patterns AFTER the grace window (a crash 2.5s past the pass markers used to be invisible), asserts the log ENDS clean to catch shapes nobody enumerated, and boots `-smp 2` where it had silently run one CPU forever. What remains here is specifically the `[FAIL]`-line half -- BOOT-BUDGET and friends -- which is a different judgement call.
+>
+> **Do not naively "fail on ANY `[FAIL]`" without settling the third item below first.** A current WHPX capture carries `[FAIL] BOOT-BUDGET: TOTAL boot took 16246ms (target 4000ms)` and several more; those are performance budgets missed on a slow accelerator, not correctness failures, and gating a smoke run on them would make the gate red on every WHPX boot and train everyone to ignore it. Decide the BOOT-BUDGET question first, then implement.
+
+
 `scripts/test-smoke.sh` passes on two markers (`Boot complete in`, `C:\>`) and fails only on a nine-string fatal allowlist. A
 `[FAIL]` outside that list passes straight through. Demonstrated 2026-07-27: a local smoke run reported `SMOKE TEST PASSED`
 while its own log held `[FAIL] BOOT-BUDGET: EXEC -> DESKTOP_READY took 1139ms (target 100ms)` and 32 `[WARN]` lines. This is
@@ -144,9 +149,12 @@ Two reporters produce the overwhelming majority of every capture's warning lines
 
 This section owns the LOG-NOISE half only. The underlying performance defect -- `quota_pressure_tick` genuinely running 100-481 us against a 100 us threshold -- is a real bug and must not be silenced instead of fixed; it is owned by `02-kernel-core/TODO-35 §3`. Rate-limiting here is for the case where a slow DPC is legitimately being reported: the operator needs to know it happened and how often, not to receive one line per occurrence forever.
 
-- [ ] Rate-limit the DPC-watchdog warning per offending routine: report the first N, then collapse to a periodic summary naming the routine, the count, and the worst observed duration.
-- [ ] Emit a single end-of-boot roll-up of DPC overruns per routine, so a capture states "quota_pressure_tick: 1776 overruns, worst 481 us" once instead of 1776 times.
+- [x] Rate-limit the DPC-watchdog warning per offending routine: report the first N, then collapse to a periodic summary naming the routine, the count, and the worst observed duration.
+      **Shipped 2026-07-28 (`41a09b70`):** first 3 crossings per routine warn, the rest are counted silently. Per-CPU table with no lock -- safe because `drain_queue()` is reached only via `smp_this_cpu()->cpu_id` from both callers (verified, not assumed), which matters because the report path calls `klog()` and holding a spinlock across serial output is forbidden. The table lives OUTSIDE `struct dpc_watchdog`, which an existing `_Static_assert` pins to one cache line.
+- [x] Emit a single end-of-boot roll-up of DPC overruns per routine, so a capture states "quota_pressure_tick: 1776 overruns, worst 481 us" once instead of 1776 times.
+      **Shipped 2026-07-28 (`41a09b70`):** `dpc_watchdog_report()`, wired into the boot report block in `boot_desktop.c`. Verified on WHPX where the flood occurred -- **3 per-occurrence lines against 1776 before**, plus the roll-up naming the routine, count and worst case.
 - [ ] Apply the same shape to any other unconditional per-event `LOG_WARN` in a hot path (audit for the pattern rather than fixing only the two known instances).
+      **Still open 2026-07-28** -- the DPC instance was fixed directly; the AUDIT for other instances was not performed, so this is the remaining work in this section.
 - [ ] Commit: `"dpc,klog: rate-limit repeat-offender warnings, roll up per routine"`
 
 **Test checkpoint:** a boot whose sampler overruns hundreds of times produces a bounded number of DPC-watchdog lines plus one roll-up naming the routine and count; the underlying overrun is still visible and still attributable. Test on: QEMU TCG, QEMU KVM, WHPX.
