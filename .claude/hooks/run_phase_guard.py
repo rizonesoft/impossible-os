@@ -844,6 +844,36 @@ def _live_oracle_status():
         return None
 
 
+def _derive_section_idx(todo_path):
+    """Section number the cursor is moving to, or None if it cannot be derived.
+
+    The current section is the first one the triage oracle still classes
+    NEEDS_WORK -- the same ordering the sequencer itself routes on, so the
+    recorded index matches the section the worker is about to implement.
+
+    Purely for metrics attribution: EVERY failure path returns None so the
+    caller keeps the previous value. A cost-reporting field must never be able
+    to fail a `cursor` move and wedge a run.
+    """
+    try:
+        out = subprocess.run(
+            [sys.executable, str(repo_root() / ".claude/hooks/sequencer_triage.py"),
+             "--classify", str(todo_path)],
+            capture_output=True, text=True, timeout=60, cwd=str(repo_root()))
+        if out.returncode != 0:
+            return None
+        secs = json.loads(out.stdout.strip()).get("sections")
+        if not isinstance(secs, list):
+            return None
+        for s in secs:
+            if isinstance(s, dict) and s.get("class") == "NEEDS_WORK":
+                n = s.get("n")
+                return n if isinstance(n, int) else None
+        return None                    # every section done: leave the cursor be
+    except Exception:
+        return None
+
+
 def handle_stop():
     # The guard governs ONLY the headless unattended run -- an interactive
     # operator session is never trapped (it can stop and disarm freely).
@@ -1009,6 +1039,24 @@ def cli(argv):
             state["domain"], state["file"] = argv[1], argv[2]
             if len(argv) >= 4:
                 state["section_idx"] = int(argv[3])
+            else:
+                # COST INSTRUMENTATION (token-saver v02, 2026-07-28). The
+                # documented call shape is `cursor <domain> <file>` with NO
+                # index, so `section_idx` never left its `start` value of 0 and
+                # stream-report.py stamped `"section": 0` on EVERY metrics
+                # record ever written -- all 56 of them, across every run. That
+                # left no way to correlate a section with its turn count, which
+                # is the dataset the split-predictor calibration needs (cost is
+                # quadratic in segment length, so knowing WHICH sections run
+                # long is the whole input). Derive it from the same oracle the
+                # sequencer routes on rather than adding an argument the model
+                # must remember: the current section is the first one still
+                # NEEDS_WORK. Fail-open in every direction -- on any error the
+                # previous value stands, exactly as before, because a metrics
+                # attribution must never be able to block a run.
+                derived = _derive_section_idx(argv[2])
+                if derived is not None:
+                    state["section_idx"] = derived
             save_state(state)
             print(f"[sequencer] cursor -> {argv[2]}", file=sys.stderr)
             return 0

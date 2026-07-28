@@ -64,12 +64,32 @@ SRC_PATHS = ["src", "include", "user", "resources", "tools",
 TODO_PATHS = ["todo"]
 
 # Per-kind relevant path scopes (P2.2). Keys are normalized review kinds.
+#
+# COVERAGE IS LOAD-BEARING (token-saver v02, 2026-07-28). A kind missing from
+# this table fails open forever: `should_redispatch` cannot fingerprint it, so
+# it ALWAYS redispatches and the gate can never suppress that kind. The canary
+# recorded "0 of 2 rounds suppressed" and one of the four all-time redispatch
+# records reads "unknown kind 'test-coverage' -- fail-open to redispatch" --
+# the gate was not mis-keyed, it simply had never been told the kind existed.
+# The repo's live vocabulary (grep `review-kind: X` across skills/hooks/scripts)
+# is adversarial, re-adversarial, perf, performance, consistency, design,
+# gap-audit, test-coverage, adversarial-impl; all nine are covered below and
+# test_review_convergence.py re-derives that list from the tree so the next kind
+# someone adds fails the suite instead of silently failing open.
+#
+# Scope choice errs WIDE on purpose: a wider scope invalidates the stored
+# verdict more often (more redispatch), while a narrow one suppresses more.
+# Only the second direction can skip a review that was actually needed.
 KIND_SCOPES = {
     "adversarial": ("src",),
     "re-adversarial": ("src",),
+    "adversarial-impl": ("src",),
     "perf": ("src",),
+    "performance": ("src",),
+    "test-coverage": ("src",),
     "consistency": ("src", "todo"),
     "design": ("src", "todo"),
+    "gap-audit": ("src", "todo"),
 }
 
 

@@ -31,7 +31,12 @@ phase in sync with what you are doing:
 python3 .claude/hooks/run_phase_guard.py <cmd>
   start <date>            begin a run (phase PREFLIGHT)
   phase <PHASE>           PREFLIGHT|TRIAGE|VALIDATE|GAP_AUDIT|SECTIONS|FILE_CLOSE|ADVANCE
-  cursor <domain> <file>  record the cursor
+  cursor <domain> <file>  record the cursor. The section index is optional and
+                          [idx]         DERIVED when omitted (first section the
+                          triage oracle still classes NEEDS_WORK), so metrics
+                          attribute turns to a real section instead of the
+                          constant 0 every record carried before 2026-07-28.
+                          Pass it explicitly only to override that.
   progress                mark that this pass shipped/cleared something
   next-pass               start the next full sweep (resets progress)
   fixpoint                run complete -> stops the watchdog
