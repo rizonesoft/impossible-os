@@ -191,7 +191,65 @@ def test_r2_wrapped_route_logs_follow():
         assert len(follows) == 1, entries
 
 
+def test_two_script_paths_are_not_an_invocation():
+    """2026-07-28: `\\b(?:bash|sh)\\s+` was satisfied by the DOT inside
+    `build.sh` -- `.` is a non-word char, `s` is a word char -- so
+    `scripts/build.sh scripts/test.sh` contained the substring
+    `sh scripts/test.sh` and a READ-ONLY grep naming two suite scripts was
+    BLOCKED as if it invoked one. The reroute advice is meaningless for a grep,
+    so the only exits were rephrasing or giving up."""
+    mod = _load()
+    clean = [
+        "grep -n 'check-abi' scripts/build.sh scripts/test.sh",
+        "ls -la scripts/build.sh scripts/test.sh",
+        "wc -l scripts/build.sh scripts/test.sh scripts/lint.sh",
+        "git diff --stat scripts/build.sh scripts/test.sh",
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        for cmd in clean:
+            rc, _, err = _run_main(mod, cmd, root)
+            assert rc == 0, f"read-only command blocked: {cmd!r} -> {err}"
+
+
+def test_real_interpreter_forms_still_block():
+    """The fix must not buy its silence by going blind: every genuine
+    invocation shape still has to match, including the two a plain
+    command-position anchor would have broken."""
+    mod = _load()
+    for cmd in ("bash scripts/test.sh", "sh scripts/build.sh",
+                "/bin/bash scripts/test.sh", "time bash scripts/test.sh"):
+        assert any(r.search(cmd) for r in mod._SCRIPT_RES), f"stopped matching: {cmd!r}"
+
+
+def test_gate_is_scoped_to_the_headless_run():
+    """The gate keyed on the GLOBAL cursor, so while a run sat in SECTIONS every
+    interactive operator session inherited its phase gates -- including a BLOCK
+    whose rationale is explicitly about the RUN's context budget. Same
+    discriminator run_phase_guard uses so an operator is never trapped."""
+    import os
+    mod = _load()
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".claude/state").mkdir(parents=True)
+        (root / ".claude/state/sequencer-run.json").write_text(
+            json.dumps({"active": True, "phase": "SECTIONS"}))
+        prev = os.environ.pop("OVERNIGHT_SEQUENCER_RUN", None)
+        try:
+            assert not mod._in_sections(root), "operator session inherited the run's gate"
+            os.environ["OVERNIGHT_SEQUENCER_RUN"] = "1"
+            assert mod._in_sections(root), "headless run must still be gated"
+        finally:
+            os.environ.pop("OVERNIGHT_SEQUENCER_RUN", None)
+            if prev is not None:
+                os.environ["OVERNIGHT_SEQUENCER_RUN"] = prev
+
+
 if __name__ == "__main__":
+    test_two_script_paths_are_not_an_invocation()
+    test_real_interpreter_forms_still_block()
+    test_gate_is_scoped_to_the_headless_run()
     test_wrapped_command_is_exempt()
     test_bare_command_blocks_with_reroute()
     test_wrapped_test_and_smoke_also_exempt()

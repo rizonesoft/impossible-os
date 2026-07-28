@@ -33,6 +33,7 @@ any error -- a hook error must never wedge the run.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -63,7 +64,19 @@ _SUITE_SCRIPTS = r"scripts/(?:build|test|test-smoke|test-tooling)\.sh\b"
 _CMD_POS = r"(?:^|[;&|(]\s*)"
 _ENV_PREFIX = r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 _SCRIPT_RES = (
-    re.compile(r"\b(?:bash|sh)\s+(?:-\S+\s+)*[\"']?(?:\S*/)?" + _SUITE_SCRIPTS),
+    # LOOKBEHIND, not \b (2026-07-28). `\b` is satisfied by the DOT inside any
+    # `*.sh` filename -- `.` is a non-word char, `s` is a word char -- so
+    # `scripts/build.sh scripts/test.sh` contained the substring
+    # `sh scripts/test.sh` and a READ-ONLY `grep`/`ls` naming two suite scripts
+    # was BLOCKED as if it were invoking one. Hit live by
+    # `grep -n "..." scripts/build.sh scripts/test.sh`, where the reroute
+    # advice ("re-issue through run-artifact.sh") is meaningless for a grep, so
+    # the only exits were rephrasing or giving up.
+    # `(?<![.\w])` keeps every real interpreter form matching -- `bash x`,
+    # `sh x`, `/bin/bash x`, `time bash x` -- while refusing to treat a
+    # filename's tail as the shell. A plain _CMD_POS anchor would be WRONG
+    # here: it would stop matching `/bin/bash ...` and `time bash ...`.
+    re.compile(r"(?<![.\w])(?:bash|sh)\s+(?:-\S+\s+)*[\"']?(?:\S*/)?" + _SUITE_SCRIPTS),
     re.compile(_CMD_POS + _ENV_PREFIX + r"[\"']?(?:\./|\S*/)?" + _SUITE_SCRIPTS,
                re.MULTILINE),
     re.compile(_CMD_POS + _ENV_PREFIX
@@ -131,7 +144,35 @@ def _repo_root() -> Path | None:
     return None
 
 
+def _is_headless_run() -> bool:
+    """True only inside the UNATTENDED run this gate governs.
+
+    SESSION SCOPING (2026-07-28). `_in_sections()` reads the GLOBAL cursor and
+    says nothing about who is issuing the command, so while a run sat in
+    SECTIONS every interactive operator session in the repo inherited its phase
+    gates -- including the BLOCK above, whose entire rationale ("91 in-context
+    build/test runs floods the overnight context") is about the RUN's context
+    budget, not an operator's. Observed live: an operator's read-only grep was
+    blocked by a gate meant for the runner.
+
+    The discriminator already exists and is used elsewhere for exactly this
+    reason -- `run_phase_guard.handle_stop()` returns early on it so "an
+    interactive operator session is never trapped". `OVERNIGHT_SEQUENCER_RUN=1`
+    is set by the arm drop-in on the systemd unit and is never present in an
+    operator shell.
+
+    Deliberately the SAME single test as `run_phase_guard.is_headless()` and
+    nothing more. A second, cleverer heuristic here would be a second answer to
+    "is this the run?", and the two would drift.
+    """
+    return os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1"
+
+
 def _in_sections(root: Path) -> bool:
+    # Both conditions are required: the RUN must be in SECTIONS *and* this
+    # session must BE the run. Either alone is not the gate's subject.
+    if not _is_headless_run():
+        return False
     try:
         st = json.loads(
             (root / ".claude" / "state" / "sequencer-run.json").read_text())
