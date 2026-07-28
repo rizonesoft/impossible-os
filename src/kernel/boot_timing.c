@@ -481,6 +481,10 @@ static const uint16_t s_perf_name[] = {
 /* Previous boot's perf data, read from NVRAM at early boot */
 static boot_perf_record_t s_prev_records[BOOT_PERF_MAX_RECORDS];
 static uint32_t            s_prev_count;
+/* Machine config the baseline was recorded under; compared in
+ * boot_perf_compare(), not at read time -- see the note there. */
+static uint32_t            s_prev_cpu_count;
+static uint32_t            s_prev_tsc_khz;
 
 static void str_copy_trunc(char *dst, const char *src, uint32_t max)
 {
@@ -533,32 +537,17 @@ void boot_perf_read_prev(void)
         return;
     }
 
-    /* Decline the comparison outright when the baseline came from a different
-     * machine configuration. Differencing timings across accelerators is what
-     * produced 30 false "regressed" warnings on 2026-07-28: a baseline saved
-     * under one accelerator, compared against a boot under another, made every
-     * step look ~3x slower. Reporting nothing is correct here -- the data is
-     * not comparable, and a warning would imply it was. */
-    {
-        uint32_t cur_cpus = smp_cpu_count();
-        uint32_t cur_khz  = (uint32_t)(s_tsc_freq / 1000ULL);
-        /* TSC frequency is compared with a tolerance: calibration jitters by a
-         * few kHz between boots on the same host, which is not a config change.
-         * 1% is far tighter than the gap between any two real configurations
-         * and far looser than calibration noise. */
-        uint32_t tol = hdr->tsc_khz / 100u;
-        uint32_t lo  = hdr->tsc_khz > tol ? hdr->tsc_khz - tol : 0;
-        uint32_t hi  = hdr->tsc_khz + tol;
-        if (hdr->cpu_count != cur_cpus || cur_khz < lo || cur_khz > hi) {
-            klog(LOG_INFO, "PERF",
-                 "Previous boot ran a different config (cpus %u->%u, tsc %u->%u kHz)"
-                 " -- comparison skipped",
-                 (uint64_t)hdr->cpu_count, (uint64_t)cur_cpus,
-                 (uint64_t)hdr->tsc_khz, (uint64_t)cur_khz);
-            POST16(POST16_BOOTPERF_READ);
-            return;
-        }
-    }
+    /* Remember the baseline's machine config for boot_perf_compare().
+     *
+     * The comparison CANNOT be made here. boot_perf_read_prev() runs in the
+     * hardware-init phase, before SMP brings up the APs and before the TSC is
+     * calibrated, so smp_cpu_count() still reads 1 and s_tsc_freq is still 0.
+     * Checking here declined every comparison with "cpus 2->1, tsc N->0"
+     * (observed 2026-07-28), which suppresses the false regressions by
+     * switching the feature off rather than fixing it. boot_perf_compare()
+     * runs from the desktop phase where both values are real. */
+    s_prev_cpu_count = hdr->cpu_count;
+    s_prev_tsc_khz   = hdr->tsc_khz;
 
     uint32_t count = hdr->count;
     if (count > BOOT_PERF_MAX_RECORDS)
@@ -600,6 +589,41 @@ void boot_perf_compare(void)
     }
 
     uint64_t base = s_steps[0].tsc;
+
+    /* Decline the comparison outright when the baseline came from a different
+     * machine configuration. Differencing timings across accelerators is what
+     * produced 30 false "regressed" warnings on 2026-07-28: a baseline saved
+     * under one accelerator, compared against a boot under another, made every
+     * step look ~3x slower. Reporting nothing is correct -- the data is not
+     * comparable, and a warning would imply it was.
+     *
+     * Checked HERE and not in boot_perf_read_prev(): that runs before SMP and
+     * before TSC calibration, so it would compare against cpu_count 1 and
+     * tsc_khz 0 and decline every time. */
+    {
+        uint32_t cur_cpus = smp_cpu_count();
+        uint32_t cur_khz  = (uint32_t)(s_tsc_freq / 1000ULL);
+        /* TSC frequency is compared with a tolerance: calibration jitters by a
+         * few kHz between boots on the same host, which is not a config change.
+         * 1% is far tighter than the gap between any two real configurations
+         * and far looser than calibration noise. A zero on either side means
+         * "unknown", and unknown is not evidence of a mismatch. */
+        uint32_t tol = s_prev_tsc_khz / 100u;
+        uint32_t lo  = s_prev_tsc_khz > tol ? s_prev_tsc_khz - tol : 0;
+        uint32_t hi  = s_prev_tsc_khz + tol;
+        int cpu_differs = (s_prev_cpu_count != 0 && cur_cpus != 0
+                           && s_prev_cpu_count != cur_cpus);
+        int tsc_differs = (s_prev_tsc_khz != 0 && cur_khz != 0
+                           && (cur_khz < lo || cur_khz > hi));
+        if (cpu_differs || tsc_differs) {
+            klog(LOG_INFO, "PERF",
+                 "Previous boot ran a different config (cpus %u->%u, tsc %u->%u kHz)"
+                 " -- comparison skipped",
+                 (uint64_t)s_prev_cpu_count, (uint64_t)cur_cpus,
+                 (uint64_t)s_prev_tsc_khz, (uint64_t)cur_khz);
+            return;
+        }
+    }
 
     klog(LOG_INFO, "PERF", "--- Boot perf comparison (prev vs current) ---");
 
