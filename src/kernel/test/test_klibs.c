@@ -663,18 +663,45 @@ static void test_nt_get_random_chunks(void)
     for (i = 0; i < sizeof(lens) / sizeof(lens[0]); i++) {
         uint64_t n = lens[i];
         int front_ok = 1, back_ok = 1, all_zero = 1;
+        uint32_t attempt;
+        NTSTATUS st = STATUS_SUCCESS;
 
-        memset(arena, 0xA7, sizeof(arena));
-        memset(arena + 8, 0, (size_t)n);
-        TEST_ASSERT_EQ((uint32_t)NtGetRandom(arena + 8, n, 0),
-                       (uint32_t)STATUS_SUCCESS,
-                       "NtGetRandom chunked length succeeds");
-        for (k = 0; k < 8; k++) {
-            if (arena[k] != 0xA7) front_ok = 0;
-            if (arena[8 + n + k] != 0xA7) back_ok = 0;
+        /* FLAKE FIX 2026-07-28. "payload bytes were written" used to draw ONCE,
+         * but a CORRECT CSPRNG returns an all-zero payload with probability
+         * 256^-n -- which at n == 1 is 1/256, so this gate failed roughly every
+         * 256 runs on a healthy kernel. It did: a CI-parity pre-push reported
+         * "1 FAILED of 26838" on a tree whose only change was a markdown file.
+         * The single-failure count is itself the proof it was the n == 1 leg
+         * and not a broken generator -- a generator actually emitting zeros
+         * would have failed all five lengths, not one.
+         *
+         * Redrawing keeps the assertion's INTENT exactly (a buffer the CSPRNG
+         * never touched stays zero on EVERY attempt) while taking the false-
+         * failure probability to 256^-(n*ATTEMPTS) -- about 2e-10 at n == 1.
+         * This is not widening an assertion to accept two answers: the
+         * corruption checks below still fail hard on the first bad draw, and
+         * the assertion COUNT stays fixed at four per length so the suite total
+         * does not move. */
+        for (attempt = 0; attempt < 4 && all_zero; attempt++) {
+            memset(arena, 0xA7, sizeof(arena));
+            memset(arena + 8, 0, (size_t)n);
+            st = NtGetRandom(arena + 8, n, 0);
+            if (st != STATUS_SUCCESS)
+                break;                        /* report the status, not a retry */
+            front_ok = 1;
+            back_ok = 1;
+            for (k = 0; k < 8; k++) {
+                if (arena[k] != 0xA7) front_ok = 0;
+                if (arena[8 + n + k] != 0xA7) back_ok = 0;
+            }
+            if (!front_ok || !back_ok)
+                break;                        /* real corruption: never retried */
+            all_zero = 1;
+            for (k = 0; k < n; k++)
+                if (arena[8 + k] != 0) { all_zero = 0; break; }
         }
-        for (k = 0; k < n; k++)
-            if (arena[8 + k] != 0) { all_zero = 0; break; }
+        TEST_ASSERT_EQ((uint32_t)st, (uint32_t)STATUS_SUCCESS,
+                       "NtGetRandom chunked length succeeds");
         TEST_ASSERT(front_ok, "no underwrite before the buffer");
         TEST_ASSERT(back_ok, "no overwrite past the requested length");
         TEST_ASSERT(!all_zero, "payload bytes were written");
