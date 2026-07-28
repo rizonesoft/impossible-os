@@ -116,8 +116,14 @@
 #define TASK_EXIT_EXEC_IMAGE_DESTROYED   (-1001)
 
 /* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */
-/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, TEB offsets,
- * KUSD offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
+/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, exported
+ * TASK_EXIT_* statuses, TEB offsets, KUSD offsets). The STATUS_* codes
+ * emitted above are NOT fingerprinted -- they mirror a stable external
+ * contract rather than a number this kernel assigns. Changing an
+ * exported exit status therefore invalidates existing user binaries at
+ * crt0, which is deliberate: a stale binary would otherwise compare a
+ * waitpid result against a number the kernel no longer produces.
+ * Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
  * crt0 calls that syscall and aborts with EX_ABI_MISMATCH = 0x42 on
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the

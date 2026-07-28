@@ -353,6 +353,23 @@ bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || { \
     echo "[shim-ca] FATAL: extract-shim-ca.sh failed; refusing to ship stale generated header" >> "$LOG"; \
     print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
+# ── Generated-ABI drift gate ────────────────────────────────────────────────
+# `make all` lists check-abi as a prerequisite, but THIS script -- the canonical
+# build path per CLAUDE.md, which forbids raw `make` -- drove `kernel` and
+# `userland` directly and never ran it. The drift guard was therefore off on the
+# only path anyone actually uses: editing a constant in one of the generator's
+# source headers compiled the NEW value into the kernel while user/include/
+# abi_numbers.h and include/kernel/abi_hash.h kept the OLD one. Both generated
+# headers still agreed with each other, so the crt0 SYS_ABI_HANDSHAKE passed and
+# ring 3 compared against a stale number with nothing complaining. Runs BEFORE
+# compilation so the failure lands on the edit, not on a later boot.
+if ! python3 scripts/gen-user-abi.py --check >> "$LOG" 2>&1; then
+    printf '\n %b✗ ABI DRIFT:%b generated ABI headers are stale vs kernel source\n' \
+        "$RED" "$RESET" | tee -a "$LOG"
+    printf '   Regenerate with: python3 scripts/gen-user-abi.py\n' | tee -a "$LOG"
+    print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
+fi
+
 # Kernel (with progress bar)
 STEP=$((STEP + 1))
 run_kernel_step $STEP $TOTAL || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }

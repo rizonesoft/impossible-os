@@ -7299,6 +7299,44 @@ else
            "ok=$GUA_OK/$GUA_EXPECT out=$GUA_OUT"
 fi
 
+# The canonical build path must RUN the drift check. `make all` lists check-abi
+# as a prerequisite, but CLAUDE.md forbids raw `make` and scripts/build.sh drove
+# `kernel`/`userland` directly, so the guard was off on the only path in use:
+# a kernel-side constant change compiled into the kernel while both generated
+# headers kept the old value, agreed with each other, and passed the crt0
+# handshake. Pin that build.sh invokes the generator's --check.
+if grep -qE 'gen-user-abi\.py --check' "$SCRIPT_DIR/build.sh"; then
+    t_pass "gen_user_abi: scripts/build.sh runs the ABI drift check"
+else
+    t_fail "gen_user_abi: scripts/build.sh runs the ABI drift check" \
+           "the canonical build path must not bypass check-abi"
+fi
+
+# A SPLIT generation -- one header regenerated, the other stale -- aborts EVERY
+# ring-3 binary at SYS_ABI_HANDSHAKE. Two independent os.replace calls cannot be
+# made pairwise atomic with POSIX rename, so the guarantee that matters is that
+# the drift gate CATCHES a split pair before it reaches a compile. Inject one
+# and require --check to reject it; grepping the source for `os.replace` proved
+# nothing (the string also appears in the explanatory comment).
+_GUA_SPLIT_BAK=$(mktemp)
+cp "$REPO_ROOT/user/include/abi_numbers.h" "$_GUA_SPLIT_BAK"
+python3 - "$REPO_ROOT/user/include/abi_numbers.h" <<'PYSPLIT'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+# Simulate a crash between the two replaces: the user header carries a previous
+# generation's hash while the kernel header keeps the current one.
+p.write_text(p.read_text().replace('#define IMPOSSIBLE_OS_ABI_HASH   0x',
+                                   '#define IMPOSSIBLE_OS_ABI_HASH   0xDEADBEEF'))
+PYSPLIT
+if (cd "$REPO_ROOT" && python3 scripts/gen-user-abi.py --check >/dev/null 2>&1); then
+    t_fail "gen_user_abi: --check rejects a split header generation" \
+           "a mismatched header pair passed the drift gate"
+else
+    t_pass "gen_user_abi: --check rejects a split header generation"
+fi
+cp "$_GUA_SPLIT_BAK" "$REPO_ROOT/user/include/abi_numbers.h"
+rm -f "$_GUA_SPLIT_BAK"
+
 # The generated headers must be in sync with kernel source at all times --
 # the same gate `make check-abi` runs, asserted here so a tooling run catches
 # a forgotten regeneration without a full build.

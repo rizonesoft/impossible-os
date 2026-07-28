@@ -35,6 +35,7 @@ import argparse
 import os
 import re
 import sys
+import tempfile
 
 # ---- Paths --------------------------------------------------------------
 
@@ -589,8 +590,14 @@ def format_block(title: str, entries: list[tuple[str, int, str]], name_width: in
 def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int) -> str:
     hash_block = (
         '/* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */\n'
-        '/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, TEB offsets,\n'
-        ' * KUSD offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user\n'
+        '/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, exported\n'
+        ' * TASK_EXIT_* statuses, TEB offsets, KUSD offsets). The STATUS_* codes\n'
+        ' * emitted above are NOT fingerprinted -- they mirror a stable external\n'
+        ' * contract rather than a number this kernel assigns. Changing an\n'
+        ' * exported exit status therefore invalidates existing user binaries at\n'
+        ' * crt0, which is deliberate: a stale binary would otherwise compare a\n'
+        ' * waitpid result against a number the kernel no longer produces.\n'
+        ' * Kernel emits the same hash via SYS_ABI_HANDSHAKE; user\n'
         ' * crt0 calls that syscall and aborts with EX_ABI_MISMATCH = 0x42 on\n'
         ' * disagreement. A kernel-side renumber that slipped through review\n'
         ' * but skipped this generator surfaces at process start, not at the\n'
@@ -791,10 +798,51 @@ def main() -> int:
             return 1
         return 0
 
-    for path, rendered in ((OUT_H, rendered_user), (OUT_KERNEL_H, rendered_kernel)):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(rendered)
+    # Stage BOTH headers, fsync them, then swap both in back to back.
+    #
+    # What this DOES guarantee: each header goes from old content to new content
+    # atomically (os.replace within a filesystem), never through a truncated or
+    # half-written state; a failure during GENERATION leaves both destinations
+    # untouched; and unique temp names mean two concurrent generator runs cannot
+    # clobber each other's staging file.
+    #
+    # What it deliberately does NOT guarantee: PAIRWISE atomicity. POSIX rename
+    # covers one path, so a SIGKILL or power loss between the two os.replace
+    # calls still leaves one new header beside one old one, with no handler
+    # running to undo it. That is worth naming precisely, because crt0 compares
+    # the user header's hash against the kernel's and a mismatched pair aborts
+    # every ring-3 binary at SYS_ABI_HANDSHAKE.
+    #
+    # The mitigation is the drift gate, not the write protocol: --check
+    # re-renders and compares BOTH destinations, and the build wrapper runs it
+    # before any compilation, so a split pair fails the next build with a named
+    # error instead of reaching a kernel. Closing the window itself needs one
+    # atomic commit point for the artifact PAIR, which changes how generated
+    # headers are laid out and included repo-wide -- tracked by the generator
+    # hardening work in the user-mode test framework TODO.
+    staged = []
+    try:
+        for path, rendered in ((OUT_H, rendered_user),
+                               (OUT_KERNEL_H, rendered_kernel)):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path),
+                                       prefix=os.path.basename(path) + '.',
+                                       suffix='.tmp')
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(rendered)
+                f.flush()
+                os.fsync(f.fileno())
+            staged.append((tmp, path))
+        while staged:
+            tmp, path = staged.pop(0)
+            os.replace(tmp, path)
+    except Exception:
+        for tmp, _path in staged:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
     print(f'gen-user-abi: wrote {OUT_H} + {OUT_KERNEL_H} '
           f'(syscalls={len(syscalls)} ssdt={len(ssdt)} ntstatus={len(ntstatus)} '
           f'exit={len(exit_status)} hash=0x{abi_hash:016X})')
