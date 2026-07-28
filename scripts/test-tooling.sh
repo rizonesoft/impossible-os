@@ -7050,6 +7050,266 @@ else
 fi
 
 # ============================================================================
+# gen-user-abi exit-status resolver (TODO-04 s23)
+# ============================================================================
+# The generator's original parse_defines() extracts the first UNSIGNED integer
+# literal from a define body, so it would read `(-1000)` as +1000 and
+# `(BASE - 1)` as +1 -- silently WRONG values, which is worse than the
+# hand-copy drift the generated header exists to eliminate. Exit statuses
+# therefore go through a separate fail-closed resolver. These fixtures pin
+# every refusal it promises, because a resolver that silently OMITS a constant
+# just restores the hand-copy it replaced.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[gen-user-abi exit-status resolver]${NC}"
+GUA_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYGUA'
+import importlib.util, tempfile, os, sys
+
+spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
+gua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gua)
+
+EXPORT = ('X_STATUS',)
+RESOLVE = ('X_BASE',)
+
+def run(source, export=EXPORT, resolve=RESOLVE):
+    """Resolve `source` as a fixture header; returns (entries, errors)."""
+    fd, path = tempfile.mkstemp(suffix=".h")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(source)
+        return gua.resolve_exit_statuses(path, export, resolve)
+    finally:
+        os.unlink(path)
+
+def check(label, cond):
+    print(("OK " if cond else "FAIL ") + label)
+
+# --- resolution ---------------------------------------------------------
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n")
+check("resolves_symbol_minus_literal", not err and e == [('X_STATUS', -1001, '(-1001)')])
+
+# The exact trap parse_defines falls into: a bare negative literal must NOT
+# come back positive.
+e, err = run("#define X_BASE (0)\n#define X_STATUS (-1234)\n")
+check("bare_negative_literal_keeps_sign", not err and e[0][1] == -1234)
+
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE + 5)\n")
+check("resolves_symbol_plus_literal", not err and e[0][1] == -995)
+
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS X_BASE\n")
+check("resolves_bare_symbol", not err and e[0][1] == -1000)
+
+# Order independence: a macro that references a symbol defined BELOW it is
+# legal C (macros expand at use), so file order must not decide resolvability.
+e, err = run("#define X_STATUS (X_BASE - 1)\n#define X_BASE (-1000)\n")
+check("resolves_forward_reference", not err and e[0][1] == -1001)
+
+# A kernel-side value change must move the generated value (this is what
+# make check-abi turns into a build failure).
+e, err = run("#define X_BASE (-2000)\n#define X_STATUS (X_BASE - 1)\n")
+check("value_change_propagates", not err and e[0][1] == -2001)
+
+# The resolve-only symbol feeds the arithmetic and is never exported: it is
+# not a ring-3 contract, and crt0 aborts every process on a hash change.
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n")
+check("resolve_only_symbol_not_exported",
+      not err and [n for n, _v, _l in e] == ['X_STATUS'])
+
+# --- refusals (each must FAIL LOUD, never omit) -------------------------
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE * 2)\n")
+check("refuses_unsupported_operator", bool(err))
+
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (SOMETHING_ELSE - 1)\n")
+check("refuses_unallowlisted_symbol", bool(err))
+
+_, err = run("#define X_BASE (-1000)\n")
+check("refuses_absent_name", bool(err) and any("not defined" in m for m in err))
+
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n"
+             "#define X_STATUS (X_BASE - 2)\n")
+check("refuses_duplicate_definition", bool(err) and any("more than" in m for m in err))
+
+# The one the design review caught: task.h already carries 14 #ifdef
+# KERNEL_TESTS blocks, one directly below the exit-status block. A generator
+# that picked a physical arm would make both generated headers agree with each
+# other while the kernel ran a different value.
+_, err = run("#define X_BASE (-1000)\n#ifdef KERNEL_TESTS\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("refuses_conditional_definition",
+      bool(err) and any("conditional" in m for m in err))
+
+# Asserting on the CONDITIONAL diagnostic, not merely on bool(err): with two
+# physical definitions this fixture would still fail via duplicate detection
+# even if conditional recognition disappeared entirely.
+_, err = run("#define X_BASE (-1000)\n#if 0\n#define X_STATUS (X_BASE - 1)\n#else\n"
+             "#define X_STATUS (X_BASE - 2)\n#endif\n")
+check("refuses_if_else_arms", bool(err) and all("conditional" in m for m in err))
+
+# C strips comments BEFORE recognising directives, so a conditional hidden
+# behind one is real and an #endif buried inside one is not.
+_, err = run("#define X_BASE (-1000)\n/* gate */ #ifdef KERNEL_TESTS\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("refuses_conditional_behind_block_comment",
+      bool(err) and any("conditional" in m for m in err))
+
+_, err = run("#define X_BASE (-1000)\n#if 0\n/*\n#endif\n*/\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("endif_inside_block_comment_does_not_close",
+      bool(err) and any("conditional" in m for m in err))
+
+# Live tokens AFTER a block comment must not be silently dropped: this body
+# compiles as -999, and resolving it to -1001 would put a value the kernel
+# never uses into both generated headers AND the hash.
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1) /* why */ + 2\n")
+check("refuses_tokens_after_block_comment", bool(err))
+
+# A trailing comment with nothing after it is the ordinary shape and must
+# still resolve.
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)  /* why */\n")
+check("strips_trailing_block_comment", not err and e[0][1] == -1001)
+
+# Exit statuses are int32_t; a value Python can compute but C would truncate
+# is a wrong answer with a certificate.
+_, err = run("#define X_BASE (-2147483648)\n#define X_STATUS (X_BASE - 1)\n")
+check("refuses_int32_underflow", bool(err) and any("int32" in m for m in err))
+
+_, err = run("#define X_BASE (2147483647)\n#define X_STATUS (X_BASE + 1)\n")
+check("refuses_int32_overflow", bool(err) and any("int32" in m for m in err))
+
+# `int(x, 0)` RAISES on a leading-zero decimal, so without an explicit refusal
+# the generator dies on a traceback instead of a named error.
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (010)\n")
+check("refuses_octal_literal", bool(err) and any("octal" in m for m in err))
+
+# C translation phase 2 splices backslash-newline BEFORE comments are removed
+# and BEFORE directives are recognised, so the generator does too. A body split
+# across lines is one logical body, not a refusal.
+e, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE \\\n - 1)\n")
+check("resolves_spliced_body", not err and e[0][1] == -1001)
+
+# The splice DELETES the backslash-newline, so a split identifier rejoins. A
+# physical-line scanner never sees this as a definition at all.
+e, err = run("#define X_BASE (-1000)\n#define X_STA\\\nTUS (X_BASE - 1)\n")
+check("resolves_spliced_identifier", not err and e[0][1] == -1001)
+
+# The shape that proves the phase ORDER: a continued `//` comment absorbs the
+# following `#endif`, so the `#if 0` is still open and the define is inside it.
+# Confirmed against clang-19 -E, which leaves the constant UNDEFINED here --
+# a physical-line scanner instead resolved it to a concrete value and would
+# have put a number the kernel never uses into both headers and the hash.
+_, err = run("#define X_BASE (-1000)\n#if 0\n// c \\\n#endif\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("spliced_line_comment_swallows_endif",
+      bool(err) and any("conditional" in m for m in err))
+
+# clang splices a backslash followed by TRAILING WHITESPACE as well, so
+# matching only a final `\` reopens the same bypass one space wider.
+_, err = run("#define X_BASE (-1000)\n#if 0\n// c \\   \n#endif\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("refuses_whitespace_tailed_continuation",
+      bool(err) and any("conditional" in m for m in err))
+
+# A `/*` inside a STRING literal is two characters, not a comment opener.
+# Without literal state it opened a synthetic comment that swallowed the
+# ACTIVE #else arm and left the inactive one standing: clang-19 expands this
+# to -1002, and the resolver used to certify -1001 with no error.
+_, err = run('#define X_BASE (-1000)\n#if 0\n#define S "/*"\n'
+             '#define X_STATUS (X_BASE - 1)\n#else\n'
+             '#define X_STATUS (X_BASE - 2)\n#endif\n')
+check("string_literal_does_not_open_comment",
+      bool(err) and any("conditional" in m for m in err))
+
+# The same state must not break the ordinary case: a lone slash in a CHAR
+# literal is not a comment either.
+e, err = run("#define X_BASE (-1000)\n#define C '/'\n#define X_STATUS (X_BASE - 1)\n")
+check("char_literal_slash_is_not_a_comment", not err and e[0][1] == -1001)
+
+# A valid C header cannot carry a stray #endif, so one means the scanner is
+# misreading the file -- fail closed instead of clamping depth and carrying on.
+_, err = run("#define X_BASE (-1000)\n#endif\n#define X_STATUS (X_BASE - 1)\n")
+check("refuses_unmatched_endif",
+      bool(err) and any("unmatched" in m for m in err))
+
+e, err = run("#define X_BASE (-0x3E8)\n#define X_STATUS (X_BASE - 0x1)\n")
+check("resolves_hex_literals", not err and e[0][1] == -1001)
+
+_, err = run("#define X_BASE (X_STATUS - 1)\n#define X_STATUS (X_BASE - 1)\n")
+check("refuses_cyclic_expression", bool(err) and any("cyclic" in m for m in err))
+
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS ((X_BASE - 1)\n")
+check("refuses_unbalanced_parens", bool(err))
+
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE) + (1)\n")
+check("refuses_multi_term_expression", bool(err))
+
+# --- ABI fingerprint boundary ------------------------------------------
+# The header-text assertions below prove what is EMITTED; these prove what is
+# HASHED, which is the half that decides whether a stale ring-3 binary is
+# rejected at crt0. Without them, dropping the EXIT loop or feeding it the
+# wrong list would pass every other fixture once the headers were regenerated.
+def exit_entries(source):
+    e, err = run(source)
+    assert not err, err
+    return e
+
+_A = exit_entries("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n")
+_B = exit_entries("#define X_BASE (-2000)\n#define X_STATUS (X_BASE - 1)\n")
+_C = exit_entries("#define X_BASE (-2000)\n#define X_STATUS (-1001)\n")
+
+def h(exit_status):
+    return gua.compute_abi_hash([], [], exit_status, [], [])
+
+check("hash_moves_on_exported_value_change", h(_A) != h(_B))
+# A resolve-only helper is not a ring-3 contract: rewriting it while the
+# EXPORTED value is unchanged must NOT skew every existing binary.
+check("hash_stable_when_only_resolve_only_changes", h(_A) == h(_C))
+# The EXIT tag must domain-separate: the same (name, literal) pair fed to the
+# SYS slot has to produce a different fingerprint.
+check("hash_exit_tag_is_domain_separated",
+      gua.compute_abi_hash([], [], _A, [], []) !=
+      gua.compute_abi_hash(_A, [], [], [], []))
+
+# --- shipped repo invariants -------------------------------------------
+entries, errors = gua.resolve_exit_statuses(
+    gua.TASK_H, gua.EXIT_STATUS_EXPORT, gua.EXIT_STATUS_RESOLVE_ONLY)
+check("repo_task_h_resolves_clean", not errors)
+check("repo_exports_exec_image_destroyed",
+      [n for n, _v, _l in entries] == ['TASK_EXIT_EXEC_IMAGE_DESTROYED'])
+check("repo_exec_image_destroyed_is_negative",
+      bool(entries) and entries[0][1] < 0)
+
+header = open("user/include/abi_numbers.h", encoding="utf-8").read()
+check("generated_header_carries_constant",
+      "#define TASK_EXIT_EXEC_IMAGE_DESTROYED" in header)
+# The resolve-only base must stay OUT of the generated header, or a refactor
+# of an internal allocation base becomes system-wide binary version skew.
+check("generated_header_omits_resolve_only_base",
+      "TASK_EXIT_REASON_BASE" not in header)
+PYGUA
+)
+GUA_OK=$(echo "$GUA_OUT" | grep -c "^OK ")
+GUA_EXPECT=39
+if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
+    echo "$GUA_OUT" | grep "^OK " | while IFS= read -r line; do
+        [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi: $line"
+    done
+    PASS=$((PASS + GUA_EXPECT))
+else
+    t_fail "gen_user_abi: exit-status resolver coverage incomplete" \
+           "ok=$GUA_OK/$GUA_EXPECT out=$GUA_OUT"
+fi
+
+# The generated headers must be in sync with kernel source at all times --
+# the same gate `make check-abi` runs, asserted here so a tooling run catches
+# a forgotten regeneration without a full build.
+if (cd "$REPO_ROOT" && python3 scripts/gen-user-abi.py --check >/dev/null 2>&1); then
+    t_pass "gen_user_abi: --check clean (generated headers match kernel source)"
+else
+    t_fail "gen_user_abi: --check clean (generated headers match kernel source)" \
+           "run: python3 scripts/gen-user-abi.py"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

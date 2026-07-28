@@ -39,6 +39,7 @@
  * ============================================================================ */
 
 #include "test.h"
+#include "abi_numbers.h"   /* TASK_EXIT_EXEC_IMAGE_DESTROYED (generated) */
 
 UTEST_DEFINE_STATE();
 
@@ -66,17 +67,16 @@ UTEST_DEFINE_STATE();
 #define SENTINEL_EXEC_UNEXPECTED_OK 63  /* exec succeeded when it must not have */
 #define SENTINEL_INJECT_UNAVAILABLE 64  /* boot.conf test=0, injection refused */
 
-/* Mirror of the kernel's TASK_EXIT_EXEC_IMAGE_DESTROYED
- * (TASK_EXIT_REASON_BASE - 1 in include/kernel/sched/task.h): the exit status
- * of a task terminated because a post-commit exec destroyed its image. Kernel
- * headers are off-limits to user binaries, so the value is restated here. It
- * cannot drift silently -- sub-test 4 asserts equality, so a kernel-side change
- * FAILS this test loudly.
+/* TASK_EXIT_EXEC_IMAGE_DESTROYED (generated into abi_numbers.h from
+ * include/kernel/sched/task.h) is the exit status of a task terminated because
+ * a post-commit exec destroyed its image. Kernel headers stay off-limits to
+ * user binaries, so the value arrives through the generated ABI header: a
+ * kernel-side change now fails `make check-abi` at build time instead of
+ * waiting for this one runtime assertion on a platform where it is not skipped.
  *
  * Distinctness is the whole point, and it is why this is not a small number:
  * -1 is a kill (sub-test 3 asserts exactly that) and signal deaths occupy
  * -(signum), so anything in -1..-SIG_MAX names something else already. */
-#define EXEC_IMAGE_DESTROYED_STATUS (-1001)
 
 /* Depth bound for the allocation-countdown sweep in sub-test 7: the sweep fails
  * the 1st, then 2nd, ... Nth allocation of the exec path in turn. A runaway
@@ -221,7 +221,7 @@ int main(void)
                  "post-commit exec failure never returns into the destroyed image");
     /* The EXACT status, not merely "died": a generic -1 would also match a
      * kill or a crash, so it could not prove the commit point was the cause. */
-    UTEST_ASSERT(wait4 == EXEC_IMAGE_DESTROYED_STATUS,
+    UTEST_ASSERT(wait4 == TASK_EXIT_EXEC_IMAGE_DESTROYED,
                  "post-commit exec failure terminates the child with the exec-destroyed status");
 
     /* ---- Sub-test 5: injected OOM refusal leaves the OLD image intact ---- *
@@ -413,7 +413,7 @@ int main(void)
         UTEST_ASSERT(wait7 != SENTINEL_INJECT_UNAVAILABLE,
                      "allocation sweep had fault injection available throughout");
         UTEST_ASSERT(wait7 == SENTINEL_PRECOMMIT_OK ||
-                     wait7 == EXEC_IMAGE_DESTROYED_STATUS ||
+                     wait7 == TASK_EXIT_EXEC_IMAGE_DESTROYED ||
                      wait7 == HELLO_NO_ARGV_EXIT,
                      "allocation sweep ended in a sanctioned outcome, not a crash");
     }

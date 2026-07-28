@@ -80,9 +80,10 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  20   | Site-targeted and PMM-countdown fault selectors     | §5                            |  [/]   |
 | 💎   |  21   | Child-targeted fault arming across `fork()`         | §5, §20                       |  [/]   |
 | 💎   |  22   | Honest machine artifacts for skipped sub-tests      | §4, §7                        |  [x]   |
-| 💎   |  23   | Generated exit-status ABI for ring-3 assertions     | §2                            |  [ ]   |
+| 💎   |  23   | Generated exit-status ABI for ring-3 assertions     | §2                            |  [x]   |
 | 💎   |  24   | JSON artifact file + abort-aware summaries          | §7, §22                       |  [ ]   |
 | ⭐   |  25   | Non-forgeable launcher record framing               | §4, §7, §22                   |  [ ]   |
+| 💎   |  26   | Preprocessor-faithful constant extraction           | §23                           |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -514,7 +515,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 517)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 518)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -828,13 +829,22 @@ Kernel exit-status constants that ring-3 tests assert on are hand-copied literal
 > [!TIP]
 > `parse_defines` in `scripts/gen-user-abi.py` extracts UNSIGNED integer literals by prefix, while the authoritative value here is a negative expression (`TASK_EXIT_REASON_BASE - 1`). The generator needs signed/expression resolution before it can carry any exit-status constant, so this is generator work first and a one-line consumer change second.
 
-- [ ] Teach `scripts/gen-user-abi.py` to resolve signed and expression-valued constants (at minimum `BASE - N` forms over
-      an already-extracted symbol), with an allowlisted `include/kernel/sched/task.h` exit-status source so the generator does not start hoovering unrelated `task.h` defines. A value the generator cannot resolve must fail the build loudly rather than silently omitting the name
-- [ ] Emit `TASK_EXIT_EXEC_IMAGE_DESTROYED` into `user/include/abi_numbers.h` and consume it in `user/test/test_process.c`
-      in place of the bare `-1001`, so the assertion tracks the kernel definition through `make check-abi`. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` added")
-- [ ] Commit: `"abi: generate signed exit-status constants for ring-3 assertions"`
+- [x] `scripts/gen-user-abi.py` resolves signed and expression-valued constants through a SEPARATE fail-closed resolver
+      (`resolve_exit_statuses` / `parse_exit_status_defines` / `resolve_exit_expr`), never `parse_defines` -- that function takes the first UNSIGNED literal, so it would read `(-1000)` as `+1000` and `(BASE - 1)` as `+1`: silently WRONG values, a worse failure than the drift this closes. Grammar is deliberately tiny (`SYMBOL`, `SYMBOL +/- N`, signed literal) and resolution is a FIXPOINT rather than a file-order walk, so a constant defined above the symbol it references still resolves. `include/kernel/sched/task.h` is read through a two-list allowlist, so no unrelated `task.h` define is hoovered. Comments come off first exactly as the C preprocessor does it (`strip_c_comments`), so a conditional hidden behind `/* ... */` is still seen, an `#endif` buried inside a comment does not close one, and live tokens AFTER a comment cannot be silently dropped -- `(BASE - 1) /* why */ + 2` compiles as -999 and must not resolve to -1001. Every refusal fails the build with a named error and a non-zero exit: unsupported operator, unallowlisted symbol, unbalanced parens, cyclic expression, a result outside `int32_t` (the type a status actually travels in), an octal literal (`int(x, 0)` raises on it, so the alternative was a traceback), a line-continued define, a name absent from the source, a name defined twice, and a name defined inside ANY preprocessor conditional
+- [x] `TASK_EXIT_EXEC_IMAGE_DESTROYED` is generated into `user/include/abi_numbers.h` as the resolved literal `(-1001)` and
+      consumed by `user/test/test_process.c` (two assertion sites) in place of the bare `-1001`, so the assertion tracks the kernel definition through `make check-abi`. It also joins the FNV-1a fingerprint under an `EXIT` tag, so a stale binary fails the crt0 handshake and not just the build gate. `TASK_EXIT_REASON_BASE` is resolve-only: it feeds the arithmetic but is neither emitted nor hashed, because crt0 aborts every process on a fingerprint change and an internal allocation base is not a ring-3 contract. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` added")
+- [x] Commit: `"abi: generate signed exit-status constants for ring-3 assertions"`
 
-**Test checkpoint:** `make check-abi` PASSes with `TASK_EXIT_EXEC_IMAGE_DESTROYED` generated rather than hand-copied, and flipping the kernel-side value fails the check instead of passing silently; an unresolvable expression in the allowlisted source fails the build rather than omitting the constant; `bash scripts/test.sh` stays green with `test_process.exe` asserting on the generated name. Test on: QEMU TCG, QEMU KVM.
+**Test checkpoint:** `make check-abi` PASSes with `TASK_EXIT_EXEC_IMAGE_DESTROYED` generated rather than hand-copied, and flipping the kernel-side value fails the check instead of passing silently; an unresolvable expression in the allowlisted source fails the build rather than omitting the constant; `bash scripts/test.sh` stays green with `test_process.exe` asserting on the generated name. Verified 2026-07-28: `make check-abi` rc=0, `user/include/abi_numbers.h` carries `#define TASK_EXIT_EXEC_IMAGE_DESTROYED   (-1001)`, and 39 host fixtures in `scripts/test-tooling.sh` pin the resolver -- `value_change_propagates` is the flip case, `refuses_unsupported_operator` / `refuses_cyclic_expression` / `refuses_unbalanced_parens` / `refuses_octal_literal` / `refuses_int32_overflow` are the unresolvable cases, `hash_moves_on_exported_value_change` / `hash_stable_when_only_resolve_only_changes` / `hash_exit_tag_is_domain_separated` pin the fingerprint boundary directly rather than through header text, and four cases were verified against `clang-19 -E` before being pinned (`spliced_line_comment_swallows_endif`, `refuses_whitespace_tailed_continuation`, `string_literal_does_not_open_comment`, `char_literal_slash_is_not_a_comment`). Test on: QEMU TCG, QEMU KVM.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | 610/610 PASS including 39 `gen_user_abi:` resolver fixtures + the `--check` sync assertion; ring-3 side rides `bash scripts/test.sh` (`test_process.exe` sub-tests 4 and 7).
+
+> **Notes:**
+> - Shipped: a fail-closed signed/expression resolver in `scripts/gen-user-abi.py` and the generated `TASK_EXIT_EXEC_IMAGE_DESTROYED (-1001)`, replacing the hand-copied literal in `user/test/test_process.c`.
+> - Integrates by adding `include/kernel/sched/task.h` as a fourth generator source behind a two-list allowlist (export vs resolve-only), leaving `parse_defines` and all three existing tables untouched.
+> - Downstream: `IMPOSSIBLE_OS_ABI_HASH` moved to `0x448A9D27775243B3` (new `EXIT` tag), so a stale user binary now fails the crt0 handshake as well as `make check-abi`.
+> - Canonical docs: [`scripts/gen-user-abi.py`](../../scripts/gen-user-abi.py) (grammar + refusal contract), [`user/include/abi_numbers.h`](../../user/include/abi_numbers.h) (generated surface).
+> - Scope boundary: only exit statuses gained expression resolution (`SYS_*`, `SSDT_*` and `STATUS_*` still use the unsigned-literal `parse_defines`, correct for them and deliberately unchanged), and the header scanner is hand-written rather than a real preprocessor -- fail-closed on every shape found, but §26 owns removing the class.
 
 ---
 
@@ -878,6 +888,27 @@ Every launcher control and artifact line shares one serial stream with ring-3 st
 
 ---
 
+## 26. Preprocessor-Faithful Constant Extraction
+
+`scripts/gen-user-abi.py` reads kernel headers with a hand-written scanner: §23 added logical-line splicing, comment stripping with string/char-literal state, and conditional-nesting detection, and each of those landed because an adversarial round found a shape where the scanner and `clang-19 -E` disagreed. Three consecutive rounds on the same class is the finding. Every disagreement has the same shape and the same severity: the generator certifies a value, both generated headers agree with each other, `make check-abi` passes, the crt0 fingerprint matches -- and the running kernel uses a different number. The scanner is fail-closed today, so the known shapes refuse rather than lie, but "refuses the shapes we thought of" is a weaker contract than "reads what the compiler reads".
+
+> [!NOTE]
+> Not a defect report against §23. That section's scanner is correct for the header it reads today, and the tooling suite pins 39 cases including four clang-differential ones. This section is about removing the CLASS, so a future edit to `task.h` cannot reopen it.
+
+- [ ] Replace the hand-written scanner in `scripts/gen-user-abi.py` with a real preprocessor query -- run `clang-19` in
+      `-dM -E` mode over a translation unit that includes the allowlisted source with the SAME flags the kernel build uses (`--target=x86_64-elf -ffreestanding -nostdinc -Iinclude`, and the same `KERNEL_TESTS` state), then read the expanded `#define` values out of its output. Splicing, comments, conditionals, and macro expansion stop being this script's problem because the compiler answers them
+- [ ] Keep the restricted expression grammar and the fail-closed refusals for whatever the preprocessor hands back, so an
+      unresolvable or out-of-`int32_t` value still fails the build loudly rather than being emitted. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §23 (item: "`scripts/gen-user-abi.py` resolves signed and expression-valued constants through a SEPARATE fail-closed resolver")
+- [ ] Keep the 39 resolver fixtures green by pointing them at the new extraction path, and add a differential fixture that
+      asserts the generator and `clang-19 -E` agree on every allowlisted constant -- the check that would have caught all five §23 findings in one pass
+- [ ] Decide and document what happens when `clang-19` is absent: `make check-abi` currently needs no compiler, and the
+      answer must be an explicit refusal or an explicit documented fallback, never a silent skip that turns the drift gate off
+- [ ] Commit: `"abi: read kernel constants through the real preprocessor"`
+
+**Test checkpoint:** `make check-abi` still passes and `user/include/abi_numbers.h` regenerates byte-identical with `TASK_EXIT_EXEC_IMAGE_DESTROYED (-1001)`; a differential fixture asserts the generator's value equals `clang-19 -E`'s expansion for every allowlisted constant; each of the five shapes §23 refused (whitespace-tailed continuation, `/*` inside a string literal, spliced `//` swallowing an `#endif`, conditional definition, duplicate definition) either resolves to the same value clang selects or fails the build. Test on: QEMU TCG, QEMU KVM.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature               | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS          |
@@ -902,6 +933,7 @@ Every launcher control and artifact line shares one serial stream with ring-3 st
 | ⭐   | Win32 on non-Win      | ❌ N/A                 | ❌ Wine only             | ✅ §14 statically linked  |
 | 💎   | Fast-path isolation   | ⚠️ HLK TEB probes     | ⚠️ kselftest vdso_test  | ✅ §17 5/5 probes PASS    |
 | 💎   | ABI drift guard       | ⚠️ SDK hdr versioning | ✅ syscall.tbl generator | ✅ §17 gen-user-abi.py    |
+| ⭐   | Exit-status ABI sync  | ⚠️ SDK ntstatus.h     | ❌ no exported reasons   | ✅ §23 generated + hashed |
 | ⭐   | Self-report vs exit   | ⚠️ trusts result log  | ⚠️ trusts TAP output    | ✅ §22 fail-closed check  |
 | ⭐   | ABI fingerprint hash  | ❌ silent Win10/11     | ❌ vDSO unsigned layout  | ✅ §18 FNV-1a handshake   |
 | ⭐   | Self-describing KUSD  | ❌ KUSD raw struct     | ❌ vDSO no layout ver    | ✅ §18 magic+ver+hash     |

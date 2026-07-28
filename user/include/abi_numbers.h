@@ -8,6 +8,7 @@
  *   include/kernel/sched/syscall.h       (INT 0x80 SYS_* numbers)
  *   include/kernel/nt/service_numbers.h  (SSDT_* service numbers)
  *   include/kernel/nt/ntstatus.h         (NTSTATUS return codes)
+ *   include/kernel/sched/task.h          (TASK_EXIT_* exit statuses)
  *
  * Any kernel-side renumber that forgets to regenerate this header will
  * fail `make check-abi` before the drift leaks to runtime. User-mode
@@ -111,6 +112,9 @@
 #define STATUS_INVALID_HANDLE            0xC0000008
 #define STATUS_ACCESS_DENIED             0xC0000022
 
+/* ---- Kernel exit statuses (TASK_EXIT_*) -- resolved, signed --------------------------------------------------------- */
+#define TASK_EXIT_EXEC_IMAGE_DESTROYED   (-1001)
+
 /* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */
 /* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, TEB offsets,
  * KUSD offsets). Kernel emits the same hash via SYS_ABI_HANDSHAKE; user
@@ -118,5 +122,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x9B8D6CD1D01DB251ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x448A9D27775243B3ULL
 #define EX_ABI_MISMATCH          0x42
