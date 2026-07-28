@@ -62,6 +62,26 @@ def test_small_abi_section_fits():
         assert cx["waiver_required"] is False
 
 
+def test_calibrated_item_threshold_boundary():
+    """The item threshold was CALIBRATED (2026-07-28) against 15 shipped
+    sections reconstructed from history -- pre-ship features paired with the
+    turns each actually cost. `open_items` is the only feature with predictive
+    power (r = +0.50); the old `> 12` gate caught 2 of 8 sections that ran past
+    250 turns. `>= 5` was chosen to MINIMISE TOTAL COST, not recall, because a
+    section carries ~60 turns of fixed review overhead and splitting below
+    T ~= 220 costs more than it saves.
+
+    Pinned so the boundary cannot drift back without re-doing that work."""
+    with tempfile.TemporaryDirectory() as d:
+        cx = _manifest(_repo_with_todo(d, items=5))["complexity"]
+        assert "SPLIT-RECOMMENDED" in cx["verdict"], cx
+        assert "5 open items" in cx["verdict"], cx
+    with tempfile.TemporaryDirectory() as d:
+        cx = _manifest(_repo_with_todo(d, items=4))["complexity"]
+        # 4 items may still SPLIT on files/subsystems, but never on item count.
+        assert "4 open items" not in cx["verdict"], cx
+
+
 def test_validate_split_waiver_structured_only():
     mod = _load()
     good = {"est_files": 3, "subsystems": ["src/kernel"], "est_tests": 4,

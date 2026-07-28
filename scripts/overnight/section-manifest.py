@@ -183,7 +183,28 @@ def main(argv) -> int:
     split_reasons = []
     if len(likely_files) > 8:
         split_reasons.append(f"{len(likely_files)} files")
-    if len(open_items) > 12:
+    # CALIBRATED 2026-07-28 against 15 shipped sections reconstructed from
+    # history (pre-ship manifest features paired with the turns each actually
+    # cost, via metrics start_sha..end_sha ranges).
+    #
+    # `open_items` is the ONLY feature with predictive power: r = +0.50 against
+    # turns. files (+0.16), subsystems (+0.05) and abi_impact (-0.22) have
+    # none, and the old composite verdict scored +0.20 -- near-random. It
+    # flagged 2 of the 8 sections that ran past 250 turns (25% recall) while
+    # firing on one that took 248.
+    #
+    # The threshold is chosen to MINIMISE TOTAL COST, not to maximise recall,
+    # because splitting is not free: a section carries ~60 turns of fixed
+    # review overhead (the floor observed in zero-item sections, 58 and 85
+    # turns), so splitting below T ~= 220 costs MORE than it saves. Modelled
+    # over the 15-section set: `> 12` captured +2.5%, `>= 6` +6.5%, `>= 5`
+    # +7.0%, `>= 4` +9.5%, against a PERFECT oracle's +11.7% ceiling.
+    #
+    # `>= 5` is the balance point -- nearly triple the old capture, splitting
+    # 9 of 15 rather than 11 or 12. Two long sections (352 and 379 turns) have
+    # only 3-4 items and are invisible to ANY item-count rule; catching those
+    # needs a different mechanism, not a lower number here.
+    if len(open_items) >= 5:
         split_reasons.append(f"{len(open_items)} open items")
     if len(subsystems) > 3:
         split_reasons.append(f"{len(subsystems)} subsystems")

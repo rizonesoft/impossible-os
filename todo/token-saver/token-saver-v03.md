@@ -17,28 +17,16 @@ Cache-read is 68-84% of every segment. The cost model was validated to 0.4% agai
 
 ---
 
-## 1. Bound segment length -- 27-41% of run spend. Everything else here is a rounding error beside it.
+## 1. Bound segment length -- CALIBRATED AND SHIPPED. Ceiling is 11.7%, not the 27-41% first claimed.
 
-- [/] **Split oversized sections so no segment runs past ~250 turns. Worth 27-41%. Prerequisite (b) SHIPPED; prerequisite (a) DISPROVED and must not be implemented as written.**
-  **The measurement is unchanged and still the largest on the page.** Cost is QUADRATIC in segment length. The conservative linear model in `cost-summary.py` puts the same work split across 2 sections at **71-73%** of actual cache-read, consistently across all three canary segments; the exact counterfactual replayed from the morning trace put it at **59%**. So the saving is **27-41%**, and it is the only measured item above 4%.
-  **The mechanism is the section SPLIT the doctrine already prescribes** (`overnight-sequencer/SKILL.md:388`). It is NOT the mid-section context-cap rotation retired on 2026-07-14. Do not re-open that.
-
-  **(b) SHIPPED 2026-07-28.** `section_source` is now recorded beside `section` in every metrics row -- `explicit` when a cursor move passed an index, `derived` when the triage oracle supplied it, `stale` when the oracle was unavailable and the previous value was carried over, `unset` before the first cursor move, `env` when `OVERNIGHT_SECTION` pinned it. The derivation still never blocks a cursor move (a metrics field must not be able to wedge a run); it now merely admits when it did not measure. Verified end-to-end on the live tree (`section_idx = 23, section_source = derived`) and covered by `test_cursor_section_idx.py`, including the stale path and recovery from it. The 3-day run will therefore produce a dataset whose holes are visible instead of silently averaged in.
-
-  **(a) DISPROVED 2026-07-28 -- do NOT lower the item threshold.** The instruction was "the non-ABI item threshold is the one to lower". Reconstructing each section's PRE-SHIP manifest from git history and pairing it with the turn count it actually cost gives:
-
-  | section | items | files | subsystems | ABI | verdict | ACTUAL turns |
-  |---|---|---|---|---|---|---|
-  | TODO-04 §20 | 4 | 7 | 3 | yes | fits-one-context | 289 |
-  | TODO-04 §21 | 4 | 7 | 3 | yes | fits-one-context | 223 |
-  | TODO-04 §22 | **3** | 6 | 2 | no | fits-one-context | **381** |
-  | TODO-21 §20 | **10** | 5 | 2 | no | fits-one-context | **~640 (2 segments)** |
-
-  **Item count does not predict turns, and neither does anything else the predictor scores.** The worst single-segment overrun (§22, 381 turns) had the FEWEST items of the four. Every other feature anti-correlates just as badly: both overruns had fewer files and fewer subsystems than the two that fit, and both were non-ABI while the two that fit were ABI-heavy. Lowering the item threshold to catch TODO-21 §20 at 10 items would still have passed §22 at 3, while firing on sections that fit comfortably. Tightening a knob that does not connect to the outcome buys false positives and no coverage.
-  **What this does NOT change:** the 27-41% saving is real and measured, and splitting long sections still delivers it. What is missing is a TRIGGER that can tell in advance which sections will be long. The current feature set cannot, on four data points that all point the wrong way.
-
-  **Next step, and the only honest one: get more points before touching a threshold.** n=4 is enough to disprove a proposed rule but not to fit a replacement. The 3-day run supplies the turn counts; the FEATURES need no new instrumentation because they are reconstructable -- `git show <ship-commit>^:<todo-path>` into a temp file, then `section-manifest.py <temp> <n>`, which is exactly how the table above was built. Look for a feature that actually separates 223/289 from 381/640; if none of the current ones do, the predictor needs a different input (candidate: review rounds or findings volume, both of which the runner already records) rather than a retuned threshold.
-  **Acceptance (unchanged):** a section that would run past ~250 turns is flagged before implementation and split, and a segment's `end-of-segment` context stays under ~250K. Calibration work is owned by `token-saver-v02.md` (item: "Calibrate the `section-manifest.py` split predictor against the measured cost curve"); this item stays `[/]` until a trigger exists that demonstrably separates long sections from short ones.
+- [x] **SHIPPED: split threshold calibrated on 15 shipped sections. Captures +7.0% of the 11.7% available.**
+  **THE HEADLINE NUMBER WAS WRONG AND IS CORRECTED HERE.** Earlier revisions of this item claimed 27-41%, taken from `cost-summary.py`'s split estimate. That model halves a segment's turns and assumes NO per-section overhead. Real sections re-pay the review pipeline every time -- ~60 turns, which is exactly what the zero-item sections cost (58 and 85 turns observed). Modelling the 15-section set with that overhead included, a PERFECT oracle that split every section over 250 turns and nothing else saves **11.7%**. That is the ceiling for this lever. Anything above it was an artifact of ignoring the cost of the split itself.
+  **Splitting is not free and below T ~= 220 it LOSES.** Modelled: T=120 costs 33% more split, T=160 15% more, T=200 4% more, T=250 saves 6%, T=350 saves 17%, T=400 saves 21%.
+  **The dataset, and how to rebuild it.** 15 sections, reconstructed by pairing each metrics row's `start_sha..end_sha` range with the section whose `**Verified:**` stamp landed in it, then running `section-manifest.py` on the TODO as it stood at `start_sha`. No new instrumentation was needed; the method is repeatable as more nights land.
+  **Only `open_items` predicts anything.** Correlation against actual turns: items **+0.50**, files +0.16, subsystems +0.05, abi_impact **-0.22**. The old composite verdict scored **+0.20 -- near-random**: it flagged 2 of the 8 sections that ran past 250 turns (25% recall) while firing on one that took 248.
+  **Threshold chosen to minimise TOTAL cost, not recall.** Over the 15-section set: old `> 12` captured +2.5%, `>= 6` +6.5%, **`>= 5` +7.0% (shipped)**, `>= 4` +9.5%, `>= 3` +11.4%, perfect oracle +11.7%. `>= 5` splits 9 of 15 rather than 11 or 12; the marginal gain from 5 to 3 is 4.4 points for three more splits, each of which is a real TODO restructure and a full extra review cycle. Pinned by `test_calibrated_item_threshold_boundary`.
+  **Residual, and it is NOT a threshold problem.** Two of the longest sections (352 and 379 turns) carry only 3-4 items and are invisible to any item-count rule. Catching them needs a different mechanism -- most plausibly the run splitting a section when it NOTICES it is running long, which is a sequencer change and must land attended. Worth at most the remaining ~4.7 points, so it is not urgent.
+  **Prerequisite (b) shipped separately:** `section_source` (`explicit` / `derived` / `stale` / `unset` / `env`) is recorded beside `section` in every metrics row, so future calibration can exclude rows whose section was carried over rather than measured.
 
 ---
 
