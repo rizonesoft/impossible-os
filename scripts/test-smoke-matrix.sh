@@ -46,29 +46,49 @@ LOG_DIR="$REPO_ROOT/build/smoke-matrix"
 mkdir -p "$LOG_DIR"
 
 PASS=0; FAIL=0; FAILED_LEGS=""
+CAPTURES=""
 START_ALL=$(date +%s)
 
 echo -e "${CYAN}=== smoke matrix: $LEGS ===${NC}"
 
 for leg in $LEGS; do
     engine="${leg%%:*}"; cpus="${leg##*:}"
-    # Recreate per leg, not once up front: test-smoke.sh runs a build, and the
-    # build removes subdirectories under build/ -- which silently deleted this
-    # directory after the first leg and made every later leg fail on "No such
-    # file or directory" rather than on anything about the kernel.
-    mkdir -p "$LOG_DIR"
     log="$LOG_DIR/${engine}-${cpus}cpu.log"
     t0=$(date +%s)
+
+    # Capture OUTSIDE build/, then move the log in afterwards.
+    #
+    # An earlier fix recreated $LOG_DIR before each leg, on the theory that the
+    # build only deleted logs written by EARLIER legs. It does worse than that:
+    # the redirect below opens the log before test-smoke.sh runs, test-smoke.sh
+    # builds, and the build removes subdirectories under build/ -- unlinking the
+    # file while the shell still holds the fd. The leg then writes to an inode
+    # with no name, so the log is gone even for the leg that produced it, the
+    # FAIL branch's `grep ... "$log"` reads nothing, and a failing configuration
+    # reports no reason at all. Measured 2026-07-28: a full green matrix left
+    # build/smoke-matrix/ EMPTY while printing four paths into it.
+    #
+    # A capture path outside build/ cannot be unlinked by the build, so the log
+    # survives to be read by the FAIL branch below and to be moved into its
+    # documented location for the operator.
+    cap="$(mktemp "${TMPDIR:-/tmp}/smoke-matrix-${engine}-${cpus}cpu.XXXXXX")"
 
     # Each leg is a full test-smoke.sh run: it rebuilds nothing new (the build is
     # already current after the first leg) but re-boots and re-asserts, which is
     # the point -- the assertions are what differ per configuration.
     if [ "$engine" = "tcg" ]; then
-        SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$log" 2>&1
+        SMOKE_FORCE_TCG=1 SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     else
-        SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$log" 2>&1
+        SMOKE_SMP="$cpus" bash scripts/test-smoke.sh > "$cap" 2>&1
     fi
     rc=$?
+    # Publish at the END of the run, not here: a LATER leg's build wipes
+    # build/ subdirectories again, so a log moved into place now would be
+    # deleted by the next leg. Only the final leg's log ever survived that
+    # way (measured 2026-07-28: a green four-leg matrix left exactly one
+    # file behind). Keep every capture on its unlinkable-by-build path and
+    # move them all in once the last leg is done.
+    CAPTURES="$CAPTURES $cap:$log"
     t1=$(date +%s); dur=$((t1 - t0))
 
     if [ "$rc" = "0" ]; then
@@ -78,13 +98,23 @@ for leg in $LEGS; do
         FAIL=$((FAIL + 1)); FAILED_LEGS="$FAILED_LEGS ${engine}:${cpus}cpu"
         printf "  ${RED}FAIL${NC}  %-8s %s cpu   %2ds   ${DIM}%s${NC}\n" "$engine" "$cpus" "$dur" "$log"
         # One reason line, not the log: the operator (or the artifact envelope)
-        # has the path when they want the rest.
-        reason=$(grep -aoE 'Detected[^"]{0,90}|Log ends on a fatal shape[^"]{0,70}' "$log" 2>/dev/null | head -1)
+        # has the path when they want the rest. Read the live CAPTURE, not the
+        # published path -- publication happens after the last leg, so $log
+        # does not exist yet while this leg is being reported.
+        reason=$(grep -aoE 'Detected[^"]{0,90}|Log ends on a fatal shape[^"]{0,70}' "$cap" 2>/dev/null | head -1)
         [ -n "$reason" ] && printf "        ${DIM}%s${NC}\n" "$reason"
     fi
 done
 
 TOTAL=$(( $(date +%s) - START_ALL ))
+
+# Publish every capture now that no further build can wipe the directory.
+# Recreated here because the last leg's build removed it again.
+mkdir -p "$LOG_DIR"
+for pair in $CAPTURES; do
+    mv -f "${pair%%:*}" "${pair##*:}" 2>/dev/null || true
+done
+
 echo ""
 if [ "$FAIL" = "0" ]; then
     echo -e "${GREEN}SMOKE MATRIX PASSED${NC}  ($PASS/$((PASS+FAIL)) legs, ${TOTAL}s)"
