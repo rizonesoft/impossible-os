@@ -21,6 +21,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/test_usermode.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/sched/task.h"   /* fault_site_* helpers + FI_ALLOC_* tags */
 #include "kernel/mm/heap.h"
 #include "kernel/boot_info.h"
 #include "registry.h"
@@ -302,9 +303,9 @@ static void test_fault_inject_rejects_unknown_kind(void)
     int64_t rc;
 
     g_boot_info.config.test = 1;
-    /* kind values above FAULT_CLEAR_ALL (6) are unassigned; dispatcher
-     * must -1 them so a future ABI extension can't be forged against
-     * an older kernel. */
+    /* kind values above the highest assigned selector (FAULT_PMM_SITE, 9)
+     * are unassigned; dispatcher must -1 them so a future ABI extension
+     * can't be forged against an older kernel. */
     rc = sys_fault_inject_dispatch(99, 0);
     TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
                    "unknown kind=99 returns -1 even under test=1");
@@ -321,6 +322,166 @@ static void test_fault_inject_kmalloc_countdown_requires_nonzero(void)
     rc = sys_fault_inject_dispatch(FAULT_KMALLOC_COUNTDOWN, 0);
     TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
                    "FAULT_KMALLOC_COUNTDOWN with countdown=0 returns -1");
+
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_inject_pmm_countdown_requires_nonzero(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    int64_t rc;
+
+    g_boot_info.config.test = 1;
+    rc = sys_fault_inject_dispatch(FAULT_PMM_COUNTDOWN, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
+                   "FAULT_PMM_COUNTDOWN with countdown=0 returns -1");
+
+    g_boot_info.config.test = saved_test;
+}
+
+/* ---- site-targeted selector regressions -------------------------
+ *
+ * These drive the arm word directly through its pure accessors; nothing
+ * here allocates, so a failing assertion cannot strand kernel memory. Each
+ * assertion clears the arm before returning so a sibling test never
+ * inherits a live injection.
+ * ----------------------------------------------------------------- */
+
+static void test_fault_site_rejects_invalid_site_id(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    int64_t rc;
+
+    g_boot_info.config.test = 1;
+    /* One past the highest assigned site. A test that names a site this
+     * kernel does not implement must fail LOUDLY at arm time rather than
+     * arming nothing and then passing because no injection ever fired. */
+    rc = sys_fault_inject_dispatch(FAULT_KMALLOC_SITE, FAULT_SITE_MAX + 1);
+    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint64_t)-1LL,
+                   "FAULT_KMALLOC_SITE with out-of-range site returns -1");
+
+    fault_site_arm_clear(FI_ALLOC_KMALLOC);
+    fault_site_arm_clear(FI_ALLOC_PMM);
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_site_claim_fires_exactly_once(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+    int64_t rc;
+
+    g_boot_info.config.test = 1;
+    rc = sys_fault_inject_dispatch(FAULT_KMALLOC_SITE,
+                                   FAULT_SITE_EXEC_ARGV_TABLE);
+    TEST_ASSERT_EQ((uint64_t)rc, 0ULL,
+                   "FAULT_KMALLOC_SITE arms a valid site");
+
+    saved_site = fault_site_enter(FAULT_SITE_EXEC_ARGV_TABLE);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 1ULL,
+                   "armed site claims once inside the named site");
+    /* Single shot: the arm is consumed by the claim, so a second
+     * allocation at the same site must NOT fail. Without this the
+     * injection would leak past its target branch. */
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 0ULL,
+                   "consumed site arm does not fire a second time");
+    fault_site_restore(saved_site);
+
+    fault_site_arm_clear(FI_ALLOC_KMALLOC);
+    fault_site_arm_clear(FI_ALLOC_PMM);
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_site_ignores_other_sites_and_allocators(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+    sys_fault_inject_dispatch(FAULT_KMALLOC_SITE, FAULT_SITE_EXEC_ARGV_TABLE);
+
+    /* Negative case 1: a DIFFERENT site must not consume the arm. This is
+     * the whole point of site targeting -- a mis-targeted test has to fail
+     * loudly instead of passing on an unrelated allocation. */
+    saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 0ULL,
+                   "unrelated site does not consume the arm");
+    fault_site_restore(saved_site);
+
+    /* Negative case 2: right site, wrong allocator. */
+    saved_site = fault_site_enter(FAULT_SITE_EXEC_ARGV_TABLE);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "kmalloc-armed site does not fire on a pmm allocation");
+    /* ...and the arm survived both misses, so it can still fire. */
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 1ULL,
+                   "arm survives non-matching probes and still fires");
+    fault_site_restore(saved_site);
+
+    fault_site_arm_clear(FI_ALLOC_KMALLOC);
+    fault_site_arm_clear(FI_ALLOC_PMM);
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_site_outside_any_site_never_fires(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+    sys_fault_inject_dispatch(FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES);
+
+    /* FAULT_SITE_NONE is the resting state of every thread. An armed site
+     * must never fire against unannotated allocations, or arming a site
+     * would behave like a plain single-shot and fail a random branch. */
+    saved_site = fault_site_enter(FAULT_SITE_NONE);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "no claim outside an annotated site");
+    fault_site_restore(saved_site);
+
+    fault_site_arm_clear(FI_ALLOC_KMALLOC);
+    fault_site_arm_clear(FI_ALLOC_PMM);
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_site_arms_are_per_allocator(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+
+    /* Arm BOTH allocators at the same site, then install an ordinal
+     * kmalloc countdown. Replacement is per-allocator, so that must
+     * cancel the kmalloc site arm and leave the pmm one untouched -- a
+     * single shared arm word would silently delete the pmm program. */
+    sys_fault_inject_dispatch(FAULT_KMALLOC_SITE, FAULT_SITE_PEB_FRAMES);
+    sys_fault_inject_dispatch(FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES);
+    sys_fault_inject_dispatch(FAULT_KMALLOC_COUNTDOWN, 1);
+
+    saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_KMALLOC), 0ULL,
+                   "ordinal kmalloc arm cancelled the kmalloc site arm");
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 1ULL,
+                   "the pmm site arm survived an unrelated kmalloc arm");
+    fault_site_restore(saved_site);
+
+    sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+    g_boot_info.config.test = saved_test;
+}
+
+static void test_fault_site_cleared_by_clear_all(void)
+{
+    uint8_t saved_test = g_boot_info.config.test;
+    uint32_t saved_site;
+
+    g_boot_info.config.test = 1;
+    sys_fault_inject_dispatch(FAULT_PMM_SITE, FAULT_SITE_PEB_FRAMES);
+    sys_fault_inject_dispatch(FAULT_CLEAR_ALL, 0);
+
+    saved_site = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+    TEST_ASSERT_EQ((uint64_t)fault_site_claim(FI_ALLOC_PMM), 0ULL,
+                   "FAULT_CLEAR_ALL disarms a site arm too");
+    fault_site_restore(saved_site);
 
     g_boot_info.config.test = saved_test;
 }
@@ -701,6 +862,27 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: FAULT_KMALLOC_COUNTDOWN requires N>=1",
                             test_fault_inject_kmalloc_countdown_requires_nonzero,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: FAULT_PMM_COUNTDOWN requires N>=1",
+                            test_fault_inject_pmm_countdown_requires_nonzero,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site rejects invalid site id",
+                            test_fault_site_rejects_invalid_site_id,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site claims exactly once",
+                            test_fault_site_claim_fires_exactly_once,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site ignores other sites/allocators",
+                            test_fault_site_ignores_other_sites_and_allocators,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site never fires outside a site",
+                            test_fault_site_outside_any_site_never_fires,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fault-site arms are per-allocator",
+                            test_fault_site_arms_are_per_allocator,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: FAULT_CLEAR_ALL clears a site arm",
+                            test_fault_site_cleared_by_clear_all,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: derive_test_name strips .exe",
                             test_derive_test_name_happy_path, TEST_CAT_EXEC);

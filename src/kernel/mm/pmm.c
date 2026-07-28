@@ -327,6 +327,15 @@ static int pmm_fault_should_fire(void)
 {
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
         return 0;
+
+    /* Site mode first, without touching the per-CPU countdown -- see the
+     * matching comment in heap.c's gate for why the two modes are disjoint
+     * rather than layered. */
+    if (fault_site_claim(FI_ALLOC_PMM)) {
+        __atomic_fetch_add(&s_pmm_fault_injections, 1ull, __ATOMIC_RELAXED);
+        return 1;
+    }
+
     struct per_cpu_data *pc = smp_this_cpu();
     if (!pc || !pc->pmm_alloc_fail_countdown)
         return 0;

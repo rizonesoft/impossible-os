@@ -621,6 +621,17 @@ static int heap_fault_injection_fires(void)
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
         return 0;
 
+    /* Site mode first, and it returns WITHOUT touching the per-CPU
+     * countdown: a named-site arm is a complete program, not a modifier on
+     * the ordinal one. Arming a site clears the same allocator's ordinal
+     * state (see sys_fault_inject_dispatch), so a fired site can never fall
+     * through to a stale countdown and fail an unrelated branch. */
+    if (fault_site_claim(FI_ALLOC_KMALLOC)) {
+        __atomic_fetch_add(&s_kmalloc_fault_injections, 1ull,
+                           __ATOMIC_RELAXED);
+        return 1;
+    }
+
     struct per_cpu_data *pc = smp_this_cpu();
     if (!pc || !pc->kmalloc_fail_countdown)
         return 0;

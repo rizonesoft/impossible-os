@@ -325,14 +325,20 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
 
     pid = task_current()->pid;
 
+    /* Every ORDINAL arm below clears the site arm first, and every SITE arm
+     * clears the matching ordinal state. That gives one tagged program per
+     * allocator with replacement semantics, so the two modes can never both
+     * be live and the caller never depends on the order it armed them in. */
     switch (kind) {
     case FAULT_KMALLOC_NEXT:
+        fault_site_arm_clear(FI_ALLOC_KMALLOC);
         kmalloc_fail_task_filter_set(pid);
         kmalloc_fail_next();
         return 0;
     case FAULT_KMALLOC_COUNTDOWN:
         if (countdown == 0)
             return -1;
+        fault_site_arm_clear(FI_ALLOC_KMALLOC);
         kmalloc_fail_task_filter_set(pid);
         kmalloc_fail_countdown_set(countdown);
         return 0;
@@ -341,6 +347,7 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
          * without the filter, a foreign task_*.exe, a sibling kthread,
          * or the launcher's own kmalloc calls on the same CPU would
          * consume the pending trap. */
+        fault_site_arm_clear(FI_ALLOC_PMM);
         pmm_alloc_fail_task_filter_set(pid);
         pmm_alloc_fail_next();
         return 0;
@@ -352,7 +359,52 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown)
         copy_user_fail_task_filter_set(pid);
         copy_user_fail_next();
         return 0;
+    case FAULT_PMM_COUNTDOWN:
+        if (countdown == 0)
+            return -1;
+        /* Ordinal arm replaces any site arm: at most one program is live
+         * per allocator, so the caller never has to reason about which of
+         * two modes wins. */
+        fault_site_arm_clear(FI_ALLOC_PMM);
+        pmm_alloc_fail_task_filter_set(pid);
+        pmm_alloc_fail_countdown_set(countdown);
+        return 0;
+    case FAULT_KMALLOC_SITE:
+    case FAULT_PMM_SITE: {
+        uint32_t alloc_tag = (kind == FAULT_KMALLOC_SITE)
+                                 ? FI_ALLOC_KMALLOC : FI_ALLOC_PMM;
+        /* countdown carries the site id for these selectors. */
+        if (fault_site_arm_set(alloc_tag, countdown) != 0) {
+            klog(LOG_WARN, "sys",
+                 "SYS_FAULT_INJECT bad site id=%u kind=%u pid=%u",
+                 (uint64_t)countdown, (uint64_t)kind, (uint64_t)pid);
+            return -1;
+        }
+        /* Replacement semantics in the other direction: installing a site
+         * arm cancels this allocator's ordinal countdown so a site that
+         * fires cannot then fall through to a stale N-th-allocation trap.
+         * NOTE: this clears the CURRENT CPU's countdown; a countdown armed
+         * on a different CPU before a migration is the pre-existing
+         * per-CPU limitation documented in include/kernel/smp.h. */
+        if (alloc_tag == FI_ALLOC_KMALLOC) {
+            kmalloc_fail_countdown_clear();
+            kmalloc_fail_task_filter_clear();
+        } else {
+            pmm_alloc_fail_countdown_clear();
+            pmm_alloc_fail_task_filter_clear();
+        }
+        return 0;
+    }
+    case FAULT_SITE_QUERY:
+        /* Consumed receipt. A ring-3 regression arms a site, drives the
+         * path, and then requires this to read 0 -- proving the injection
+         * fired at the named allocation rather than the path merely
+         * failing for some unrelated reason, which is otherwise
+         * indistinguishable from the outside. */
+        return (int64_t)(uint64_t)fault_site_arm_peek(countdown);
     case FAULT_CLEAR_ALL:
+        fault_site_arm_clear(FI_ALLOC_KMALLOC);
+        fault_site_arm_clear(FI_ALLOC_PMM);
         kmalloc_fail_countdown_clear();
         kmalloc_fail_task_filter_clear();
         pmm_alloc_fail_countdown_clear();

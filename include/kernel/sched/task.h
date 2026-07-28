@@ -26,6 +26,25 @@
 #include "kernel/task_limits.h"   /* rlimit_t, RLIM_NLIMITS, RLIMIT_* */
 #include "kernel/quota/quota.h"   /* quota_block_t, quota_absorb_record_t */
 #include "kernel/quota/quota_policy.h" /* quota_policy_t (ProcessQuotaLimits) */
+#include "kernel/sched/syscall.h" /* FAULT_SITE_* ids for the site-targeted
+                                   * fault-injection helpers below. syscall.h
+                                   * pulls only kernel/types.h, so this adds
+                                   * no include cycle. */
+
+/* ---- Site-targeted fault-injection allocator tags ----
+ * Declared above struct task because the arm array below is sized by
+ * FI_ALLOC_COUNT. Each allocator that participates in site targeting owns
+ * its own arm slot, mirroring the per-allocator ordinal countdowns, so
+ * arming one allocator's program never disturbs another's. */
+#define FI_ALLOC_KMALLOC  ((uint32_t)FAULT_ALLOC_KMALLOC)
+#define FI_ALLOC_PMM      ((uint32_t)FAULT_ALLOC_PMM)
+#define FI_ALLOC_COUNT    2u   /* number of participating allocators */
+#define FI_ALLOC_SHIFT    24u  /* site ids occupy the low 24 bits   */
+
+/* Tags are 1-based so 0 stays "no allocator"; the array is 0-based. */
+#define FI_ARM_SLOT(alloc)       ((uint32_t)(alloc) - 1u)
+#define FI_ARM_PACK(alloc, site) \
+    ((((uint32_t)(alloc)) << FI_ALLOC_SHIFT) | ((uint32_t)(site)))
 
 /* Forward declaration: kernel-mode SEH (KI_TRY/KI_EXCEPT) registration chain
  * head lives in struct thread. Full type in kernel/except.h; forward-declared
@@ -192,6 +211,17 @@ struct thread {
     uint8_t     in_audit;           /* 1 while this thread is running a syscall-audit hook;
                                      * per-thread (migration-safe) recursion guard so a hook's
                                      * own syscall is not itself re-audited. Zero-init. */
+#ifdef KERNEL_TESTS
+    uint32_t    fault_site_current; /* FAULT_SITE_* this thread is executing right now;
+                                     * FAULT_SITE_NONE when outside every annotated site.
+                                     * PER-THREAD, not per-task: a task owns many
+                                     * independently scheduled threads, so a task-wide
+                                     * marker would let a sibling's allocation consume the
+                                     * single-shot injection armed for this thread's site
+                                     * (same hazard pledge_pending above is per-thread for).
+                                     * Follows the thread across CPU migration by
+                                     * construction. Zero-init. KERNEL_TESTS-only. */
+#endif
     uint8_t     in_knf_trace;       /* 1 while this thread is running the KNF publish
                                      * observability bridge; recursion guard so a klog/ETW
                                      * path that re-publishes a KNF state cannot recurse.
@@ -623,6 +653,26 @@ struct task {
      * process's limits. */
     quota_policy_t quota_policy;
     spinlock_t     quota_policy_lock;
+#ifdef KERNEL_TESTS
+    /* Site-targeted fault-injection arm (FAULT_KMALLOC_SITE / FAULT_PMM_SITE).
+     *
+     * Packed as FI_ARM_PACK(allocator_tag, FAULT_SITE_*); 0 = disarmed. The
+     * COMPLETE arm program lives in this one word on the TASK, never split
+     * with per_cpu_data: the ordinal countdowns are per-CPU and therefore
+     * carry the documented "a migrating task does not trigger" caveat
+     * (include/kernel/smp.h), which a named-site selector must not inherit
+     * -- a site test that silently stops firing after a migration would
+     * certify a branch it never exercised.
+     *
+     * Single shot: the allocator gate consumes it with a compare-exchange,
+     * so exactly one allocation can fire even when sibling threads on other
+     * CPUs reach the same site simultaneously. Reset on slot reuse.
+     *
+     * INDEXED BY ALLOCATOR (FI_ARM_SLOT) because the ordinal countdowns it
+     * sits beside are themselves per-allocator: one shared word would make
+     * arming a kmalloc program silently delete a live pmm one. */
+    uint32_t    fault_site_arm[FI_ALLOC_COUNT];
+#endif
 };
 
 /* Task entry function type */
@@ -1036,6 +1086,81 @@ int32_t thread_join(uint32_t thread_id);
 /* Voluntarily yield the CPU to the next ready thread.
  * (This is the same as yield() -- threads and tasks share the scheduler.) */
 void thread_yield(void);
+
+#ifdef KERNEL_TESTS
+/* ---- Site-targeted fault injection (test flavor only) ----
+ *
+ * An ordinal countdown can only say "fail the N-th allocation", and N drifts
+ * whenever any code on the path gains or loses an allocation. These helpers
+ * let a test name the allocation instead. Allocation sites opt in by
+ * bracketing the call with fault_site_enter()/fault_site_restore(); the
+ * allocator gates ask fault_site_claim() whether THIS allocation is the
+ * armed one.
+ *
+ * The arm word is task-owned and the current-site marker is thread-owned, so
+ * the whole program survives CPU migration and no sibling thread can consume
+ * another thread's injection. */
+/* Mark the current thread as executing `site`; returns the previous site so
+ * a nested annotation can restore it. No-op (returns FAULT_SITE_NONE) when
+ * there is no current thread. */
+uint32_t fault_site_enter(uint32_t site);
+
+/* Restore the current thread's site marker to `saved`. */
+void fault_site_restore(uint32_t saved);
+
+/* Returns 1 exactly once if the calling thread's current site matches the
+ * task's armed site for `alloc_tag`, atomically consuming the single shot.
+ * Returns 0 otherwise -- including when no site is armed, which is what lets
+ * the ordinal countdown path run unchanged. */
+int fault_site_claim(uint32_t alloc_tag);
+
+/* Install a site arm for ONE allocator (replacing only that allocator's
+ * previous site arm), or clear it with FAULT_SITE_NONE. Returns 0 on
+ * success, -1 on an invalid allocator tag or site id. */
+int fault_site_arm_set(uint32_t alloc_tag, uint32_t site);
+
+/* Clear the calling task's site arm for ONE allocator. */
+void fault_site_arm_clear(uint32_t alloc_tag);
+
+/* Read one allocator's arm word: the packed FI_ARM_PACK value while armed,
+ * 0 once an allocation has consumed it. This is the CONSUMED RECEIPT a
+ * ring-3 regression needs: without it a test can only observe that some
+ * operation failed, not that it failed at the site the test named -- an
+ * unrelated failure would otherwise look identical to a hit. Returns 0 for
+ * an invalid tag, which a caller distinguishes by having armed first. */
+uint32_t fault_site_arm_peek(uint32_t alloc_tag);
+
+/* Slot-reuse resets. Task slots and thread slots are recycled and this file
+ * clears stale per-slot state field by field (there is no blanket memset),
+ * so an arm left behind by a dead task would otherwise fire inside whatever
+ * process next inherits the slot. Called from every create/fork path. */
+static inline void fault_site_reset_task(struct task *t)
+{
+    uint32_t i;
+
+    if (!t)
+        return;
+    for (i = 0; i < FI_ALLOC_COUNT; i++)
+        __atomic_store_n(&t->fault_site_arm[i], 0u, __ATOMIC_RELEASE);
+}
+static inline void fault_site_reset_thread(struct thread *th)
+{
+    if (th)
+        th->fault_site_current = FAULT_SITE_NONE;
+}
+#else /* !KERNEL_TESTS */
+/* Release flavor: the site annotations compile to nothing, so an annotated
+ * allocation site costs exactly zero instructions in a shipping kernel and
+ * the call sites need no #ifdef of their own. */
+static inline uint32_t fault_site_enter(uint32_t site)
+{
+    (void)site;
+    return 0u;
+}
+static inline void fault_site_restore(uint32_t saved) { (void)saved; }
+static inline void fault_site_reset_task(struct task *t) { (void)t; }
+static inline void fault_site_reset_thread(struct thread *th) { (void)th; }
+#endif /* KERNEL_TESTS */
 
 /* Get the current thread within the current task.
  * Returns NULL if current task has no thread tracking (PID 0 boot). */

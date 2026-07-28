@@ -73,6 +73,17 @@
 #define FAULT_VMM_MAP_NEXT       4
 #define FAULT_COPY_USER_NEXT     5
 #define FAULT_CLEAR_ALL          6
+#define FAULT_PMM_COUNTDOWN      7
+#define FAULT_KMALLOC_SITE       8
+#define FAULT_PMM_SITE           9
+#define FAULT_SITE_QUERY         10
+#define FAULT_ALLOC_KMALLOC      1
+#define FAULT_ALLOC_PMM          2
+#define FAULT_SITE_NONE          0
+#define FAULT_SITE_EXEC_ARGV_TABLE 1
+#define FAULT_SITE_EXEC_PRIVATE_FRAMES 2
+#define FAULT_SITE_PEB_FRAMES    3
+#define FAULT_SITE_MAX           3
 #define SYS_NT_WRITE             0x0013
 #define SYS_NT_READ              0x0012
 #define SYS_NT_EXIT              0x0033
@@ -105,5 +116,5 @@
  * disagreement. A kernel-side renumber that slipped through review
  * but skipped this generator surfaces at process start, not at the
  * first syscall with corrupted semantics. */
-#define IMPOSSIBLE_OS_ABI_HASH   0x5A874792697ED3C7ULL
+#define IMPOSSIBLE_OS_ABI_HASH   0x3E6472B0D52FB521ULL
 #define EX_ABI_MISMATCH          0x42

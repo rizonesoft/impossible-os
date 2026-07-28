@@ -101,6 +101,41 @@ int64_t sys_fault_inject_dispatch(uint32_t kind, uint32_t countdown);
 #define FAULT_VMM_MAP_NEXT       4  /* fail next vmm_map_page               */
 #define FAULT_COPY_USER_NEXT     5  /* fail next copy_from_user/to_user     */
 #define FAULT_CLEAR_ALL          6  /* disarm every countdown + filter      */
+#define FAULT_PMM_COUNTDOWN      7  /* arg2 = N; fail the N-th pmm frame    */
+#define FAULT_KMALLOC_SITE       8  /* arg2 = FAULT_SITE_*; named kmalloc   */
+#define FAULT_PMM_SITE           9  /* arg2 = FAULT_SITE_*; named pmm frame */
+#define FAULT_SITE_QUERY        10  /* arg2 = FI_ALLOC_*; read the arm word */
+
+/* ---- FAULT_SITE_* named allocation sites ----
+ * An ORDINAL selector (FAULT_*_COUNTDOWN) fails the N-th allocation on a
+ * path, so which branch it lands on shifts the moment any code on that
+ * path gains or loses an allocation. A SITE selector names the allocation
+ * instead: the kernel fails the allocation performed at exactly this site
+ * and no other, however many allocations precede it.
+ *
+ * The ids are a stable ABI enum, never a line number. They ride the FAULT_
+ * prefix into user/include/abi_numbers.h via scripts/gen-user-abi.py, so a
+ * ring-3 test and the kernel cannot disagree about a site without
+ * `make check-abi` failing. Adding a site means APPENDING here and bumping
+ * FAULT_SITE_MAX -- never renumbering, which would silently retarget every
+ * existing test that names the old id.
+ *
+ * A site selector installs a COMPLETE arm program in ONE syscall (single
+ * shot, self-PID scoped) and REPLACES any ordinal arm for the same
+ * allocator, so the two modes are never both live and a fired site cannot
+ * fall through to a stale countdown. */
+/* Allocator tags. Ring 3 needs these to name which allocator's arm it is
+ * querying with FAULT_SITE_QUERY, so they live here (and therefore ride the
+ * FAULT_ prefix into abi_numbers.h) rather than kernel-side. The kernel's
+ * FI_ALLOC_* names in kernel/sched/task.h alias these -- one source. */
+#define FAULT_ALLOC_KMALLOC             1  /* kmalloc() arm slot            */
+#define FAULT_ALLOC_PMM                 2  /* pmm_alloc_frame() arm slot    */
+
+#define FAULT_SITE_NONE                 0  /* not inside any annotated site */
+#define FAULT_SITE_EXEC_ARGV_TABLE      1  /* task_exec argv address table  */
+#define FAULT_SITE_EXEC_PRIVATE_FRAMES  2  /* task_exec private-frame table */
+#define FAULT_SITE_PEB_FRAMES           3  /* peb_alloc_for_task PEB frames */
+#define FAULT_SITE_MAX                  3  /* highest valid site id         */
 
 /* --- SSDT index aliases for transition ---
  * These map existing SYS_* names to their SSDT NtXxx equivalents.

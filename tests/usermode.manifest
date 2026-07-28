@@ -66,7 +66,11 @@ test_win32.exe
 test_loader_elf.exe
 test_loader_pe.exe
 test_loader_eif.exe
-test_faultinject.exe
+# Forks one child per kmalloc-backed exec site probe (2), plus itself.
+# PIDs are allocated monotonically and task_cleanup does not return slots,
+# so the budget must name all three or the launcher's TASK_MAX pre-flight
+# undercounts and a later stress test fails without the capacity warning.
+test_faultinject.exe expects_tasks=3
 
 # §8 stress + perf phase -- run after all correctness passes.
 test_stress_libc.exe

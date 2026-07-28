@@ -846,6 +846,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
     tasks[pid].search_path_mode = 0;  /* unset -> default safe SearchPathW ordering; clear stale bits on slot reuse */
     tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
+    fault_site_reset_task(&tasks[pid]);  /* no stale fault-site arm on slot reuse */
     tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
     tasks[pid].unveil_locked = 0;
     tasks[pid].unveil_active = 0;
@@ -864,6 +865,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    fault_site_reset_thread(&tasks[pid].threads[0]);  /* no stale site marker */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
@@ -1087,6 +1089,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].mitigation_flags = 0;  /* fresh: no mitigation policy; clear stale bits on slot reuse */
     tasks[pid].search_path_mode = 0;  /* unset -> default safe SearchPathW ordering; clear stale bits on slot reuse */
     tasks[pid].pledge_mask = 0;       /* not pledged; clear stale bits on slot reuse */
+    fault_site_reset_task(&tasks[pid]);  /* no stale fault-site arm on slot reuse */
     tasks[pid].unveil_list = (struct unveil_entry *)0;  /* full FS visible; clear stale tenant list ptr */
     tasks[pid].unveil_locked = 0;
     tasks[pid].unveil_active = 0;
@@ -1105,6 +1108,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    fault_site_reset_thread(&tasks[pid].threads[0]);  /* no stale site marker */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
@@ -2131,6 +2135,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].quota_ledger = NULL;
     tasks[child_pid].quota_policy_lock.flag = 0;
     quota_policy_reset(&tasks[child_pid]);  /* per-process, never inherited (see task_create) */
+    fault_site_reset_task(&tasks[child_pid]);  /* arm is per-process, never inherited */
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process
@@ -2266,6 +2271,7 @@ int task_fork(struct interrupt_frame *frame)
      * task_create_* init. */
     tasks[child_pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
+    fault_site_reset_thread(&tasks[child_pid].threads[0]);  /* no stale site marker */
     tasks[child_pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
     tasks[child_pid].threads[0].kernel_exception_list =
         (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
@@ -2477,10 +2483,17 @@ static PEB *peb_alloc_for_task(uint32_t pid, uintptr_t image_base,
     RTL_USER_PROCESS_PARAMETERS *pp;
     uint16_t *env;
 
-    /* Allocate physical pages */
-    peb_phys = pmm_alloc_frame();
-    rtlpp_phys = pmm_alloc_frame();
-    env_phys = pmm_alloc_frame();
+    /* Allocate physical pages. Bracketed as FAULT_SITE_PEB_FRAMES so a
+     * ring-3 test can fail THIS post-load allocation by name; an ordinal
+     * PMM countdown cannot reach it reliably because the frame count on the
+     * exec path ahead of it drifts with unrelated changes. */
+    {
+        uint32_t fs_saved = fault_site_enter(FAULT_SITE_PEB_FRAMES);
+        peb_phys = pmm_alloc_frame();
+        rtlpp_phys = pmm_alloc_frame();
+        env_phys = pmm_alloc_frame();
+        fault_site_restore(fs_saved);
+    }
     if (!peb_phys || !rtlpp_phys || !env_phys) {
         if (peb_phys) pmm_free_frame(peb_phys);
         if (rtlpp_phys) pmm_free_frame(rtlpp_phys);
@@ -3028,7 +3041,11 @@ int task_exec(const uint8_t *data, uint64_t size,
                  need, t_argc);
             return -1;
         }
-        argv_addrs = (uint64_t *)kmalloc((uint32_t)t_argc * sizeof(uint64_t));
+        {
+            uint32_t fs_saved = fault_site_enter(FAULT_SITE_EXEC_ARGV_TABLE);
+            argv_addrs = (uint64_t *)kmalloc((uint32_t)t_argc * sizeof(uint64_t));
+            fault_site_restore(fs_saved);
+        }
         if (!argv_addrs) {
             klog(LOG_ERROR, "sched",
                  "task_exec: OOM allocating argv address table (argc %d)", t_argc);
@@ -3069,8 +3086,13 @@ int task_exec(const uint8_t *data, uint64_t size,
     /* Address table for the fork+exec private frames. Allocated pre-commit
      * with everything else that can fail. */
     if (tasks[pid].cr3) {
-        priv_frames = (uintptr_t *)kmalloc(EXEC_PRIVATE_FRAMES
-                                           * sizeof(uintptr_t));
+        {
+            uint32_t fs_saved =
+                fault_site_enter(FAULT_SITE_EXEC_PRIVATE_FRAMES);
+            priv_frames = (uintptr_t *)kmalloc(EXEC_PRIVATE_FRAMES
+                                               * sizeof(uintptr_t));
+            fault_site_restore(fs_saved);
+        }
         if (!priv_frames) {
             klog(LOG_ERROR, "sched",
                  "task_exec: OOM allocating private-frame table (%u frames)",
@@ -4583,6 +4605,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    fault_site_reset_thread(&t->threads[tid]);  /* no stale site marker on slot reuse */
     t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     t->threads[tid].pledge_pending = 0;
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
@@ -4836,6 +4859,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
+    fault_site_reset_thread(&t->threads[tid]);  /* no stale site marker on slot reuse */
     t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     t->threads[tid].pledge_pending = 0;
 
@@ -5103,6 +5127,109 @@ struct thread *thread_current(void)
         return (struct thread *)0;
     return &tasks[current_task].threads[current_thread];
 }
+
+#ifdef KERNEL_TESTS
+/* ============================================================================
+ * Site-targeted fault injection (test flavor only)
+ *
+ * Ownership split, and why it is this way:
+ *   - fault_site_current is PER-THREAD. A task owns many independently
+ *     scheduled threads, so a task-wide marker would let a sibling thread's
+ *     allocation consume the single shot armed for this thread's site.
+ *   - fault_site_arm is PER-TASK, holding the COMPLETE program (allocator +
+ *     site) in one word. Nothing about site mode lives in per_cpu_data, so
+ *     unlike the ordinal countdowns it does not inherit the documented
+ *     "a migrating task does not trigger" caveat in include/kernel/smp.h.
+ *
+ * The claim is a compare-exchange, so exactly one allocation fires even if
+ * threads on several CPUs reach the same site at once.
+ * ========================================================================= */
+
+uint32_t fault_site_enter(uint32_t site)
+{
+    struct thread *th = thread_current();
+    uint32_t prev;
+
+    if (!th)
+        return FAULT_SITE_NONE;
+    prev = th->fault_site_current;
+    th->fault_site_current = site;
+    return prev;
+}
+
+void fault_site_restore(uint32_t saved)
+{
+    struct thread *th = thread_current();
+
+    if (th)
+        th->fault_site_current = saved;
+}
+
+/* Valid participating allocator tags are 1..FI_ALLOC_COUNT. */
+static int fault_site_tag_valid(uint32_t alloc_tag)
+{
+    return (alloc_tag >= 1u && alloc_tag <= FI_ALLOC_COUNT);
+}
+
+int fault_site_claim(uint32_t alloc_tag)
+{
+    struct task   *t  = task_current();
+    struct thread *th = thread_current();
+    uint32_t *slot, want, armed;
+
+    if (!t || !th || th->fault_site_current == FAULT_SITE_NONE)
+        return 0;
+    if (!fault_site_tag_valid(alloc_tag))
+        return 0;
+
+    slot  = &t->fault_site_arm[FI_ARM_SLOT(alloc_tag)];
+    want  = FI_ARM_PACK(alloc_tag, th->fault_site_current);
+    armed = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+    if (armed != want)
+        return 0;
+
+    /* Single shot: whoever wins the exchange owns the injection. */
+    return __atomic_compare_exchange_n(slot, &armed, 0u, false,
+                                       __ATOMIC_ACQ_REL,
+                                       __ATOMIC_RELAXED) ? 1 : 0;
+}
+
+int fault_site_arm_set(uint32_t alloc_tag, uint32_t site)
+{
+    struct task *t = task_current();
+
+    if (!t || !fault_site_tag_valid(alloc_tag))
+        return -1;
+    if (site > FAULT_SITE_MAX)
+        return -1;
+    /* Only THIS allocator's slot moves: a live arm on the other allocator
+     * is an independent program and must survive. */
+    __atomic_store_n(&t->fault_site_arm[FI_ARM_SLOT(alloc_tag)],
+                     (site == FAULT_SITE_NONE)
+                         ? 0u : FI_ARM_PACK(alloc_tag, site),
+                     __ATOMIC_RELEASE);
+    return 0;
+}
+
+uint32_t fault_site_arm_peek(uint32_t alloc_tag)
+{
+    struct task *t = task_current();
+
+    if (!t || !fault_site_tag_valid(alloc_tag))
+        return 0u;
+    return __atomic_load_n(&t->fault_site_arm[FI_ARM_SLOT(alloc_tag)],
+                           __ATOMIC_ACQUIRE);
+}
+
+void fault_site_arm_clear(uint32_t alloc_tag)
+{
+    struct task *t = task_current();
+
+    if (t && fault_site_tag_valid(alloc_tag))
+        __atomic_store_n(&t->fault_site_arm[FI_ARM_SLOT(alloc_tag)], 0u,
+                         __ATOMIC_RELEASE);
+}
+#endif /* KERNEL_TESTS */
 
 /* ============================================================================
  * Priority management helpers (used by mutex priority inheritance)
