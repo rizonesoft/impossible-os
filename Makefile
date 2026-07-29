@@ -117,6 +117,21 @@ else
 endif
 override CFLAGS += $(EXCEPT_TELEMETRY_FLAG)
 
+# --- The kernel translation-unit vector -------------------------------------
+# THE definition of "how a kernel .c file is preprocessed and compiled". The
+# generic C compile rule and `print-abi-cppflags` both expand THIS variable;
+# neither spells the flags out again.
+#
+# It is one variable because scripts/gen-user-abi.py reads kernel ABI constants
+# THROUGH clang and must read them in the context the kernel is actually built
+# in. While the include vector was written out at both sites, "they match" was a
+# claim maintained by hand: adding a -D or an -I to the compile rule and not to
+# the query would leave check-abi certifying constants from a translation
+# context the kernel never uses, and every generated artifact would still agree
+# with itself. Keep it that way -- do not inline these flags at a new call site.
+KERNEL_TU_FLAGS = $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) \
+                  -I$(SRC_DIR) -I$(BUILD_DIR)
+
 # Flavor stamp -- content is the flavor name. Every C object rule takes it as
 # a REAL (not order-only) prerequisite, so a flip rebuilds every TU instead of
 # silently relinking objects compiled under the opposite flavor.
@@ -1161,7 +1176,36 @@ check-abi:
 ## because check-abi runs ahead of compilation.
 .PHONY: print-abi-cppflags
 print-abi-cppflags:
-	@printf '%s\n' $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -I$(BUILD_DIR)
+	@printf '%s\n' $(KERNEL_TU_FLAGS)
+
+## print-abi-config: everything scripts/gen-user-abi.py needs to know about the
+## build BEFORE it starts querying per-flavor flags, in ONE invocation --
+## `make` costs ~0.2s of process startup each time and this runs inside
+## check-abi on every build, so two extra queries would cost more than the pass
+## they were added to remove.
+##
+##   CC=<compiler>            the compiler the kernel is ACTUALLY built with.
+##                            The generator certifies ABI values by COMPILING
+##                            assertions, so it must use this binary: a
+##                            `make CC=<other>` override would otherwise build
+##                            the kernel with one compiler while the values were
+##                            certified with another, and compiler predefined
+##                            macros can select different constants in each.
+##   FLAVOR=<AXIS>=v1,v2,...  one preprocessor-visible build flavor axis. The
+##                            generator sweeps every combination to prove no
+##                            published constant depends on the flavor, and
+##                            reads the matrix from HERE rather than mirroring
+##                            the axis list in Python -- so adding an axis below
+##                            extends the sweep instead of silently narrowing
+##                            it. CONTRACT: the FIRST state listed is that
+##                            axis's build DEFAULT (matching its `?=` above),
+##                            which lets the generator take the default
+##                            flavor's extraction straight out of the sweep.
+.PHONY: print-abi-config
+print-abi-config:
+	@printf 'CC=%s\n' '$(CC)'
+	@printf 'FLAVOR=%s\n' 'KERNEL_TESTS=on,off' 'EXCEPT_TELEMETRY=on,off' \
+	                       'BUILD_ALT_BOOT=off,diagnostic,compatible'
 
 ## Per-category test targets
 test-mm: all
@@ -1690,7 +1734,7 @@ $(BUILD_DIR)/kernel/lz4.o: $(SRC_DIR)/kernel/lz4.c $(KERNEL_TESTS_STAMP) | $(GEN
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -I$(BUILD_DIR) -c $< -o $@
+	$(CC) $(KERNEL_TU_FLAGS) -c $< -o $@
 	@echo "[CC] $<"
 
 # Explicit dep: boot_proto.o tracks the generated sha header so a real

@@ -336,13 +336,20 @@ Key flags:
 
 ### Build Flavors
 
-Two validated knobs select a build flavor. Both fail fast with `$(error ...)` on an
+Three validated knobs select a build flavor. Each fails fast with `$(error ...)` on an
 unrecognized value rather than silently building something unintended.
 
 | Knob            | Values                        | Default | Purpose                                    |
 | --------------- | ----------------------------- | ------- | ------------------------------------------ |
 | `BUILD_ALT_BOOT`| `off`, `diagnostic`, `compatible` | `off` | Alternate boot-protocol policy (see [alt-boot.md](../boot/alt-boot.md)) |
 | `KERNEL_TESTS`  | `on`, `off`                   | `on`    | Kernel test-surface flavor                 |
+| `EXCEPT_TELEMETRY` | `on`, `off`                | `on`    | Exception-dispatch telemetry (`-DCONFIG_EXCEPT_TELEMETRY=0\|1`) |
+
+All three are **preprocessor-visible**, so their 2 x 2 x 3 = 12 combinations are the
+matrix `make check-abi` sweeps to prove no published ABI constant depends on which
+flavor the kernel was built in. `make print-abi-config` is the machine-readable
+source of that matrix -- adding a knob there extends the sweep, and a knob added to
+the build but not to that target would silently narrow it.
 
 **`KERNEL_TESTS=off` is the release flavor.** It does two distinct things, and both are
 required: it omits `-DKERNEL_TESTS` (so the in-translation-unit `#ifdef KERNEL_TESTS`

@@ -7401,10 +7401,28 @@ check("accepts_flavor_invariant_value",
 
 # Every flavor axis in the Makefile must be swept; dropping one silently
 # narrows the invariance claim to the axes someone remembered.
+_COMBOS, _COMBOS_ERR = gua.flavor_combinations()
 check("flavor_sweep_covers_every_axis",
-      len(gua.flavor_combinations()) == 12 and
-      {k for c in gua.flavor_combinations() for k in c} ==
+      _COMBOS_ERR is None and len(_COMBOS) == 12 and
+      {k for c in _COMBOS for k in c} ==
       {'KERNEL_TESTS', 'EXCEPT_TELEMETRY', 'BUILD_ALT_BOOT'})
+# The axis matrix and the compiler come from the MAKEFILE, not a Python mirror:
+# a mirror would let a newly added axis silently narrow the invariance sweep
+# while every check stayed green.
+_CC_CFG, _AXES_CFG, _CFG_ERR = gua.abi_config()
+check("axis_matrix_comes_from_the_makefile",
+      _CFG_ERR is None and
+      [a for a, _v in _AXES_CFG] ==
+      ['KERNEL_TESTS', 'EXCEPT_TELEMETRY', 'BUILD_ALT_BOOT'])
+check("compiler_comes_from_the_makefile",
+      _CFG_ERR is None and _CC_CFG == 'clang-19')
+# CONTRACT: the first state of each axis is the build DEFAULT, which is what
+# lets extraction reuse the sweep's default pass instead of repeating it.
+check("first_axis_state_is_the_build_default",
+      _CFG_ERR is None and
+      [v[0] for _a, v in _AXES_CFG] == ['on', 'on', 'off'] and
+      _COMBOS[0] == {'KERNEL_TESTS': 'on', 'EXCEPT_TELEMETRY': 'on',
+                     'BUILD_ALT_BOOT': 'off'})
 
 # The flag vector is the Makefile's to define. If this script ever starts
 # assembling its own, the translation context can drift from the kernel's
@@ -7615,7 +7633,8 @@ def flavor_names(source, prefixes=('SYS_',)):
     try:
         with os.fdopen(fd, "w") as f:
             f.write(source)
-        return gua.cross_flavor_names([path], _CLANG, prefixes)
+        seen, _ev, _mac, errs = gua.cross_flavor_names([path], _CLANG, prefixes)
+        return (seen, errs)
     finally:
         os.unlink(path)
 
@@ -7633,7 +7652,21 @@ check("cross_flavor_inventory_sees_every_flavor",
 # The shipped tree must itself be free of flavor-conditional ABI names.
 check("repo_has_no_flavor_conditional_abi_name",
       not gua.cross_flavor_names(
-          _HDRS, _CLANG, ('SYS_', 'FAULT_', 'SSDT_', 'STATUS_'))[1])
+          _HDRS, _CLANG, ('SYS_', 'FAULT_', 'SSDT_', 'STATUS_'))[3])
+# The sweep must hand back the DEFAULT flavor's extraction, or main() would be
+# preprocessing that context a second time for nothing.
+_cf_seen, _cf_ev, _cf_mac, _cf_err = gua.cross_flavor_names(
+    _HDRS, _CLANG, ('SYS_',))
+# Every cross_flavor_names exit must be the documented FOUR-tuple: a two-value
+# early return turned a config error into `ValueError: not enough values to
+# unpack` at the caller instead of the intended diagnostic.
+_empty = gua.cross_flavor_names(_HDRS, _CLANG, ('SYS_',), flavors=[])
+check("empty_flavor_matrix_returns_four_values", len(_empty) == 4)
+check("empty_flavor_matrix_is_refused",
+      bool(_empty[3]) and 'empty' in _empty[3][0])
+check("sweep_returns_the_default_flavor_extraction",
+      not _cf_err and _cf_ev is not None and _cf_mac is not None and
+      'SYS_WRITE' in _cf_mac)
 
 # --- s26 round 2: TEB/KUSD offsets are compiler-certified --------------
 # These feed the ABI hash, but were verified only by a REGEX over raw header
@@ -7665,6 +7698,95 @@ def _bad_layout_probe(headers, families, clang, flavors=None,
                          [('teb', 'TEB', _BAD_TEB)])
 check("main_certifies_the_hashed_struct_offsets",
       refused({'certify_values': _bad_layout_probe}, "offset does not match"))
+
+# --- s26 round 3: one definition of the translation context ------------
+# The flag vector had TWO spellings -- the print target and the generic compile
+# rule each listed the five -I paths -- so "they match" was a hand-maintained
+# claim. Both now expand $(KERNEL_TU_FLAGS); pin that neither re-inlines them.
+_MK = open("Makefile", encoding="utf-8").read()
+check("compile_rule_uses_the_shared_tu_vector",
+      "$(CC) $(KERNEL_TU_FLAGS) -c $< -o $@" in _MK)
+check("print_target_uses_the_shared_tu_vector",
+      "@printf '%s\\n' $(KERNEL_TU_FLAGS)" in _MK)
+check("tu_vector_has_exactly_one_definition",
+      _MK.count("-I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) \\") == 1)
+
+# Flags are parsed LINE by line, not by whitespace: the targets emit one record
+# per line precisely so a value containing a space survives, and split() would
+# shred `-DX='a b'` into two arguments -- a translation context the kernel never
+# used, agreed on by every generated artifact.
+check("flag_vector_is_parsed_line_by_line",
+      "proc.stdout.splitlines()" in
+      open("scripts/gen-user-abi.py", encoding="utf-8").read())
+_ml, _mlerr = gua.make_query('print-abi-config')
+check("make_query_returns_whole_lines",
+      _mlerr is None and any(ln.startswith('FLAVOR=') and ',' in ln
+                             for ln in _ml))
+check("make_query_names_a_missing_target",
+      gua.make_query('print-abi-no-such-target')[1] is not None)
+
+# Offset assertions are discovered in the PREPROCESSED text, so a commented-out
+# or dead-arm assertion is not counted and a named-constant offset is seen.
+# Production reads the assertions out of the PREPROCESSED layout headers.
+# Preprocess the same two headers the generator does and require parity with
+# the raw scan on the shipped tree (they agree today), so this fixture pins the
+# WIRING rather than merely that a list comes back.
+_LAY_EV, _LAY_MAC, _LAY_ERR = gua.run_preprocessor(
+    [gua.TEB_HEADER, gua.KUSD_HEADER], _FLAGS, _CLANG)
+check("layout_headers_preprocess_cleanly", _LAY_ERR is None and _LAY_EV.text)
+_PP_TEB = gua.parse_kernel_asserts(gua.TEB_HEADER, 'TEB', _LAY_EV.text)
+_PP_KUSD = gua.parse_kernel_asserts(gua.KUSD_HEADER, 'KUSER_SHARED_DATA',
+                                    _LAY_EV.text)
+check("preprocessed_scan_finds_the_shipped_teb_assertions",
+      len(_PP_TEB) == len(gua.TEB_LAYOUT) and
+      sorted(_PP_TEB) == sorted(gua.parse_kernel_asserts(gua.TEB_HEADER, 'TEB')))
+check("preprocessed_scan_finds_the_shipped_kusd_assertions",
+      len(_PP_KUSD) == len(gua.KUSD_LAYOUT))
+# The property the coverage gate exists for: a field the kernel pins but the
+# hash-input list omits must be refused, or it drifts outside the fingerprint.
+check("unlisted_asserted_field_is_refused",
+      bool(gua.check_coverage(list(gua.TEB_LAYOUT),
+                              _PP_TEB + [('GhostField', 0x999)], 'TEB')))
+check("main_reads_layout_assertions_from_preprocessed_text",
+      "parse_kernel_asserts(TEB_HEADER, 'TEB', layout_text)" in
+      open("scripts/gen-user-abi.py", encoding="utf-8").read())
+# Comments and dead arms are removed by the PREPROCESSOR, not by the regex --
+# which is exactly why the scan must run on preprocessed text. Drive the real
+# path: a commented assertion and one in an inactive #if arm must both vanish,
+# while the live one survives.
+def _pp_asserts(source, struct='TEB'):
+    fd, path = tempfile.mkstemp(suffix=".h")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(source)
+        ev, _mac, err = gua.run_preprocessor([path], _FLAGS, _CLANG)
+        assert not err, err
+        return gua.parse_kernel_asserts(path, struct, ev.text)
+    finally:
+        os.unlink(path)
+
+check("commented_offset_assertion_is_not_counted",
+      not _pp_asserts('struct TEB { int a; };\n'
+                      '/* _Static_assert(__builtin_offsetof(TEB, a) == 0x99,'
+                      ' "x"); */\n'))
+check("inactive_arm_offset_assertion_is_not_counted",
+      not _pp_asserts('struct TEB { int a; };\n#if 0\n'
+                      '_Static_assert(__builtin_offsetof(TEB, a) == 0x99,'
+                      ' "x");\n#endif\n'))
+check("named_constant_offset_is_counted_after_expansion",
+      _pp_asserts('struct TEB { int a; int b; };\n#define B_OFF 4\n'
+                  '_Static_assert(__builtin_offsetof(TEB, b) == B_OFF, "x");\n')
+      == [('b', 4)])
+check("reversed_offset_comparison_is_counted",
+      gua.parse_kernel_asserts(
+          'x.h', 'TEB',
+          '_Static_assert(0x30 == __builtin_offsetof(TEB, NtTib.Self), "x");')
+      == [('NtTib.Self', 0x30)])
+check("forward_offset_comparison_is_counted",
+      gua.parse_kernel_asserts(
+          'x.h', 'TEB',
+          '_Static_assert(__builtin_offsetof(TEB, NtTib.Self) == 0x30, "x");')
+      == [('NtTib.Self', 0x30)])
 
 # --- s26: propose_defines skip contract --------------------------------
 # The three body shapes that are NOT publishable integers must be REPORTED as
@@ -7700,7 +7822,7 @@ finally:
 PYGUA
 )
 GUA_OK=$(echo "$GUA_OUT" | grep -c "^OK ")
-GUA_EXPECT=87
+GUA_EXPECT=109
 if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
     echo "$GUA_OUT" | grep "^OK " | while IFS= read -r line; do
         [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi: $line"

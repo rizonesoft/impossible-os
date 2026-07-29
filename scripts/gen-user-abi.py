@@ -105,26 +105,44 @@ KUSD_HEADER = os.path.join(REPO_ROOT, 'include', 'kernel', 'nt', 'kusd.h')
 
 # Extract `_Static_assert(__builtin_offsetof(STRUCT, FIELD) == LITERAL, ...)`
 # so we can verify that every kernel assertion has a matching hash entry.
-# The struct name is the first group-1 capture; the field (possibly with
-# dotted subfield access) is group-2; the literal hex offset is group-3.
+# BOTH operand orders are matched: `offsetof(...) == N` and `N == offsetof(...)`
+# assert exactly the same thing, and recognising only one of them meant a field
+# pinned the other way round was invisible to the coverage check -- it would
+# then never reach TEB_LAYOUT/KUSD_LAYOUT, never be certified, and never enter
+# the ABI fingerprint, so a binary built against the new layout still passed the
+# handshake against the old one.
+_OFFSETOF = (r'__builtin_offsetof\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*'
+             r'([A-Za-z_][A-Za-z0-9_.\[\]]*)\s*\)')
+_INTLIT = r'(0x[0-9A-Fa-f]+|[0-9]+)'
 STATIC_ASSERT_RE = re.compile(
-    r'_Static_assert\s*\(\s*__builtin_offsetof\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*'
-    r'([A-Za-z_][A-Za-z0-9_.\[\]]*)\s*\)\s*==\s*(0x[0-9A-Fa-f]+|[0-9]+)'
-)
+    r'_Static_assert\s*\(\s*' + _OFFSETOF + r'\s*==\s*' + _INTLIT)
+STATIC_ASSERT_REVERSED_RE = re.compile(
+    r'_Static_assert\s*\(\s*' + _INTLIT + r'\s*==\s*' + _OFFSETOF)
 
 
-def parse_kernel_asserts(path: str, struct_name: str) -> list[tuple[str, int]]:
-    """Return [(field, offset)] for every _Static_assert in `path`
-    whose struct name matches `struct_name`. Order preserved."""
+def parse_kernel_asserts(path: str, struct_name: str, text: str = None
+                         ) -> list[tuple[str, int]]:
+    """Return [(field, offset)] for every offset assertion on `struct_name`.
+    Order preserved.
+
+    `text` should be the PREPROCESSED translation unit. Scanning raw source
+    counted assertions the compiler never sees -- one inside a comment, or in
+    an inactive `#if` arm -- and missed one whose offset is written as a named
+    constant, because the regex only recognises an integer literal. After
+    preprocessing, comments and dead arms are gone and a named constant has
+    already been expanded to its literal, so what is matched here is what the
+    compiler actually compiled. The raw-file fallback exists only for callers
+    that have no preprocessed text to offer."""
+    if text is None:
+        with open(path, 'r', encoding='utf-8') as f:
+            text = f.read()
     out: list[tuple[str, int]] = []
-    with open(path, 'r', encoding='utf-8') as f:
-        text = f.read()
     for m in STATIC_ASSERT_RE.finditer(text):
-        if m.group(1) != struct_name:
-            continue
-        field = m.group(2)
-        off = int(m.group(3), 0)
-        out.append((field, off))
+        if m.group(1) == struct_name:
+            out.append((m.group(2), int(m.group(3), 0)))
+    for m in STATIC_ASSERT_REVERSED_RE.finditer(text):
+        if m.group(2) == struct_name:
+            out.append((m.group(3), int(m.group(1), 0)))
     return out
 
 
@@ -227,7 +245,17 @@ DD_UNDEF_RE = re.compile(r'^#undef\s+([A-Za-z_][A-Za-z0-9_]*)\s*$')
 
 
 def clang_binary() -> tuple:
-    """Locate the compiler. Returns (path, None) or (None, reason).
+    """Locate the compiler THE KERNEL IS BUILT WITH. Returns (path, None) or
+    (None, reason).
+
+    The name comes from `make print-abi-cc`, not from a constant here. The
+    generator certifies ABI values by COMPILING assertions, so using a
+    different binary than the kernel build would be its own silent-drift
+    channel: `make CC=<other>` compiles the kernel with one compiler while the
+    values are certified with another, compiler predefined macros can select
+    different constants in each, and both generated headers plus every
+    assertion still agree -- with the wrong compiler. `ABI_CLANG` overrides,
+    for a host where the same compiler is installed under another name.
 
     Absence is an explicit, named REFUSAL rather than a skip. `make check-abi`
     needed no compiler before this change, so this is a real new requirement,
@@ -237,23 +265,109 @@ def clang_binary() -> tuple:
     BUILD this repo already has clang-19 (setup.sh installs it as a required
     tool), so the requirement costs nothing on any host that could act on the
     answer anyway."""
-    name = os.environ.get(CLANG_ENV) or CLANG_DEFAULT
+    name = os.environ.get(CLANG_ENV)
+    if not name:
+        name, _axes, reason = abi_config()
+        if reason:
+            return (None, reason)
     path = shutil.which(name)
     if path:
         return (path, None)
     return (None, f'{name} not found on PATH. The generator reads kernel '
-                  f'constants THROUGH the compiler, so without it there is no '
-                  f'certified answer to emit -- and skipping would silently '
-                  f'disable the ABI drift gate. Install clang-19 (bash '
-                  f'scripts/setup.sh), or set {CLANG_ENV}=<compiler> if yours '
-                  f'is named differently.')
+                  f'constants THROUGH the compiler the kernel is built with, '
+                  f'so without it there is no certified answer to emit -- and '
+                  f'skipping would silently disable the ABI drift gate. '
+                  f'Install clang-19 (bash scripts/setup.sh), or set '
+                  f'{CLANG_ENV}=<compiler> if yours is named differently.')
 
 
-def flavor_combinations() -> list:
-    """Every supported build-flavor combination, as {VAR: value} dicts."""
-    names = [n for n, _ in FLAVOR_AXES]
-    return [dict(zip(names, combo))
-            for combo in itertools.product(*[v for _, v in FLAVOR_AXES])]
+_CONFIG_CACHE: dict = {}
+
+
+def abi_config() -> tuple:
+    """The build's self-description: (cc, flavor_axes, None) or
+    (None, None, reason). One `make print-abi-config` round-trip, cached for
+    the process -- each `make` invocation is ~0.2s of pure startup and this
+    runs inside check-abi on every build."""
+    hit = _CONFIG_CACHE.get('config')
+    if hit is not None:
+        return hit
+    lines, reason = make_query('print-abi-config')
+    if reason:
+        return (None, None, reason)
+    cc, axes = None, []
+    for line in lines:
+        if line.startswith('CC='):
+            cc = line[3:].strip()
+        elif line.startswith('FLAVOR='):
+            record = line[7:].strip()
+            if '=' not in record:
+                return (None, None, f'malformed axis record from make '
+                                    f'print-abi-config: {record!r} '
+                                    f'(expected AXIS=v1,v2)')
+            axis, raw = record.split('=', 1)
+            states = [v for v in raw.split(',') if v]
+            if not axis.strip() or len(states) < 2:
+                return (None, None, f'axis {axis!r} declares fewer than two '
+                                    f'states, so it cannot be swept: '
+                                    f'{record!r}')
+            axes.append((axis.strip(), tuple(states)))
+    if not cc:
+        return (None, None, '`make print-abi-config` did not report a CC line; '
+                            'the generator cannot know which compiler the '
+                            'kernel is built with')
+    if not axes:
+        return (None, None, '`make print-abi-config` reported no FLAVOR axes; '
+                            'the cross-flavor sweep would be vacuous')
+    _CONFIG_CACHE['config'] = (cc, tuple(axes), None)
+    return _CONFIG_CACHE['config']
+
+
+def make_query(target: str, overrides: dict = None) -> tuple:
+    """Run a `print-*` Makefile target and return (lines, None) or
+    (None, reason).
+
+    Output is parsed LINE by line, never by whitespace. Every one of these
+    targets emits one record per line precisely so a value containing a space
+    survives; `split()` would silently shred `-DX='a b'` into two arguments and
+    hand the compiler a translation context the kernel never used. (The Make
+    side cannot represent such a flag today either -- `printf '%s\n' $(CFLAGS)`
+    is word-split by the shell before printf sees it -- so quoting it there is
+    the other half of that fix if such a flag is ever added.)"""
+    cmd = ['make', '-s', target]
+    for var, value in sorted((overrides or {}).items()):
+        cmd.append(f'{var}={value}')
+    try:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True,
+                              text=True, check=False)
+    except OSError as exc:
+        return (None, f'cannot run `make {target}`: {exc}')
+    if proc.returncode != 0:
+        return (None, f'`{" ".join(cmd)}` failed (rc={proc.returncode}): '
+                      f'{proc.stderr.strip()}')
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        return (None, f'`make {target}` produced no output; the Makefile '
+                      f'target is missing or was emptied')
+    return (lines, None)
+
+
+def flavor_combinations() -> tuple:
+    """Every supported build-flavor combination, as {VAR: value} dicts, with
+    the axis matrix read from the MAKEFILE rather than mirrored here.
+
+    A hand-maintained copy of the axes is the same hazard as a hand-maintained
+    copy of the flags: adding an axis to the build and forgetting this list
+    would silently NARROW the invariance sweep while every check stayed green,
+    and the sweep is the only thing standing between a flavor-dependent
+    constant and a header shared by every flavor."""
+    _cc, axes, reason = abi_config()
+    if reason:
+        return (None, reason)
+    names = [a for a, _ in axes]
+    values = [list(v) for _, v in axes]
+    combos = [dict(zip(names, combo)) for combo in itertools.product(*values)]
+    return (combos, None)
 
 
 # One `make` round-trip is ~0.13s of pure process startup, and both the flavor
@@ -282,24 +396,22 @@ def kernel_cpp_flags(flavor: dict = None) -> tuple:
     hit = _FLAGS_CACHE.get(key)
     if hit is not None:
         return hit
-    cmd = ['make', '-s', 'print-abi-cppflags']
-    for var, value in sorted((flavor or {}).items()):
-        cmd.append(f'{var}={value}')
-    try:
-        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True,
-                              text=True, check=False)
-    except OSError as exc:
-        return (None, f'cannot run `make print-abi-cppflags`: {exc}')
-    if proc.returncode != 0:
-        return (None, f'`{" ".join(cmd)}` failed (rc={proc.returncode}): '
-                      f'{proc.stderr.strip()}')
-    flags = [tok for tok in proc.stdout.split()
-             if tok and tok not in DEP_ONLY_FLAGS]
+    lines, reason = make_query('print-abi-cppflags', flavor)
+    if reason:
+        return (None, reason)
+    flags = [tok for tok in lines if tok not in DEP_ONLY_FLAGS]
     if not flags:
-        return (None, '`make print-abi-cppflags` produced no flags; the '
-                      'Makefile target is missing or was emptied')
+        return (None, '`make print-abi-cppflags` emitted only dependency-file '
+                      'flags; the Makefile target is missing or was emptied')
     _FLAGS_CACHE[key] = (flags, None)
     return (flags, None)
+
+
+class _Events(list):
+    """A plain list of preprocessor events that also carries the preprocessed
+    text it was derived from. A list subclass so every existing consumer keeps
+    iterating it unchanged."""
+    text = ''
 
 
 def _probe_tu(headers) -> str:
@@ -312,7 +424,11 @@ def run_preprocessor(headers, flags, clang) -> tuple:
     """Run `clang -dD -E` over `headers`. Returns (events, final, None) or
     (None, None, reason), where events is an ordered [(kind, name, body)] of
     every #define/#undef the preprocessor PROCESSED and final maps each name to
-    the body still in effect at the end."""
+    the body still in effect at the end.
+
+    The raw preprocessed text is attached as `events.text` so a caller can scan
+    what the compiler ACTUALLY saw (comments stripped, dead arms gone, named
+    constants expanded) instead of re-reading the source file."""
     fd, tu = tempfile.mkstemp(suffix='.c', prefix='abi-probe.')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -352,6 +468,8 @@ def run_preprocessor(headers, flags, clang) -> tuple:
         body = rest.strip()
         events.append(('define', name, body))
         final[name] = body
+    events = _Events(events)
+    events.text = proc.stdout
     return (events, final, None)
 
 
@@ -462,25 +580,48 @@ def cross_flavor_names(headers, clang, prefixes, flavors=None) -> tuple:
     because nothing ever asks about it. A cross-flavor guarantee is only worth
     as much as the INVENTORY behind it, so the inventory is taken per flavor
     too."""
-    combos = flavors if flavors is not None else flavor_combinations()
+    if flavors is None:
+        combos, reason = flavor_combinations()
+        if reason:
+            return ({}, None, None, [reason])
+    else:
+        combos = flavors
+    if not combos:
+        # ThreadPoolExecutor(max_workers=0) raises, and an empty sweep would
+        # "prove" flavor-invariance by checking nothing at all.
+        return ({}, None, None,
+                ['the build-flavor matrix is empty, so the cross-flavor '
+                 'inventory would check nothing'])
+
+    # The DEFAULT flavor is one of the combinations, so extraction reads its
+    # events/macros back out of this sweep instead of paying a separate,
+    # unoverlapped make+clang pass before it (~0.23s of every build).
+    # combos[0] IS the default because `make print-abi-flavors` lists each
+    # axis's default state first and itertools.product varies the last axis
+    # fastest -- a contract stated on the Makefile target, not an accident of
+    # ordering here.
+    default = combos[0] if combos else None
+    default_events = default_macros = None
 
     def probe(flavor):
         flags, reason = kernel_cpp_flags(flavor)
         if reason:
-            return (flavor, None, reason)
-        _events, macros, reason = run_preprocessor(headers, flags, clang)
-        return (flavor, macros, reason)
+            return (flavor, None, None, reason)
+        events, macros, reason = run_preprocessor(headers, flags, clang)
+        return (flavor, events, macros, reason)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(combos)) as pool:
         results = list(pool.map(probe, combos))
 
     seen: dict = {}
     every = set()
-    for flavor, macros, reason in results:
+    for flavor, events, macros, reason in results:
         if reason:
-            return ({}, [reason])
+            return ({}, None, None, [reason])
         desc = ' '.join(f'{k}={v}' for k, v in sorted(flavor.items()))
         every.add(desc)
+        if flavor == default:
+            default_events, default_macros = events, macros
         for name in macros:
             if name.startswith(prefixes):
                 seen.setdefault(name, set()).add(desc)
@@ -494,7 +635,7 @@ def cross_flavor_names(headers, clang, prefixes, flavors=None) -> tuple:
                           f'generated header pair is shared by every flavor, so '
                           f'a name present in only some of them has nothing to '
                           f'publish -- make it unconditional or drop the prefix')
-    return (seen, errors)
+    return (seen, default_events, default_macros, errors)
 
 
 def certify_values(headers, families, clang, flavors=None,
@@ -545,7 +686,12 @@ def certify_values(headers, families, clang, flavors=None,
         return ['nothing to certify: the constant tables are empty, so a '
                 'successful compile would prove nothing about the ABI']
     source = _probe_tu(headers) + '\n'.join(asserts) + '\n'
-    combos = flavors if flavors is not None else flavor_combinations()
+    if flavors is None:
+        combos, reason = flavor_combinations()
+        if reason:
+            return [reason]
+    else:
+        combos = flavors
 
     # The flavor sweep is a dozen independent subprocess round-trips and this
     # runs inside `check-abi`, on the critical path of every build. Serially it
@@ -1076,25 +1222,24 @@ def main() -> int:
     if reason:
         print(f'gen-user-abi: {reason}', file=sys.stderr)
         return 1
-    flags, reason = kernel_cpp_flags()
-    if reason:
-        print(f'gen-user-abi: {reason}', file=sys.stderr)
-        return 1
     headers = [SYSCALL_H, SSDT_H, NTSTATUS_H, TASK_H]
-    events, macros, reason = run_preprocessor(headers, flags, clang)
-    if reason:
-        print(f'gen-user-abi: {reason}', file=sys.stderr)
-        return 1
 
-    # The INVENTORY has to be cross-flavor too, not just the values. Extraction
-    # above ran in the default flavor; a name defined only under another one
-    # would be invisible to every check below AND to certification, because
-    # nothing generates an assertion for a name nobody discovered.
+    # The INVENTORY is taken per flavor, not just the values: a name defined
+    # only under a non-default flavor would be invisible to every check below
+    # AND to certification, because nothing generates an assertion for a name
+    # nobody discovered. Extraction then reuses the DEFAULT flavor's pass out of
+    # this same sweep rather than preprocessing that context a second time.
     ABI_PREFIXES = ('SYS_', 'FAULT_', 'SSDT_', 'STATUS_')
-    _names, flavor_errs = cross_flavor_names(headers, clang, ABI_PREFIXES)
+    _names, events, macros, flavor_errs = cross_flavor_names(
+        headers, clang, ABI_PREFIXES)
     if flavor_errs:
         for e in flavor_errs:
             print(f'gen-user-abi: flavor: {e}', file=sys.stderr)
+        return 1
+    if events is None or macros is None:
+        print('gen-user-abi: the flavor sweep returned no default-flavor '
+              'extraction; the axis matrix does not list the build default '
+              'first', file=sys.stderr)
         return 1
 
     syscalls, sys_skipped = propose_defines(macros, SYSCALL_H, ('SYS_', 'FAULT_'))
@@ -1164,11 +1309,29 @@ def main() -> int:
     # Closes the "hand-picked subset" gap Codex flagged 2026-04-22:
     # without this, an offset outside the hand-coded lists could
     # silently drift and the runtime handshake would still succeed.
-    teb_errs = check_coverage(TEB_LAYOUT,
-                              parse_kernel_asserts(TEB_HEADER, 'TEB'), 'TEB')
-    kusd_errs = check_coverage(KUSD_LAYOUT,
-                               parse_kernel_asserts(KUSD_HEADER, 'KUSER_SHARED_DATA'),
-                               'KUSER_SHARED_DATA')
+    #
+    # The assertions are read out of the PREPROCESSED layout headers, not the
+    # raw files. On raw text a commented-out or dead-arm assertion still counts
+    # while one whose offset is written as a named constant does not -- so a
+    # newly pinned field could stay out of the layout lists, out of certification
+    # and out of the fingerprint, and a binary built against the new layout would
+    # still pass the handshake against the old one.
+    layout_flags, reason = kernel_cpp_flags()
+    if reason:
+        print(f'gen-user-abi: {reason}', file=sys.stderr)
+        return 1
+    layout_events, _layout_macros, reason = run_preprocessor(
+        [TEB_HEADER, KUSD_HEADER], layout_flags, clang)
+    if reason:
+        print(f'gen-user-abi: layout: {reason}', file=sys.stderr)
+        return 1
+    layout_text = layout_events.text
+    teb_errs = check_coverage(
+        TEB_LAYOUT, parse_kernel_asserts(TEB_HEADER, 'TEB', layout_text), 'TEB')
+    kusd_errs = check_coverage(
+        KUSD_LAYOUT,
+        parse_kernel_asserts(KUSD_HEADER, 'KUSER_SHARED_DATA', layout_text),
+        'KUSER_SHARED_DATA')
     if teb_errs or kusd_errs:
         for e in teb_errs + kusd_errs:
             print(f'gen-user-abi: coverage: {e}', file=sys.stderr)
