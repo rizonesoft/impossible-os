@@ -127,6 +127,127 @@ done
 # attributes it to this run. Nothing below this line can exit without leaving
 # either a document belonging to THIS run or no document at all.
 
+mkdir -p "$PROJECT/build"
+
+# Concurrent same-tree runs are NOT a supported mode, and the refusal is
+# EXPLICIT rather than emergent.
+#
+# This script serializes by construction and always did: it patches the shared
+# `boot.conf` (Step 2), boots with a fixed `build/test.log` serial sink
+# (Step 3), and copies OVMF vars to one fixed path. Two overlapping runs
+# therefore corrupt each other's BOOT state long before their artifacts
+# collide, so per-run artifact records below make concurrent runs
+# non-colliding without making them meaningful. Supporting them for real means
+# per-invocation boot.conf, serial log and OVMF paths -- a much larger change
+# than the artifacts, and one nothing has asked for. Until then the honest
+# behaviour is to refuse a second run rather than let it silently interleave.
+#
+# The lock is taken BEFORE the artifact lifecycle is armed below, because a
+# refusing run must not touch a single shared name: acquiring after the
+# `rm -f` would delete the artifacts of the run it is about to defer to.
+# A refusing run therefore publishes NOTHING -- it owes no document, having
+# never been the run any consumer was told to expect.
+UTEST_LOCK="$PROJECT/build/.test-run.lock"
+UTEST_LOCK_FD=9
+if command -v flock >/dev/null 2>&1; then
+    eval "exec ${UTEST_LOCK_FD}>\"\$UTEST_LOCK\""
+    if ! flock -n "$UTEST_LOCK_FD"; then
+        echo -e "${RED}[TEST]${RESET} another run of this script holds $UTEST_LOCK."
+        echo -e "${YELLOW}       Concurrent same-tree runs are not supported: this script patches the${RESET}"
+        echo -e "${YELLOW}       shared boot.conf, writes a fixed build/test.log, and copies OVMF vars${RESET}"
+        echo -e "${YELLOW}       to a fixed path, so two runs corrupt each other's boot state. Wait for${RESET}"
+        echo -e "${YELLOW}       the other run, or use a separate checkout.${RESET}"
+        exit 1
+    fi
+else
+    # Not fatal: flock is util-linux and present on every supported host, but a
+    # missing lock tool must not stop a lone run that would have been fine.
+    # Say so rather than pretending the refusal is enforced.
+    UTEST_LOCK_FD=""
+    echo -e "${YELLOW}[TEST]${RESET} flock unavailable -- the concurrent-run refusal is NOT enforced this run."
+fi
+
+# --- Per-run artifact record ---
+#
+# The RECORD is a per-invocation directory; the stable pathnames below are
+# ALIASES into it. Until now the leg-suffixed pathname WAS the record, so the
+# next run of the same configuration rewrote it, and an invocation that exited
+# during the environment preflight -- before its leg was even derivable --
+# left an EARLIER run's document in place under a stable name.
+#
+# RUN_ID is derived here, ahead of every exit path, so even the earliest
+# refusal lands in a directory belonging to THIS run. It is created with a
+# non-recursive `mkdir`, which FAILS if the directory exists: that is what
+# makes the identity collision-proof rather than merely improbable.
+RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# The random suffix is best-effort; the pid plus the exclusive `mkdir` below
+# are what make the identity sound, so a host without /dev/urandom degrades to
+# a still-unique name rather than failing the run under `set -e`.
+RUN_RAND="$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -cd 'a-f0-9' || true)"
+[ -n "$RUN_RAND" ] || RUN_RAND="norand"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RUN_RAND}"
+RUN_ID="$(printf '%s' "$RUN_ID" | tr -cd 'A-Za-z0-9._-')"
+RUNS_DIR="$PROJECT/build/test-runs"
+mkdir -p "$RUNS_DIR"
+RECORD_DIR="$RUNS_DIR/$RUN_ID"
+if ! mkdir "$RECORD_DIR" 2>/dev/null; then
+    echo -e "${RED}[TEST]${RESET} run record $RECORD_DIR already exists -- refusing to overwrite a prior run."
+    exit 1
+fi
+
+# Durable does not mean unbounded: every invocation leaves a directory, so
+# without a retention bound `build/` grows for as long as anyone runs tests.
+# The newest UTEST_RECORD_KEEP records survive; older ones are pruned at the
+# START of a run, so the records a failure investigation wants are never
+# removed by the run that is still writing them. RUN_ID leads with a compact
+# UTC timestamp, so lexicographic order IS chronological.
+#
+# The value is normalised in BASE 10 and bounded. `UTEST_RECORD_KEEP=08`
+# passes a digits-only check and passes `-ge`, then aborts the whole run in
+# `$(( ))`, where bash reads a leading zero as octal and 08 is not octal --
+# and this runs under `set -e`. The call site below is deliberately AFTER the
+# canonical aliases are cleared and the EXIT trap is armed, so even an abort
+# in here cannot leave a previous run's documents sitting under the names that
+# claim to describe this one.
+utest_prune_records() {
+    local keep="${UTEST_RECORD_KEEP:-20}" old
+    case "$keep" in
+        ''|*[!0-9]*) keep=20 ;;
+        *) keep=$(( 10#$keep )) ;;
+    esac
+    [ "$keep" -ge 1 ] 2>/dev/null || keep=20
+    [ "$keep" -le 10000 ] 2>/dev/null || keep=10000
+    {
+        find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
+            sort -r | tail -n +$(( keep + 1 )) |
+            while IFS= read -r old; do
+                # %f yields a bare basename, so this can never escape RUNS_DIR,
+                # and the run now in progress is never a candidate.
+                [ -n "$old" ] || continue
+                [ "$old" = "$RUN_ID" ] && continue
+                rm -rf -- "$RUNS_DIR/$old"
+            done
+    } || true
+    return 0
+}
+
+# Every staging path lives inside the record, so no two invocations share one.
+# They were fixed paths under build/ (`.test-results-refusal.*`, the `.staged`
+# siblings, `$canonical.tmp`, and the run slice), which made them shared state
+# between any two runs that did overlap -- the lock above now refuses that
+# overlap, and private staging means a stale file from a killed run cannot be
+# mistaken for this run's either.
+XML_RECORD="$RECORD_DIR/test-results.xml"
+JSON_RECORD="$RECORD_DIR/test-results.json"
+IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+
+# ALIASES. The canonical pair names THIS invocation and is cleared right here,
+# so no exit can leave a stale document under it. The leg-suffixed pair means
+# "the latest COMPLETED run of that configuration" -- it is never cleared on
+# behalf of another leg, because runs of different configurations deliberately
+# accumulate one artifact each, and it is only ever rewritten from a committed
+# record.
 XML_OUT="$PROJECT/build/test-results.xml"
 JSON_OUT="$PROJECT/build/test-results.json"
 IDENTITY_OUT="$PROJECT/build/test-run-identity.json"
@@ -135,12 +256,14 @@ IDENTITY_OUT="$PROJECT/build/test-run-identity.json"
 XML_LEG_OUT=""
 JSON_LEG_OUT=""
 
-mkdir -p "$PROJECT/build"
 rm -f "$XML_OUT" "$JSON_OUT" "$IDENTITY_OUT"
 
 # Identity fields, filled by Step 0b. Read at call time, so a refusal
 # published before Step 0b carries "unknown" rather than a stale value.
-RUN_TS="unknown"
+# RUN_TS and RUN_ID are the exceptions: both are properties of the INVOCATION
+# rather than of the environment it went on to detect, they are known the
+# moment the run starts, and a refusal is far easier to place with a real
+# start time than with "unknown".
 RUN_COMMIT="unknown"
 RUN_LEG="unknown"
 RUN_LEG_SOURCE="underived"
@@ -162,6 +285,7 @@ utest_xml_identity_attrs() {
 utest_json_identity() {
     printf '{\n'
     printf '  "schema": "utest-run-identity-v1",\n'
+    printf '  "run_id": "%s",\n' "$RUN_ID"
     printf '  "timestamp": "%s",\n' "$RUN_TS"
     printf '  "commit": "%s",\n' "$RUN_COMMIT"
     printf '  "leg": "%s",\n' "$RUN_LEG"
@@ -179,6 +303,7 @@ utest_json_identity() {
 # one and not the other gives two consumers two different identity contracts
 # for one run.
 utest_xml_identity_props() {
+    printf '    <property name="run_id" value="%s"/>\n' "$RUN_ID"
     printf '    <property name="commit" value="%s"/>\n' "$RUN_COMMIT"
     printf '    <property name="leg" value="%s"/>\n' "$RUN_LEG"
     printf '    <property name="leg_source" value="%s"/>\n' "$RUN_LEG_SOURCE"
@@ -190,27 +315,139 @@ utest_xml_identity_props() {
         "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
 }
 
-# Publish a staged document to the leg path first and the canonical alias
-# second. The leg artifact is the record; the alias is a convenience that must
-# never be newer than the record it points at. Before the leg is known the
-# staged file becomes the canonical artifact directly.
-# Returns 0 once the LEG record has landed, even if the alias copy then fails.
-# The caller marks the format published on that basis, because the guard's
-# refusal path would otherwise move a run_incomplete document OVER a valid,
-# fully assembled leg artifact -- destroying the evidence it exists to
-# preserve. An alias failure is reported and fails the run instead.
+# Land a staged document as this run's RECORD. That is ALL this does: the
+# aliases are published later, by utest_finalize_record(), and only after the
+# commit marker names what the record holds.
+#
+# The split is load-bearing. An alias updated the moment one format landed is
+# visible while the run is still assembling the other, so a death in between
+# would leave a stable pathname pointing into a record with no commit marker
+# and possibly only one of two requested documents -- an alias enumerator
+# would consume an uncommitted run. Aliases must be updated only after the
+# record is COMPLETE, which is exactly what the section requires.
+#
+# The `mv` is within the record directory, so the record itself commits
+# atomically. Returns non-zero only if the record could not land; the caller
+# marks the format published on that basis, because the guard's refusal path
+# would otherwise move a run_incomplete document OVER a valid, fully
+# assembled artifact -- destroying the evidence it exists to preserve.
 utest_publish() {
-    local staged="$1" leg="$2" canonical="$3"
+    local staged="$1" record="$2"
+    mv -f "$staged" "$record" || return 1
+    return 0
+}
+
+# Copy one landed record out to its two stable aliases. Each alias goes
+# through a private temp plus `mv`, so no alias is ever observed partially
+# written, and a failure is reported and FAILS the run rather than leaving a
+# promised pathname silently absent.
+utest_alias_record() {
+    local record="$1" leg="$2" canonical="$3" tag="$4"
+    [ -f "$record" ] || return 0
     if [ -n "$leg" ]; then
-        mv -f "$staged" "$leg" || return 1
-        if ! { cp -f "$leg" "$canonical.tmp" && mv -f "$canonical.tmp" "$canonical"; }; then
-            rm -f "$canonical.tmp"
-            echo -e "  ${RED}[UTEST]${RESET} leg artifact published at $leg but the canonical alias $canonical could not be written"
+        if ! { cp -f "$record" "$RECORD_DIR/.${tag}leg.tmp" &&
+               mv -f "$RECORD_DIR/.${tag}leg.tmp" "$leg"; }; then
+            rm -f "$RECORD_DIR/.${tag}leg.tmp"
+            echo -e "  ${RED}[UTEST]${RESET} run record published at $record but the leg alias $leg could not be written"
             UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
         fi
-    else
-        mv -f "$staged" "$canonical" || return 1
     fi
+    if ! { cp -f "$record" "$RECORD_DIR/.${tag}canon.tmp" &&
+           mv -f "$RECORD_DIR/.${tag}canon.tmp" "$canonical"; }; then
+        rm -f "$RECORD_DIR/.${tag}canon.tmp"
+        echo -e "  ${RED}[UTEST]${RESET} run record published at $record but the canonical alias $canonical could not be written"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    fi
+    return 0
+}
+
+# The single observable commit point for the record directory.
+#
+# A directory that merely EXISTS is not a completed record: it is created
+# before the run does anything, and a SIGKILL can leave it holding only an
+# identity file, one of two requested formats, or a half-written staging file.
+# This marker is written LAST, names exactly which documents the record
+# actually contains, and is what a consumer must check before trusting any of
+# them. Its own write goes through a temp plus `mv`, so the marker can never
+# be observed partially written either.
+utest_commit_record() {
+    local status="$1" tmp="$RECORD_DIR/.marker.tmp"
+    if {
+        printf '{\n'
+        printf '  "schema": "utest-run-record-v1",\n'
+        printf '  "run_id": "%s",\n' "$RUN_ID"
+        printf '  "status": "%s",\n' "$status"
+        printf '  "xml": %s,\n' "$([ -f "$XML_RECORD" ] && echo '"test-results.xml"' || echo 'null')"
+        printf '  "json": %s,\n' "$([ -f "$JSON_RECORD" ] && echo '"test-results.json"' || echo 'null')"
+        printf '  "identity": %s\n' "$([ -f "$IDENTITY_RECORD" ] && echo '"test-run-identity.json"' || echo 'null')"
+        printf '}\n'
+    } > "$tmp" 2>/dev/null && mv -f "$tmp" "$RECORD_MARKER" 2>/dev/null; then
+        return 0
+    fi
+    # A marker that cannot land is NOT a cosmetic loss. It is the only thing
+    # that tells a consumer the record is finished, so a run whose marker
+    # failed must not report success: a green exit over an uncommitted record
+    # is precisely the false-green this lifecycle exists to close.
+    rm -f "$tmp"
+    echo -e "  ${RED}[UTEST]${RESET} run record $RECORD_DIR could not be committed -- $RECORD_MARKER was not written"
+    UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    return 1
+}
+
+# The one place a record becomes consumable: commit the marker, THEN publish
+# the aliases. Idempotent, because the normal path calls it before the final
+# verdict (so an alias failure can still fail the run) and the EXIT guard
+# calls it again for every path that never got there.
+UTEST_FINALIZED=0
+utest_finalize_record() {
+    local status="$1"
+    [ "${UTEST_FINALIZED:-0}" -eq 0 ] || return 0
+    UTEST_FINALIZED=1
+    utest_commit_record "$status" || true
+    # Aliases follow the marker, never precede it. A death before this point
+    # leaves both aliases ABSENT, which sends a consumer to the record
+    # directory rather than to another run's document.
+    utest_alias_record "$XML_RECORD" "$XML_LEG_OUT" "$XML_OUT" x
+    utest_alias_record "$JSON_RECORD" "$JSON_LEG_OUT" "$JSON_OUT" j
+    utest_alias_record "$IDENTITY_RECORD" "" "$IDENTITY_OUT" i
+    return 0
+}
+
+# Every XML refusal on this path emits the SAME document shape: a one-testcase
+# <testsuite> carrying errors="1" and aborted="true", differing only in the
+# testcase name and the error message. It was written out five times inline,
+# which is five places for the shape to drift and -- more to the point -- five
+# places no test could reach. As a function it is emitted once and can be
+# driven directly by scripts/test-tooling.sh.
+#
+# Writes to stdout; the caller redirects. `errors="1"` rather than a failure
+# count is what makes a JUnit consumer that never reads our exit code show red.
+utest_xml_refusal_doc() {
+    local case_name="$1" message="$2"
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+        "$(utest_xml_identity_attrs)"
+    echo '  <properties>'
+    echo '    <property name="aborted" value="true"/>'
+    echo '    <property name="not_run" value="0"/>'
+    utest_xml_identity_props
+    echo '  </properties>'
+    printf '  <testcase name="%s" classname="infrastructure">\n' "$case_name"
+    printf '    <error message="%s"/>\n' "$message"
+    echo '  </testcase>'
+    echo '</testsuite>'
+}
+
+# Stage a refusal document privately, publish it to the record and both
+# aliases, and mark XML published so a later guard cannot overwrite it.
+# Returns 0 regardless: a refusal that cannot be written must not, under
+# `set -e`, abort the very cleanup path that was reporting the problem.
+utest_publish_xml_refusal() {
+    local case_name="$1" message="$2" staged="$RECORD_DIR/.refusal.xml"
+    if utest_xml_refusal_doc "$case_name" "$message" > "$staged" 2>/dev/null; then
+        utest_publish "$staged" "$XML_RECORD" && XML_PUBLISHED=1
+    fi
+    rm -f "$staged"
     return 0
 }
 
@@ -238,30 +475,13 @@ utest_artifact_guard() {
     # refusal for an artifact nobody asked for is noise, not honesty.
     if [ "${XML_MODE:-0}" -eq 1 ] || [ "${HAS_XML:-0}" -eq 1 ]; then
         if [ "${XML_PUBLISHED:-0}" -eq 0 ]; then
-            staged="$PROJECT/build/.test-results-refusal.xml"
-            if {
-                echo '<?xml version="1.0" encoding="UTF-8"?>'
-                printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
-                    "$(utest_xml_identity_attrs)"
-                echo '  <properties>'
-                echo '    <property name="aborted" value="true"/>'
-                echo '    <property name="not_run" value="0"/>'
-                utest_xml_identity_props
-                echo '  </properties>'
-                echo '  <testcase name="run-incomplete" classname="infrastructure">'
-                printf '    <error message="%s"/>\n' "$why"
-                echo '  </testcase>'
-                echo '</testsuite>'
-            } > "$staged" 2>/dev/null; then
-                utest_publish "$staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
-            fi
-            rm -f "$staged"
+            utest_publish_xml_refusal "run-incomplete" "$why"
         fi
     fi
 
     if [ "${JSON_MODE:-0}" -eq 1 ] || [ "${HAS_JSON:-0}" -eq 1 ]; then
         if [ "${JSON_PUBLISHED:-0}" -eq 0 ]; then
-            staged="$PROJECT/build/.test-results-refusal.json"
+            staged="$RECORD_DIR/.refusal.json"
             if {
                 printf '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],\n'
                 printf ' "summary": null, "summary_error": "run_incomplete",\n'
@@ -270,11 +490,15 @@ utest_artifact_guard() {
                 utest_json_identity
                 printf '}\n'
             } > "$staged" 2>/dev/null; then
-                utest_publish "$staged" "$JSON_LEG_OUT" "$JSON_OUT" && JSON_PUBLISHED=1
+                utest_publish "$staged" "$JSON_RECORD" && JSON_PUBLISHED=1
             fi
             rm -f "$staged"
         fi
     fi
+    # Last thing the run does: name what the record actually contains. Until
+    # this lands the directory is abandoned staging, and a consumer that
+    # honours the marker cannot mistake it for a finished run.
+    utest_finalize_record "$([ "$ec" -eq 0 ] && echo complete || echo incomplete)"
     return 0
 }
 
@@ -286,6 +510,13 @@ utest_artifact_guard() {
 trap 'utest_artifact_guard $?' EXIT
 trap 'UTEST_SIGNALLED=1; utest_artifact_guard 130; exit 130' INT
 trap 'UTEST_SIGNALLED=1; utest_artifact_guard 143; exit 143' TERM
+
+# Retention runs HERE, not at record creation: it is fallible (a bad
+# UTEST_RECORD_KEEP, an unreadable directory) and everything above this line
+# is what makes a failure safe -- the canonical aliases are already cleared
+# and the guard is already armed, so an abort in retention leaves a document
+# belonging to this run rather than the previous run's success.
+utest_prune_records
 
 # CI_PARITY=1 -- reproduce what CI runs, exactly, before code leaves the machine.
 #
@@ -352,10 +583,11 @@ fi
 # The accelerator is settled, so the leg can be named. Everything here is
 # derived from what the run OBSERVED; nothing is taken on an operator's word.
 
-# xs:dateTime (the type the JUnit `timestamp` attribute carries) accepts the
-# trailing Z. A local naive timestamp cannot be ordered against another leg
+# RUN_TS was taken in Step 0a, when the run actually started, so that a
+# refusal published before this point can still be placed in time. It is
+# xs:dateTime (the type the JUnit `timestamp` attribute carries) with the
+# trailing Z: a local naive timestamp cannot be ordered against another leg
 # that ran in a different zone, which is most of the point of carrying one.
-RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 RUN_COMMIT="$(git -C "$PROJECT" rev-parse HEAD 2>/dev/null | tr -cd 'a-f0-9')"
 if [ -z "$RUN_COMMIT" ]; then
@@ -432,17 +664,28 @@ if [ -n "${UTEST_LEG:-}" ]; then
     fi
 fi
 
-# Leg-suffixed artifacts accumulate (one per configuration); the canonical
-# unsuffixed paths, already cleared in Step 0a, remain for existing consumers
-# and always name THIS invocation rather than merely the last successful one.
+# Leg-suffixed aliases accumulate, one per configuration, and mean "the latest
+# COMPLETED run of this leg". Only THIS leg's alias is cleared, never another
+# configuration's: a matrix that runs several legs in sequence must still find
+# every leg readable at the end, which is the contract these aliases were
+# introduced to provide. Clearing our own is what keeps it honest -- if this
+# run dies, the leg alias is ABSENT rather than answering with the previous
+# run's document, and the previous run is still retrievable under its own run
+# id in build/test-runs/.
+#
+# The canonical unsuffixed pair means something different: THIS invocation. It
+# was already cleared in Step 0a, ahead of every exit path, so no preflight
+# exit can leave a stale document under the name a consumer reads as current.
 XML_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.xml"
 JSON_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.json"
-# The .staged siblings go too: a publication that failed partway through a
-# previous run leaves one behind, and it is not covered by the destinations.
-rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT" "$XML_LEG_OUT.staged" "$JSON_LEG_OUT.staged"
+rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT"
 
-{ utest_json_identity; printf '\n'; } > "$IDENTITY_OUT.tmp" &&
-    mv -f "$IDENTITY_OUT.tmp" "$IDENTITY_OUT"
+# The identity file lands in the RECORD now; its alias is published by
+# utest_finalize_record() along with the documents, after the commit marker.
+# The staging path is inside the record, so it is not shared with any other
+# invocation.
+{ utest_json_identity; printf '\n'; } > "$RECORD_DIR/.identity.tmp" &&
+    mv -f "$RECORD_DIR/.identity.tmp" "$IDENTITY_RECORD"
 
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
@@ -534,7 +777,7 @@ echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s
     -netdev user,id=net0 \
     -device virtio-tablet-pci \
     -rtc base=localtime \
-    -no-reboot 2>/dev/null &
+    -no-reboot 2>/dev/null 9>&- &
 QEMU_PID=$!
 
 # Poll for test summary line or timeout.
@@ -1269,21 +1512,8 @@ fi
 # death before this point cannot leave one behind masquerading as current.
 if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
     rm -f "$XML_OUT" "$XML_LEG_OUT"
-    {
-        echo '<?xml version="1.0" encoding="UTF-8"?>'
-        printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
-            "$(utest_xml_identity_attrs)"
-        echo '  <properties>'
-        echo '    <property name="aborted" value="true"/>'
-        echo '    <property name="not_run" value="0"/>'
-        utest_xml_identity_props
-        echo '  </properties>'
-        echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
-        echo '    <error message="XML=1 requested but no [UTEST-XML] stream reached serial"/>'
-        echo '  </testcase>'
-        echo '</testsuite>'
-    } > "$XML_LEG_OUT.staged" &&
-        utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+    utest_publish_xml_refusal "artifact-pipeline" \
+        "XML=1 requested but no [UTEST-XML] stream reached serial"
     echo -e "  ${RED}[UTEST]${RESET} XML=1 requested but no [UTEST-XML] stream on serial -- artifact pipeline broken, failing the run"
     UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
 fi
@@ -1310,7 +1540,9 @@ if [ "$HAS_XML" -eq 1 ]; then
     # by an unterminated one: the last terminator then precedes the last
     # announcement, slicing is skipped, and both runs' testcases get published
     # under one run's summary.
-    XML_SRC="$TEST_LOG.runslice"
+    # Inside the run record: it was a fixed `$TEST_LOG.runslice`, which is
+    # shared state between any two invocations that overlap.
+    XML_SRC="$RECORD_DIR/runslice"
     rm -f "$XML_SRC"
     XML_SLICE_FAILED=0
     if [ -n "$FRAME_COMPLETE_RUN" ]; then
@@ -1331,21 +1563,8 @@ if [ "$HAS_XML" -eq 1 ]; then
         echo -e "  ${RED}[UTEST]${RESET} run slice failed for a COMPLETE framed run -- refusing to assemble from the whole capture"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
         XML_SUMMARY_OK=0
-        {
-            echo '<?xml version="1.0" encoding="UTF-8"?>'
-            printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
-                "$(utest_xml_identity_attrs)"
-            echo '  <properties>'
-            echo '    <property name="aborted" value="true"/>'
-            echo '    <property name="not_run" value="0"/>'
-            utest_xml_identity_props
-            echo '  </properties>'
-            echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
-            echo '    <error message="run slice failed for a complete framed run -- artifact would mix runs"/>'
-            echo '  </testcase>'
-            echo '</testsuite>'
-        } > "$XML_LEG_OUT.staged" &&
-            utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+        utest_publish_xml_refusal "artifact-pipeline" \
+            "run slice failed for a complete framed run -- artifact would mix runs"
         # The payload greps below still run; give them an EMPTY source rather
         # than a missing file (set -e would abort on the read) and rather than
         # the whole capture (that is the mixing this branch refuses).
@@ -1399,21 +1618,8 @@ if [ "$HAS_XML" -eq 1 ]; then
             # aborted="false", which is a CLAIM the stream never made. An
             # artifact-only consumer would read a version-skewed or truncated
             # run as a completed green suite.
-            {
-                echo '<?xml version="1.0" encoding="UTF-8"?>'
-                printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
-                    "$(utest_xml_identity_attrs)"
-                echo '  <properties>'
-                echo '    <property name="aborted" value="true"/>'
-                echo '    <property name="not_run" value="0"/>'
-                utest_xml_identity_props
-                echo '  </properties>'
-                echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
-                echo '    <error message="[UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- run completeness unknown"/>'
-                echo '  </testcase>'
-                echo '</testsuite>'
-            } > "$XML_LEG_OUT.staged" &&
-                utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+            utest_publish_xml_refusal "artifact-pipeline" \
+                "[UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- run completeness unknown"
             XML_SUMMARY_OK=0
         fi
     else
@@ -1433,21 +1639,8 @@ if [ "$HAS_XML" -eq 1 ]; then
         # consumer as a clean empty run while carrying evidence of an
         # incomplete one. The intent was always to refuse; only the code
         # continued.
-        {
-            echo '<?xml version="1.0" encoding="UTF-8"?>'
-            printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
-                "$(utest_xml_identity_attrs)"
-            echo '  <properties>'
-            echo '    <property name="aborted" value="true"/>'
-            echo '    <property name="not_run" value="0"/>'
-            utest_xml_identity_props
-            echo '  </properties>'
-            echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
-            echo '    <error message="[UTEST-XML] records on serial with no parseable [UTEST-XML-SUMMARY] -- counts unknown"/>'
-            echo '  </testcase>'
-            echo '</testsuite>'
-        } > "$XML_LEG_OUT.staged" &&
-            utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+        utest_publish_xml_refusal "artifact-pipeline" \
+            "[UTEST-XML] records on serial with no parseable [UTEST-XML-SUMMARY] -- counts unknown"
         XML_SUMMARY_OK=0
     fi
     fi  # XML_SLICE_FAILED guard: the slice-failure refusal stands alone
@@ -1512,12 +1705,12 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
         sed -n "s/.*${UF}\[UTEST-XML\] //p" "$XML_SRC" |
             grep -E '^<testcase' || true
         echo '</testsuite>'
-    } > "$XML_LEG_OUT.staged" &&
-        utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+    } > "$RECORD_DIR/.assembled.xml" &&
+        utest_publish "$RECORD_DIR/.assembled.xml" "$XML_RECORD" && XML_PUBLISHED=1
     if [ "${XML_ABORTED:-0}" -ne 0 ]; then
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_LEG_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
     else
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_LEG_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
     fi
 fi
 
@@ -1557,25 +1750,30 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
             printf ' "summary": null, "summary_error": "no_python3",\n'
             printf ' "detail": "python3 unavailable -- artifact could not be assembled",\n'
             printf ' "run_identity": '
-            cat "$IDENTITY_OUT" 2>/dev/null || printf 'null'
+            cat "$IDENTITY_RECORD" 2>/dev/null || printf 'null'
             printf '}\n'
-        } > "$JSON_LEG_OUT.staged" &&
-            utest_publish "$JSON_LEG_OUT.staged" "$JSON_LEG_OUT" "$JSON_OUT" && JSON_PUBLISHED=1
-        echo -e "  ${RED}[UTEST]${RESET} python3 not available -- cannot assemble $JSON_LEG_OUT"
+        } > "$RECORD_DIR/.no-python3.json" &&
+            utest_publish "$RECORD_DIR/.no-python3.json" "$JSON_RECORD" && JSON_PUBLISHED=1
+        echo -e "  ${RED}[UTEST]${RESET} python3 not available -- cannot assemble $JSON_RECORD"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
     else
-        # The harvester writes the LEG artifact; test.sh mirrors it to the
-        # canonical alias, so both files come from one assembly and the alias
-        # can never be newer than the record it points at.
+        # The harvester writes a PRIVATE staged file, which is then published
+        # through the same utest_publish() every other document goes through.
+        # An earlier draft let the harvester write the record directly and
+        # hand-rolled the alias copies here, which forked the lifecycle in two
+        # ways an adversarial review caught: a leg-alias failure was swallowed
+        # without failing the run, and a canonical-alias failure left
+        # JSON_PUBLISHED at 0, so the EXIT guard treated an already-landed
+        # record as unpublished and overwrote it with a run_incomplete
+        # refusal. One publication path is what makes the contract testable.
         JSON_ERR=$(python3 "$PROJECT/scripts/utest-json-harvest.py" \
-                       "$TEST_LOG" "$JSON_LEG_OUT" --identity "$IDENTITY_OUT" 2>&1) &&
+                       "$TEST_LOG" "$RECORD_DIR/.harvest.json" --identity "$IDENTITY_RECORD" 2>&1) &&
             JSON_RC=0 || JSON_RC=$?
-        if [ -f "$JSON_LEG_OUT" ]; then
-            cp -f "$JSON_LEG_OUT" "$JSON_OUT.tmp" &&
-                mv -f "$JSON_OUT.tmp" "$JSON_OUT" && JSON_PUBLISHED=1
+        if [ -f "$RECORD_DIR/.harvest.json" ]; then
+            utest_publish "$RECORD_DIR/.harvest.json" "$JSON_RECORD" && JSON_PUBLISHED=1
         fi
         if [ "$JSON_RC" -eq 0 ]; then
-            echo -e "${CYAN}[TEST]${RESET} JSON results written: $JSON_LEG_OUT"
+            echo -e "${CYAN}[TEST]${RESET} JSON results written: $JSON_RECORD"
         else
             # rc 3 is "no stream at all", which is only a failure when the
             # run actually asked for JSON. Every other refusal means records
@@ -1589,6 +1787,14 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
         fi
     fi
 fi
+
+# Both formats have had their chance to assemble, so the record is finished:
+# commit its marker and publish the aliases from it. This happens BEFORE the
+# verdict on purpose. The EXIT guard would finalize too, but only after the
+# exit status is already decided, so a failed alias write or an uncommittable
+# marker discovered there could never fail the run -- and both are exactly the
+# kind of silent artifact loss this lifecycle exists to make loud.
+utest_finalize_record complete
 
 # Final verdict -- kernel TEST and user-mode UTEST failures both gate exit.
 # A user-mode binary regression (e.g. PE loader segfaulting at _start)

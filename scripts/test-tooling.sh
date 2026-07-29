@@ -9060,6 +9060,231 @@ echo "SURVIVED"
     fi
 fi
 
+# 6h. The run-slice failure refusal must stay wired, and the per-run record
+#     and alias publication must keep its ordering. The refusal shipped
+#     alongside the streamed run-slice assembler, which exercised it ONCE, by
+#     hand, by forcing --emit-run to fail; nothing re-checked it afterwards,
+#     so a control-flow regression could quietly restore the mixed-run
+#     artifact the branch exists to refuse.
+#
+#     This drives the PRODUCTION control flow, not just the document emitter.
+#     Both the helper functions and the whole slice-failure REGION are
+#     extracted VERBATIM from scripts/test.sh, so what runs here is what
+#     ships: a rendering-only test would have proved the refusal renders while
+#     saying nothing about whether --emit-run failure still reaches it, still
+#     counts a failure, still marks the format published, or is still
+#     protected from the later no-summary branch.
+UAR_FNS=""
+for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
+           utest_publish utest_alias_record utest_commit_record \
+           utest_finalize_record utest_xml_refusal_doc \
+           utest_publish_xml_refusal; do
+    _body="$(sed -n "/^${_fn}() {/,/^}/p" "$REPO_ROOT/scripts/test.sh")"
+    if [ -z "$_body" ]; then
+        t_fail "artifact record: extracted $_fn from scripts/test.sh" "function not found"
+        UAR_FNS=""
+        break
+    fi
+    UAR_FNS="$UAR_FNS
+$_body"
+done
+# The extracted span STARTS at the XML_SRC assignment, not at
+# XML_SLICE_FAILED=0. Hardcoding XML_SRC in the harness would let production
+# drift back to a shared run-slice path -- the exact shared-state shape this
+# section removed -- while this test kept passing against its own private one.
+UAR_REGION="$(sed -n '/^    XML_SRC="\$RECORD_DIR\/runslice"$/,/^    fi  # XML_SLICE_FAILED guard/p' \
+              "$REPO_ROOT/scripts/test.sh")"
+if [ -z "$UAR_REGION" ]; then
+    t_fail "artifact record: extracted the slice-failure region from scripts/test.sh" \
+        "anchors not found -- XML_SRC assignment .. 'fi  # XML_SLICE_FAILED guard'"
+elif [ -n "$UAR_FNS" ]; then
+    UAR_TMP="$FRAME_TMP/uar"
+    rm -rf "$UAR_TMP"
+    mkdir -p "$UAR_TMP/build" "$UAR_TMP/scripts"
+    # A fake parser that FAILS is how section 29 forced the branch by hand.
+    # Automating that injection is the whole point of this sub-test.
+    printf '%s\n' 'import sys; sys.exit(1)' > "$UAR_TMP/scripts/utest-frame.py"
+    # A capture carrying a testcase payload: if the refusal ever falls back to
+    # the whole capture again, this name shows up in the artifacts.
+    UAR_LOG="$UAR_TMP/build/test.log"
+    {
+        printf 'UTEST-deadbeef: [UTEST-XML] <testcase name="leaked-from-capture" classname="x"/>\n'
+        printf 'UTEST-deadbeef: [UTEST-XML-SUMMARY] tests=1 failures=0 skipped=0 time=1.0 aborted=0 not_run=0\n'
+    } > "$UAR_LOG"
+
+    UAR_OUT="$(bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="'"$UAR_TMP"'"
+RECORD_DIR="'"$UAR_TMP"'/build/test-runs/run1"
+mkdir -p "$RECORD_DIR"
+TEST_LOG="'"$UAR_LOG"'"
+XML_RECORD="$RECORD_DIR/test-results.xml"
+JSON_RECORD="$RECORD_DIR/test-results.json"
+IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+XML_LEG_OUT="'"$UAR_TMP"'/build/test-results-leg.xml"
+XML_OUT="'"$UAR_TMP"'/build/test-results.xml"
+JSON_LEG_OUT="'"$UAR_TMP"'/build/test-results-leg.json"
+JSON_OUT="'"$UAR_TMP"'/build/test-results.json"
+IDENTITY_OUT="'"$UAR_TMP"'/build/test-run-identity.json"
+RUN_ID="run1"; RUN_TS="t"; RUN_COMMIT="c"; RUN_LEG="leg"; RUN_LEG_SOURCE="derived"
+RUN_ACCEL="tcg"; RUN_HOST="h"; RUN_HOSTNAME="hn"; RUN_QEMU="q"; SMP_CPUS_SAFE="1"
+CI_PARITY=0
+UTEST_FAIL=0; XML_PUBLISHED=0; XML_SUMMARY_OK=1; UTEST_FINALIZED=0
+UF="UTEST-deadbeef: "
+FRAME_COMPLETE_RUN="1"
+'"$UAR_FNS"'
+'"$UAR_REGION"'
+utest_finalize_record complete
+# XML_SRC comes from the extracted production span, never from this harness:
+# report where production actually put it so a move back to a shared path is
+# a test failure rather than an invisible drift.
+echo "SLICE $XML_SRC"
+echo "RESULT utest_fail=$UTEST_FAIL xml_published=$XML_PUBLISHED summary_ok=$XML_SUMMARY_OK"
+' 2>&1)"
+
+    uar_doc_ok() {
+        # $1 = path. A published refusal must carry errors="1" and the
+        # slice-specific message, and must NOT carry the capture payload.
+        [ -f "$1" ] &&
+        grep -q 'errors="1"' "$1" &&
+        grep -q 'artifact would mix runs' "$1" &&
+        ! grep -q 'leaked-from-capture' "$1"
+    }
+
+    if printf '%s' "$UAR_OUT" | grep -q 'RESULT utest_fail=1 xml_published=1 summary_ok=0'; then
+        t_pass "slice-failure refusal: fails the run, marks XML published, stops assembly"
+    else
+        t_fail "slice-failure refusal: fails the run, marks XML published, stops assembly" "$UAR_OUT"
+    fi
+
+    # The run slice must live inside the per-run record, not at a shared path.
+    if printf '%s' "$UAR_OUT" | grep -q "SLICE $UAR_TMP/build/test-runs/run1/"; then
+        t_pass "run record: production puts the run slice inside the record directory"
+    else
+        t_fail "run record: production puts the run slice inside the record directory" "$UAR_OUT"
+    fi
+
+    if uar_doc_ok "$UAR_TMP/build/test-runs/run1/test-results.xml"; then
+        t_pass "slice-failure refusal: errors=1 document lands in the run RECORD"
+    else
+        t_fail "slice-failure refusal: errors=1 document lands in the run RECORD" "$UAR_OUT"
+    fi
+
+    if uar_doc_ok "$UAR_TMP/build/test-results-leg.xml"; then
+        t_pass "slice-failure refusal: errors=1 document lands at the LEG alias"
+    else
+        t_fail "slice-failure refusal: errors=1 document lands at the LEG alias" "$UAR_OUT"
+    fi
+
+    if uar_doc_ok "$UAR_TMP/build/test-results.xml"; then
+        t_pass "slice-failure refusal: errors=1 document lands at the CANONICAL alias"
+    else
+        t_fail "slice-failure refusal: errors=1 document lands at the CANONICAL alias" "$UAR_OUT"
+    fi
+
+    # The no-summary and normal-assembly paths must not overwrite the precise
+    # diagnosis with a generic one, and must not count a second failure for
+    # the same event. utest_fail=1 above is half the proof; the message
+    # surviving in the canonical alias is the other half.
+    if grep -q 'artifact would mix runs' "$UAR_TMP/build/test-results.xml" 2>/dev/null &&
+       ! grep -q 'counts unknown' "$UAR_TMP/build/test-results.xml" 2>/dev/null; then
+        t_pass "slice-failure refusal: not overwritten by the no-summary branch"
+    else
+        t_fail "slice-failure refusal: not overwritten by the no-summary branch" "$UAR_OUT"
+    fi
+
+    # The record is only trustworthy once its commit marker names what it
+    # holds. A directory that merely exists is abandoned staging.
+    if [ -f "$UAR_TMP/build/test-runs/run1/record-complete.json" ] &&
+       grep -q '"xml": "test-results.xml"' "$UAR_TMP/build/test-runs/run1/record-complete.json" &&
+       grep -q '"run_id": "run1"' "$UAR_TMP/build/test-runs/run1/record-complete.json"; then
+        t_pass "run record: the completion marker names the documents it holds"
+    else
+        t_fail "run record: the completion marker names the documents it holds" \
+            "$(cat "$UAR_TMP/build/test-runs/run1/record-complete.json" 2>&1 || true)"
+    fi
+
+    # No staging file may survive publication -- a leftover .refusal.xml or
+    # .tmp is the shared-state shape section 30 removed.
+    UAR_STAGE="$(find "$UAR_TMP/build/test-runs/run1" -maxdepth 1 -name '.*' -type f 2>/dev/null | wc -l)"
+    if [ "$UAR_STAGE" -eq 0 ]; then
+        t_pass "run record: no staging file survives publication"
+    else
+        t_fail "run record: no staging file survives publication" \
+            "$(find "$UAR_TMP/build/test-runs/run1" -maxdepth 1 -name '.*' -type f 2>&1)"
+    fi
+
+    # Durability must be BOUNDED: every invocation leaves a record directory,
+    # so an unpruned build/test-runs grows for as long as anyone runs tests.
+    # The newest N survive and the run in progress is never a candidate.
+    UAR_PRUNE="$(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+    if [ -z "$UAR_PRUNE" ]; then
+        t_fail "run record: retention prunes to the newest N" "utest_prune_records not found"
+    else
+        UAR_PDIR="$UAR_TMP/prune"
+        mkdir -p "$UAR_PDIR"
+        for _i in 1 2 3 4 5; do mkdir -p "$UAR_PDIR/2026010${_i}T000000Z-1-aaaa"; done
+        UAR_PRES="$(bash -c '
+set -euo pipefail
+RUNS_DIR="'"$UAR_PDIR"'"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+'"$UAR_PRUNE"'
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+' 2>&1)"
+        # keep=2 retains the two newest (…04, …05); …01 is the current RUN_ID
+        # and must survive even though it is older than the cut.
+        if printf '%s' "$UAR_PRES" | grep -q '20260101T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PRES" | grep -q '20260104T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PRES" | grep -q '20260105T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_PRES" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "run record: retention prunes to the newest N and spares the running one"
+        else
+            t_fail "run record: retention prunes to the newest N and spares the running one" "$UAR_PRES"
+        fi
+    fi
+fi
+
+# 6i. Concurrent same-tree runs are an explicitly UNSUPPORTED mode, and the
+#     refusal must not touch a single shared name. A second run that deleted
+#     the first run's canonical artifacts before deferring would be worse than
+#     the emergent interleaving it replaced.
+if grep -q 'flock -n "\$UTEST_LOCK_FD"' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "concurrency: scripts/test.sh takes an exclusive run lock"
+else
+    t_fail "concurrency: scripts/test.sh takes an exclusive run lock" "flock guard not found"
+fi
+# Ordering is the load-bearing part: the lock must be acquired BEFORE the
+# canonical artifacts are cleared.
+UAR_LOCK_LN="$(grep -n 'flock -n "\$UTEST_LOCK_FD"' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+UAR_RM_LN="$(grep -n '^rm -f "\$XML_OUT" "\$JSON_OUT" "\$IDENTITY_OUT"$' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+if [ -n "$UAR_LOCK_LN" ] && [ -n "$UAR_RM_LN" ] && [ "$UAR_LOCK_LN" -lt "$UAR_RM_LN" ]; then
+    t_pass "concurrency: the run lock is taken before any shared name is cleared"
+else
+    t_fail "concurrency: the run lock is taken before any shared name is cleared" \
+        "lock at line ${UAR_LOCK_LN:-none}, canonical clear at line ${UAR_RM_LN:-none}"
+fi
+# An orphaned QEMU must not inherit the lock descriptor: SIGKILL bypasses the
+# cleanup trap, and an inherited fd would let the orphan hold the lock and
+# wedge every later run.
+if grep -q '9>&- &' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "concurrency: QEMU is launched with the lock descriptor closed"
+else
+    t_fail "concurrency: QEMU is launched with the lock descriptor closed" "9>&- not found on the QEMU launch"
+fi
+# Only THIS leg's alias may be cleared. Glob-clearing every leg would destroy
+# a sequential matrix's accumulated results.
+if grep -q 'rm -f "\$XML_LEG_OUT" "\$JSON_LEG_OUT"$' "$REPO_ROOT/scripts/test.sh" &&
+   ! grep -q 'rm -f .*test-results-\*' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "aliases: only this leg's alias is cleared, never another configuration's"
+else
+    t_fail "aliases: only this leg's alias is cleared, never another configuration's" \
+        "a glob clear of leg aliases would break a sequential matrix"
+fi
+
 # 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce
 #    is an authenticating value and every disk log lives in a directory ring
 #    3 can open, so each rendering has to go through klog_disk_subsystem().
@@ -9254,18 +9479,71 @@ else
     t_fail "identity: an untracked build input marks the commit dirty"
 fi
 
-# i12. A landed LEG artifact must survive an alias-copy failure. utest_publish
-#      returns 0 once the leg record exists, because the guard would otherwise
-#      see the format as unpublished and move a run_incomplete refusal OVER a
+# i12. A landed RECORD must survive an alias-copy failure. utest_publish
+#      returns 0 once the record exists, because the guard would otherwise see
+#      the format as unpublished and move a run_incomplete refusal OVER a
 #      fully assembled document -- destroying the evidence it exists to keep.
+#      Section 30 made the per-run record the thing that must land, and BOTH
+#      the leg and canonical pathnames aliases onto it; neither alias failure
+#      may abort the publication, and each must still fail the run.
 PUBFN=$(awk '/^utest_publish\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
-if printf '%s' "$PUBFN" | grep -q 'mv -f "\$staged" "\$leg" || return 1' &&
-   printf '%s' "$PUBFN" | grep -q 'if ! { cp -f "\$leg" "\$canonical.tmp"' &&
-   printf '%s' "$PUBFN" | grep -q 'UTEST_FAIL=' &&
-   ! printf '%s' "$PUBFN" | grep -q 'cp -f "\$leg" "\$canonical.tmp" || return 1'; then
+ALIASFN=$(awk '/^utest_alias_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+if printf '%s' "$PUBFN" | grep -q 'mv -f "\$staged" "\$record" || return 1' &&
+   printf '%s' "$ALIASFN" | grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}leg\.tmp"' &&
+   printf '%s' "$ALIASFN" | grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}canon\.tmp"' &&
+   [ "$(printf '%s' "$ALIASFN" | grep -c 'UTEST_FAIL=')" -eq 2 ] &&
+   ! printf '%s' "$ALIASFN" | grep -q 'return 1'; then
     t_pass "identity: a landed leg artifact survives an alias-copy failure"
 else
-    t_fail "identity: a landed leg artifact survives an alias-copy failure"
+    t_fail "identity: a landed leg artifact survives an alias-copy failure" "$PUBFN$ALIASFN"
+fi
+
+# i12b. There must be exactly ONE record-to-alias implementation. The JSON
+#       harvester originally wrote its record directly and hand-rolled the
+#       alias copies, which swallowed a leg-alias failure and left
+#       JSON_PUBLISHED at 0 on a canonical failure -- so the EXIT guard then
+#       overwrote an already-landed record with a run_incomplete refusal.
+if [ "$(grep -c 'cp -f "\$record" "\$RECORD_DIR' "$LEGSH")" -eq 2 ] &&
+   grep -q '"\$TEST_LOG" "\$RECORD_DIR/\.harvest\.json"' "$LEGSH" &&
+   grep -q 'utest_publish "\$RECORD_DIR/\.harvest\.json" "\$JSON_RECORD"' "$LEGSH"; then
+    t_pass "identity: JSON publication goes through the one shared record/alias path"
+else
+    t_fail "identity: JSON publication goes through the one shared record/alias path" \
+        "the harvester must stage privately and publish through utest_publish"
+fi
+
+# i12c. Aliases may only appear AFTER the record's commit marker. An alias
+#       published mid-run points into a record with no marker and possibly
+#       only one of two requested formats, which is exactly what an alias
+#       enumerator must never be able to consume.
+FINFN=$(awk '/^utest_finalize_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+FIN_COMMIT=$(printf '%s\n' "$FINFN" | grep -n 'utest_commit_record' | head -1 | cut -d: -f1)
+FIN_ALIAS=$(printf '%s\n' "$FINFN" | grep -n 'utest_alias_record' | head -1 | cut -d: -f1)
+if [ -n "$FIN_COMMIT" ] && [ -n "$FIN_ALIAS" ] && [ "$FIN_COMMIT" -lt "$FIN_ALIAS" ] &&
+   ! printf '%s' "$PUBFN" | grep -q 'utest_alias_record'; then
+    t_pass "identity: aliases are published only after the record commit marker"
+else
+    t_fail "identity: aliases are published only after the record commit marker" "$FINFN"
+fi
+
+# i12d. A marker that cannot land must FAIL the run. A green exit over an
+#       uncommitted record is the false-green the lifecycle exists to close.
+COMMITFN=$(awk '/^utest_commit_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+if printf '%s' "$COMMITFN" | grep -q 'UTEST_FAIL=' &&
+   printf '%s' "$COMMITFN" | grep -q 'return 1'; then
+    t_pass "identity: a record whose commit marker fails to land fails the run"
+else
+    t_fail "identity: a record whose commit marker fails to land fails the run" "$COMMITFN"
+fi
+
+# i12e. UTEST_RECORD_KEEP must be normalised in BASE 10. `08` passes a
+#       digits-only check and `-ge`, then aborts the run in $(( )) under
+#       set -e, where bash reads a leading zero as octal.
+if grep -q 'keep=\$(( 10#\$keep ))' "$LEGSH"; then
+    t_pass "run record: the retention bound is normalised in base 10"
+else
+    t_fail "run record: the retention bound is normalised in base 10" \
+        "UTEST_RECORD_KEEP=08 would abort the run in arithmetic expansion"
 fi
 
 # i13. XML and JSON must project the SAME identity field set. A field in one
@@ -9289,13 +9567,24 @@ fi
 #      documented schema says their ABSENCE means the artifact predates the
 #      completeness dimension, so a current refusal without them is misread as
 #      an old one.
-if [ "$(grep -c 'utest_xml_identity_props$' "$LEGSH")" -ge 4 ] &&
-   [ "$(grep -c 'property name="aborted"' "$LEGSH")" -ge 5 ] &&
-   ! awk '/<properties>/{a=0} /property name="aborted"/{a=1}
-          /utest_xml_identity_props$/{if(!a) bad=1} END{exit !bad}' "$LEGSH"; then
+#
+#      Section 30 replaced five duplicated inline refusal blocks with ONE
+#      emitter, which turns this from a counting argument into a structural
+#      one: assert that the sole emitter carries both properties plus the
+#      identity projection, and that nothing else in the script hand-rolls an
+#      errors="1" testsuite behind its back. A new refusal added as a fresh
+#      inline block is exactly the drift this now catches.
+REFUSALFN=$(awk '/^utest_xml_refusal_doc\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+REFUSAL_OPENERS=$(grep -c 'errors="1" time="0"' "$LEGSH")
+if printf '%s' "$REFUSALFN" | grep -q 'property name="aborted" value="true"' &&
+   printf '%s' "$REFUSALFN" | grep -q 'property name="not_run" value="0"' &&
+   printf '%s' "$REFUSALFN" | grep -q 'utest_xml_identity_props$' &&
+   printf '%s' "$REFUSALFN" | grep -q 'errors="1"' &&
+   [ "$REFUSAL_OPENERS" -eq 1 ]; then
     t_pass "identity: every synthetic XML error document carries the completeness properties"
 else
-    t_fail "identity: every synthetic XML error document carries the completeness properties"
+    t_fail "identity: every synthetic XML error document carries the completeness properties" \
+        "sole-emitter check failed; errors=1 openers in the script: $REFUSAL_OPENERS (expected 1)"
 fi
 
 # i15. Format obligations are settled before any fallible host-side parsing.

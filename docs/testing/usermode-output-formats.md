@@ -267,6 +267,7 @@ producer drift, not an old artifact, and a document asserting
          an artifact nobody can place is the one a dashboard most needs to
          place. Identity never softens a refusal -- errors="1" and the
          <error> element stay exactly as they were. -->
+    <property name="run_id" value="TIMESTAMP-PID-RANDOM"/>
     <property name="commit" value="SHA[-dirty]"/>
     <property name="leg" value="HOST-ACCEL-Ncpu[-ciparity][-LABEL]"/>
     <property name="leg_source" value="derived|derived+override"/>
@@ -485,19 +486,76 @@ death before publication cannot leave a stale file that reads as current.
 
 ### Run identity and artifact paths
 
-Both artifacts are written twice: to a leg-suffixed path that accumulates
-(`build/test-results-<leg>.xml` / `.json`) and to the canonical unsuffixed
-path, which is an alias for the invocation that wrote it. The leg artifact is
-published first and the alias second, so the alias is never newer than the
-record it points at.
+The RECORD is a per-invocation directory; every stable pathname is an alias
+into it. `scripts/test.sh` derives a `run_id` in Step 0a, ahead of every exit
+path, and creates `build/test-runs/<run_id>/` with a non-recursive `mkdir` --
+which FAILS if the directory exists, so the identity is collision-proof rather
+than merely improbable.
 
-`scripts/test.sh` derives identity before the build and writes it to
-`build/test-run-identity.json` (`utest-run-identity-v1`), which the harvester
-reads via `--identity`:
+| Path | Meaning |
+|---|---|
+| `build/test-runs/<run_id>/test-results.{xml,json}` | the RECORD: immutable, never rewritten by another run |
+| `build/test-runs/<run_id>/record-complete.json` | the commit marker (`utest-run-record-v1`) |
+| `build/test-results.{xml,json}` | alias: THIS invocation. Cleared in Step 0a before anything can fail |
+| `build/test-results-<leg>.{xml,json}` | alias: the latest COMPLETED run of that leg |
+| `build/test-run-identity.json` | alias for the record's identity document |
+
+Publication order is **record -> commit marker -> aliases**, and every alias
+write goes through a private temp plus `mv`, so no alias is ever newer than
+the record it points at and none can be observed half-written. The marker
+comes BEFORE the aliases on purpose: an alias updated the moment one format
+landed would be visible while the run was still assembling the other, so a
+death in between would leave a stable pathname pointing into a record with no
+marker and possibly only one of two requested documents. A `SIGKILL` before
+the marker therefore leaves BOTH aliases absent, which is fail-CLOSED --
+absence sends a consumer to the record directory, whereas a stale alias would
+answer with another run's document.
+
+Both formats go through that one path. An alias that cannot be written fails
+the run rather than going silently missing, and finalization happens before
+the final verdict precisely so that failure can still change the exit code.
+
+**A directory that merely exists is not a completed record.** It is created
+before the run does anything, so a death can leave it holding only an identity
+file or one of two requested formats. `record-complete.json` is written LAST
+and names exactly which documents the record contains; check it before
+trusting any of them:
+
+```json
+{ "schema": "utest-run-record-v1", "run_id": "...", "status": "complete",
+  "xml": "test-results.xml", "json": "test-results.json",
+  "identity": "test-run-identity.json" }
+```
+
+`status` is `complete` once both formats have had their chance to assemble;
+an exit before that point records `incomplete`, and an absent marker means the
+run never reached its own cleanup. `status` describes the RECORD, not the
+verdict -- a run whose tests failed still leaves a complete record. A format
+the run did not produce is `null` rather than missing. A marker that cannot be
+written fails the run: a green exit over an uncommitted record would be the
+same false-green this lifecycle exists to close.
+
+The two alias kinds mean DIFFERENT things and only one is "current". The
+canonical unsuffixed pair names this invocation and is cleared in Step 0a
+ahead of every exit path, so no preflight exit -- one occurring before the leg
+is even derivable -- can leave a stale document under it. The leg-suffixed
+pair accumulates one per configuration and means "the latest completed run of
+this leg"; only the running leg's own alias is cleared, never another
+configuration's, so a matrix that runs several legs in sequence still finds
+every leg readable at the end.
+
+Records are durable but BOUNDED: the newest `UTEST_RECORD_KEEP` (default 20)
+survive, pruned at the START of a run so an investigation's evidence is never
+removed by the run still writing it.
+
+`scripts/test.sh` derives identity before the build and writes it to the
+record, aliased to `build/test-run-identity.json` (`utest-run-identity-v1`),
+which the harvester reads via `--identity`:
 
 | Field | Source |
 |---|---|
-| `timestamp` | `date -u`, ISO-8601 with `Z` |
+| `run_id` | the record directory name: UTC timestamp, pid, and random suffix |
+| `timestamp` | `date -u` at Step 0a, when the run started, ISO-8601 with `Z` |
 | `commit` | `git rev-parse HEAD`, `-dirty` appended when tracked files differ |
 | `leg` | `<host>-<accel>-<n>cpu`, plus `-ciparity` and any validated `UTEST_LEG` label |
 | `leg_source` | `derived`, or `derived+override` when `UTEST_LEG` added a label |
@@ -522,13 +580,29 @@ never reached assembly. A signalled run carries `128+signo`, never 0. A failed o
 itself, never the previous run's success sitting where CI would upload it as
 current.
 
-One invocation at a time per checkout. `scripts/test.sh` patches the shared
-`boot.conf`, writes a fixed `build/test.log`, and copies OVMF vars to a fixed
-path, so two concurrent runs in the same working tree already corrupt each
-other's boot configuration and serial capture regardless of artifacts; the
-leg-suffixed paths separate CONFIGURATIONS run one after another, not
-simultaneous runs. Giving each invocation its own private record is tracked
-separately.
+**Concurrent same-tree runs are NOT a supported mode, and the refusal is
+explicit.** `scripts/test.sh` takes an exclusive `flock` on
+`build/.test-run.lock` and exits 1 if another run holds it. This is a
+DECISION, not a limitation waiting to be lifted: the script patches the shared
+`boot.conf`, boots with a fixed `build/test.log` serial sink, and copies OVMF
+vars to one fixed path, so two overlapping runs corrupt each other's BOOT
+state long before their artifacts could collide. Per-run records make
+concurrent runs non-colliding without making them meaningful; supporting them
+for real means per-invocation `boot.conf`, serial log and OVMF paths, which is
+a much larger change than the artifacts and one nothing has asked for. The
+leg-suffixed aliases separate CONFIGURATIONS run one after another, not
+simultaneous runs.
+
+Two details make the refusal safe. The lock is taken BEFORE the artifact
+lifecycle is armed, so a refusing run touches no shared name and publishes no
+document -- acquiring it after the canonical clear would delete the artifacts
+of the run it is deferring to. And QEMU is launched with the lock descriptor
+closed (`9>&-`): `SIGKILL` bypasses the cleanup trap, and an inherited
+descriptor would let an orphaned VM hold the lock and wedge every later run.
+An orphaned QEMU still owning the shared `boot.conf` after a `SIGKILL` is a
+pre-existing hazard the lock neither creates nor closes; it is tracked
+separately. If `flock` is unavailable the run says so and proceeds rather than
+failing a lone run that would have been fine.
 
 The artifact is a GATE, not a convenience. A stream that does not agree with
 its own summary must fail the run rather than publish a smaller plausible
