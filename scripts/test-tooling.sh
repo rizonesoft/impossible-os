@@ -7050,19 +7050,39 @@ else
 fi
 
 # ============================================================================
-# gen-user-abi exit-status resolver (TODO-04 s23)
+# gen-user-abi constant extraction (TODO-04 s23 + s26)
 # ============================================================================
-# The generator's original parse_defines() extracts the first UNSIGNED integer
+# The generator's single-literal rule extracts the first UNSIGNED integer
 # literal from a define body, so it would read `(-1000)` as +1000 and
 # `(BASE - 1)` as +1 -- silently WRONG values, which is worse than the
 # hand-copy drift the generated header exists to eliminate. Exit statuses
-# therefore go through a separate fail-closed resolver. These fixtures pin
-# every refusal it promises, because a resolver that silently OMITS a constant
-# just restores the hand-copy it replaced.
+# therefore go through a restricted expression grammar with a fail-closed
+# contract. These fixtures pin every refusal it promises, because a resolver
+# that silently OMITS a constant just restores the hand-copy it replaced.
+#
+# s26 moved EXTRACTION onto clang (-dD -E in the kernel's own flag vector) and
+# added CERTIFICATION (a generated _Static_assert per emitted value, compiled
+# in every build flavor). That splits these fixtures into two kinds, and the
+# distinction is the point:
+#
+#   REFUSAL fixtures  -- shapes the restricted grammar still will not resolve
+#                        (unsupported operator, cyclic, int32 overflow, octal,
+#                        multi-term). Unchanged: a refusal is a build failure.
+#   AGREEMENT fixtures -- shapes the OLD scanner refused because IT could not
+#                        read them (conditional arms, spliced comments, a `/*`
+#                        inside a string literal). clang reads them correctly,
+#                        so the assertion is now "the generator returns the
+#                        value clang computes", which is strictly stronger than
+#                        "the generator declines to guess".
+#
+# A shape moving from refusal to agreement is NOT a weakened guarantee: the
+# value is now decided by the compiler that builds the kernel, and anything
+# genuinely unpublishable (a value that differs per build flavor) is refused by
+# the flavor sweep instead.
 
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[gen-user-abi exit-status resolver]${NC}"
 GUA_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYGUA'
-import importlib.util, tempfile, os, sys
+import importlib.util, tempfile, os, sys, io, contextlib
 
 spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
 gua = importlib.util.module_from_spec(spec)
@@ -7125,37 +7145,71 @@ check("refuses_unallowlisted_symbol", bool(err))
 _, err = run("#define X_BASE (-1000)\n")
 check("refuses_absent_name", bool(err) and any("not defined" in m for m in err))
 
+# Duplicate definitions are refused by TWO complementary layers, and which one
+# fires depends on the shape. A redefinition with a DIFFERENT body is already
+# fatal to the kernel build itself -- the authoritative flag vector carries
+# -Werror, so -Wmacro-redefined stops the query before the generator gets a
+# chance to have an opinion. Asserting the compiler's refusal here rather than
+# the generator's is deliberate: it pins that the query really does run under
+# the kernel's own flags.
 _, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n"
              "#define X_STATUS (X_BASE - 2)\n")
-check("refuses_duplicate_definition", bool(err) and any("more than" in m for m in err))
+check("refuses_duplicate_definition",
+      bool(err) and any("REFUSED" in m and "redefined" in m for m in err))
 
-# The one the design review caught: task.h already carries 14 #ifdef
-# KERNEL_TESTS blocks, one directly below the exit-status block. A generator
-# that picked a physical arm would make both generated headers agree with each
-# other while the kernel ran a different value.
-_, err = run("#define X_BASE (-1000)\n#ifdef KERNEL_TESTS\n"
+# The second layer covers what -Wmacro-redefined does NOT: clang accepts an
+# IDENTICAL redefinition silently, and accepts #undef + redefine silently,
+# reporting only the surviving value. Both exit 0, so without an explicit
+# ownership check they would sail through. The guarantee worth keeping is not
+# "clang did not complain" but "exactly one place owns this ABI number" -- two
+# owners are one refactor away from disagreeing, and the generator would
+# faithfully certify whichever won the include race.
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n"
+             "#define X_STATUS (X_BASE - 1)\n")
+check("refuses_identical_redefinition",
+      bool(err) and any("IDENTICAL" in m for m in err))
+
+_, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1)\n"
+             "#undef X_STATUS\n#define X_STATUS (X_BASE - 2)\n")
+check("refuses_undef_then_redefine",
+      bool(err) and any("#undef" in m for m in err))
+
+# task.h carries 14 #ifdef KERNEL_TESTS blocks, one directly below the
+# exit-status block. The old scanner refused ANY conditional definition because
+# it could not evaluate the build configuration and would otherwise have picked
+# a physical arm rather than the active one. clang picks the arm the kernel
+# compiles, so the ACTIVE arm now resolves -- correctly, and only because the
+# query runs in the kernel's own flag vector where KERNEL_TESTS is defined.
+e, err = run("#define X_BASE (-1000)\n#ifdef KERNEL_TESTS\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
-check("refuses_conditional_definition",
-      bool(err) and any("conditional" in m for m in err))
+check("resolves_active_conditional_arm", not err and e[0][1] == -1001)
 
-# Asserting on the CONDITIONAL diagnostic, not merely on bool(err): with two
-# physical definitions this fixture would still fail via duplicate detection
-# even if conditional recognition disappeared entirely.
-_, err = run("#define X_BASE (-1000)\n#if 0\n#define X_STATUS (X_BASE - 1)\n#else\n"
+# The arm that is NOT compiled must not contribute a value: an #ifdef on a
+# macro the kernel does not define leaves the constant undefined, and an
+# undefined allowlisted name is a loud refusal, never an omission.
+_, err = run("#define X_BASE (-1000)\n#ifdef NOT_A_KERNEL_FLAVOR_FLAG\n"
+             "#define X_STATUS (X_BASE - 1)\n#endif\n")
+check("refuses_inactive_conditional_arm",
+      bool(err) and any("not defined" in m for m in err))
+
+# #if 0 / #else: the old scanner saw two physical definitions and refused.
+# clang takes the #else arm, which is what the kernel compiles.
+e, err = run("#define X_BASE (-1000)\n#if 0\n#define X_STATUS (X_BASE - 1)\n#else\n"
              "#define X_STATUS (X_BASE - 2)\n#endif\n")
-check("refuses_if_else_arms", bool(err) and all("conditional" in m for m in err))
+check("resolves_else_arm_not_dead_arm", not err and e[0][1] == -1002)
 
 # C strips comments BEFORE recognising directives, so a conditional hidden
-# behind one is real and an #endif buried inside one is not.
-_, err = run("#define X_BASE (-1000)\n/* gate */ #ifdef KERNEL_TESTS\n"
+# behind one is a REAL directive -- clang honours it and the active arm wins.
+e, err = run("#define X_BASE (-1000)\n/* gate */ #ifdef KERNEL_TESTS\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
-check("refuses_conditional_behind_block_comment",
-      bool(err) and any("conditional" in m for m in err))
+check("resolves_conditional_behind_block_comment", not err and e[0][1] == -1001)
 
+# ...and an #endif buried INSIDE a comment is not a directive at all, so the
+# `#if 0` is still open and the define never happens. Undefined -> refusal.
 _, err = run("#define X_BASE (-1000)\n#if 0\n/*\n#endif\n*/\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
 check("endif_inside_block_comment_does_not_close",
-      bool(err) and any("conditional" in m for m in err))
+      bool(err) and any("not defined" in m for m in err))
 
 # Live tokens AFTER a block comment must not be silently dropped: this body
 # compiles as -999, and resolving it to -1001 would put a value the kernel
@@ -7194,41 +7248,42 @@ check("resolves_spliced_identifier", not err and e[0][1] == -1001)
 
 # The shape that proves the phase ORDER: a continued `//` comment absorbs the
 # following `#endif`, so the `#if 0` is still open and the define is inside it.
-# Confirmed against clang-19 -E, which leaves the constant UNDEFINED here --
-# a physical-line scanner instead resolved it to a concrete value and would
-# have put a number the kernel never uses into both headers and the hash.
+# clang leaves the constant UNDEFINED here; a physical-line scanner resolved it
+# to a concrete value and would have put a number the kernel never uses into
+# both headers and the hash. Now the compiler answers, so it is undefined.
 _, err = run("#define X_BASE (-1000)\n#if 0\n// c \\\n#endif\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
 check("spliced_line_comment_swallows_endif",
-      bool(err) and any("conditional" in m for m in err))
+      bool(err) and any("not defined" in m for m in err))
 
-# clang splices a backslash followed by TRAILING WHITESPACE as well, so
-# matching only a final `\` reopens the same bypass one space wider.
+# A backslash followed by TRAILING WHITESPACE splices too, so the same shape
+# one space wider must reach the same conclusion.
 _, err = run("#define X_BASE (-1000)\n#if 0\n// c \\   \n#endif\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
-check("refuses_whitespace_tailed_continuation",
-      bool(err) and any("conditional" in m for m in err))
+check("whitespace_tailed_continuation_also_splices",
+      bool(err) and any("not defined" in m for m in err))
 
-# A `/*` inside a STRING literal is two characters, not a comment opener.
-# Without literal state it opened a synthetic comment that swallowed the
-# ACTIVE #else arm and left the inactive one standing: clang-19 expands this
-# to -1002, and the resolver used to certify -1001 with no error.
-_, err = run('#define X_BASE (-1000)\n#if 0\n#define S "/*"\n'
+# A `/*` inside a STRING literal is two characters, not a comment opener, so
+# the ACTIVE arm here is the #else one. The old scanner opened a synthetic
+# comment, swallowed that arm, and certified -1001 with no error; clang expands
+# it to -1002, which is now what the generator returns.
+e, err = run('#define X_BASE (-1000)\n#if 0\n#define S "/*"\n'
              '#define X_STATUS (X_BASE - 1)\n#else\n'
              '#define X_STATUS (X_BASE - 2)\n#endif\n')
-check("string_literal_does_not_open_comment",
-      bool(err) and any("conditional" in m for m in err))
+check("string_literal_does_not_open_comment", not err and e[0][1] == -1002)
 
 # The same state must not break the ordinary case: a lone slash in a CHAR
 # literal is not a comment either.
 e, err = run("#define X_BASE (-1000)\n#define C '/'\n#define X_STATUS (X_BASE - 1)\n")
 check("char_literal_slash_is_not_a_comment", not err and e[0][1] == -1001)
 
-# A valid C header cannot carry a stray #endif, so one means the scanner is
-# misreading the file -- fail closed instead of clamping depth and carrying on.
+# A valid C header cannot carry a stray #endif. The scanner used to detect this
+# itself as "my model of the file diverged from the compiler's"; now the
+# compiler rejects the header outright and the generator surfaces that refusal
+# rather than certifying a value out of a file clang would not accept.
 _, err = run("#define X_BASE (-1000)\n#endif\n#define X_STATUS (X_BASE - 1)\n")
 check("refuses_unmatched_endif",
-      bool(err) and any("unmatched" in m for m in err))
+      bool(err) and any("REFUSED" in m for m in err))
 
 e, err = run("#define X_BASE (-0x3E8)\n#define X_STATUS (X_BASE - 0x1)\n")
 check("resolves_hex_literals", not err and e[0][1] == -1001)
@@ -7285,10 +7340,367 @@ check("generated_header_carries_constant",
 # of an internal allocation base becomes system-wide binary version skew.
 check("generated_header_omits_resolve_only_base",
       "TASK_EXIT_REASON_BASE" not in header)
+
+# --- s26: the compiler is the authority -------------------------------
+# Everything above proves what the EXTRACTOR proposes. These prove the step
+# that decides whether a proposal may be published at all. Without them the
+# extractor could go back to being trusted on its own word, which is exactly
+# the arrangement five adversarial rounds kept breaking.
+_CLANG, _CLANG_ERR = gua.clang_binary()
+check("clang_binary_resolves", _CLANG_ERR is None and bool(_CLANG))
+
+_ONE_FLAVOR = [{'KERNEL_TESTS': 'on', 'EXCEPT_TELEMETRY': 'on',
+                'BUILD_ALT_BOOT': 'off'}]
+
+def certify(entries, kind=None, headers=None, flavors=None):
+    return gua.certify_values(headers or [gua.TASK_H],
+                              [('probe', kind or gua.CERTIFY_SIGNED32, entries)],
+                              _CLANG, flavors=flavors)
+
+# The value the repo actually ships must certify in EVERY build flavor.
+check("certifies_real_exit_status",
+      not certify([('TASK_EXIT_EXEC_IMAGE_DESTROYED', -1001, '(-1001)')]))
+
+# A WRONG proposal is the whole point: it must fail the build, not be frozen
+# into two mutually-agreeing headers plus an ABI hash.
+check("certification_rejects_wrong_value",
+      bool(certify([('TASK_EXIT_EXEC_IMAGE_DESTROYED', -9999, '(-9999)')],
+                   flavors=_ONE_FLAVOR)))
+
+# STATUS_* is published as an unsigned hex bit pattern while the kernel spells
+# it ((NTSTATUS)0xC0000008), a NEGATIVE int32. A bare == would compare a
+# negative int against a large unsigned and prove the wrong thing, so the
+# comparison type is part of the claim.
+check("certifies_ntstatus_bit_pattern",
+      not certify([('STATUS_INVALID_HANDLE', 0xC0000008, '0xC0000008')],
+                  kind=gua.CERTIFY_UNSIGNED32, headers=[gua.NTSTATUS_H]))
+check("ntstatus_wrong_bit_pattern_rejected",
+      bool(certify([('STATUS_INVALID_HANDLE', 0xC0000009, '0xC0000009')],
+                   kind=gua.CERTIFY_UNSIGNED32, headers=[gua.NTSTATUS_H],
+                   flavors=_ONE_FLAVOR)))
+
+# The header PAIR is committed once and included by every flavor, so a constant
+# whose value depends on the flavor has no single publishable value. It must be
+# refused rather than silently frozen at whichever flavor generated it.
+def flavor_probe(source, entries):
+    fd, path = tempfile.mkstemp(suffix=".h")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(source)
+        return gua.certify_values(
+            [path], [('probe', gua.CERTIFY_SIGNED32, entries)], _CLANG)
+    finally:
+        os.unlink(path)
+
+check("refuses_flavor_dependent_value",
+      bool(flavor_probe("#ifdef KERNEL_TESTS\n#define X_FLAVOR 1\n"
+                        "#else\n#define X_FLAVOR 2\n#endif\n",
+                        [('X_FLAVOR', 1, '1')])))
+check("accepts_flavor_invariant_value",
+      not flavor_probe("#define X_STABLE 7\n", [('X_STABLE', 7, '7')]))
+
+# Every flavor axis in the Makefile must be swept; dropping one silently
+# narrows the invariance claim to the axes someone remembered.
+check("flavor_sweep_covers_every_axis",
+      len(gua.flavor_combinations()) == 12 and
+      {k for c in gua.flavor_combinations() for k in c} ==
+      {'KERNEL_TESTS', 'EXCEPT_TELEMETRY', 'BUILD_ALT_BOOT'})
+
+# The flag vector is the Makefile's to define. If this script ever starts
+# assembling its own, the translation context can drift from the kernel's
+# while every generated artifact stays self-consistent -- the exact silent
+# failure this section exists to remove.
+_FLAGS, _FLAGS_ERR = gua.kernel_cpp_flags()
+check("flag_vector_comes_from_the_makefile",
+      _FLAGS_ERR is None and '-DCONFIG_SMP' in _FLAGS and
+      '--target=x86_64-elf' in _FLAGS and '-Iinclude' in _FLAGS)
+# The five ordered -I paths are part of the context, not decoration: a subset
+# that merely looks equivalent can select a different definition.
+check("flag_vector_carries_full_include_order",
+      _FLAGS_ERR is None and
+      [f for f in _FLAGS if f.startswith('-I')] ==
+      ['-Iinclude', '-Isrc/kernel', '-Ibuild/generated', '-Isrc', '-Ibuild'])
+# Dependency-file flags would litter stray .d files under -E/-fsyntax-only.
+check("flag_vector_drops_dependency_only_flags",
+      _FLAGS_ERR is None and not ({'-MMD', '-MP'} & set(_FLAGS)))
+# Flavor overrides must actually reach the compiler, or the sweep is theatre.
+_OFF, _ = gua.kernel_cpp_flags({'KERNEL_TESTS': 'off'})
+check("flavor_override_changes_the_vector",
+      _OFF is not None and '-UKERNEL_TESTS' in _OFF and
+      '-DKERNEL_TESTS' not in _OFF)
+
+# The differential that would have caught all five s23 findings in ONE pass:
+# every constant the generator publishes, certified against the compiler in
+# every flavor. Sampling a few names proves the mechanism; this proves the
+# COVERAGE, which is the half that decays silently when a new allowlist entry
+# lands. It re-derives the tables exactly as main() does.
+_HDRS = [gua.SYSCALL_H, gua.SSDT_H, gua.NTSTATUS_H, gua.TASK_H]
+_ev, _mac, _pperr = gua.run_preprocessor(_HDRS, _FLAGS, _CLANG)
+check("full_table_preprocessor_query_succeeds", _pperr is None)
+_sys, _sys_skip = gua.propose_defines(_mac, gua.SYSCALL_H, ('SYS_', 'FAULT_'))
+_ssdt, _ssdt_skip = gua.propose_defines(_mac, gua.SSDT_H, 'SSDT_')
+_nts, _nts_skip = gua.propose_defines(_mac, gua.NTSTATUS_H, 'STATUS_')
+_exit, _exiterr = gua.resolve_exit_statuses(
+    gua.TASK_H, gua.EXIT_STATUS_EXPORT, gua.EXIT_STATUS_RESOLVE_ONLY, _mac, _ev)
+check("full_table_extraction_is_non_empty",
+      not _exiterr and len(_sys) > 20 and len(_ssdt) > 20 and len(_nts) > 3)
+# Nothing prefixed may be silently unreadable: a skipped name leaves BOTH the
+# header and the FNV fingerprint while every artifact stays self-consistent.
+check("no_prefixed_name_is_silently_skipped",
+      not _sys_skip and not _ssdt_skip and not _nts_skip)
+# Every allowlisted name must be PRESENT, not merely filtered: a rename yields
+# a shorter table rather than an error unless this is checked.
+check("every_allowlisted_name_is_present",
+      not (set(gua.SSDT_USER_ALLOWLIST) - {n for n, _v, _l in _ssdt}) and
+      not (set(gua.NTSTATUS_USER_ALLOWLIST) - {n for n, _v, _l in _nts}))
+check("every_published_constant_is_compiler_certified",
+      not gua.certify_values(_HDRS, [
+          ('syscall', gua.CERTIFY_SIGNED32, _sys),
+          ('ssdt', gua.CERTIFY_SIGNED32, _ssdt),
+          ('ntstatus', gua.CERTIFY_UNSIGNED32, _nts),
+          ('exit-status', gua.CERTIFY_SIGNED32, _exit),
+      ], _CLANG))
+# Ownership holds across the REAL include chain, not just fixture headers.
+check("no_published_name_has_two_owners",
+      not gua.check_single_ownership(
+          _ev, [n for n, _v, _l in _sys + _ssdt + _nts]))
+
+# --- s26: the gates are wired into PRODUCTION, not just callable -------
+# Every check above calls a helper directly, so deleting the call from main()
+# would leave all of them green -- and the repo's committed values are already
+# correct, so even `--check` would stay quiet. These drive main() itself and
+# assert BOTH the exit status and that no header was replaced.
+_OUT_PAIR = (gua.OUT_H, gua.OUT_KERNEL_H)
+
+def main_with(patch, argv=('--check',)):
+    """Run main() with one function replaced; returns (rc, headers_unchanged).
+
+    Diagnostics are captured rather than printed: every injection below is
+    SUPPOSED to fail, so its stderr is expected output, not suite noise. The
+    captured text is asserted on separately so a refusal that fires with no
+    explanation still counts as a failure."""
+    before = [open(p, 'rb').read() for p in _OUT_PAIR]
+    saved_argv, saved = sys.argv, {}
+    for attr, fn in patch.items():
+        saved[attr] = getattr(gua, attr)
+        setattr(gua, attr, fn)
+    sys.argv = ['gen-user-abi.py'] + list(argv)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            rc = gua.main()
+    except SystemExit as exc:
+        rc = exc.code
+    finally:
+        sys.argv = saved_argv
+        for attr, fn in saved.items():
+            setattr(gua, attr, fn)
+    after = [open(p, 'rb').read() for p in _OUT_PAIR]
+    main_with.last_stderr = buf.getvalue()
+    return (rc, before == after)
+
+
+def refused(patch, must_say):
+    """main() must exit 1, leave BOTH headers untouched, and SAY why."""
+    rc, unchanged = main_with(patch)
+    return (rc, unchanged, must_say in main_with.last_stderr) == (1, True, True)
+
+# Baseline: unpatched main() succeeds, so a failure below is the injection.
+check("main_check_passes_unpatched", main_with({}) == (0, True))
+
+# A wrong PROPOSED value must be caught by main()'s certification call. Without
+# that call this returns 0 and the original silent-wrong-value class is back.
+_real_propose = gua.propose_defines
+def _wrong_value(macros, path, prefixes):
+    entries, skipped = _real_propose(macros, path, prefixes)
+    if entries and path == gua.SYSCALL_H:
+        n, v, _l = entries[0]
+        entries = [(n, v + 1, str(v + 1))] + entries[1:]
+    return (entries, skipped)
+check("main_rejects_a_wrong_proposed_value",
+      refused({'propose_defines': _wrong_value},
+              "does not match the generated header"))
+
+# A skipped prefixed name must fail main(), not shrink the table: it would
+# otherwise drop out of the ABI fingerprint too.
+def _drop_one(macros, path, prefixes):
+    entries, skipped = _real_propose(macros, path, prefixes)
+    if entries and path == gua.SSDT_H:
+        dropped = entries[0]
+        entries = entries[1:]
+        skipped = skipped + [(dropped[0], 'ALIAS_OF_SOMETHING_ELSE')]
+    return (entries, skipped)
+check("main_refuses_a_skipped_prefixed_name",
+      refused({'propose_defines': _drop_one},
+              "not a single integer literal"))
+
+# An allowlisted name that disappeared must fail rather than yield a shorter
+# table (the shape a kernel-side rename produces).
+def _drop_allowlisted(macros, path, prefixes):
+    entries, skipped = _real_propose(macros, path, prefixes)
+    if path == gua.NTSTATUS_H:
+        entries = [e for e in entries if e[0] not in gua.NTSTATUS_USER_ALLOWLIST]
+    return (entries, skipped)
+check("main_refuses_a_missing_allowlisted_name",
+      refused({'propose_defines': _drop_allowlisted},
+              "allowlist names absent"))
+
+# Ownership must be enforced for SYS_/SSDT_/STATUS_, not only exit statuses.
+_real_pp = gua.run_preprocessor
+def _duplicate_owner(headers, flags, clang):
+    events, final, err = _real_pp(headers, flags, clang)
+    if err:
+        return (events, final, err)
+    name = next(n for n in final if n.startswith('SSDT_'))
+    return (events + [('define', name, final[name])], final, None)
+check("main_refuses_a_second_owner_for_a_published_name",
+      refused({'run_preprocessor': _duplicate_owner},
+              "Exactly one place must own"))
+
+# A compiler that fails mid-sweep must fail main(), never be treated as clean.
+def _broken_clang():
+    return ('/nonexistent/clang-for-fixture', None)
+check("main_refuses_when_the_compiler_cannot_run",
+      refused({'clang_binary': _broken_clang}, "cannot run"))
+
+# A flag vector that cannot be obtained is fail-closed too: without the kernel's
+# own flags there is no authoritative translation context to read.
+def _no_flags(flavor=None):
+    return (None, 'fixture: make print-abi-cppflags unavailable')
+check("main_refuses_without_a_flag_vector",
+      refused({'kernel_cpp_flags': _no_flags},
+              "print-abi-cppflags unavailable"))
+
+# --- s26: certification refuses vacuous and out-of-range input ---------
+# An empty assert set compiles trivially, so reporting success would tell a
+# caller that lost its tables that the ABI is certified.
+check("certification_refuses_empty_tables",
+      bool(gua.certify_values([gua.TASK_H],
+                              [('probe', gua.CERTIFY_SIGNED32, [])], _CLANG)))
+
+# Both sides of an unsigned assert are 32-bit, so an oversized proposal would
+# certify TRUNCATED while format_block emitted the untruncated literal --
+# certifying one number and publishing another.
+check("rejects_unsigned_value_wider_than_uint32",
+      gua.certify_range_error('X', 0x1C0000008, gua.CERTIFY_UNSIGNED32, 't')
+      is not None)
+check("accepts_unsigned_value_at_uint32_max",
+      gua.certify_range_error('X', 0xFFFFFFFF, gua.CERTIFY_UNSIGNED32, 't')
+      is None)
+check("rejects_negative_unsigned_value",
+      gua.certify_range_error('X', -1, gua.CERTIFY_UNSIGNED32, 't') is not None)
+check("rejects_signed_value_outside_int32",
+      gua.certify_range_error('X', 1 << 31, gua.CERTIFY_SIGNED32, 't')
+      is not None)
+check("accepts_signed_value_at_int32_bounds",
+      gua.certify_range_error('X', (1 << 31) - 1, gua.CERTIFY_SIGNED32, 't')
+      is None and
+      gua.certify_range_error('X', -(1 << 31), gua.CERTIFY_SIGNED32, 't')
+      is None)
+# An out-of-range proposal must be refused BEFORE an assert is generated, or
+# the mask in _assert_line silently makes it pass.
+check("out_of_range_value_never_reaches_an_assert",
+      bool(gua.certify_values([gua.NTSTATUS_H],
+           [('probe', gua.CERTIFY_UNSIGNED32, [('STATUS_SUCCESS', 0x1FFFFFFFF,
+                                                '0x1FFFFFFFF')])],
+           _CLANG, flavors=_ONE_FLAVOR)))
+
+# --- s26 round 2: the INVENTORY is cross-flavor, not just the values ---
+# The flavor sweep can only assert names the extraction pass discovered, so a
+# constant defined under one flavor and not another was invisible to the
+# candidates, the skip list, ownership, the header, the FNV hash AND all 12
+# certification units -- every one of which still compiled.
+def flavor_names(source, prefixes=('SYS_',)):
+    fd, path = tempfile.mkstemp(suffix=".h")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(source)
+        return gua.cross_flavor_names([path], _CLANG, prefixes)
+    finally:
+        os.unlink(path)
+
+_seen, _ferrs = flavor_names("#ifndef KERNEL_TESTS\n"
+                             "#define SYS_ONLY_WHEN_TESTS_OFF 90\n#endif\n"
+                             "#define SYS_ALWAYS 5\n")
+check("refuses_a_name_defined_in_only_some_flavors",
+      any("SYS_ONLY_WHEN_TESTS_OFF" in e and "build flavors" in e
+          for e in _ferrs))
+check("accepts_an_unconditionally_defined_name",
+      "SYS_ALWAYS" in _seen and
+      not any("SYS_ALWAYS" in e for e in _ferrs))
+check("cross_flavor_inventory_sees_every_flavor",
+      _seen.get("SYS_ALWAYS") and len(_seen["SYS_ALWAYS"]) == 12)
+# The shipped tree must itself be free of flavor-conditional ABI names.
+check("repo_has_no_flavor_conditional_abi_name",
+      not gua.cross_flavor_names(
+          _HDRS, _CLANG, ('SYS_', 'FAULT_', 'SSDT_', 'STATUS_'))[1])
+
+# --- s26 round 2: TEB/KUSD offsets are compiler-certified --------------
+# These feed the ABI hash, but were verified only by a REGEX over raw header
+# text -- which accepts an assertion inside a comment or an inactive #if arm,
+# and never notices a kernel-side assertion that was deleted. A field could
+# move while a stale textual assertion held the fingerprint constant.
+check("real_teb_and_kusd_offsets_certify",
+      not gua.certify_values(
+          [gua.TEB_HEADER, gua.KUSD_HEADER], [], _CLANG,
+          offset_families=[('teb', 'TEB', gua.TEB_LAYOUT),
+                           ('kusd', 'KUSER_SHARED_DATA', gua.KUSD_LAYOUT)]))
+_BAD_TEB = [(f, o + 8 if f == 'ClientId' else o) for f, o in gua.TEB_LAYOUT]
+check("a_moved_teb_field_fails_certification",
+      bool(gua.certify_values([gua.TEB_HEADER], [], _CLANG, flavors=_ONE_FLAVOR,
+                              offset_families=[('teb', 'TEB', _BAD_TEB)])))
+_BAD_KUSD = [(f, o + 4 if f == 'TickCount' else o) for f, o in gua.KUSD_LAYOUT]
+check("a_moved_kusd_field_fails_certification",
+      bool(gua.certify_values([gua.KUSD_HEADER], [], _CLANG,
+                              flavors=_ONE_FLAVOR,
+                              offset_families=[('kusd', 'KUSER_SHARED_DATA',
+                                                _BAD_KUSD)])))
+# main() must apply BOTH, not merely be able to.
+_real_certify = gua.certify_values
+def _bad_layout_probe(headers, families, clang, flavors=None,
+                      offset_families=None):
+    # Bind the REAL function: calling gua.certify_values here would re-enter
+    # this patched stand-in.
+    return _real_certify(headers, families, clang, flavors,
+                         [('teb', 'TEB', _BAD_TEB)])
+check("main_certifies_the_hashed_struct_offsets",
+      refused({'certify_values': _bad_layout_probe}, "offset does not match"))
+
+# --- s26: propose_defines skip contract --------------------------------
+# The three body shapes that are NOT publishable integers must be REPORTED as
+# skips rather than quietly omitted.
+_SKIP_MACROS = {'SYS_ALIAS': 'SYS_OTHER', 'SYS_EMPTY': '',
+                'SYS_FUNCLIKE': None, 'SYS_GOOD': '7',
+                'SYS_TWO_LITERALS': '(1 + 2)'}
+_kept, _skips = gua.propose_defines(_SKIP_MACROS, gua.SYSCALL_H, 'SYS_')
+check("skip_contract_keeps_only_plain_integers",
+      [n for n, _v, _l in _kept] == ['SYS_GOOD'])
+check("skip_contract_reports_alias_empty_funclike_and_multiliteral",
+      {n for n, _b in _skips} ==
+      {'SYS_ALIAS', 'SYS_EMPTY', 'SYS_FUNCLIKE', 'SYS_TWO_LITERALS'})
+check("skip_contract_handles_an_empty_macro_map",
+      gua.propose_defines({}, gua.SYSCALL_H, 'SYS_') == ([], []))
+
+# clang absent is an explicit REFUSAL. A silent skip would turn the ABI drift
+# gate off on exactly the hosts least likely to notice, and a fallback to the
+# old scanner would re-open the class this work closed.
+_saved = os.environ.get('ABI_CLANG')
+os.environ['ABI_CLANG'] = 'clang-does-not-exist-for-this-fixture'
+try:
+    _p, _r = gua.clang_binary()
+    check("absent_compiler_is_a_named_refusal",
+          _p is None and _r is not None and 'not found on PATH' in _r)
+    check("absent_compiler_names_the_remedy",
+          _r is not None and 'setup.sh' in _r and 'ABI_CLANG' in _r)
+finally:
+    if _saved is None:
+        del os.environ['ABI_CLANG']
+    else:
+        os.environ['ABI_CLANG'] = _saved
 PYGUA
 )
 GUA_OK=$(echo "$GUA_OUT" | grep -c "^OK ")
-GUA_EXPECT=39
+GUA_EXPECT=87
 if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
     echo "$GUA_OUT" | grep "^OK " | while IFS= read -r line; do
         [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi: $line"

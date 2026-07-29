@@ -1149,6 +1149,20 @@ test: all
 check-abi:
 	@python3 scripts/gen-user-abi.py --check
 
+## print-abi-cppflags: emit the AUTHORITATIVE preprocessing vector for one kernel
+## TU, one token per line. scripts/gen-user-abi.py reads kernel constants through
+## clang, and it must read them in the SAME translation context the kernel is
+## compiled in -- so the flag vector has exactly one definition, here, rather
+## than a hand-assembled subset inside the generator that silently drifts the day
+## a new -D or -I lands. The generator re-queries this per build flavor by
+## passing KERNEL_TESTS / EXCEPT_TELEMETRY / BUILD_ALT_BOOT through, so the
+## Makefile stays the sole author of what each flavor means. Deliberately has NO
+## prerequisites: it must answer on a clean tree, before anything is built,
+## because check-abi runs ahead of compilation.
+.PHONY: print-abi-cppflags
+print-abi-cppflags:
+	@printf '%s\n' $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -I$(BUILD_DIR)
+
 ## Per-category test targets
 test-mm: all
 	@bash scripts/test.sh SUITE=mm

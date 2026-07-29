@@ -32,8 +32,12 @@
 # =============================================================================
 
 import argparse
+import concurrent.futures
+import itertools
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -161,61 +165,517 @@ DEFINE_NAME_RE = re.compile(
 INT_LITERAL_RE = re.compile(r'(0x[0-9A-Fa-f]+|[0-9]+)')
 
 
-def parse_defines(path: str, name_prefix: str) -> list[tuple[str, int, str]]:
-    """Parse `#define <NAME> <integer>` lines whose name starts with one of
-    the prefixes. Returns [(name, value_int, original_literal)] preserving
-    the order they appear in the source file so the generated header is
-    readable."""
-    if isinstance(name_prefix, str):
-        prefixes = (name_prefix,)
+# ---- Preprocessor-backed extraction -------------------------------------
+#
+# Every constant this generator emits is read through clang, in the SAME
+# translation context the kernel is compiled in, and then CERTIFIED by clang
+# before it is written. That two-step split is the whole design, and the split
+# is what removes the bug class rather than narrowing it:
+#
+#   EXTRACT proposes a candidate value. It is allowed to be a heuristic.
+#   CERTIFY compiles `_Static_assert(NAME == <candidate>)` against the real
+#   headers, so a wrong candidate is a BUILD FAILURE, never a silent wrong
+#   number.
+#
+# Before this, extraction WAS the answer: a hand-written scanner reimplemented
+# C translation phases 2-4 in Python (splicing, comment removal, conditional
+# tracking) and whatever it concluded went straight into both generated headers
+# and the ABI hash. Five adversarial rounds each found a shape where that
+# scanner and clang disagreed, and every disagreement had the same shape --
+# both generated headers agree with each other, `make check-abi` passes, the
+# crt0 fingerprint matches, and the running kernel uses a different number.
+# Refusing the shapes we thought of is a weaker contract than being checked by
+# the compiler, which is why the refusals are no longer the load-bearing part.
+#
+# Neither `-dM` nor `-E` hands back an evaluated value -- `-dM` prints the
+# unexpanded body `(TASK_EXIT_REASON_BASE - 1)` and full `-E` expands that to
+# the TEXT `((-1000) - 1)`, not to `-1001`. Any generator that stops at the
+# preprocessor is therefore still doing C arithmetic in Python. `_Static_assert`
+# is what makes the compiler compute the number.
+
+CLANG_ENV = 'ABI_CLANG'
+CLANG_DEFAULT = 'clang-19'
+
+# Every preprocessor-visible build flavor axis, mirrored from the Makefile
+# (KERNEL_TESTS / EXCEPT_TELEMETRY / BUILD_ALT_BOOT). The generated header pair
+# is committed ONCE and shared by every flavor, so a constant whose value
+# depends on which flavor the kernel was built with cannot be represented in it
+# at all -- that is a refusal, not a value. The axes are named here but their
+# MEANING (which -D each state implies) stays in the Makefile: this script asks
+# `make print-abi-cppflags` per combination rather than assembling flags itself.
+FLAVOR_AXES = (
+    ('KERNEL_TESTS', ('on', 'off')),
+    ('EXCEPT_TELEMETRY', ('on', 'off')),
+    ('BUILD_ALT_BOOT', ('off', 'diagnostic', 'compatible')),
+)
+
+# -MMD/-MP/-MD/-M/-MM make the compiler WRITE dependency files as a side effect;
+# they carry no translation semantics, and under -E/-fsyntax-only they would
+# litter stray .d files next to the source. Dropped for that reason and that
+# reason only -- anything that can change what the preprocessor sees is kept,
+# including flags that look irrelevant to a header query (-O2, -mcmodel=kernel),
+# because "obviously irrelevant" is the judgement call this design refuses to
+# make on the compiler's behalf.
+DEP_ONLY_FLAGS = frozenset({'-MMD', '-MP', '-MD', '-M', '-MM'})
+
+# `#define NAME body` / `#undef NAME` as they appear in `clang -dD -E` output.
+# -dD emits one line per DIRECTIVE PROCESSED, in order, so a name defined twice
+# appears twice and an #undef is visible -- which is what lets ownership be
+# checked. -dM (final state only) cannot see either.
+DD_DEFINE_RE = re.compile(r'^#define\s+([A-Za-z_][A-Za-z0-9_]*)(\(|\s+|$)(.*)$')
+DD_UNDEF_RE = re.compile(r'^#undef\s+([A-Za-z_][A-Za-z0-9_]*)\s*$')
+
+
+def clang_binary() -> tuple:
+    """Locate the compiler. Returns (path, None) or (None, reason).
+
+    Absence is an explicit, named REFUSAL rather than a skip. `make check-abi`
+    needed no compiler before this change, so this is a real new requirement,
+    and the alternative was worse: a silent skip turns the ABI drift gate OFF on
+    exactly the hosts least likely to notice, and a fallback to the old scanner
+    would re-open the class this function exists to close. Every host that can
+    BUILD this repo already has clang-19 (setup.sh installs it as a required
+    tool), so the requirement costs nothing on any host that could act on the
+    answer anyway."""
+    name = os.environ.get(CLANG_ENV) or CLANG_DEFAULT
+    path = shutil.which(name)
+    if path:
+        return (path, None)
+    return (None, f'{name} not found on PATH. The generator reads kernel '
+                  f'constants THROUGH the compiler, so without it there is no '
+                  f'certified answer to emit -- and skipping would silently '
+                  f'disable the ABI drift gate. Install clang-19 (bash '
+                  f'scripts/setup.sh), or set {CLANG_ENV}=<compiler> if yours '
+                  f'is named differently.')
+
+
+def flavor_combinations() -> list:
+    """Every supported build-flavor combination, as {VAR: value} dicts."""
+    names = [n for n, _ in FLAVOR_AXES]
+    return [dict(zip(names, combo))
+            for combo in itertools.product(*[v for _, v in FLAVOR_AXES])]
+
+
+# One `make` round-trip is ~0.13s of pure process startup, and both the flavor
+# sweep and the fixture suite ask for the same vectors repeatedly within a
+# single process. The Makefile cannot change underneath a running generator, so
+# the answer is cached per flavor for the life of the process.
+#
+# Unlocked on purpose. The flavor sweep reads this from several threads, but
+# each key maps to a deterministic value, so the only race is two threads
+# recomputing the SAME vector and storing identical results; `dict` insertion is
+# atomic under the GIL, so no partially-built entry is ever observable. A lock
+# here would serialize the sweep it exists to speed up.
+_FLAGS_CACHE: dict = {}
+
+
+def kernel_cpp_flags(flavor: dict = None) -> tuple:
+    """Ask the Makefile for the authoritative flag vector. Returns
+    (flags, None) or (None, reason).
+
+    The generator deliberately does NOT assemble this list. A hand-picked
+    subset is how the context drifts: the real compile line carries five
+    ordered -I paths and three flavor -D flags, and a subset that merely LOOKS
+    equivalent can select a different definition while every generated artifact
+    stays self-consistent."""
+    key = tuple(sorted((flavor or {}).items()))
+    hit = _FLAGS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    cmd = ['make', '-s', 'print-abi-cppflags']
+    for var, value in sorted((flavor or {}).items()):
+        cmd.append(f'{var}={value}')
+    try:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True,
+                              text=True, check=False)
+    except OSError as exc:
+        return (None, f'cannot run `make print-abi-cppflags`: {exc}')
+    if proc.returncode != 0:
+        return (None, f'`{" ".join(cmd)}` failed (rc={proc.returncode}): '
+                      f'{proc.stderr.strip()}')
+    flags = [tok for tok in proc.stdout.split()
+             if tok and tok not in DEP_ONLY_FLAGS]
+    if not flags:
+        return (None, '`make print-abi-cppflags` produced no flags; the '
+                      'Makefile target is missing or was emptied')
+    _FLAGS_CACHE[key] = (flags, None)
+    return (flags, None)
+
+
+def _probe_tu(headers) -> str:
+    """A translation unit that includes the allowlisted headers and nothing
+    else, so what the query sees is what the kernel sees."""
+    return ''.join(f'#include "{h}"\n' for h in headers)
+
+
+def run_preprocessor(headers, flags, clang) -> tuple:
+    """Run `clang -dD -E` over `headers`. Returns (events, final, None) or
+    (None, None, reason), where events is an ordered [(kind, name, body)] of
+    every #define/#undef the preprocessor PROCESSED and final maps each name to
+    the body still in effect at the end."""
+    fd, tu = tempfile.mkstemp(suffix='.c', prefix='abi-probe.')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(_probe_tu(headers))
+        cmd = [clang] + list(flags) + ['-dD', '-E', tu]
+        try:
+            proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True,
+                                  text=True, check=False)
+        except OSError as exc:
+            return (None, None, f'cannot run the preprocessor: {exc}')
+        if proc.returncode != 0:
+            detail = proc.stderr.strip().splitlines()
+            head = '; '.join(detail[:3]) if detail else 'no diagnostic'
+            return (None, None, f'the preprocessor REFUSED these headers '
+                                f'(rc={proc.returncode}): {head}')
+    finally:
+        os.unlink(tu)
+    events = []
+    final = {}
+    for line in proc.stdout.splitlines():
+        m = DD_UNDEF_RE.match(line)
+        if m:
+            events.append(('undef', m.group(1), None))
+            final.pop(m.group(1), None)
+            continue
+        m = DD_DEFINE_RE.match(line)
+        if not m:
+            continue
+        name, sep, rest = m.group(1), m.group(2), m.group(3)
+        if sep == '(':
+            # Function-like macro: never an ABI number, and its body is not a
+            # constant expression. Recorded as an event so a name that is both
+            # object-like and function-like still trips the ownership check.
+            events.append(('define', name, None))
+            final[name] = None
+            continue
+        body = rest.strip()
+        events.append(('define', name, body))
+        final[name] = body
+    return (events, final, None)
+
+
+def check_single_ownership(events, names) -> list:
+    """Refuse any allowlisted name the preprocessor saw defined more than once,
+    including a redefinition that is IDENTICAL and a #undef followed by a new
+    definition.
+
+    `-Werror=macro-redefined` does not cover this: clang accepts an identical
+    redefinition silently, and accepts #undef + redefine silently, reporting
+    only the surviving value. Both shapes exit 0. The property worth keeping is
+    not "clang did not complain" but "exactly one place in the kernel owns this
+    number" -- a constant with two owners is one refactor away from the two
+    disagreeing, and the generator would faithfully certify whichever one won
+    the include race."""
+    # Indexed once rather than rescanned per name: main() checks every published
+    # family (650+ names) against the full event stream, and the naive nested
+    # scan is quadratic over an input that grows with every kernel header.
+    wanted = set(names)
+    defines: dict = {}
+    undeffed = set()
+    for kind, name, body in events:
+        if name not in wanted:
+            continue
+        if kind == 'undef':
+            undeffed.add(name)
+        else:
+            defines.setdefault(name, []).append(body)
+    errors = []
+    for name in names:
+        bodies = defines.get(name, [])
+        if len(bodies) <= 1:
+            continue
+        shape = ('#undef followed by a new definition' if name in undeffed else
+                 'defined again without an intervening #undef')
+        distinct = {b for b in bodies if b is not None}
+        same = ' (the definitions are IDENTICAL, which clang accepts silently)' \
+            if len(distinct) <= 1 else ''
+        errors.append(f'{name} has {len(bodies)} definitions in the kernel '
+                      f'translation context -- {shape}{same}. Exactly one '
+                      f'place must own an ABI number; collapse them or drop '
+                      f'the name from the allowlist')
+    return errors
+
+
+# Each emitted family states how the number it publishes must compare against
+# the kernel constant. The comparison TYPE is part of the claim: STATUS_* is a
+# 32-bit bit pattern published as unsigned hex while the kernel spells it
+# `((NTSTATUS)0xC0000008)` (a negative int32), so a bare `==` would compare a
+# negative int against a large unsigned and prove the wrong thing.
+CERTIFY_UNSIGNED32 = 'unsigned32'
+CERTIFY_SIGNED32 = 'signed32'
+
+
+UINT32_MAX = (1 << 32) - 1
+
+
+def certify_range_error(name: str, value: int, kind: str, tag: str):
+    """Refuse a proposed value that does not FIT the type it will be published
+    and compared as. Returns a reason, or None.
+
+    Without this the certification could pass while the header lied. Both sides
+    of an unsigned assertion are 32-bit -- the kernel expression is cast to
+    `unsigned int` and the proposal would be masked -- so a malformed
+    `((NTSTATUS)0x1C0000008)` certifies as `0xC0000008`, while `format_block`
+    emits the ORIGINAL unmasked `0x1C0000008` into the user header. The
+    generator would then have certified one number and published a different
+    one, which is worse than either failing or being wrong consistently."""
+    if kind == CERTIFY_UNSIGNED32:
+        if not 0 <= value <= UINT32_MAX:
+            return (f'{tag}: {name} = {value:#x} does not fit uint32; it would '
+                    f'be certified truncated to {value & 0xFFFFFFFF:#x} while '
+                    f'the header published the untruncated literal')
+    elif not INT32_MIN <= value <= INT32_MAX:
+        return (f'{tag}: {name} = {value} does not fit int32; C would truncate '
+                f'it on the way to ring 3, so the generated header would not '
+                f'match the running kernel')
+    return None
+
+
+def _assert_line(name: str, value: int, kind: str, tag: str) -> str:
+    # Callers must have run certify_range_error() first: the masks below are
+    # then identities, not silent truncation.
+    if kind == CERTIFY_UNSIGNED32:
+        lhs = f'((unsigned int)({name}))'
+        rhs = f'{value & 0xFFFFFFFF}u'
     else:
-        prefixes = tuple(name_prefix)
-    out: list[tuple[str, int, str]] = []
+        lhs = f'((int)({name}))'
+        rhs = f'({value})'
+    return (f'_Static_assert({lhs} == {rhs}, '
+            f'"{tag}: {name} does not match the generated header");')
+
+
+def _offset_assert_line(struct: str, field: str, off: int) -> str:
+    return (f'_Static_assert(__builtin_offsetof({struct}, {field}) == {off}, '
+            f'"{struct}.{field} offset does not match the ABI hash input");')
+
+
+def cross_flavor_names(headers, clang, prefixes, flavors=None) -> tuple:
+    """Preprocess `headers` in EVERY flavor and return (names_by_flavor,
+    errors), refusing any prefixed name whose PRESENCE depends on the flavor.
+
+    Extracting once in the default flavor is not enough, and the gap is subtle:
+    the flavor sweep can only assert names the extraction pass discovered, so a
+    constant defined only under (say) `KERNEL_TESTS=off` is absent from the
+    candidates, the skip list, the ownership check, the generated header, the
+    FNV hash AND every certification unit -- and all 12 units still compile,
+    because nothing ever asks about it. A cross-flavor guarantee is only worth
+    as much as the INVENTORY behind it, so the inventory is taken per flavor
+    too."""
+    combos = flavors if flavors is not None else flavor_combinations()
+
+    def probe(flavor):
+        flags, reason = kernel_cpp_flags(flavor)
+        if reason:
+            return (flavor, None, reason)
+        _events, macros, reason = run_preprocessor(headers, flags, clang)
+        return (flavor, macros, reason)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(combos)) as pool:
+        results = list(pool.map(probe, combos))
+
+    seen: dict = {}
+    every = set()
+    for flavor, macros, reason in results:
+        if reason:
+            return ({}, [reason])
+        desc = ' '.join(f'{k}={v}' for k, v in sorted(flavor.items()))
+        every.add(desc)
+        for name in macros:
+            if name.startswith(prefixes):
+                seen.setdefault(name, set()).add(desc)
+    errors = []
+    for name in sorted(seen):
+        missing = every - seen[name]
+        if missing:
+            errors.append(f'{name} carries an ABI prefix but is defined in only '
+                          f'{len(seen[name])} of {len(every)} build flavors '
+                          f'(absent under: {"; ".join(sorted(missing))}). The '
+                          f'generated header pair is shared by every flavor, so '
+                          f'a name present in only some of them has nothing to '
+                          f'publish -- make it unconditional or drop the prefix')
+    return (seen, errors)
+
+
+def certify_values(headers, families, clang, flavors=None,
+                   offset_families=None) -> list:
+    """Compile `_Static_assert(NAME == <emitted value>)` for every constant the
+    generator is about to publish, once per build flavor. Returns [] when the
+    compiler certifies every value in every flavor.
+
+    This is the step that makes the COMPILER the authority. Extraction upstream
+    only has to PROPOSE a number; if it proposes a wrong one -- because a body
+    was spliced, hidden behind a comment, wrapped in a cast, or built from an
+    expression the proposer read badly -- the assert fails and the build stops.
+
+    Running it across every flavor also answers a question a single query
+    cannot: the header PAIR is committed once and included by every build, so a
+    constant that is 5 under one flavor and 6 under another has no single
+    correct value to publish. Such a constant fails here rather than being
+    silently frozen at whichever flavor happened to generate it. A name that is
+    undefined in some flavor fails the same way, as an unknown identifier.
+
+    `families` is [(tag, kind, [(name, value, literal)])]."""
+    asserts = []
+    range_errors = []
+    for tag, kind, entries in families:
+        for name, value, _literal in entries:
+            reason = certify_range_error(name, value, kind, tag)
+            if reason:
+                range_errors.append(reason)
+                continue
+            asserts.append(_assert_line(name, value, kind, tag))
+    # Struct offsets are hash inputs too, so they get the same treatment. Before
+    # this they were verified by REGEX over raw header text, which accepts an
+    # assertion sitting in a comment or in an inactive #if arm and never notices
+    # a kernel-side assertion that was deleted -- so a field could move while a
+    # stale textual assertion held the fingerprint constant, and the kernel and
+    # user headers would agree with each other all the way through the runtime
+    # handshake. __builtin_offsetof compiled in the real translation context
+    # cannot be fooled by either.
+    for tag, struct, entries in (offset_families or []):
+        for field, off in entries:
+            asserts.append(_offset_assert_line(struct, field, off))
+    if range_errors:
+        return range_errors
+    if not asserts:
+        # An empty assert set would compile trivially and report success, so a
+        # caller that lost its tables would be told the ABI is certified. There
+        # is no legitimate call with nothing to certify.
+        return ['nothing to certify: the constant tables are empty, so a '
+                'successful compile would prove nothing about the ABI']
+    source = _probe_tu(headers) + '\n'.join(asserts) + '\n'
+    combos = flavors if flavors is not None else flavor_combinations()
+
+    # The flavor sweep is a dozen independent subprocess round-trips and this
+    # runs inside `check-abi`, on the critical path of every build. Serially it
+    # is ~2.2s, of which the `make` queries alone are ~1.5s -- pure process
+    # startup, not work. They share nothing, so they run concurrently; threads
+    # are the right tool because every one of them is blocked in wait(2).
+    def certify_one(flavor):
+        desc = ' '.join(f'{k}={v}' for k, v in sorted(flavor.items()))
+        flags, reason = kernel_cpp_flags(flavor)
+        if reason:
+            return [reason]
+        fd, tu = tempfile.mkstemp(suffix='.c', prefix='abi-certify.')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(source)
+            try:
+                proc = subprocess.run([clang] + flags + ['-fsyntax-only', tu],
+                                      cwd=REPO_ROOT, capture_output=True,
+                                      text=True, check=False)
+            except OSError as exc:
+                return [f'cannot run the compiler for certification: {exc}']
+        finally:
+            os.unlink(tu)
+        if proc.returncode == 0:
+            return []
+        found = [f'[{desc}] {line.strip()}' for line in proc.stderr.splitlines()
+                 if 'static assertion failed' in line or 'error:' in line]
+        return found or [f'[{desc}] the certification unit failed to compile '
+                         f'(rc={proc.returncode}); the emitted values cannot '
+                         f'be confirmed against the kernel in this flavor']
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(combos)) as pool:
+        # Ordered map, so the reported failures do not shuffle between runs.
+        results = list(pool.map(certify_one, combos))
+    return [e for group in results for e in group]
+
+
+def source_define_order(path: str) -> list:
+    """Names in the order they are `#define`d in the SOURCE file.
+
+    Used for PRESENTATION only -- the generated header stays readable and
+    diffable against the kernel header it mirrors. Values never come from here:
+    `-dD` output is emitted in include-processing order across the whole
+    translation unit, which is not the order a human reads one header in."""
+    order = []
+    seen = set()
     with open(path, 'r', encoding='utf-8') as f:
         for line in f:
-            m = DEFINE_NAME_RE.match(line)
-            if not m:
-                continue
-            name = m.group(1)
-            if not name.startswith(prefixes):
-                continue
-            body = m.group(2)
-            lits = INT_LITERAL_RE.findall(body)
-            # Accept exactly one integer literal in the body so
-            # `#define FOO  (BAR + 1)` (zero literals) and
-            # `#define FOO  (A | B)` (multiple names) are skipped --
-            # user header stays a flat integer table.
-            if len(lits) != 1:
-                continue
-            literal = lits[0]
-            try:
-                value = int(literal, 0)
-            except ValueError:
-                continue
-            out.append((name, value, literal))
-    return out
+            m = re.match(r'^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)', line)
+            if m and m.group(1) not in seen:
+                seen.add(m.group(1))
+                order.append(m.group(1))
+    return order
+
+
+def propose_defines(macros: dict, path: str, name_prefix) -> list:
+    """Propose (name, value, literal) for every allowlisted-prefix name the
+    PREPROCESSOR reported, in source order.
+
+    This is a candidate proposal, not a verdict: `certify_values` compiles each
+    number against the kernel headers afterwards, so a body this function reads
+    badly fails the build instead of being published. That is why it is allowed
+    to stay a simple single-literal rule -- the rule no longer has to be right
+    about C, it only has to be right often enough to be useful, and wrong is
+    caught rather than shipped.
+
+    Bodies come from the preprocessor rather than from a regex over the file, so
+    conditional arms, splices, comments and include order are already resolved
+    the way the kernel build resolves them."""
+    prefixes = (name_prefix,) if isinstance(name_prefix, str) else tuple(name_prefix)
+    order = source_define_order(path)
+    rank = {name: i for i, name in enumerate(order)}
+    candidates = []
+    skipped = []
+    for name, body in macros.items():
+        if not name.startswith(prefixes):
+            continue
+        if body is None:
+            # Function-like or empty: never a publishable ABI number. Reported
+            # rather than dropped -- see the skip contract below.
+            skipped.append((name, '<function-like or empty>'))
+            continue
+        lits = INT_LITERAL_RE.findall(body)
+        # Exactly one integer literal keeps the generated header a flat integer
+        # table: `(BAR + 1)` (a symbol plus a literal) and `(A | B)` (no
+        # literal) are deliberately NOT published rather than guessed at.
+        if len(lits) != 1:
+            skipped.append((name, body))
+            continue
+        literal = lits[0]
+        try:
+            value = int(literal, 0)
+        except ValueError:
+            skipped.append((name, body))
+            continue
+        candidates.append((name, value, literal))
+    # Names absent from this header (reached through an include) sort after the
+    # ones a reader can find in it, alphabetically so the output is stable.
+    candidates.sort(key=lambda e: (rank.get(e[0], len(order)), e[0]))
+    skipped.sort()
+    # The SKIP list is returned, never swallowed. A name carrying an ABI prefix
+    # that this rule cannot read is not a harmless omission: main() feeds these
+    # tables to BOTH the generated header and the FNV fingerprint, so a dropped
+    # name silently leaves the hash as well -- `#define SSDT_NtFoo SSDT_NtBar`
+    # would vanish from the contract while every artifact stayed self-consistent,
+    # which is the exact failure shape this section exists to remove. Nothing is
+    # skipped in the tree today (72/72 SYS_+FAULT_, 479/479 SSDT_, 103/103
+    # STATUS_), so refusing on skip costs nothing now and catches the first one.
+    return (candidates, skipped)
 
 
 # ---- Signed / expression-valued constants -------------------------------
 #
-# parse_defines() above extracts the first UNSIGNED integer literal out of a
+# propose_defines() above extracts the first UNSIGNED integer literal out of a
 # define body, which is correct for every table it reads (SYS_*, FAULT_*,
 # SSDT_*, STATUS_* are all non-negative). It is actively WRONG for the kernel
 # exit-status block: `(-1000)` would resolve to +1000 and
 # `(TASK_EXIT_REASON_BASE - 1)` to +1 -- silently incorrect values rather than
 # omissions, which is a worse failure than the hand-copy drift this exists to
-# close. Exit statuses therefore get their own parser, their own restricted
-# expression grammar, and a fail-closed contract.
+# close. Exit statuses therefore keep their own restricted expression grammar
+# and their own fail-closed contract on top of the preprocessor's answer.
+#
+# What used to live here as well -- splice_logical_lines() and
+# strip_c_comments(), a Python reimplementation of C translation phases 2 and 3
+# -- is GONE. Each was correct, each was paid for by an adversarial round that
+# found a shape it got wrong, and each was still only as good as the shapes
+# anyone had thought of. clang performs those phases now, so keeping a second
+# implementation around would preserve exactly the drift risk this section
+# exists to delete.
 
-# `#define NAME BODY` over a COMMENT-STRIPPED line, so BODY is the whole
-# logical body. Matching the raw line and stopping at the first `/*` would
-# truncate `(BASE - 1) /* why */ + 2` to `(BASE - 1)` and resolve it to -1001
-# while the kernel compiles -999 -- and both generated headers plus the ABI
-# hash would then agree on a value ring 0 never uses. Function-like macros are
-# rejected by the `(?!\()` guard, same as DEFINE_NAME_RE.
-EXIT_DEFINE_RE = re.compile(
-    r'^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)(?!\()\s+(.*)$'
-)
 
 # Exit statuses travel as int32_t (`void task_exit(int32_t status)`), so a
 # value the resolver can compute in Python's unbounded integers but C would
@@ -231,114 +691,6 @@ EXIT_EXPR_RE = re.compile(
     r'^([A-Za-z_][A-Za-z0-9_]*|[+-]?(?:0x[0-9A-Fa-f]+|[0-9]+))'
     r'(?:\s*([+-])\s*(0x[0-9A-Fa-f]+|[0-9]+))?$'
 )
-
-COND_OPEN_RE  = re.compile(r'^\s*#\s*(?:if|ifdef|ifndef)\b')
-COND_CLOSE_RE = re.compile(r'^\s*#\s*endif\b')
-
-
-def splice_logical_lines(text: str) -> list:
-    """Join backslash-newline continuations into LOGICAL lines, as C
-    translation phase 2 does. Returns [(lineno, logical_line)] where lineno is
-    the physical line the logical line STARTS on, so diagnostics still point
-    somewhere useful.
-
-    This runs BEFORE comment stripping and BEFORE directive matching, and the
-    order is load-bearing rather than cosmetic. C splices first, so
-
-        // trailing comment \\
-        #endif
-
-    puts that `#endif` INSIDE the comment; a scanner working on physical lines
-    sees a real directive and closes a conditional that is actually still open,
-    then certifies the enclosed define as unconditional. Verified against
-    clang-19 -E: for exactly that shape the compiler leaves the constant
-    UNDEFINED while a physical-line scanner resolved it to a concrete value.
-    The same phase also makes `X_STA\\` + `TUS` one identifier, which a
-    physical-line scanner never sees as a definition at all."""
-    out = []
-    buf: list = []
-    start = None
-    for lineno, raw in enumerate(text.splitlines(), 1):
-        if start is None:
-            start = lineno
-        # clang splices a backslash followed by TRAILING WHITESPACE too (it
-        # warns, but it splices), so matching only a FINAL `\` reopens the very
-        # bypass this function exists to close: `// c \   ` still absorbs the
-        # next line's `#endif`.
-        trimmed = raw.rstrip()
-        if trimmed.endswith('\\'):
-            # The backslash-newline pair is DELETED, not replaced by a space --
-            # that is what lets a split identifier rejoin.
-            buf.append(trimmed[:-1])
-            continue
-        buf.append(raw)
-        out.append((start, ''.join(buf)))
-        buf = []
-        start = None
-    if buf:
-        out.append((start, ''.join(buf)))
-    return out
-
-
-def strip_c_comments(line: str, in_block: bool) -> tuple:
-    """Remove C comments from ONE physical line, given whether the line starts
-    inside a block comment. Returns (clean_line, still_in_block).
-
-    This has to run before anything else looks at the line, because C strips
-    comments BEFORE it recognises preprocessing directives. Three shapes
-    otherwise slip past the scanner, and all three end with the generated
-    headers agreeing with each other about a value the kernel does not use:
-
-      - `/* gate */ #ifdef KERNEL_TESTS` is a real conditional opener that a
-        directive regex anchored at `^\\s*#` never sees
-      - an `#endif` spelled inside a block comment would wrongly close a
-        conditional that is still open
-      - `#define X (BASE - 1) /* why */ + 2` has LIVE tokens after the comment
-
-    A comment is replaced by a space, as the C preprocessor does, so tokens on
-    either side of it stay separate."""
-    out = []
-    i, n = 0, len(line)
-    quote = ''
-    while i < n:
-        ch = line[i]
-        if in_block:
-            end = line.find('*/', i)
-            if end < 0:
-                break
-            in_block = False
-            out.append(' ')
-            i = end + 2
-            continue
-        if quote:
-            # Inside a string or char literal, `/*` is just two characters.
-            # Without this state a `"/*"` opened a synthetic block comment that
-            # swallowed the ACTIVE arm of an #if/#else and left the inactive one
-            # standing -- verified against clang-19, which expanded the constant
-            # to a different value than the resolver certified.
-            out.append(ch)
-            if ch == '\\' and i + 1 < n:
-                out.append(line[i + 1])
-                i += 2
-                continue
-            if ch == quote:
-                quote = ''
-            i += 1
-            continue
-        if ch in '"\'':
-            quote = ch
-            out.append(ch)
-            i += 1
-            continue
-        if line.startswith('//', i):
-            break
-        if line.startswith('/*', i):
-            in_block = True
-            i += 2
-            continue
-        out.append(ch)
-        i += 1
-    return (''.join(out), in_block)
 
 
 def parse_int_literal(text: str) -> tuple:
@@ -428,75 +780,61 @@ def resolve_exit_expr(body: str, values: dict, known: tuple):
     return (value, None)
 
 
-def parse_exit_status_defines(path: str, names: tuple) -> tuple:
-    """Collect the raw body of `#define <NAME>` for every NAME in `names`,
-    refusing every shape the generator cannot certify against the kernel the
-    build actually compiles:
+def parse_exit_status_defines(path: str, names: tuple, macros: dict = None,
+                              events: list = None) -> tuple:
+    """Collect the body of `#define <NAME>` for every NAME in `names` as the
+    PREPROCESSOR resolved it, refusing what the generator cannot certify:
 
-      - defined inside ANY preprocessor conditional. The generator does not
-        evaluate the build configuration, so with `#if`/`#else` arms it would
-        pick a physical definition rather than the ACTIVE one -- and both
-        generated headers would then agree with each other while the kernel ran
-        a different value, defeating check-abi and the crt0 handshake at once.
-        Not hypothetical: task.h already carries 14 `#ifdef KERNEL_TESTS`
-        blocks, one of them directly below the exit-status block.
-      - defined more than once, for the same reason.
+      - defined more than once in the translation context (including an
+        identical redefinition, and #undef followed by a new definition).
+        Exactly one place must own an ABI number.
       - absent entirely. A kernel-side rename must fail the generator loudly,
         not silently drop the constant out of the user header.
 
+    Conditional definitions are no longer refused HERE, and that is an upgrade
+    rather than a relaxation. The old scanner refused anything inside `#if`
+    because it could not evaluate the build configuration and would otherwise
+    have picked a physical arm rather than the ACTIVE one. clang picks the arm
+    the kernel actually compiles, so a conditional definition now resolves
+    CORRECTLY -- and a definition whose value genuinely differs between build
+    flavors is caught downstream by `certify_values`, which compiles the emitted
+    number against every flavor. Net: the shapes that used to be refused because
+    they were unreadable are now read correctly, and the shapes that are
+    genuinely unpublishable still fail the build.
+
     Returns (bodies_by_name, errors)."""
-    bodies: dict = {}
-    errors: list = []
-    flagged: set = set()
-    depth = 0
-    in_block = False
-    with open(path, 'r', encoding='utf-8') as f:
-        source = f.read()
-    # Phase order mirrors the C preprocessor: splice continuations, THEN strip
-    # comments, THEN recognise directives. Any other order lets a directive
-    # hide behind a comment, or a comment swallow a directive.
-    for lineno, raw in splice_logical_lines(source):
-        line, in_block = strip_c_comments(raw, in_block)
-        if COND_OPEN_RE.match(line):
-            depth += 1
-            continue
-        if COND_CLOSE_RE.match(line):
-            if depth == 0:
-                # A valid C header cannot have a stray #endif, so seeing one
-                # means THIS scanner's model of the file diverged from the
-                # compiler's. Fail closed rather than clamp to zero and carry
-                # on certifying values from a file we are misreading.
-                errors.append(f'unmatched #endif at {path}:{lineno}; the '
-                              f'generator is misreading this file and will '
-                              f'not certify a value from it')
-                break
-            depth -= 1
-            continue
-        m = EXIT_DEFINE_RE.match(line)
-        if not m or m.group(1) not in names:
-            continue
-        name = m.group(1)
-        if depth > 0:
-            flagged.add(name)
-            errors.append(f'{name} ({path}:{lineno}) is defined inside a '
-                          f'preprocessor conditional; the generator cannot '
-                          f'know which arm the kernel compiles')
-            continue
-        if name in bodies:
-            flagged.add(name)
-            errors.append(f'{name} ({path}:{lineno}) is defined more than '
-                          f'once; the generator cannot know which '
-                          f'definition the kernel compiles')
-            continue
-        bodies[name] = m.group(2).strip()
+    if macros is None:
+        clang, reason = clang_binary()
+        if reason:
+            return ({}, [reason])
+        flags, reason = kernel_cpp_flags()
+        if reason:
+            return ({}, [reason])
+        events, macros, reason = run_preprocessor([path], flags, clang)
+        if reason:
+            return ({}, [reason])
+    ownership = check_single_ownership(events or [], names)
+    errors = list(ownership)
+    # Names already reported for ownership must not ALSO be reported as absent.
+    # Matched on the exact leading token rather than a substring: `X in <name>`
+    # would let X_STATUS inherit a diagnostic raised for X_STATUS_EXTRA.
+    flagged = {e.split(' ', 1)[0] for e in ownership}
+    bodies = {}
     for name in names:
-        if name not in bodies and name not in flagged:
-            errors.append(f'{name} is not defined in {path} -- it was renamed '
-                          f'or removed; update the exit-status allowlist')
+        body = macros.get(name)
+        if body is None:
+            if name not in flagged:
+                errors.append(f'{name} is not defined in the translation '
+                              f'context rooted at {path} -- it was renamed, '
+                              f'removed, or compiled out; update the '
+                              f'exit-status allowlist')
+            continue
+        bodies[name] = body.strip()
     return (bodies, errors)
 
 
-def resolve_exit_statuses(path: str, export: tuple, resolve_only: tuple) -> tuple:
+def resolve_exit_statuses(path: str, export: tuple, resolve_only: tuple,
+                          macros: dict = None, events: list = None) -> tuple:
     """Resolve the allowlisted exit-status constants. Returns
     (entries, errors) where entries is [(name, value, literal)] in `export`
     order; `resolve_only` names feed the arithmetic and are never emitted.
@@ -504,9 +842,15 @@ def resolve_exit_statuses(path: str, export: tuple, resolve_only: tuple) -> tupl
     Resolution is a FIXPOINT, not a source-order walk: a constant defined above
     the symbol it references is legal C (macros expand at use), so file order
     must not decide whether the generator can resolve it. A round that resolves
-    nothing means the remainder is cyclic or unresolvable, and says so."""
+    nothing means the remainder is cyclic or unresolvable, and says so.
+
+    The value this returns is still a CANDIDATE. `certify_values` compiles it
+    against the kernel headers afterwards, so the grammar below can refuse an
+    expression it does not understand (fail loud) but can no longer certify one
+    it understands WRONGLY (fail silent). Passing `macros`/`events` reuses an
+    existing preprocessor query instead of spawning another."""
     known = tuple(export) + tuple(resolve_only)
-    bodies, errors = parse_exit_status_defines(path, known)
+    bodies, errors = parse_exit_status_defines(path, known, macros, events)
     if errors:
         return ([], errors)
     values: dict = {}
@@ -724,18 +1068,86 @@ def main() -> int:
                     help='verify committed abi headers match kernel source; exit 1 on drift')
     args = ap.parse_args()
 
-    syscalls = parse_defines(SYSCALL_H, ('SYS_', 'FAULT_'))
-    ssdt_all = parse_defines(SSDT_H, 'SSDT_')
+    # One preprocessor query over ALL the allowlisted headers, in the kernel's
+    # own translation context. Reading them together rather than one at a time
+    # is deliberate: include order is part of that context, and a name the
+    # kernel reaches through an include chain must resolve here the same way.
+    clang, reason = clang_binary()
+    if reason:
+        print(f'gen-user-abi: {reason}', file=sys.stderr)
+        return 1
+    flags, reason = kernel_cpp_flags()
+    if reason:
+        print(f'gen-user-abi: {reason}', file=sys.stderr)
+        return 1
+    headers = [SYSCALL_H, SSDT_H, NTSTATUS_H, TASK_H]
+    events, macros, reason = run_preprocessor(headers, flags, clang)
+    if reason:
+        print(f'gen-user-abi: {reason}', file=sys.stderr)
+        return 1
+
+    # The INVENTORY has to be cross-flavor too, not just the values. Extraction
+    # above ran in the default flavor; a name defined only under another one
+    # would be invisible to every check below AND to certification, because
+    # nothing generates an assertion for a name nobody discovered.
+    ABI_PREFIXES = ('SYS_', 'FAULT_', 'SSDT_', 'STATUS_')
+    _names, flavor_errs = cross_flavor_names(headers, clang, ABI_PREFIXES)
+    if flavor_errs:
+        for e in flavor_errs:
+            print(f'gen-user-abi: flavor: {e}', file=sys.stderr)
+        return 1
+
+    syscalls, sys_skipped = propose_defines(macros, SYSCALL_H, ('SYS_', 'FAULT_'))
+    ssdt_all, ssdt_skipped = propose_defines(macros, SSDT_H, 'SSDT_')
     ssdt = [e for e in ssdt_all if e[0] in SSDT_USER_ALLOWLIST]
-    ntstatus_all = parse_defines(NTSTATUS_H, 'STATUS_')
+    ntstatus_all, nts_skipped = propose_defines(macros, NTSTATUS_H, 'STATUS_')
     ntstatus = [e for e in ntstatus_all if e[0] in NTSTATUS_USER_ALLOWLIST]
 
-    # Exit statuses are signed expressions, so they get the fail-closed
-    # resolver rather than parse_defines. Any refusal is fatal by design: a
-    # constant the generator cannot certify must break the build here, not
-    # vanish from the user header and resurface as a stale hand-copy.
+    # A prefixed name the single-literal rule cannot read must FAIL, not vanish.
+    # These tables feed the FNV fingerprint as well as the header, so a silent
+    # skip drops the name out of the ABI contract while every artifact stays
+    # self-consistent -- the failure shape this section exists to remove.
+    inventory_errs = [f'{name} carries an ABI prefix but its body is not a '
+                      f'single integer literal (body: {body!r}); publish it as '
+                      f'a plain integer, or remove the prefix'
+                      for name, body in sys_skipped + ssdt_skipped + nts_skipped]
+
+    # Every allowlisted name must actually be present. Filtering a name that no
+    # longer exists yields a SHORTER table, not an error, so without this a
+    # kernel-side rename silently drops a constant ring 3 still expects.
+    for label, allow, got in (('SSDT', SSDT_USER_ALLOWLIST, ssdt),
+                              ('NTSTATUS', NTSTATUS_USER_ALLOWLIST, ntstatus)):
+        missing = sorted(set(allow) - {n for n, _v, _l in got})
+        if missing:
+            inventory_errs.append(f'{label} user allowlist names absent from '
+                                  f'the kernel translation context: '
+                                  f'{", ".join(missing)} -- renamed, removed, '
+                                  f'or no longer a plain integer')
+
+    # Ownership, for EVERY published family and not just the exit statuses.
+    # -Wmacro-redefined (fatal under the kernel's -Werror) already stops an
+    # incompatible redefinition; this covers the two shapes clang accepts
+    # silently -- an identical redefinition, and #undef followed by redefine.
+    inventory_errs += check_single_ownership(
+        events, [n for n, _v, _l in syscalls + ssdt_all + ntstatus_all])
+
+    if inventory_errs:
+        for e in inventory_errs:
+            print(f'gen-user-abi: inventory: {e}', file=sys.stderr)
+        print('               an ABI name that cannot be published must break '
+              'the build here;', file=sys.stderr)
+        print('               dropping it would remove it from the generated '
+              'header AND the ABI', file=sys.stderr)
+        print('               fingerprint while every artifact stayed '
+              'self-consistent.', file=sys.stderr)
+        return 1
+
+    # Exit statuses are signed expressions, so they go through the restricted
+    # grammar rather than the single-literal rule. Any refusal is fatal by
+    # design: a constant the generator cannot resolve must break the build here,
+    # not vanish from the user header and resurface as a stale hand-copy.
     exit_status, exit_errs = resolve_exit_statuses(
-        TASK_H, EXIT_STATUS_EXPORT, EXIT_STATUS_RESOLVE_ONLY)
+        TASK_H, EXIT_STATUS_EXPORT, EXIT_STATUS_RESOLVE_ONLY, macros, events)
     if exit_errs:
         for e in exit_errs:
             print(f'gen-user-abi: exit-status: {e}', file=sys.stderr)
@@ -766,6 +1178,43 @@ def main() -> int:
               file=sys.stderr)
         print('               field. Add the missing entries.',
               file=sys.stderr)
+        return 1
+
+    # THE gate: have the compiler certify every number about to be published,
+    # in every build flavor. Everything above only PROPOSED values -- a
+    # single-literal rule for the flat tables and a restricted grammar for the
+    # exit statuses, both of them Python reading C. This is where clang gets the
+    # last word, so a proposal that is wrong fails the build instead of being
+    # frozen into two mutually-agreeing headers and an ABI hash.
+    #
+    # Both name lists are certified, not just the emitted subset: ssdt_all and
+    # ntstatus_all feed the fingerprint and the allowlist filter respectively,
+    # so a wrong value there is just as load-bearing as one in the header.
+    families = [
+        ('syscall', CERTIFY_SIGNED32, syscalls),
+        ('ssdt', CERTIFY_SIGNED32, ssdt_all),
+        ('ntstatus', CERTIFY_UNSIGNED32, ntstatus_all),
+        ('exit-status', CERTIFY_SIGNED32, exit_status),
+    ]
+    # TEB/KUSD offsets are hashed, so they are certified alongside the constants
+    # rather than trusted to the raw-text assertion scan above.
+    certify_errs = certify_values(
+        headers + [TEB_HEADER, KUSD_HEADER], families, clang,
+        offset_families=[('teb', 'TEB', TEB_LAYOUT),
+                         ('kusd', 'KUSER_SHARED_DATA', KUSD_LAYOUT)])
+    if certify_errs:
+        for e in certify_errs:
+            print(f'gen-user-abi: certify: {e}', file=sys.stderr)
+        print('               the compiler disagrees with a value this '
+              'generator was about to', file=sys.stderr)
+        print('               publish. A number that differs per build flavor '
+              'cannot be put in a', file=sys.stderr)
+        print('               header every flavor shares; a number that '
+              'differs at all means the', file=sys.stderr)
+        print('               extraction misread the kernel. Fix the kernel '
+              'definition or the', file=sys.stderr)
+        print('               allowlist -- do NOT hand-edit the generated '
+              'header.', file=sys.stderr)
         return 1
 
     # Hash over the FULL SSDT registry (not just the user allowlist) so

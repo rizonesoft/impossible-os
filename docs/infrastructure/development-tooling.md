@@ -123,7 +123,7 @@ Each required-sentinel tool has an expected version floor. `bash scripts/setup.s
 
 | Tool                  | Minimum   | Verification command                                | Rationale                                                      |
 | --------------------- | --------- | --------------------------------------------------- | -------------------------------------------------------------- |
-| `clang-19`            | 19.1.0    | `clang-19 --version`                                | Makefile uses `CC := clang-19`; major must match.              |
+| `clang-19`            | 19.1.0    | `clang-19 --version`                                | Makefile uses `CC := clang-19`; major must match. Also REQUIRED by `make check-abi` (see below). |
 | `ld.lld-19`           | 19.1.0    | `ld.lld-19 --version`                               | Paired with clang-19; major must match.                        |
 | `llvm-objcopy-19`     | 19.1.0    | `llvm-objcopy-19 --version`                         | Paired with clang-19; major must match.                        |
 | `llvm-ar-19`          | 19.1.0    | `llvm-ar-19 --version`                              | Paired with clang-19; major must match.                        |
@@ -140,6 +140,18 @@ Each required-sentinel tool has an expected version floor. `bash scripts/setup.s
 | `bear`                | 3.0       | `bear --version`                                    | Optional; generates `compile_commands.json` for clangd.        |
 
 `bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Output is **purely advisory**: the command always exits 0, so optional tools (`bear`) and below-floor entries do not gate via this report. The hard pass/fail contract is `--verify`, which enforces presence AND required version floors (fails closed: a required tool that is missing, has an unparseable version, or is below its floor returns non-zero); `--check-versions` runs the floor gate standalone. Optional tools (the explicit `OPTIONAL_VERSION_TOOLS` set, currently `bear`) are reported but never gate. A drift guard inside the floor gate also fails if any required non-firmware sentinel lacks a `VERSION_SPECS` floor.
+
+#### `make check-abi` requires a compiler
+
+`make check-abi` needed no compiler before 2026-07-29. It now does, and the requirement is deliberate. `scripts/gen-user-abi.py` reads the kernel's `SYS_*` / `SSDT_*` / `STATUS_*` / `TASK_EXIT_*` constants **through clang**, in the kernel's own preprocessing context (the `print-abi-cppflags` Makefile target is the single source for that flag vector), and then has clang **certify** every value it is about to publish with a generated `_Static_assert` compiled against the real headers -- across all 12 build-flavor combinations of `KERNEL_TESTS` x `EXCEPT_TELEMETRY` x `BUILD_ALT_BOOT`. That certification step is what removed the silent-wrong-value class: neither `-dM` nor `-E` hands back an *evaluated* number, so a generator that stopped at the preprocessor would still be doing C arithmetic in Python. Full rationale: [Preprocessor-faithful constant extraction](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md#26-generator-hardening-preprocessor-faithful-constant-extraction).
+
+If `clang-19` is missing, the generator **refuses with a named error** and `check-abi` fails. It does not skip, and it does not fall back to the old hand-written scanner:
+
+- A silent skip would disable the ABI drift gate on exactly the hosts least likely to notice, and drift here is invisible until a ring-3 binary makes a syscall against the wrong number.
+- A scanner fallback would re-open the bug class that work closed, on the hosts that get the least scrutiny.
+- The requirement costs nothing real: every host that can *build* this repo already has `clang-19` (`scripts/setup.sh` installs it as a required tool), and a host without it could not act on a drift report anyway.
+
+Set `ABI_CLANG=<compiler>` if your clang-19 is named differently (e.g. an unversioned `clang` on Fedora/Arch, per the symlink note above).
 
 ### Reproducible Environment (`.devcontainer`)
 
