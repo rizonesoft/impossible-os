@@ -265,7 +265,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Canonical doc: `include/kernel/csprng.h` + the `include/kernel/entropy.h` conditioner contract.
 > - Scope boundary: boot seed payload mixing/ordering/policy stay with `01-boot-platform/TODO-12` §7-§9; virtio-rng hook with `04-drivers-hardware/TODO-09` §12; `canary_init()` with `TODO-10` §11.
 > **Verified:** 2026-06-12 | commit `99910014` | 9/12 items | build OK | tests 4523/4523 PASS, smoke PASS
-> **Accepted:** [H] `NtGetRandom` (and every UserMode NtXxx handler) trusts `ProbeFor*IfUser` range-only check; a ring-3 low kernel VA below `MM_USER_PROBE_ADDRESS` passes (systemic, per-process frames shared until PE loader) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §2 (item: "Harden the user-copy path to reject supervisor destinations" at line 140)
+> **Accepted:** [H] `NtGetRandom` (and every UserMode NtXxx handler) trusts `ProbeFor*IfUser` range-only check; a ring-3 low kernel VA below `MM_USER_PROBE_ADDRESS` passes (systemic, per-process frames shared until PE loader) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §2 (item: "Harden the user-copy path to reject supervisor destinations" at line 141)
 > **Accepted:** [H] global `s_previous_mode` can race on SMP, skipping a handler's probe (reason: gated on SMP user scheduling) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §12 (item: "Make `s_previous_mode` ... per-CPU" at line 431)
 > **Quality reviewed:** 2026-06-12 | Codex 11x (design + test-coverage + adversarial + consistency + perf + re-adversarial) | 3H+5M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 

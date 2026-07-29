@@ -85,6 +85,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  25   | Non-forgeable launcher record framing               | §4, §7, §22                   |  [x]   |
 | 💎   |  26   | Preprocessor-faithful constant extraction           | §23                           |  [ ]   |
 | 💎   |  27   | Artifact consumer completeness (run identity, name bound) | §24                     |  [ ]   |
+| 💎   |  28   | Atomic publication of the generated header pair     | §23, §26                      |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -516,7 +517,7 @@ First Impossible-OS probe of the Win32 API surface from ring 3 -- proves the "Wi
 > - Scope boundary: §14 owns Win32-level CreateFile(OPEN_EXISTING) / ReadFile(sync) / CloseHandle / GetCurrentProcessId / GetTickCount. NOT in scope: CreateProcess, WaitForSingleObject, VirtualAlloc, registry APIs, CreateFile with CREATE_* / TRUNCATE_* dispositions (requires SYSCALL-arg extension past 4 regs), async ReadFile with OVERLAPPED, the Unicode-W variants, and full kernel32.dll via the PE32+ dynamic linker (§15). A thicker Win32 layer that supports those callers is the §15 territory once PE32+ imports land.
 
 > **Verified:** 2026-04-22 | commit `86a4edf4` (initial) + follow-up | 3/3 items | build OK | 12 UTEST_ASSERTs across 7 probes; 1800/1800 kernel unit tests PASS; `test_win32.exe` (~24 KiB) deployed; smoke PASS (KVM 2.22 s)
-> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 519)
+> **Accepted:** [H] Win32 shim routes every call through INT 0x80 (proven path) instead of the Windows-native transport (`gs:0x40` / KUSD / `syscall` -> `ssdt_dispatch`) because all three fast paths hung silently in the first revision on WHPX -- public API unchanged, future migration is a single-file swap (reason: infra -- needs isolated fast-path probes before migration) -> XREF: 00-infrastructure/TODO-04 §2 (item: "Verify the user-mode fast paths that user/lib/win32.c routed around" at line 520)
 > **Quality reviewed:** 2026-04-22 | Codex 3x (adversarial, adversarial-post-fix, quality) | 1Critical+1H+2M fixed (slot-0 reservation, CloseHandle sentinels, ReadFile EOF, OBJECT_ATTRIBUTES + UNICODE_STRING ABI layout; transport rewritten from SYSCALL to INT 0x80 after silent WHPX hang) + 1H Accepted (fast-path probes), 0 open | scope: userland-code-quality
 
 ---
@@ -848,8 +849,8 @@ Kernel exit-status constants that ring-3 tests assert on are hand-copied literal
 > - Scope boundary: only exit statuses gained expression resolution (`SYS_*`, `SSDT_*` and `STATUS_*` still use the unsigned-literal `parse_defines`, correct for them and deliberately unchanged), and the header scanner is hand-written rather than a real preprocessor -- fail-closed on every shape found, but §26 owns removing the class.
 
 > **Verified:** 2026-07-29 | commit `f79c6a1a` + review fixes | 3/3 items | build OK | 26983 kernel + 16 user-mode tests pass | 612/612 tooling | check-abi rc=0 | lint rc=0 | smoke matrix 4/4 (kvm 1+2 cpu, tcg 1+2 cpu) | drift gate proven live: a hand-staled `abi_numbers.h` fails `scripts/build.sh` with `ABI DRIFT` before compilation
-> **Deferred:** [M] the generator reads kernel headers with a hand-written scanner rather than the real preprocessor, so fidelity rests on refusing the shapes found so far (five rounds found five) rather than on reading what the compiler reads (reason: a `clang -dM -E` query is a separate change with its own flag-coupling and compiler-absence decisions) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §26 (item: "Replace the hand-written scanner in `scripts/gen-user-abi.py` with a real preprocessor query" at line 903)
-> **Deferred:** [M] the two generated headers are each replaced atomically but not as a PAIR, so a SIGKILL between the two `os.replace` calls leaves a mismatched pair that would abort every ring-3 binary at `SYS_ABI_HANDSHAKE` (reason: POSIX rename covers one path; a single commit point for the pair changes how generated headers are laid out and included repo-wide. Mitigated meanwhile by detection: `--check` compares BOTH destinations and the build wrapper runs it before compilation, pinned by the split-pair injection fixture) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §26 (item: "Give the generated header PAIR a single atomic commit point" at line 911)
+> **Deferred:** [M] the generator reads kernel headers with a hand-written scanner rather than the real preprocessor, so fidelity rests on refusing the shapes found so far (five rounds found five) rather than on reading what the compiler reads (reason: a `clang -dM -E` query is a separate change with its own flag-coupling and compiler-absence decisions) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §26 (item: "Replace the hand-written scanner in `scripts/gen-user-abi.py` with a real preprocessor query" at line 944)
+> **Deferred:** [M] the two generated headers are each replaced atomically but not as a PAIR, so a SIGKILL between the two `os.replace` calls leaves a mismatched pair that would abort every ring-3 binary at `SYS_ABI_HANDSHAKE` (reason: POSIX rename covers one path; a single commit point for the pair changes how generated headers are laid out and included repo-wide. Mitigated meanwhile by detection: `--check` compares BOTH destinations and the build wrapper runs it before compilation, pinned by the split-pair injection fixture) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §28 (item: "Choose the commit-point mechanism and record the decision with its rejected alternatives")
 > **Quality reviewed:** 2026-07-29 | Codex 10x (design, adversarial x4, test-coverage, consistency x2, perf x2) | 7H+6M+2L fixed, 2 deferred | scope: userland-code-quality
 
 ---
@@ -933,7 +934,7 @@ Every launcher control and artifact line shares one serial stream with ring-3 st
 
 ---
 
-## 26. Generator Hardening: Preprocessor Fidelity and Atomic Artifact Publication
+## 26. Generator Hardening: Preprocessor-Faithful Constant Extraction
 
 `scripts/gen-user-abi.py` reads kernel headers with a hand-written scanner: §23 added logical-line splicing, comment stripping with string/char-literal state, and conditional-nesting detection, and each of those landed because an adversarial round found a shape where the scanner and `clang-19 -E` disagreed. Three consecutive rounds on the same class is the finding. Every disagreement has the same shape and the same severity: the generator certifies a value, both generated headers agree with each other, `make check-abi` passes, the crt0 fingerprint matches -- and the running kernel uses a different number. The scanner is fail-closed today, so the known shapes refuse rather than lie, but "refuses the shapes we thought of" is a weaker contract than "reads what the compiler reads".
 
@@ -948,8 +949,6 @@ Every launcher control and artifact line shares one serial stream with ring-3 st
       asserts the generator and `clang-19 -E` agree on every allowlisted constant -- the check that would have caught all five §23 findings in one pass
 - [ ] Decide and document what happens when `clang-19` is absent: `make check-abi` currently needs no compiler, and the
       answer must be an explicit refusal or an explicit documented fallback, never a silent skip that turns the drift gate off
-- [ ] Give the generated header PAIR a single atomic commit point. `scripts/gen-user-abi.py` writes
-      `user/include/abi_numbers.h` and `include/kernel/abi_hash.h`, and crt0 compares one against the other, so a split generation aborts every ring-3 binary at `SYS_ABI_HANDSHAKE`. Each file is now replaced atomically from a unique staged temp, but POSIX rename covers ONE path: a SIGKILL between the two `os.replace` calls still leaves a mismatched pair. Today's mitigation is detection, not prevention -- `--check` compares both destinations and the build wrapper runs it before compilation, so a split pair fails the next build rather than reaching a kernel. Closing the window needs one commit point for the pair (a generated-include directory swapped atomically, or a single generated header both sides consume), which changes how generated headers are laid out and included repo-wide. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §23 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` is generated into `user/include/abi_numbers.h`")
 - [ ] Commit: `"abi: read kernel constants through the real preprocessor"`
 
 **Test checkpoint:** `make check-abi` still passes and `user/include/abi_numbers.h` regenerates byte-identical with `TASK_EXIT_EXEC_IMAGE_DESTROYED (-1001)`; a differential fixture asserts the generator's value equals `clang-19 -E`'s expansion for every allowlisted constant; each of the five shapes §23 refused (whitespace-tailed continuation, `/*` inside a string literal, spliced `//` swallowing an `#endif`, conditional definition, duplicate definition) either resolves to the same value clang selects or fails the build. Test on: QEMU TCG, QEMU KVM.
@@ -981,6 +980,27 @@ The machine artifacts are now assembled, validated, and honest about whether the
 - [ ] Commit: `"test: give the usermode artifacts run identity and a record name bound"`
 
 **Test checkpoint:** two smoke-matrix legs of the same commit produce two distinct artifact files, each naming its own leg, timestamp and commit; a binary whose name approaches `VFS_MAX_NAME` is refused at manifest ingest with a named error rather than producing a truncated verdict line; `bash scripts/test.sh QUIET=1 JSON=1` still writes a parseable `build/test-results.json`. Test on: QEMU TCG, QEMU KVM.
+
+---
+
+## 28. Atomic Publication of the Generated Header Pair
+
+`scripts/gen-user-abi.py` writes TWO destinations -- `user/include/abi_numbers.h` (consumed by ring-3) and `include/kernel/abi_hash.h` (consumed by the kernel) -- and crt0 compares one against the other at `SYS_ABI_HANDSHAKE`. Each file is replaced atomically from its own uniquely staged temp, but POSIX `rename` is atomic for ONE path: a crash or SIGKILL landing between the two `os.replace` calls leaves a mismatched pair on disk. Today's answer is DETECTION rather than prevention -- `--check` compares both destinations and the build wrapper runs it before compilation, so a split pair fails the next build instead of reaching a kernel, and a split-pair injection fixture pins that behavior. Prevention needs a single commit point for the pair, which is a repo-wide layout question (a generated-include directory swapped atomically, or one generated header both sides consume), not a generator-internal fix -- which is why it is its own section rather than part of §26.
+
+> [!NOTE]
+> Split out of §26 (2026-07-29) because the two halves have different blast radii: §26 changes how the generator READS kernel headers and touches one script plus its fixtures, while this section changes how generated headers are LAID OUT and INCLUDED across the kernel and ring-3 build. Bundling them would have put an ABI-surface layout change behind a scanner refactor's review.
+
+- [ ] Choose the commit-point mechanism and record the decision with its rejected alternatives: an atomically swapped
+      generated-include directory (`rename` of a symlink or directory, one syscall for both files) versus a SINGLE generated header both sides consume (no pair to desynchronize, but the kernel then includes a header carrying ring-3 numbers). Include the include-path and build-dependency consequences of each for `scripts/build.sh`, the Makefile, and the crt0 link. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §23 (item: "`TASK_EXIT_EXEC_IMAGE_DESTROYED` is generated into `user/include/abi_numbers.h`")
+- [ ] Implement the chosen mechanism so an interrupted generation can never leave a mismatched pair visible to a build,
+      and keep the generation idempotent (a re-run over unchanged inputs still rewrites nothing observable)
+- [ ] Keep `--check` and the split-pair injection fixture as the belt to the new braces -- prevention replaces the
+      window, it does not retire the detector, and the fixture must still fail a hand-corrupted destination
+- [ ] Add a crash-window fixture that interrupts generation between the two publications and asserts the tree is left
+      with a CONSISTENT pair (either both old or both new), which is the property the current design cannot offer
+- [ ] Commit: `"abi: publish the generated header pair at a single commit point"`
+
+**Test checkpoint:** a generation interrupted between the two destination writes leaves `user/include/abi_numbers.h` and `include/kernel/abi_hash.h` mutually consistent (both pre-generation or both post-generation), `make check-abi` passes against the published pair, and a hand-corrupted destination is still caught by `--check`. Test on: QEMU TCG, QEMU KVM (build-host only for the crash-window fixture).
 
 ---
 
