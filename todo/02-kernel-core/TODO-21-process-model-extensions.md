@@ -149,7 +149,8 @@ Win32 programs use `NtAllocateVirtualMemory` (TODO-12 §9) for heap. Linux-compa
 - [ ] `task_exec` CR3-reuse path: unmap + free the prior image's brk range before resetting the break fields, so a replaced image never inherits stale heap (design H2)
 - [ ] `task_fork`: eager-copy every committed brk page into the child PML4 + copy `program_break`/`program_break_start` (COW is not available; reset-in-child would violate fork semantics -- design H3)
 - [ ] `sys_sbrk(increment)`: return old break, then `sys_brk(break+increment)`; `increment==0` returns the current break
-- [ ] `SYS_BRK=48` in `include/kernel/sched/syscall.h` + `case SYS_BRK` in `syscall_handler` (`syscall.c`); regen `abi_numbers.h` via `gen-user-abi.py`; hand-add `sys_brk`/`sys_sbrk` wrappers in `user/include/syscall.h`
+- [ ] `SYS_BRK=48` in `include/kernel/sched/syscall.h` + `case SYS_BRK` in `syscall_handler` (`syscall.c`); regen the ABI, then hand-add `sys_brk`/`sys_sbrk` wrappers in `user/include/syscall.h`
+      Regeneration target is `abi/generated/abi_contract.h` via `gen-user-abi.py`: `user/include/abi_numbers.h` is a byte-pinned facade over it since `00-infrastructure/TODO-04-usermode-test-framework.md` §28, so editing or regenerating that path is not the ABI step.
 - [ ] Rewire `user/lib/stdlib.c` `malloc`/`free` from the static 64 KiB BSS bump arena to an `sys_sbrk`-backed growable arena (the current arena has no sbrk consumer)
 - [ ] Commit: `"kernel: task -- program break (brk/sbrk) for Linux compat heap"`
 

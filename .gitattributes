@@ -1,0 +1,25 @@
+# ============================================================================
+# Line-ending policy -- deliberately NARROW.
+#
+# This file pins LF for the generated-ABI surface ONLY. It is not a repo-wide
+# `* text=auto` policy: that would renormalize every tracked file on the next
+# checkout, which is a much larger and riskier change than the problem below.
+#
+# Why these files. `make check-abi` compares the two ABI facades BYTE FOR BYTE
+# against the canonical constants in scripts/gen-user-abi.py (see
+# CANONICAL_SHIM_* there). Those constants are Python string literals and
+# therefore hold LF. A checkout made with core.autocrlf=true would hand the
+# gate CRLF facades that clang compiles identically but that no longer match,
+# failing every build for a difference that cannot affect which directives are
+# active. check_shim_form() also normalizes newlines on read, so the two
+# defenses are independent: this keeps the bytes right in the repository, that
+# keeps a pre-existing clone from failing spuriously.
+#
+# The generated contract is listed for the same reason -- gen-user-abi.py
+# renders it with LF and --check compares the rendering against the file.
+# ============================================================================
+
+abi/generated/abi_contract.h   text eol=lf
+include/kernel/abi_hash.h      text eol=lf
+user/include/abi_numbers.h     text eol=lf
+scripts/gen-user-abi.py        text eol=lf

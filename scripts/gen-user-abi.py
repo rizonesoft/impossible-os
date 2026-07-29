@@ -39,6 +39,7 @@ import re
 import shutil
 import subprocess
 import sys
+import stat
 import tempfile
 
 # ---- Paths --------------------------------------------------------------
@@ -48,8 +49,19 @@ SYSCALL_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'sched', 'syscall.h')
 SSDT_H    = os.path.join(REPO_ROOT, 'include', 'kernel', 'nt', 'service_numbers.h')
 NTSTATUS_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'nt', 'ntstatus.h')
 TASK_H    = os.path.join(REPO_ROOT, 'include', 'kernel', 'sched', 'task.h')
-OUT_H     = os.path.join(REPO_ROOT, 'user', 'include', 'abi_numbers.h')
-OUT_KERNEL_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'abi_hash.h')
+# The SINGLE generated destination. Both former destinations
+# (user/include/abi_numbers.h, include/kernel/abi_hash.h) are now static
+# committed shims over this file -- see HEADER_TEMPLATE for why one file is
+# the whole point: POSIX rename is atomic for one path, so one generated
+# artifact means publication has no split-pair window to crash inside.
+OUT_CONTRACT = os.path.join(REPO_ROOT, 'abi', 'generated', 'abi_contract.h')
+
+# The static shims. NOT generated and NOT written by this script; listed so
+# --check can confirm they still route to the generated contract. A shim that
+# was edited to hand-define an ABI constant would reintroduce exactly the
+# hand-copy drift this generator exists to eliminate.
+SHIM_USER_H   = os.path.join(REPO_ROOT, 'user', 'include', 'abi_numbers.h')
+SHIM_KERNEL_H = os.path.join(REPO_ROOT, 'include', 'kernel', 'abi_hash.h')
 
 # TEB + KUSD offsets fed into the FNV-1a ABI hash. The entries must
 # match the `_Static_assert(__builtin_offsetof(...) == <literal>)`
@@ -1031,7 +1043,7 @@ def resolve_exit_statuses(path: str, export: tuple, resolve_only: tuple,
 
 HEADER_TEMPLATE = '''\
 /* ============================================================================
- * abi_numbers.h -- User-mode ABI number table (GENERATED)
+ * abi_contract.h -- Kernel/ring-3 ABI contract (GENERATED, SINGLE SOURCE)
  *
  * Regenerate via: python3 scripts/gen-user-abi.py
  * Verified via:   make check-abi
@@ -1048,20 +1060,44 @@ HEADER_TEMPLATE = '''\
  * the kernel values by hand -- the hand-copy pattern is exactly what
  * TODO-04 -17 was filed to eliminate.
  *
+ * SINGLE COMMIT POINT. This file is the ONLY generated ABI artifact. It
+ * used to be a PAIR -- user/include/abi_numbers.h plus
+ * include/kernel/abi_hash.h -- published by two back-to-back os.replace
+ * calls. POSIX rename is atomic for ONE path, so a SIGKILL between those
+ * calls left a mismatched pair on disk, and crt0 aborts every ring-3
+ * binary at SYS_ABI_HANDSHAKE when the two disagree. One generated file
+ * means one rename: no reader can observe half a generation. Both former
+ * destinations are now STATIC committed shims over this file; a shim
+ * carries no generated data, so it cannot desynchronize from the source.
+ *
+ * TWO INDEPENDENT GUARDS, deliberately. The fingerprint is always visible;
+ * the number tables appear only under ABI_CONTRACT_WANT_NUMBERS, which the
+ * ring-3 shim defines and the kernel shim does not -- the kernel already
+ * defines SYS_* in include/kernel/sched/syscall.h and would collide. The
+ * guards are separate rather than one `#pragma once` so INCLUSION ORDER
+ * cannot matter: a translation unit that already saw this header without
+ * the macro still gets the tables when a later include defines it.
+ *
  * Layout contract: flat `#define` block per category. No enums (user libc
  * is freestanding and may be compiled without -std=c11+), no function-like
- * macros (keeps parse surface minimal for future tooling), no guard against
- * redefinition other than the `#pragma once` below (user headers that
- * previously #defined these constants must strip their copies and
- * `#include "abi_numbers.h"` instead).
+ * macros (keeps parse surface minimal for future tooling).
  * ============================================================================ */
 
-#pragma once
+#ifndef IMPOSSIBLE_OS_ABI_CONTRACT_H
+#define IMPOSSIBLE_OS_ABI_CONTRACT_H
+
+{hash_block}
+#endif /* IMPOSSIBLE_OS_ABI_CONTRACT_H */
+
+#if defined(ABI_CONTRACT_WANT_NUMBERS) && !defined(IMPOSSIBLE_OS_ABI_NUMBERS_H)
+#define IMPOSSIBLE_OS_ABI_NUMBERS_H
 
 {syscall_block}
 {ssdt_block}
 {ntstatus_block}
 {exit_status_block}
+{mismatch_block}
+#endif /* ABI_CONTRACT_WANT_NUMBERS */
 '''
 
 
@@ -1082,7 +1118,7 @@ def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int) -> str:
         '/* ---- ABI fingerprint (FNV-1a 64-bit) --------------------------------------------------------- */\n'
         '/* Hash over the sorted tuple of (SYS_*, SSDT_*, FAULT_*, exported\n'
         ' * TASK_EXIT_* statuses, TEB offsets, KUSD offsets). The STATUS_* codes\n'
-        ' * emitted above are NOT fingerprinted -- they mirror a stable external\n'
+        ' * in the number block are NOT fingerprinted -- they mirror a stable external\n'
         ' * contract rather than a number this kernel assigns. Changing an\n'
         ' * exported exit status therefore invalidates existing user binaries at\n'
         ' * crt0, which is deliberate: a stale binary would otherwise compare a\n'
@@ -1093,15 +1129,24 @@ def render(syscalls, ssdt, ntstatus, exit_status, abi_hash: int) -> str:
         ' * but skipped this generator surfaces at process start, not at the\n'
         ' * first syscall with corrupted semantics. */\n'
         f'#define IMPOSSIBLE_OS_ABI_HASH   0x{abi_hash:016X}ULL\n'
+    )
+    # Ring-3 semantics: the exit status crt0 uses when the handshake fails.
+    # It lives under ABI_CONTRACT_WANT_NUMBERS rather than beside the hash
+    # because only user/lib/crt_init.c consumes it -- the kernel needs the
+    # fingerprint alone, and a kernel TU has no use for a ring-3 exit code.
+    mismatch_block = (
+        '/* ---- crt0 handshake failure exit status --------------------------------------------------- */\n'
         '#define EX_ABI_MISMATCH          0x42\n'
     )
     return HEADER_TEMPLATE.format(
+        hash_block=hash_block,
         syscall_block=format_block('INT 0x80 syscall numbers (SYS_*, FAULT_*)', syscalls, 24),
         ssdt_block=format_block('SSDT service numbers (SSDT_*) -- fastpath probe', ssdt, 32),
         ntstatus_block=format_block('NTSTATUS return codes used by user probes', ntstatus, 32),
         exit_status_block=format_block(
             'Kernel exit statuses (TASK_EXIT_*) -- resolved, signed', exit_status, 32),
-    ) + hash_block
+        mismatch_block=mismatch_block,
+    )
 
 
 # ---- FNV-1a 64-bit hash --------------------------------------------------
@@ -1142,28 +1187,294 @@ def compute_abi_hash(syscalls, ssdt, exit_status, teb_layout, kusd_layout) -> in
     return h
 
 
-KERNEL_HEADER_TEMPLATE = '''\
+# Constant families the generator owns. Any macro whose name starts with one of
+# these is an ABI number that must come from the generated contract and from
+# nowhere else.
+SHIM_OWNED_PREFIXES = ('SYS_', 'SSDT_', 'STATUS_', 'FAULT_', 'TASK_EXIT_',
+                       'IMPOSSIBLE_OS_ABI_HASH', 'EX_ABI_MISMATCH')
+
+def user_cpp_flags() -> tuple:
+    """Ask the Makefile for the authoritative RING-3 flag vector, the way
+    kernel_cpp_flags() does for the kernel. Returns (flags, None) or
+    (None, reason).
+
+    A shim must be validated under the flags it is really compiled with. A
+    hand-picked minimal vector was tried and was fail-open: production carries
+    -O2, which defines __OPTIMIZE__, so a shim could hide a wrong ABI value
+    behind `#ifdef __OPTIMIZE__`, satisfy the gate, and still reach every
+    optimized user binary -- with the fingerprint untouched, so the crt0
+    handshake would agree and nothing would ever report the drift."""
+    hit = _FLAGS_CACHE.get('user')
+    if hit is not None:
+        return hit
+    lines, reason = make_query('print-user-cflags')
+    if reason:
+        return (None, reason)
+    flags = [tok for tok in lines if tok not in DEP_ONLY_FLAGS]
+    if not flags:
+        return (None, '`make print-user-cflags` emitted only dependency-file '
+                      'flags; the Makefile target is missing or was emptied')
+    _FLAGS_CACHE['user'] = (flags, None)
+    return (flags, None)
+
+
+def _owned_macros(final: dict) -> dict:
+    """The subset of a preprocessed macro map that the generator owns."""
+    return {n: b for n, b in final.items() if n.startswith(SHIM_OWNED_PREFIXES)}
+
+
+SHIM_INCLUDE_SPELLING = '"../../abi/generated/abi_contract.h"'
+
+# The facades, pinned BYTE FOR BYTE.
+#
+# Everything about these two files is fixed: they carry no ABI data and never
+# vary with the ABI, so there is nothing for a human to legitimately tune in
+# them. Pinning the exact bytes is therefore both the simplest check and the
+# strongest one, and it is the reason no C parsing happens here any more.
+#
+# Four successive parsing designs were tried and each was bypassed, because
+# each was an approximation of what a compiler does with a file:
+#   1. a `#define `-prefix text scan          -- missed `# define` and `#undef`
+#   2. the same, under minimal flags          -- missed __OPTIMIZE__/flavor guards
+#   3. per-vector semantic value comparison   -- missed a guard on NULL, which
+#      `user/include/syscall.h` supplies by including types.h first
+#   4. a directive allowlist over stripped comments -- missed line splicing,
+#      then `// /*` hiding directives from a block-first regex, then `/*` inside
+#      an #include header-name collapsing to the required spelling
+# Every one of those had the same shape: Python guessing at C lexing, one
+# corner at a time. A byte comparison has no corners. It cannot be fooled by a
+# splice, a comment, a header-name, an encoding, or a preceding header, because
+# it never interprets anything -- any deviation at all, in any direction, is a
+# refusal. The semantic per-vector value check below is retained as a second
+# layer for the case a facade is REPLACED wholesale by something that happens
+# to compile.
+#
+# To change a facade: edit the constant here, then copy it into the file (or
+# run `python3 scripts/gen-user-abi.py --write-shims`).
+CANONICAL_SHIM_KERNEL = '''\
 /* ============================================================================
- * abi_hash.h -- Kernel ABI fingerprint (GENERATED)
+ * abi_hash.h -- Kernel ABI fingerprint (STATIC FACADE, byte-pinned)
  *
- * Regenerate via: python3 scripts/gen-user-abi.py
- * Verified via:   make check-abi
- *
- * DO NOT EDIT BY HAND. Derived from the same sources as
- * user/include/abi_numbers.h -- the kernel-side copy is needed so
- * SYS_ABI_HANDSHAKE can return the same 64-bit hash the user libc
- * has compiled in. A drift between the two headers is a build error,
- * not a runtime surprise.
+ * NOT generated, and NOT free-form: `make check-abi` compares this file
+ * BYTE FOR BYTE against CANONICAL_SHIM_KERNEL in scripts/gen-user-abi.py.
+ * Change it there, or the build fails. The rationale for every line below --
+ * why one generated artifact, why a relative include, why this side omits
+ * ABI_CONTRACT_WANT_NUMBERS -- lives in that script's HEADER_TEMPLATE and
+ * check_shim_form() docstrings, so it is stated once rather than twice.
  * ============================================================================ */
 
 #pragma once
 
-#define IMPOSSIBLE_OS_ABI_HASH   0x{abi_hash:016X}ULL
+#include "../../abi/generated/abi_contract.h"
+'''
+
+CANONICAL_SHIM_USER = '''\
+/* ============================================================================
+ * abi_numbers.h -- User-mode ABI numbers (STATIC FACADE, byte-pinned)
+ *
+ * NOT generated, and NOT free-form: `make check-abi` compares this file
+ * BYTE FOR BYTE against CANONICAL_SHIM_USER in scripts/gen-user-abi.py.
+ * Change it there, or the build fails. The rationale for every line below --
+ * why one generated artifact, why a relative include, why this side defines
+ * ABI_CONTRACT_WANT_NUMBERS -- lives in that script's HEADER_TEMPLATE and
+ * check_shim_form() docstrings, so it is stated once rather than twice.
+ * ============================================================================ */
+
+#pragma once
+
+#define ABI_CONTRACT_WANT_NUMBERS
+#include "../../abi/generated/abi_contract.h"
 '''
 
 
-def render_kernel_hash_header(abi_hash: int) -> str:
-    return KERNEL_HEADER_TEMPLATE.format(abi_hash=abi_hash)
+def check_shim_form(path: str, want_numbers: bool) -> list[str]:
+    """Compare a facade against its pinned bytes. No parsing, by design.
+
+    See CANONICAL_SHIM_* above for the four parsing designs this replaced and
+    why each was bypassable. Returns human-readable reasons; empty means the
+    file is byte-identical to its canonical form."""
+    rel = os.path.relpath(path, REPO_ROOT)
+    want = CANONICAL_SHIM_USER if want_numbers else CANONICAL_SHIM_KERNEL
+    # A facade must be a REGULAR FILE. Comparing content alone accepted a
+    # symlink whose target happened to hold the canonical bytes -- the bytes
+    # would be right today and follow someone else's file tomorrow, entirely
+    # outside this gate's view.
+    try:
+        st = os.lstat(path)
+    except OSError:
+        st = None
+    if st is not None and not stat.S_ISREG(st.st_mode):
+        if stat.S_ISDIR(st.st_mode):
+            # --write-shims cannot fix this: os.replace of a regular file onto a
+            # directory raises IsADirectoryError, so pointing at it would name a
+            # remedy that cannot work. Say what actually resolves it.
+            return [f'{rel} is a DIRECTORY where a facade belongs; remove or '
+                    f'move it first, then restore the facade with `python3 '
+                    f'scripts/gen-user-abi.py --write-shims`']
+        kind = 'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'
+        return [f'{rel} is {kind}; a facade must be a regular file so its bytes '
+                f'cannot be redirected. Restore it with `python3 '
+                f'scripts/gen-user-abi.py --write-shims`']
+    try:
+        # Universal newlines ON PURPOSE: a CRLF working copy (a Windows
+        # checkout, or core.autocrlf=true -- the repo pins LF in .gitattributes
+        # but a stale clone predates it) is byte-different and SEMANTICALLY
+        # IDENTICAL, since a line ending cannot change which directives are
+        # active. Comparing raw bytes there failed every --check on a file
+        # clang was perfectly happy with, and, because splitlines() strips both
+        # endings, the per-line loop below then found no difference and fell
+        # through to a self-contradicting "expected 15 lines, found 15".
+        with open(path, 'r', encoding='utf-8') as f:
+            got = f.read()
+    except FileNotFoundError:
+        return [f'{rel} missing -- the facade over the generated contract was '
+                f'deleted']
+    except (UnicodeDecodeError, OSError) as exc:
+        return [f'{rel} is not readable as UTF-8 text: {exc}']
+    if got == want:
+        return []
+    fix = ('restore it with `python3 scripts/gen-user-abi.py --write-shims`, '
+           'or edit CANONICAL_SHIM_* in scripts/gen-user-abi.py if the change '
+           'is intended')
+    # Name the first differing line: the whole point is that a reader can see
+    # what moved without diffing by hand.
+    got_lines, want_lines = got.splitlines(), want.splitlines()
+    for n, (g, w) in enumerate(zip(got_lines, want_lines), 1):
+        if g != w:
+            return [f'{rel}:{n} differs from the pinned facade -- expected '
+                    f'{w!r}, found {g!r}. A facade carries no ABI data and is '
+                    f'byte-pinned; {fix}']
+    if len(got_lines) != len(want_lines):
+        return [f'{rel} differs from the pinned facade in length: expected '
+                f'{len(want_lines)} lines, found {len(got_lines)}. A facade is '
+                f'byte-pinned; {fix}']
+    # Equal line-by-line and equal in count, yet unequal overall: the only
+    # remaining difference is invisible to splitlines(), i.e. a trailing
+    # newline or a stray leading BOM. Say so rather than emitting a
+    # contradiction.
+    return [f'{rel} differs from the pinned facade in characters splitlines() '
+            f'does not show -- a missing or extra trailing newline, or a byte-'
+            f'order mark. {fix}']
+
+
+
+
+
+def _user_shim_vectors() -> tuple:
+    """[(flags, label)] for validating the ring-3 shim. Returns (vectors, err).
+
+    One vector: ring-3 has no flavor axis (USER_CFLAGS is a single definition
+    with no per-build overrides), unlike the kernel."""
+    flags, reason = user_cpp_flags()
+    if reason:
+        return ([], f'cannot obtain the ring-3 flag vector: {reason}')
+    return ([(flags, 'user')], None)
+
+
+def _kernel_shim_vectors() -> tuple:
+    """[(flags, label)] for validating the kernel shim, ONE PER FLAVOR.
+
+    Returns (vectors, err). The kernel is built under several flavors
+    (KERNEL_TESTS, EXCEPT_TELEMETRY, BUILD_ALT_BOOT), each with its own -D set.
+    A shim that hid a wrong ABI value behind one of those macros would be
+    invisible to a single-vector check, so every flavor gets its own pass --
+    the same rule the constant extraction already follows."""
+    combos, reason = flavor_combinations()
+    if reason:
+        return ([], f'cannot enumerate build flavors: {reason}')
+    vectors = []
+    for flavor in combos:
+        flags, err = kernel_cpp_flags(flavor)
+        if err:
+            label = ','.join(f'{k}={v}' for k, v in sorted(flavor.items()))
+            return ([], f'cannot obtain the kernel flag vector for '
+                        f'[{label or "default"}]: {err}')
+        label = ','.join(f'{k}={v}' for k, v in sorted(flavor.items()))
+        vectors.append((flags, label or 'default'))
+    return (vectors, None)
+
+
+def check_shim(path: str, want_numbers: bool, clang: str,
+               flags=None, context: str = '') -> list[str]:
+    """Confirm a static shim resolves EXACTLY the ABI macros the contract
+    publishes for its side, with the same values.
+
+    The shims are ordinary committed source, not generated output, so they
+    cannot be diffed against a rendering. Validation is therefore SEMANTIC: the
+    shim and the contract are each preprocessed, and the owned macros the shim
+    actually resolves are compared name-by-name and value-by-value against what
+    the contract yields for that visibility.
+
+    `flags` MUST be the authoritative vector for this shim's side -- the kernel
+    TU vector for the kernel shim (per flavor), the ring-3 vector for the user
+    shim. Validating under a hand-picked minimal vector is fail-open, because
+    production carries -O2 (hence __OPTIMIZE__) and the kernel adds flavor
+    macros: a value guarded behind either would pass here and still reach the
+    real binaries. `context` names the vector in any message, so a failure that
+    reproduces under only one flavor says which one.
+
+    A raw-text scan was tried first and was fail-open too. It matched only
+    lines beginning with the exact token `#define `, so a shim could include
+    the contract and then `#undef SYS_WRITE` followed by `# define SYS_WRITE
+    999` (note the space) and pass -- ring 3 would compile against a wrong
+    syscall number while the fingerprint stayed correct, so SYS_ABI_HANDSHAKE
+    would agree and nothing would ever report the drift. Directives inside an
+    inactive `#if 0` arm fooled it in the other direction. Asking the
+    preprocessor closes both: it reports what the compiler will actually see.
+
+    Returns a list of human-readable reasons; empty means the shim is sound."""
+    rel = os.path.relpath(path, REPO_ROOT)
+    if context:
+        rel = f'{rel} [{context}]'
+    if flags is None:
+        return [f'{rel}: no authoritative flag vector supplied -- refusing to '
+                f'validate a shim under a guessed preprocessing context']
+    if not os.path.exists(path):
+        return [f'{rel} missing -- the static shim over the generated contract '
+                f'was deleted']
+    if not os.path.exists(OUT_CONTRACT):
+        return [f'{os.path.relpath(OUT_CONTRACT, REPO_ROOT)} missing -- cannot '
+                f'validate {rel} against it']
+
+    # What the contract publishes for this side, asked of the compiler rather
+    # than assumed from the template -- and under the SAME vector as the shim,
+    # so the comparison isolates what the shim did rather than a flag delta.
+    contract_flags = list(flags)
+    if want_numbers:
+        contract_flags.append('-DABI_CONTRACT_WANT_NUMBERS')
+    _ev, contract_final, err = run_preprocessor([OUT_CONTRACT], contract_flags,
+                                                clang)
+    if err:
+        return [f'cannot preprocess the generated contract for {rel}: {err}']
+
+    _ev, shim_final, err = run_preprocessor([path], list(flags), clang)
+    if err:
+        return [f'cannot preprocess {rel}: {err}']
+
+    expected = _owned_macros(contract_final)
+    got = _owned_macros(shim_final)
+    problems = []
+
+    missing = sorted(set(expected) - set(got))
+    if missing:
+        head = ', '.join(missing[:5]) + (', ...' if len(missing) > 5 else '')
+        problems.append(f'{rel} does not resolve {len(missing)} ABI macro(s) the '
+                        f'contract publishes for it ({head}) -- it stopped '
+                        f'including the contract, guarded the include out, or '
+                        f'undefined them')
+    extra = sorted(set(got) - set(expected))
+    if extra:
+        head = ', '.join(extra[:5]) + (', ...' if len(extra) > 5 else '')
+        problems.append(f'{rel} resolves {len(extra)} ABI macro(s) the contract '
+                        f'does NOT publish for it ({head}) -- either a hand-'
+                        f'written constant, or the wrong ABI_CONTRACT_WANT_'
+                        f'NUMBERS visibility for this side')
+    for name in sorted(set(expected) & set(got)):
+        if expected[name] != got[name]:
+            problems.append(f'{rel} resolves {name} to {got[name]!r}, but the '
+                            f'contract publishes {expected[name]!r} -- a shim '
+                            f'must never restate an ABI value')
+    return problems
 
 
 # ---- SSDT filter --------------------------------------------------------
@@ -1208,11 +1519,173 @@ EXIT_STATUS_EXPORT = ('TASK_EXIT_EXEC_IMAGE_DESTROYED',)
 EXIT_STATUS_RESOLVE_ONLY = ('TASK_EXIT_REASON_BASE',)
 
 
+def _contained_dir(path: str) -> tuple:
+    """Resolve the directory a publication may write into, refusing to leave
+    the repository. Returns (dirname, reason).
+
+    Every component is checked, not just the final one. Protecting only the
+    destination file left the same escape one level up: if `user/include` were
+    a symlink to an external directory, staging and replacement would both
+    resolve through it and overwrite a file outside the tree. This REFUSES
+    instead of writing, which is the right answer for a repair command -- it is
+    not a defense against a concurrent attacker racing the check (that would
+    need dir_fd + O_NOFOLLOW plumbing throughout, which is disproportionate for
+    a build script, and a tree whose directories have been swapped for links is
+    already compiling from somewhere unintended)."""
+    dirname = os.path.dirname(path)
+    root = os.path.realpath(REPO_ROOT)
+    probe = dirname
+    while True:
+        # Test for the trust anchor BEFORE testing for a link. The checkout
+        # itself may legitimately be reached through a symlink -- a worktree
+        # under a symlinked home, or an absolute invocation via such a path --
+        # and refusing that rejected every publication in a perfectly normal
+        # tree. The anchor is the RESOLVED root; only its descendants are
+        # required to be link-free, which is what actually stops an escape.
+        if os.path.realpath(probe) == root:
+            break
+        if os.path.islink(probe):
+            return (None, f'{os.path.relpath(probe, REPO_ROOT)} is a symlink; '
+                          f'refusing to publish through it')
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return (None, f'{dirname} is not inside the repository')
+        probe = parent
+    if not os.path.realpath(dirname).startswith(root + os.sep):
+        return (None, f'{dirname} resolves outside the repository')
+    return (dirname, None)
+
+
+def _fsync_dir(dirname: str) -> None:
+    """fsync a directory so a rename entry within it survives power loss."""
+    dirfd = os.open(dirname, os.O_RDONLY)
+    try:
+        os.fsync(dirfd)
+    finally:
+        os.close(dirfd)
+
+
+def publish_atomically(dest: str, content: str, before_replace=None,
+                       after_replace=None) -> bool:
+    """THE publication protocol: stage, fsync, ONE os.replace, fsync the parent.
+
+    Used by the generator for the contract and by --write-shims for a facade,
+    and invoked directly by the crash-window fixture through the two hooks --
+    which is the point of it being one function. The fixture used to re-declare
+    its own copy of this protocol, so it certified a transcription rather than
+    the shipping code: reordering the replace before the write, or replacing the
+    wrong path, would not have failed it.
+
+    os.replace is atomic for ONE path, so a single artifact has no window in
+    which a reader can observe half a generation. The parent fsync makes the
+    swap survive power loss, not merely a process death.
+
+    The destination MODE is preserved when it already exists, and otherwise set
+    to 0644 honouring umask: mkstemp creates 0600, so publishing straight from
+    it left the ABI headers private to the invoking user and unreadable by
+    anyone else sharing the checkout."""
+    dirname, reason = _contained_dir(dest)
+    if reason:
+        raise RuntimeError(f'refusing to publish {dest}: {reason}')
+    # Unchanged input, nothing observable. Replacing unconditionally swapped the
+    # inode and moved ctime/mtime on every regeneration, which is exactly what
+    # this section promised NOT to do: a re-run over unchanged sources would
+    # have re-triggered every make rule and file watcher downstream of the
+    # contract for no ABI change at all.
+    #
+    # The shortcut is gated on lstat, NOT on open(). open() follows symlinks, so
+    # a facade replaced by a link whose TARGET already held the canonical bytes
+    # compared equal and short-circuited -- leaving the abnormal symlink in
+    # place and making --write-shims silently decline to repair the very thing
+    # it exists to repair. A FIFO or device at the destination would also have
+    # been read, blocking indefinitely or streaming without bound. Only a
+    # regular, non-symlink file may take the shortcut; anything else is forced
+    # down the replacement path, which swaps the link or special file for a
+    # real file.
+    try:
+        st = os.lstat(dest)
+    except OSError:
+        st = None
+    if st is not None and stat.S_ISREG(st.st_mode):
+        try:
+            with open(dest, 'r', encoding='utf-8') as f:
+                if f.read() == content:
+                    # Still complete the durability barrier. os.replace may have
+                    # committed on a PREVIOUS attempt whose parent fsync then
+                    # failed; returning here without the fsync would turn that
+                    # reported failure plus this reported success into a
+                    # publication no barrier ever covered.
+                    _fsync_dir(dirname)
+                    return False
+        except (OSError, UnicodeDecodeError):
+            pass
+    os.makedirs(dirname, exist_ok=True)
+    # Preserve the mode ONLY of an existing regular file. os.stat follows
+    # links, so replacing an abnormal symlink imported its TARGET's mode onto
+    # the new facade -- a link to a mode-000 file published an unreadable
+    # facade and reported success, which contradicts the whole point of not
+    # following the link.
+    if st is not None and stat.S_ISREG(st.st_mode):
+        mode = stat.S_IMODE(st.st_mode)
+    else:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o644 & ~umask
+    fd, tmp = tempfile.mkstemp(dir=dirname,
+                               prefix=os.path.basename(dest) + '.',
+                               suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(content)
+            # fchmod on the OPEN descriptor, BEFORE the fsync -- the mode is
+            # part of what has to survive a power loss. Applying it after the
+            # fsync left the metadata change outside the durability barrier
+            # (the later parent fsync covers the rename entry, not this inode's
+            # mode), so recovery could surface the contract at mkstemp's 0600
+            # while publication claimed the mode was preserved.
+            os.fchmod(f.fileno(), mode)
+            f.flush()
+            os.fsync(f.fileno())
+        if before_replace is not None:
+            before_replace(tmp, dest)
+        os.replace(tmp, dest)
+        if after_replace is not None:
+            after_replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    _fsync_dir(dirname)
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true',
                     help='verify committed abi headers match kernel source; exit 1 on drift')
+    ap.add_argument('--write-shims', action='store_true',
+                    help='rewrite the two byte-pinned facades from CANONICAL_SHIM_*')
     args = ap.parse_args()
+
+    if args.write_shims:
+        # The facades are pinned bytes, so restoring one is a copy, not an edit.
+        # Offered as a command so the --check failure message names a fix
+        # instead of asking someone to hand-transcribe a constant.
+        #
+        # Staged + os.replace, NOT open(path, 'w'): this command exists to
+        # repair an ABNORMAL facade, and `open` follows symlinks. A facade that
+        # had been replaced by a link would have had its TARGET truncated and
+        # overwritten -- verified to clobber a file outside the repository while
+        # leaving the link in place -- turning a repair into data loss. replace
+        # swaps the link itself, and is atomic besides.
+        for path, want in ((SHIM_USER_H, CANONICAL_SHIM_USER),
+                           (SHIM_KERNEL_H, CANONICAL_SHIM_KERNEL)):
+            wrote = publish_atomically(path, want)
+            print(f'gen-user-abi: {"wrote" if wrote else "unchanged"} '
+                  f'{os.path.relpath(path, REPO_ROOT)}')
+        return 0
 
     # One preprocessor query over ALL the allowlisted headers, in the kernel's
     # own translation context. Reading them together rather than one at a time
@@ -1386,76 +1859,101 @@ def main() -> int:
     abi_hash = compute_abi_hash(syscalls, ssdt_all, exit_status,
                                 TEB_LAYOUT, KUSD_LAYOUT)
 
-    rendered_user = render(syscalls, ssdt, ntstatus, exit_status, abi_hash)
-    rendered_kernel = render_kernel_hash_header(abi_hash)
+    rendered_contract = render(syscalls, ssdt, ntstatus, exit_status, abi_hash)
 
     if args.check:
         drift = False
-        for path, rendered in ((OUT_H, rendered_user), (OUT_KERNEL_H, rendered_kernel)):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    existing = f.read()
-            except FileNotFoundError:
-                print(f'gen-user-abi: {path} missing -- run `python3 scripts/gen-user-abi.py`',
+        # The contract gets the SAME regular-file guard as the facades. It was
+        # only guarded there, which left the identical hole on the new single
+        # source of truth: a FIFO here blocks this read forever -- and build.sh
+        # invokes the gate with no timeout, so it would hang every canonical
+        # build -- while a symlink would let the gate bless a mutable external
+        # target as the ABI.
+        try:
+            cst = os.lstat(OUT_CONTRACT)
+        except OSError:
+            cst = None
+        # A bad contract also DISABLES the facade checks below. Those invoke
+        # clang on the facades, and every facade #includes the contract -- so
+        # with a FIFO contract the guard here reported the problem and the very
+        # next stage handed the same FIFO to the compiler and blocked anyway.
+        contract_ok = False
+        if cst is None:
+            print(f'gen-user-abi: {OUT_CONTRACT} missing -- run '
+                  '`python3 scripts/gen-user-abi.py`', file=sys.stderr)
+            drift = True
+        elif not stat.S_ISREG(cst.st_mode):
+            kind = 'a symlink' if stat.S_ISLNK(cst.st_mode) else 'not a regular file'
+            print(f'gen-user-abi: {OUT_CONTRACT} is {kind}; the generated '
+                  f'contract must be a regular file so its bytes cannot be '
+                  f'redirected. Remove it and run '
+                  f'`python3 scripts/gen-user-abi.py`', file=sys.stderr)
+            drift = True
+        else:
+            with open(OUT_CONTRACT, 'r', encoding='utf-8') as f:
+                existing = f.read()
+            if existing != rendered_contract:
+                print(f'gen-user-abi: {OUT_CONTRACT} is stale vs kernel source',
                       file=sys.stderr)
                 drift = True
+            else:
+                # Byte-equality, not merely "it is a regular file". A stale but
+                # regular contract is still arbitrary content: one containing an
+                # #include of a FIFO would be reported stale here and then hand
+                # that FIFO to clang in the facade stage below, reopening the
+                # very hang this guard exists to close. Only a contract that
+                # matches what we just rendered is safe to compile against.
+                contract_ok = True
+        # The shims carry no generated data, so they cannot be "stale" -- but a
+        # shim that stopped including the contract, or grew a hand-written ABI
+        # constant, silently detaches its side of the build from the generator.
+        # That is the drift class this whole generator exists to prevent, so
+        # --check refuses it rather than trusting review to catch a one-line edit.
+        # Each side is validated under ITS OWN authoritative vector, and the
+        # kernel side under every flavor, because a value hidden behind
+        # __OPTIMIZE__ or a flavor macro is invisible to any other context.
+        user_vectors, uv_err = _user_shim_vectors()
+        kernel_vectors, kv_err = _kernel_shim_vectors()
+        for err in (uv_err, kv_err):
+            if err:
+                print(f'gen-user-abi: shim validation: {err}', file=sys.stderr)
+                drift = True
+        facade_drift = False
+        for shim, want_numbers, vectors in ((SHIM_USER_H, True, user_vectors),
+                                            (SHIM_KERNEL_H, False, kernel_vectors)):
+            # FORM first, and STOP THERE on failure. The value check hands the
+            # path to clang with no timeout, so running it after the form gate
+            # already refused a FIFO left --check blocked forever waiting for a
+            # writer -- hanging every build behind the gate that was supposed to
+            # report the problem. A facade that failed the byte pin has nothing
+            # left to learn from preprocessing it anyway.
+            form_problems = check_shim_form(shim, want_numbers)
+            for reason in form_problems:
+                print(f'gen-user-abi: {reason}', file=sys.stderr)
+                drift = facade_drift = True
+            if form_problems:
                 continue
-            if existing != rendered:
-                print(f'gen-user-abi: {path} is stale vs kernel source',
-                      file=sys.stderr)
-                drift = True
+            if not contract_ok:
+                continue
+            for vec_flags, vec_name in vectors:
+                for reason in check_shim(shim, want_numbers, clang,
+                                         vec_flags, vec_name):
+                    print(f'gen-user-abi: {reason}', file=sys.stderr)
+                    drift = facade_drift = True
         if drift:
+            # Name the RIGHT remedy: regenerating rewrites the contract and does
+            # nothing to a facade, so pointing a reader at it for a facade
+            # failure sends them somewhere that cannot fix their problem.
             print('                run `python3 scripts/gen-user-abi.py` to regenerate',
                   file=sys.stderr)
+            if facade_drift:
+                print('                and `python3 scripts/gen-user-abi.py '
+                      '--write-shims` to restore a facade', file=sys.stderr)
             return 1
         return 0
 
-    # Stage BOTH headers, fsync them, then swap both in back to back.
-    #
-    # What this DOES guarantee: each header goes from old content to new content
-    # atomically (os.replace within a filesystem), never through a truncated or
-    # half-written state; a failure during GENERATION leaves both destinations
-    # untouched; and unique temp names mean two concurrent generator runs cannot
-    # clobber each other's staging file.
-    #
-    # What it deliberately does NOT guarantee: PAIRWISE atomicity. POSIX rename
-    # covers one path, so a SIGKILL or power loss between the two os.replace
-    # calls still leaves one new header beside one old one, with no handler
-    # running to undo it. That is worth naming precisely, because crt0 compares
-    # the user header's hash against the kernel's and a mismatched pair aborts
-    # every ring-3 binary at SYS_ABI_HANDSHAKE.
-    #
-    # The mitigation is the drift gate, not the write protocol: --check
-    # re-renders and compares BOTH destinations, and the build wrapper runs it
-    # before any compilation, so a split pair fails the next build with a named
-    # error instead of reaching a kernel. Closing the window itself needs one
-    # atomic commit point for the artifact PAIR, which changes how generated
-    # headers are laid out and included repo-wide -- tracked by the generator
-    # hardening work in the user-mode test framework TODO.
-    staged = []
-    try:
-        for path, rendered in ((OUT_H, rendered_user),
-                               (OUT_KERNEL_H, rendered_kernel)):
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path),
-                                       prefix=os.path.basename(path) + '.',
-                                       suffix='.tmp')
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(rendered)
-                f.flush()
-                os.fsync(f.fileno())
-            staged.append((tmp, path))
-        while staged:
-            tmp, path = staged.pop(0)
-            os.replace(tmp, path)
-    except Exception:
-        for tmp, _path in staged:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        raise
-    print(f'gen-user-abi: wrote {OUT_H} + {OUT_KERNEL_H} '
+    wrote = publish_atomically(OUT_CONTRACT, rendered_contract)
+    print(f'gen-user-abi: {"wrote" if wrote else "unchanged"} {OUT_CONTRACT} '
           f'(syscalls={len(syscalls)} ssdt={len(ssdt)} ntstatus={len(ntstatus)} '
           f'exit={len(exit_status)} hash=0x{abi_hash:016X})')
     return 0

@@ -68,6 +68,20 @@ SRC_DIR    := src
 BUILD_DIR  := build
 INCLUDE    := include
 GENERATED  := build/generated
+
+# The COMMITTED generated-ABI artifact. Distinct from $(GENERATED)
+# (build/generated) because it is checked in and gated by `make check-abi`,
+# rather than produced by a build rule.
+#
+# Deliberately NOT on any include vector. The two shims over it
+# (include/kernel/abi_hash.h, user/include/abi_numbers.h) reach it by a path
+# relative to themselves, so exactly one file on disk can satisfy the include.
+# An `-I` search was tried and removed: `-I$(BUILD_DIR)` precedes any late
+# addition, and `build/generated/` already exists, so an ignored, unchecked
+# `build/generated/abi_contract.h` shadowed the committed artifact and compiled
+# a bogus ABI fingerprint into the kernel while `--check` stayed silent.
+# This variable exists for the build-dependency edge only.
+ABI_CONTRACT_H := abi/generated/abi_contract.h
 BOOT_DIR   := $(SRC_DIR)/boot
 KERNEL_DIR := $(SRC_DIR)/kernel
 LIBC_DIR   := $(SRC_DIR)/libc
@@ -872,6 +886,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
                                                                               user/include/test.h \
                                                                               user/include/syscall.h \
                                                                               user/include/abi_numbers.h \
+                                                                              $(ABI_CONTRACT_H) \
                                                                               user/include/teb.h \
                                                                               user/include/kusd.h \
                                                                               user/include/win32.h \
@@ -1177,6 +1192,19 @@ check-abi:
 .PHONY: print-abi-cppflags
 print-abi-cppflags:
 	@printf '%s\n' $(KERNEL_TU_FLAGS)
+
+## print-user-cflags: the ring-3 counterpart. scripts/gen-user-abi.py validates
+## user/include/abi_numbers.h by PREPROCESSING it, and validating under
+## different flags than the real compile is fail-open: -O2 alone defines
+## __OPTIMIZE__, so a shim could guard a wrong ABI value behind it, pass the
+## gate, and still reach every optimized user binary with the fingerprint
+## intact -- the handshake would agree and nothing would report the drift.
+## -Iuser/include matches what every user compile rule adds on top of
+## USER_CFLAGS. Same contract as print-abi-cppflags: NO prerequisites, because
+## check-abi runs ahead of compilation on a clean tree.
+.PHONY: print-user-cflags
+print-user-cflags:
+	@printf '%s\n' $(USER_CFLAGS) -Iuser/include
 
 ## print-abi-config: everything scripts/gen-user-abi.py needs to know about the
 ## build BEFORE it starts querying per-flavor flags, in ONE invocation --

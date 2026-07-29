@@ -7052,6 +7052,31 @@ fi
 # ============================================================================
 # gen-user-abi constant extraction (TODO-04 s23 + s26)
 # ============================================================================
+# Every ABI fixture below plants scratch state under build/. Confirm ONCE, up
+# front, that build/ is a real directory in this repository and not a symlink,
+# and refuse the whole group otherwise -- a symlinked build/ would put every
+# mkdtemp, plant and cleanup outside the checkout.
+#
+# This is a REAL-DIRECTORY check, not a defense against a concurrent process
+# swapping build/ between this test and a later mkdir. Guarding that would need
+# dir_fd + O_NOFOLLOW plumbing through every fixture, and it buys nothing here:
+# an actor able to do it already has write access to this script, the Makefile
+# and the sources. What it does close is the realistic case -- residue or a
+# hand-made symlink left where a scratch directory is expected.
+if [ -L "$REPO_ROOT/build" ] || { [ -e "$REPO_ROOT/build" ] && [ ! -d "$REPO_ROOT/build" ]; }; then
+    t_fail "gen_user_abi: build/ is a real directory for ABI scratch state" \
+           "build/ is a symlink or not a directory; refusing to plant fixture state through it"
+    _GUA_SCRATCH_OK=0
+else
+    # build/ is GITIGNORED, so it does not exist on a clean checkout -- and CI
+    # runs this suite BEFORE build.sh (.github/workflows/build.yml runs
+    # test-tooling at the lint stage, build.sh several steps later). Creating it
+    # here is what keeps every scratch mkdtemp below from failing with ENOENT on
+    # exactly that path.
+    mkdir -p "$REPO_ROOT/build"
+    t_pass "gen_user_abi: build/ is a real directory for ABI scratch state"
+    _GUA_SCRATCH_OK=1
+fi
 # The generator's single-literal rule extracts the first UNSIGNED integer
 # literal from a define body, so it would read `(-1000)` as +1000 and
 # `(BASE - 1)` as +1 -- silently WRONG values, which is worse than the
@@ -7333,7 +7358,10 @@ check("repo_exports_exec_image_destroyed",
 check("repo_exec_image_destroyed_is_negative",
       bool(entries) and entries[0][1] < 0)
 
-header = open("user/include/abi_numbers.h", encoding="utf-8").read()
+# The SINGLE generated artifact -- user/include/abi_numbers.h is a static shim
+# over it and carries no constants of its own, so reading the shim here would
+# assert nothing.
+header = open(gua.OUT_CONTRACT, encoding="utf-8").read()
 check("generated_header_carries_constant",
       "#define TASK_EXIT_EXEC_IMAGE_DESTROYED" in header)
 # The resolve-only base must stay OUT of the generated header, or a refactor
@@ -7433,7 +7461,10 @@ check("flag_vector_comes_from_the_makefile",
       _FLAGS_ERR is None and '-DCONFIG_SMP' in _FLAGS and
       '--target=x86_64-elf' in _FLAGS and '-Iinclude' in _FLAGS)
 # The five ordered -I paths are part of the context, not decoration: a subset
-# that merely looks equivalent can select a different definition.
+# that merely looks equivalent can select a different definition. The committed
+# ABI contract is deliberately NOT among them -- the shims reach it by a path
+# relative to themselves, because a search path here would let the writable
+# build tree shadow it (see the shadow fixture below).
 check("flag_vector_carries_full_include_order",
       _FLAGS_ERR is None and
       [f for f in _FLAGS if f.startswith('-I')] ==
@@ -7488,7 +7519,7 @@ check("no_published_name_has_two_owners",
 # would leave all of them green -- and the repo's committed values are already
 # correct, so even `--check` would stay quiet. These drive main() itself and
 # assert BOTH the exit status and that no header was replaced.
-_OUT_PAIR = (gua.OUT_H, gua.OUT_KERNEL_H)
+_OUT_PAIR = (gua.OUT_CONTRACT,)
 
 def main_with(patch, argv=('--check',)):
     """Run main() with one function replaced; returns (rc, headers_unchanged).
@@ -7519,7 +7550,7 @@ def main_with(patch, argv=('--check',)):
 
 
 def refused(patch, must_say):
-    """main() must exit 1, leave BOTH headers untouched, and SAY why."""
+    """main() must exit 1, leave the generated contract untouched, and SAY why."""
     rc, unchanged = main_with(patch)
     return (rc, unchanged, must_say in main_with.last_stderr) == (1, True, True)
 
@@ -7846,30 +7877,822 @@ else
            "the canonical build path must not bypass check-abi"
 fi
 
-# A SPLIT generation -- one header regenerated, the other stale -- aborts EVERY
-# ring-3 binary at SYS_ABI_HANDSHAKE. Two independent os.replace calls cannot be
-# made pairwise atomic with POSIX rename, so the guarantee that matters is that
-# the drift gate CATCHES a split pair before it reaches a compile. Inject one
-# and require --check to reject it; grepping the source for `os.replace` proved
-# nothing (the string also appears in the explanatory comment).
-_GUA_SPLIT_BAK=$(mktemp)
-cp "$REPO_ROOT/user/include/abi_numbers.h" "$_GUA_SPLIT_BAK"
-python3 - "$REPO_ROOT/user/include/abi_numbers.h" <<'PYSPLIT'
-import sys, pathlib
-p = pathlib.Path(sys.argv[1])
-# Simulate a crash between the two replaces: the user header carries a previous
-# generation's hash while the kernel header keeps the current one.
-p.write_text(p.read_text().replace('#define IMPOSSIBLE_OS_ABI_HASH   0x',
-                                   '#define IMPOSSIBLE_OS_ABI_HASH   0xDEADBEEF'))
-PYSPLIT
-if (cd "$REPO_ROOT" && python3 scripts/gen-user-abi.py --check >/dev/null 2>&1); then
-    t_fail "gen_user_abi: --check rejects a split header generation" \
-           "a mismatched header pair passed the drift gate"
+# The six cases below all drive the REAL main() --check / --write-shims logic,
+# but against THROWAWAY contract and facade paths, by redirecting the module
+# constants in-process. Nothing tracked is ever mutated.
+#
+# Earlier revisions corrupted the real contract and replaced the real facade
+# with FIFOs and directories, restoring afterwards -- first by fallthrough, then
+# under EXIT/INT/TERM traps. Neither survives SIGKILL, and an interrupted run
+# really did leave this checkout in a state that stalled a later lint pass. Even
+# a clean restore rewrote ctime and, after rm+cp, the inode. A subprocess cannot
+# be redirected this way (a child resolves the generator's own constants), so
+# these run in-process and assert main()'s exit status directly.
+#
+# The probe directory is UNIQUE per run and created exclusively: a fixed
+# build/shimprobe could be left behind as a symlink by an interrupted run, and
+# write_text() would then follow it straight out of the repository -- the exact
+# data-loss class the repair case below exists to prove is closed. It sits TWO
+# levels below the repo root so a facade's relative
+# `../../abi/generated/abi_contract.h` resolves to the real contract, exactly as
+# it does from user/include/ and include/kernel/.
+_GUA_MAIN_OUT="SKIPPED: build/ unusable for scratch state"
+[ "$_GUA_SCRATCH_OK" = "1" ] && _GUA_MAIN_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYMAIN'
+import contextlib, importlib.util, io, os, pathlib, stat, sys, tempfile
+
+spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
+gua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gua)
+
+problems = []
+probe = pathlib.Path(tempfile.mkdtemp(prefix='shimprobe-',
+                                      dir=os.path.join(gua.REPO_ROOT, 'build')))
+REAL = (gua.OUT_CONTRACT, gua.SHIM_USER_H, gua.SHIM_KERNEL_H)
+real_contract = pathlib.Path(gua.OUT_CONTRACT).read_text()
+
+def run_main(argv):
+    """main() with diagnostics captured -- every case here is SUPPOSED to
+    fail, so its stderr is expected output, not suite noise."""
+    saved = sys.argv
+    sys.argv = ['gen-user-abi.py'] + list(argv)
+    buf = io.StringIO()
+    try:
+        # stdout as well as stderr: --write-shims reports what it wrote, and
+        # that chatter would otherwise land in this fixture's captured verdict.
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+            rc = gua.main()
+    except SystemExit as exc:
+        rc = exc.code
+    finally:
+        sys.argv = saved
+    return rc, buf.getvalue()
+
+def reset():
+    gua.OUT_CONTRACT, gua.SHIM_USER_H, gua.SHIM_KERNEL_H = REAL
+
+def case(label, setup, want_needle):
+    """Redirect, apply a hostile setup, require --check to REFUSE and say why."""
+    d = pathlib.Path(tempfile.mkdtemp(prefix='c-', dir=probe))
+    try:
+        gua.OUT_CONTRACT = str(d / 'abi_contract.h')
+        gua.SHIM_USER_H = str(d / 'abi_numbers.h')
+        gua.SHIM_KERNEL_H = str(d / 'abi_hash.h')
+        # A canonical starting point, so only the mutation under test differs.
+        pathlib.Path(gua.OUT_CONTRACT).write_text(real_contract)
+        pathlib.Path(gua.SHIM_USER_H).write_text(gua.CANONICAL_SHIM_USER)
+        pathlib.Path(gua.SHIM_KERNEL_H).write_text(gua.CANONICAL_SHIM_KERNEL)
+        setup(d)
+        rc, err = run_main(['--check'])
+        if rc != 1:
+            problems.append(f'{label}: expected rc=1, got {rc}: {err.strip()[:200]}')
+        elif want_needle not in err:
+            problems.append(f'{label}: expected {want_needle!r}, got: {err.strip()[:200]}')
+    finally:
+        reset()
+
+def corrupt_contract(d):
+    p = pathlib.Path(gua.OUT_CONTRACT)
+    t = p.read_text()
+    c = t.replace('#define IMPOSSIBLE_OS_ABI_HASH   0x',
+                  '#define IMPOSSIBLE_OS_ABI_HASH   0xDEADBEEF')
+    if c == t:
+        problems.append('corrupted-contract: literal not found; the template '
+                        'was renamed and this fixture stopped asserting')
+    p.write_text(c)
+
+case('--check rejects a corrupted generated contract', corrupt_contract,
+     'is stale vs kernel source')
+
+case('--check rejects the comment-lexing facade bypass',
+     lambda d: pathlib.Path(gua.SHIM_USER_H).write_text(
+         gua.CANONICAL_SHIM_USER +
+         '// /*\n#ifdef NULL\n#undef SYS_WRITE\n#define SYS_WRITE 999\n'
+         '#endif\n// */\n'),
+     'differs from the pinned facade')
+
+def fifo_facade(d):
+    p = pathlib.Path(gua.SHIM_USER_H)
+    p.unlink()
+    os.mkfifo(p)
+
+case('a FIFO facade is refused, not blocked on', fifo_facade,
+     'is not a regular file')
+
+def dir_facade(d):
+    p = pathlib.Path(gua.SHIM_USER_H)
+    p.unlink()
+    p.mkdir()
+
+case('a directory facade names a remedy that works', dir_facade,
+     'remove or move it first')
+
+def fifo_contract(d):
+    p = pathlib.Path(gua.OUT_CONTRACT)
+    p.unlink()
+    os.mkfifo(p)
+
+case('a FIFO generated contract is refused, not blocked on', fifo_contract,
+     'must be a regular file')
+
+def stale_contract_including_fifo(d):
+    fifo = d / 'stale-include.h'
+    os.mkfifo(fifo)
+    pathlib.Path(gua.OUT_CONTRACT).write_text(f'#include "{fifo}"\n')
+
+case('a stale regular contract never reaches clang',
+     stale_contract_including_fifo, 'is stale vs kernel source')
+
+# The --write-shims BRANCH, not just the helper underneath it: argparse, the
+# flag, and the loop that repairs BOTH facades. Calling publish_atomically
+# directly would still pass if the command repaired only one facade, or skipped
+# the branch entirely, while the gate tells users to run exactly that command.
+d = pathlib.Path(tempfile.mkdtemp(prefix='w-', dir=probe))
+sentinel = d / 'sentinel.txt'
+sentinel.write_text('SENTINEL-MUST-SURVIVE\n')
+try:
+    gua.SHIM_USER_H = str(d / 'abi_numbers.h')
+    gua.SHIM_KERNEL_H = str(d / 'abi_hash.h')
+    # The ring-3 facade starts as a SYMLINK at an external file: repair must
+    # replace the link, never write through it.
+    os.symlink(sentinel, gua.SHIM_USER_H)
+    rc, err = run_main(['--write-shims'])
+    if rc != 0:
+        problems.append(f'write-shims: expected rc=0, got {rc}: {err.strip()[:200]}')
+    if sentinel.read_text() != 'SENTINEL-MUST-SURVIVE\n':
+        problems.append('write-shims: overwrote a symlink target outside the '
+                        'repository instead of replacing the link')
+    for path, want in ((gua.SHIM_USER_H, gua.CANONICAL_SHIM_USER),
+                       (gua.SHIM_KERNEL_H, gua.CANONICAL_SHIM_KERNEL)):
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            problems.append(f'write-shims: {path} is not a regular file after '
+                            f'repair')
+        elif pathlib.Path(path).read_text() != want:
+            problems.append(f'write-shims: {path} does not hold canonical bytes '
+                            f'after repair')
+finally:
+    reset()
+
+for root, dirs, files in os.walk(probe, topdown=False):
+    for n in files:
+        os.unlink(os.path.join(root, n))
+    for n in dirs:
+        os.rmdir(os.path.join(root, n))
+os.rmdir(probe)
+
+print('OK' if not problems else '; '.join(problems))
+PYMAIN
+)
+if [ "$_GUA_MAIN_OUT" = "OK" ]; then
+    t_pass "gen_user_abi: --check and --write-shims refuse every hostile ABI file"
 else
-    t_pass "gen_user_abi: --check rejects a split header generation"
+    t_fail "gen_user_abi: --check and --write-shims refuse every hostile ABI file" \
+           "$_GUA_MAIN_OUT"
 fi
-cp "$_GUA_SPLIT_BAK" "$REPO_ROOT/user/include/abi_numbers.h"
-rm -f "$_GUA_SPLIT_BAK"
+
+# PUBLICATION ATOMICITY -- the property the old two-destination design could not
+# offer. A timed SIGKILL is the wrong instrument: it is flaky and can miss the
+# publication boundary indefinitely. Instead wrap os.replace and terminate
+# DETERMINISTICALLY at each side of it, then assert the tree holds exactly one
+# complete generation -- the old file or the new file, never a blend and never a
+# leftover temp. Runs against a throwaway destination so the repo tree is never
+# the experiment.
+_GUA_ATOMIC_OUT="SKIPPED: build/ unusable for scratch state"
+[ "$_GUA_SCRATCH_OK" = "1" ] && _GUA_ATOMIC_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYATOMIC'
+import importlib.util, os, pathlib, stat, tempfile
+
+spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
+gua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gua)
+
+OLD = "OLD-GENERATION\n"
+NEW = "NEW-GENERATION\n"
+
+class Crash(Exception):
+    pass
+
+problems = []
+
+# Drive the PRODUCTION publisher, not a transcription of it. The fixture used
+# to declare its own publish(), so it certified a copy: reordering the replace
+# before the write, or replacing the wrong path, would not have failed it. The
+# hooks fire immediately either side of the real os.replace.
+for crash_at, expected in (('before', OLD), ('after', NEW)):
+    d = tempfile.mkdtemp(dir=os.path.join(gua.REPO_ROOT, 'build'))
+    dest = os.path.join(d, 'abi_contract.h')
+    pathlib.Path(dest).write_text(OLD)
+    os.chmod(dest, 0o644)
+    hook = (lambda *_: (_ for _ in ()).throw(Crash())) if crash_at == 'before' \
+        else None
+    after = (lambda *_: (_ for _ in ()).throw(Crash())) if crash_at == 'after' \
+        else None
+    try:
+        gua.publish_atomically(dest, NEW, before_replace=hook, after_replace=after)
+    except Crash:
+        pass
+    got = pathlib.Path(dest).read_text()
+    if got != expected:
+        problems.append(f'crash-{crash_at}: destination is {got!r}, expected '
+                        f'the complete {expected!r}')
+    # Residue. This injects an EXCEPTION at each side of the commit point, and
+    # the production publisher unwinds it by unlinking the staging file, so
+    # neither side leaves anything -- which is a STRONGER property than the
+    # section originally claimed and is what is asserted here.
+    #
+    # It is not the same as a SIGKILL. A signal runs no handler, so a real
+    # abrupt termination before the commit point does leave the staging file
+    # behind; that residue is inert (a uniquely-named .tmp nothing reads, which
+    # can never take the published name) and is not reachable from this
+    # injection. The distinction is recorded rather than papered over: a timed
+    # SIGKILL was rejected as an instrument precisely because it is flaky.
+    stray = [n for n in os.listdir(d) if n != 'abi_contract.h']
+    if stray:
+        problems.append(f'crash-{crash_at}: an exception during publication '
+                        f'must unwind its staging file, found {stray}')
+    # Mode must survive publication: mkstemp makes 0600, which would leave the
+    # ABI headers private to the invoking user in a shared checkout.
+    if crash_at == 'after':
+        mode = stat.S_IMODE(os.stat(dest).st_mode)
+        if mode != 0o644:
+            problems.append(f'published mode is {mode:#o}, expected the '
+                            f'destination mode 0o644 to be preserved')
+    for n in os.listdir(d):
+        os.unlink(os.path.join(d, n))
+    os.rmdir(d)
+
+# A brand-new destination lands at 0644 MODULO UMASK -- asserting group/other
+# readability unconditionally would fail a developer running a legitimately
+# restrictive umask (0027 -> 0640, 0077 -> 0600), turning a correct
+# implementation into a red tooling gate.
+for umask_val in (0o022, 0o027, 0o077):
+    d = tempfile.mkdtemp(dir=os.path.join(gua.REPO_ROOT, 'build'))
+    dest = os.path.join(d, 'abi_contract.h')
+    old_umask = os.umask(umask_val)
+    try:
+        gua.publish_atomically(dest, NEW)
+    finally:
+        os.umask(old_umask)
+    mode = stat.S_IMODE(os.stat(dest).st_mode)
+    want = 0o644 & ~umask_val
+    if mode != want:
+        problems.append(f'a new destination under umask {umask_val:#o} '
+                        f'published as {mode:#o}, expected {want:#o}')
+    os.unlink(dest)
+    os.rmdir(d)
+
+# An EXISTING destination keeps its mode, including a deliberately private one:
+# preservation must not silently widen a file someone restricted on purpose.
+for existing in (0o600, 0o640, 0o644):
+    d = tempfile.mkdtemp(dir=os.path.join(gua.REPO_ROOT, 'build'))
+    dest = os.path.join(d, 'abi_contract.h')
+    pathlib.Path(dest).write_text(OLD)
+    os.chmod(dest, existing)
+    gua.publish_atomically(dest, NEW)
+    mode = stat.S_IMODE(os.stat(dest).st_mode)
+    if mode != existing:
+        problems.append(f'an existing {existing:#o} destination became '
+                        f'{mode:#o}; publication must preserve it')
+    os.unlink(dest)
+    os.rmdir(d)
+
+# The unchanged-content shortcut must be gated on lstat, not on open(). A
+# destination symlinked at a target that ALREADY holds the canonical bytes
+# compared equal through open(), so publication declined to act and left the
+# abnormal link in place -- the repair command silently refusing to repair.
+d = tempfile.mkdtemp(dir=os.path.join(gua.REPO_ROOT, 'build'))
+dest = os.path.join(d, 'abi_contract.h')
+target = os.path.join(d, 'target.h')
+pathlib.Path(target).write_text(NEW)
+os.symlink(target, dest)
+gua.publish_atomically(dest, NEW)
+if os.path.islink(dest):
+    problems.append('a destination symlink whose target held the canonical '
+                    'bytes was left in place; the shortcut followed the link')
+if pathlib.Path(target).read_text() != NEW:
+    problems.append('publication wrote through the destination symlink instead '
+                    'of replacing it')
+for n in os.listdir(d):
+    os.unlink(os.path.join(d, n))
+os.rmdir(d)
+
+# Unchanged input must rewrite NOTHING observable -- same inode, same mtime.
+# Republishing unconditionally would re-trigger every downstream make rule and
+# file watcher for an ABI that did not move.
+d = tempfile.mkdtemp(dir=os.path.join(gua.REPO_ROOT, 'build'))
+dest = os.path.join(d, 'abi_contract.h')
+gua.publish_atomically(dest, NEW)
+before = os.stat(dest)
+gua.publish_atomically(dest, NEW)
+after = os.stat(dest)
+if (before.st_ino, before.st_mtime_ns) != (after.st_ino, after.st_mtime_ns):
+    problems.append('republishing identical content replaced the inode or '
+                    'moved mtime; an unchanged generation must be a no-op')
+os.unlink(dest)
+os.rmdir(d)
+
+# A checkout reached through a symlink is LEGITIMATE (a worktree under a
+# symlinked home, or an absolute invocation via such a path). Only descendants
+# must be link-free, so the trust anchor is the resolved root.
+_alias = pathlib.Path(tempfile.mkdtemp()) / 'repo-alias'
+_alias.symlink_to(gua.REPO_ROOT)
+try:
+    aliased = os.path.join(str(_alias), 'build', 'abi-alias-probe.h')
+    gua.publish_atomically(aliased, NEW)
+    if pathlib.Path(aliased).read_text() != NEW:
+        problems.append('publication through a symlinked checkout root did not '
+                        'write the expected content')
+    os.unlink(aliased)
+except RuntimeError as exc:
+    problems.append(f'publication refused a legitimate symlinked checkout '
+                    f'root: {exc}')
+finally:
+    _alias.unlink()
+    os.rmdir(_alias.parent)
+
+# Publication must REFUSE to leave the repository, at any path component -- the
+# final-component symlink guard was not enough, because a symlinked parent
+# directory resolves during staging and replacement just the same.
+ext = tempfile.mkdtemp()
+sentinel = pathlib.Path(ext) / 'abi_contract.h'
+sentinel.write_text('SENTINEL-MUST-SURVIVE\n')
+# A UNIQUE name, and never an unlink of a pre-existing entry: the fixed
+# `build/abi-escape-probe` was removed before planting, so residue left by an
+# interrupted run -- a symlink someone else's process owned, or one pointing
+# outside the tree -- was deleted by a routine tooling run. mkdtemp gives a
+# name that cannot already exist, and symlink() onto a fresh path inside it
+# cannot clobber anything.
+link_parent = os.path.join(tempfile.mkdtemp(prefix='abi-escape-',
+                                            dir=os.path.join(gua.REPO_ROOT, 'build')),
+                           'probe')
+try:
+    os.symlink(ext, link_parent)
+    try:
+        gua.publish_atomically(os.path.join(link_parent, 'abi_contract.h'), NEW)
+        problems.append('publication through a symlinked parent directory was '
+                        'permitted')
+    except RuntimeError:
+        pass
+    if sentinel.read_text() != 'SENTINEL-MUST-SURVIVE\n':
+        problems.append('publication overwrote a file outside the repository '
+                        'through a symlinked parent directory')
+finally:
+    if os.path.islink(link_parent):
+        os.unlink(link_parent)
+    os.rmdir(os.path.dirname(link_parent))
+    sentinel.unlink(missing_ok=True)
+    os.rmdir(ext)
+
+print('OK' if not problems else '; '.join(problems))
+PYATOMIC
+)
+if [ "$_GUA_ATOMIC_OUT" = "OK" ]; then
+    t_pass "gen_user_abi: publication is atomic at a single commit point"
+else
+    t_fail "gen_user_abi: publication is atomic at a single commit point" \
+           "$_GUA_ATOMIC_OUT"
+fi
+
+# The two STATIC shims are ordinary committed source, so no rendering comparison
+# can catch a one-line edit that detaches a side of the build from the generated
+# contract. --check verifies them structurally; assert each refusal shape here.
+_GUA_SHIM_OUT="SKIPPED: build/ unusable for scratch state"
+[ "$_GUA_SCRATCH_OK" = "1" ] && _GUA_SHIM_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYSHIM'
+import importlib.util, os, pathlib, subprocess, sys, tempfile
+
+spec = importlib.util.spec_from_file_location("gua", "scripts/gen-user-abi.py")
+gua = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gua)
+
+problems = []
+_CLANG, _CLANG_ERR = gua.clang_binary()
+if _CLANG_ERR:
+    print(f'cannot resolve clang for shim validation: {_CLANG_ERR}')
+    raise SystemExit(0)
+
+# Every MUTATING case below runs against throwaway facades, never the tracked
+# ones. Restoring a tracked file in a `finally` is not interruption-safe --
+# SIGTERM or SIGKILL skips it entirely, leaving a corrupted facade behind, which
+# is exactly the incident this section hit -- and even a clean restore rewrites
+# timestamps. Pointing the generator's path constants at copies removes the
+# whole hazard class instead of guarding it: the worst a signal can now leave is
+# litter under build/.
+#
+# The probes sit TWO levels below the repo root so the facades' relative include
+# `../../abi/generated/abi_contract.h` resolves to the real contract, exactly as
+# it does from user/include/ and include/kernel/.
+# UNIQUE per run, never a fixed reused name: an interrupted run could leave a
+# fixed build/shimprobe behind as a symlink, and write_text() would then follow
+# it straight out of the repository -- the very data-loss class these fixtures
+# exist to prove is closed.
+_PROBE = pathlib.Path(tempfile.mkdtemp(
+    prefix='shimprobe-', dir=str(pathlib.Path(gua.REPO_ROOT) / 'build')))
+_REAL_USER_H, _REAL_KERNEL_H = gua.SHIM_USER_H, gua.SHIM_KERNEL_H
+
+# Read-only baseline against the REAL committed facades, before the redirect.
+for _path, _want in ((_REAL_USER_H, True), (_REAL_KERNEL_H, False)):
+    _r = gua.check_shim_form(_path, _want)
+    if _r:
+        problems.append(f'committed facade {_path} is not byte-pinned: {_r}')
+
+_probe_user = _PROBE / 'abi_numbers.h'
+_probe_kernel = _PROBE / 'abi_hash.h'
+with open(_probe_user, 'x', encoding='utf-8') as _f:
+    _f.write(gua.CANONICAL_SHIM_USER)
+with open(_probe_kernel, 'x', encoding='utf-8') as _f:
+    _f.write(gua.CANONICAL_SHIM_KERNEL)
+gua.SHIM_USER_H = str(_probe_user)
+gua.SHIM_KERNEL_H = str(_probe_kernel)
+
+# The AUTHORITATIVE vectors, not a hand-picked subset -- validating a shim under
+# flags the real compile does not use is fail-open (production carries -O2, so
+# __OPTIMIZE__ is defined there and not in a minimal vector).
+_USER_VECS, _UV_ERR = gua._user_shim_vectors()
+_KERN_VECS, _KV_ERR = gua._kernel_shim_vectors()
+if _UV_ERR or _KV_ERR:
+    problems.append(f'cannot obtain authoritative shim vectors: {_UV_ERR or ""} '
+                    f'{_KV_ERR or ""}'.strip())
+    _USER_VECS, _KERN_VECS = [], []
+
+# A minimal vector must be REFUSED outright rather than silently guessed.
+if not gua.check_shim(gua.SHIM_USER_H, True, _CLANG):
+    problems.append('check_shim accepted a shim with no flag vector supplied')
+
+def _vecs(path):
+    return _USER_VECS if path == gua.SHIM_USER_H else _KERN_VECS
+
+def expect(path, want_numbers, mutate, needle, label):
+    """The mutation must be rejected under AT LEAST ONE authoritative vector --
+    a flavor-guarded edit is invisible to the others by construction."""
+    p = pathlib.Path(path)
+    original = p.read_text()
+    try:
+        p.write_text(mutate(original))
+        seen = []
+        for flags, name in _vecs(path):
+            seen += gua.check_shim(str(p), want_numbers, _CLANG, flags, name)
+        if not any(needle in r for r in seen):
+            problems.append(f'{label}: expected a reason containing {needle!r}, '
+                            f'got {seen}')
+    finally:
+        p.write_text(original)
+
+# Baseline: the committed shims are sound under EVERY authoritative vector.
+for path, want in ((gua.SHIM_USER_H, True), (gua.SHIM_KERNEL_H, False)):
+    for flags, name in _vecs(path):
+        reasons = gua.check_shim(path, want, _CLANG, flags, name)
+        if reasons:
+            problems.append(f'committed shim {path} fails check_shim '
+                            f'under [{name}]: {reasons}')
+
+# Detaching the include, in each of the shapes a raw-text scan would miss.
+expect(gua.SHIM_USER_H, True,
+       lambda t: t.replace('#include "../../abi/generated/abi_contract.h"',
+                           '/* detached */'),
+       'does not resolve', 'detached-include')
+expect(gua.SHIM_USER_H, True,
+       lambda t: t.replace('#include "../../abi/generated/abi_contract.h"',
+                           '#if 0\n#include "../../abi/generated/abi_contract.h"\n#endif'),
+       'does not resolve', 'if0-guarded-include')
+# Wrong visibility for the side: user without the tables, kernel with them.
+expect(gua.SHIM_USER_H, True,
+       lambda t: t.replace('#define ABI_CONTRACT_WANT_NUMBERS', '/* dropped */'),
+       'does not resolve', 'user-shim-without-numbers')
+expect(gua.SHIM_KERNEL_H, False,
+       lambda t: t + '#define ABI_CONTRACT_WANT_NUMBERS\n'
+                     '#include "../../abi/generated/abi_contract.h"\n',
+       'does NOT publish for it', 'kernel-shim-with-numbers')
+# A restated value -- and the two spellings that slipped past the raw-text scan:
+# `#undef` plus `# define` with a space, which would have shipped ring 3 against
+# a wrong syscall number while the fingerprint still agreed at the handshake.
+# A BARE redefinition (no #undef) is rejected even harder than by value
+# comparison: the authoritative vectors carry -Werror -Wmacro-redefined, so the
+# preprocessor refuses the shim outright. Either rejection is a --check failure,
+# so this needle matches the macro name rather than one specific message.
+expect(gua.SHIM_USER_H, True,
+       lambda t: t + '#define SYS_WRITE 999\n',
+       'SYS_WRITE', 'hand-defined-constant')
+expect(gua.SHIM_USER_H, True,
+       lambda t: t + '#undef SYS_WRITE\n# define SYS_WRITE 999\n',
+       'resolves SYS_WRITE', 'undef-then-spaced-redefine')
+expect(gua.SHIM_KERNEL_H, False,
+       lambda t: t + '#undef IMPOSSIBLE_OS_ABI_HASH\n',
+       'does not resolve', 'undef-the-fingerprint')
+expect(gua.SHIM_KERNEL_H, False,
+       lambda t: t + '#undef IMPOSSIBLE_OS_ABI_HASH\n'
+                     '#  define IMPOSSIBLE_OS_ABI_HASH 0xBADULL\n',
+       'resolves IMPOSSIBLE_OS_ABI_HASH', 'hand-defined-hash')
+# The FLAG-GUARDED shapes: invisible to any minimal preprocessing context, live
+# in the real build. -O2 puts __OPTIMIZE__ in both production vectors, and the
+# kernel adds flavor macros -- either would carry a wrong ABI value into real
+# binaries with the fingerprint intact, so the crt0 handshake would still agree.
+expect(gua.SHIM_USER_H, True,
+       lambda t: t + '#ifdef __OPTIMIZE__\n#undef SYS_WRITE\n'
+                     '# define SYS_WRITE 999\n#endif\n',
+       'resolves SYS_WRITE', 'optimize-guarded-redefine')
+expect(gua.SHIM_KERNEL_H, False,
+       lambda t: t + '#ifdef KERNEL_TESTS\n#undef IMPOSSIBLE_OS_ABI_HASH\n'
+                     '#define IMPOSSIBLE_OS_ABI_HASH 0xBADULL\n#endif\n',
+       'resolves IMPOSSIBLE_OS_ABI_HASH', 'flavor-guarded-fingerprint-swap')
+
+# --- FACADE BYTE-PINNING --------------------------------------------------
+# Four parsing designs were bypassed here in succession -- a `#define `-prefix
+# scan, the same under minimal flags, per-vector semantic comparison, and a
+# directive allowlist over stripped comments. Each was Python guessing at C
+# lexing and each lost to a different corner: `# define`, __OPTIMIZE__ guards,
+# a guard on NULL that types.h supplies before the shim, line splicing,
+# `// /*` hiding directives from a block-first regex, and `/*` inside an
+# #include header-name collapsing to the required spelling. The facades carry
+# no ABI data and never vary, so their exact bytes are pinned instead. A byte
+# comparison has no corners to find.
+def expect_form(path, want_numbers, mutate, needle, label):
+    p = pathlib.Path(path)
+    original = p.read_text()
+    try:
+        p.write_text(mutate(original))
+        reasons = gua.check_shim_form(str(p), want_numbers)
+        if not any(needle in r for r in reasons):
+            problems.append(f'form/{label}: expected a reason containing '
+                            f'{needle!r}, got {reasons}')
+    finally:
+        p.write_text(original)
+
+# (The committed facades were checked against their canonical bytes above,
+# before the probe redirect; the probes start canonical by construction.)
+
+# Every historical bypass, now refused by the same mechanism.
+for payload, label in (
+        ('#ifdef NULL\n#undef SYS_WRITE\n#define SYS_WRITE 999\n#endif\n',
+         'preceding-header-macro-guard'),
+        ('#undef SYS_WRITE\n# define SYS_WRITE 999\n', 'undef-then-spaced-redefine'),
+        ('#ifdef __OPTIMIZE__\n#undef SYS_WRITE\n# define SYS_WRITE 9\n#endif\n',
+         'optimize-guarded-redefine'),
+        ('/* b *\\\n/\n#ifdef NULL\n#endif\n// */\n', 'line-splice-fake-comment-end'),
+        ('// /*\n#ifdef NULL\n#undef SYS_WRITE\n#endif\n// */\n',
+         'line-comment-hiding-block-marker'),
+        ('/* unterminated\n#ifdef NULL\n#endif\n', 'unterminated-block-comment'),
+        ('#include "types.h"\n', 'extra-include'),
+        ('int sneaky = 1;\n', 'code-in-a-facade'),
+):
+    expect_form(gua.SHIM_USER_H, True, lambda t, pl=payload: t + pl,
+                'differs from the pinned facade', label)
+
+# In-place edits, not just appends -- these change no line count.
+expect_form(gua.SHIM_USER_H, True,
+            lambda t: t.replace('#include "../../abi/generated/abi_contract.h"',
+                                '#include "../../abi/generated/abi_/*x*/contract.h"'),
+            'differs from the pinned facade', 'header-name-comment-splice')
+expect_form(gua.SHIM_USER_H, True,
+            lambda t: t.replace('#include "../../abi/generated/abi_contract.h"',
+                                '#include "generated/abi_contract.h"'),
+            'differs from the pinned facade', 'search-form-include-spelling')
+expect_form(gua.SHIM_USER_H, True,
+            lambda t: t.replace('#define ABI_CONTRACT_WANT_NUMBERS\n', ''),
+            'differs from the pinned facade', 'user-facade-without-numbers')
+expect_form(gua.SHIM_KERNEL_H, False,
+            lambda t: t.replace('#pragma once',
+                                '#pragma once\n#define ABI_CONTRACT_WANT_NUMBERS'),
+            'differs from the pinned facade', 'kernel-facade-with-numbers')
+# A refusal must name the first differing LINE so a reader is not left diffing.
+expect_form(gua.SHIM_USER_H, True,
+            lambda t: t.replace('#pragma once', '#pragma  once'),
+            ':12 differs', 'first-differing-line-is-named')
+
+# A facade must be a REGULAR FILE, even when a symlink target happens to hold
+# the exact canonical bytes: right today, following someone else's file
+# tomorrow, entirely outside this gate's view.
+_p = pathlib.Path(gua.SHIM_USER_H)
+_orig = _p.read_bytes()
+_orig_mode = _p.stat().st_mode
+_canon = pathlib.Path(tempfile.mkdtemp()) / 'canonical.h'
+_canon.write_bytes(_orig)
+try:
+    _p.unlink()
+    _p.symlink_to(_canon)
+    _reasons = gua.check_shim_form(str(_p), True)
+    if not any('symlink' in r for r in _reasons):
+        problems.append(f'form/symlink-with-canonical-bytes: a symlinked facade '
+                        f'must be refused even when its target matches, got '
+                        f'{_reasons}')
+finally:
+    if _p.is_symlink() or _p.exists():
+        _p.unlink()
+    _p.write_bytes(_orig)
+    os.chmod(_p, _orig_mode)
+    _canon.unlink(missing_ok=True)
+    os.rmdir(_canon.parent)
+
+# A CRLF working copy is byte-different and SEMANTICALLY IDENTICAL -- a line
+# ending cannot change which directives are active. Byte-pinning must not fail
+# a checkout clang is perfectly happy with (.gitattributes keeps the repository
+# side LF; this keeps a pre-existing clone from failing spuriously).
+_p = pathlib.Path(gua.SHIM_USER_H)
+_orig = _p.read_bytes()
+_orig_mode = _p.stat().st_mode
+try:
+    _p.write_bytes(_orig.decode().replace('\\n', '\\r\\n').encode())
+    _reasons = gua.check_shim_form(str(_p), True)
+    if _reasons:
+        problems.append(f'form/crlf-checkout: a CRLF facade must be accepted, '
+                        f'got {_reasons}')
+finally:
+    _p.write_bytes(_orig)
+    os.chmod(_p, _orig_mode)
+
+# Facade repair must not FOLLOW a symlink: `open(path, "w")` truncated the LINK
+# TARGET, verified to clobber a file outside the repository while leaving the
+# link in place. publish_atomically stages and os.replaces, so the link itself
+# is swapped -- exercised here in-process against the probe, because the
+# --write-shims SUBCOMMAND resolves the generator's own path constants and would
+# rewrite the tracked facade rather than this one.
+_sentinel = pathlib.Path(tempfile.mkdtemp()) / 'sentinel.txt'
+_sentinel.write_text('SENTINEL-MUST-SURVIVE\n')
+try:
+    _probe_user.unlink()
+    _probe_user.symlink_to(_sentinel)
+    gua.publish_atomically(str(_probe_user), gua.CANONICAL_SHIM_USER)
+    if _sentinel.read_text() != 'SENTINEL-MUST-SURVIVE\n':
+        problems.append('facade repair overwrote a symlink target outside the '
+                        'repository instead of replacing the link')
+    if _probe_user.is_symlink():
+        problems.append('facade repair left the symlink in place, so the path '
+                        'was followed rather than replaced')
+    if _probe_user.read_text() != gua.CANONICAL_SHIM_USER:
+        problems.append('facade repair did not restore the canonical bytes')
+finally:
+    if _probe_user.is_symlink() or _probe_user.exists():
+        _probe_user.unlink()
+    _probe_user.write_text(gua.CANONICAL_SHIM_USER)
+    _sentinel.unlink(missing_ok=True)
+    os.rmdir(_sentinel.parent)
+
+gua.SHIM_USER_H, gua.SHIM_KERNEL_H = _REAL_USER_H, _REAL_KERNEL_H
+for _n in _PROBE.iterdir():
+    _n.unlink()
+_PROBE.rmdir()
+
+print('OK' if not problems else '; '.join(problems))
+PYSHIM
+)
+if [ "$_GUA_SHIM_OUT" = "OK" ]; then
+    t_pass "gen_user_abi: --check refuses a shim that detaches from the contract"
+else
+    t_fail "gen_user_abi: --check refuses a shim that detaches from the contract" \
+           "$_GUA_SHIM_OUT"
+fi
+
+# INCLUSION ORDER must not decide whether ring-3 sees the number tables. The
+# contract uses two independent guards precisely so a TU that already pulled in
+# the kernel-visible half still gets the tables from a later include. Compile
+# both orders through the real shims and require SYS_WRITE to resolve in each.
+_GUA_ORDER_OK=1
+for _order in "kernel_first" "user_first"; do
+    _GUA_TU=$(mktemp -p "$REPO_ROOT/user/include" --suffix=.c abi-order-XXXXXX)
+    if [ "$_order" = "kernel_first" ]; then
+        printf '#include "../../include/kernel/abi_hash.h"\n#include "abi_numbers.h"\nint probe = SYS_WRITE;\nlong h = IMPOSSIBLE_OS_ABI_HASH;\n' > "$_GUA_TU"
+    else
+        printf '#include "abi_numbers.h"\n#include "../../include/kernel/abi_hash.h"\nint probe = SYS_WRITE;\nlong h = IMPOSSIBLE_OS_ABI_HASH;\n' > "$_GUA_TU"
+    fi
+    if ! (cd "$REPO_ROOT" && clang-19 --target=x86_64-elf -ffreestanding -nostdlib \
+            -nostdinc -fsyntax-only "$_GUA_TU" >/dev/null 2>&1); then
+        _GUA_ORDER_OK=0
+        _GUA_ORDER_BAD="$_order"
+    fi
+    rm -f "$_GUA_TU"
+done
+if [ "$_GUA_ORDER_OK" = "1" ]; then
+    t_pass "gen_user_abi: contract number tables are inclusion-order independent"
+else
+    t_fail "gen_user_abi: contract number tables are inclusion-order independent" \
+           "SYS_WRITE did not resolve with include order: $_GUA_ORDER_BAD"
+fi
+
+# An ignored build tree must NOT be able to shadow the committed contract. The
+# shims originally found it as `generated/abi_contract.h` via -Iabi, but
+# -I$(BUILD_DIR) precedes that in the kernel vector and build/generated/ already
+# exists, so planting build/generated/abi_contract.h won the lookup and compiled
+# a bogus fingerprint into the kernel while --check -- which reads the committed
+# artifact by absolute path -- stayed silent. The shims now include the artifact
+# by a path relative to themselves. Plant the conflict and require the real hash.
+# Plant and probe entirely in PYTHON with O_NOFOLLOW|O_CREAT|O_EXCL. The shell
+# version used `[ -f ... ]` to decide whether the path was free, and both that
+# test and the `>` redirection FOLLOW SYMLINKS: a dangling symlink left at
+# build/generated/abi_contract.h read as "absent" and the redirection then
+# created or truncated its target outside the checkout. A symlinked
+# build/generated parent escaped the same way. O_EXCL refuses a path that
+# already exists at all, O_NOFOLLOW refuses a final symlink, and the parent
+# components are walked without following.
+_GUA_SHADOW_OUT="SKIPPED: build/ unusable for scratch state"
+[ "$_GUA_SCRATCH_OK" = "1" ] && _GUA_SHADOW_OUT=$(cd "$REPO_ROOT" && python3 - <<'PYSHADOW'
+import os, pathlib, re, subprocess, tempfile
+
+root = pathlib.Path.cwd()
+real = (root / 'abi/generated/abi_contract.h').read_text()
+m = re.search(r'0x[0-9A-F]{16}ULL', real)
+if not m:
+    print('could not read the committed hash literal'); raise SystemExit(0)
+want = m.group(0)
+
+gen = root / 'build' / 'generated'
+probe = gen / 'abi_contract.h'
+
+# Refuse to touch anything if a parent component is a symlink.
+walk = gen
+while walk != root:
+    if walk.is_symlink():
+        print(f'{walk} is a symlink; refusing to plant through it')
+        raise SystemExit(0)
+    walk = walk.parent
+gen.mkdir(parents=True, exist_ok=True)
+
+try:
+    fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+except FileExistsError:
+    print('build/generated/abi_contract.h already exists -- refusing to clobber it')
+    raise SystemExit(0)
+except OSError as exc:
+    print(f'could not plant the shadow header safely: {exc}')
+    raise SystemExit(0)
+
+tu = None
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write('#define IMPOSSIBLE_OS_ABI_HASH 0xDEADBEEFDEADBEEFULL\n')
+    # The TU must EXPAND the macro: -E drops #define lines, so a header-only
+    # translation unit preprocesses to nothing and the comparison below would
+    # see an empty string and "fail" for the wrong reason.
+    tu = pathlib.Path(tempfile.mkstemp(suffix='.c', prefix='abi-shadow-',
+                                       dir=str(root))[1])
+    tu.write_text('#include "include/kernel/abi_hash.h"\n'
+                  'unsigned long long probe = IMPOSSIBLE_OS_ABI_HASH;\n')
+    out = subprocess.run(
+        ['clang-19', '--target=x86_64-elf', '-ffreestanding', '-nostdinc',
+         '-Iinclude', '-Isrc/kernel', '-Ibuild/generated', '-Isrc', '-Ibuild',
+         '-E', str(tu)], capture_output=True, text=True, cwd=str(root)).stdout
+    seen = re.findall(r'0x[0-9A-F]+ULL', out)
+    seen = seen[-1] if seen else '<none>'
+    print('OK' if seen == want
+          else f'kernel resolved {seen}, expected the committed {want}')
+finally:
+    probe.unlink(missing_ok=True)
+    if tu is not None:
+        tu.unlink(missing_ok=True)
+PYSHADOW
+)
+if [ "$_GUA_SHADOW_OUT" = "OK" ]; then
+    t_pass "gen_user_abi: an ignored build tree cannot shadow the ABI contract"
+else
+    t_fail "gen_user_abi: an ignored build tree cannot shadow the ABI contract" \
+           "$_GUA_SHADOW_OUT"
+fi
+
+# The generated contract must be a REAL prerequisite of the grouped userland
+# target. Those .exe targets compile their objects with inline recipe commands,
+# so the -MMD depfiles describe object targets make never requests: unlike the
+# kernel (whose .o files ARE real targets and do pick the contract up through
+# their .d files), userland has no automatic path from an ABI change to a
+# rebuild. Today the grouped target is rebuilt unconditionally anyway, because
+# its first prerequisite `sysroot` is .PHONY -- so this listing is not what
+# saves the current build, and no incremental-skew bug is being fixed here.
+# It is listed because that protection is INCIDENTAL: the day the grouped
+# target becomes properly incremental, an unlisted contract means the kernel
+# rebuilds against a new hash while stale user binaries survive, and every
+# ring-3 process then aborts at SYS_ABI_HANDSHAKE. Pin the explicit edge now.
+if grep -qE '\$\(ABI_CONTRACT_H\)' "$REPO_ROOT/Makefile" && \
+   awk '/^\$\(SYSROOT\)\/hello\.exe/,/^\t/' "$REPO_ROOT/Makefile" \
+       | grep -q 'ABI_CONTRACT_H'; then
+    t_pass "gen_user_abi: generated contract is a userland build prerequisite"
+else
+    t_fail "gen_user_abi: generated contract is a userland build prerequisite" \
+           "the grouped userland target does not list \$(ABI_CONTRACT_H)"
+fi
+
+# The committed-ABI root must stay OFF every include vector. Putting it on one
+# was the shadowing bug above: as soon as `generated/abi_contract.h` is resolved
+# by SEARCH rather than by a path relative to the shim, whichever -I root comes
+# first wins, and a writable build tree can come first. Re-adding -Iabi would
+# make the shadow fixture pass while restoring the hazard for any NEW consumer
+# that spells the include the search way, so pin the absence, not the presence.
+_GUA_UFLAGS=$( (cd "$REPO_ROOT" && make print-user-cflags 2>/dev/null) | tr '\n' ' ')
+case "$_GUA_UFLAGS" in
+  *-O2*-Iuser/include*|*-Iuser/include*-O2*)
+    t_pass "gen_user_abi: the ring-3 shim vector comes from the Makefile" ;;
+  *)
+    t_fail "gen_user_abi: the ring-3 shim vector comes from the Makefile" \
+           "make print-user-cflags must expand USER_CFLAGS + -Iuser/include (got: $_GUA_UFLAGS)" ;;
+esac
+
+if grep -qE -- '-I\$\(ABI_DIR\)|-Iabi\b' "$REPO_ROOT/Makefile"; then
+    t_fail "gen_user_abi: the committed-ABI root stays off the include vectors" \
+           "an -Iabi search path reintroduces build-tree shadowing of the contract"
+elif grep -q 'include "\.\./\.\./abi/generated/abi_contract\.h"' \
+        "$REPO_ROOT/include/kernel/abi_hash.h" && \
+     grep -q 'include "\.\./\.\./abi/generated/abi_contract\.h"' \
+        "$REPO_ROOT/user/include/abi_numbers.h"; then
+    t_pass "gen_user_abi: the committed-ABI root stays off the include vectors"
+else
+    t_fail "gen_user_abi: the committed-ABI root stays off the include vectors" \
+           "both shims must include the contract by a path relative to themselves"
+fi
 
 # The generated headers must be in sync with kernel source at all times --
 # the same gate `make check-abi` runs, asserted here so a tooling run catches

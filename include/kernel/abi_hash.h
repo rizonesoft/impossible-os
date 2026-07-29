@@ -1,16 +1,14 @@
 /* ============================================================================
- * abi_hash.h -- Kernel ABI fingerprint (GENERATED)
+ * abi_hash.h -- Kernel ABI fingerprint (STATIC FACADE, byte-pinned)
  *
- * Regenerate via: python3 scripts/gen-user-abi.py
- * Verified via:   make check-abi
- *
- * DO NOT EDIT BY HAND. Derived from the same sources as
- * user/include/abi_numbers.h -- the kernel-side copy is needed so
- * SYS_ABI_HANDSHAKE can return the same 64-bit hash the user libc
- * has compiled in. A drift between the two headers is a build error,
- * not a runtime surprise.
+ * NOT generated, and NOT free-form: `make check-abi` compares this file
+ * BYTE FOR BYTE against CANONICAL_SHIM_KERNEL in scripts/gen-user-abi.py.
+ * Change it there, or the build fails. The rationale for every line below --
+ * why one generated artifact, why a relative include, why this side omits
+ * ABI_CONTRACT_WANT_NUMBERS -- lives in that script's HEADER_TEMPLATE and
+ * check_shim_form() docstrings, so it is stated once rather than twice.
  * ============================================================================ */
 
 #pragma once
 
-#define IMPOSSIBLE_OS_ABI_HASH   0x448A9D27775243B3ULL
+#include "../../abi/generated/abi_contract.h"

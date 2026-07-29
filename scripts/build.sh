@@ -358,13 +358,19 @@ bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || { \
 # build path per CLAUDE.md, which forbids raw `make` -- drove `kernel` and
 # `userland` directly and never ran it. The drift guard was therefore off on the
 # only path anyone actually uses: editing a constant in one of the generator's
-# source headers compiled the NEW value into the kernel while user/include/
-# abi_numbers.h and include/kernel/abi_hash.h kept the OLD one. Both generated
-# headers still agreed with each other, so the crt0 SYS_ABI_HANDSHAKE passed and
-# ring 3 compared against a stale number with nothing complaining. Runs BEFORE
-# compilation so the failure lands on the edit, not on a later boot.
+# source headers compiled the NEW value into the kernel while the generated ABI
+# artifact kept the OLD one, and the crt0 SYS_ABI_HANDSHAKE passed because the
+# generated side agreed with itself -- ring 3 compared against a stale number
+# with nothing complaining. Runs BEFORE compilation so the failure lands on the
+# edit, not on a later boot.
+#
+# --check also verifies the two STATIC shims (user/include/abi_numbers.h,
+# include/kernel/abi_hash.h) still route to abi/generated/abi_contract.h with
+# the right visibility and hand-define no ABI constant of their own. The shims
+# are ordinary committed source, so nothing else would catch a one-line edit
+# that detaches a side of the build from the generator.
 if ! python3 scripts/gen-user-abi.py --check >> "$LOG" 2>&1; then
-    printf '\n %b✗ ABI DRIFT:%b generated ABI headers are stale vs kernel source\n' \
+    printf '\n %b✗ ABI DRIFT:%b generated ABI contract is stale vs kernel source\n' \
         "$RED" "$RESET" | tee -a "$LOG"
     printf '   Regenerate with: python3 scripts/gen-user-abi.py\n' | tee -a "$LOG"
     print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1
