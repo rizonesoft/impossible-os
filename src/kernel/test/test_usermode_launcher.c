@@ -49,13 +49,19 @@ int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
                                          const char *base, uint32_t k);
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
-                                     uint64_t total_ms);
+                                     uint64_t total_ms, int aborted,
+                                     uint32_t not_run);
 int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                       uint32_t failed, uint32_t skipped,
-                                      uint32_t a_pass, uint32_t a_fail,
-                                      uint32_t blocks, uint32_t records,
-                                      uint32_t reported, uint32_t invalid,
-                                      uint32_t unreported, uint64_t total_ms);
+                                      uint64_t total_ms);
+int test_usermode_format_json_run_report(char *dst, uint32_t cap,
+                                         uint32_t a_pass, uint32_t a_fail,
+                                         uint32_t blocks, uint32_t records,
+                                         uint32_t reported, uint32_t invalid,
+                                         uint32_t unreported);
+int test_usermode_format_json_run_meta(char *dst, uint32_t cap, int aborted,
+                                       uint32_t not_run);
+uint32_t test_usermode_json_line_max(void);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
                                         uint32_t blocks, uint32_t records,
@@ -591,19 +597,50 @@ static void test_xml_summary_counts_records(void)
     char line[192];
 
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 12, 2, 5, 1500) == 1,
+                                                 12, 2, 5, 1500, 0, 0) == 1,
                 "XML summary formats at realistic widths");
     TEST_ASSERT(u_test_streq(line,
-                    "[UTEST-XML-SUMMARY] tests=12 failures=2 skipped=5 time=1.500"),
+                    "[UTEST-XML-SUMMARY] tests=12 failures=2 skipped=5 time=1.500 "
+                    "aborted=0 not_run=0"),
                 "XML summary is EXACTLY the contract the host post-processor parses");
     /* An all-zero run is the empty-suite artifact contract: it must still
      * produce a complete, patchable summary rather than a degenerate one. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 0, 0, 0, 0) == 1,
+                                                 0, 0, 0, 0, 0, 0) == 1,
                 "an empty suite still formats a summary");
     TEST_ASSERT(u_test_streq(line,
-                    "[UTEST-XML-SUMMARY] tests=0 failures=0 skipped=0 time=0.000"),
+                    "[UTEST-XML-SUMMARY] tests=0 failures=0 skipped=0 time=0.000 "
+                    "aborted=0 not_run=0"),
                 "empty-suite summary carries explicit zeros");
+}
+
+static void test_xml_summary_carries_abort_state(void)
+{
+    char line[192];
+
+    /* The abort case the artifact previously could not express: a smoke
+     * binary SKIPPED, so `failures` is 0 and the counts that DID land are
+     * internally consistent -- the run reads as a small, clean, complete
+     * suite unless the completeness dimension says otherwise. */
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 1, 0, 1, 90, 1, 11) == 1,
+                "aborted XML summary formats");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-XML-SUMMARY] tests=1 failures=0 skipped=1 time=0.090 "
+                    "aborted=1 not_run=11"),
+                "abort state rides as trailing fields, after time=");
+    /* The trailing position is load-bearing, not cosmetic: scripts/test.sh
+     * extracts time with a greedy `.*time=([0-9.]+).*` sed, so anything
+     * inserted BEFORE it would be captured instead. */
+    TEST_ASSERT(u_test_contains(line, "time=0.090 aborted=1"),
+                "time= keeps a numeric value immediately after it");
+    /* `aborted` is a flag, never a count: any nonzero must normalise to 1
+     * so the host can compare it as a literal. */
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 1, 0, 1, 90, 7, 11) == 1,
+                "a nonzero abort flag formats");
+    TEST_ASSERT(u_test_contains(line, "aborted=1 not_run=11"),
+                "any nonzero abort flag normalises to exactly 1");
 }
 
 static void test_xml_summary_refuses_truncation(void)
@@ -614,8 +651,18 @@ static void test_xml_summary_refuses_truncation(void)
      * publish `[UTEST-XML-SUM` as if it were a summary; the host
      * post-processor then read a truncated `tests=` as a real number. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 12, 2, 5, 1500) == 0,
+                                                 12, 2, 5, 1500, 0, 0) == 0,
                 "XML summary reports failure instead of truncating");
+    /* The completeness fields are appended LAST, so a buffer that fits
+     * everything through `time=` and nothing more is the exact width at
+     * which a silent truncation would drop the abort state while leaving a
+     * summary that still parses. It must be refused, not published. */
+    {
+        char tight[61];
+        TEST_ASSERT(test_usermode_format_xml_summary(tight, sizeof(tight),
+                                                     12, 2, 5, 1500, 1, 9) == 0,
+                    "a buffer that fits only through time= is refused, not truncated");
+    }
 }
 
 static void test_json_summary_separates_dimensions(void)
@@ -623,21 +670,118 @@ static void test_json_summary_separates_dimensions(void)
     char line[384];
 
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  9, 1, 2,
-                                                  480, 3, 4, 4, 8, 1, 3,
-                                                  2500) == 1,
+                                                  9, 1, 2, 2500) == 1,
                 "JSON summary formats at realistic widths");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-JSON] {\"summary\":{\"passed\":9,\"failed\":1,"
-                    "\"skipped\":2,\"total\":12,\"reported\":{\"asserts_passed\":480,"
-                    "\"asserts_failed\":3,\"skip_blocks\":4,\"skip_records\":4,"
-                    "\"binaries_reported\":8,\"binaries_invalid\":1,"
-                    "\"binaries_unreported\":3},\"time_ms\":2500}}"),
+                    "\"skipped\":2,\"total\":12,\"time_ms\":2500}}"),
                 "JSON summary is EXACTLY the documented record, every field in order");
-    /* The nesting is the load-bearing part: assertion counts must never sit
-     * beside binary counts where a consumer could read one as the other. */
-    TEST_ASSERT(u_test_contains(line, "\"reported\":{\"asserts_passed\":480"),
-                "assertion counts live in their own object, not beside binaries");
+    /* The summary carries BINARY counts only. Assertion counts travel in
+     * their own record and are nested under `summary.reported` by the host
+     * assembler, so a consumer can never read one unit as the other -- but
+     * they must not appear inline here, where a partial read could. */
+    TEST_ASSERT(!u_test_contains(line, "asserts_passed"),
+                "assertion counts never sit inline beside binary counts");
+
+    TEST_ASSERT(test_usermode_format_json_run_report(line, sizeof(line),
+                                                     480, 3, 4, 4, 8, 1, 3) == 1,
+                "run_report formats at realistic widths");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-JSON] {\"record_kind\":\"run_report\","
+                    "\"asserts_passed\":480,\"asserts_failed\":3,"
+                    "\"skip_blocks\":4,\"skip_records\":4,"
+                    "\"binaries_reported\":8,\"binaries_invalid\":1,"
+                    "\"binaries_unreported\":3}"),
+                "run_report is EXACTLY the documented record, every field in order");
+}
+
+static void test_json_records_fit_klog_transport(void)
+{
+    char line[384];
+    uint32_t cap = test_usermode_json_line_max();
+
+    /* Every record reaches the host through klog, which bounds a message to
+     * its 256-byte ring field. A record wider than that is cut mid-object in
+     * transit -- for JSON, unparseable rather than merely short, and silent.
+     *
+     * This is measured, not hypothetical. With the report dimension nested
+     * inline the live summary reached 242 of the 255 usable bytes, and a
+     * suite with four-digit binary counts and six-digit assertion counts
+     * overflowed it. Splitting the dimensions is what bought the headroom,
+     * so every record is pinned here at its uint32 maximum: if a future
+     * field pushes one back over the transport, this fails at build-test
+     * time rather than by publishing an unparseable artifact. */
+    TEST_ASSERT(cap == 256,
+                "the emitter caps a record at klog's message capacity");
+    TEST_ASSERT(test_usermode_format_json_summary(line, cap,
+                                                  4294967295u, 4294967295u,
+                                                  4294967295u,
+                                                  18446744073709551615ull) == 1,
+                "the summary fits the transport at every field's maximum");
+    TEST_ASSERT(test_usermode_format_json_run_report(line, cap,
+                                                     4294967295u, 4294967295u,
+                                                     4294967295u, 4294967295u,
+                                                     4294967295u, 4294967295u,
+                                                     4294967295u) == 1,
+                "run_report fits the transport at every field's maximum");
+    TEST_ASSERT(test_usermode_format_json_run_meta(line, cap,
+                                                   1, 4294967295u) == 1,
+                "run_meta fits the transport at every field's maximum");
+}
+
+static void test_json_run_report_refuses_truncation(void)
+{
+    char line[40];
+
+    TEST_ASSERT(test_usermode_format_json_run_report(line, sizeof(line),
+                                                     480, 3, 4, 4, 8, 1, 3) == 0,
+                "run_report reports failure instead of truncating");
+}
+
+static void test_json_run_meta_record(void)
+{
+    char line[384];
+
+    /* The completeness dimension: a run the smoke gate cut short otherwise
+     * serializes identically to a smaller complete one. */
+    TEST_ASSERT(test_usermode_format_json_run_meta(line, sizeof(line),
+                                                   1, 11) == 1,
+                "aborted run_meta formats");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-JSON] {\"record_kind\":\"run_meta\","
+                    "\"aborted\":true,\"not_run\":11}"),
+                "run_meta is EXACTLY the documented record");
+    /* record_kind leads the record, as it does for every other kind in this
+     * stream -- a consumer discriminates on it and never on field presence. */
+    TEST_ASSERT(u_test_contains(line, "{\"record_kind\":\"run_meta\""),
+                "run_meta leads with the stream discriminator");
+    /* Emitted on EVERY run, not only aborted ones: its absence must mean
+     * "this producer predates the dimension", never "the run completed". */
+    TEST_ASSERT(test_usermode_format_json_run_meta(line, sizeof(line),
+                                                   0, 0) == 1,
+                "a complete run also emits run_meta");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-JSON] {\"record_kind\":\"run_meta\","
+                    "\"aborted\":false,\"not_run\":0}"),
+                "a complete run says so explicitly");
+    /* `aborted` is a JSON boolean, not 0/1, so it cannot be summed with the
+     * neighbouring count by a consumer walking the object generically. */
+    TEST_ASSERT(test_usermode_format_json_run_meta(line, sizeof(line),
+                                                   7, 3) == 1,
+                "a nonzero abort flag formats");
+    TEST_ASSERT(u_test_contains(line, "\"aborted\":true"),
+                "any nonzero abort flag normalises to the JSON literal true");
+    /* Widest possible: the record must fit the transport with every field at
+     * its maximum, or an aborted run would lose the very record that says so. */
+}
+
+static void test_json_run_meta_refuses_truncation(void)
+{
+    char line[24];
+
+    TEST_ASSERT(test_usermode_format_json_run_meta(line, sizeof(line),
+                                                   1, 11) == 0,
+                "run_meta reports failure instead of truncating");
 }
 
 static void test_json_summary_zero_run(void)
@@ -645,29 +789,28 @@ static void test_json_summary_zero_run(void)
     char line[384];
 
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  0, 0, 0,
-                                                  0, 0, 0, 0, 0, 0, 0, 0) == 1,
+                                                  0, 0, 0, 0) == 1,
                 "an all-zero JSON summary formats");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":0,"
-                    "\"skipped\":0,\"total\":0,\"reported\":{\"asserts_passed\":0,"
-                    "\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,"
-                    "\"binaries_reported\":0,\"binaries_invalid\":0,"
-                    "\"binaries_unreported\":0},\"time_ms\":0}}"),
+                    "\"skipped\":0,\"total\":0,\"time_ms\":0}}"),
                 "zero counts serialize as explicit zeros, not omitted fields");
+    TEST_ASSERT(test_usermode_format_json_run_report(line, sizeof(line),
+                                                     0, 0, 0, 0, 0, 0, 0) == 1,
+                "an all-zero run_report formats");
+    TEST_ASSERT(u_test_contains(line, "\"binaries_unreported\":0}"),
+                "an empty suite still publishes every report counter");
 }
 
 static void test_json_summary_refuses_truncation(void)
 {
-    char line[40];
+    char line[24];
 
     /* A truncated JSON object is not merely wrong, it is unparseable --
      * so the formatter must refuse and let the emitter publish a valid
      * error record instead. */
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  9, 1, 2,
-                                                  480, 3, 4, 4, 8, 1, 3,
-                                                  2500) == 0,
+                                                  9, 1, 2, 2500) == 0,
                 "JSON summary reports failure instead of truncating");
 }
 
@@ -1607,8 +1750,21 @@ void test_register_usermode_launcher(void)
                             test_xml_summary_counts_records, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: XML summary refuses truncation",
                             test_xml_summary_refuses_truncation, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: XML summary carries abort state",
+                            test_xml_summary_carries_abort_state, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: JSON summary separates dimensions",
                             test_json_summary_separates_dimensions,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON records fit klog transport",
+                            test_json_records_fit_klog_transport,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON run_report refuses truncation",
+                            test_json_run_report_refuses_truncation,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON run_meta record",
+                            test_json_run_meta_record, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: JSON run_meta refuses truncation",
+                            test_json_run_meta_refuses_truncation,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: JSON summary refuses truncation",
                             test_json_summary_refuses_truncation, TEST_CAT_EXEC);

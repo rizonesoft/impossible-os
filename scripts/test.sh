@@ -51,6 +51,7 @@ Usage:
   bash scripts/test.sh XML=1        Emit JUnit XML to build/test-results.xml
   bash scripts/test.sh JSON=1       Emit the launcher's JSON record stream
   bash scripts/test.sh TAP=1        Emit the launcher's TAP producer stream
+  bash scripts/test.sh UTEST_FILTER=test_harness_*  Glob-filter the user-mode binaries
   bash scripts/test.sh --help       Show this help
 
 Categories (SUITE=...):
@@ -88,6 +89,13 @@ JSON_MODE=0
 # with a documented producer contract was the one this script could never
 # exercise. Same shape as XML=1 / JSON=1.
 TAP_MODE=0
+# Glob filter over the user-mode BINARIES (boot.conf `utest_filter`), which
+# is a different axis from SUITE= (kernel test categories). It had no runner
+# knob either, so the empty-suite artifact contract -- a run selecting zero
+# binaries must still publish a parseable envelope rather than none -- could
+# not be exercised without hand-editing boot.conf. It is the only way to
+# reach that path on demand, so the contract needs it to be testable.
+UTEST_FILTER=""
 for arg in "$@"; do
     case "$arg" in
         -h|--help) print_help; exit 0 ;;
@@ -98,6 +106,7 @@ for arg in "$@"; do
         XML=1)    XML_MODE=1 ;;
         JSON=1)   JSON_MODE=1 ;;
         TAP=1)    TAP_MODE=1 ;;
+        UTEST_FILTER=*) UTEST_FILTER="${arg#UTEST_FILTER=}" ;;
     esac
 done
 
@@ -110,23 +119,33 @@ fi
 echo -e "${GREEN}[TEST]${RESET} Build OK"
 
 # --- Step 2: Patch boot.conf for test mode ---
-PATCH_ARGS="test 1"
+#
+# An ARRAY, not a space-joined string. The values here are user-supplied and
+# one of them is a GLOB: a scalar expanded unquoted as `$PATCH_ARGS` is
+# pathname-expanded against the repository first, so `UTEST_FILTER=*` would
+# reach the patcher as a list of repo filenames -- silently writing some
+# arbitrary filename as the filter and shifting every later key/value pair.
+# The array keeps each element exactly as typed.
+PATCH_ARGS=(test 1)
 if [ -n "$SUITE_CATEGORY" ]; then
-    PATCH_ARGS="$PATCH_ARGS test_suite $SUITE_CATEGORY"
+    PATCH_ARGS+=(test_suite "$SUITE_CATEGORY")
 fi
 if [ "$QUIET_MODE" -eq 1 ]; then
-    PATCH_ARGS="$PATCH_ARGS test_quiet 1"
+    PATCH_ARGS+=(test_quiet 1)
 fi
 if [ "$XML_MODE" -eq 1 ]; then
-    PATCH_ARGS="$PATCH_ARGS xml 1"
+    PATCH_ARGS+=(xml 1)
 fi
 if [ "$JSON_MODE" -eq 1 ]; then
-    PATCH_ARGS="$PATCH_ARGS json 1"
+    PATCH_ARGS+=(json 1)
 fi
 if [ "$TAP_MODE" -eq 1 ]; then
-    PATCH_ARGS="$PATCH_ARGS tap 1"
+    PATCH_ARGS+=(tap 1)
 fi
-bash "$PROJECT/scripts/patch-boot-conf.sh" $PATCH_ARGS > /dev/null
+if [ -n "$UTEST_FILTER" ]; then
+    PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
+fi
+bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
 
 # Install cleanup trap now that boot.conf is patched. Runs on normal exit,
 # SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
@@ -618,20 +637,39 @@ HAS_XML=0
 grep -q '\[UTEST-XML\]' "$TEST_LOG" 2>/dev/null && HAS_XML=1
 
 # Belt-and-suspenders: XML=1 was requested but the kernel produced no
-# [UTEST-XML] stream (test_usermode_run bailed before emitting, e.g.
-# C:\\ not mounted). CI tools fail on missing artifacts, so generate
-# an explicit zero-test <testsuite/> envelope. Normal empty-suite case
-# (total_planned=0 with xml=1) is handled kernel-side and goes through
-# the HAS_XML=1 branch below.
+# [UTEST-XML] stream. The normal empty-suite case (total_planned=0 with
+# xml=1) is handled kernel-side and goes through the HAS_XML=1 branch
+# below, so reaching here means the producer never ran while the launcher
+# itself did -- the boot.conf `xml=` patch did not take, or the stream was
+# cut. That is an INFRASTRUCTURE failure, not an empty run.
+#
+# Until 2026-07-29 this wrote a clean zero-test <testsuite/> and exited
+# green, which made "the artifact pipeline is broken" indistinguishable
+# from "the filter matched nothing". Now it fails the run and publishes a
+# document that says so: a single <error> testcase, so a JUnit consumer
+# that never reads our exit code still sees red rather than an empty
+# green suite. A stale artifact from a previous run is removed first so a
+# death before this point cannot leave one behind masquerading as current.
 if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
+    rm -f "$XML_OUT"
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
-        echo '<testsuite name="impossible-os-usermode" tests="0" failures="0" skipped="0" errors="0" time="0"/>'
-    } > "$XML_OUT"
-    echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (empty -- no [UTEST-XML] stream on serial)"
+        echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+        echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
+        echo '    <error message="XML=1 requested but no [UTEST-XML] stream reached serial"/>'
+        echo '  </testcase>'
+        echo '</testsuite>'
+    } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+    echo -e "  ${RED}[UTEST]${RESET} XML=1 requested but no [UTEST-XML] stream on serial -- artifact pipeline broken, failing the run"
+    UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
 fi
 
+XML_SUMMARY_OK=1
 if [ "$HAS_XML" -eq 1 ]; then
+    # Any artifact from a previous run goes first: a death partway through
+    # assembly must not leave the old document at the canonical path where a
+    # consumer would read it as this run's result.
+    rm -f "$XML_OUT"
     # Strip ANSI + klog wrapper prefix (timestamp, [cpu:N], level badge,
     # UTEST subsystem tag) in one sed pass. Everything after the first
     # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
@@ -647,6 +685,36 @@ if [ "$HAS_XML" -eq 1 ]; then
         XML_FAIL=$(echo "$SUM_LINE" | sed -E 's/.*failures=([0-9]+).*/\1/')
         XML_SKIP=$(echo "$SUM_LINE" | sed -E 's/.*skipped=([0-9]+).*/\1/')
         XML_TIME=$(echo "$SUM_LINE" | sed -E 's/.*time=([0-9.]+).*/\1/')
+        # Run-completeness fields. Fail-CLOSED on absence, matching the
+        # stance taken on an unparseable summary below and the JSON
+        # harvester's `missing_completeness` refusal: test.sh boots the
+        # kernel it just built, so a summary without these fields is
+        # producer/host drift, not an old artifact. Defaulting them to
+        # "complete" would let exactly that drift republish an aborted run
+        # as a finished one.
+        XML_ABORTED=0
+        XML_NOT_RUN=0
+        if echo "$SUM_LINE" | grep -qE ' aborted=[0-9]+ not_run=[0-9]+'; then
+            XML_ABORTED=$(echo "$SUM_LINE" | sed -E 's/.* aborted=([0-9]+).*/\1/')
+            XML_NOT_RUN=$(echo "$SUM_LINE" | sed -E 's/.* not_run=([0-9]+).*/\1/')
+        else
+            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- cannot tell a complete run from an aborted one"
+            UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+            # Same refusal as an unparseable summary, for the same reason:
+            # continuing would publish a normal document asserting
+            # aborted="false", which is a CLAIM the stream never made. An
+            # artifact-only consumer would read a version-skewed or truncated
+            # run as a completed green suite.
+            {
+                echo '<?xml version="1.0" encoding="UTF-8"?>'
+                echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+                echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
+                echo '    <error message="[UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- run completeness unknown"/>'
+                echo '  </testcase>'
+                echo '</testsuite>'
+            } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+            XML_SUMMARY_OK=0
+        fi
     else
         # No parseable summary, but [UTEST-XML] records DID reach serial
         # (HAS_XML=1). Substituting zeros here produced the worst possible
@@ -657,12 +725,67 @@ if [ "$HAS_XML" -eq 1 ]; then
         # publishing an artifact that contradicts itself.
         echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML] records on serial but no parseable [UTEST-XML-SUMMARY] -- XML artifact counts unknown"
         UTEST_FAIL=$(( UTEST_FAIL + 1 ))
-        XML_TESTS=0; XML_FAIL=0; XML_SKIP=0; XML_TIME=0
+        # Publish a document that SAYS the counts are unknown, and stop.
+        # Falling through with zeros wrote `<testsuite tests="0" ...>` wrapped
+        # around the real testcases still on serial -- the self-contradicting
+        # artifact the comment above disclaims, which reads to a JUnit
+        # consumer as a clean empty run while carrying evidence of an
+        # incomplete one. The intent was always to refuse; only the code
+        # continued.
+        {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+            echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
+            echo '    <error message="[UTEST-XML] records on serial with no parseable [UTEST-XML-SUMMARY] -- counts unknown"/>'
+            echo '  </testcase>'
+            echo '</testsuite>'
+        } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+        XML_SUMMARY_OK=0
     fi
 
+    # An aborted suite gets a synthetic infrastructure <testcase> carrying an
+    # <error>, and errors="1" to match it.
+    #
+    # <properties> alone would not be enough. The smoke gate aborts on ANY
+    # non-PASS verdict including SKIP, and a skipped smoke leaves failures=0
+    # with every remaining count internally consistent -- so a plain JUnit
+    # consumer (dorny/test-reporter, the GitLab junit schema, the Jenkins
+    # plugin) reports a run where most binaries never executed as green. The
+    # properties carry the queryable numbers; the error element is what makes
+    # the document itself red. `tests` is incremented to match, because it
+    # counts elements in the file.
+    XML_ERRORS=0
+    if [ "${XML_ABORTED:-0}" -ne 0 ]; then
+        XML_ERRORS=1
+        XML_TESTS=$(( XML_TESTS + 1 ))
+    fi
+fi
+
+# Assembly runs only when the summary parsed. The unparseable-summary branch
+# above has already published its own error document, and re-entering here
+# would overwrite it with the zeros-around-real-testcases artifact it exists
+# to avoid.
+if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
-        echo "<testsuite name=\"impossible-os-usermode\" tests=\"${XML_TESTS}\" failures=\"${XML_FAIL}\" skipped=\"${XML_SKIP}\" errors=\"0\" time=\"${XML_TIME}\">"
+        echo "<testsuite name=\"impossible-os-usermode\" tests=\"${XML_TESTS}\" failures=\"${XML_FAIL}\" skipped=\"${XML_SKIP}\" errors=\"${XML_ERRORS}\" time=\"${XML_TIME}\">"
+        # <properties> must be the first child of <testsuite> per the JUnit
+        # schema. Emitted on every run, not only aborted ones, so that a
+        # consumer can distinguish "this run completed" from "this artifact
+        # predates the completeness dimension".
+        echo '  <properties>'
+        if [ "${XML_ABORTED:-0}" -ne 0 ]; then
+            echo '    <property name="aborted" value="true"/>'
+        else
+            echo '    <property name="aborted" value="false"/>'
+        fi
+        echo "    <property name=\"not_run\" value=\"${XML_NOT_RUN:-0}\"/>"
+        echo '  </properties>'
+        if [ "${XML_ABORTED:-0}" -ne 0 ]; then
+            echo '  <testcase name="suite-abort" classname="infrastructure">'
+            echo "    <error message=\"smoke gate aborted the suite; ${XML_NOT_RUN:-0} binaries never ran\"/>"
+            echo '  </testcase>'
+        fi
         # Strip the klog prefix + `[UTEST-XML] ` marker. Keep only the
         # <testcase ...> / <testcase ...>...</testcase> payloads. Skip
         # the placeholder <testsuite ...> opener and the </testsuite>
@@ -677,8 +800,69 @@ if [ "$HAS_XML" -eq 1 ]; then
         echo "$STRIPPED" | sed -n 's/.*\[UTEST-XML\] //p' |
             grep -E '^<testcase' || true
         echo '</testsuite>'
-    } > "$XML_OUT"
-    echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+    } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+    if [ "${XML_ABORTED:-0}" -ne 0 ]; then
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
+    else
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+    fi
+fi
+
+# --- Step 6b: User-mode test JSON artifact ---
+#
+# The JSON sibling of step 6. The launcher has emitted a valid `[UTEST-JSON]`
+# record per binary since the typed-stream work, but nothing ever assembled
+# them into a file: XML=1 produced build/test-results.xml while JSON=1
+# produced only serial output, so every JSON consumer had to re-derive the
+# harvest itself.
+#
+# Assembly and validation live in scripts/utest-json-harvest.py rather than
+# inline sed. The artifact is a gate: a truncated, duplicated, or
+# self-inconsistent stream must fail the run instead of publishing a smaller
+# plausible result, and that check is real JSON parsing, not pattern
+# matching. The harvester publishes atomically and writes an explicit
+# error envelope (summary: null) on every refusal.
+
+JSON_OUT="$PROJECT/build/test-results.json"
+HAS_JSON=0
+grep -q '\[UTEST-JSON\]' "$TEST_LOG" 2>/dev/null && HAS_JSON=1
+
+if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
+    # Remove any artifact from a previous run BEFORE anything can fail --
+    # including the dependency check below. A stale successful envelope left
+    # at the canonical path outlives the run that failed to replace it, and
+    # CI that uploads artifacts regardless of exit code would attribute that
+    # old success to this run.
+    rm -f "$JSON_OUT"
+    if ! command -v python3 >/dev/null 2>&1; then
+        # Fail rather than skip: JSON=1 asked for an artifact, and silently
+        # producing none is the false-green this step exists to close. Leave
+        # an error envelope behind so a consumer reading only the file sees
+        # the reason instead of a missing path.
+        printf '%s\n' \
+            '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],' \
+            ' "summary": null, "summary_error": "no_python3",' \
+            ' "detail": "python3 unavailable -- artifact could not be assembled"}' \
+            > "$JSON_OUT.tmp" && mv -f "$JSON_OUT.tmp" "$JSON_OUT"
+        echo -e "  ${RED}[UTEST]${RESET} python3 not available -- cannot assemble $JSON_OUT"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    else
+        JSON_ERR=$(python3 "$PROJECT/scripts/utest-json-harvest.py" \
+                       "$TEST_LOG" "$JSON_OUT" 2>&1) && JSON_RC=0 || JSON_RC=$?
+        if [ "$JSON_RC" -eq 0 ]; then
+            echo -e "${CYAN}[TEST]${RESET} JSON results written: $JSON_OUT"
+        else
+            # rc 3 is "no stream at all", which is only a failure when the
+            # run actually asked for JSON. Every other refusal means records
+            # DID reach serial and did not agree with their own summary.
+            if [ "$JSON_RC" -eq 3 ] && [ "$JSON_MODE" -eq 0 ]; then
+                :
+            else
+                echo -e "  ${RED}[UTEST]${RESET} JSON artifact refused: ${JSON_ERR}"
+                UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+            fi
+        fi
+    fi
 fi
 
 # Final verdict -- kernel TEST and user-mode UTEST failures both gate exit.

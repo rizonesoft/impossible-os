@@ -1423,6 +1423,40 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  * handful of skip blocks today -- so a legitimate run never meets it. */
 #define UTEST_SKIP_RECORD_BUDGET 1024u
 
+/* Transport cap for EVERY machine-artifact record.
+ *
+ * Records reach the host through klog, whose ring entry is `message[256]`
+ * and which bounds the formatted message to that size. A record formatted
+ * into a larger local buffer still gets cut there, silently -- and a cut
+ * JSON object is unparseable rather than merely short, while a cut XML
+ * element corrupts the assembled document. Formatting against this cap
+ * instead means the bounded-append path refuses and the emitter publishes
+ * an explicit overflow marker the host fails on, which is a diagnosis
+ * rather than a corruption.
+ *
+ * It bites on real inputs, not theoretical ones: a binary name may be
+ * VFS_MAX_NAME (256) bytes, so the JSON prefix plus a long name already
+ * exceeds the wire capacity on its own. */
+#define UTEST_RECORD_LINE_MAX 256
+_Static_assert(UTEST_RECORD_LINE_MAX <= sizeof(((klog_entry_t *)0)->message),
+               "UTEST record buffer must fit klog's message field or the "
+               "wire copy is silently truncated");
+
+/* Machine-artifact records bypass the per-subsystem rate limiter.
+ *
+ * klog drops messages past 100 per second per subsystem, and under
+ * `xml=1 json=1` the UTEST subsystem emits several records per binary --
+ * so a fast enough suite can push the mandatory tail (run_report, summary,
+ * run_meta, and the XML closer) past the budget. The host then refuses a
+ * perfectly valid run because its terminator never arrived, and the drop
+ * gets worse on faster hardware. A rate limiter silently deleting the
+ * records an artifact is assembled from is the same false-green class this
+ * whole path exists to close. The volume is bounded by the binary count,
+ * not by anything unbounded, so the limiter has nothing to protect here.
+ *
+ * Human-readable UTEST progress lines deliberately keep the rate limit. */
+#define utest_record_log(level, ...) klog_unrated((level), "UTEST", __VA_ARGS__)
+
 struct u_report {
     uint32_t asserts_passed;
     uint32_t asserts_failed;
@@ -1571,7 +1605,7 @@ static void u_emit_xml_suite_open(void)
      * scripts/test.sh's post-processor because we don't yet know the
      * final counts; emit a placeholder header so the XML envelope is
      * recognizable even without post-processing. */
-    klog(LOG_INFO, "UTEST",
+    utest_record_log(LOG_INFO,
          "[UTEST-XML] <testsuite name=\"impossible-os-usermode\" tests=\"0\" "
          "failures=\"0\" skipped=\"0\" errors=\"0\" time=\"0\">");
 }
@@ -1590,10 +1624,19 @@ static void u_emit_xml_suite_open(void)
  * `tests` and `skipped` count RECORDS (binary testcases plus the
  * synthetic per-skip-block ones), so the attributes the host patches into
  * <testsuite> match the number of <testcase>/<skipped> elements actually
- * emitted. */
+ * emitted.
+ *
+ * `aborted` / `not_run` describe the RUN, not any testcase: a suite the
+ * smoke gate cut short describes only the binaries that executed, so
+ * without these two fields the artifact reads as a smaller COMPLETE run.
+ * They are appended AFTER `time=` deliberately -- every host parser in
+ * scripts/test.sh step 6 is a greedy `.*<key>=(...)` sed plus an
+ * end-unanchored validating grep, so trailing fields extend the line
+ * without disturbing any existing extraction. */
 static int u_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                 uint32_t failures, uint32_t skipped,
-                                uint64_t total_ms)
+                                uint64_t total_ms, int aborted,
+                                uint32_t not_run)
 {
     uint32_t pos = 0;
     char time_buf[24];
@@ -1608,12 +1651,17 @@ static int u_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
     u_format_seconds(time_buf, sizeof(time_buf), total_ms);
     if (!u_append(dst, &pos, cap, " time=")) return 0;
     if (!u_append(dst, &pos, cap, time_buf)) return 0;
+    if (!u_append(dst, &pos, cap, " aborted=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, aborted ? 1u : 0u)) return 0;
+    if (!u_append(dst, &pos, cap, " not_run=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, not_run)) return 0;
     return 1;
 }
 
 static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
                                    uint32_t skipped, uint32_t skip_records,
-                                   uint64_t total_ms)
+                                   uint64_t total_ms, int aborted,
+                                   uint32_t not_run)
 {
     char line[192];
 
@@ -1625,19 +1673,20 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
      * and closer lines. */
     if (u_format_xml_summary(line, sizeof(line),
                              passed + failed + skipped + skip_records,
-                             failed, skipped + skip_records, total_ms)) {
-        klog(LOG_INFO, "UTEST", "%s", line);
+                             failed, skipped + skip_records, total_ms,
+                             aborted, not_run)) {
+        utest_record_log(LOG_INFO, "%s", line);
     } else {
         /* Never publish a truncated summary: a short `tests=` reads as a
          * smaller-but-plausible run. Emit an unmistakable marker instead
          * and let the host gate fail the run on its presence. */
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "[UTEST-XML-SUMMARY-OVERFLOW] summary line exceeded %u bytes",
              (uint64_t)sizeof(line));
     }
     (void)passed;
 
-    klog(LOG_INFO, "UTEST", "[UTEST-XML] </testsuite>");
+    utest_record_log(LOG_INFO, "[UTEST-XML] </testsuite>");
 }
 
 /* Emit one `<testcase>` element for a binary. `verdict` is 0=PASS,
@@ -1659,7 +1708,7 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
                                  const char *reason,
                                  const char *classname_override)
 {
-    char line[512];
+    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
     char time_buf[24];
 
@@ -1703,7 +1752,7 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
         }
         APP("</testcase>");
     }
-    klog(LOG_INFO, "UTEST", "%s", line);
+    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_XML
     return;
@@ -1715,15 +1764,15 @@ overflow:
      * accounting while the suite header still counted it -- a record that
      * silently became a pass. The name is the only part we drop, because
      * the name is what did not fit. */
-    klog(LOG_ERROR, "UTEST",
+    utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] XML record for '%s' exceeded its buffer",
          name);
     if (verdict == 0) {
-        klog(LOG_INFO, "UTEST",
+        utest_record_log(LOG_INFO,
              "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\"/>",
              classname_override ? classname_override : u_type_label(type));
     } else {
-        klog(LOG_INFO, "UTEST",
+        utest_record_log(LOG_INFO,
              "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\">"
              "%s</testcase>",
              classname_override ? classname_override : u_type_label(type),
@@ -1739,7 +1788,7 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
                                   const char *reason,
                                   const struct u_report *rep)
 {
-    char line[512];
+    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
     const char *status;
 
@@ -1787,7 +1836,7 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
         APP_UINT(rep->skip_blocks);
     }
     APP("}");
-    klog(LOG_INFO, "UTEST", "%s", line);
+    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_JSON
     #undef APP_UINT
@@ -1798,22 +1847,26 @@ overflow:
      * following the documented contract drops any record without it --
      * which would make an overflowing binary disappear entirely rather
      * than surface as the failure it is. */
-    klog(LOG_ERROR, "UTEST",
+    utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] JSON record for '%s' exceeded its buffer",
          name);
-    klog(LOG_INFO, "UTEST",
+    utest_record_log(LOG_INFO,
          "[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"overflow\","
          "\"status\":\"FAIL\",\"time_ms\":0,\"reason\":\"record name too long\"}");
 }
 
 /* Build the [UTEST-JSON] summary body. Returns 1 on success, 0 if the
  * record would not fit. Same checked-append and testable-cap rationale as
- * u_format_xml_summary; this one matters more because the record grew the
- * whole report dimension and a truncated JSON object is not merely wrong,
- * it is unparseable. */
+ * u_format_xml_summary; this one matters more because a truncated JSON
+ * object is not merely wrong, it is unparseable.
+ *
+ * The record carries the BINARY counts only. The assertion-level report
+ * dimension it used to nest inline moved to its own `run_report` record
+ * for transport reasons -- see u_format_json_run_report. The host
+ * assembler nests it back under `summary.reported`, so the artifact's
+ * shape is unchanged. */
 static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                  uint32_t failed, uint32_t skipped,
-                                 const struct u_report_totals *rt,
                                  uint64_t total_ms)
 {
     uint32_t pos = 0;
@@ -1830,25 +1883,6 @@ static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
     JNUM(skipped);
     JAPP(",\"total\":");
     JNUM(passed + failed + skipped);
-    /* Report dimension: assertion-level statistics the binaries reported
-     * about themselves. Kept in its own object so a consumer can never
-     * mistake an assertion count for a binary count -- they are different
-     * units and the outer numbers are the ones the exit code reflects. */
-    JAPP(",\"reported\":{\"asserts_passed\":");
-    JNUM(rt->asserts_passed);
-    JAPP(",\"asserts_failed\":");
-    JNUM(rt->asserts_failed);
-    JAPP(",\"skip_blocks\":");
-    JNUM(rt->skip_blocks);
-    JAPP(",\"skip_records\":");
-    JNUM(rt->skip_records);
-    JAPP(",\"binaries_reported\":");
-    JNUM(rt->reported);
-    JAPP(",\"binaries_invalid\":");
-    JNUM(rt->invalid);
-    JAPP(",\"binaries_unreported\":");
-    JNUM(rt->unreported);
-    JAPP("}");
     JAPP(",\"time_ms\":");
     JNUM(total_ms);
     JAPP("}}");
@@ -1857,25 +1891,133 @@ static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
     return 1;
 }
 
+/* Build the assertion-level report record.
+ *
+ * Split out of the summary object for the same transport reason as
+ * run_meta, and measured rather than assumed: with all seven counters
+ * nested inline the live summary record reached 242 of the 255 bytes klog
+ * can carry, so a suite an order of magnitude larger -- four-digit binary
+ * counts, six-digit assertion counts -- overflowed it and the launcher
+ * published an overflow marker instead of a summary. Each dimension now
+ * gets its own record with room for every field at its uint32 maximum.
+ *
+ * The units stay separated exactly as before: assertion counts and binary
+ * counts are different things, and the host assembler nests these back
+ * under `summary.reported` so no consumer can read one as the other. */
+static int u_format_json_run_report(char *dst, uint32_t cap,
+                                    const struct u_report_totals *rt)
+{
+    uint32_t pos = 0;
+
+    dst[0] = '\0';
+    #define RAPP(s)  do { if (!u_append(dst, &pos, cap, (s))) return 0; } while (0)
+    #define RNUM(v)  do { if (!u_append_uint(dst, &pos, cap, (uint64_t)(v))) return 0; } while (0)
+
+    RAPP("[UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":");
+    RNUM(rt->asserts_passed);
+    RAPP(",\"asserts_failed\":");
+    RNUM(rt->asserts_failed);
+    RAPP(",\"skip_blocks\":");
+    RNUM(rt->skip_blocks);
+    RAPP(",\"skip_records\":");
+    RNUM(rt->skip_records);
+    RAPP(",\"binaries_reported\":");
+    RNUM(rt->reported);
+    RAPP(",\"binaries_invalid\":");
+    RNUM(rt->invalid);
+    RAPP(",\"binaries_unreported\":");
+    RNUM(rt->unreported);
+    RAPP("}");
+    #undef RAPP
+    #undef RNUM
+    return 1;
+}
+
+/* Build the run-completeness record.
+ *
+ * This is a RECORD OF ITS OWN rather than two more fields on the summary,
+ * and the reason is the transport. Every record reaches the host through
+ * klog, whose ring entry is `message[256]` and which bounds the formatted
+ * message to that size (klog_emit -> vformat_buf). The summary record
+ * already measures 242 characters on a live run, so appending the
+ * completeness pair to it produced a record longer than klog can carry:
+ * the wire copy is silently cut mid-object, which for JSON means
+ * unparseable rather than merely short. Measured 2026-07-29 -- the
+ * assertion-report dimension had already spent nearly all the headroom.
+ *
+ * Splitting keeps every record small and leaves the summary's shape and
+ * field order untouched; the host assembler folds this record into the
+ * artifact's `summary` object, so a consumer reading the FILE still sees
+ * one summary carrying `aborted` and `not_run`. `record_kind` is already
+ * this stream's discriminator, so a third kind costs the consumer nothing
+ * it was not already required to handle. */
+static int u_format_json_run_meta(char *dst, uint32_t cap, int aborted,
+                                  uint32_t not_run)
+{
+    uint32_t pos = 0;
+
+    dst[0] = '\0';
+    if (!u_append(dst, &pos, cap,
+                  "[UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":"))
+        return 0;
+    if (!u_append(dst, &pos, cap, aborted ? "true" : "false")) return 0;
+    if (!u_append(dst, &pos, cap, ",\"not_run\":")) return 0;
+    if (!u_append_uint(dst, &pos, cap, not_run)) return 0;
+    if (!u_append(dst, &pos, cap, "}")) return 0;
+    return 1;
+}
+
 static void u_emit_json_summary(uint32_t passed, uint32_t failed,
                                 uint32_t skipped,
                                 const struct u_report_totals *rt,
                                 uint64_t total_ms)
 {
-    char line[384];
+    char line[UTEST_RECORD_LINE_MAX];
 
     if (!s_json_mode) return;
+    /* Report dimension first, summary second: the summary is the record the
+     * host anchors the stream's tail on, so everything it will be assembled
+     * with must already be on the wire. */
+    if (u_format_json_run_report(line, sizeof(line), rt)) {
+        utest_record_log(LOG_INFO, "%s", line);
+    } else {
+        utest_record_log(LOG_ERROR,
+             "[UTEST-JSON] {\"summary_error\":\"overflow\"}");
+        utest_record_log(LOG_ERROR,
+             "[UTEST-JSON-SUMMARY-OVERFLOW] run_report record exceeded %u bytes",
+             (uint64_t)sizeof(line));
+        return;
+    }
     if (u_format_json_summary(line, sizeof(line), passed, failed, skipped,
-                              rt, total_ms)) {
-        klog(LOG_INFO, "UTEST", "%s", line);
+                              total_ms)) {
+        utest_record_log(LOG_INFO, "%s", line);
     } else {
         /* Syntactically valid JSON that cannot be mistaken for a run
          * summary, so a consumer fails rather than reading a truncated
          * object as zero tests. */
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "[UTEST-JSON] {\"summary_error\":\"overflow\"}");
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "[UTEST-JSON-SUMMARY-OVERFLOW] summary record exceeded %u bytes",
+             (uint64_t)sizeof(line));
+    }
+}
+
+static void u_emit_json_run_meta(int aborted, uint32_t not_run)
+{
+    char line[UTEST_RECORD_LINE_MAX];
+
+    if (!s_json_mode) return;
+    if (u_format_json_run_meta(line, sizeof(line), aborted, not_run)) {
+        utest_record_log(LOG_INFO, "%s", line);
+    } else {
+        /* Two fixed labels and one decimal count cannot outgrow a 256-byte
+         * buffer, so reaching here means the buffer contract itself
+         * regressed. Say so on the same overflow channel the host already
+         * fails on rather than dropping the record: a missing completeness
+         * record is exactly the ambiguity it exists to remove. */
+        utest_record_log(LOG_ERROR,
+             "[UTEST-JSON-SUMMARY-OVERFLOW] run_meta record exceeded %u bytes",
              (uint64_t)sizeof(line));
     }
 }
@@ -1922,9 +2064,9 @@ static void u_emit_report_summary(const struct u_report_totals *rt)
     char line[224];
 
     if (u_format_report_summary(line, sizeof(line), rt))
-        klog(LOG_INFO, "UTEST", "%s", line);
+        utest_record_log(LOG_INFO, "%s", line);
     else
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "[UTEST-REPORT-SUMMARY-OVERFLOW] report summary exceeded %u bytes",
              (uint64_t)sizeof(line));
 }
@@ -1956,7 +2098,7 @@ static uint32_t u_skip_records_allowed(uint32_t already_emitted,
 static void u_emit_json_skip_record(const char *rec_name, const char *parent,
                                     uint32_t index)
 {
-    char line[512];
+    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
 
     if (!s_json_mode) return;
@@ -1973,17 +2115,17 @@ static void u_emit_json_skip_record(const char *rec_name, const char *parent,
     APP_UINT(index);
     APP(",\"status\":\"SKIP\",\"reason\":\"sub-test block skipped "
         "(reason on serial log)\"}");
-    klog(LOG_INFO, "UTEST", "%s", line);
+    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_JSON
     #undef APP_UINT
     return;
 
 overflow:
-    klog(LOG_ERROR, "UTEST",
+    utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] JSON skip record for '%s' exceeded its buffer",
          parent);
-    klog(LOG_INFO, "UTEST",
+    utest_record_log(LOG_INFO,
          "[UTEST-JSON] {\"record_kind\":\"skip_block\",\"name\":\"overflow\","
          "\"parent\":\"overflow\",\"skip_index\":0,\"status\":\"SKIP\","
          "\"reason\":\"record name too long\"}");
@@ -2056,7 +2198,7 @@ static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
      * artifact knowingly missing records is not a passing run. */
     allowed = u_skip_records_allowed(already_emitted, rep->skip_blocks);
     if (allowed < rep->skip_blocks) {
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "[UTEST-SKIP-RECORD-BUDGET] %s requested=%u emitted=%u "
              "omitted=%u budget=%u",
              name, (uint64_t)rep->skip_blocks, (uint64_t)allowed,
@@ -2073,14 +2215,14 @@ static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
              * fails the run. Omitting records with only a WARN would keep
              * the run GREEN on artifacts that under-report skips, which
              * is the exact false-coverage class this section closes. */
-            klog(LOG_ERROR, "UTEST",
+            utest_record_log(LOG_ERROR,
                  "[UTEST-RECORD-OVERFLOW] %s skip-record name too long -- "
                  "%u record(s) omitted",
                  name, (uint64_t)(rep->skip_blocks - k + 1));
             return k - 1;
         }
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP reported by binary",
+            utest_record_log(LOG_INFO, "ok %u - %s # SKIP reported by binary",
                  (uint64_t)(++(*tap_point)), rec);
         else
             (*tap_point)++;
@@ -2107,7 +2249,7 @@ static void u_emit_report_line(const char *name, const struct u_report *rep)
 {
     if (!rep || rep->state == TASK_UTEST_REPORT_NONE)
         return;
-    klog(LOG_INFO, "UTEST",
+    utest_record_log(LOG_INFO,
          "[UTEST-REPORT] %s asserts_passed=%u asserts_failed=%u "
          "skip_blocks=%u state=%s",
          name, (uint64_t)rep->asserts_passed, (uint64_t)rep->asserts_failed,
@@ -2238,7 +2380,7 @@ static void u_run_one(const char *name, utest_type_t type,
         *out_verdict = 1;
         test_num = ++(*tap_point);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
+            utest_record_log(LOG_INFO,
                  "not ok %u - %s # task_create failed",
                  (uint64_t)test_num, name_copy);
         u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed",
@@ -2271,7 +2413,7 @@ static void u_run_one(const char *name, utest_type_t type,
         struct task *t = task_get_by_pid((uint32_t)pid);
         const char *fmt = (t && t->loaded_format) ? t->loaded_format : (const char *)0;
         if (fmt)
-            klog(LOG_INFO, "UTEST", "%s: format=%s", name_copy, fmt);
+            utest_record_log(LOG_INFO, "%s: format=%s", name_copy, fmt);
     }
 
     /* Compute preliminary verdict + reason from the child's exit
@@ -2426,47 +2568,47 @@ static void u_run_one(const char *name, utest_type_t type,
      * test_num. */
     test_num = ++(*tap_point);
     if (*out_verdict == 0) {
-        klog(LOG_INFO, "UTEST", "%s: PASS (exit=0)", name_copy);
+        utest_record_log(LOG_INFO, "%s: PASS (exit=0)", name_copy);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "ok %u - %s",
+            utest_record_log(LOG_INFO, "ok %u - %s",
                  (uint64_t)test_num, name_copy);
     } else if (*out_verdict == 2) {
-        klog(LOG_INFO, "UTEST", "%s: SKIP (exit=77)", name_copy);
+        utest_record_log(LOG_INFO, "%s: SKIP (exit=77)", name_copy);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "ok %u - %s # SKIP",
+            utest_record_log(LOG_INFO, "ok %u - %s # SKIP",
                  (uint64_t)test_num, name_copy);
     } else if (have_stem && leaked > 0 && exit_status == 0 && !timed_out &&
                !isolation_failed) {
         /* Escalated from PASS by leak detection only. */
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
              name_copy, (uint64_t)leaked);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
+            utest_record_log(LOG_INFO,
                  "not ok %u - %s # %u handle(s) leaked",
                  (uint64_t)test_num, name_copy, (uint64_t)leaked);
     } else if (isolation_failed && exit_status == 0 && !timed_out) {
         /* Escalated from PASS by isolation failure only. */
-        klog(LOG_ERROR, "UTEST",
+        utest_record_log(LOG_ERROR,
              "%s: FAIL (isolation failed -- escalated from PASS)",
              name_copy);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
+            utest_record_log(LOG_INFO,
                  "not ok %u - %s # isolation failed",
                  (uint64_t)test_num, name_copy);
     } else if (timed_out) {
-        klog(LOG_ERROR, "UTEST", "%s: FAIL (timeout after %ums)",
+        utest_record_log(LOG_ERROR, "%s: FAIL (timeout after %ums)",
              name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
                                                 : UTEST_DEFAULT_TIMEOUT_MS));
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
+            utest_record_log(LOG_INFO,
                  "not ok %u - %s # timeout",
                  (uint64_t)test_num, name_copy);
     } else {
-        klog(LOG_ERROR, "UTEST", "%s: FAIL (exit=%d)",
+        utest_record_log(LOG_ERROR, "%s: FAIL (exit=%d)",
              name_copy, (int64_t)exit_status);
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST",
+            utest_record_log(LOG_INFO,
                  "not ok %u - %s # exit=%d",
                  (uint64_t)test_num, name_copy, (int64_t)exit_status);
     }
@@ -2563,6 +2705,11 @@ void test_usermode_run(void)
     /* Set when a `Bail out!` was emitted. TAP makes bail-out terminal, so
      * the trailing plan must not follow it. */
     int                   tap_bailed = 0;
+    /* Run-completeness state, published in both machine summaries. Declared
+     * at function scope because the abort is DETECTED inside the phase loop
+     * but ANNOUNCED and SERIALISED after it. */
+    int                   suite_aborted = 0;
+    uint32_t              not_run = 0;
     uint32_t              total_planned = 0;
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
@@ -2652,14 +2799,26 @@ void test_usermode_run(void)
          * and tooling doesn't fail on missing artifact. Codex quality
          * M1 2026-04-20. */
         u_emit_xml_suite_open();
-        u_emit_xml_suite_close(0, 0, 0, 0, 0);
+        u_emit_xml_suite_close(0, 0, 0, 0, 0, 0, 0);
         u_emit_json_summary(0, 0, 0, &rt, 0);
+        u_emit_json_run_meta(0, 0);
         /* Empty suite still gets a plan (`1..0`) and a report summary, so
          * a consumer can tell "ran nothing" from "the launcher died before
          * emitting either". */
         if (s_tap_mode)
-            klog(LOG_INFO, "UTEST", "1..0");
+            utest_record_log(LOG_INFO, "1..0");
         u_emit_report_summary(&rt);
+        /* The legacy summary line is emitted for the empty suite too. It
+         * is not decoration: scripts/test.sh waits for exactly this string
+         * before it post-processes anything (its poll requires the
+         * user-mode summary whenever xml=/json=/tap= is set), so returning
+         * without it made a zero-binary run under xml=1/json=1 hang until
+         * the host timeout and exit 1 -- with the parseable empty envelope
+         * sitting unread on serial. Same shape as the populated path
+         * below, so the host's position-sensitive sed patterns apply
+         * unchanged. */
+        utest_record_log(LOG_INFO,
+             "=== 0 passed, 0 failed, 0 skipped of 0 total ===");
         u_manifest_free(&manifest);
         scheduler_disable();
         return;
@@ -2734,27 +2893,6 @@ void test_usermode_run(void)
         int phase;
         for (phase = 0; phase < 2; phase++) {
             int want_smoke = (phase == 0);
-            if (smoke_failed && phase == 1) {
-                klog(LOG_ERROR, "UTEST",
-                     "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
-                     (uint64_t)(total_planned - total_ran));
-                /* TAP contract: if the plan `1..N` was emitted but we
-                 * will not produce N results, emit a `Bail out!` record
-                 * so TAP consumers (scripts/test.sh, kselftest-style
-                 * runners, CI parsers) treat the run as aborted
-                 * instead of "missing N-K results = malformed".
-                 * Codex quality Phase-2, 2026-04-20. */
-                if (s_tap_mode) {
-                    klog(LOG_INFO, "UTEST",
-                         "Bail out! smoke failed -- %u non-smoke binaries skipped",
-                         (uint64_t)(total_planned - total_ran));
-                    /* Bail-out is TERMINAL in TAP: no further points and no
-                     * plan may follow it. Recorded so the trailing plan at
-                     * the bottom of this function stays suppressed. */
-                    tap_bailed = 1;
-                }
-                break;
-            }
             if (use_manifest) {
                 for (i = 0; i < manifest.count; i++) {
                     int verdict;
@@ -2772,11 +2910,21 @@ void test_usermode_run(void)
                     }
                     total_ran++;
                     u_run_one(nm, type, &tap_point, counters, &rt, &verdict);
-                    if (want_smoke && verdict != 0)
+                    if (want_smoke && verdict != 0) {
+                        /* Fast-fail is IMMEDIATE, per the gate's own spec:
+                         * stop this source right here rather than after the
+                         * rest of the phase. Continuing would run further
+                         * binaries past a smoke failure that may have left
+                         * the system in the state the smoke exists to
+                         * detect, and would inflate `total_ran` so the
+                         * `not_run` count published in the artifacts
+                         * described a boundary the gate never had. */
                         smoke_failed = 1;
+                        break;
+                    }
                 }
             }
-            if (!use_manifest || manifest.overflowed) {
+            if (!smoke_failed && (!use_manifest || manifest.overflowed)) {
                 struct glob_state gs = { root, 0 };
                 while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
                     int verdict;
@@ -2805,16 +2953,46 @@ void test_usermode_run(void)
                     total_ran++;
                     u_run_one(scratch_name, type, &tap_point, counters,
                               &rt, &verdict);
-                    if (want_smoke && verdict != 0)
+                    if (want_smoke && verdict != 0) {
                         smoke_failed = 1;
+                        break;
+                    }
                 }
             }
             if (smoke_failed && want_smoke) {
-                /* Short-circuit immediately: rest of phase-0 smokes
-                 * would still run, but the spec is "fast-fail gate":
-                 * one smoke FAIL aborts the whole suite. */
+                /* One smoke non-PASS aborts the whole suite: skip phase 1.
+                 * The abort is ANNOUNCED below, outside this loop, not in
+                 * a phase-1 preamble -- this `break` leaves the loop
+                 * entirely, so a preamble here would never execute (which
+                 * is exactly how the announcement and the TAP bail-out
+                 * silently stopped firing before 2026-07-29, leaving the
+                 * host ABORT gate dead and TAP streams plan-inconsistent). */
                 break;
             }
+        }
+        suite_aborted = smoke_failed;
+    }
+
+    /* Abort announcement -- unconditionally reachable, because it lives
+     * outside the phase loop that every abort path breaks out of. */
+    if (suite_aborted) {
+        not_run = total_planned - total_ran;
+        utest_record_log(LOG_ERROR,
+             "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
+             (uint64_t)not_run);
+        /* TAP contract: if the plan `1..N` was emitted but we will not
+         * produce N results, emit a `Bail out!` record so TAP consumers
+         * (scripts/test.sh, kselftest-style runners, CI parsers) treat the
+         * run as aborted instead of "missing N-K results = malformed".
+         * Codex quality Phase-2, 2026-04-20. */
+        if (s_tap_mode) {
+            utest_record_log(LOG_INFO,
+                 "Bail out! smoke failed -- %u non-smoke binaries skipped",
+                 (uint64_t)not_run);
+            /* Bail-out is TERMINAL in TAP: no further points and no plan
+             * may follow it. Recorded so the trailing plan at the bottom
+             * of this function stays suppressed. */
+            tap_bailed = 1;
         }
     }
 
@@ -2825,14 +3003,14 @@ void test_usermode_run(void)
 
     /* Summary. Counters: [0]=pass, [1]=fail, [2]=skip(exit=77). */
     if (skipped_by_filter > 0) {
-        klog(LOG_INFO, "UTEST",
+        utest_record_log(LOG_INFO,
              "=== %u passed, %u failed, %u skipped of %u total "
              "(%u filtered) ===",
              (uint64_t)counters[0], (uint64_t)counters[1],
              (uint64_t)counters[2], (uint64_t)total_ran,
              (uint64_t)skipped_by_filter);
     } else {
-        klog(LOG_INFO, "UTEST",
+        utest_record_log(LOG_INFO,
              "=== %u passed, %u failed, %u skipped of %u total ===",
              (uint64_t)counters[0], (uint64_t)counters[1],
              (uint64_t)counters[2], (uint64_t)total_ran);
@@ -2849,7 +3027,7 @@ void test_usermode_run(void)
      * An aborted run is correctly plan-less -- the bail-out line IS the
      * verdict. */
     if (s_tap_mode && !tap_bailed)
-        klog(LOG_INFO, "UTEST", "1..%u", (uint64_t)tap_point);
+        utest_record_log(LOG_INFO, "1..%u", (uint64_t)tap_point);
 
     /* summary emissions: close the XML envelope and drop the final
      * JSON summary record. Both are no-ops if the respective modes
@@ -2857,9 +3035,14 @@ void test_usermode_run(void)
      * plain diagnostic line, not part of either machine artifact, and the
      * host cross-check needs it whenever any binary reported. */
     u_emit_xml_suite_close(counters[0], counters[1], counters[2],
-                           rt.skip_records, run_end_ms - run_start_ms);
+                           rt.skip_records, run_end_ms - run_start_ms,
+                           suite_aborted, not_run);
     u_emit_json_summary(counters[0], counters[1], counters[2], &rt,
                         run_end_ms - run_start_ms);
+    /* Emitted AFTER the summary so the host assembler sees the completeness
+     * record as the stream's terminator and can reject anything that
+     * follows it as a cut-and-resumed stream. */
+    u_emit_json_run_meta(suite_aborted, not_run);
     u_emit_report_summary(&rt);
 }
 
@@ -2951,29 +3134,41 @@ int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
 
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
-                                     uint64_t total_ms);
+                                     uint64_t total_ms, int aborted,
+                                     uint32_t not_run);
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
-                                     uint64_t total_ms)
+                                     uint64_t total_ms, int aborted,
+                                     uint32_t not_run)
 {
     if (cap == 0) return 0;
-    return u_format_xml_summary(dst, cap, tests, failures, skipped, total_ms);
+    return u_format_xml_summary(dst, cap, tests, failures, skipped, total_ms,
+                                aborted, not_run);
+}
+
+int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                      uint32_t failed, uint32_t skipped,
+                                      uint64_t total_ms);
+int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
+                                      uint32_t failed, uint32_t skipped,
+                                      uint64_t total_ms)
+{
+    if (cap == 0) return 0;
+    return u_format_json_summary(dst, cap, passed, failed, skipped, total_ms);
 }
 
 /* The report totals are passed as a flat argument list rather than the
  * struct so the test file does not need the file-local type. */
-int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
-                                      uint32_t failed, uint32_t skipped,
-                                      uint32_t a_pass, uint32_t a_fail,
-                                      uint32_t blocks, uint32_t records,
-                                      uint32_t reported, uint32_t invalid,
-                                      uint32_t unreported, uint64_t total_ms);
-int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
-                                      uint32_t failed, uint32_t skipped,
-                                      uint32_t a_pass, uint32_t a_fail,
-                                      uint32_t blocks, uint32_t records,
-                                      uint32_t reported, uint32_t invalid,
-                                      uint32_t unreported, uint64_t total_ms)
+int test_usermode_format_json_run_report(char *dst, uint32_t cap,
+                                         uint32_t a_pass, uint32_t a_fail,
+                                         uint32_t blocks, uint32_t records,
+                                         uint32_t reported, uint32_t invalid,
+                                         uint32_t unreported);
+int test_usermode_format_json_run_report(char *dst, uint32_t cap,
+                                         uint32_t a_pass, uint32_t a_fail,
+                                         uint32_t blocks, uint32_t records,
+                                         uint32_t reported, uint32_t invalid,
+                                         uint32_t unreported)
 {
     struct u_report_totals rt;
     if (cap == 0) return 0;
@@ -2984,8 +3179,26 @@ int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
     rt.reported       = reported;
     rt.invalid        = invalid;
     rt.unreported     = unreported;
-    return u_format_json_summary(dst, cap, passed, failed, skipped, &rt,
-                                 total_ms);
+    return u_format_json_run_report(dst, cap, &rt);
+}
+
+/* The completeness record travels separately from the summary because it
+ * must fit klog's message field; the emitter's real cap is exported too so
+ * a test can prove the record fits the transport rather than a number the
+ * test picked. */
+uint32_t test_usermode_json_line_max(void);
+uint32_t test_usermode_json_line_max(void)
+{
+    return UTEST_RECORD_LINE_MAX;
+}
+
+int test_usermode_format_json_run_meta(char *dst, uint32_t cap, int aborted,
+                                       uint32_t not_run);
+int test_usermode_format_json_run_meta(char *dst, uint32_t cap, int aborted,
+                                       uint32_t not_run)
+{
+    if (cap == 0) return 0;
+    return u_format_json_run_meta(dst, cap, aborted, not_run);
 }
 
 int test_usermode_format_report_summary(char *dst, uint32_t cap,

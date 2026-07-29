@@ -21,10 +21,19 @@ are all `0`; opt in per-run:
 | `test=1`           | (prereq) launcher runs at all                                                             |
 | `tap=1`            | `1..N` plan line + `ok N - <name>` / `not ok N - <name>` per binary                       |
 | `xml=1`            | `[UTEST-XML] <testsuite>` / `[UTEST-XML] <testcase>` + `[UTEST-XML-SUMMARY]` envelope     |
-| `json=1`           | One `[UTEST-JSON] {...}` per binary + a final `[UTEST-JSON] {"summary":{...}}` record     |
+| `json=1`           | One `[UTEST-JSON] {...}` per binary + the trailing `run_report`, `summary`, `run_meta` records |
+| `utest_filter=<glob>` | Restrict the run to binaries matching the glob                                        |
 
-`scripts/test.sh` mirrors these as `QUIET=1`, `XML=1`, `JSON=1`, `TAP=1`
-command-line flags and patches them into the booted `boot.conf`.
+`scripts/test.sh` mirrors these as `QUIET=1`, `XML=1`, `JSON=1`, `TAP=1`,
+`UTEST_FILTER=<glob>` command-line flags and patches them into the booted
+`boot.conf`.
+
+`XML=1` and `JSON=1` also assemble host-side artifacts --
+`build/test-results.xml` and `build/test-results.json`. Both are gates: if
+the requested stream never reaches serial, or reaches it in a state that
+disagrees with its own summary, the run FAILS and the artifact says why.
+Neither ever publishes a clean-looking empty result to stand in for a broken
+pipeline.
 
 ### The report dimension (2026-07-28)
 
@@ -128,20 +137,48 @@ harvests both streams and regenerates a valid file at
 [UTEST-XML] <testcase name="test_harness_smoke.exe" classname="correctness" time="0.080"/>
 [UTEST-XML] <testcase name="test_leaky.exe" classname="correctness" time="0.090"><failure message="1 handle(s) leaked"/></testcase>
 [UTEST-XML] <testcase name="test_skip_me.exe" classname="correctness" time="0.010"><skipped message="exit=77"/></testcase>
-[UTEST-XML-SUMMARY] tests=3 failures=1 skipped=1 time=0.180
+[UTEST-XML-SUMMARY] tests=3 failures=1 skipped=1 time=0.180 aborted=0 not_run=0
 [UTEST-XML] </testsuite>
 ```
+
+`aborted=` and `not_run=` are the run-completeness dimension: `aborted=1`
+means the smoke gate cut the suite short and `not_run=` counts the planned
+binaries that never executed. They are appended after `time=` because every
+host parser is a greedy `.*<key>=(...)` expression plus an end-unanchored
+validating grep, so trailing fields extend the line without disturbing any
+existing extraction. `scripts/test.sh` fails the run if they are absent and
+publishes an infrastructure-error document instead of assembling a normal
+one: it boots the kernel it just built, so a summary without them is
+producer drift, not an old artifact, and a document asserting
+`aborted="false"` would be a claim the stream never made.
 
 ### Element schema
 
 ```xml
 <testsuite
     name="impossible-os-usermode"
-    tests="N"              <!-- RECORDS: binaries that ran + skip-block records -->
+    tests="N"              <!-- RECORDS: binaries that ran + skip-block records
+                                 + the synthetic abort record when aborted -->
     failures="N"           <!-- verdict == FAIL (incl. leaks/timeouts/isolation) -->
     skipped="N"            <!-- binaries that exited 77 + skip-block records -->
-    errors="0"             <!-- reserved; launcher never emits infra errors -->
+    errors="N"             <!-- 1 when the smoke gate aborted the suite, else 0 -->
     time="S.MMM">          <!-- wall-clock seconds for the whole suite -->
+  <!-- Always emitted, and always the first child (the JUnit schema requires
+       that position). Absence means the artifact predates the completeness
+       dimension; it never means the run completed. -->
+  <properties>
+    <property name="aborted" value="true|false"/>
+    <property name="not_run" value="N"/>
+  </properties>
+  <!-- Emitted ONLY on an aborted run. The properties above are queryable but
+       inert: the smoke gate aborts on any non-PASS verdict INCLUDING skip,
+       and a skipped smoke leaves failures="0" with every remaining count
+       internally consistent -- so a plain JUnit consumer would report a run
+       where most binaries never executed as green. This record, and the
+       errors="1" that matches it, are what make the document itself red. -->
+  <testcase name="suite-abort" classname="infrastructure">
+    <error message="smoke gate aborted the suite; N binaries never ran"/>
+  </testcase>
   <testcase
       name="test_<stem>.exe"
       classname="correctness"     <!-- test-type taxonomy label -->
@@ -200,7 +237,10 @@ junit 'build/test-results.xml'
 ## JSON lines (`json=1`)
 
 Typed schema for downstream automation (dashboards, trend analysis,
-regression bisect). One record per binary + one summary.
+regression bisect). `scripts/test.sh JSON=1` assembles the record stream
+into `build/test-results.json` -- see "Assembled artifact" below, which is
+what a consumer should read. This section documents the wire stream behind
+it.
 
 ### Wire format
 
@@ -209,8 +249,24 @@ regression bisect). One record per binary + one summary.
 [UTEST-JSON] {"record_kind":"skip_block","name":"test_harness_smoke.exe::skipped-block-1","parent":"test_harness_smoke.exe","skip_index":1,"status":"SKIP","reason":"sub-test block skipped (reason on serial log)"}
 [UTEST-JSON] {"record_kind":"binary","name":"test_leaky.exe","type":"correctness","status":"FAIL","time_ms":90,"reason":"1 handle(s) leaked"}
 [UTEST-JSON] {"record_kind":"binary","name":"test_skip_me.exe","type":"correctness","status":"SKIP","time_ms":10,"reason":"exit=77"}
-[UTEST-JSON] {"summary":{"passed":1,"failed":1,"skipped":1,"total":3,"reported":{"asserts_passed":3,"asserts_failed":0,"skip_blocks":1,"skip_records":1,"binaries_reported":1,"binaries_invalid":0,"binaries_unreported":2},"time_ms":180}}
+[UTEST-JSON] {"record_kind":"run_report","asserts_passed":3,"asserts_failed":0,"skip_blocks":1,"skip_records":1,"binaries_reported":1,"binaries_invalid":0,"binaries_unreported":2}
+[UTEST-JSON] {"summary":{"passed":1,"failed":1,"skipped":1,"total":3,"time_ms":180}}
+[UTEST-JSON] {"record_kind":"run_meta","aborted":false,"not_run":0}
 ```
+
+**Why the run-level data is split across three records.** Every record
+crosses to the host through `klog`, whose ring entry is `message[256]` and
+which bounds the formatted message to that size. A record wider than that is
+cut mid-object in transit, and a truncated JSON object is unparseable rather
+than merely short -- silently. With the assertion dimension nested inline the
+summary record measured 242 of the 255 usable bytes on a live run, so it
+overflowed on a suite with four-digit binary counts. Each dimension therefore
+gets its own record, sized to fit every field at its `uint32` maximum, and
+the host assembler nests them back together. The constraint stops at the
+wire: a consumer of `build/test-results.json` sees one summary object.
+
+The stream always ends `run_report`, `summary`, `run_meta`, in that order.
+The assembler rejects any other tail as a cut-and-resumed stream.
 
 **`record_kind` leads every record and is the stream's discriminator.**
 The stream carries two kinds of object: one per BINARY and one per
@@ -263,7 +319,7 @@ Skip-block record (one per reported skip block):
 | `status`      | string   | Always `"SKIP"`                                            |
 | `reason`      | string   | Fixed text; the human-readable reason stays on serial      |
 
-Summary record:
+Summary record (wire) -- binary counts only:
 
 | Field                                 | Type     | Notes                                              |
 |---------------------------------------|----------|----------------------------------------------------|
@@ -271,46 +327,123 @@ Summary record:
 | `summary.failed`                      | integer  | binaries with verdict=FAIL (all causes)            |
 | `summary.skipped`                     | integer  | binaries with verdict=SKIP (exit=77)               |
 | `summary.total`                       | integer  | `passed + failed + skipped` -- BINARIES only       |
-| `summary.reported.asserts_passed`     | integer  | assertions that held, summed over accepted reports |
-| `summary.reported.asserts_failed`     | integer  | assertions that did not                            |
-| `summary.reported.skip_blocks`        | integer  | skip sites taken, summed over accepted reports     |
-| `summary.reported.skip_records`       | integer  | synthetic records emitted (== skip_blocks unless the run-wide budget clipped them) |
-| `summary.reported.binaries_reported`  | integer  | binaries whose report was accepted                 |
-| `summary.reported.binaries_invalid`   | integer  | binaries whose report contradicted their exit      |
-| `summary.reported.binaries_unreported`| integer  | binaries that never reported (legacy path)         |
 | `summary.time_ms`                     | integer  | Suite wall-clock milliseconds                      |
+
+`run_report` record -- the assertion dimension, nested under
+`summary.reported` in the assembled artifact:
+
+| Field                   | Type     | Notes                                              |
+|-------------------------|----------|----------------------------------------------------|
+| `record_kind`           | string   | Always `"run_report"`                              |
+| `asserts_passed`        | integer  | assertions that held, summed over accepted reports |
+| `asserts_failed`        | integer  | assertions that did not                            |
+| `skip_blocks`           | integer  | skip sites taken, summed over accepted reports     |
+| `skip_records`          | integer  | synthetic records emitted (== skip_blocks unless the run-wide budget clipped them) |
+| `binaries_reported`     | integer  | binaries whose report was accepted                 |
+| `binaries_invalid`      | integer  | binaries whose report contradicted their exit      |
+| `binaries_unreported`   | integer  | binaries that never reported (legacy path)         |
+
+`run_meta` record -- the run-completeness dimension, merged into `summary`
+in the assembled artifact:
+
+| Field         | Type     | Notes                                                       |
+|---------------|----------|-------------------------------------------------------------|
+| `record_kind` | string   | Always `"run_meta"`                                         |
+| `aborted`     | boolean  | the smoke gate cut the suite short. A JSON boolean, not 0/1, so a consumer walking the object generically cannot sum it with a count |
+| `not_run`     | integer  | planned binaries that never executed. Always 0 when `aborted` is false; the assembler rejects any other combination |
+
+Emitted on EVERY run, not only aborted ones: absence must mean "this
+producer predates the dimension", never "the run completed". This is the
+only thing separating an aborted suite from a smaller complete one --
+the gate aborts on any non-PASS smoke verdict *including SKIP*, which
+leaves `failed` at 0 and every other count internally consistent.
+
+### Assembled artifact (`build/test-results.json`)
+
+`scripts/test.sh JSON=1` runs `scripts/utest-json-harvest.py`, which
+validates the stream and publishes the document below via a temporary file
+and atomic rename. Any artifact from a previous run is removed first, so a
+death before publication cannot leave a stale file that reads as current.
+
+```json
+{
+  "schema": "utest-json-v1",
+  "testcases": [ /* every record_kind=binary record, in stream order */ ],
+  "skip_blocks": [ /* every record_kind=skip_block record */ ],
+  "summary": {
+    "passed": 1, "failed": 1, "skipped": 1, "total": 3, "time_ms": 180,
+    "reported": { /* the run_report fields */ },
+    "aborted": false, "not_run": 0
+  }
+}
+```
+
+The artifact is a GATE, not a convenience. A stream that does not agree with
+its own summary must fail the run rather than publish a smaller plausible
+result, so the assembler refuses on: a missing/duplicate/non-terminal
+summary, a missing or duplicate `run_report`/`run_meta`, the launcher's own
+`summary_error` overflow marker, an unparseable record, an unknown
+`record_kind`, a binary count that disagrees with `summary.total`, per-status
+counts that disagree with `passed`/`failed`/`skipped`, a `skip_block` count
+that disagrees with `reported.skip_records`, and a not-aborted run that
+nevertheless reports binaries as not run.
+
+On refusal it writes an explicit error envelope -- `"summary": null` plus a
+`summary_error` reason and `detail` -- and exits nonzero, so `test.sh` fails
+the run. `summary` is null rather than zero-filled on purpose: a consumer
+keying on the summary must be unable to read a refused artifact as a clean
+run that happened to have no tests. The same stance applies when `JSON=1`
+was requested and no stream reached serial at all (`missing_stream`).
+
+An empty suite is a valid, publishable state: a run whose filter selects
+zero binaries writes a complete envelope with empty arrays and explicit
+zeros, never a missing file.
 
 ### Extraction
 
-No CI-side post-processor ships today; `jq` handles the rest:
+The assembled artifact is the intended consumer surface; `jq` over the raw
+serial stream still works for ad-hoc queries:
 
 ```sh
-# Per-binary pass-rate (key on record_kind -- selecting on .name would
-# also pull in the synthetic skip-block records and inflate the count):
+# Did this run actually finish, or did the smoke gate cut it short?
+jq '.summary | {total, aborted, not_run}' build/test-results.json
+
+# Per-binary pass rate. The artifact already separates the record kinds, so
+# there is no discriminator to remember and no way to inflate the count with
+# the synthetic skip-block records:
+jq -c '.testcases[] | {name, status, time_ms}' build/test-results.json
+
+# Which binaries skipped work, and how much:
+jq -c '.testcases[] | select((.skip_blocks // 0) > 0)
+       | {name, skip_blocks, asserts_passed}' build/test-results.json
+
+# Every skipped block, grouped under its binary:
+jq -c '.skip_blocks | group_by(.parent)' build/test-results.json
+
+# Trend the honesty signal: silence is not the same as zero skips.
+jq '.summary.reported
+    | {skip_blocks, binaries_unreported, binaries_invalid}' build/test-results.json
+
+# Refused artifact? summary is null and the reason is named:
+jq 'if .summary == null then {refused: .summary_error, detail} else "ok" end' \
+   build/test-results.json
+```
+
+Reading the raw serial stream instead (no artifact, e.g. triaging a run that
+refused to publish) means keying on `record_kind` yourself, and remembering
+that `reported` lives in the separate `run_report` record on the wire:
+
+```sh
+# Per-binary pass-rate from serial -- select on record_kind, never on the
+# presence of .name, which the skip-block records also carry:
 grep '\[UTEST-JSON\] {' build/test.log |
   sed 's/.*\[UTEST-JSON\] //' |
   jq -c 'select(.record_kind == "binary") | {name, status, time_ms}'
 
-# Which binaries skipped work, and how much:
+# The assertion dimension and the completeness dimension, from their own records:
 grep '\[UTEST-JSON\] {' build/test.log |
   sed 's/.*\[UTEST-JSON\] //' |
-  jq -c 'select(.record_kind == "binary" and (.skip_blocks // 0) > 0)
-         | {name, skip_blocks, asserts_passed}'
-
-# Every skipped block, grouped under its binary:
-grep '\[UTEST-JSON\] {' build/test.log |
-  sed 's/.*\[UTEST-JSON\] //' |
-  jq -sc 'map(select(.record_kind == "skip_block")) | group_by(.parent)'
-
-# Just the summary:
-grep '\[UTEST-JSON\] {"summary' build/test.log |
-  sed 's/.*\[UTEST-JSON\] //' |
-  jq '.summary'
-
-# Trend the honesty signal: silence is not the same as zero skips.
-grep '\[UTEST-JSON\] {"summary' build/test.log |
-  sed 's/.*\[UTEST-JSON\] //' |
-  jq '.summary.reported | {skip_blocks, binaries_unreported, binaries_invalid}'
+  jq -c 'select(.record_kind == "run_report" or .record_kind == "run_meta")'
 ```
 
 ---
@@ -339,4 +472,5 @@ let a binary set its own reason string.
 - **Public API:** [include/kernel/test/test_usermode.h](../../include/kernel/test/test_usermode.h)
 - **Governing TODO:** [TODO-04 -- User-Mode Test Framework](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md)
 - **Sibling environment matrix:** [usermode-env-matrix.md](usermode-env-matrix.md)
-- **CI runner:** [scripts/test.sh](../../scripts/test.sh) -- XML post-processor at step 6
+- **CI runner:** [scripts/test.sh](../../scripts/test.sh) -- XML post-processor at step 6, JSON at step 6b
+- **JSON assembler:** [scripts/utest-json-harvest.py](../../scripts/utest-json-harvest.py) -- validation rules and refusal reasons
