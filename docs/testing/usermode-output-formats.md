@@ -508,16 +508,27 @@ reads via `--identity`:
 nothing else, so an override that renamed a leg to `whpx`, `vbox` or
 `baremetal` would publish coverage nothing executed; the derived accelerator
 and CPU count stay in the name and in their own fields regardless, and the
-provenance is recorded. A label outside `[a-z0-9-]{1,32}` is refused rather
-than ignored, because the value lands in a filename.
+provenance is recorded. A label that does not match `^[a-z0-9][a-z0-9-]{0,31}$`
+-- the FIRST character must be alphanumeric, so a leading hyphen is refused --
+is rejected rather than ignored, because the value lands in a filename.
 
 Publication is fail-closed at both ends. The canonical pair is invalidated
 before anything in the run can fail -- including the argument check above --
-and an EXIT trap armed before the build publishes an identity-bearing
-refusal (`summary_error: "run_incomplete"`) for any exit that never reached
-assembly. A failed or interrupted run therefore leaves a document that names
+and an EXIT/INT/TERM trap armed before the environment preflight publishes an
+identity-bearing refusal (`summary_error: "run_incomplete"`, and in XML
+`errors="1"` with `aborted`/`not_run` present so a current refusal is never
+read as an artifact predating the completeness dimension) for any exit that
+never reached assembly. A signalled run carries `128+signo`, never 0. A failed or interrupted run therefore leaves a document that names
 itself, never the previous run's success sitting where CI would upload it as
 current.
+
+One invocation at a time per checkout. `scripts/test.sh` patches the shared
+`boot.conf`, writes a fixed `build/test.log`, and copies OVMF vars to a fixed
+path, so two concurrent runs in the same working tree already corrupt each
+other's boot configuration and serial capture regardless of artifacts; the
+leg-suffixed paths separate CONFIGURATIONS run one after another, not
+simultaneous runs. Giving each invocation its own private record is tracked
+separately.
 
 The artifact is a GATE, not a convenience. A stream that does not agree with
 its own summary must fail the run rather than publish a smaller plausible

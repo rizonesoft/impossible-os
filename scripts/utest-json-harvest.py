@@ -108,23 +108,41 @@ def _write_atomic(path, payload):
 _IDENTITY = None
 
 
-def _load_identity(path):
-    """Return the identity object, or None when it is absent or unreadable.
+# Provenance is metadata, not payload: it is read under a hard byte cap and a
+# regular-file check so a mistaken path (a directory, a multi-gigabyte log, a
+# deeply nested document) degrades to `run_identity: null` instead of
+# exhausting memory or killing the harvest with an uncaught RecursionError.
+IDENTITY_MAX_BYTES = 64 * 1024
 
-    A missing identity file is NOT a refusal: the artifact's own gates are
-    about stream integrity, and failing the harvest because provenance is
-    unavailable would turn a metadata gap into a false red.
+
+def _load_identity(path):
+    """Return the identity object, or None when it is absent or unusable.
+
+    A missing or malformed identity file is NOT a refusal: the artifact's own
+    gates are about stream integrity, and failing the harvest because
+    provenance is unavailable would turn a metadata gap into a false red.
     """
     if not path:
         return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            value = json.load(handle)
-    except (OSError, ValueError):
-        sys.stderr.write("utest-json-harvest: identity unreadable at %s "
-                         "-- publishing without it\n" % path)
+
+    def _decline(why):
+        sys.stderr.write("utest-json-harvest: identity %s at %s "
+                         "-- publishing without it\n" % (why, path))
         return None
-    return value if isinstance(value, dict) else None
+
+    try:
+        if not os.path.isfile(path):
+            return _decline("is not a regular file")
+        size = os.path.getsize(path)
+        if size > IDENTITY_MAX_BYTES:
+            return _decline("exceeds %d bytes" % IDENTITY_MAX_BYTES)
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.loads(handle.read(IDENTITY_MAX_BYTES + 1))
+    except (OSError, ValueError, RecursionError):
+        return _decline("is unreadable")
+    if not isinstance(value, dict):
+        return _decline("is not a JSON object")
+    return value
 
 
 def _refuse(out_path, reason, detail=None):

@@ -159,6 +159,25 @@ utest_xml_identity_attrs() {
     printf ' timestamp="%s" hostname="%s"' "$RUN_TS" "$RUN_HOSTNAME"
 }
 
+utest_json_identity() {
+    printf '{\n'
+    printf '  "schema": "utest-run-identity-v1",\n'
+    printf '  "timestamp": "%s",\n' "$RUN_TS"
+    printf '  "commit": "%s",\n' "$RUN_COMMIT"
+    printf '  "leg": "%s",\n' "$RUN_LEG"
+    printf '  "leg_source": "%s",\n' "$RUN_LEG_SOURCE"
+    printf '  "host": "%s",\n' "$RUN_HOST"
+    printf '  "hostname": "%s",\n' "$RUN_HOSTNAME"
+    printf '  "accel": "%s",\n' "$RUN_ACCEL"
+    printf '  "cpus": %s,\n' "$SMP_CPUS_SAFE"
+    printf '  "qemu": "%s",\n' "$RUN_QEMU"
+    printf '  "ci_parity": %s\n' "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
+    printf '}'
+}
+
+# The XML projection carries the SAME field set as the JSON object. A field in
+# one and not the other gives two consumers two different identity contracts
+# for one run.
 utest_xml_identity_props() {
     printf '    <property name="commit" value="%s"/>\n' "$RUN_COMMIT"
     printf '    <property name="leg" value="%s"/>\n' "$RUN_LEG"
@@ -166,18 +185,29 @@ utest_xml_identity_props() {
     printf '    <property name="accel" value="%s"/>\n' "$RUN_ACCEL"
     printf '    <property name="cpus" value="%s"/>\n' "$SMP_CPUS_SAFE"
     printf '    <property name="qemu" value="%s"/>\n' "$RUN_QEMU"
+    printf '    <property name="host" value="%s"/>\n' "$RUN_HOST"
+    printf '    <property name="ci_parity" value="%s"/>\n' \
+        "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
 }
 
 # Publish a staged document to the leg path first and the canonical alias
 # second. The leg artifact is the record; the alias is a convenience that must
 # never be newer than the record it points at. Before the leg is known the
 # staged file becomes the canonical artifact directly.
+# Returns 0 once the LEG record has landed, even if the alias copy then fails.
+# The caller marks the format published on that basis, because the guard's
+# refusal path would otherwise move a run_incomplete document OVER a valid,
+# fully assembled leg artifact -- destroying the evidence it exists to
+# preserve. An alias failure is reported and fails the run instead.
 utest_publish() {
     local staged="$1" leg="$2" canonical="$3"
     if [ -n "$leg" ]; then
         mv -f "$staged" "$leg" || return 1
-        cp -f "$leg" "$canonical.tmp" || return 1
-        mv -f "$canonical.tmp" "$canonical" || return 1
+        if ! { cp -f "$leg" "$canonical.tmp" && mv -f "$canonical.tmp" "$canonical"; }; then
+            rm -f "$canonical.tmp"
+            echo -e "  ${RED}[UTEST]${RESET} leg artifact published at $leg but the canonical alias $canonical could not be written"
+            UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        fi
     else
         mv -f "$staged" "$canonical" || return 1
     fi
@@ -237,7 +267,7 @@ utest_artifact_guard() {
                 printf ' "summary": null, "summary_error": "run_incomplete",\n'
                 printf ' "detail": "%s",\n' "$why"
                 printf ' "run_identity": '
-                cat "$IDENTITY_OUT" 2>/dev/null || printf 'null'
+                utest_json_identity
                 printf '}\n'
             } > "$staged" 2>/dev/null; then
                 utest_publish "$staged" "$JSON_LEG_OUT" "$JSON_OUT" && JSON_PUBLISHED=1
@@ -397,7 +427,7 @@ if [ -n "${UTEST_LEG:-}" ]; then
         # silently dropped override publishes under a name the caller does
         # not expect -- which is the collision this whole step exists to stop.
         echo -e "${RED}[TEST]${RESET} UTEST_LEG='$UTEST_LEG' is not a valid leg label."
-        echo -e "${YELLOW}       Allowed: 1-32 chars of [a-z0-9-], starting alphanumeric.${RESET}"
+        echo -e "${YELLOW}       Allowed: ^[a-z0-9][a-z0-9-]{0,31}$ -- 1-32 chars, first alphanumeric.${RESET}"
         exit 1
     fi
 fi
@@ -411,21 +441,8 @@ JSON_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.json"
 # previous run leaves one behind, and it is not covered by the destinations.
 rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT" "$XML_LEG_OUT.staged" "$JSON_LEG_OUT.staged"
 
-{
-    printf '{\n'
-    printf ' "schema": "utest-run-identity-v1",\n'
-    printf ' "timestamp": "%s",\n' "$RUN_TS"
-    printf ' "commit": "%s",\n' "$RUN_COMMIT"
-    printf ' "leg": "%s",\n' "$RUN_LEG"
-    printf ' "leg_source": "%s",\n' "$RUN_LEG_SOURCE"
-    printf ' "host": "%s",\n' "$RUN_HOST"
-    printf ' "hostname": "%s",\n' "$RUN_HOSTNAME"
-    printf ' "accel": "%s",\n' "$RUN_ACCEL"
-    printf ' "cpus": %s,\n' "$SMP_CPUS_SAFE"
-    printf ' "qemu": "%s",\n' "$RUN_QEMU"
-    printf ' "ci_parity": %s\n' "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
-    printf '}\n'
-} > "$IDENTITY_OUT.tmp" && mv -f "$IDENTITY_OUT.tmp" "$IDENTITY_OUT"
+{ utest_json_identity; printf '\n'; } > "$IDENTITY_OUT.tmp" &&
+    mv -f "$IDENTITY_OUT.tmp" "$IDENTITY_OUT"
 
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
@@ -781,6 +798,18 @@ if [ -n "$UTEST_NONCE" ]; then
     grep -qE "${UF}=== [0-9]+ passed" "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
 fi
 
+# Format obligations are settled HERE, the moment the frame prefix is known and
+# before any fallible host-side parsing. The guard owes a refusal for a format
+# this run would have produced; deciding that at assembly time meant an exit
+# during parsing could publish one format's refusal and silently skip the
+# other's, because the flag it keys on had not been assigned yet.
+HAS_XML=0
+HAS_JSON=0
+if [ -n "$UF" ]; then
+    grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
+    grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
+fi
+
 UTEST_PASS=0
 UTEST_FAIL=0
 UTEST_SKIP=0
@@ -1084,10 +1113,8 @@ fi
 #
 # No-op when no `[UTEST-XML]` lines are present (xml= was not enabled).
 
-# XML_OUT / XML_LEG_OUT are set in Step 0, before the build, because the
-# publication lifecycle starts there rather than here.
-HAS_XML=0
-[ -n "$UF" ] && grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
+# XML_OUT / XML_LEG_OUT are set in Step 0a and HAS_XML right after the serial
+# capture: both the destination and the obligation exist before this point.
 
 # Belt-and-suspenders: XML=1 was requested but the kernel produced no
 # [UTEST-XML] stream. The normal empty-suite case (total_planned=0 with
@@ -1110,6 +1137,8 @@ if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
         printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
             "$(utest_xml_identity_attrs)"
         echo '  <properties>'
+        echo '    <property name="aborted" value="true"/>'
+        echo '    <property name="not_run" value="0"/>'
         utest_xml_identity_props
         echo '  </properties>'
         echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
@@ -1185,6 +1214,8 @@ sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
                 printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
                     "$(utest_xml_identity_attrs)"
                 echo '  <properties>'
+                echo '    <property name="aborted" value="true"/>'
+                echo '    <property name="not_run" value="0"/>'
                 utest_xml_identity_props
                 echo '  </properties>'
                 echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
@@ -1217,6 +1248,8 @@ sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
             printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
                 "$(utest_xml_identity_attrs)"
             echo '  <properties>'
+            echo '    <property name="aborted" value="true"/>'
+            echo '    <property name="not_run" value="0"/>'
             utest_xml_identity_props
             echo '  </properties>'
             echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
@@ -1312,9 +1345,7 @@ fi
 # matching. The harvester publishes atomically and writes an explicit
 # error envelope (summary: null) on every refusal.
 
-# JSON_OUT / JSON_LEG_OUT are set in Step 0 alongside the XML pair.
-HAS_JSON=0
-[ -n "$UF" ] && grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
+# JSON_OUT / JSON_LEG_OUT are set in Step 0a and HAS_JSON alongside HAS_XML.
 
 if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
     # Remove any artifact from a previous run BEFORE anything can fail --

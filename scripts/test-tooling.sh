@@ -8324,6 +8324,93 @@ else
     t_fail "identity: an untracked build input marks the commit dirty"
 fi
 
+# i12. A landed LEG artifact must survive an alias-copy failure. utest_publish
+#      returns 0 once the leg record exists, because the guard would otherwise
+#      see the format as unpublished and move a run_incomplete refusal OVER a
+#      fully assembled document -- destroying the evidence it exists to keep.
+PUBFN=$(awk '/^utest_publish\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+if printf '%s' "$PUBFN" | grep -q 'mv -f "\$staged" "\$leg" || return 1' &&
+   printf '%s' "$PUBFN" | grep -q 'if ! { cp -f "\$leg" "\$canonical.tmp"' &&
+   printf '%s' "$PUBFN" | grep -q 'UTEST_FAIL=' &&
+   ! printf '%s' "$PUBFN" | grep -q 'cp -f "\$leg" "\$canonical.tmp" || return 1'; then
+    t_pass "identity: a landed leg artifact survives an alias-copy failure"
+else
+    t_fail "identity: a landed leg artifact survives an alias-copy failure"
+fi
+
+# i13. XML and JSON must project the SAME identity field set. A field in one
+#      and not the other hands two consumers two different contracts for one
+#      run. `schema` is the JSON envelope's own version marker, and
+#      timestamp/hostname ride as <testsuite> attributes.
+XML_FIELDS=$(awk '/^utest_xml_identity_props\(\)/{f=1} f&&/name="/{ \
+    match($0, /name="[a-z_]+"/); print substr($0, RSTART+6, RLENGTH-7)} \
+    f&&/^\}/{exit}' "$LEGSH" | sort)
+JSON_FIELDS=$(awk '/^utest_json_identity\(\)/{f=1} f&&/printf/{ \
+    if (match($0, /"[a-z_]+":/)) print substr($0, RSTART+1, RLENGTH-3)} \
+    f&&/^\}/{exit}' "$LEGSH" | grep -vE '^(schema|timestamp|hostname)$' | sort)
+if [ -n "$XML_FIELDS" ] && [ "$XML_FIELDS" = "$JSON_FIELDS" ]; then
+    t_pass "identity: the XML and JSON projections carry the same field set"
+else
+    t_fail "identity: the XML and JSON projections carry the same field set" \
+           "xml=[$(echo $XML_FIELDS)] json=[$(echo $JSON_FIELDS)]"
+fi
+
+# i14. EVERY synthetic XML error document carries aborted/not_run. The
+#      documented schema says their ABSENCE means the artifact predates the
+#      completeness dimension, so a current refusal without them is misread as
+#      an old one.
+if [ "$(grep -c 'utest_xml_identity_props$' "$LEGSH")" -ge 4 ] &&
+   [ "$(grep -c 'property name="aborted"' "$LEGSH")" -ge 5 ] &&
+   ! awk '/<properties>/{a=0} /property name="aborted"/{a=1}
+          /utest_xml_identity_props$/{if(!a) bad=1} END{exit !bad}' "$LEGSH"; then
+    t_pass "identity: every synthetic XML error document carries the completeness properties"
+else
+    t_fail "identity: every synthetic XML error document carries the completeness properties"
+fi
+
+# i15. Format obligations are settled before any fallible host-side parsing.
+#      Deciding them at assembly time meant an exit during parsing published
+#      one format's refusal and silently skipped the other's.
+if awk '/^HAS_XML=0$/{x=NR} /^HAS_JSON=0$/{j=NR}
+        /STRIPPED=\$\(sed/{if(!parse) parse=NR}
+        END{exit !(x && j && parse && x < parse && j < parse)}' "$LEGSH"; then
+    t_pass "identity: both format obligations are known before any host-side parsing"
+else
+    t_fail "identity: both format obligations are known before any host-side parsing"
+fi
+
+# i16. Provenance is metadata, not payload: a mistaken --identity path must
+#      degrade to run_identity null, never kill the harvest or read unbounded.
+mkdir -p "$IDENT_TMP/adir"
+printf '"a scalar, not an object"' > "$IDENT_TMP/scalar.json"
+python3 -c "open('$IDENT_TMP/huge.json','w').write('{\"x\":\"' + 'p'*200000 + '\"}')"
+IDENT_OK=1
+for BAD in "$IDENT_TMP/adir" "$IDENT_TMP/scalar.json" "$IDENT_TMP/huge.json"; do
+    python3 "$HARVEST" "$IDENT_TMP/good.log" "$IDENT_TMP/bad.json" \
+        --identity "$BAD" >/dev/null 2>&1 || IDENT_OK=0
+    python3 -c "
+import json,sys
+d=json.load(open('$IDENT_TMP/bad.json'))
+sys.exit(0 if d['run_identity'] is None and d['summary']['total']==1 else 1)" || IDENT_OK=0
+done
+if [ "$IDENT_OK" = "1" ]; then
+    t_pass "identity: a directory, a scalar and an oversized identity all degrade to null"
+else
+    t_fail "identity: a directory, a scalar and an oversized identity all degrade to null"
+fi
+
+# i17. The documented leg grammar must be the one the runner enforces. The docs
+#      previously advertised [a-z0-9-]{1,32}, which accepts a leading hyphen the
+#      runner refuses -- an operator following the published grammar hit an
+#      unexplained pre-build refusal.
+if grep -qF '^[a-z0-9][a-z0-9-]{0,31}$' "$LEGSH" &&
+   grep -qF '^[a-z0-9][a-z0-9-]{0,31}$' "$REPO_ROOT/docs/testing/usermode-output-formats.md" &&
+   ! grep -qF '`[a-z0-9-]{1,32}`' "$REPO_ROOT/docs/testing/usermode-output-formats.md"; then
+    t_pass "identity: the documented leg grammar matches the one the runner enforces"
+else
+    t_fail "identity: the documented leg grammar matches the one the runner enforces"
+fi
+
 # ============================================================================
 # Summary
 # ============================================================================
