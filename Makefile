@@ -1171,11 +1171,14 @@ run-test: all
 test: all
 	@bash scripts/test.sh $(if $(SUITE),SUITE=$(SUITE)) $(if $(QUIET),QUIET=$(QUIET))
 
-## check-abi: Verify user/include/abi_numbers.h is in sync with kernel
-## source (include/kernel/sched/syscall.h + nt/service_numbers.h + nt/ntstatus.h).
-## Fails the build when a kernel-side SYS_*/SSDT_*/STATUS_* renumber forgot
-## to regenerate the user header -- silent drift was TODO-04 -17's original
-## root cause. Safe to run standalone or chain in front of `make test`.
+## check-abi: Verify abi/generated/abi_contract.h -- the ONE generated ABI
+## artifact -- is in sync with kernel source (include/kernel/sched/syscall.h +
+## nt/service_numbers.h + nt/ntstatus.h + sched/task.h), and that the two static
+## facades over it (user/include/abi_numbers.h, include/kernel/abi_hash.h) still
+## hold their canonical text. Fails the build when a kernel-side
+## SYS_*/SSDT_*/STATUS_* renumber forgot to regenerate the contract -- silent
+## drift was TODO-04 -17's original root cause. Safe to run standalone or chain
+## in front of `make test`.
 check-abi:
 	@python3 scripts/gen-user-abi.py --check
 

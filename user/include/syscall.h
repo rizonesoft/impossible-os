@@ -52,11 +52,16 @@ typedef int32_t HANDLE;
 #define LOG_FATAL 4   /* Kernel-only; sys_log(LOG_FATAL, ...) returns -1 */
 
 /* Syscall numbers + FAULT_* subcommand selectors come from the
- * generated abi_numbers.h. Hand-copied `#define SYS_* <N>` here was
+ * generated ABI contract, reached through the abi_numbers.h facade.
+ * Hand-copied `#define SYS_* <N>` here was
  * the original root cause of TODO-04 -17: a kernel-side renumber would
  * silently drift from this file and user binaries would hit the wrong
  * handler at runtime. Regeneration + `make check-abi` catches drift
- * at build time; do not re-add the hand copies. */
+ * at build time; do not re-add the hand copies. Since the single-commit-point
+ * ABI publication landed, abi_numbers.h is a static FACADE over the one
+ * generated artifact
+ * abi/generated/abi_contract.h -- regenerating does not rewrite it
+ * (`gen-user-abi.py --write-shims` repairs it). */
 #include "abi_numbers.h"
 
 /* Task states (must match kernel task.h) */

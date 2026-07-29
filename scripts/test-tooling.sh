@@ -7238,7 +7238,7 @@ check("endif_inside_block_comment_does_not_close",
 
 # Live tokens AFTER a block comment must not be silently dropped: this body
 # compiles as -999, and resolving it to -1001 would put a value the kernel
-# never uses into both generated headers AND the hash.
+# never uses into the generated contract AND the hash.
 _, err = run("#define X_BASE (-1000)\n#define X_STATUS (X_BASE - 1) /* why */ + 2\n")
 check("refuses_tokens_after_block_comment", bool(err))
 
@@ -7275,7 +7275,7 @@ check("resolves_spliced_identifier", not err and e[0][1] == -1001)
 # following `#endif`, so the `#if 0` is still open and the define is inside it.
 # clang leaves the constant UNDEFINED here; a physical-line scanner resolved it
 # to a concrete value and would have put a number the kernel never uses into
-# both headers and the hash. Now the compiler answers, so it is undefined.
+# the contract and the hash. Now the compiler answers, so it is undefined.
 _, err = run("#define X_BASE (-1000)\n#if 0\n// c \\\n#endif\n"
              "#define X_STATUS (X_BASE - 1)\n#endif\n")
 check("spliced_line_comment_swallows_endif",
@@ -7326,7 +7326,7 @@ check("refuses_multi_term_expression", bool(err))
 # The header-text assertions below prove what is EMITTED; these prove what is
 # HASHED, which is the half that decides whether a stale ring-3 binary is
 # rejected at crt0. Without them, dropping the EXIT loop or feeding it the
-# wrong list would pass every other fixture once the headers were regenerated.
+# wrong list would pass every other fixture once the contract was regenerated.
 def exit_entries(source):
     e, err = run(source)
     assert not err, err
@@ -7390,7 +7390,7 @@ check("certifies_real_exit_status",
       not certify([('TASK_EXIT_EXEC_IMAGE_DESTROYED', -1001, '(-1001)')]))
 
 # A WRONG proposal is the whole point: it must fail the build, not be frozen
-# into two mutually-agreeing headers plus an ABI hash.
+# into the generated contract plus an ABI hash.
 check("certification_rejects_wrong_value",
       bool(certify([('TASK_EXIT_EXEC_IMAGE_DESTROYED', -9999, '(-9999)')],
                    flavors=_ONE_FLAVOR)))
@@ -7407,7 +7407,7 @@ check("ntstatus_wrong_bit_pattern_rejected",
                    kind=gua.CERTIFY_UNSIGNED32, headers=[gua.NTSTATUS_H],
                    flavors=_ONE_FLAVOR)))
 
-# The header PAIR is committed once and included by every flavor, so a constant
+# The CONTRACT is committed once and included by every flavor, so a constant
 # whose value depends on the flavor has no single publishable value. It must be
 # refused rather than silently frozen at whichever flavor generated it.
 def flavor_probe(source, entries):
@@ -7867,8 +7867,8 @@ fi
 # The canonical build path must RUN the drift check. `make all` lists check-abi
 # as a prerequisite, but CLAUDE.md forbids raw `make` and scripts/build.sh drove
 # `kernel`/`userland` directly, so the guard was off on the only path in use:
-# a kernel-side constant change compiled into the kernel while both generated
-# headers kept the old value, agreed with each other, and passed the crt0
+# a kernel-side constant change compiled into the kernel while the generated
+# contract kept the old value, stayed self-consistent, and passed the crt0
 # handshake. Pin that build.sh invokes the generator's --check.
 if grep -qE 'gen-user-abi\.py --check' "$SCRIPT_DIR/build.sh"; then
     t_pass "gen_user_abi: scripts/build.sh runs the ABI drift check"
@@ -7929,6 +7929,15 @@ def run_main(argv):
 
 def reset():
     gua.OUT_CONTRACT, gua.SHIM_USER_H, gua.SHIM_KERNEL_H = REAL
+
+# These cases assert CONTRACT/FACADE validation, which sits downstream of the
+# flavor sweep and the certification compiles. Running the full 12-flavor
+# inventory for each of them re-did ~39 clang subprocesses per case to reach the
+# same starting point -- the bulk of this suite's 90s -> 3m11s regression. Pin
+# the sweep to the DEFAULT flavor here; the full sweep is still exercised by the
+# real --check on every build and by the s26 flavor fixtures that own it.
+_real_flavors = gua.flavor_combinations
+gua.flavor_combinations = lambda: ([{}], None)
 
 def case(label, setup, want_needle):
     """Redirect, apply a hostile setup, require --check to REFUSE and say why."""
@@ -8032,6 +8041,8 @@ try:
                             f'after repair')
 finally:
     reset()
+
+gua.flavor_combinations = _real_flavors
 
 for root, dirs, files in os.walk(probe, topdown=False):
     for n in files:
@@ -8292,7 +8303,7 @@ _REAL_USER_H, _REAL_KERNEL_H = gua.SHIM_USER_H, gua.SHIM_KERNEL_H
 for _path, _want in ((_REAL_USER_H, True), (_REAL_KERNEL_H, False)):
     _r = gua.check_shim_form(_path, _want)
     if _r:
-        problems.append(f'committed facade {_path} is not byte-pinned: {_r}')
+        problems.append(f'committed facade {_path} is not text-pinned: {_r}')
 
 _probe_user = _PROBE / 'abi_numbers.h'
 _probe_kernel = _PROBE / 'abi_hash.h'
@@ -8394,7 +8405,7 @@ expect(gua.SHIM_KERNEL_H, False,
                      '#define IMPOSSIBLE_OS_ABI_HASH 0xBADULL\n#endif\n',
        'resolves IMPOSSIBLE_OS_ABI_HASH', 'flavor-guarded-fingerprint-swap')
 
-# --- FACADE BYTE-PINNING --------------------------------------------------
+# --- FACADE TEXT-PINNING --------------------------------------------------
 # Four parsing designs were bypassed here in succession -- a `#define `-prefix
 # scan, the same under minimal flags, per-vector semantic comparison, and a
 # directive allowlist over stripped comments. Each was Python guessing at C
@@ -8402,8 +8413,9 @@ expect(gua.SHIM_KERNEL_H, False,
 # a guard on NULL that types.h supplies before the shim, line splicing,
 # `// /*` hiding directives from a block-first regex, and `/*` inside an
 # #include header-name collapsing to the required spelling. The facades carry
-# no ABI data and never vary, so their exact bytes are pinned instead. A byte
-# comparison has no corners to find.
+# no ABI data and never vary, so their canonical TEXT is pinned instead
+# (line endings normalized; every other difference refused). A text comparison
+# has no corners to find.
 def expect_form(path, want_numbers, mutate, needle, label):
     p = pathlib.Path(path)
     original = p.read_text()
@@ -8416,7 +8428,7 @@ def expect_form(path, want_numbers, mutate, needle, label):
     finally:
         p.write_text(original)
 
-# (The committed facades were checked against their canonical bytes above,
+# (The committed facades were checked against their canonical text above,
 # before the probe redirect; the probes start canonical by construction.)
 
 # Every historical bypass, now refused by the same mechanism.
@@ -8455,7 +8467,7 @@ expect_form(gua.SHIM_KERNEL_H, False,
 # A refusal must name the first differing LINE so a reader is not left diffing.
 expect_form(gua.SHIM_USER_H, True,
             lambda t: t.replace('#pragma once', '#pragma  once'),
-            ':12 differs', 'first-differing-line-is-named')
+            ':13 differs', 'first-differing-line-is-named')
 
 # A facade must be a REGULAR FILE, even when a symlink target happens to hold
 # the exact canonical bytes: right today, following someone else's file
@@ -8482,7 +8494,7 @@ finally:
     os.rmdir(_canon.parent)
 
 # A CRLF working copy is byte-different and SEMANTICALLY IDENTICAL -- a line
-# ending cannot change which directives are active. Byte-pinning must not fail
+# ending cannot change which directives are active. The text pin must not fail
 # a checkout clang is perfectly happy with (.gitattributes keeps the repository
 # side LF; this keeps a pre-existing clone from failing spuriously).
 _p = pathlib.Path(gua.SHIM_USER_H)
@@ -8694,13 +8706,15 @@ else
            "both shims must include the contract by a path relative to themselves"
 fi
 
-# The generated headers must be in sync with kernel source at all times --
-# the same gate `make check-abi` runs, asserted here so a tooling run catches
-# a forgotten regeneration without a full build.
+# The generated CONTRACT must be in sync with kernel source at all times -- the
+# same gate `make check-abi` runs, asserted here so a tooling run catches a
+# forgotten regeneration without a full build. (One generated artifact since the
+# single-commit-point publication landed; the two headers are static facades,
+# checked separately by the text pin above.)
 if (cd "$REPO_ROOT" && python3 scripts/gen-user-abi.py --check >/dev/null 2>&1); then
-    t_pass "gen_user_abi: --check clean (generated headers match kernel source)"
+    t_pass "gen_user_abi: --check clean (generated contract matches kernel source)"
 else
-    t_fail "gen_user_abi: --check clean (generated headers match kernel source)" \
+    t_fail "gen_user_abi: --check clean (generated contract matches kernel source)" \
            "run: python3 scripts/gen-user-abi.py"
 fi
 

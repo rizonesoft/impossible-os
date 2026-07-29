@@ -129,7 +129,8 @@ int main(void)
                  "CLEAR_ALL disarms the PMM countdown");
 
     /* Every assigned site id must arm. The kernel and this binary agree on
-     * the ids through the generated abi_numbers.h, so a kernel-side
+     * the ids through the generated ABI contract (reached via the
+     * abi_numbers.h facade), so a kernel-side
      * renumber breaks `make check-abi` rather than silently retargeting
      * these arms at the wrong allocation. */
     UTEST_ASSERT(utest_fault_inject(FAULT_KMALLOC_SITE,

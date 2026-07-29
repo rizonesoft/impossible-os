@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
-# gen-user-abi.py -- Generate user/include/abi_numbers.h from kernel source
+# gen-user-abi.py -- Generate the ABI contract (abi/generated/abi_contract.h)
+#                    from kernel source
 #
 # Reads the authoritative syscall + SSDT number tables out of the kernel
 # headers and emits a generated, committed header that user-mode test binaries
@@ -18,17 +19,25 @@
 #   include/kernel/sched/task.h         -- allowlisted TASK_EXIT_* exit-status
 #                                           constants a ring-3 test asserts on
 #
-# Output:
-#   user/include/abi_numbers.h  -- generated; committed; do NOT edit by hand
+# Output -- exactly ONE generated file:
+#   abi/generated/abi_contract.h  -- generated; committed; do NOT edit by hand
+#
+# The two headers everyone actually includes are STATIC FACADES over it, not
+# generated output, and regenerating does not touch them:
+#   user/include/abi_numbers.h    -- ring-3 facade (defines ABI_CONTRACT_WANT_NUMBERS)
+#   include/kernel/abi_hash.h     -- kernel facade (fingerprint only)
+# Repair a damaged facade with --write-shims; regenerating will not.
 #
 # Invocation:
-#   python3 scripts/gen-user-abi.py            # rewrite the header in place
-#   python3 scripts/gen-user-abi.py --check    # re-run + diff; exit 1 on drift
+#   python3 scripts/gen-user-abi.py               # republish the contract
+#   python3 scripts/gen-user-abi.py --check       # verify; exit 1 on drift
+#   python3 scripts/gen-user-abi.py --write-shims # restore the two facades
 #
 # `make check-abi` uses --check as a pre-commit / CI gate: a kernel-side
-# renumber that did not get the user header regenerated fails the build
-# at the check step instead of at runtime when a user binary makes a
-# syscall against the wrong number and gets a garbage handler back.
+# renumber that did not get the contract regenerated fails the build at the
+# check step instead of at runtime when a user binary makes a syscall against
+# the wrong number and gets a garbage handler back. --check also refuses a
+# facade that is not its canonical text.
 # =============================================================================
 
 import argparse
@@ -209,11 +218,13 @@ INT_LITERAL_RE = re.compile(r'(0x[0-9A-Fa-f]+|[0-9]+)')
 #
 # Before this, extraction WAS the answer: a hand-written scanner reimplemented
 # C translation phases 2-4 in Python (splicing, comment removal, conditional
-# tracking) and whatever it concluded went straight into both generated headers
+# tracking) and whatever it concluded went straight into the generated output
 # and the ABI hash. Five adversarial rounds each found a shape where that
 # scanner and clang disagreed, and every disagreement had the same shape --
-# both generated headers agree with each other, `make check-abi` passes, the
-# crt0 fingerprint matches, and the running kernel uses a different number.
+# the generated output was self-consistent (a PAIR of headers at the time;
+# one contract since the single-commit-point publication), `make check-abi`
+# passed, the crt0 fingerprint
+# matched, and the running kernel used a different number.
 # Refusing the shapes we thought of is a weaker contract than being checked by
 # the compiler, which is why the refusals are no longer the load-bearing part.
 #
@@ -227,7 +238,7 @@ CLANG_ENV = 'ABI_CLANG'
 CLANG_DEFAULT = 'clang-19'
 
 # Every preprocessor-visible build flavor axis, mirrored from the Makefile
-# (KERNEL_TESTS / EXCEPT_TELEMETRY / BUILD_ALT_BOOT). The generated header pair
+# (KERNEL_TESTS / EXCEPT_TELEMETRY / BUILD_ALT_BOOT). The generated contract
 # is committed ONCE and shared by every flavor, so a constant whose value
 # depends on which flavor the kernel was built with cannot be represented in it
 # at all -- that is a refusal, not a value. The axes are named here but their
@@ -265,7 +276,7 @@ def clang_binary() -> tuple:
     different binary than the kernel build would be its own silent-drift
     channel: `make CC=<other>` compiles the kernel with one compiler while the
     values are certified with another, compiler predefined macros can select
-    different constants in each, and both generated headers plus every
+    different constants in each, and the generated contract plus every
     assertion still agree -- with the wrong compiler. `ABI_CLANG` overrides,
     for a host where the same compiler is installed under another name.
 
@@ -644,7 +655,7 @@ def cross_flavor_names(headers, clang, prefixes, flavors=None) -> tuple:
             errors.append(f'{name} carries an ABI prefix but is defined in only '
                           f'{len(seen[name])} of {len(every)} build flavors '
                           f'(absent under: {"; ".join(sorted(missing))}). The '
-                          f'generated header pair is shared by every flavor, so '
+                          f'generated contract is shared by every flavor, so '
                           f'a name present in only some of them has nothing to '
                           f'publish -- make it unconditional or drop the prefix')
     return (seen, default_events, default_macros, errors)
@@ -662,7 +673,7 @@ def certify_values(headers, families, clang, flavors=None,
     expression the proposer read badly -- the assert fails and the build stops.
 
     Running it across every flavor also answers a question a single query
-    cannot: the header PAIR is committed once and included by every build, so a
+    cannot: the CONTRACT is committed once and included by every build, so a
     constant that is 5 under one flavor and 6 under another has no single
     correct value to publish. Such a constant fails here rather than being
     silently frozen at whichever flavor happened to generate it. A name that is
@@ -1225,11 +1236,11 @@ def _owned_macros(final: dict) -> dict:
 
 SHIM_INCLUDE_SPELLING = '"../../abi/generated/abi_contract.h"'
 
-# The facades, pinned BYTE FOR BYTE.
+# The facades, pinned to exact canonical TEXT (newline-normalized).
 #
 # Everything about these two files is fixed: they carry no ABI data and never
 # vary with the ABI, so there is nothing for a human to legitimately tune in
-# them. Pinning the exact bytes is therefore both the simplest check and the
+# them. Pinning their exact text is therefore both the simplest check and the
 # strongest one, and it is the reason no C parsing happens here any more.
 #
 # Four successive parsing designs were tried and each was bypassed, because
@@ -1242,21 +1253,28 @@ SHIM_INCLUDE_SPELLING = '"../../abi/generated/abi_contract.h"'
 #      then `// /*` hiding directives from a block-first regex, then `/*` inside
 #      an #include header-name collapsing to the required spelling
 # Every one of those had the same shape: Python guessing at C lexing, one
-# corner at a time. A byte comparison has no corners. It cannot be fooled by a
-# splice, a comment, a header-name, an encoding, or a preceding header, because
-# it never interprets anything -- any deviation at all, in any direction, is a
-# refusal. The semantic per-vector value check below is retained as a second
-# layer for the case a facade is REPLACED wholesale by something that happens
-# to compile.
+# corner at a time. A text comparison has no corners. It cannot be fooled by a
+# splice, a comment, a header-name, or a preceding header, because it never
+# interprets anything -- every difference is a refusal EXCEPT line endings,
+# which are normalized on read because a CRLF checkout is compiler-equivalent
+# and .gitattributes already pins LF on the repository side.
+#
+# check_shim() below is NOT a second production layer: `--check` calls only
+# check_shim_form(). Once a facade matches this canonical text and the contract
+# matches a fresh render, the macros that facade resolves are DETERMINED, so
+# preprocessing it per vector could not discover a new state. check_shim() is
+# the tooling-suite CANARY, exercised against deliberately non-canonical
+# facades -- the inputs where its answer is not already known.
 #
 # To change a facade: edit the constant here, then copy it into the file (or
 # run `python3 scripts/gen-user-abi.py --write-shims`).
 CANONICAL_SHIM_KERNEL = '''\
 /* ============================================================================
- * abi_hash.h -- Kernel ABI fingerprint (STATIC FACADE, byte-pinned)
+ * abi_hash.h -- Kernel ABI fingerprint (STATIC FACADE, text-pinned)
  *
  * NOT generated, and NOT free-form: `make check-abi` compares this file
- * BYTE FOR BYTE against CANONICAL_SHIM_KERNEL in scripts/gen-user-abi.py.
+ * against CANONICAL_SHIM_KERNEL in scripts/gen-user-abi.py: newline-normalized,
+ * so a CRLF checkout is fine, but every other byte must match exactly.
  * Change it there, or the build fails. The rationale for every line below --
  * why one generated artifact, why a relative include, why this side omits
  * ABI_CONTRACT_WANT_NUMBERS -- lives in that script's HEADER_TEMPLATE and
@@ -1270,10 +1288,11 @@ CANONICAL_SHIM_KERNEL = '''\
 
 CANONICAL_SHIM_USER = '''\
 /* ============================================================================
- * abi_numbers.h -- User-mode ABI numbers (STATIC FACADE, byte-pinned)
+ * abi_numbers.h -- User-mode ABI numbers (STATIC FACADE, text-pinned)
  *
  * NOT generated, and NOT free-form: `make check-abi` compares this file
- * BYTE FOR BYTE against CANONICAL_SHIM_USER in scripts/gen-user-abi.py.
+ * against CANONICAL_SHIM_USER in scripts/gen-user-abi.py: newline-normalized,
+ * so a CRLF checkout is fine, but every other byte must match exactly.
  * Change it there, or the build fails. The rationale for every line below --
  * why one generated artifact, why a relative include, why this side defines
  * ABI_CONTRACT_WANT_NUMBERS -- lives in that script's HEADER_TEMPLATE and
@@ -1288,11 +1307,18 @@ CANONICAL_SHIM_USER = '''\
 
 
 def check_shim_form(path: str, want_numbers: bool) -> list[str]:
-    """Compare a facade against its pinned bytes. No parsing, by design.
+    """Compare a facade against its pinned canonical TEXT. No parsing, by design.
+
+    Equality is NEWLINE-NORMALIZED, not raw-byte: the file is read with
+    universal newlines, so a CRLF working copy compares equal. That is
+    deliberate -- a line ending cannot change which directives are active, and
+    failing a checkout clang compiles identically would be a false alarm
+    (.gitattributes keeps the repository side LF). Every OTHER byte difference,
+    including whitespace inside a line, is refused.
 
     See CANONICAL_SHIM_* above for the four parsing designs this replaced and
     why each was bypassable. Returns human-readable reasons; empty means the
-    file is byte-identical to its canonical form."""
+    file matches its canonical text, modulo line endings."""
     rel = os.path.relpath(path, REPO_ROOT)
     want = CANONICAL_SHIM_USER if want_numbers else CANONICAL_SHIM_KERNEL
     # A facade must be a REGULAR FILE. Comparing content alone accepted a
@@ -1343,11 +1369,11 @@ def check_shim_form(path: str, want_numbers: bool) -> list[str]:
         if g != w:
             return [f'{rel}:{n} differs from the pinned facade -- expected '
                     f'{w!r}, found {g!r}. A facade carries no ABI data and is '
-                    f'byte-pinned; {fix}']
+                    f'text-pinned (canonical text, modulo line endings); {fix}']
     if len(got_lines) != len(want_lines):
         return [f'{rel} differs from the pinned facade in length: expected '
                 f'{len(want_lines)} lines, found {len(got_lines)}. A facade is '
-                f'byte-pinned; {fix}']
+                f'text-pinned (canonical text, modulo line endings); {fix}']
     # Equal line-by-line and equal in count, yet unequal overall: the only
     # remaining difference is invisible to splitlines(), i.e. a trailing
     # newline or a stray leading BOM. Say so rather than emitting a
@@ -1503,7 +1529,7 @@ NTSTATUS_USER_ALLOWLIST = frozenset({
 # Kernel exit-status constants, split into two lists on purpose.
 #
 # EXIT_STATUS_EXPORT is the ring-3 CONTRACT: the values a user binary compares
-# a waitpid result against. These are emitted into abi_numbers.h and folded
+# a waitpid result against. These are emitted into the contract and folded
 # into the ABI fingerprint.
 #
 # EXIT_STATUS_RESOLVE_ONLY names the symbols an exported expression is allowed
@@ -1664,13 +1690,13 @@ def publish_atomically(dest: str, content: str, before_replace=None,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--check', action='store_true',
-                    help='verify committed abi headers match kernel source; exit 1 on drift')
+                    help='verify the generated contract matches kernel source and the two facades match their canonical text; exit 1 on drift')
     ap.add_argument('--write-shims', action='store_true',
-                    help='rewrite the two byte-pinned facades from CANONICAL_SHIM_*')
+                    help='rewrite the two text-pinned facades from CANONICAL_SHIM_*')
     args = ap.parse_args()
 
     if args.write_shims:
-        # The facades are pinned bytes, so restoring one is a copy, not an edit.
+        # A facade has one canonical text, so restoring it is a copy, not an edit.
         # Offered as a command so the --check failure message names a fix
         # instead of asking someone to hand-transcribe a constant.
         #
@@ -1821,7 +1847,7 @@ def main() -> int:
     # single-literal rule for the flat tables and a restricted grammar for the
     # exit statuses, both of them Python reading C. This is where clang gets the
     # last word, so a proposal that is wrong fails the build instead of being
-    # frozen into two mutually-agreeing headers and an ABI hash.
+    # frozen into the generated contract and an ABI hash.
     #
     # Both name lists are certified, not just the emitted subset: ssdt_all and
     # ntstatus_all feed the fingerprint and the allowlist filter respectively,
@@ -1912,34 +1938,26 @@ def main() -> int:
         # Each side is validated under ITS OWN authoritative vector, and the
         # kernel side under every flavor, because a value hidden behind
         # __OPTIMIZE__ or a flavor macro is invisible to any other context.
-        user_vectors, uv_err = _user_shim_vectors()
-        kernel_vectors, kv_err = _kernel_shim_vectors()
-        for err in (uv_err, kv_err):
-            if err:
-                print(f'gen-user-abi: shim validation: {err}', file=sys.stderr)
-                drift = True
+        # The FORM check is the whole build-time facade gate, deliberately.
+        #
+        # Once the facade matches its canonical text AND the contract matches
+        # the rendering we just computed, the macros that facade resolves are
+        # fully DETERMINED -- there is no third state left for preprocessing to
+        # discover. Running check_shim() here anyway meant 1 ring-3 vector plus
+        # 12 kernel flavors, each preprocessing both the contract and the
+        # facade: 26 clang subprocesses per build whose result was decided
+        # before they started. `--check` runs on EVERY build, so that was pure
+        # recurring cost.
+        #
+        # check_shim() is not deleted: it stays the semantic canary in
+        # scripts/test-tooling.sh, where it is exercised against deliberately
+        # non-canonical facades -- exactly the inputs where its answer is NOT
+        # already known, and where sweeping every flavor is the point.
         facade_drift = False
-        for shim, want_numbers, vectors in ((SHIM_USER_H, True, user_vectors),
-                                            (SHIM_KERNEL_H, False, kernel_vectors)):
-            # FORM first, and STOP THERE on failure. The value check hands the
-            # path to clang with no timeout, so running it after the form gate
-            # already refused a FIFO left --check blocked forever waiting for a
-            # writer -- hanging every build behind the gate that was supposed to
-            # report the problem. A facade that failed the byte pin has nothing
-            # left to learn from preprocessing it anyway.
-            form_problems = check_shim_form(shim, want_numbers)
-            for reason in form_problems:
+        for shim, want_numbers in ((SHIM_USER_H, True), (SHIM_KERNEL_H, False)):
+            for reason in check_shim_form(shim, want_numbers):
                 print(f'gen-user-abi: {reason}', file=sys.stderr)
                 drift = facade_drift = True
-            if form_problems:
-                continue
-            if not contract_ok:
-                continue
-            for vec_flags, vec_name in vectors:
-                for reason in check_shim(shim, want_numbers, clang,
-                                         vec_flags, vec_name):
-                    print(f'gen-user-abi: {reason}', file=sys.stderr)
-                    drift = facade_drift = True
         if drift:
             # Name the RIGHT remedy: regenerating rewrites the contract and does
             # nothing to a facade, so pointing a reader at it for a facade

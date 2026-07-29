@@ -39,7 +39,8 @@
  * ============================================================================ */
 
 #include "test.h"
-#include "abi_numbers.h"   /* TASK_EXIT_EXEC_IMAGE_DESTROYED (generated) */
+#include "abi_numbers.h"   /* TASK_EXIT_EXEC_IMAGE_DESTROYED -- facade over
+                             * the generated abi/generated/abi_contract.h */
 
 UTEST_DEFINE_STATE();
 
@@ -67,7 +68,7 @@ UTEST_DEFINE_STATE();
 #define SENTINEL_EXEC_UNEXPECTED_OK 63  /* exec succeeded when it must not have */
 #define SENTINEL_INJECT_UNAVAILABLE 64  /* boot.conf test=0, injection refused */
 
-/* TASK_EXIT_EXEC_IMAGE_DESTROYED (generated into abi_numbers.h from
+/* TASK_EXIT_EXEC_IMAGE_DESTROYED (generated into abi/generated/abi_contract.h from
  * include/kernel/sched/task.h) is the exit status of a task terminated because
  * a post-commit exec destroyed its image. Kernel headers stay off-limits to
  * user binaries, so the value arrives through the generated ABI header: a

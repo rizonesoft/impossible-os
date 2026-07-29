@@ -77,9 +77,10 @@ static void test_kusd_abi_hash_matches_kernel(void)
 {
     /* The same hash user-mode crt_init compares against must be
      * written into the KUSD page by the kernel's kusd_init. A
-     * mismatch here means kernel build drift: abi_hash.h was
-     * regenerated for the kernel code but the kusd_init writer
-     * still captures an old value. */
+     * mismatch here means kernel build drift: both sides now read
+     * the SAME constant out of abi/generated/abi_contract.h, so a
+     * disagreement means kusd_init captured its value from a stale
+     * object rather than that the two headers diverged. */
     if (!g_kusd)
         return;
     TEST_ASSERT_EQ(g_kusd->AbiLayoutHash, IMPOSSIBLE_OS_ABI_HASH,
