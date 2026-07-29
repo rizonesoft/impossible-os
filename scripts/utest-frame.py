@@ -133,6 +133,13 @@ READ_CHUNK = 1 << 20
 # of magnitude above anything legitimate.
 MAX_PHYSICAL_LINE = 1 << 20
 
+# Hard cap on the persisted STATE FILE itself, checked via fstat before a
+# single byte is read. The legitimate content (a poll's FSM snapshot with
+# retain_lines=False, so no run text) is a few KB; this is headroom, not a
+# tight fit. Rejecting above it only costs the resume optimization -- see
+# _load_state().
+STATE_FILE_MAX = 1 << 20
+
 # Bytes immediately before the committed offset whose digest is stored with
 # the state and re-read on resume. This is what makes the resume safe against
 # a log that was truncated and regrown, or an inode that was reused: device
@@ -143,6 +150,9 @@ ANCHOR_BYTES = 4096
 
 def strip_ansi(line):
     return ANSI_RE.sub("", line).rstrip("\n")
+
+
+_LINE_TERM_RE = re.compile(rb"\r\n|\r|\n")
 
 
 def split_complete_lines(buf):
@@ -156,29 +166,28 @@ def split_complete_lines(buf):
     Returns (lines, consumed). A trailing CR at the very end of `buf` is NOT
     consumed: the next byte may be the LF that makes it a single CRLF, and
     committing it early would turn one line into two on the next call.
+
+    Delimiter search runs through `re.finditer` rather than a per-byte Python
+    loop: measured 2026-07-29 at ~9x slower than the FULL reparse it resumes
+    (25 MiB synthetic capture, 1.306s vs 0.146s) when this was a manual
+    byte-at-a-time scan, since every byte paid Python bytecode dispatch
+    instead of the regex engine's C loop. The alternation order (`\r\n`
+    before lone `\r`) matches the manual version's CRLF-vs-lone-CR
+    precedence exactly, so this changes performance only, no semantic.
     """
     lines = []
     start = 0
-    i = 0
-    n = len(buf)
     consumed = 0
-    while i < n:
-        c = buf[i]
-        if c == 0x0A:                      # LF
-            lines.append(buf[start:i])
-            i += 1
-            start = i
-            consumed = i
-        elif c == 0x0D:                    # CR
-            if i + 1 >= n:
-                # Ambiguous: could be the CR of a CRLF that has not arrived.
-                break
-            lines.append(buf[start:i])
-            i += 2 if buf[i + 1] == 0x0A else 1
-            start = i
-            consumed = i
-        else:
-            i += 1
+    n = len(buf)
+    for m in _LINE_TERM_RE.finditer(buf):
+        if m.group() == b"\r" and m.end() == n:
+            # Ambiguous: could be the CR of a CRLF that has not arrived yet.
+            # This can only be the LAST match (it consumes the final byte of
+            # `buf`), so stopping here never skips a later real terminator.
+            break
+        lines.append(buf[start:m.start()])
+        start = m.end()
+        consumed = m.end()
     return lines, consumed
 
 
@@ -534,7 +543,13 @@ class FrameParser:
         self.last_lines = _str_list("last_lines")
         if lc is None and self.last_lines:
             raise ValueError("selected lines without a selected run")
-        self.line_overflow = _exact_bool("line_overflow", False)
+        # No default: snapshot() ALWAYS writes this field, so a state file
+        # missing it is malformed, not "no overflow happened". Defaulting to
+        # False would let a version-skewed or truncated state silently erase
+        # a recorded overflow instead of failing the restore and falling
+        # back to a cold parse -- the same false-green class every other
+        # field here is validated to prevent.
+        self.line_overflow = _exact_bool("line_overflow")
         self.retain_lines = _exact_bool("retain_lines")
         return self
 
@@ -767,9 +782,38 @@ def parse_file(path, state=None, retain_lines=True):
 
 def _load_state(path):
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+        with open(path, "rb") as handle:
+            # fstat the DESCRIPTOR before reading a byte, and reject an
+            # oversized file BEFORE json.load() ever runs. `_state_shape_ok`
+            # and `FrameParser.restore()` reject a malformed body field by
+            # field, but both run AFTER the parse -- so an untrusted or
+            # racing writer could make json.load() itself pay unbounded
+            # memory/CPU parsing a huge or deeply-nested document before
+            # either check gets a chance to refuse it. The legitimate state
+            # this file holds is the once-per-second POLL's FSM snapshot
+            # (retain_lines=False, so no run text is retained) plus at most
+            # MAX_TRACKED_RUNS run records and MAX_TRACKED_CONFLICTS nonces --
+            # a few KB. STATE_FILE_MAX is generous headroom over that, not a
+            # tight fit, and rejecting above it only costs the OPTIMIZATION:
+            # the caller falls back to a cold parse from byte zero, same as
+            # any other malformed state.
+            if os.fstat(handle.fileno()).st_size > STATE_FILE_MAX:
+                return None
+            raw = handle.read(STATE_FILE_MAX + 1)
+        if len(raw) > STATE_FILE_MAX:
+            return None
+        return json.loads(raw.decode("utf-8"))
     except (OSError, ValueError):
+        return None
+    except RecursionError:
+        # A document deeply nested enough to blow the interpreter's
+        # recursion limit can be well under STATE_FILE_MAX in bytes (a few
+        # thousand levels of "[" costs one byte each) -- the size cap above
+        # bounds memory, not nesting depth. json.loads() raises
+        # RecursionError, which is neither OSError nor ValueError, so
+        # without this it would escape _load_state() entirely instead of
+        # degrading to the same cold-reparse fallback every other malformed
+        # state takes.
         return None
 
 

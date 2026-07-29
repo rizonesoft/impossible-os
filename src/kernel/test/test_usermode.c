@@ -1456,26 +1456,55 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  * would under-count the real burst by roughly a third, which is the error
  * that makes a "derived" number no better than a picked one. Components are
  * read off klog's serial emit path (src/kernel/klog.c:1240-1341). */
-#define KLOG_WIRE_TIMESTAMP_MAX 12u  /* "[NNNNN.mmm] " (>= 3 digits, grows) */
+/* "[NNNNNNNN.mmm] " -- klog's serial renderer buffers the seconds field's
+ * decimal digits in a local `char tmp[8]` (klog.c, same function) with no
+ * bound on the digit COUNT it writes there beyond `sizeof(tmp)`; `sec` is a
+ * uint32_t, so digit counts beyond 8 (sec >= 100,000,000, ~3.17 years of
+ * continuous uptime) write past `tmp` -- a latent, practically-unreachable
+ * stack overflow tracked as its own item (02-kernel-core/TODO-04-system-
+ * logging.md item: "Bound the timestamp digit loop in klog.c's serial
+ * renderer so it cannot write past its fixed stack buffer regardless of
+ * uptime seconds"), out of THIS section's scope. What this macro must do is
+ * bound the WIRE cost within klog's actual defined behavior, which caps at
+ * 8 digits: '[' + 8 digits + '.' + 3 fractional digits + ']' + ' ' = 15. A
+ * post-ship review (2026-07-29) found the prior value (12, assuming <= 5
+ * digits) undercounts every timestamp past 99,999 seconds (~27.8h uptime),
+ * which a long boot-test session can reach. */
+#define KLOG_WIRE_TIMESTAMP_MAX 15u
 #define KLOG_WIRE_CPUTAG_MAX     9u  /* "[cpu:NN] " on SMP                 */
 #define KLOG_WIRE_LEVEL_ANSI_MAX 7u  /* longest level_ansi[] entry         */
 #define KLOG_WIRE_LEVEL_PREFIX   7u  /* "[CRIT] " -- every badge is 7      */
 #define KLOG_WIRE_ANSI_RESET     4u  /* the reset sequence                 */
-#define KLOG_WIRE_TEST_COLOR    19u  /* UTEST truecolor sequence           */
 #define KLOG_WIRE_TRUNC_MARK     1u  /* '~' appended on truncation         */
 #define KLOG_WIRE_CRLF           2u  /* newline reaches the wire as CR LF  */
 /* Subsystem tag plus its ": " separator. The tag is the framed
  * "UTEST-<8hex>" (UTEST_FRAME_TAG_MAX), bounded by klog's own field. */
 #define KLOG_WIRE_SUBSYSTEM_MAX (KLOG_SUBSYSTEM_MAX + 2u)
 
-/* A full-line level re-emits its colour after the badge, so the level ANSI
- * sequence and the reset can each appear twice on one record. */
+/* Every record this macro bounds is one of the two overflow markers
+ * u_emit_skip_records() logs -- [UTEST-SKIP-RECORD-BUDGET] and
+ * [UTEST-RECORD-OVERFLOW], both `utest_record_log(LOG_ERROR, ...)` -- and
+ * both fire AFTER task_cleanup() clears the launcher's color-scope flag
+ * (s_utest_color_active = 0 at test_usermode.c:2895, well before
+ * u_emit_skip_records() runs at test_usermode.c:3062). The explicit
+ * "UTEST-<8hex>" subsystem match in klog's renderer also does not fire for
+ * this tag: it requires subsystem[5] to be '\0' or ':' (klog.c:1279-1280),
+ * but subsystem[5] here is '-'. So klog's renderer (klog.c:1274-1327) never
+ * takes the TEST-color branch for these specific records -- it always takes
+ * the plain LOG_ERROR path, where `level_full_line[LOG_ERROR]` is 1
+ * (klog.c:276), so the badge's level-ANSI sequence is re-emitted after the
+ * message. That path costs: the badge (1x LEVEL_ANSI + LEVEL_PREFIX +
+ * reset), a second LEVEL_ANSI re-emission, the message's own reset, and the
+ * reset klog appends to EVERY record unconditionally (klog.c:1332-1336) --
+ * 2x LEVEL_ANSI, 3x RESET, and no truecolor sequence at all. Modeling the
+ * TEST-color branch instead (as an earlier version of this macro did) would
+ * both add a sequence these records never carry AND miss the third reset
+ * they always do -- the wrong branch, not merely an imprecise one. */
 #define UTEST_RECORD_WIRE_MAX                                            \
     (UTEST_RECORD_LINE_MAX + KLOG_WIRE_TIMESTAMP_MAX +                   \
      KLOG_WIRE_CPUTAG_MAX + (2u * KLOG_WIRE_LEVEL_ANSI_MAX) +            \
-     KLOG_WIRE_LEVEL_PREFIX + (2u * KLOG_WIRE_ANSI_RESET) +              \
-     KLOG_WIRE_TEST_COLOR + KLOG_WIRE_SUBSYSTEM_MAX +                    \
-     KLOG_WIRE_TRUNC_MARK + KLOG_WIRE_CRLF)
+     KLOG_WIRE_LEVEL_PREFIX + (3u * KLOG_WIRE_ANSI_RESET) +              \
+     KLOG_WIRE_SUBSYSTEM_MAX + KLOG_WIRE_TRUNC_MARK + KLOG_WIRE_CRLF)
 
 /* The allowance itself: how many bytes a pathological skip burst may add to
  * the capture. A mebibyte is a rounding error against the multi-MB serial
@@ -1485,10 +1514,11 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  *
  * It is 1 MiB rather than 512 KiB because the floor below is what actually
  * constrains this: with the honest 6x overflow fanout, a 512 KiB allowance
- * divides out to 252 records, under the 256 a single binary may legitimately
- * report. Rather than accept a budget that clips an honest binary, the
- * allowance doubles. The _Static_assert is what forced the choice into the
- * open instead of leaving it to arithmetic nobody re-derives. */
+ * divides out to 252 records even BEFORE the refusal reservation below is
+ * subtracted -- under the 256 a single binary may legitimately report.
+ * Rather than accept a budget that clips an honest binary, the allowance
+ * doubles. The _Static_assert is what forced the choice into the open
+ * instead of leaving it to arithmetic nobody re-derives. */
 #define UTEST_SKIP_BURST_WIRE_MAX (1024u * 1024u)
 
 /* Refusing costs wire too. u_emit_skip_records() emits a
@@ -1498,7 +1528,17 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
  * derivation advertises: at the boundary the logical records already consume
  * 1,048,380 of 1,048,576 bytes, so a single marker overruns it. Reserving
  * the refusal traffic FIRST keeps the 1 MiB figure a real bound instead of
- * one that holds only until the budget is actually enforced. */
+ * one that holds only until the budget is actually enforced.
+ *
+ * TASK_MAX bounds "binaries run" only because task slots are NOT reusable
+ * today (test_usermode.c:3288 -- "task_create-failed until scheduler slot
+ * reuse ships"); a run cannot dispatch more than TASK_MAX binaries because
+ * num_tasks++ never resets. Once the scheduler's reusable-task-slot
+ * free-list work ships (tracked in the scheduler enhancement TODO, item
+ * "Add reusable slot/free-list logic for dead tasks"), a single run could
+ * dispatch more binaries than TASK_MAX and this reservation would silently
+ * undercount -- that item is this reservation's consumer too, not just the
+ * launcher's stress-loop XREF already on file. */
 #define UTEST_SKIP_REFUSAL_WIRE_MAX (TASK_MAX * UTEST_RECORD_WIRE_MAX)
 
 #define UTEST_SKIP_RECORD_BUDGET                                         \
@@ -1554,6 +1594,21 @@ _Static_assert(UTEST_RECORD_LINE_MAX <= sizeof(((klog_entry_t *)0)->message),
 _Static_assert(UTEST_SKIP_RECORD_BUDGET >= TASK_UTEST_REPORT_SKIP_MAX,
                "run-wide skip budget must cover the per-binary ceiling or a "
                "single legitimate binary's skip blocks get clipped");
+
+/* UTEST_SKIP_RECORD_BUDGET's numerator is an UNSIGNED subtraction
+ * (BURST_WIRE_MAX - REFUSAL_WIRE_MAX). If a future retune ever made the
+ * reservation exceed the allowance, that subtraction would wrap to
+ * approximately UINT32_MAX rather than go negative, and the floor assert
+ * above would still pass on the resulting (wrongly huge) budget -- the
+ * worst-case-fits assert below DOES catch it, but points at the wrong
+ * relationship for whoever has to diagnose the failure. Asserting the
+ * subtraction's precondition directly, by name, is what makes the eventual
+ * build failure diagnose itself instead of requiring this comment to be
+ * re-derived. */
+_Static_assert(UTEST_SKIP_REFUSAL_WIRE_MAX < UTEST_SKIP_BURST_WIRE_MAX,
+               "the refusal-marker reservation must not consume the whole "
+               "serialized-byte allowance or the budget's unsigned "
+               "subtraction wraps instead of going negative");
 
 /* The whole point of the derivation: the worst-case burst must actually fit
  * the allowance it was divided out of -- INCLUDING the refusal markers the

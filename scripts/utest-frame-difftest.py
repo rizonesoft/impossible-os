@@ -70,19 +70,41 @@ def full(path):
     trailing BARE CR is ambiguous (the LF may not have arrived yet), so it is
     not a line terminator. Python's text mode would translate it into one.
     An unterminated final line is likewise dropped rather than parsed.
+
+    A second adjustment mirrors production's MAX_PHYSICAL_LINE cap
+    (parse_file()'s `if len(raw) > MAX_PHYSICAL_LINE` check): any RAW
+    (pre-decode) physical line over the cap is excluded from the parse and
+    latches the same `overflow` flag production reports. Without this, an
+    over-long announcement or terminator would be LEARNED by this oracle but
+    REFUSED by production, so the two would silently diverge at exactly the
+    boundary the cap exists to enforce -- which is what plain byte-count
+    equivalence testing had missed. bytes.splitlines() (not the parser's own
+    split_complete_lines/find_terminator) supplies the independent split, so
+    this stays a comparison against a DIFFERENT implementation, not the
+    parser checking itself; only the MAX_PHYSICAL_LINE threshold itself is
+    the shared spec constant, same as the frame regexes this oracle already
+    reuses via `uf.parse`/`uf.strip_ansi`.
     """
     with open(path, "rb") as h:
         raw = h.read()
     if raw.endswith(b"\r"):
         raw = raw[:-1]
-    data = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8",
-                            errors="replace").read()
-    lines = data.split("\n")
-    if not data.endswith("\n"):
-        lines = lines[:-1]
-    else:
-        lines = lines[:-1]
-    return uf.parse(uf.strip_ansi(x) for x in lines)
+    raw_lines = raw.splitlines()
+    if raw and not raw.endswith((b"\n", b"\r")):
+        # bytes.splitlines() has no notion of "unterminated"; the trailing
+        # element is the fragment production never feeds either.
+        raw_lines = raw_lines[:-1]
+    overflowed = False
+    decoded = []
+    for rl in raw_lines:
+        if len(rl) > uf.MAX_PHYSICAL_LINE:
+            overflowed = True
+            continue
+        decoded.append(uf.strip_ansi(rl.decode("utf-8", errors="replace")))
+    result = uf.parse(decoded)
+    if overflowed:
+        result["overflow"] = True
+    return result
 
 def quiet_main(argv):
     """Run the CLI with stdout/stderr captured -- the harness prints its own

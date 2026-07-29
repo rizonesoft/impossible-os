@@ -72,6 +72,7 @@ title: "TODO-04 -- System Logging"
 | 💎   |  11   | ETW provider registration + filtering          | §7, T12 §5       |  [/]   |
 | 💎   |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 |  [/]   |
 | 💎   |  13   | Rotated-log compression (LZ4)                  | §4, T03 §3       |  [x]   |
+| ⭐   |  14   | Serial timestamp render bound                  | §1               |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -152,7 +153,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 155)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 156)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
@@ -433,6 +434,15 @@ The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no s
 > **Verified:** 2026-06-21 | ship `d9df4bd2` + review fixes | 7/7 items | build OK | smoke PASS (TCG 2.64s); 3224 kernel + 16 user PASS
 > **Accepted:** [M] `.N.lz4` header is native-endian (correct on x86-64; a big-endian host extractor would misread fields) -> XREF: 14-host-tools/TODO-08 §4 (item: "Decompress `.N.lz4` rotated logs: parse `klog_lz4_hdr_t` by explicit little-endian offsets")
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 1H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 14. Serial Timestamp Render Bound
+
+Discovered 2026-07-29 during a `00-infrastructure/TODO-04-usermode-test-framework.md` §29 re-adversarial review (a wire-cost derivation elsewhere needed to bound the timestamp field's worst-case byte count, which surfaced this). The serial-line renderer's timestamp digit loop (`src/kernel/klog.c` around the function documented at `klog.c:1240-1341`) writes decimal digits of `uint32_t sec` into a fixed local buffer with no bound on digit count: `char tmp[8]; ... while (v > 0) { tmp[n++] = ...; v /= 10; }`. `sec` is a `uint32_t` (max value 4,294,967,295, 10 decimal digits), but `tmp` holds only 8 bytes -- a boot whose uptime reaches 100,000,000 seconds (~3.17 years of continuous uptime) writes past the end of `tmp` on the stack. No test, panic path, or bare-metal gate currently catches this because reaching it requires uptime far beyond any real boot-test cycle or realistic continuous-uptime deployment; it is a latent stack buffer overflow, not a live one.
+
+- [ ] Bound the timestamp digit loop in klog.c's serial renderer so it cannot write past its fixed stack buffer regardless of uptime seconds
+      Size `tmp` to the true `uint32_t` worst case (10 digits) or cap the loop at 8 iterations and saturate/wrap once `sec` exceeds what the buffer holds, with a `_Static_assert` pinning the bound against `sizeof(tmp)`. Add a unit test driving the renderer at 7/8/9/10-digit `sec` values confirming no write past the declared size (canary byte after `tmp`, or refactor the digit-count logic into a testable pure function). Consumer: `00-infrastructure/TODO-04-usermode-test-framework.md` §29's `UTEST_RECORD_WIRE_MAX`, which must widen `KLOG_WIRE_TIMESTAMP_MAX` again if the fix changes the max digit count the renderer can safely emit.
 
 ---
 

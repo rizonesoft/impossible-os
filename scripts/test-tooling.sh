@@ -8985,6 +8985,81 @@ else
            "$(grep -m3 '^FAIL' "$FRAME_DIFF_OUT" || tail -3 "$FRAME_DIFF_OUT")"
 fi
 
+# 6g. utest_frame_poll (scripts/test.sh) must never let a poll FAILURE look
+#     like "no frame present": a config that does not require XML/JSON/TAP
+#     accepts the kernel summary alone once the frame-presence check comes
+#     back empty, and empty is exactly what a killed child or truncated
+#     output also produces. It must also survive scripts/test.sh's own
+#     `set -euo pipefail` -- an earlier draft used a bare `out="$(cmd)"; rc=$?`
+#     that aborted the WHOLE SCRIPT the first time the parser legitimately
+#     exited 1 or 2 (its ROUTINE not-complete-yet answer), confirmed with a
+#     minimal repro outside any inherit_errexit shopt. The function is
+#     extracted VERBATIM from scripts/test.sh (never hand-copied), so this
+#     test can never silently drift from what actually ships; $PROJECT is
+#     pointed at a fake tree so the child command is a stand-in script
+#     instead of the real parser, with no PATH shadowing tricks needed.
+UFP_SRC="$(sed -n '/^utest_frame_poll() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+if [ -z "$UFP_SRC" ]; then
+    t_fail "utest_frame_poll: extracted from scripts/test.sh" "function not found in scripts/test.sh"
+else
+    UFP_FAKE_PROJECT="$FRAME_TMP/ufp-fake-project"
+    mkdir -p "$UFP_FAKE_PROJECT/scripts"
+    UFP_LOG="$FRAME_TMP/ufp.log"
+    : > "$UFP_LOG"
+
+    ufp_run() {
+        # $1 = fake utest-frame.py body (a python3 script's source), $2 = budget
+        printf '%s\n' "$1" > "$UFP_FAKE_PROJECT/scripts/utest-frame.py"
+        bash -c '
+set -euo pipefail
+PROJECT="'"$UFP_FAKE_PROJECT"'"
+UTEST_POLL_STATE="'"$FRAME_TMP"'/ufp-state.json"
+'"$UFP_SRC"'
+utest_frame_poll "'"$UFP_LOG"'" "'"$2"'"
+echo
+echo "SURVIVED"
+' 2>&1
+    }
+
+    # (a) errexit-safety: the parser's ROUTINE exit 2 ("no frame learned")
+    #     must not abort the calling script.
+    UFP_A=$(ufp_run 'import sys; print("{}"); sys.exit(2)' 5)
+    if printf '%s' "$UFP_A" | tail -1 | grep -q '^SURVIVED$'; then
+        t_pass "utest_frame_poll: survives set -e on the parser's routine exit 2"
+    else
+        t_fail "utest_frame_poll: survives set -e on the parser's routine exit 2" "$UFP_A"
+    fi
+
+    # (b) a killed child (budget exhausted) must report inconclusive, not
+    #     something a "no frame ever" reading would accept.
+    UFP_B=$(ufp_run 'import time; time.sleep(5)' 1)
+    if printf '%s' "$UFP_B" | grep -q '__poll_inconclusive__' &&
+       printf '%s' "$UFP_B" | tail -1 | grep -q '^SURVIVED$'; then
+        t_pass "utest_frame_poll: a killed child reports inconclusive, not no-frame"
+    else
+        t_fail "utest_frame_poll: a killed child reports inconclusive, not no-frame" "$UFP_B"
+    fi
+
+    # (c) truncated-but-brace-matching output (a kill landing right after a
+    #     nested object closes) must be rejected by real JSON validation, not
+    #     waved through by a glob on the outer braces.
+    UFP_C=$(ufp_run 'import sys; sys.stdout.write("{\"runs\": [{\"run\": 1}"); sys.exit(0)' 5)
+    if printf '%s' "$UFP_C" | grep -q '__poll_inconclusive__'; then
+        t_pass "utest_frame_poll: truncated-but-brace-matching output is rejected"
+    else
+        t_fail "utest_frame_poll: truncated-but-brace-matching output is rejected" "$UFP_C"
+    fi
+
+    # (d) a legitimate, complete, well-formed result must still pass through
+    #     untouched -- the hardening above must not also reject good answers.
+    UFP_D=$(ufp_run 'import sys; print("{\"prefix\": \"UTEST-abc12345: \", \"ok\": false}"); sys.exit(1)' 5)
+    if printf '%s' "$UFP_D" | grep -q '"prefix": "UTEST-abc12345: "'; then
+        t_pass "utest_frame_poll: a well-formed result still passes through"
+    else
+        t_fail "utest_frame_poll: a well-formed result still passes through" "$UFP_D"
+    fi
+fi
+
 # 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce
 #    is an authenticating value and every disk log lives in a directory ring
 #    3 can open, so each rendering has to go through klog_disk_subsystem().

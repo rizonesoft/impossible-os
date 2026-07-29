@@ -589,10 +589,69 @@ utest_frame_scan() {
 # reparse on every append prefix, byte by byte.
 UTEST_POLL_STATE="${TEST_LOG}.framestate"
 utest_frame_poll() {
-    local log="$1"
+    local log="$1" budget="${2:-1}" out rc
     [ -f "$log" ] || { echo '{}'; return 0; }
-    python3 "$PROJECT/scripts/utest-frame.py" \
-        --state "$UTEST_POLL_STATE" --poll "$log" 2>/dev/null || true
+    # Bounded by the CALLER's remaining deadline budget, not left to run to
+    # completion regardless of size: a poll loop that only checks the
+    # deadline between calls still lets one call itself run unboundedly long
+    # on a large capture, which is exactly the "counts sleep calls, not wall
+    # time" bug this section's whole poll-deadline rework exists to close.
+    # `if out=$(...); then rc=0; else rc=$?; fi`, NOT a plain assignment
+    # statement followed by `rc=$?` on the next line: this file runs under
+    # `set -euo pipefail` (line 17), and a bare `out="$(cmd)"` statement IS
+    # subject to errexit when `cmd`'s exit status is nonzero -- confirmed:
+    # `set -e; out="$(bash -c 'exit 2')"; echo unreached` never reaches the
+    # echo, with no `inherit_errexit` shopt involved. utest-frame.py's exit
+    # 1 (framed, unreconciled) and 2 (no frame) are the ROUTINE answer for
+    # most of a poll's lifetime, so a plain assignment here would abort the
+    # entire test harness on the very first ordinary "not complete yet"
+    # poll. The `if`/`else` form is one of the contexts `set -e` exempts
+    # (an if-condition), which is what the original pre-review function
+    # relied on via `cmd || true` before this poll gained a captured rc.
+    if out="$(timeout "$budget" python3 "$PROJECT/scripts/utest-frame.py" \
+        --state "$UTEST_POLL_STATE" --poll "$log" 2>/dev/null)"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    # utest-frame.py's module docstring documents exactly three CLEAN exit
+    # codes: 0 (complete, reconciled run), 1 (framed but unreconciled), 2 (no
+    # frame learned). Any other code -- `timeout`'s 124 when it had to KILL
+    # the child, a shell-level 125/126/127, a signal death (128+N, e.g. 137
+    # for SIGKILL), or a crash this list never anticipated -- means the
+    # process never reached its own documented exit path, so its stdout
+    # proves NOTHING about frame presence. Checking the exit code allowlist
+    # alone is not enough either: a kill can land after a PARTIAL write even
+    # under an accidentally-clean-looking status, so the output is also
+    # required to look like a complete JSON object. Both failure modes map
+    # to the SAME inconclusive marker, because the caller's correct response
+    # is identical either way: this poll answered nothing, so treat it as
+    # "not yet", never silently as "no frame" -- the false-green a single
+    # `-eq 124` check closed only for ONE of the ways this can happen.
+    case "$rc" in
+    0 | 1 | 2) ;;
+    *) out='' ;;
+    esac
+    # A shell glob on the outer braces is NOT proof of complete, well-formed
+    # JSON: a response truncated right after a NESTED object closes (e.g.
+    # `{"runs":[{"run":1}`) still starts with `{` and ends with `}`, and
+    # non-JSON garbage can too. Validate with the SAME parser the caller's
+    # own field extraction (utest_frame_field) trusts, so there is exactly
+    # ONE JSON-parsing implementation in this contract, not a bash
+    # approximation that can be fooled by where the truncation happened to
+    # land.
+    if printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if isinstance(d, dict) else 1)
+' 2>/dev/null; then
+        printf '%s' "$out"
+    else
+        echo '{"__poll_inconclusive__": true}'
+    fi
 }
 
 utest_frame_field() {
@@ -638,7 +697,18 @@ POLL_DEADLINE=$(( $(mono_now) + TIMEOUT ))
 FOUND=0
 while [ "$(mono_now)" -lt "$POLL_DEADLINE" ]; do
     sleep 1
-    if [ -f "$TEST_LOG" ] && grep -q '=== .* tests\? passed' "$TEST_LOG" 2>/dev/null; then
+    # Recheck the deadline immediately after the sleep, BEFORE the grep and
+    # frame-parse below run: checking only at the top of the loop bounded
+    # when an iteration was allowed to START, not how long its own work could
+    # then run, so an iteration starting a moment before POLL_DEADLINE could
+    # still finish well after it on a large capture -- the same "counts sleep
+    # calls, not wall time" failure mode this deadline exists to close, just
+    # moved one level down. REMAIN is also handed to grep/utest_frame_poll as
+    # a hard ceiling on THEIR execution, not merely a re-check between them:
+    # a single slow parse can no longer run past the deadline either.
+    REMAIN=$(( POLL_DEADLINE - $(mono_now) ))
+    [ "$REMAIN" -le 0 ] && break
+    if [ -f "$TEST_LOG" ] && timeout "$REMAIN" grep -q '=== .* tests\? passed' "$TEST_LOG" 2>/dev/null; then
         FOUND=1
         UMODE_NEEDED=0
         [ "$XML_MODE" -eq 1 ] && UMODE_NEEDED=1
@@ -652,7 +722,30 @@ while [ "$(mono_now)" -lt "$POLL_DEADLINE" ]; do
         # Framed, not bare `UTEST:`: ring-3 stdout shares this serial stream
         # (sys_write copies caller bytes straight to serial_putchar), so an
         # unframed match proves nothing about who wrote it.
-        POLL_SCAN=$(utest_frame_poll "$TEST_LOG")
+        REMAIN=$(( POLL_DEADLINE - $(mono_now) ))
+        if [ "$REMAIN" -le 0 ]; then
+            # FOUND was set the instant the kernel summary line matched,
+            # before the frame check below ran at all -- breaking here
+            # without resetting it would report success on a run whose
+            # user-mode completion was never actually verified, exactly
+            # the false-green class this whole poll exists to refuse.
+            FOUND=0
+            break
+        fi
+        POLL_SCAN=$(utest_frame_poll "$TEST_LOG" "$REMAIN")
+        case "$POLL_SCAN" in
+        *'"__poll_inconclusive__"'*)
+            # The frame-presence check did not reach a clean, complete
+            # answer (timed out, was killed, or crashed) -- we cannot tell
+            # whether a launcher frame is present, so this iteration must
+            # NOT fall through to the kernel-summary-alone completion path
+            # below (that is exactly the false-green this deadline rework
+            # exists to refuse). Poll again; the outer loop's own deadline
+            # check is what ends the run if the budget is truly exhausted.
+            FOUND=0
+            continue
+            ;;
+        esac
         POLL_UF=$(utest_frame_field "$POLL_SCAN" prefix)
         if [ "$UMODE_NEEDED" -eq 0 ] && [ -n "$POLL_UF" ]; then
             UMODE_NEEDED=1
